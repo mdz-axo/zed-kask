@@ -10,7 +10,6 @@
 //! | DeepInfra  | `/v1/chat/completions`  | `Bearer`        |
 //! | OpenRouter | `/v1/chat/completions`  | `Bearer`        |
 //! | KiloCode   | `/chat/completions`     | `Bearer`        |
-//! | Fal        | `/v1/chat/completions`  | `Key`           |
 //! | Ollama     | `/v1/chat/completions`  | `Bearer` (ignored) |
 //!
 //! RunPod does NOT use this function — it is vision/OCR-only (no chat).

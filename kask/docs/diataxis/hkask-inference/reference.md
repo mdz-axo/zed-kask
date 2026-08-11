@@ -63,7 +63,8 @@ classDiagram
         +default_provider: ProviderId
         +deepinfra_base_url: String
         +deepinfra_api_key: String
-        +fal_base_url: String
+        +fal_media_base_url: String
+        +fal_queue_base_url: String
         +fal_api_key: String
         +openrouter_base_url: String
         +openrouter_api_key: String

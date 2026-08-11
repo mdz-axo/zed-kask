@@ -590,21 +590,25 @@ uninstall_hkask() {
         log "Removed updater bundle: $updater_dir"
     fi
 
-    # Remove any stale .desktop entry from prior installs (pre-0.34, when
-    # zed-kask erroneously installed a .desktop file). Also remove the icon.
-    # zed-kask is a CLI tool — it must not have a .desktop file.
-    local app_id="dev.zed-kask.Zed-Kask"
+    # Remove the NoDisplay .desktop entry installed by install_desktop_entry
+    # (all release channels — dev/stable, nightly, preview) plus the icon.
+    # This .desktop is the window→icon binding GNOME uses for the taskbar; it
+    # is NoDisplay=true with no MimeType/Keywords, so it never collided with
+    # upstream Zed. Also remove any stale entry from pre-0.34 installs.
     local data_root
     for data_root in "${XDG_DATA_HOME:-$HOME/.local/share}" "/usr/local/share"; do
-        local desktop_file="$data_root/applications/$app_id.desktop"
-        if [ -f "$desktop_file" ]; then
-            rm -f "$desktop_file"
-            log "Removed desktop entry: $desktop_file"
-        fi
+        local desktop_app_id
+        for desktop_app_id in dev.zed-kask.Zed-Kask dev.zed-kask.Zed-Kask-Nightly dev.zed-kask.Zed-Kask-Preview; do
+            local desktop_file="$data_root/applications/$desktop_app_id.desktop"
+            if [ -f "$desktop_file" ]; then
+                rm -f "$desktop_file"
+                log "Removed desktop entry: $desktop_file"
+            fi
+        done
         # Remove both icon names installed by install_icon: the app_id name
         # (load-bearing on Wayland) and the friendly "zed-kask" alias.
         local icon_name
-        for icon_name in "$app_id" "zed-kask"; do
+        for icon_name in dev.zed-kask.Zed-Kask dev.zed-kask.Zed-Kask-Nightly dev.zed-kask.Zed-Kask-Preview zed-kask; do
             local icon_file_512="$data_root/icons/hicolor/512x512/apps/$icon_name.png"
             local icon_file_1024="$data_root/icons/hicolor/1024x1024/apps/$icon_name.png"
             if [ -f "$icon_file_512" ]; then

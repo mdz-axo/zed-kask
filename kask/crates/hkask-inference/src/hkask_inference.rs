@@ -29,7 +29,7 @@
 //! # Model Naming
 //!
 //! - `DeepInfra/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra (via IPC bridge)
-//! - `fal.ai/paddleocr` → fal.ai (media)
+//! - `fal.ai/flux-2` → fal.ai (media)
 //! - `OpenRouter/openai/gpt-4o` → OpenRouter (via IPC bridge)
 //! - No prefix → default model (configurable, default: OpenRouter/z-ai/glm-5.2)
 

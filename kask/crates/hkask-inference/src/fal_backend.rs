@@ -1,36 +1,26 @@
-//! fal.ai backend — cloud inference via OpenAI-compatible API.
+//! fal.ai backend — generative media (image/video/speech/transcription/workflow).
 //!
-//! fal.ai exposes `/v1/chat/completions` for text and vision models.
-//! Requires Bearer token authentication via `FALAI_API_KEY`.
-//!
-//! Model listing: fal.ai does not expose a standard `/v1/models` endpoint.
-//! Instead, a static catalog of known vision-capable models is used.
+//! fal.ai is NOT an OpenAI-compatible chat endpoint (`/v1/chat/completions`
+//! returns 404; `/v1/models` uses `Authorization: Key` and returns a media
+//! catalog). This backend is registered in `MediaRouter` as a `MediaProvider`
+//! for media-generation ops only; chat/vision/embed/list_models are routed
+//! through the zed IPC bridge by the `MediaRouter` `InferencePort` impl.
+//! Auth: `Authorization: Key {FALAI_API_KEY}`.
 
-use crate::chat_protocol::{
-    ChatResponse, build_vision_request, chat_response_to_result, stream_chat_completion,
-    validate_prompt,
-};
 use crate::config::InferenceConfig;
 use crate::fal_workflow::{ExecutionMode, WorkflowResult};
-use crate::openai_compat::{
-    openai_compatible_generate, openai_compatible_generate_messages, sanitize_error_body,
-};
+use crate::openai_compat::sanitize_error_body;
 use crate::provider::{MediaOp, MediaProvider};
 use crate::workflow::NodeExecutor;
-use hkask_types::template::LLMParameters;
-use hkask_types::{
-    ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, InferenceStreamChunk,
-    MediaGenerateParams,
-};
+use hkask_types::{InferenceError, MediaGenerateParams};
 use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-/// fal.ai backend for chat completions and vision inference.
+/// fal.ai backend for generative media (image/video/speech/transcription/workflow).
 #[derive(Debug)]
 pub struct FalBackend {
-    base_url: String,
     media_base_url: String,
     queue_base_url: String,
     api_key: String,
@@ -56,189 +46,11 @@ impl FalBackend {
             ));
         }
         Ok(Self {
-            base_url: config.fal_base_url.clone(),
             media_base_url: config.fal_media_base_url.clone(),
             queue_base_url: config.fal_queue_base_url.clone(),
             api_key: config.fal_api_key.clone(),
             client,
         })
-    }
-
-    /// Send a chat completion request to fal.ai.
-    ///
-    /// expect: "The system regulates text/image/speech generation through provider membranes"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — regulated text generation
-    /// pre:  model is a valid fal.ai model name
-    /// pre:  prompt is non-empty (validated by validate_prompt)
-    /// pre:  params is a valid LLMParameters
-    /// post: returns Ok(InferenceResult) with generated text, model, usage stats
-    /// post: if connection fails → Err(InferenceError::Connection)
-    /// post: if prompt is empty → Err(InferenceError::Generation)
-    pub async fn generate(
-        &self,
-        model: &str,
-        prompt: &str,
-        params: &LLMParameters,
-        tools: Option<&[ChatToolDefinition]>,
-    ) -> Result<InferenceResult, InferenceError> {
-        openai_compatible_generate(
-            &self.client,
-            &self.base_url,
-            &self.api_key,
-            model,
-            prompt,
-            params,
-            tools,
-            "/v1/chat/completions",
-            "Key",
-            "fal.ai",
-        )
-        .await
-    }
-
-    /// Send a multi-turn chat completion request to fal.ai with an explicit
-    /// message array.
-    ///
-    /// expect: "The system regulates text/image/speech generation through provider membranes"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — regulated multi-turn text generation
-    /// pre:  model is a valid fal.ai model name
-    /// pre:  messages is non-empty
-    /// pre:  params is a valid LLMParameters
-    /// post: returns Ok(InferenceResult) with generated text, model, usage stats
-    /// post: if connection fails → Err(InferenceError::Connection)
-    pub async fn generate_with_messages(
-        &self,
-        model: &str,
-        messages: &[ChatMessage],
-        params: &LLMParameters,
-        tools: Option<&[ChatToolDefinition]>,
-    ) -> Result<InferenceResult, InferenceError> {
-        openai_compatible_generate_messages(
-            &self.client,
-            &self.base_url,
-            &self.api_key,
-            model,
-            messages,
-            params,
-            tools,
-            "/v1/chat/completions",
-            "Key",
-            "fal.ai",
-        )
-        .await
-    }
-
-    /// Vision/multimodal inference with base64-encoded images.
-    ///
-    /// expect: "The system regulates text/image/speech generation through provider membranes"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — regulated multimodal generation
-    /// pre:  model is a valid fal.ai vision-capable model name
-    /// pre:  prompt is non-empty
-    /// pre:  images is non-empty (at least one base64-encoded image)
-    /// pre:  params is a valid LLMParameters
-    /// post: returns Ok(InferenceResult) with vision-generated text
-    /// post: if images is empty → Err(InferenceError::Generation("No images provided"))
-    /// post: if connection fails → Err(InferenceError::Connection)
-    pub async fn generate_vision(
-        &self,
-        model: &str,
-        prompt: &str,
-        images: &[String],
-        params: &LLMParameters,
-    ) -> Result<InferenceResult, InferenceError> {
-        validate_prompt(prompt)?;
-        if images.is_empty() {
-            return Err(InferenceError::Generation("No images provided".into()));
-        }
-        let request = build_vision_request(model, prompt, images, params);
-        let response = self
-            .client
-            .post(format!("{}/chat/completions", self.media_base_url))
-            .header("Authorization", format!("Key {}", self.api_key))
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("fal.ai vision: {}", e)))?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(InferenceError::Connection(format!(
-                "fal.ai {}: {}",
-                status,
-                sanitize_error_body(&body)
-            )));
-        }
-        let body = response
-            .text()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("fal.ai body read: {}", e)))?;
-        let chat_response: ChatResponse = serde_json::from_str(&body).map_err(|e| {
-            let preview = if body.len() > 500 {
-                format!("{}...", &body[..500])
-            } else {
-                body.clone()
-            };
-            InferenceError::Json(format!("fal.ai JSON: {} | body: {}", e, preview))
-        })?;
-        chat_response_to_result(chat_response)
-    }
-
-    /// List available models from fal.ai.
-    /// Stream a chat completion from fal.ai via SSE.
-    /// Generate a streaming completion from Fal.
-    ///
-    /// expect: "The system regulates text/image/speech generation through provider membranes"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — regulated streaming text generation
-    /// pre:  model is a valid Fal model name
-    /// post: returns stream of inference chunks
-    pub fn generate_stream(
-        &self,
-        model: &str,
-        prompt: &str,
-        params: &LLMParameters,
-        tools: Option<&[ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn futures_util::Stream<Item = Result<InferenceStreamChunk, InferenceError>>
-                + Send
-                + '_,
-        >,
-    > {
-        let auth = format!("Key {}", self.api_key);
-        stream_chat_completion(
-            Arc::clone(&self.client),
-            self.base_url.clone(),
-            auth,
-            model.to_string(),
-            prompt.to_string(),
-            params.clone(),
-            tools.map(|t| t.to_vec()),
-        )
-    }
-
-    /// List known fal.ai models from the static catalog.
-    ///
-    /// fal.ai does not expose a standard `/v1/models` endpoint.
-    /// Returns a curated list of vision-capable models known to work
-    /// with the OpenAI-compatible chat completions endpoint.
-    /// List available models from fal.ai static catalog.
-    ///
-    /// Returns `RouterModelEntry` with provider prefix applied on each entry.
-    ///
-    /// expect: "I can discover available models across providers"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — static model catalog for variety
-    /// pre:  none (static catalog, no API call)
-    /// post: returns `Vec<RouterModelEntry>` with curated model list
-    #[must_use]
-    pub async fn list_models(&self) -> Vec<crate::RouterModelEntry> {
-        use crate::config::ProviderId;
-
-        // Static catalog of known fal.ai vision models.
-        // These are models confirmed to work via the chat completions endpoint.
-        vec!["paddleocr", "nemotron-parse", "docres"]
-            .into_iter()
-            .map(|id| crate::RouterModelEntry::from_model_entry(ProviderId::Fal, id))
-            .collect()
     }
 
     // ── Media generation methods ───────────────────────────────────────────
@@ -741,29 +553,6 @@ mod tests {
             "should succeed with API key: {:?}",
             result.err()
         );
-    }
-
-    /// expect: "Inference static catalog lookup works correctly under test conditions"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — validates model variety catalog
-    #[tokio::test]
-    async fn static_catalog_returns_vision_models() {
-        let config = InferenceConfig {
-            fal_api_key: "test-key".into(),
-            ..Default::default()
-        };
-        let backend = FalBackend::new(&config, test_client()).unwrap();
-        let models = backend.list_models().await;
-        assert!(!models.is_empty(), "catalog should not be empty");
-        let ids: Vec<&str> = models.iter().map(|m| m.model.as_str()).collect();
-        assert!(
-            ids.contains(&"paddleocr"),
-            "catalog should include paddleocr"
-        );
-        assert!(
-            ids.contains(&"nemotron-parse"),
-            "catalog should include nemotron-parse"
-        );
-        assert!(ids.contains(&"docres"), "catalog should include docres");
     }
 
     /// expect: "Inference vision support heuristic works correctly under test conditions"

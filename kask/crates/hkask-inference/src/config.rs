@@ -3,7 +3,7 @@
 //! # Environment Variables
 //!
 //! - `DEEPINFRA_BASE_URL` / `DEEPINFRA_API_KEY` — DeepInfra (cloud, required)
-//! - `FALAI_BASE_URL` / `FALAI_API_KEY` — fal.ai (cloud, required)
+//! - `FALAI_MEDIA_BASE_URL` / `FALAI_QUEUE_BASE_URL` / `FALAI_API_KEY` — fal.ai (cloud media, required)
 //! - `OPENROUTER_BASE_URL` / `OPENROUTER_API_KEY` — OpenRouter (cloud, required)
 //! - `KILOCODE_BASE_URL` / `KILOCODE_API_KEY` — KiloCode (cloud, required)
 //! - `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` — Ollama (local; key optional, header ignored)
@@ -21,7 +21,7 @@
 //!
 //! Models use a full-name provider prefix:
 //! - `DeepInfra/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra (cloud)
-//! - `fal.ai/paddleocr` → fal.ai (cloud)
+//! - `fal.ai/flux-2` → fal.ai (cloud media)
 //! - `OpenRouter/openai/gpt-4o` → OpenRouter (cloud)
 //! - `KiloCode/anthropic/claude-sonnet-4.5` → KiloCode (cloud)
 //! - `ollama/qwen3:8b` → Ollama (local)
@@ -156,7 +156,6 @@ pub struct InferenceConfig {
 
     pub deepinfra_base_url: String,
     pub deepinfra_api_key: String,
-    pub fal_base_url: String,
     pub fal_media_base_url: String,
     pub fal_queue_base_url: String,
     pub fal_api_key: String,
@@ -184,7 +183,6 @@ impl Default for InferenceConfig {
             default_provider: ProviderId::DeepInfra,
             deepinfra_base_url: "https://api.deepinfra.com".to_string(),
             deepinfra_api_key: String::new(),
-            fal_base_url: "https://api.fal.ai".to_string(),
             fal_media_base_url: "https://fal.run".to_string(),
             fal_queue_base_url: "https://queue.fal.run".to_string(),
             fal_api_key: String::new(),
@@ -218,9 +216,6 @@ impl InferenceConfig {
         let kc = ProviderConfig::from_env("KiloCode", "https://api.kilo.ai/api/gateway");
         let om = ProviderConfig::from_env("ollama", "http://localhost:11434");
 
-        let fal_base_url =
-            std::env::var("FALAI_BASE_URL").unwrap_or_else(|_| "https://api.fal.ai".to_string());
-
         let fal_media_base_url =
             std::env::var("FALAI_MEDIA_BASE_URL").unwrap_or_else(|_| "https://fal.run".to_string());
 
@@ -237,7 +232,6 @@ impl InferenceConfig {
             default_provider: resolve_default_provider(),
             deepinfra_base_url: di.base_url,
             deepinfra_api_key: di.api_key,
-            fal_base_url,
             fal_media_base_url,
             fal_queue_base_url,
             fal_api_key,

@@ -280,11 +280,18 @@ install_updater_bundle() {
 # install_icon — install the zed-kask icon into the hicolor theme so the
 # running application's window has a proper icon in the taskbar/dock.
 #
-# zed-kask is a CLI development tool, NOT a desktop application. It must NOT
-# have a .desktop file — that would register it in the app launcher, dock,
-# and file associations, where it collides with the user's real Zed install.
-# The icon is needed only for the window manager to display the correct icon
-# when zed-kask is running.
+# NOTE: the hicolor icon alone is NOT sufficient on GNOME. GNOME Shell
+# resolves the taskbar/dock icon by matching the window's app_id to a
+# .desktop file (filename + StartupWMClass) and reading its Icon= — for a
+# window with no matching .desktop, GNOME shows a GENERIC icon, not a themed
+# lookup of the app_id. So install_desktop_entry (below) is what actually
+# makes the icon appear; this function supplies the named icon it references.
+#
+# zed-kask is a CLI development tool and must NOT pollute the app launcher,
+# dock, or file associations. The .desktop installed by install_desktop_entry
+# is NoDisplay=true with NO MimeType and NO Keywords, so it is invisible to
+# the launcher and cannot collide with the user's real Zed install (per the
+# .rules "zed-kask .desktop files must never collide with upstream Zed").
 #
 # On Wayland the compositor (GNOME Shell, KDE) resolves the taskbar/dock icon
 # by looking up the xdg_toplevel app_id as an icon name in the hicolor theme.
@@ -369,6 +376,84 @@ install_icon() {
     fi
 }
 
+# install_desktop_entry — install a NoDisplay .desktop entry that binds the
+# zed-kask window's Wayland app_id / X11 WM_CLASS to its icon. This is the
+# mechanism GNOME Shell actually uses to resolve the taskbar/dock icon: it
+# matches the window's app_id to a .desktop file (by filename + StartupWMClass)
+# and reads Icon=. Without it GNOME shows a generic icon for the window — the
+# hicolor themed-icon-by-app_id fallback is NOT reliable on modern GNOME, so
+# the icon installed by install_icon alone never reached the taskbar.
+#
+# This does NOT register zed-kask in the app launcher/dock or file
+# associations: NoDisplay=true hides it from menus, and it declares NO
+# MimeType and NO Keywords, so it cannot collide with the user's real Zed
+# install (per the .rules "zed-kask .desktop files must never collide with
+# upstream Zed" — only x-scheme-handler/zed-kask and Keywords=zed-kask are
+# permitted, and we declare neither). It is purely a window→icon binding.
+# The filename and StartupWMClass equal the release-channel app_id (see
+# ReleaseChannel::app_id in crates/release_channel/src/lib.rs), matching the
+# app_id the GPUI window advertises on Wayland (xdg_toplevel.set_app_id) and
+# WM_CLASS on X11.
+install_desktop_entry() {
+    local workspace_root="$HKASK_SOURCE_DIR"
+
+    local data_root
+    if [ "${HKASK_SYSTEM_INSTALL:-false}" = "true" ]; then
+        data_root="/usr/local/share"
+    else
+        data_root="${XDG_DATA_HOME:-$HOME/.local/share}"
+    fi
+
+    local channel
+    if [ -f "$workspace_root/crates/zed/RELEASE_CHANNEL" ]; then
+        channel="$(< "$workspace_root/crates/zed/RELEASE_CHANNEL")"
+    else
+        channel="${RELEASE_CHANNEL:-dev}"
+    fi
+    local app_id_name
+    case "$channel" in
+        stable)  app_id_name="dev.zed-kask.Zed-Kask" ;;
+        nightly) app_id_name="dev.zed-kask.Zed-Kask-Nightly" ;;
+        preview) app_id_name="dev.zed-kask.Zed-Kask-Preview" ;;
+        *)       app_id_name="dev.zed-kask.Zed-Kask" ;;
+    esac
+
+    local apps_dir="$data_root/applications"
+    local desktop_file="$apps_dir/$app_id_name.desktop"
+    assert_not_zed_owned_path "$desktop_file" "desktop entry write" || return 1
+    mkdir -p "$apps_dir"
+
+    # NoDisplay=true: invisible to launcher/dock/menus (no pollution, no
+    # collision with upstream Zed). No MimeType/Keywords: zero file-association
+    # surface. Icon + StartupWMClass = app_id: binds the window to the icon.
+    cat > "$desktop_file" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Zed-Kask
+Comment=Zed-Kask editor
+Exec=zed-kask %U
+Icon=$app_id_name
+StartupWMClass=$app_id_name
+Terminal=false
+NoDisplay=true
+EOF
+
+    # Defensive: the .desktop must never carry upstream-Zed-colliding content.
+    if grep -Eq 'text/plain|application/x-zerosize|x-scheme-handler/zed;|Keywords=zed;' "$desktop_file"; then
+        log_error "desktop entry contains forbidden (upstream-colliding) content: $desktop_file"
+        rm -f "$desktop_file"
+        return 1
+    fi
+
+    log "Installed desktop entry: $desktop_file"
+
+    # Best-effort: refresh the desktop database so the running GNOME Shell's
+    # AppSystem reloads and picks up the new entry (it monitors this dir).
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$apps_dir" 2>/dev/null || true
+    fi
+}
+
 setup_environment() {
     log "Setting up environment..."
 
@@ -428,6 +513,16 @@ verify_installation() {
         return 1
     fi
     log "Icon: $installed_icon ($(stat -c%s "$installed_icon" 2>/dev/null || echo "unknown") bytes)"
+
+    # The NoDisplay .desktop entry is what GNOME actually uses to bind the
+    # window's app_id to the icon (see install_desktop_entry). Without it the
+    # taskbar shows a generic icon even though the hicolor icon is present.
+    local installed_desktop="$icon_data_root/applications/dev.zed-kask.Zed-Kask.desktop"
+    if [ ! -s "$installed_desktop" ]; then
+        log_error "Desktop entry not found or empty at $installed_desktop"
+        return 1
+    fi
+    log "Desktop entry: $installed_desktop"
 
     # Check MCP server binaries
     local mcp_count=0
@@ -640,6 +735,7 @@ main() {
             install_binary
             install_updater_bundle
             install_icon
+            install_desktop_entry
             setup_environment
             write_mcp_server_settings
 

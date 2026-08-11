@@ -337,8 +337,9 @@ fn main() {
     }
 
     // Load kask `.env` file if present. The file contains API keys and
-    // configuration for kask inference providers (DEEPINFRA_API_KEY, FALAI_API_KEY,
-    // OPENROUTER_API_KEY, etc.) and kask runtime settings (HKASK_*).
+    // configuration for kask inference providers (DEEPINFRA_API_KEY,
+    // OPENROUTER_API_KEY, etc.), the fal.ai media credential
+    // (FALAI_API_KEY), and kask runtime settings (HKASK_*).
     // Without this, the keys are invisible to the process even though they're
     // in the file.
     //
@@ -1608,10 +1609,11 @@ fn main() {
                     );
                 }
 
-                // zed-kask: D8/D12 — F13b: mirror inference-provider env keys to keychain.
-                // Operators who set `FALAI_API_KEY` etc. in `kask/.env` get a working
-                // main process (the env var is read by `EnvVar::new` in the
-                // OpenAI-compatible provider state), but MCP server child processes
+                // zed-kask: D8/D12 — F13b: mirror inference-provider + data-service env keys to keychain.
+                // Operators who set `DEEPINFRA_API_KEY` / `FALAI_API_KEY` etc. in `kask/.env`
+                // get a working main process (the env var is read by `EnvVar::new` in the
+                // OpenAI-compatible provider state, and by the in-process media router for
+                // fal.ai), but MCP server child processes
                 // (media, corpus) receive their credentials via `mcp_env_with_credentials`,
                 // which reads from the keychain — not the parent process env. Without
                 // this mirror, MCP servers silently fail with "API key not configured"

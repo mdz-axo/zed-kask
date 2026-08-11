@@ -449,7 +449,7 @@ impl StepMachine {
     /// evaluates the truthy/comparison expression.
     fn evaluate_condition(&self, cond: &str) -> Result<bool> {
         let resolved = if cond.contains("{{") {
-            match self.context.legacy("__renderer__").and_then(|_| Some(())) {
+            match self.context.legacy("__renderer__").map(|_| ()) {
                 Some(()) => {
                     // We have a renderer — but it's on the Infra, not the context.
                     // For now, use the condition evaluator directly on the raw

@@ -43,8 +43,8 @@ pub(crate) fn render_inference_providers_page(
     let mut rows: Vec<AnyElement> = Vec::new();
     for desc in kask_bridge::INFERENCE_PROVIDERS {
         // Match on `credential_key` (lowercase canonical key: "deepinfra",
-        // "fal", "openrouter", "kilocode", "cline"), not `desc.id`
-        // (which is the display-form "DeepInfra", "fal.ai", …).
+        // "openrouter", "kilocode", "atlascloud"), not `desc.id`
+        // (which is the display-form "DeepInfra", "OpenRouter", …).
         // The runtime matchers in `kask_bridge` use `credential_key`; the UI
         // must agree or every toggle renders off and writes no-op.
         let enabled = match desc.credential_key {
@@ -261,7 +261,7 @@ fn render_inference_provider_row(
 
 fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App) {
     // `provider_id` arrives as `desc.id` (display-form: "DeepInfra",
-    // "fal.ai", …). Translate to the canonical lowercase `credential_key`
+    // "OpenRouter", …). Translate to the canonical lowercase `credential_key`
     // so the match arms fire. Without this, toggling a provider writes
     // nothing because none of the lowercase arms match the display-form id.
     let credential_key = match provider_id {
