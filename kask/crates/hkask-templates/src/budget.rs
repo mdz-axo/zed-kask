@@ -110,10 +110,13 @@ impl BudgetTracker {
         self.gas_used = self.gas_used.saturating_add(self.gas_cost_per_iter);
     }
 
-    /// Construct a per-task budget tracker from remaining capacity.
-    /// Used by the concurrent wave executor — each concurrent step gets
-    /// its own tracker so they don't share mutable state. The caller
-    /// merges consumption back into the parent tracker after the wave.
+    /// Construct a per-task budget tracker from remaining capacity. Each
+    /// concurrent branch gets its own tracker so they don't share mutable
+    /// state; the caller merges consumption back into the parent via
+    /// `consume_child` after the wave.
+    ///
+    /// **Not yet wired** — no concurrent executor exists today. The `parallel`
+    /// step action (slice K2) will call this per branch.
     pub fn from_remaining(gas_remaining: u32, rjoule_remaining: f64) -> Self {
         Self {
             gas_used: 0,
@@ -132,8 +135,11 @@ impl BudgetTracker {
     }
 
     /// Return the rJoule cost charged by the most recent `charge_rjoule` call.
-    /// Used by the concurrent wave executor to merge per-task costs back
-    /// into the parent tracker.
+    /// Intended for merging a per-task tracker's cost back into the parent
+    /// (the rJoule-under-concurrency design: per-branch settle + join-sum,
+    /// no shared `Mutex<f64>`).
+    ///
+    /// **Not yet wired** — the `parallel` step action (slice K2) will use this.
     pub fn last_rjoule_cost(&self) -> Option<f64> {
         if self.rjoule_used > 0.0 {
             Some(self.rjoule_used)

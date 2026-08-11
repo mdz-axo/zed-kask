@@ -96,12 +96,13 @@ steps:
     description: exit
 ";
 
-/// Same manifest with `concurrency: 1`. If the `concurrency` field were wired,
-/// this would schedule differently from `concurrency: 32`; today both are
-/// sequential so their outputs are identical.
+/// Same manifest with `concurrency: 1` (and the same `id`, so the only
+/// variable between the two is `concurrency`). If the `concurrency` field were
+/// wired, this would schedule differently from `concurrency: 32`; today both
+/// are sequential so their outputs are identical.
 const BENCH_MANIFEST_YAML_SERIAL: &str = "\
 manifest:
-  id: bench-baseline-serial
+  id: bench-baseline
   category: skill
   concurrency: 1
 convergence:

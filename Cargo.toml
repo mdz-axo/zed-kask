@@ -889,7 +889,6 @@ hkask-lisp = { path = "kask/crates/hkask-lisp" }
 hkask-templates = { path = "kask/crates/hkask-templates" }
 hkask-memory = { path = "kask/crates/hkask-memory" }
 hkask-email = { path = "kask/crates/hkask-email" }
-hkask-mcp = { path = "kask/crates/hkask-mcp" }
 hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
 hkask-mcp-portfolio = { path = "kask/mcp-servers/hkask-mcp-portfolio" }
 hkask-mcp-prediction-markets = { path = "kask/mcp-servers/hkask-mcp-prediction-markets" }

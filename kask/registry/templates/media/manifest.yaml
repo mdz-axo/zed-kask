@@ -91,16 +91,6 @@ templates:
       transparent PNG, monochrome variant, icon-only mark, and context
       mockup showing the logo in real-world use.
 
-  - id: media/workflow-composer
-    name: "Compose a valid Fal.ai workflow JSON DAG from a natural-language…"
-    path: workflow-composer.j2
-    type: KnowAct
-    description: >
-      Compose a valid Fal.ai workflow JSON DAG from a natural-language
-      media intent. Selects appropriate models, defines node topology,
-      and wires $references for correct data flow between nodes. Output
-      is a valid workflow JSON ready for media.execute_workflow.
-
   # ── Pre-defined pipelines (OpenMontage pattern; FlowDef, fixed topology) ──
   # The FlowDef executor chains tool outputs implicitly — no $references and
   # no fal.ai response-shape coupling. The agent only supplies the subject /

@@ -20,13 +20,13 @@ templates against the inference port. Template types are `Prompt` (WordAct),
 
 | Symbol                        | Location                                                   |
 | ----------------------------- | ---------------------------------------------------------- |
-| `ManifestExecutor` struct     | `kask/crates/hkask-templates/src/executor.rs:128`          |
-| `ManifestExecutor::new`       | `kask/crates/hkask-templates/src/executor.rs:170`          |
-| `execute_manifest`            | `kask/crates/hkask-templates/src/executor.rs:467`          |
-| `extract_final_step_result`   | `kask/crates/hkask-templates/src/executor.rs:1853`         |
-| `propagate_taint_for_binding` | `kask/crates/hkask-templates/src/executor.rs:282`          |
-| `check_untrusted_input`       | `kask/crates/hkask-templates/src/executor.rs:233`          |
-| `spotlight_tool_output`       | `kask/crates/hkask-templates/src/executor.rs:1904`         |
+| `ManifestExecutor` struct     | `kask/crates/hkask-templates/src/executor.rs:73`           |
+| `ManifestExecutor::new`       | `kask/crates/hkask-templates/src/executor.rs:85`           |
+| `execute_manifest`            | `kask/crates/hkask-templates/src/executor.rs:161`          |
+| `extract_final_step_result`   | `kask/crates/hkask-templates/src/executor.rs:200`          |
+| `StepResult.taint` / `StepContext::taint_of` | `kask/crates/hkask-templates/src/step_context.rs:40` / `:135` (replaces the removed `propagate_taint_for_binding`) |
+| `check_untrusted_input`       | `kask/crates/hkask-templates/src/step_actions.rs:705`      |
+| `spotlight_tool_output`       | _removed_ (D4 — `hkask-guard` deleted 2026-08-10)           |
 | `BundleManifest` struct       | `kask/crates/hkask-templates/src/bundle/manifest.rs:91`    |
 | `BundleManifestStep`          | `kask/crates/hkask-templates/src/bundle/manifest.rs:35`    |
 | `BundleSkill`                 | `kask/crates/hkask-templates/src/bundle/manifest.rs:24`    |
@@ -164,48 +164,49 @@ is spotlight-transformed (`spotlight_tool_output`, `executor.rs:1904`) and
 returned together with the tool's `ToolTaint` label, which is stored in
 `taint_labels` under `step_{ordinal}_result`.
 
-### FIDES taint propagation
+### FIDES taint propagation (not yet enforced)
 
-Two complementary functions close the Source→Sink information-flow gate (see
-[`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md)):
+The Source→Sink information-flow gate is structurally present but operationally
+inert (see [`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md)
+and `kask/research/seam-audit/security-review.md` findings KS-01/KS-02):
 
-- `propagate_taint_for_binding(original_value, new_key)` (`executor.rs:282`)
-  — called at every `input_mapping` binding **before** `context.insert`, so
-  the new key inherits the strongest taint of every context key it references
-  (Source > Endorser > Pure). Enforced by regression RR-0026/RR-0027 (cargo
-  tests in `executor.rs`); the call sites are `run_cascade`
-  (`executor.rs:789`), `execute_select` (`executor.rs:1245`),
-  `execute_populate` (`executor.rs:1376`), and `execute_render`
-  (`executor.rs:1423`). Passing the _original_ mapping value (with `$ref` /
-  `{{ }}` markers), not the resolved value — the function inspects
-  pre-resolution markers to find referenced keys.
-- `check_untrusted_input(value)` (`executor.rs:233`) — the gate side:
+- `StepResult.taint: ToolTaint` (`step_context.rs:40`) — taint is now a field on
+  each step result, written by `StepContext::store_result`/`store_named` and
+  read via `StepContext::taint_of` (`step_context.rs:135`). The legacy
+  `propagate_taint_for_binding` function (`executor.rs:282`) was **removed**
+  when `executor.rs` was refactored into `step_actions.rs`/`step_context.rs`/
+  `step_machine.rs`; binding-path propagation to the gate is not currently wired.
+- `check_untrusted_input(value)` (`step_actions.rs:705`) — the gate side:
   recursively scans a bound tool-input JSON for `{"$ref": "step_N_result..."}`
-  patterns **and** inline-Jinja `{{ step_N_result }}` strings (the same
-  reference grammar propagation recognizes — the gate must scan the same
-  grammar or inline Jinja would bypass the Source→Sink block), returning true
-  when any referenced entry is labeled `Source`.
+  patterns **and** inline-Jinja `{{ step_N_result }}` strings, returning true
+  when any referenced entry is labeled `Source`. It reads taint from legacy
+  `__taint__{key}` map markers that the write side no longer emits, so
+  `has_untrusted_input` is always `false` — the gate never fires (pending
+  KS-01). Compounding this, `McpRuntime::get_tool_info` hardcodes
+  `ToolTaint::Pure` for every MCP tool (`hkask-mcp/src/runtime.rs:370`), so the
+  `Sink` arm of `DefaultPolicy::check` (`hkask-regulation/src/runtime_policy.rs:71`)
+  never matches (pending KS-02).
 
 ## Cascade actions
 
-`ManifestExecutor::execute_manifest` (`executor.rs:467`) dispatches on
-`step.action`:
+`ManifestExecutor::execute_manifest` (`executor.rs:161`) dispatches on
+`step.action` (via the `StepMachine` dispatch loop in `step_machine.rs`):
 
 | Action               | Handler                                    | Purpose                                            |
 | -------------------- | ------------------------------------------ | -------------------------------------------------- |
-| `select`             | `execute_select` (`executor.rs:1231`)      | LLM inference, parse JSON, merge into context      |
-| `populate`           | `execute_populate` (`executor.rs:1358`)    | Render-only, store under `step_N_populated`        |
-| `render`             | `execute_render` (`executor.rs:1412`)      | RenderAct — no inference, for reference docs       |
-| `flowdef`            | `execute_flowdef` (`executor.rs:1472`)     | Nested sub-manifest cascade (composability)        |
-| `tool_invoke`        | `execute_tool_invoke` (`executor.rs:1629`) | MCP tool call via `step.mcp`                       |
-| `compute`            | `execute_compute` (`executor.rs:1704`)     | Deterministic math primitive (`hkask_forecast::*`) |
-| `choice`             | inline (`executor.rs:671`)                 | Conditional branch via `_next_ordinal`             |
-| `loop`               | inline (`executor.rs:695`)                 | PDCA re-entry from target ordinal                  |
-| `abort` / `escalate` | inline                                     | Terminate cascade                                  |
+| `select`             | `execute_select` (`step_actions.rs:196`)      | LLM inference, parse JSON, merge into context      |
+| `populate`           | `execute_populate` (`step_actions.rs:279`)    | Render-only, store under `step_N_populated`        |
+| `render`             | `execute_render` (`step_actions.rs:351`)      | RenderAct — no inference, for reference docs       |
+| `flowdef`            | `execute_flowdef` (`step_actions.rs:429`)     | Nested sub-manifest cascade (composability)        |
+| `tool_invoke`        | `execute_tool_invoke` (`step_actions.rs:384`) | MCP tool call via `step.mcp`                       |
+| `compute`            | `execute_compute` (`step_actions.rs:304`)     | Deterministic math primitive (`hkask_forecast::*`) |
+| `choice`             | inline (`step_machine.rs` dispatch loop)     | Conditional branch via `_next_ordinal`             |
+| `loop`               | inline (`step_machine.rs` dispatch loop)     | PDCA re-entry from target ordinal                  |
+| `abort` / `escalate` | inline (`step_machine.rs` dispatch loop)     | Terminate cascade                                  |
 
 Step results are stored under `step_{ordinal}_result` keys. Final-result
 extraction must be ordinal-keyed — the canonical extractors are
-`extract_final_step_result` (`executor.rs:1937`) and the same-named function
+`extract_final_step_result` (`executor.rs:200`) and the same-named function
 in `kask_bridge/src/skill_executor.rs`; `HashMap::values().last()` is
 non-deterministic (`RandomState`).
 
@@ -217,16 +218,16 @@ model stuck in a serial sub-call verification loop that burns wall-clock
 while consuming few tokens (observed: 741.5s for 11,715 tokens):
 
 1. **Per-step timeout** (`step.timeout_seconds`, `manifest.rs:55`) — hard,
-   enforced via `tokio::time::timeout` in `execute_select` (`executor.rs:1353`).
+   enforced via `tokio::time::timeout` in `execute_select` (`step_actions.rs:196`).
    Catches individual stuck inference calls. Default is 0 (disabled); skill
    authors set it per step.
 2. **Iteration cap** (`convergence.max_iterations`, `config.rs:194`, default 10)
    — bounds the number of PDCA loop passes. Each pass can spawn sub-calls,
    so the cascade is bounded by `max_iterations × steps_per_pass ×
 per_step_timeout`.
-3. **Matryoshka depth guard** (`SYSTEM_MAX_RECURSION = 7`, `token_types.rs:18`)
-   — bounds flowdef sub-cascade nesting depth, enforced at `run_cascade`
-   entry (`executor.rs:496`).
+3. **Matryoshka depth guard** (`SYSTEM_MAX_RECURSION = 7`, `hkask-capability/src/token_types.rs:18`)
+   — bounds flowdef sub-cascade nesting depth, enforced at `StepMachine::run`
+   entry (`step_machine.rs:129`; was `run_cascade` in the pre-refactor `executor.rs`).
 
 **Known gap:** there is no _cascade-level aggregate_ wall-clock cap that
 bounds total elapsed time across all nesting levels. The per-step timeout

@@ -9,6 +9,8 @@ mds_categories: [trust, composition, domain]
 ---
 
 > **DEPRECATED 2026-08-10:** The `hkask-guard` crate and all components documented here (`ContentGuard`, `GuardedInferencePort`, `Spotlighter`, `CanaryToken`) have been removed from the codebase. The `RoleOverride` scanner's bare `system:` substring pattern produced false positives that blocked legitimate skill cascade template rendering, making the guard a net-negative failure mode. This document is retained for historical reference only.
+>
+> **FIDES taint layer — NOT YET ENFORCED (2026-08-11):** The guard layer above is gone, but the FIDES tool-taint lattice below is structurally present yet operationally inert. `ToolTaint`/`can_flow_to` (`hkask-capability/src/tool_taint.rs:34`) and `DefaultPolicy::check` (`hkask-regulation/src/runtime_policy.rs:71`) are live, but two gaps defeat the gate: (1) `check_untrusted_input` (`step_actions.rs:705`) reads taint from legacy `__taint__{key}` map markers that the write side (`StepContext::store_result`/`store_named`) no longer emits, so `has_untrusted_input` is always `false`; (2) `McpRuntime::get_tool_info` hardcodes `ToolTaint::Pure` for every MCP tool (`hkask-mcp/src/runtime.rs:370`), so the `Sink` arm never matches. Taint is now a field on `StepResult.taint` (`step_context.rs:40`). The legacy `propagate_taint_for_binding` function was removed when `executor.rs` was refactored into `step_actions.rs`/`step_context.rs`/`step_machine.rs`. Restoration is tracked as findings KS-01 (bridge the read path) and KS-02 (per-tool taint labels) in `kask/research/seam-audit/security-review.md`.
 
 # Guard and Taint Pipeline
 
@@ -82,22 +84,27 @@ Inside the manifest executor:
    through `spotlight_tool_output` (`executor.rs:1904`), which applies the
    executor's `Spotlighter` (constructed with `SpotlightMode::Delimit` at
    `executor.rs:183`).
-3. **Propagation.** Every `input_mapping` binding calls
-   `propagate_taint_for_binding(v, k)` (`executor.rs:282`) **before**
-   `context.insert(k, bound)`. The propagation inspects the _original_
-   mapping value (with `$ref` / `{{ }}` markers) and labels the new key with
-   the strongest taint of every referenced key (Source > Endorser > Pure).
-   Call sites: `run_cascade` (`executor.rs:789`), `execute_select`
-   (`executor.rs:1245`), `execute_populate` (`executor.rs:1376`),
-   `execute_render` (`executor.rs:1423`).
-4. **Gating.** Before each tool invocation, `check_untrusted_input`
-   (`executor.rs:233`) scans the bound input JSON for both `{"$ref": ...}`
-   objects and inline-Jinja `{{ step_N_result }}` strings — the gate must
-   recognize the same reference grammar propagation handles, or inline Jinja
-   would bypass the block. When untrusted input is detected, the
-   `runtime_policy` (`executor.rs:402`) consults `DefaultPolicy`:
-   `Block`/`RequireHuman` abort the step, `Log` emits a
-   `reg.guard.runtime_policy` span, `Allow` proceeds.
+3. **Propagation (currently inert).** Taint is now carried as a field on
+   `StepResult.taint` (`step_context.rs:40`), written by
+   `StepContext::store_result`/`store_named` and read via
+   `StepContext::taint_of` (`step_context.rs:135`). The legacy
+   `propagate_taint_for_binding` function (`executor.rs:282`) was **removed**
+   when `executor.rs` was refactored into `step_actions.rs`/`step_context.rs`/
+   `step_machine.rs`. The gate (`check_untrusted_input`, `step_actions.rs:705`)
+   still reads taint from legacy `__taint__{key}` map markers, but the write side
+   no longer emits those markers, so `has_untrusted_input` is always `false`.
+   **Not yet enforced — pending KS-01 (bridge the read path to `StepResult.taint`)
+   and KS-02 (per-tool taint labels).**
+4. **Gating (currently inert).** Before each tool invocation,
+   `check_untrusted_input` (`step_actions.rs:705`) scans the bound input JSON
+   for both `{"$ref": ...}` objects and inline-Jinja `{{ step_N_result }}`
+   strings, consulting the legacy `__taint__{key}` markers. When untrusted input
+   is detected, `invoke_tool` (`step_actions.rs:768`) calls `DefaultPolicy::check`
+   (`hkask-regulation/src/runtime_policy.rs:71`): `Block`/`RequireHuman` abort
+   the step, `Log` emits a `reg.guard.runtime_policy` span, `Allow` proceeds
+   (Rule 2, `runtime_policy.rs:86`). Because propagation is inert (§3),
+   `has_untrusted_input` is always `false` and the `Sink` arm never fires.
+   **Not yet enforced — pending KS-01/KS-02.**
 
 ```mermaid
 flowchart TD
@@ -130,9 +137,9 @@ invariant below names the exact code that enforces it.
 | Invariant                                                  | Enforcement point                                                                                                                                                                                                                                               |
 | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Core scanners always active (not configurable off)         | `ContentGuard::mandatory` (`pipeline.rs:195`); `GuardConfig` controls parameters only (`pipeline.rs:70`)                                                                                                                                                        |
-| `Source → Sink` flow blocked                               | `ToolTaint::can_flow_to` (`tool_taint.rs:35`) + `DefaultPolicy` verdict consumed in `invoke_tool` (`executor.rs:402`–`:422`); matrix pinned by `can_flow_to_matrix` (`tool_taint.rs:57`)                                                                        |
-| Taint survives `input_mapping` binding                     | `propagate_taint_for_binding` called before every `context.insert` at binding sites (`executor.rs:789`, `:1245`, `:1376`, `:1423`); pinned by RR-0026/RR-0027 cargo tests (`executor.rs` test module, e.g. `execute_populate_propagates_source_taint`, `:2097`) |
-| Gate and propagation scan the same reference grammar       | `check_untrusted_input` handles both `$ref` objects and inline-Jinja strings (`executor.rs:233`–`:260`); rationale comment at `executor.rs:247`–`:252`                                                                                                          |
+| `Source → Sink` flow blocked                               | **Structurally present, not yet enforced.** `ToolTaint::can_flow_to` (`hkask-capability/src/tool_taint.rs:34`) + `DefaultPolicy::check` consumed in `invoke_tool` (`step_actions.rs:786`); matrix pinned by `can_flow_to_matrix` (`tool_taint.rs:57`). Inert: `has_untrusted_input` is always `false` (KS-01) and every tool is labeled `Pure` (KS-02, `hkask-mcp/src/runtime.rs:370`). |
+| Taint survives `input_mapping` binding                     | **Not yet enforced.** The legacy `propagate_taint_for_binding` was removed; taint is now a field on `StepResult.taint` (`step_context.rs:40`) read via `StepContext::taint_of` (`step_context.rs:135`), but the binding-path propagation is not wired to the gate. Pending KS-01. |
+| Gate and propagation scan the same reference grammar       | `check_untrusted_input` (`step_actions.rs:705`) handles both `$ref` objects and inline-Jinja strings, but reads legacy `__taint__{key}` markers that are never written. Pending KS-01. |
 | Unscanned streaming output never treated as clean          | `GuardedStream` scans on stream end (`guarded_inference.rs:66`–`:70`) and caps accumulation at 256 KB (`guarded_inference.rs:35`)                                                                                                                               |
 | Malformed `HKASK_GUARD_TOKEN_LIMIT` is visible, not silent | `GuardConfig::from_env` warns with the raw value (`pipeline.rs:100`–`:107`)                                                                                                                                                                                     |
 
@@ -155,4 +162,4 @@ invariant below names the exact code that enforces it.
 
 [^spotlighting]: Microsoft Research. (2024). _Defending LLMs against prompt injection with spotlighting_ (arXiv:2403.14720). The delimit/datamark/encode transforms implemented in `hkask-guard/src/spotlight.rs`.
 
-[^rlm-overthinking]: Wang, D. (2026). _Think, But Don't Overthink: Reproducing Recursive Language Models_ (arXiv:2603.02615v1). Documents the "parametric hallucination" failure mode at RLM recursion depth=2: models abandon input context and emit pre-trained constants from parametric memory. This is the empirical evidence justifying the taint propagation requirement — without `propagate_taint_for_binding`, deeper cascades lose context anchoring and hallucinate from parametric memory, the exact failure mode documented in §4.4. The paper also documents the `<thinking>` tag format-collapse failure (Appendix A.4) that `normalize_model_output` defends against.
+[^rlm-overthinking]: Wang, D. (2026). _Think, But Don't Overthink: Reproducing Recursive Language Models_ (arXiv:2603.02615v1). Documents the "parametric hallucination" failure mode at RLM recursion depth=2: models abandon input context and emit pre-trained constants from parametric memory. This is the empirical evidence justifying the taint-propagation requirement (now carried by `StepResult.taint`, `step_context.rs:40` — the legacy `propagate_taint_for_binding` was removed): without taint surviving `input_mapping` binding, deeper cascades lose context anchoring and hallucinate from parametric memory, the exact failure mode documented in §4.4. The paper also documents the `<thinking>` tag format-collapse failure (Appendix A.4) that `normalize_model_output` defends against.

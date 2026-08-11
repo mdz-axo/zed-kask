@@ -2,9 +2,8 @@
 # Pre-defined pipeline (OpenMontage pattern): generate a clean product image,
 # remove the background, then upscale to 4K. Topology is fixed and known-good —
 # the FlowDef executor chains tool outputs implicitly, so no $references are
-# needed and no fal.ai response-shape coupling exists. Invoked via
-# action: flowdef from a parent skill (e.g. media-workflow or a future
-# product-photography skill).
+# needed and no provider response-shape coupling exists. Invoked via
+# action: flowdef from a parent skill (e.g. a future product-photography skill).
 
 template_type: FlowDef
 name: media_product_shot

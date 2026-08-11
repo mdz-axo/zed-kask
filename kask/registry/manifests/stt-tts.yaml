@@ -1,7 +1,7 @@
 # STT / TTS Voice Integration Pipeline Manifest
 # hKask v0.33.7 — Verified wiring: media server (audio.rs) + inference router + skills (caveman/ttbs)
 # Design gap: REPL/chat coordinating loop (S1→S5) unimplemented — see architecture analysis.
-# Deepgram deferred; current backends = DeepInfra (STT_DEFAULT: DeepInfra/whisper-large-v3; TTS_DEFAULT: DeepInfra/hexgrad/Kokoro-82M). fal.ai is deprecated for TTS/STT/image-gen; FalBackend retained for video/upscale/segment/workflow.
+# Deepgram deferred; current backends = DeepInfra (STT_DEFAULT: DeepInfra/whisper-large-v3; TTS_DEFAULT: DeepInfra/hexgrad/Kokoro-82M). AtlasCloud handles video/image-to-image/upscale/audio.
 
 manifest:
   id: stt-tts
@@ -9,7 +9,7 @@ manifest:
   name: STT-TTS Voice Integration
   description: >
     Vertical pipeline: agent text → TTbS simplification (caveman/compression grammar) → VoiceDesign mapping → TTS (generate_speech).
-    User speech → audio_capture → STT (transcribe/transcribe_bundle) → agent receives. Uses media server (audio.rs) + inference router (deepinfra_backend.rs / fal.ai endpoints).
+    User speech → audio_capture → STT (transcribe/transcribe_bundle) → agent receives. Uses media server (audio.rs) + inference router (DeepInfra/AtlasCloud backends).
   functional_role: flowdef
   version: "0.33.7"
   visibility: Public
@@ -99,18 +99,15 @@ steps:
   - ordinal: 4
     action: execute
     description: >
-      Execute speech generation via media server audio.rs (generate_speech). For STT: audio_capture + transcribe_bundle via inference router backend.
-    tool: media.execute_workflow
+      Execute speech generation via the media server's generate_speech tool.
+      The reverse STT path (audio_capture → transcribe_bundle) is a separate
+      flow outside this linear pipeline; see the gap_declaration below.
+    tool: media.generate_speech
     gas_cap: 120000
     timeout_seconds: 600
     input_mapping:
-      workflow: >
-        {
-          "stt": { "capture": true, "transcribe_model": "DeepInfra/whisper-large-v3" },
-          "tts": { "voice": "{{ step_2_result.voice_preset }}", "text": "{{ step_2_result.tts_text }}" },
-          "loop_closure": "contract_defined",
-          "repl_chat_hook": "repl_chat_ref"
-        }
+      text: "{{ step_2_result.tts_text }}"
+      voice_design: "{{ step_2_result.voice_preset }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -129,7 +126,7 @@ error_handling:
 #     bundle.repl_chat_ref to receive STT output. S5 consumption remains
 #     design gap.
 #   deepgram_integration: Deepgram deferred; current variety (DeepInfra +
-#     fal.ai) sufficient per Ashby variety engineering.
+#     AtlasCloud) sufficient per Ashby variety engineering.
 #   caveman_skill_link: caveman manifest provides simplification grammar linked
 #     to coding-guidelines (Simplicity First).
 #   convergence_metric: 0.15, status: near_convergence, approved: true.

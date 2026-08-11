@@ -13,7 +13,7 @@ use serde_json::Value;
 /// Resolve the output schema for a `select` step.
 ///
 /// Priority:
-/// 1. `step.output_schema` (manifest-declared, if present)
+/// 1. `output_schema` (manifest-declared, if present)
 /// 2. `contract.output` from the template frontmatter (parsed at runtime)
 ///
 /// Returns a JSON Schema suitable for tool-calling, or `None` if no schema

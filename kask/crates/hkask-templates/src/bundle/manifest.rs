@@ -155,11 +155,15 @@ pub struct BundleManifest {
     pub enforce_inputs: Option<bool>,
     #[serde(default)]
     pub principles: Option<serde_json::Value>,
-    /// Maximum number of steps to execute concurrently within a single PDCA
-    /// iteration. Steps with no data dependency on each other (determined by
-    /// `input_mapping` references to `step_N_result` keys) are run in parallel
-    /// via `FuturesUnordered`. Default 32, max 128. Set to 1 for strictly
-    /// serial execution (back-compat).
+    /// Declared maximum number of steps to execute concurrently within a single
+    /// PDCA iteration. Default 32, max 128 (`MAX_CONCURRENCY`); set to 1 for
+    /// strictly serial execution.
+    ///
+    /// **Not yet enforced.** The kernel's `run_pass` is strictly sequential
+    /// today; this field is parsed and round-tripped but has no scheduling
+    /// effect. The `parallel` step action (slice K2) will wire it. Until then,
+    /// `concurrency: 1` and `concurrency: 32` produce identical output — pinned
+    /// by `executor_baseline_contract::concurrency_field_has_no_effect_today`.
     #[serde(default = "default_concurrency")]
     pub concurrency: u32,
 }
