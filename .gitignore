@@ -63,6 +63,9 @@ crates/docs_preprocessor/actions.json
 
 .local*
 
+# Local build error logs (stale artifacts, not source)
+build-err.txt
+
 # Corpus pipeline — all intermediate and raw artifacts ignored.
 # Final outputs will be explicitly committed after the pipeline completes
 # and all gates pass verification.

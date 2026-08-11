@@ -18,6 +18,42 @@ Zed-Kask is one clone, one build, one CI. Everything Kask lives under [`kask/`](
 
 ---
 
+## Key Features
+
+Zed-Kask adds three native editor surfaces that upstream Zed does not have. Each is wired through a small, documented seam ([`DIVERGENCE.md`](./DIVERGENCE.md)) and runs in-process — no separate daemon, no external service.
+
+### Skills
+
+**61 agent-facing skills** (PDCA loops), each composed of a [FlowDef manifest](./kask/registry/manifests/) plus a [template crate](./kask/registry/templates/), execute inside the agent panel via the manifest cascade (D1). A skill is a _process_, not a prompt: it composes Jinja2 templates into Plan-Do-Check-Act cycles with convergence thresholds, gas budgets, and escalation to the user — there is no autonomous agent loop by default. The shipped skills, manifests, and templates are seeded to disk at startup (seed-if-missing; user edits are never overwritten) and are editable at runtime. The 61 `SKILL.md` companions in [`.agents/skills/`](./.agents/skills/) are discovery-only (the catalog description the agent reads to pick a skill); the manifest is the source of truth. See [`kask/docs/reference/skills/README.md`](./kask/docs/reference/skills/README.md) for the registry and [`kask/docs/explanation/skills-and-composition.md`](./kask/docs/explanation/skills-and-composition.md) for the anatomy.
+
+### MCP servers
+
+**13 built-in MCP servers** (260 tools fleet-wide) are hosted in-process by Zed's `context_server` infrastructure (D3) and exposed as agent tools through `rmcp`:
+
+| Server | Surface |
+| --- | --- |
+| `codegraph` | Code-graph query, traversal, and context assembly |
+| `companies` | Company valuation, forecasting, portfolio |
+| `condenser` | Thread/session compression algorithms |
+| `corpus` | Gather→process→output document pipeline (folded `docproc` + `replica`) |
+| `curator` | Curator-scoped memory and regulation surfaces |
+| `kata-kanban` | Kata-driven task kanban |
+| `media` | Image/video/audio gallery and generation |
+| `portfolio` | Portfolio dashboard and positions |
+| `prediction-markets` | Polymarket/Kalshi calibration |
+| `research` | Web research and extraction |
+| `scenarios` | Schwartz/Tetlock scenario pipeline |
+| `swarm` | Agent Bestiary World swarm orchestration |
+| `training` | LoRA/QLoRA training configuration and contracts |
+
+Two parallel launch paths serve different consumers: the app-global `McpRuntime` (governed dispatch with capability-match gate, gas budgeting, and `reg.tool.*` spans — serves the skill cascade) and the per-project `ContextServerStore` (serves the agent tool picker). Both are by design. See [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry.
+
+### Curator agent
+
+The **Curator** (D2) is a native in-process agent — an `Agent::Curator` variant backed by hKask's Regulation and metacognition loops, selectable alongside the Zed coding agent in the Agent Panel. It is the system's cybernetic regulator, not an autonomous agent: it runs the CyberneticsLoop (variety engineering, algedonic alerts), MetacognitionLoop, and ConsolidationService against the user's sovereign pod, and escalates _to the user_ rather than acting on its own. The Curator carries its own sovereign memory store (`agents/curator/pod.db`, D6) — Curator turns are ingested as curator-perspective episodic + semantic records, and the curator's context injector (D8) recalls from its own DB so it builds its own memory automatically. Its `CuratorStatusTool` and regulatory static context are appended to the Zed Agent prompt (not an override — the coding instructions stay intact), so the Curator gets all coding capabilities _plus_ regulatory context and tools. See [`kask/docs/architecture/zed-host-architecture-plan.md`](./kask/docs/architecture/zed-host-architecture-plan.md) for the composition root wiring.
+
+---
+
 ## What Kask Is
 
 Kask is a set of **agentic AI tools** — skills, MCP servers, regulation, and sovereign memory — designed to run inside a host editor rather than as a standalone platform. In Zed-Kask it runs as a **local, single-user install**: one user, one sovereign pod, on the user's own machine. It is not an agent framework — there is no autonomous agent loop by default; the human is in the loop and skills escalate _to the user_, not away from them. The Curator is the system's cybernetic regulator, not an autonomous agent.

@@ -1,12 +1,13 @@
 //! Curator tools — regulatory surface tools for the Curator agent.
 //!
 //! These tools are registered on Curator threads alongside the standard Zed
-//! Agent tools. They expose the Curator's regulatory surface: system health,
-//! escalation management, and regulation observability.
+//! Agent tools. They expose the Curator's regulatory surface:
+//! - `curator_status`: read system health (variety, regulation effectiveness, alerts)
+//! - `curator_directive`: issue directives to the cybernetics regulation loop
 //!
-//! The tools use a `MetacognitionProvider` trait (defined here) to read
-//! system health. The composition root injects the provider; when not set,
-//! the tools return "not available".
+//! The tools use process-global hooks (`MetacognitionProvider`,
+//! `CuratorDirectiveSink`) that the composition root injects at startup.
+//! When a hook is not set, the tool returns "not available".
 
 use std::sync::Arc;
 
@@ -228,6 +229,240 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
                 Some(false) => "ok".to_string(),
                 None => "not monitored".to_string(),
             },
+        );
+        language_model::LanguageModelToolResultContent::Text(text.into())
+    }
+}
+
+// ── CuratorDirectiveSink trait ──────────────────────────────────────────────
+
+/// Sink for curator directives — the composition root implements this over
+/// the tokio channel that feeds `CyberneticsLoop::process_inbox`.
+///
+/// The trait lives here (not in `hkask-types`) so the `agent` crate can use it
+/// without depending on `hkask-types`. The composition root converts the
+/// tool-local `CuratorDirectiveRequest` into `hkask_types::CuratorDirective`
+/// before sending.
+pub trait CuratorDirectiveSink: Send + Sync {
+    /// Send a directive to the cybernetics regulation loop.
+    ///
+    /// Returns `Ok(accepted)` where `accepted` is `true` if the directive was
+    /// sent, `false` if it was dampened (duplicate within cooldown). Returns
+    /// `Err` if the channel is closed or the sink is unwired.
+    fn send_directive(&self, directive: CuratorDirectiveRequest) -> Result<bool, String>;
+}
+
+/// Global hook for the curator directive sink.
+static CURATOR_DIRECTIVE_SINK: std::sync::Mutex<Option<Arc<dyn CuratorDirectiveSink>>> =
+    std::sync::Mutex::new(None);
+
+/// Set the global curator directive sink (composition root).
+///
+/// Re-settable — later calls replace the earlier sink.
+pub fn set_curator_directive_sink(sink: Option<Arc<dyn CuratorDirectiveSink>>) {
+    *CURATOR_DIRECTIVE_SINK
+        .lock()
+        .expect("CURATOR_DIRECTIVE_SINK poisoned") = sink;
+}
+
+fn curator_directive_sink() -> Option<Arc<dyn CuratorDirectiveSink>> {
+    CURATOR_DIRECTIVE_SINK
+        .lock()
+        .expect("CURATOR_DIRECTIVE_SINK poisoned")
+        .clone()
+}
+
+// ── Curator Directive Tool ───────────────────────────────────────────────────
+
+/// A directive the Curator model issues to the cybernetics regulation loop.
+///
+/// This is a tool-local representation — the composition root converts it to
+/// `hkask_types::CuratorDirective` before sending. Agent fields use names
+/// (e.g. `"curator"`, `"swarm-panel"`), not raw WebIDs, because the model
+/// knows agents by name.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CuratorDirectiveRequest {
+    /// Adjust a regulation threshold for a domain.
+    CalibrateThreshold {
+        /// Domain identifier (e.g., "inference", "storage", "variety").
+        domain: String,
+        /// New threshold value.
+        new_threshold: u64,
+    },
+    /// Add or remove capabilities for an agent.
+    UpdateCapabilities {
+        /// Agent name (e.g., "curator", "swarm-panel").
+        agent: String,
+        /// Capabilities to add.
+        #[serde(default)]
+        additions: Vec<String>,
+        /// Capabilities to remove.
+        #[serde(default)]
+        removals: Vec<String>,
+    },
+    /// Override an agent's energy budget beyond cybernetics set-points.
+    OverrideEnergyBudget {
+        /// Agent name.
+        agent: String,
+        /// New energy budget (call cap per tick).
+        new_budget: u64,
+    },
+    /// Request more evidence for a pending decision (confidence-gated).
+    SeekMoreEvidence {
+        /// The decision context requiring more evidence.
+        context: String,
+        /// Which evidence channel to verify (e.g., "llm_confidence", "validation_result").
+        channel: String,
+        /// Current confidence level (e.g., "0.45").
+        confidence: String,
+    },
+    /// Replenish an agent's energy budget by a specific amount.
+    ReplenishBudget {
+        /// Agent name.
+        agent: String,
+        /// Amount to replenish.
+        amount: u64,
+        /// Priority weight for replenishment scaling (0.0–1.0). Defaults to 1.0.
+        #[serde(default)]
+        priority: Option<f64>,
+    },
+    /// Clear a curation override on an agent's energy budget.
+    ClearOverride {
+        /// Agent name.
+        agent: String,
+    },
+    /// Escalate a domain-level concern to the user for human review.
+    EscalateDomain {
+        /// Domain identifier (e.g., "inference", "storage").
+        domain: String,
+        /// Severity level: "info", "warning", or "critical".
+        severity: String,
+        /// Human-readable evidence summary.
+        evidence: String,
+    },
+}
+
+/// Issue a CuratorDirective to the cybernetics regulation loop.
+///
+/// Directives adjust thresholds, capabilities, energy budgets, or escalate
+/// domain-level concerns. The cybernetics loop dampens repeated directives to
+/// prevent feedback oscillation — a dampened directive returns `accepted: false`.
+/// When the directive channel is not wired, returns an error.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+pub struct CuratorDirectiveTool;
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CuratorDirectiveInput {
+    /// The directive to issue.
+    pub directive: CuratorDirectiveRequest,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CuratorDirectiveOutput {
+    /// `true` if the directive was accepted; `false` if dampened (duplicate within cooldown).
+    pub accepted: bool,
+    /// Human-readable status message.
+    pub message: String,
+    /// The directive variant name that was issued (for logging).
+    pub directive_type: String,
+}
+
+impl AgentTool for CuratorDirectiveTool {
+    type Input = CuratorDirectiveInput;
+    type Output = CuratorDirectiveOutput;
+
+    const NAME: &'static str = "curator_directive";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Write
+    }
+
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        let variant = input
+            .ok()
+            .map(|i| i.directive.variant_name())
+            .unwrap_or("directive");
+        format!("Curator Directive: {variant}").into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        let sink = curator_directive_sink();
+        cx.background_executor().spawn(async move {
+            let input = input.recv().await.map_err(|_| CuratorDirectiveOutput {
+                accepted: false,
+                message: "error: invalid input".to_string(),
+                directive_type: "unknown".to_string(),
+            })?;
+
+            let directive_type = input.directive.variant_name().to_string();
+
+            let Some(sink) = sink else {
+                return Ok(CuratorDirectiveOutput {
+                    accepted: false,
+                    message: "directive sink not wired — the regulation loop is not running"
+                        .to_string(),
+                    directive_type,
+                });
+            };
+
+            match sink.send_directive(input.directive) {
+                Ok(true) => Ok(CuratorDirectiveOutput {
+                    accepted: true,
+                    message: format!("directive '{directive_type}' accepted by the regulation loop"),
+                    directive_type,
+                }),
+                Ok(false) => Ok(CuratorDirectiveOutput {
+                    accepted: false,
+                    message: format!(
+                        "directive '{directive_type}' dampened — a similar directive was issued recently (cooldown active)"
+                    ),
+                    directive_type,
+                }),
+                Err(channel_err) => Ok(CuratorDirectiveOutput {
+                    accepted: false,
+                    message: format!("directive '{directive_type}' failed: {channel_err}"),
+                    directive_type,
+                }),
+            }
+        })
+    }
+}
+
+impl CuratorDirectiveRequest {
+    fn variant_name(&self) -> &'static str {
+        match self {
+            Self::CalibrateThreshold { .. } => "calibrate_threshold",
+            Self::UpdateCapabilities { .. } => "update_capabilities",
+            Self::OverrideEnergyBudget { .. } => "override_energy_budget",
+            Self::SeekMoreEvidence { .. } => "seek_more_evidence",
+            Self::ReplenishBudget { .. } => "replenish_budget",
+            Self::ClearOverride { .. } => "clear_override",
+            Self::EscalateDomain { .. } => "escalate_domain",
+        }
+    }
+}
+
+impl From<CuratorDirectiveOutput> for language_model::LanguageModelToolResultContent {
+    fn from(output: CuratorDirectiveOutput) -> Self {
+        let status = if output.accepted {
+            "accepted"
+        } else {
+            "not accepted"
+        };
+        let text = format!(
+            "Curator Directive ({}): {}\n  {}",
+            output.directive_type, status, output.message,
         );
         language_model::LanguageModelToolResultContent::Text(text.into())
     }

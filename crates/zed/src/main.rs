@@ -731,12 +731,21 @@ fn main() {
         let algedonic_threshold = kask_settings_for_mcp.curator.algedonic_threshold;
         let scaled = hkask_regulation::DEFAULT_VARIETY_MAX_DEFICIT * (1.0 - algedonic_threshold);
         set_points.variety_max_deficit = scaled.max(1.0);
+        // zed-kask: D3/D8 — CuratorDirective channel wiring.
+        // Create the channel: the Curator's `curator_directive` tool sends
+        // directives via the sink, and the CyberneticsLoop's `process_inbox`
+        // drains them. The sink converts the tool-local `CuratorDirectiveRequest`
+        // (agent-name strings) to `hkask_types::CuratorDirective` (WebIDs) before
+        // sending.
+        let (directive_tx, directive_rx) =
+            tokio::sync::mpsc::unbounded_channel::<hkask_types::CuratorDirective>();
         let cybernetics_loop_inner =
             hkask_regulation::CyberneticsLoop::with_set_points(
                 regulation_ledger.clone(),
                 set_points,
             )
             .with_alerts_channel(alert_tx)
+            .with_curator_directive_channel(directive_rx)
             .with_event_sink(event_sink.clone());
         let cybernetics_loop_inner = if let Some(sink) = alert_email_sink {
             cybernetics_loop_inner.with_alert_email_sink(sink)
@@ -833,6 +842,17 @@ fn main() {
         );
         agent::set_metacognition_provider(Some(provider));
         log::info!("Curator metacognition provider wired to CuratorStatusTool");
+
+        // zed-kask: D3/D8 — CuratorDirective sink wiring.
+        // Wire the directive sink so the CuratorDirectiveTool can send
+        // directives to the CyberneticsLoop. The sink converts the tool-local
+        // `CuratorDirectiveRequest` (agent-name strings) to
+        // `hkask_types::CuratorDirective` (WebIDs) before sending via the
+        // tokio channel.
+        let directive_sink: std::sync::Arc<dyn agent::CuratorDirectiveSink> =
+            std::sync::Arc::new(kask_bridge::BridgeCuratorDirectiveSink::new(directive_tx));
+        agent::set_curator_directive_sink(Some(directive_sink));
+        log::info!("Curator directive sink wired to CuratorDirectiveTool");
         let mcp_runtime_for_startup = mcp_runtime.clone();
         let tool_port = mcp_runtime;
         // OCAP token verification is self-referential (token.verify() checks

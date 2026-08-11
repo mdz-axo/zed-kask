@@ -894,6 +894,7 @@ impl NativeAgent {
                 // curator would have no automatic recall.
                 thread.set_agent_id(CURATOR_AGENT_ID.clone(), cx);
                 thread.add_tool(CuratorStatusTool);
+                thread.add_tool(CuratorDirectiveTool);
             });
         }
         if let Some(ref scope) = self.mcp_server_scope {
