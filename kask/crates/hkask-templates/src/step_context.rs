@@ -1,49 +1,41 @@
-//! Step context — typed replacement for the stringly-keyed `HashMap<String, Value>`.
+//! Step context — the single typed source of truth for cascade state.
 //!
-//! The old executor stored everything in one flat `HashMap<String, Value>`:
-//! user inputs, step results, loop counters, convergence state, budget
-//! snapshots, and taint labels — all addressed by string keys like
-//! `step_3_result`, `prev_step_1_result`, `convergence_signal`, `_convergence`.
-//! This caused:
+//! (K1) Replaced the denormalized `legacy: HashMap<String, Value>` mirror with
+//! typed fields + a small `by_ordinal` index. Templates resolve
+//! `{{ step_3_result }}` / `{{ prev_step_1_result }}` / `{{ target }}` through
+//! `lookup` (O(1) via the ordinal index) or through the custom `Serialize`
+//! impl that minijinja walks directly — no per-render materialization, and no
+//! clone-on-write to keep a parallel string-keyed mirror in sync.
+//! `store_result`/`snapshot_prev`/merge no longer deep-clone `Value`s into a
+//! second map. Protocol keys (`_gas`, `_rjoule`, `_convergence`,
+//! `convergence_signal`, `kata_brier`, `input_mapping`-injected bindings) live
+//! in `protocol`; step results live once in `results`; user inputs live once
+//! in `inputs`.
 //!
-//! - `extract_final_step_result` scanning all keys for `step_` prefix and
-//!   parsing ordinals out of strings (randomized HashMap order picked
-//!   arbitrary steps).
-//! - `prev_step_N_result` created by copying every step result into a
-//!   parallel key on every loop iteration (30-line block, N lock acquisitions).
-//! - FIDES taint tracked in a *parallel* `HashMap<String, ToolTaint>` that had
-//!   to be kept in sync with the context map by hand.
-//! - `propagate_taint_for_binding` grepping Jinja `{{ }}` expressions with a
-//!   hand-rolled tokenizer to figure out which context keys a binding
-//!   references.
-//!
-//! `StepContext` separates these into typed fields. Step results are keyed by
-//! `StepId` (O(1) lookup, no string parsing). Taint is a field on `StepResult`,
-//! not a parallel map. `prev_results` is populated by the machine on re-enter,
-//! not by a block inside the loop arm. The convergence signal is read from
-//! the results map directly.
-//!
-//! The context also carries a `legacy` map for backward compatibility with
-//! templates that reference `{{ step_3_result }}` by string. The machine
-//! writes to both the typed `results` map and the `legacy` string map so
-//! existing Jinja templates keep working without modification.
+//! The `ContextLookup`/`ContextMap` traits let convergence/condition/budget
+//! stay generic over the backing store: `HashMap<String, Value>` (tests) and
+//! `StepContext` (the executor). Two impls, both live (tests use the flat map,
+//! the executor uses the typed context) — not the one-impl trap. Naming the
+//! trait methods `get`/`insert` keeps call-site bodies unchanged.
 
 use crate::step_graph::StepId;
 use hkask_capability::tool_taint::ToolTaint;
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-// ── Context map interface (K1) ─────────────────────────────────────────────
+// ── Context map interface ──────────────────────────────────────────────────
 //
-// A shared read/write interface over the context map so readers (convergence,
-// condition, input_mapping, budget) are generic over the backing store:
-// `HashMap<String, Value>` (tests, the materialized return map) and
-// `HashMap<String, Arc<Value>>` (the executor's shared-value map from K1).
-// The trait methods are named `get`/`insert` so call-site bodies are unchanged
-// — for a generic `C: ContextLookup`, `context.get(k)` resolves to the trait
-// method. Two impls at birth (both live: tests use `Value`, the executor uses
-// `Arc<Value>`), so this is not the one-impl speculative-generality trap.
+// A shared read/write interface so readers (convergence, condition,
+// input_mapping, budget) are generic over the backing store: `HashMap<String,
+// Value>` (tests, the materialized return map) and `StepContext` (the
+// executor's typed context). The trait methods are named `get`/`insert` so
+// call-site bodies are unchanged — for a generic `C: ContextLookup`,
+// `context.get(k)` resolves to the trait method. Two impls at birth, both
+// live (tests use the flat map, the executor uses the typed context), so this
+// is not the one-impl speculative-generality trap.
 
 /// Read-only string-key lookup over a context map.
 pub(crate) trait ContextLookup {
@@ -52,8 +44,8 @@ pub(crate) trait ContextLookup {
 
 /// Mutable string-key map: `ContextLookup` plus `insert`. Writers (convergence
 /// `inject_running`/`finalize_report`, budget `inject_into_context`) are
-/// generic over this so the `Arc<Value>` store wraps on insert while the
-/// `Value` store moves.
+/// generic over this; the `StepContext` impl routes inserts to its `protocol`
+/// map, the `HashMap` impl moves.
 pub(crate) trait ContextMap: ContextLookup {
     fn insert(&mut self, key: String, value: Value);
 }
@@ -70,18 +62,6 @@ impl ContextMap for HashMap<String, Value> {
     }
 }
 
-impl ContextLookup for HashMap<String, Arc<Value>> {
-    fn get(&self, key: &str) -> Option<&Value> {
-        self.get(key).map(|v| v.as_ref())
-    }
-}
-
-impl ContextMap for HashMap<String, Arc<Value>> {
-    fn insert(&mut self, key: String, value: Value) {
-        self.insert(key, Arc::new(value));
-    }
-}
-
 /// A step's result, with its taint label inline.
 #[derive(Debug, Clone)]
 pub struct StepResult {
@@ -91,8 +71,9 @@ pub struct StepResult {
     pub ordinal: u32,
 }
 
-/// Typed cascade context. Replaces `HashMap<String, Value>` + the parallel
-/// `taint_labels` map.
+/// Typed cascade context — the single source of truth. Step results live once
+/// (keyed by `StepId`, indexed by ordinal); user inputs once; protocol keys
+/// once. No denormalized string-key mirror.
 #[derive(Debug, Clone)]
 pub struct StepContext {
     /// User-supplied inputs + injected model defaults. Addressed by string
@@ -102,20 +83,28 @@ pub struct StepContext {
     /// Step results, keyed by `StepId`. O(1) lookup, no string parsing.
     results: HashMap<StepId, StepResult>,
 
+    /// Ordinal → `StepId` index, for resolving `{{ step_N_result }}` without
+    /// scanning. Built incrementally by `store_result`/`store_named`.
+    by_ordinal: HashMap<u32, StepId>,
+
     /// The previous iteration's results, for Self-Refine loops. Populated by
-    /// the machine on `Reenter`, not by a block inside the loop arm.
+    /// the machine on `Reenter` (shallow after K4: `Arc<Value>` refcount bumps).
     prev_results: HashMap<StepId, StepResult>,
 
-    /// Legacy string-keyed view of step results, for Jinja templates that
-    /// reference `{{ step_3_result }}`. Written in lockstep with `results`.
-    /// Read by `input_mapping::resolve_mapping_value` and
-    /// `template_renderer::render`.
-    legacy: HashMap<String, Value>,
+    /// Ordinal → `StepId` index for `{{ prev_step_N_result }}`.
+    prev_by_ordinal: HashMap<u32, StepId>,
 
-    /// Convergence signal — the scalar the loop step binds via
-    /// `convergence_signal: "{{ step_N_result }}"`. Read by the convergence
-    /// tracker from the legacy map (the binding resolves through Jinja).
-    /// Stored here so the machine can read it without re-parsing strings.
+    /// Named (non-`_result`) step outputs — `step_{ordinal}_populated` etc.
+    /// from `populate`/`render` actions. Templates resolve these via `lookup`.
+    named: HashMap<String, Arc<Value>>,
+
+    /// Protocol keys: `_gas`, `_rjoule`, `_convergence`, `convergence_signal`,
+    /// `kata_brier`, and `input_mapping`-injected bindings. This is the
+    /// manifest-author binding protocol, NOT a results duplication.
+    protocol: HashMap<String, Value>,
+
+    /// Cached scalar readings of the convergence signal / Brier (set by
+    /// `read_convergence_signal` from `protocol`).
     pub convergence_signal: Option<f64>,
     pub kata_brier: Option<f64>,
 }
@@ -126,19 +115,21 @@ impl StepContext {
         Self {
             inputs,
             results: HashMap::new(),
+            by_ordinal: HashMap::new(),
             prev_results: HashMap::new(),
-            legacy: HashMap::new(),
+            prev_by_ordinal: HashMap::new(),
+            named: HashMap::new(),
+            protocol: HashMap::new(),
             convergence_signal: None,
             kata_brier: None,
         }
     }
 
-    /// Store a step result. Writes to both the typed `results` map and the
-    /// `legacy` string map (as `step_{ordinal}_result`) so Jinja templates
-    /// that reference results by string keep working.
+    /// Store a step result under `step_{ordinal}_result`. No mirror to keep in
+    /// sync (K1) — the `by_ordinal` index makes `{{ step_N_result }}` resolve
+    /// O(1) without a parallel string-keyed map.
     pub fn store_result(&mut self, step_id: StepId, ordinal: u32, value: Value, taint: ToolTaint) {
-        let key = format!("step_{ordinal}_result");
-        self.legacy.insert(key, value.clone());
+        self.by_ordinal.insert(ordinal, step_id);
         self.results.insert(
             step_id,
             StepResult {
@@ -152,6 +143,9 @@ impl StepContext {
 
     /// Store a step result under a custom key suffix (e.g. `populated` for
     /// `step_{ordinal}_populated`). Used by `populate` and `render` actions.
+    /// The value is also reachable as `step_{ordinal}_result` via the typed
+    /// `results` map (same `step_id`), so `extract_final_step_result`'s
+    /// max-ordinal selection still works.
     pub fn store_named(
         &mut self,
         step_id: StepId,
@@ -161,14 +155,13 @@ impl StepContext {
         taint: ToolTaint,
     ) {
         let key = format!("step_{ordinal}_{suffix}");
-        self.legacy.insert(key, value.clone());
-        // Named results also go into the typed map under the step_id, so
-        // the machine can extract the final result by StepId. The `value`
-        // is the rendered output; the taint is propagated from inputs.
+        let arc = Arc::new(value);
+        self.named.insert(key, arc.clone());
+        self.by_ordinal.insert(ordinal, step_id);
         self.results.insert(
             step_id,
             StepResult {
-                value: Arc::new(value),
+                value: arc,
                 taint,
                 step_id,
                 ordinal,
@@ -190,24 +183,18 @@ impl StepContext {
     }
 
     /// The last step result that stored a value (highest StepId with a result).
-    /// O(1) — the machine tracks this, no string-key scan.
+    /// O(1) — the machine tracks `last_result_step`, no string-key scan.
     pub fn last_result(&self, last_step_id: StepId) -> Option<&StepResult> {
         self.results.get(&last_step_id)
     }
 
-    /// Snapshot the current iteration's results into `prev_results`. Called
-    /// by the machine on `Reenter`, replacing the 30-line block in the old
-    /// loop arm that copied every `step_N_result` into `prev_step_N_result`.
+    /// Snapshot the current iteration's results into `prev_results` for
+    /// Self-Refine loops. Called by the machine on `Reenter`. Shallow after
+    /// K4 (Arc refcount bumps) — and after K1 there are no parallel
+    /// `prev_step_N_result` legacy writes either.
     pub fn snapshot_prev(&mut self) {
-        // Shallow after K4: `StepResult.value` is `Arc<Value>`, so cloning the
-        // results map is N refcount bumps, not N deep Value-tree clones. The
-        // legacy prev-key writes below remain deep clones (the legacy map owns
-        // `Value`); K1 removes them when the legacy results-mirror is deleted.
         self.prev_results = self.results.clone();
-        for (_step_id, result) in &self.results {
-            let prev_key = format!("prev_step_{}_result", result.ordinal);
-            self.legacy.insert(prev_key, result.value.as_ref().clone());
-        }
+        self.prev_by_ordinal = self.by_ordinal.clone();
     }
 
     /// Get a previous iteration's result by `StepId`.
@@ -215,11 +202,11 @@ impl StepContext {
         self.prev_results.get(&step_id)
     }
 
-    /// Insert a value into the legacy string-keyed map (for bindings like
-    /// `convergence_signal`, `prior_probability`, etc. that aren't step
-    /// results but need to be visible to Jinja templates).
-    pub fn insert_legacy(&mut self, key: String, value: Value) {
-        self.legacy.insert(key, value);
+    /// Insert a protocol-key binding (`convergence_signal`, `input_mapping`-
+    /// injected keys, etc.). NOT for step results — use `store_result`/
+    /// `store_named`.
+    pub fn insert_protocol(&mut self, key: String, value: Value) {
+        self.protocol.insert(key, value);
     }
 
     /// Iterate over all typed step results.
@@ -227,47 +214,194 @@ impl StepContext {
         self.results.iter()
     }
 
-    /// Read a value from the legacy string-keyed map.
-    pub fn legacy(&self, key: &str) -> Option<&Value> {
-        self.legacy.get(key)
+    /// Read a protocol key directly (for callers that know the key is
+    /// protocol, not a result).
+    pub fn protocol(&self, key: &str) -> Option<&Value> {
+        self.protocol.get(key)
     }
 
-    /// Get the full legacy map for Jinja template rendering. This is the
-    /// `HashMap<String, Value>` that `TemplateRenderer::render` and
-    /// `resolve_mapping_value` consume.
-    pub fn legacy_map(&self) -> &HashMap<String, Value> {
-        &self.legacy
+    /// Read-only access to the protocol map (e.g. for FlowDef's parent-key
+    /// snapshot before a sub-cascade).
+    pub fn protocol_map(&self) -> &HashMap<String, Value> {
+        &self.protocol
     }
 
-    /// Get a mutable reference to the legacy map (for the budget tracker's
-    /// `inject_into_context` and the convergence tracker's
-    /// `inject_running` / `finalize_report`).
-    pub fn legacy_map_mut(&mut self) -> &mut HashMap<String, Value> {
-        &mut self.legacy
+    /// Read-only access to the named-results map.
+    pub fn named_map(&self) -> &HashMap<String, Arc<Value>> {
+        &self.named
     }
 
-    /// Merge user inputs into the legacy map so templates can reference them
-    /// by name (`{{ target }}`).
-    pub fn merge_inputs_into_legacy(&mut self) {
-        for (key, value) in &self.inputs {
-            self.legacy.insert(key.clone(), value.clone());
+    /// String-key lookup over the whole context: `step_N_result` and
+    /// `prev_step_N_result` resolve O(1) via the ordinal index; named results,
+    /// inputs, and protocol keys are direct map lookups. This is what
+    /// templates (via `Serialize`), `resolve_mapping_value`, and conditions
+    /// see as `{{ step_3_result }}` / `{{ target }}` / `{{ convergence_signal }}`.
+    pub fn lookup(&self, key: &str) -> Option<&Value> {
+        if let Some(rest) = key.strip_prefix("prev_step_")
+            && let Some(rest) = rest.strip_suffix("_result")
+            && let Ok(ordinal) = rest.parse::<u32>()
+        {
+            return self
+                .prev_by_ordinal
+                .get(&ordinal)
+                .and_then(|id| self.prev_results.get(id))
+                .map(|r| r.value.as_ref());
+        }
+        if let Some(rest) = key.strip_prefix("step_")
+            && let Some(rest) = rest.strip_suffix("_result")
+            && let Ok(ordinal) = rest.parse::<u32>()
+        {
+            return self
+                .by_ordinal
+                .get(&ordinal)
+                .and_then(|id| self.results.get(id))
+                .map(|r| r.value.as_ref());
+        }
+        if let Some(v) = self.named.get(key) {
+            return Some(v);
+        }
+        if let Some(v) = self.inputs.get(key) {
+            return Some(v);
+        }
+        self.protocol.get(key)
+    }
+
+    /// Iterate all `(string_key, &Value)` pairs the context exposes — for
+    /// `render_inline`'s simple `{{key}}` substitution. Order: results,
+    /// prev_results, named, inputs, protocol. No `Value` clones.
+    pub fn entries<'a>(&'a self) -> impl Iterator<Item = (String, &'a Value)> + 'a {
+        self.results
+            .values()
+            .map(|r| (format!("step_{}_result", r.ordinal), r.value.as_ref()))
+            .chain(
+                self.prev_results
+                    .values()
+                    .map(|r| (format!("prev_step_{}_result", r.ordinal), r.value.as_ref())),
+            )
+            .chain(self.named.iter().map(|(k, v)| (k.clone(), v.as_ref())))
+            .chain(self.inputs.iter().map(|(k, v)| (k.clone(), v)))
+            .chain(self.protocol.iter().map(|(k, v)| (k.clone(), v)))
+    }
+
+    /// Materialize a flat `HashMap<String, Value>` for the bridge (until K5
+    /// returns a typed `CascadeOutcome`). One deep clone per manifest, NOT
+    /// per iteration — `extract_final_step_result` reads `step_N_result` keys
+    /// from this.
+    pub fn materialize(&self) -> HashMap<String, Value> {
+        let mut out = HashMap::new();
+        for r in self.results.values() {
+            out.insert(
+                format!("step_{}_result", r.ordinal),
+                r.value.as_ref().clone(),
+            );
+        }
+        for r in self.prev_results.values() {
+            out.insert(
+                format!("prev_step_{}_result", r.ordinal),
+                r.value.as_ref().clone(),
+            );
+        }
+        for (k, v) in &self.named {
+            out.insert(k.clone(), v.as_ref().clone());
+        }
+        for (k, v) in &self.inputs {
+            out.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &self.protocol {
+            out.insert(k.clone(), v.clone());
+        }
+        out
+    }
+
+    /// Merge a sub-cascade's (FlowDef) updates back into the parent. The
+    /// sub-cascade ran on a clone of the parent; only keys that existed in the
+    /// parent before the sub-cascade are kept (sub-only keys are dropped). The
+    /// parent-key sets are computed by the caller from the pre-sub-cascade
+    /// context (so they reflect the parent, not the sub).
+    pub fn merge_back_sub_cascade(
+        &mut self,
+        sub: &StepContext,
+        parent_step_ids: &HashSet<StepId>,
+        parent_protocol_keys: &[String],
+        parent_named_keys: &[String],
+    ) {
+        for (step_id, result) in sub.results_iter() {
+            if parent_step_ids.contains(step_id) {
+                self.store_result(
+                    *step_id,
+                    result.ordinal,
+                    result.value.as_ref().clone(),
+                    result.taint,
+                );
+            }
+        }
+        for key in parent_protocol_keys {
+            if let Some(v) = sub.protocol.get(key) {
+                self.protocol.insert(key.clone(), v.clone());
+            }
+        }
+        for key in parent_named_keys {
+            if let Some(v) = sub.named.get(key) {
+                self.named.insert(key.clone(), v.clone());
+            }
         }
     }
 
-    /// Read the convergence signal from the legacy map. The loop step's
-    /// `convergence_signal:` binding resolves through Jinja into the legacy
-    /// map under the key `convergence_signal`.
+    /// Read the convergence signal and Brier from `protocol` (the loop step's
+    /// `convergence_signal:` binding lands there via `apply_input_mapping` →
+    /// `insert_protocol`).
     pub fn read_convergence_signal(&mut self) {
         if let Some(v) = self
-            .legacy
+            .protocol
             .get("convergence_signal")
             .and_then(|v| v.as_f64())
         {
             self.convergence_signal = Some(v);
         }
-        if let Some(v) = self.legacy.get("kata_brier").and_then(|v| v.as_f64()) {
+        if let Some(v) = self.protocol.get("kata_brier").and_then(|v| v.as_f64()) {
             self.kata_brier = Some(v);
         }
+    }
+}
+
+// `StepContext` IS the context the renderer serializes (via the custom
+// `Serialize` below) and the readers look up (via `ContextLookup`).
+impl ContextLookup for StepContext {
+    fn get(&self, key: &str) -> Option<&Value> {
+        self.lookup(key)
+    }
+}
+
+impl ContextMap for StepContext {
+    fn insert(&mut self, key: String, value: Value) {
+        self.insert_protocol(key, value);
+    }
+}
+
+/// Serialize as a flat string-keyed map — the shape minijinja expects, so
+/// `{{ step_3_result }}` / `{{ prev_step_1_result }}` / `{{ target }}` /
+/// `{{ convergence_signal }}` resolve. minijinja's `Value::from_serialize`
+/// walks this; no per-render materialization of a `HashMap`, and no
+/// `Value` clones in the walk (entries are emitted by reference).
+impl Serialize for StepContext {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(None)?;
+        for r in self.results.values() {
+            map.serialize_entry(&format!("step_{}_result", r.ordinal), &*r.value)?;
+        }
+        for r in self.prev_results.values() {
+            map.serialize_entry(&format!("prev_step_{}_result", r.ordinal), &*r.value)?;
+        }
+        for (k, v) in &self.named {
+            map.serialize_entry(k, &**v)?;
+        }
+        for (k, v) in &self.inputs {
+            map.serialize_entry(k, v)?;
+        }
+        for (k, v) in &self.protocol {
+            map.serialize_entry(k, v)?;
+        }
+        map.end()
     }
 }
 
@@ -276,7 +410,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn store_result_writes_both_typed_and_legacy() {
+    fn store_result_resolves_by_ordinal_via_lookup() {
         let mut ctx = StepContext::new(HashMap::new());
         ctx.store_result(0, 1, Value::String("hello".into()), ToolTaint::Pure);
 
@@ -284,8 +418,10 @@ mod tests {
             ctx.result(0).unwrap().value.as_ref(),
             &Value::String("hello".into())
         );
+        // `{{ step_1_result }}` resolves O(1) via the by_ordinal index — no
+        // parallel string-keyed map.
         assert_eq!(
-            ctx.legacy("step_1_result").unwrap(),
+            ctx.lookup("step_1_result").unwrap(),
             &Value::String("hello".into())
         );
     }
@@ -299,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_prev_copies_results_and_writes_legacy_prev_keys() {
+    fn snapshot_prev_resolves_via_prev_lookup_no_legacy_writes() {
         let mut ctx = StepContext::new(HashMap::new());
         ctx.store_result(0, 1, Value::String("first".into()), ToolTaint::Pure);
         ctx.store_result(1, 2, Value::String("second".into()), ToolTaint::Source);
@@ -314,12 +450,14 @@ mod tests {
             ctx.prev_result(1).unwrap().value.as_ref(),
             &Value::String("second".into())
         );
+        // `{{ prev_step_1_result }}` resolves via prev_by_ordinal — no legacy
+        // prev-key writes (the old N deep clones per loop iteration are gone).
         assert_eq!(
-            ctx.legacy("prev_step_1_result").unwrap(),
+            ctx.lookup("prev_step_1_result").unwrap(),
             &Value::String("first".into())
         );
         assert_eq!(
-            ctx.legacy("prev_step_2_result").unwrap(),
+            ctx.lookup("prev_step_2_result").unwrap(),
             &Value::String("second".into())
         );
     }
@@ -334,5 +472,47 @@ mod tests {
         let last = ctx.last_result(2).unwrap();
         assert_eq!(last.value.as_ref(), &Value::String("c".into()));
         assert_eq!(last.ordinal, 7);
+    }
+
+    #[test]
+    fn lookup_resolves_inputs_and_protocol() {
+        let mut inputs = HashMap::new();
+        inputs.insert("target".into(), Value::String("widget".into()));
+        let mut ctx = StepContext::new(inputs);
+        ctx.insert_protocol("convergence_signal".into(), serde_json::json!(0.42));
+
+        assert_eq!(
+            ctx.lookup("target").unwrap(),
+            &Value::String("widget".into())
+        );
+        assert_eq!(
+            ctx.lookup("convergence_signal").unwrap(),
+            &serde_json::json!(0.42)
+        );
+        // Unknown key resolves to None.
+        assert!(ctx.lookup("nope").is_none());
+    }
+
+    #[test]
+    fn serialize_emits_flat_map_for_minijinja() {
+        let mut inputs = HashMap::new();
+        inputs.insert("target".into(), Value::String("x".into()));
+        let mut ctx = StepContext::new(inputs);
+        ctx.store_result(
+            0,
+            1,
+            Value::Number(serde_json::Number::from(6)),
+            ToolTaint::Pure,
+        );
+        ctx.insert_protocol("convergence_signal".into(), serde_json::json!(0.1));
+
+        let serialized = serde_json::to_value(&ctx).expect("StepContext serializes");
+        let obj = serialized.as_object().expect("serializes to a map");
+        // Results, inputs, and protocol keys are all present (the shape
+        // minijinja sees as `{{ step_1_result }}` / `{{ target }}` /
+        // `{{ convergence_signal }}`).
+        assert_eq!(obj["step_1_result"], serde_json::json!(6));
+        assert_eq!(obj["target"], Value::String("x".into()));
+        assert_eq!(obj["convergence_signal"], serde_json::json!(0.1));
     }
 }

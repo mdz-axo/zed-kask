@@ -634,18 +634,6 @@ impl KaskModelsSettings {
     pub const DEFAULT_INFERENCE_MODEL: &'static str =
         hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL;
 
-    /// The kask default embedding model.
-    ///
-    /// Single source of truth: `hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL`.
-    pub const DEFAULT_EMBEDDING_MODEL: &'static str =
-        hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL;
-
-    /// The kask default classifier model.
-    ///
-    /// Single source of truth: `hkask_inference::model_constants::DEFAULT_CLASSIFIER_MODEL`.
-    pub const DEFAULT_CLASSIFIER_MODEL: &'static str =
-        hkask_inference::model_constants::DEFAULT_CLASSIFIER_MODEL;
-
     /// Resolve the effective default inference model, falling back to the
     /// kask default when the setting is empty.
     #[must_use]
@@ -654,26 +642,6 @@ impl KaskModelsSettings {
             Self::DEFAULT_INFERENCE_MODEL
         } else {
             &self.default_model
-        }
-    }
-
-    /// Resolve the effective embedding model, falling back to the kask default.
-    #[must_use]
-    pub fn effective_embedding_model(&self) -> &str {
-        if self.embedding_model.trim().is_empty() {
-            Self::DEFAULT_EMBEDDING_MODEL
-        } else {
-            &self.embedding_model
-        }
-    }
-
-    /// Resolve the effective classifier model, falling back to the kask default.
-    #[must_use]
-    pub fn effective_classifier_model(&self) -> &str {
-        if self.classifier_model.trim().is_empty() {
-            Self::DEFAULT_CLASSIFIER_MODEL
-        } else {
-            &self.classifier_model
         }
     }
 }

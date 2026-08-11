@@ -89,8 +89,9 @@ pub fn set_worktree_spawner(spawner: Option<Arc<dyn WorktreeSpawner>>) {
 }
 
 /// Read the global worktree spawner. Returns `None` when no workspace with an
-/// `AgentPanel` is open. Called by the GPUI-side IPC task.
-pub fn shared_worktree_spawner() -> Option<Arc<dyn WorktreeSpawner>> {
+/// `AgentPanel` is open. Called only by the GPUI-side IPC task in this crate
+/// (`InferenceIpcServer::start`'s worktree spawn task); not re-exported.
+pub(crate) fn shared_worktree_spawner() -> Option<Arc<dyn WorktreeSpawner>> {
     WORKTREE_SPAWNER
         .lock()
         .expect("WORKTREE_SPAWNER poisoned")

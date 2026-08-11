@@ -375,26 +375,19 @@ mod tests {
             let prefix = SECRET_PREFIXES[prefix_idx];
             let body = format!("{prefix_text}{prefix}{secret}{suffix_text}");
             let sanitized = sanitize_error_body(&body);
-            // The secret must not appear after the [REDACTED] marker — the
-            // redactor replaces prefix+token with [REDACTED], so the secret
-            // (which followed the prefix) must be consumed.
-            let redacted_pos = sanitized.find("[REDACTED]");
-            if let Some(pos) = redacted_pos {
-                let after_redacted = &sanitized[pos + "[REDACTED]".len()..];
-                prop_assert!(
-                    !after_redacted.contains(&secret),
-                    "secret '{}' survived after [REDACTED] for prefix '{}': body={:?} sanitized={:?}",
-                    secret, prefix, body, sanitized
-                );
-            } else {
-                // No [REDACTED] marker means the prefix wasn't found — the
-                // secret is still in the body. This is a redaction failure.
-                prop_assert!(
-                    !sanitized.contains(&secret),
-                    "no [REDACTED] marker and secret '{}' survived for prefix '{}': body={:?} sanitized={:?}",
-                    secret, prefix, body, sanitized
-                );
-            }
+            // Assert the prefix itself is redacted. Checking the secret string
+            // directly is unsound: the secret alphabet `[A-Za-z0-9+/=_-]`
+            // overlaps the `[a-z ]` filler, so the secret can coincidentally
+            // reappear in prefix_text/suffix_text (e.g. secret="c" with
+            // suffix_text=" c") — a false positive. The redactor consumes
+            // prefix+token as a unit, so "prefix gone" entails "secret consumed",
+            // and the redactor re-scans the whole body so a prefix coincidentally
+            // present in the filler is redacted too (no false positives).
+            prop_assert!(
+                !sanitized.contains(prefix),
+                "prefix '{}' survived redaction: body={:?} sanitized={:?}",
+                prefix, body, sanitized
+            );
         }
 
         /// P4 panic-freedom: sanitize_error_body must never panic on any input,

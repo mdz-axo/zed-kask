@@ -232,55 +232,6 @@ impl RealMemoryPort {
         })
     }
 
-    /// Try to construct a `RealMemoryPort` from environment variables.
-    ///
-    /// Returns `Ok(Some(port))` if `HKASK_DB_PATH` and `HKASK_DB_PASSPHRASE`
-    /// are set and the database opens successfully.
-    /// Returns `Ok(None)` if `HKASK_DB_PATH` is not set (graceful degradation).
-    /// Returns `Err` if the database path is set but cannot be opened.
-    ///
-    /// `consolidation_cadence_secs` and `confidence_floor` come from
-    /// `KaskMemorySettings` — a cadence of `0` disables the consolidation
-    /// trigger entirely.
-    pub fn from_env(
-        user_webid: WebID,
-        embedding_model: String,
-        embedding_dim: usize,
-        embedding_port: LanguageModelEmbeddingPort,
-        consolidation_cadence_secs: u64,
-        confidence_floor: f64,
-        tokio_handle: tokio::runtime::Handle,
-    ) -> Result<Option<Self>, String> {
-        let db_path = match std::env::var("HKASK_DB_PATH") {
-            Ok(p) if !p.trim().is_empty() => p,
-            _ => return Ok(None),
-        };
-
-        let passphrase = hkask_keystore::keychain::resolve_db_passphrase_string()
-            .map_err(|e| e.to_string())?
-            .to_string();
-
-        let port = Self::new(
-            &db_path,
-            &passphrase,
-            user_webid,
-            embedding_model,
-            embedding_dim,
-            embedding_port,
-            consolidation_cadence_secs,
-            confidence_floor,
-            tokio_handle,
-        )?;
-        tracing::info!(
-            target: "reg.memory",
-            db_path = %db_path,
-            consolidation_cadence_secs,
-            confidence_floor,
-            "RealMemoryPort initialized — turns will be stored in episodic + semantic memory"
-        );
-        Ok(Some(port))
-    }
-
     /// Check whether the consolidation cadence has elapsed and, if so, fire
     /// a consolidation pass (episodic → semantic promotion + semantic cleanup).
     ///

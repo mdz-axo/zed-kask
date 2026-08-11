@@ -368,13 +368,32 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
 pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, String)> {
     let mut urls = Vec::new();
 
-    // Data services — inject secrets (keychain-backed) unconditionally.
-    // `Config` entries are skipped (they're non-secret, routed via `mcp_env()`
-    // and the `config_env` allowlist, not the keychain). The
-    // `mcp_env_with_credentials` function skips env vars already set in the
-    // process environment, so there's no harm in listing all secrets.
+    // Data services — inject secrets (keychain-backed). Services with a
+    // settings toggle (`*_enabled` on `KaskDataServiceSettings`) are gated on
+    // the toggle; services without a toggle (ABW, DB passphrase, SMTP, RunPod
+    // S3/template, FRED, and the no-field services like SerpAPI/Firecrawl/
+    // Browserbase/HF token) are injected unconditionally when the keychain
+    // entry exists — they have no enable/disable control. `Config` entries are
+    // skipped (non-secret, routed via `mcp_env()`). The per-MCP-server
+    // `credentials` allowlist is the final filter, so listing a key here does
+    // not reach a server that doesn't declare it. `mcp_env_with_credentials`
+    // also skips env vars already set in the process environment.
     for desc in DATA_SERVICES {
-        if desc.is_secret() {
+        if !desc.is_secret() {
+            continue;
+        }
+        let enabled = match desc.credential_key {
+            "eodhd" => settings.data_services.eodhd_enabled,
+            "fmp" => settings.data_services.fmp_enabled,
+            "exa" => settings.data_services.exa_enabled,
+            "tavily" => settings.data_services.tavily_enabled,
+            "brave" => settings.data_services.brave_enabled,
+            "runpod" => settings.data_services.runpod_enabled,
+            "nebius_project_id" | "nebius_subnet_id" => settings.data_services.nebius_enabled,
+            // No toggle for this service — inject when the keychain entry exists.
+            _ => true,
+        };
+        if enabled {
             urls.push((desc.env_var.to_string(), desc.credential_url()));
         }
     }
@@ -1019,6 +1038,56 @@ mod tests {
             std::env::remove_var("NEBIUS_PROJECT_ID");
             std::env::remove_var("HKASK_FRED_API_KEY");
         }
+    }
+
+    /// BD-01: data-service enable toggles must gate credential injection.
+    /// Previously `credential_urls_for_mcp` injected every Secret data-service
+    /// credential unconditionally, ignoring `KaskDataServiceSettings.*_enabled`
+    /// — the toggles were inert (advertised-invariant-without-enforcement-point).
+    /// Services WITHOUT a toggle field (DB passphrase, ABW, …) stay unconditional.
+    #[test]
+    fn credential_urls_for_mcp_gates_data_service_toggles() {
+        // Default: every data-service toggle is `false`.
+        let mut settings = crate::KaskSettings::default();
+        let urls = credential_urls_for_mcp(&settings);
+        let has = |env: &str| urls.iter().any(|(v, _)| v == env);
+
+        // Toggleable services are gated OFF by default.
+        assert!(
+            !has("HKASK_EODHD_API_KEY"),
+            "eodhd_enabled=false → EODHD key must NOT be injected"
+        );
+        assert!(
+            !has("RUNPOD_API_KEY"),
+            "runpod_enabled=false → RunPod key must NOT be injected"
+        );
+        assert!(
+            !has("HKASK_FMP_API_KEY"),
+            "fmp_enabled=false → FMP key must NOT be injected"
+        );
+
+        // Services without a toggle field are injected unconditionally.
+        assert!(
+            has("HKASK_DB_PASSPHRASE"),
+            "DB passphrase has no toggle → always injected"
+        );
+        assert!(
+            has("HKASK_ABW_API_KEY"),
+            "ABW key has no toggle → always injected"
+        );
+
+        // Flipping a toggle ON injects that service's credential.
+        settings.data_services.eodhd_enabled = true;
+        let urls = credential_urls_for_mcp(&settings);
+        let has = |env: &str| urls.iter().any(|(v, _)| v == env);
+        assert!(
+            has("HKASK_EODHD_API_KEY"),
+            "eodhd_enabled=true → EODHD key must be injected"
+        );
+        assert!(
+            !has("RUNPOD_API_KEY"),
+            "runpod still off → RunPod key must NOT be injected"
+        );
     }
 
     /// Coverage governance: every env var declared in a built-in MCP server's
