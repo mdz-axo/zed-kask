@@ -606,7 +606,7 @@ impl LanguageModelEmbeddingPort {
 /// Strip the provider prefix from a model string, case-insensitive.
 ///
 /// Accepts long-form prefixes (`DeepInfra/`, `OpenRouter/`, `fal.ai/`,
-/// `RunPod/`, `KiloCode/`, `ollama/`, `Cline/`).
+/// `RunPod/`, `KiloCode/`, `ollama/`).
 /// Returns the bare model id. If no prefix is recognized, returns the
 /// string unchanged (the API will reject it, which surfaces a clear error).
 fn strip_provider_prefix(model: &str) -> String {
@@ -619,7 +619,6 @@ fn strip_provider_prefix(model: &str) -> String {
         "OpenRouter/",
         "KiloCode/",
         "ollama/",
-        "Cline/",
     ];
     for prefix in LONG_FORM {
         if let Some(rest) = model.strip_prefix(prefix) {

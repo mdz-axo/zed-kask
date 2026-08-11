@@ -39,23 +39,21 @@ const PROVIDER_ALIASES: &[(&[&str], &str)] = &[
     (&["openrouter", "or"], "OR"),
     (&["kilocode", "kc"], "KC"),
     (&["ollama", "om"], "OM"),
-    (&["cline", "cl"], "CL"),
 ];
 
 /// The serde id for every `ProviderId` variant (for the "valid provider"
 /// invariant). `OpenRouter` is the fallback, so it appears once here.
-const ALL_PROVIDER_IDS: &[&str] = &["DI", "FA", "RP", "OR", "KC", "OM", "CL"];
+const ALL_PROVIDER_IDS: &[&str] = &["DI", "FA", "RP", "OR", "KC", "OM"];
 
-/// All seven `ProviderId` variants — for `prop::sample::select` when generating
+/// All six `ProviderId` variants — for `prop::sample::select` when generating
 /// `RouterModelEntry`.
-const ALL_PROVIDERS: [ProviderId; 7] = [
+const ALL_PROVIDERS: [ProviderId; 6] = [
     ProviderId::DeepInfra,
     ProviderId::Fal,
     ProviderId::Runpod,
     ProviderId::OpenRouter,
     ProviderId::KiloCode,
     ProviderId::Ollama,
-    ProviderId::Cline,
 ];
 
 /// Reference implementation of `ModelInfo::from(ModelEntry)`, written as a

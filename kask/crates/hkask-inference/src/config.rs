@@ -1,4 +1,4 @@
-//! Inference configuration — multi-provider routing for 7 providers: DeepInfra, fal.ai, OpenRouter, KiloCode, Ollama (local), Cline (cloud gateway), RunPod (vision/OCR only).
+//! Inference configuration — multi-provider routing for 6 providers: DeepInfra, fal.ai, OpenRouter, KiloCode, Ollama (local), RunPod (vision/OCR only).
 //!
 //! # Environment Variables
 //!
@@ -7,9 +7,8 @@
 //! - `OPENROUTER_BASE_URL` / `OPENROUTER_API_KEY` — OpenRouter (cloud, required)
 //! - `KILOCODE_BASE_URL` / `KILOCODE_API_KEY` — KiloCode (cloud, required)
 //! - `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` — Ollama (local; key optional, header ignored)
-//! - `CLINE_BASE_URL` / `CLINE_API_KEY` — Cline cloud gateway (required)
 //! - `RUNPOD_API_KEY` / `RUNPOD_BASE_URL` or `RUNPOD_TEMPLATE_ID` — RunPod (vision/OCR only)
-//! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DeepInfra, fal.ai, RunPod, OpenRouter, KiloCode, ollama, Cline; default: DeepInfra)
+//! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DeepInfra, fal.ai, RunPod, OpenRouter, KiloCode, ollama; default: DeepInfra)
 //! - `HKASK_DEFAULT_MODEL` — default model (default: `OpenRouter/z-ai/glm-5.2`)
 //!
 //! # API Key Resolution
@@ -26,7 +25,6 @@
 //! - `OpenRouter/openai/gpt-4o` → OpenRouter (cloud)
 //! - `KiloCode/anthropic/claude-sonnet-4.5` → KiloCode (cloud)
 //! - `ollama/qwen3:8b` → Ollama (local)
-//! - `Cline/anthropic/claude-sonnet-4-6` → Cline (cloud gateway)
 //! - `RunPod/kask-ocr` → RunPod (vision/OCR only — not available for chat)
 //! - No prefix → default provider (configurable, default: DeepInfra)
 
@@ -55,11 +53,6 @@ pub enum ProviderId {
     /// endpoint at `/v1/chat/completions` ignores the `Authorization` header.
     #[serde(rename = "OM")]
     Ollama,
-    /// Cline (cloud) — prefix `Cline/`. OpenAI-compatible gateway at `api.cline.bot`
-    /// routing to Anthropic/OpenAI/Google/DeepSeek/xAI models behind one key.
-    /// Env: `CLINE_API_KEY`, `CLINE_BASE_URL` (default `https://api.cline.bot/api`).
-    #[serde(rename = "CL")]
-    Cline,
 }
 
 impl ProviderId {
@@ -71,7 +64,7 @@ impl ProviderId {
     /// expect: "The system normalizes provider responses for monitoring"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — model-name routing to provider boundary
     /// pre:  model is non-empty
-    /// post: returns Some((ProviderId, stripped_model)) for DeepInfra/, fal.ai/, RunPod/, OpenRouter/, KiloCode/, ollama/, Cline/ prefixes
+    /// post: returns Some((ProviderId, stripped_model)) for DeepInfra/, fal.ai/, RunPod/, OpenRouter/, KiloCode/, ollama/ prefixes
     /// post: returns None for unrecognized or missing prefix
     #[must_use]
     pub fn parse_from_model(model: &str) -> Option<(Self, &str)> {
@@ -84,7 +77,6 @@ impl ProviderId {
             ("OpenRouter/", ProviderId::OpenRouter),
             ("KiloCode/", ProviderId::KiloCode),
             ("ollama/", ProviderId::Ollama),
-            ("Cline/", ProviderId::Cline),
         ];
         for (prefix, provider) in PREFIXES {
             if let Some(rest) = model.strip_prefix(prefix) {
@@ -137,7 +129,7 @@ impl ProviderId {
     ///
     /// expect: "The system normalizes provider responses for monitoring"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — stable provider name for routing
-    /// post: returns "DeepInfra", "fal.ai", "RunPod", "OpenRouter", "KiloCode", "ollama", or "Cline"
+    /// post: returns "DeepInfra", "fal.ai", "RunPod", "OpenRouter", "KiloCode", or "ollama"
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -147,7 +139,6 @@ impl ProviderId {
             ProviderId::OpenRouter => "OpenRouter",
             ProviderId::KiloCode => "KiloCode",
             ProviderId::Ollama => "ollama",
-            ProviderId::Cline => "Cline",
         }
     }
 }
@@ -155,7 +146,7 @@ impl ProviderId {
 /// Configuration for the inference router.
 ///
 /// Holds connection settings for DeepInfra, fal.ai, OpenRouter, KiloCode,
-/// Ollama, Cline, and AtlasCloud. The router uses this config to construct
+/// Ollama, and AtlasCloud. The router uses this config to construct
 /// backends and decide the default provider for unprefixed model names.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceConfig {
@@ -178,10 +169,6 @@ pub struct InferenceConfig {
     /// other backends and to support remote Ollama instances that require auth.
     pub ollama_base_url: String,
     pub ollama_api_key: String,
-    /// Cline cloud gateway — OpenAI-compatible router at `api.cline.bot`.
-    /// Env: `CLINE_API_KEY`, `CLINE_BASE_URL` (default `https://api.cline.bot/api`).
-    pub cline_base_url: String,
-    pub cline_api_key: String,
     /// AtlasCloud — task-based media API (image/video/3D/audio/ASR) + OpenAI-compatible LLM.
     /// Env: `ATLASCLOUD_API_KEY`, `ATLASCLOUD_BASE_URL` (default `https://api.atlascloud.ai/api/v1`).
     pub atlascloud_base_url: String,
@@ -207,8 +194,6 @@ impl Default for InferenceConfig {
             kilocode_api_key: String::new(),
             ollama_base_url: "http://localhost:11434".to_string(),
             ollama_api_key: String::new(),
-            cline_base_url: "https://api.cline.bot/api".to_string(),
-            cline_api_key: String::new(),
             atlascloud_base_url: "https://api.atlascloud.ai/api/v1".to_string(),
             atlascloud_api_key: String::new(),
             timeout_secs: 120,
@@ -232,10 +217,6 @@ impl InferenceConfig {
         let or = ProviderConfig::from_env("OpenRouter", "https://openrouter.ai/api");
         let kc = ProviderConfig::from_env("KiloCode", "https://api.kilo.ai/api/gateway");
         let om = ProviderConfig::from_env("ollama", "http://localhost:11434");
-        // Cline uses the sanitized prefix convention (CLINE_API_KEY).
-        let cline_base_url = std::env::var("CLINE_BASE_URL")
-            .unwrap_or_else(|_| "https://api.cline.bot/api".to_string());
-        let cline_api_key = resolve_api_key("CLINE_API_KEY");
 
         let fal_base_url =
             std::env::var("FALAI_BASE_URL").unwrap_or_else(|_| "https://api.fal.ai".to_string());
@@ -266,8 +247,6 @@ impl InferenceConfig {
             kilocode_api_key: kc.api_key,
             ollama_base_url: om.base_url,
             ollama_api_key: om.api_key,
-            cline_base_url,
-            cline_api_key,
             atlascloud_base_url,
             atlascloud_api_key,
             timeout_secs: resolve_config_str("HKASK_HTTP_TIMEOUT_SECS")
@@ -343,7 +322,7 @@ fn resolve_default_provider() -> ProviderId {
 /// Parse a provider code string to a ProviderId.
 ///
 /// Accepted values: full provider names (DeepInfra, fal.ai,
-/// RunPod, OpenRouter, KiloCode, ollama, Cline). Anything else (including
+/// RunPod, OpenRouter, KiloCode, ollama). Anything else (including
 /// empty) → DeepInfra.
 fn parse_provider_code(raw: &str) -> ProviderId {
     match raw {
@@ -353,7 +332,6 @@ fn parse_provider_code(raw: &str) -> ProviderId {
         "OpenRouter" => ProviderId::OpenRouter,
         "KiloCode" => ProviderId::KiloCode,
         "ollama" => ProviderId::Ollama,
-        "Cline" => ProviderId::Cline,
         _ => ProviderId::DeepInfra,
     }
 }
@@ -503,7 +481,6 @@ mod tests {
         assert_eq!(parse_provider_code("OpenRouter"), ProviderId::OpenRouter);
         assert_eq!(parse_provider_code("KiloCode"), ProviderId::KiloCode);
         assert_eq!(parse_provider_code("ollama"), ProviderId::Ollama);
-        assert_eq!(parse_provider_code("Cline"), ProviderId::Cline);
     }
 
     /// expect: "Inference provider code default works correctly under test conditions"

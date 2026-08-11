@@ -71,7 +71,6 @@ impl From<hkask_types::ModelEntry> for ModelInfo {
             "openrouter" | "or" => ProviderId::OpenRouter,
             "kilocode" | "kc" => ProviderId::KiloCode,
             "ollama" | "om" => ProviderId::Ollama,
-            "cline" | "cl" => ProviderId::Cline,
             _ => ProviderId::OpenRouter,
         };
         Self {

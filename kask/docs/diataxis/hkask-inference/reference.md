@@ -71,8 +71,6 @@ classDiagram
         +kilocode_api_key: String
         +ollama_base_url: String
         +ollama_api_key: String
-        +cline_base_url: String
-        +cline_api_key: String
         +runpod_* : String
         +default_model: String
     }

@@ -1,6 +1,6 @@
 # hkask-inference
 
-Multi-provider inference router for hKask — DeepInfra, fal.ai, OpenRouter, KiloCode, Ollama, Cline, RunPod.
+Multi-provider inference router for hKask — DeepInfra, fal.ai, OpenRouter, KiloCode, Ollama, RunPod.
 
 ## Features
 
@@ -17,8 +17,7 @@ Multi-provider inference router for hKask — DeepInfra, fal.ai, OpenRouter, Kil
 | `FALAI_API_KEY` | Fal.ai API key |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 | `KILOCODE_API_KEY` | KiloCode API key |
-| `CLINE_API_KEY` | Cline cloud gateway API key |
 | `RUNPOD_API_KEY` | RunPod API key (vision/OCR only) |
 | `RUNPOD_TEMPLATE_ID` | RunPod serverless template ID (alternative to `RUNPOD_BASE_URL`) |
 | `HKASK_DEFAULT_MODEL` | Default model (e.g., `KC/z-ai/glm-5.2`) |
-| `HKASK_DEFAULT_PROVIDER` | Default provider code (DI, FA, OR, KC, OM, CL; default: DI) |
+| `HKASK_DEFAULT_PROVIDER` | Default provider code (DI, FA, OR, KC, OM; default: DI) |
