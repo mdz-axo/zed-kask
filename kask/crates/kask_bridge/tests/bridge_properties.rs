@@ -70,7 +70,6 @@ fn bare_params() -> InferenceParams {
         media_duration: None,
         media_object_description: None,
         media_language: None,
-        media_workflow: None,
         tool_server: None,
         tool_name: None,
         tool_args: None,
@@ -209,42 +208,6 @@ proptest! {
             oracle.verify(&original, &roundtripped),
             OracleVerdict::Pass,
             "InferenceRequest tool_args roundtrip lost structure for wire: {}",
-            wire
-        );
-    }
-
-    /// An `InferenceRequest` carrying an arbitrary JSON `media_workflow`
-    /// payload round-trips losslessly. (The `media_workflow` field is
-    /// `serde_json::Value`, the DAG spec for `execute_workflow`.)
-    ///
-    /// Oracle: [`oracle_invariant`] — float-tolerant structural equality.
-    #[test]
-    fn inference_request_roundtrip_preserves_media_workflow(
-        id in any::<u64>(),
-        media_workflow in arb_json_value(),
-    ) {
-        let oracle = roundtrip_oracle();
-
-        let request = InferenceRequest {
-            id,
-            method: InferenceMethod::MediaGenerate,
-            params: {
-                let mut p = bare_params();
-                p.media_op = Some("execute_workflow".to_string());
-                p.media_workflow = Some(media_workflow);
-                p
-            },
-        };
-        let original = serde_json::to_value(&request).expect("request -> Value");
-        let wire = serde_json::to_string(&request).expect("request serializes");
-        let reparsed: InferenceRequest =
-            serde_json::from_str(&wire).expect("request re-parses");
-        let roundtripped = serde_json::to_value(&reparsed).expect("reparsed -> Value");
-
-        prop_assert_eq!(
-            oracle.verify(&original, &roundtripped),
-            OracleVerdict::Pass,
-            "InferenceRequest media_workflow roundtrip lost structure for wire: {}",
             wire
         );
     }

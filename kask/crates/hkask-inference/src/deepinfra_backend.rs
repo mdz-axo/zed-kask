@@ -214,9 +214,8 @@ impl MediaProvider for DeepInfraBackend {
 
     /// DeepInfra is the preferred provider for the three ops it is cheapest
     /// for (background removal, TTS, STT). Image/video generation is intentionally
-    /// NOT advertised here — fal.ai remains the sole provider for image/video
-    /// generation, preserving the existing DeepInfra-first / fal-fallback
-    /// dispatch. Register DeepInfra first in `ProviderRegistry` so it is
+    /// NOT advertised here — AtlasCloud handles image/video generation.
+    /// Register DeepInfra first in `ProviderRegistry` so it is
     /// preferred for these three ops.
     fn supports(&self, op: MediaOp) -> bool {
         matches!(

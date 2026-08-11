@@ -38,14 +38,6 @@ pub struct GenerateVideoRequest {
     pub style: Option<String>,
 }
 
-/// Workflow execution request — accepts a Fal-compatible workflow JSON string.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ExecuteWorkflowRequest {
-    /// A Fal-compatible workflow JSON string with input, run, and display nodes.
-    /// Run nodes support "mode": "sync" (default) or "mode": "queue" for long-running models.
-    pub workflow: String,
-}
-
 // ── Image description ────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]

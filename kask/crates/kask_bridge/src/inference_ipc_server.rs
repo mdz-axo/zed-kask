@@ -1174,7 +1174,6 @@ mod tests {
             media_duration: None,
             media_object_description: None,
             media_language: None,
-            media_workflow: None,
             tool_server: None,
             tool_name: None,
             tool_args: None,

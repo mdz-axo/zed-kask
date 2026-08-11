@@ -3,7 +3,7 @@ name = "hkask-mcp-media"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Media generation MCP server (image, video, audio, 3D via fal.ai and other providers)"
+description = "Media generation MCP server (image, video, audio, 3D via AtlasCloud and DeepInfra)"
 
 [features]
 default = []

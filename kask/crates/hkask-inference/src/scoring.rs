@@ -76,8 +76,8 @@ impl ProviderScore {
 /// Default scoring encodes the current dispatch policy:
 /// - `deepinfra`: highest for `RemoveBackground`/`GenerateSpeech`/`Transcribe`
 ///   (cheapest for these ops, registered first as fallback target)
-/// - `atlascloud`: highest for image/video (quality, broad support)
-/// - `atlascloud`: lower (fallback only, task-based API adds latency)
+/// - `atlascloud`: highest for image/video (quality, broad support) — the
+///   catch-all arm makes it the primary for every op DeepInfra doesn't win
 fn score_provider(id: &str, op: MediaOp) -> ProviderScore {
     match (id, op) {
         (

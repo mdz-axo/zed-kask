@@ -193,7 +193,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "media",
         binary: "hkask-mcp-media",
         description: "Media — image generation and media workflows",
-        credentials: Some(&["FALAI_API_KEY", "DEEPINFRA_API_KEY", "ATLASCLOUD_API_KEY"]),
+        credentials: Some(&["DEEPINFRA_API_KEY", "ATLASCLOUD_API_KEY"]),
         config_env: Some(&[
             // Durable gallery DB path (WS-3). Unencrypted file SQLite — the
             // media server reads it via std::env::var; absent → in-memory.
@@ -851,16 +851,15 @@ mod tests {
     }
 
     // The media server should only receive the keys it actually reads
-    // (FALAI_API_KEY, DEEPINFRA_API_KEY, ATLASCLOUD_API_KEY), not other
-    // inference keys or unrelated secrets. Vision routes through the IPC
-    // bridge to zed's LanguageModelRegistry — the media server process never
-    // reads OPENROUTER_API_KEY. This pins the allowlist against a future edit
+    // (DEEPINFRA_API_KEY, ATLASCLOUD_API_KEY), not other inference keys or
+    // unrelated secrets. Vision routes through the IPC bridge to zed's
+    // LanguageModelRegistry — the media server process never reads
+    // OPENROUTER_API_KEY. This pins the allowlist against a future edit
     // that re-widens it. See kask/docs/plans/media-system-refactor.md §6 (F-2).
     #[test]
     fn media_credentials_only_include_used_keys() {
         let all_credentials: Vec<(String, String)> = [
             "DEEPINFRA_API_KEY",
-            "FALAI_API_KEY",
             "ATLASCLOUD_API_KEY",
             "OPENROUTER_API_KEY",
             "KILOCODE_API_KEY",
@@ -874,11 +873,14 @@ mod tests {
         let keys: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
             keys.len(),
-            3,
-            "media server should receive FALAI_API_KEY + DEEPINFRA_API_KEY + ATLASCLOUD_API_KEY, got {keys:?}"
+            2,
+            "media server should receive DEEPINFRA_API_KEY + ATLASCLOUD_API_KEY, got {keys:?}"
         );
-        assert!(keys.contains(&"FALAI_API_KEY"));
         assert!(keys.contains(&"DEEPINFRA_API_KEY"));
+        assert!(
+            !keys.contains(&"FALAI_API_KEY"),
+            "media server must not receive FALAI_API_KEY — fal.ai backend removed"
+        );
         assert!(
             keys.contains(&"ATLASCLOUD_API_KEY"),
             "media server reads ATLASCLOUD_API_KEY — it must be in credentials"

@@ -446,7 +446,6 @@ impl InferenceIpcClient {
                 media_duration: params.duration,
                 media_object_description: params.object_description.clone(),
                 media_language: params.language.clone(),
-                media_workflow: params.workflow.clone(),
                 ..Default::default()
             },
         };
@@ -530,7 +529,7 @@ impl InferenceIpcClient {
     ///
     /// `op` selects the backend method (e.g. "generate_image", "transcribe").
     /// `params` carries the op-specific fields. The zed process dispatches
-    /// to its hKask `InferenceRouter` (fal.ai/DeepInfra backends).
+    /// to its hKask `MediaRouter` (DeepInfra/AtlasCloud backends).
     pub async fn media_generate(
         &self,
         op: &str,

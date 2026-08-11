@@ -62,8 +62,6 @@ pub struct MediaGenerateParams {
     pub object_description: Option<String>,
     /// Language hint for transcription.
     pub language: Option<String>,
-    /// Workflow JSON for `execute_workflow`.
-    pub workflow: Option<serde_json::Value>,
 }
 
 /// LLM invocation boundary. Uses ``Pin<Box<dyn Future>>`` (not `async_trait`) for object-safety.

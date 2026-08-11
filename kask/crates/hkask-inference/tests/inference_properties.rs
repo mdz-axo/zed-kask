@@ -2,9 +2,7 @@
 //!
 //! These tests replaced the deleted `mod tests` blocks that used `MockProvider`
 //! and `MockExecutor` stubs. They target *pure* functions only — `MediaOp`
-//! parsing, `ProviderScore::weighted`, the fal-workflow DAG utilities
-//! (`workflow::topological_sort_graph`, `resolve_references`, `extract_urls`,
-//! `validate_workflow_structure`, `parse_workflow_nodes`), and
+//! parsing, `ProviderScore::weighted`, and
 //! `RouterModelEntry::infer_vision_support` — using proptest generators and the
 //! `hkask-test-harness` Oracle taxonomy (invariant + reference oracles).
 //!

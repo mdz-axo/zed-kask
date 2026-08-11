@@ -345,25 +345,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         kind: DataServiceKind::Secret,
         ui_toggle: Some("hf_token"),
     },
-    // fal.ai — generative media platform (image/video/audio). fal.ai is NOT an
-    // OpenAI-compatible chat endpoint (`https://api.fal.ai/v1/chat/completions`
-    // returns 404; `/v1/models` returns fal's media catalog under
-    // `Authorization: Key`, not Bearer), so it must not be registered as an
-    // `openai_compatible` chat provider. The `FALAI_API_KEY` is consumed by the
-    // media and corpus MCP servers (which list it in their `credentials`
-    // allowlist) and by the in-process `hkask-inference` `FalBackend` (which
-    // reads it from the process env). Routed as a data-service secret so it is
-    // mirrored from `.env` to the keychain and injected into those MCP servers,
-    // unconditionally when present — no enable toggle (the key's presence is
-    // the opt-in, same as `HKASK_DB_PASSPHRASE`).
-    DataServiceDescriptor {
-        env_var: "FALAI_API_KEY",
-        credential_key: "fal",
-        label: "fal.ai (media generation)",
-        dashboard_url: "https://fal.ai/",
-        kind: DataServiceKind::Secret,
-        ui_toggle: None,
-    },
     // FRED (Federal Reserve Economic Data) — read by the prediction-markets
     // MCP server via `ctx.credentials.get("HKASK_FRED_API_KEY")` for live
     // reference-level fetches. Optional (curated static fallback when absent),
@@ -635,9 +616,9 @@ impl MirrorTarget {
 /// the `.env` load at startup or by the shell). MCP servers, however, receive
 /// their credentials via `mcp_env_with_credentials`, which reads from the
 /// keychain (`kask://credentials/<key>`) — not from the parent process env.
-/// Without this mirror, an operator who sets `FALAI_API_KEY` only in `.env`
-/// gets a working main process but MCP servers silently fail with
-/// "API key not configured".
+/// Without this mirror, an operator who sets a provider key (e.g.
+/// `DEEPINFRA_API_KEY`) only in `.env` gets a working main process but
+/// MCP servers silently fail with "API key not configured".
 ///
 /// For each provider in `INFERENCE_PROVIDERS` whose env var is set and
 /// non-empty, this writes the key to both keychain locations (the provider's
@@ -887,7 +868,7 @@ mod tests {
             for desc in DATA_SERVICES {
                 std::env::remove_var(desc.env_var);
             }
-            std::env::set_var("FALAI_API_KEY", "");
+            std::env::set_var("HF_TOKEN", "");
         }
         let collected = collect_env_keys_for_mirror();
         assert!(
@@ -895,7 +876,7 @@ mod tests {
             "empty env var should be skipped (treated as not set)"
         );
         unsafe {
-            std::env::remove_var("FALAI_API_KEY");
+            std::env::remove_var("HF_TOKEN");
         }
     }
 
@@ -911,12 +892,12 @@ mod tests {
                 std::env::remove_var(desc.env_var);
             }
             std::env::set_var("DEEPINFRA_API_KEY", "di-test-key");
-            std::env::set_var("FALAI_API_KEY", "fal-test-key");
+            std::env::set_var("HF_TOKEN", "hf-test-key");
         }
         let collected = collect_env_keys_for_mirror();
-        // DeepInfra is an inference provider (chat); fal.ai is a data-service
-        // credential (media). Both are mirrored, but only the inference
-        // provider carries an api_url.
+        // DeepInfra is an inference provider (chat); HF_TOKEN is a data-service
+        // credential. Both are mirrored, but only the inference provider carries
+        // an api_url.
         assert_eq!(
             collected.len(),
             2,
@@ -943,25 +924,28 @@ mod tests {
             }
             other => panic!("DEEPINFRA_API_KEY should be InferenceProvider, got {other:?}"),
         }
-        // fal.ai — DataService variant (no api_url; media credential only).
-        let fal_entry = collected
+        // HF_TOKEN — DataService variant (no api_url; data-service credential).
+        let hf_entry = collected
             .iter()
-            .find(|t| t.env_var() == "FALAI_API_KEY")
-            .expect("FALAI_API_KEY entry should be present");
-        match fal_entry {
+            .find(|t| t.env_var() == "HF_TOKEN")
+            .expect("HF_TOKEN entry should be present");
+        match hf_entry {
             MirrorTarget::DataService {
                 credential_url,
                 key,
                 ..
             } => {
-                assert_eq!(credential_url, "kask://credentials/fal", "credential_url");
-                assert_eq!(key, "fal-test-key", "key");
+                assert_eq!(
+                    credential_url, "kask://credentials/hf_token",
+                    "credential_url"
+                );
+                assert_eq!(key, "hf-test-key", "key");
             }
-            other => panic!("FALAI_API_KEY should be DataService, got {other:?}"),
+            other => panic!("HF_TOKEN should be DataService, got {other:?}"),
         }
         unsafe {
             std::env::remove_var("DEEPINFRA_API_KEY");
-            std::env::remove_var("FALAI_API_KEY");
+            std::env::remove_var("HF_TOKEN");
         }
     }
 

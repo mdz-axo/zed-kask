@@ -1,6 +1,6 @@
 # hkask-mcp-media
 
-Media generation MCP server — image, video, audio, and 3D generation via fal.ai and other providers.
+Media generation MCP server — image, video, audio, and 3D generation via AtlasCloud and DeepInfra.
 
 ## Tools (36)
 
@@ -22,11 +22,11 @@ Media generation MCP server — image, video, audio, and 3D generation via fal.a
 | `extract_object` | Extract a specific object from an image using AI segmentation. Returns the isolated object as a new image |
 | `gallery_timeline` | Organize gallery images by time period using EXIF dates. Returns images grouped by year, month, or decade |
 | `image_remove_background` | Remove background from a gallery image. Delegates to DeepInfra Bria RMBG 2.0 |
-| `image_apply_style` | Apply style transfer to a gallery image. Delegates to fal.ai Flux dev img2img |
+| `image_apply_style` | Apply style transfer to a gallery image. Delegates to AtlasCloud |
 | `image_create_collage` | Create a collage from multiple gallery images. Local composition using image crate. Three modes: search_terms, similar_to_index, or image_indices |
 | `video_clip` | Trim a video to specified start/end times using local ffmpeg |
 | `video_to_gif` | Convert a video segment to GIF format using local ffmpeg |
-| `image_to_video` | Animate a gallery image into a short video clip. Delegates to fal.ai Seedance 2.0 |
+| `image_to_video` | Animate a gallery image into a short video clip. Delegates to AtlasCloud |
 | `video_add_caption` | Add text caption overlay to a video using local ffmpeg |
 | `video_remix` | Generate a video remix: clip, add caption, convert to GIF |
 | `video_from_images` | Create a video or GIF from a sequence of gallery images using ffmpeg |
@@ -46,7 +46,7 @@ Media generation MCP server — image, video, audio, and 3D generation via fal.a
 
 ## Configuration
 
-This server reads `FALAI_API_KEY` and `DEEPINFRA_API_KEY` for media generation. Vision-LLM calls (describe, analyze, face validation) route through the inference IPC bridge to zed's `LanguageModelRegistry` — the media process does not read `OPENROUTER_API_KEY`/`KILOCODE_API_KEY` directly (those are read by the zed process).
+This server reads `ATLASCLOUD_API_KEY` and `DEEPINFRA_API_KEY` for media generation. Vision-LLM calls (describe, analyze, face validation) route through the inference IPC bridge to zed's `LanguageModelRegistry` — the media process does not read `OPENROUTER_API_KEY`/`KILOCODE_API_KEY` directly (those are read by the zed process).
 
 | Variable | Default | Description |
 |---|---|---|
@@ -61,16 +61,16 @@ This server reads `FALAI_API_KEY` and `DEEPINFRA_API_KEY` for media generation. 
 | `HKASK_MEDIA_RJOULE_PER_UPSCALE` | `0.02` | Estimated rJoule cost per upscale unit (scales with `scale^2`) |
 | `HKASK_MEDIA_RJOULE_PER_VIDEO_SECOND` | `1.0` | Estimated rJoule cost per second of generated video |
 
-All models are open-weight. Provider prefixes (`FA/`, `KC/`, etc.) route to the appropriate inference backend.
+All models are open-weight. Provider prefixes (`DI/`, `OR/`, `KC/`, etc.) route to the appropriate inference backend.
 
 ## Budget governance
 
-When `HKASK_MEDIA_RJOULE_CAP` is set, the five billable generation tools (`generate_image`, `transform_image`, `upscale_image`, `generate_video`, and `execute_workflow`) pre-charge an estimated rJoule (USD) cost before dispatching to the provider and reject the request with a clear error when the remaining budget is insufficient. A set-but-malformed `HKASK_MEDIA_RJOULE_CAP` (e.g. `100.5`) logs a warning and fails open to disabled rather than silently swallowing the config error. When `HKASK_MEDIA_RJOULE_ALERT_THRESHOLD` is reached (default 80% of the cap), a one-shot budget warning fires. Compute gas is **not** tracked here — it is enforced upstream at `McpRuntime::invoke` via `CyberneticsLoop`; the media tracker is rJoule-only. The unit-cost env vars above are conservative placeholders — set them to your provider's actual rates for accurate gating. Unset or `0` `HKASK_MEDIA_RJOULE_CAP` disables enforcement entirely (the default).
+When `HKASK_MEDIA_RJOULE_CAP` is set, the four billable generation tools (`generate_image`, `transform_image`, `upscale_image`, and `generate_video`) pre-charge an estimated rJoule (USD) cost before dispatching to the provider and reject the request with a clear error when the remaining budget is insufficient. A set-but-malformed `HKASK_MEDIA_RJOULE_CAP` (e.g. `100.5`) logs a warning and fails open to disabled rather than silently swallowing the config error. When `HKASK_MEDIA_RJOULE_ALERT_THRESHOLD` is reached (default 80% of the cap), a one-shot budget warning fires. Compute gas is **not** tracked here — it is enforced upstream at `McpRuntime::invoke` via `CyberneticsLoop`; the media tracker is rJoule-only. The unit-cost env vars above are conservative placeholders — set them to your provider's actual rates for accurate gating. Unset or `0` `HKASK_MEDIA_RJOULE_CAP` disables enforcement entirely (the default).
 
 ## Quick Start
 
 ```bash
-export FALAI_API_KEY="your-fal-ai-key"
+export ATLASCLOUD_API_KEY="your-atlascloud-key"
 # The server starts automatically with kask
 the zed-kask editor
 # Or standalone:

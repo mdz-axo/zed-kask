@@ -15,16 +15,16 @@
 
 use hkask_mcp_media::types::{
     ApplyStyleRequest, AudioCaptureRequest, CreateCollageRequest, DescribeImageRequest,
-    ExecuteWorkflowRequest, ExpandPromptRequest, ExtractObjectRequest, FaceListRequest,
-    FaceRegisterRequest, FaceRemoveRequest, FaceScanFolderRequest, FaceValidateRequest,
-    GalleryAnalyzeRequest, GalleryFindSimilarRequest, GalleryLineageRequest,
-    GalleryNameFaceRequest, GalleryOrganizeRequest, GalleryRecordGenerationRequest,
-    GalleryRefreshRequest, GalleryReproduceRequest, GallerySearchRequest, GalleryTimelineRequest,
-    GenerateImageRequest, GenerateSpeechRequest, GenerateVideoRequest, ImageToVideoRequest,
-    RecordAndTranscribeRequest, RemoveBackgroundRequest, TranscribeRequest, TransformImageRequest,
-    UpscaleImageRequest, VideoAddCaptionRequest, VideoCaptionRequest, VideoClipRequest,
-    VideoConcatRequest, VideoFromImagesRequest, VideoMemeRequest, VideoRemixRequest,
-    VideoToGifRequest, VoiceDesignRequest,
+    ExpandPromptRequest, ExtractObjectRequest, FaceListRequest, FaceRegisterRequest,
+    FaceRemoveRequest, FaceScanFolderRequest, FaceValidateRequest, GalleryAnalyzeRequest,
+    GalleryFindSimilarRequest, GalleryLineageRequest, GalleryNameFaceRequest,
+    GalleryOrganizeRequest, GalleryRecordGenerationRequest, GalleryRefreshRequest,
+    GalleryReproduceRequest, GallerySearchRequest, GalleryTimelineRequest, GenerateImageRequest,
+    GenerateSpeechRequest, GenerateVideoRequest, ImageToVideoRequest, RecordAndTranscribeRequest,
+    RemoveBackgroundRequest, TranscribeRequest, TransformImageRequest, UpscaleImageRequest,
+    VideoAddCaptionRequest, VideoCaptionRequest, VideoClipRequest, VideoConcatRequest,
+    VideoFromImagesRequest, VideoMemeRequest, VideoRemixRequest, VideoToGifRequest,
+    VoiceDesignRequest,
 };
 use hkask_mcp_server::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -79,7 +79,6 @@ schema_clean_test!(generate_image_request_schema, GenerateImageRequest);
 schema_clean_test!(transform_image_request_schema, TransformImageRequest);
 schema_clean_test!(upscale_image_request_schema, UpscaleImageRequest);
 schema_clean_test!(generate_video_request_schema, GenerateVideoRequest);
-schema_clean_test!(execute_workflow_request_schema, ExecuteWorkflowRequest);
 schema_clean_test!(expand_prompt_request_schema, ExpandPromptRequest);
 schema_clean_test!(remove_background_request_schema, RemoveBackgroundRequest);
 schema_clean_test!(apply_style_request_schema, ApplyStyleRequest);

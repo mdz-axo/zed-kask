@@ -34,7 +34,6 @@ use serde_json::{Value as JsonValue, json};
 /// independence that makes a reference oracle worth anything.
 const PROVIDER_ALIASES: &[(&[&str], &str)] = &[
     (&["deepinfra", "di"], "DI"),
-    (&["fal", "fa", "fal.ai"], "FA"),
     (&["runpod", "rp"], "RP"),
     (&["openrouter", "or"], "OR"),
     (&["kilocode", "kc"], "KC"),
@@ -43,13 +42,12 @@ const PROVIDER_ALIASES: &[(&[&str], &str)] = &[
 
 /// The serde id for every `ProviderId` variant (for the "valid provider"
 /// invariant). `OpenRouter` is the fallback, so it appears once here.
-const ALL_PROVIDER_IDS: &[&str] = &["DI", "FA", "RP", "OR", "KC", "OM"];
+const ALL_PROVIDER_IDS: &[&str] = &["DI", "RP", "OR", "KC", "OM"];
 
-/// All six `ProviderId` variants — for `prop::sample::select` when generating
+/// All five `ProviderId` variants — for `prop::sample::select` when generating
 /// `RouterModelEntry`.
-const ALL_PROVIDERS: [ProviderId; 6] = [
+const ALL_PROVIDERS: [ProviderId; 5] = [
     ProviderId::DeepInfra,
-    ProviderId::Fal,
     ProviderId::Runpod,
     ProviderId::OpenRouter,
     ProviderId::KiloCode,

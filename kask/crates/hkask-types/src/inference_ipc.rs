@@ -84,11 +84,10 @@ pub enum InferenceMethod {
     /// The result is returned as `InferenceOutcome::ModelList`.
     ListModels,
     /// Generate media (image, video, speech, transcription, etc.) via
-    /// fal.ai/DeepInfra backends. Uses `media_op`, `media_prompt`,
+    /// AtlasCloud/DeepInfra backends. Uses `media_op`, `media_prompt`,
     /// `media_image_url`, `media_text`, `media_size`, `media_count`,
-    /// `media_strength`, `media_duration`, `media_workflow` from
-    /// `InferenceParams`. The result is returned as
-    /// `InferenceOutcome::Media`.
+    /// `media_strength`, `media_duration` from `InferenceParams`. The result is
+    /// returned as `InferenceOutcome::Media`.
     MediaGenerate,
     /// Invoke a governed MCP tool on the zed side (`ToolDispatchPort`).
     /// Uses `tool_server`, `tool_name`, `tool_args` from `InferenceParams`.
@@ -147,8 +146,6 @@ pub struct InferenceParams {
     pub media_object_description: Option<String>,
     /// Language hint for transcription.
     pub media_language: Option<String>,
-    /// Workflow JSON for `execute_workflow`.
-    pub media_workflow: Option<serde_json::Value>,
     // ── Tool dispatch fields (for `InferenceMethod::ToolInvoke`) ──
     /// MCP server id the tool lives on (e.g. "codegraph").
     pub tool_server: Option<String>,
@@ -374,7 +371,6 @@ mod tests {
                 media_duration: None,
                 media_object_description: None,
                 media_language: None,
-                media_workflow: None,
                 tool_server: Some("codegraph".to_string()),
                 tool_name: Some("codegraph_query".to_string()),
                 tool_args: Some(serde_json::json!({ "q": "x" })),
@@ -429,7 +425,6 @@ mod tests {
                 media_duration: None,
                 media_object_description: None,
                 media_language: None,
-                media_workflow: None,
                 tool_server: None,
                 tool_name: None,
                 tool_args: None,

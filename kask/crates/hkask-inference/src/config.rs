@@ -1,14 +1,14 @@
-//! Inference configuration — multi-provider routing for 6 providers: DeepInfra, fal.ai, OpenRouter, KiloCode, Ollama (local), RunPod (vision/OCR only).
+//! Inference configuration — multi-provider routing for 5 chat providers: DeepInfra, RunPod (vision/OCR only), OpenRouter, KiloCode, Ollama (local).
 //!
 //! # Environment Variables
 //!
 //! - `DEEPINFRA_BASE_URL` / `DEEPINFRA_API_KEY` — DeepInfra (cloud, required)
-//! - `FALAI_MEDIA_BASE_URL` / `FALAI_QUEUE_BASE_URL` / `FALAI_API_KEY` — fal.ai (cloud media, required)
+//! - `ATLASCLOUD_BASE_URL` / `ATLASCLOUD_API_KEY` — AtlasCloud (cloud media + LLM)
 //! - `OPENROUTER_BASE_URL` / `OPENROUTER_API_KEY` — OpenRouter (cloud, required)
 //! - `KILOCODE_BASE_URL` / `KILOCODE_API_KEY` — KiloCode (cloud, required)
 //! - `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` — Ollama (local; key optional, header ignored)
 //! - `RUNPOD_API_KEY` / `RUNPOD_BASE_URL` or `RUNPOD_TEMPLATE_ID` — RunPod (vision/OCR only)
-//! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DeepInfra, fal.ai, RunPod, OpenRouter, KiloCode, ollama; default: DeepInfra)
+//! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DeepInfra, RunPod, OpenRouter, KiloCode, ollama; default: DeepInfra)
 //! - `HKASK_DEFAULT_MODEL` — default model (default: `OpenRouter/z-ai/glm-5.2`)
 //!
 //! # API Key Resolution
@@ -21,7 +21,6 @@
 //!
 //! Models use a full-name provider prefix:
 //! - `DeepInfra/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra (cloud)
-//! - `fal.ai/flux-2` → fal.ai (cloud media)
 //! - `OpenRouter/openai/gpt-4o` → OpenRouter (cloud)
 //! - `KiloCode/anthropic/claude-sonnet-4.5` → KiloCode (cloud)
 //! - `ollama/qwen3:8b` → Ollama (local)
@@ -31,7 +30,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Provider identifier for inference routing. Used as the model-string
-/// prefix (e.g. `DeepInfra/model`, `fal.ai/model`) and in log messages.
+/// prefix (e.g. `DeepInfra/model`, `OpenRouter/model`) and in log messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ProviderId {
     /// DeepInfra (cloud) — prefix `DeepInfra/`
@@ -61,7 +60,7 @@ impl ProviderId {
     /// expect: "The system normalizes provider responses for monitoring"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — model-name routing to provider boundary
     /// pre:  model is non-empty
-    /// post: returns Some((ProviderId, stripped_model)) for DeepInfra/, fal.ai/, RunPod/, OpenRouter/, KiloCode/, ollama/ prefixes
+    /// post: returns Some((ProviderId, stripped_model)) for DeepInfra/, RunPod/, OpenRouter/, KiloCode/, ollama/ prefixes
     /// post: returns None for unrecognized or missing prefix
     #[must_use]
     pub fn parse_from_model(model: &str) -> Option<(Self, &str)> {
@@ -125,7 +124,7 @@ impl ProviderId {
     ///
     /// expect: "The system normalizes provider responses for monitoring"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — stable provider name for routing
-    /// post: returns "DeepInfra", "fal.ai", "RunPod", "OpenRouter", "KiloCode", or "ollama"
+    /// post: returns "DeepInfra", "RunPod", "OpenRouter", "KiloCode", or "ollama"
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -140,7 +139,7 @@ impl ProviderId {
 
 /// Configuration for the inference router.
 ///
-/// Holds connection settings for DeepInfra, fal.ai, OpenRouter, KiloCode,
+/// Holds connection settings for DeepInfra, OpenRouter, KiloCode,
 /// Ollama, and AtlasCloud. The router uses this config to construct
 /// backends and decide the default provider for unprefixed model names.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,8 +287,8 @@ fn resolve_api_key(env_name: &str) -> String {
 /// Resolve the default provider from env var or keychain.
 ///
 /// Reads `HKASK_DEFAULT_PROVIDER` via [`resolve_api_key`] (env var first, then
-/// OS keychain). Accepted values: DeepInfra, fal.ai, RunPod, OpenRouter,
-/// KiloCode, ollama, Cline. Defaults to DeepInfra.
+/// OS keychain). Accepted values: DeepInfra, RunPod, OpenRouter,
+/// KiloCode, ollama. Defaults to DeepInfra.
 fn resolve_default_provider() -> ProviderId {
     let raw = resolve_api_key("HKASK_DEFAULT_PROVIDER");
     parse_provider_code(&raw)
@@ -297,7 +296,7 @@ fn resolve_default_provider() -> ProviderId {
 
 /// Parse a provider code string to a ProviderId.
 ///
-/// Accepted values: full provider names (DeepInfra, fal.ai,
+/// Accepted values: full provider names (DeepInfra,
 /// RunPod, OpenRouter, KiloCode, ollama). Anything else (including
 /// empty) → DeepInfra.
 fn parse_provider_code(raw: &str) -> ProviderId {

@@ -250,10 +250,6 @@ fn estimate_rjoule(
         "generate_video" => {
             unit_costs.per_video_second * params.duration.unwrap_or(5.0).max(1.0) as f64
         }
-        // Workflow DAGs are opaque without parsing; charge the image unit as a
-        // floor. This arm is live: `execute_workflow` calls `charge_budget`
-        // (see `tools/generation.rs`), closing the bypass.
-        "execute_workflow" => unit_costs.per_image,
         _ => unit_costs.per_image,
     }
 }
@@ -664,17 +660,6 @@ mod charge_budget_gate_tests {
                 .await
                 .is_err()
         );
-    }
-
-    #[tokio::test]
-    async fn execute_workflow_charges_image_floor() {
-        // execute_workflow estimate = per_image floor (0.05); cap 1 → passes,
-        // leaves 0.95. Pins that execute_workflow is now gated (F1).
-        let budget = gated(1, 0.8);
-        let res =
-            charge_budget_gate(&budget, "execute_workflow", &MediaGenerateParams::default()).await;
-        assert!(res.is_ok());
-        assert!((remaining(&budget).await - 0.95).abs() < 1e-9);
     }
 
     #[tokio::test]

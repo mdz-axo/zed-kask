@@ -3,12 +3,20 @@ title: "Media Landscape Research"
 audience: [developers, architects]
 last_updated: 2026-08-04
 version: "0.31.1"
-status: "Active"
+status: "Historical"
 domain: "MCP Servers"
 mds_categories: [domain, composition]
 ---
 
 # Media Tool Domain Landscape — hKask Media MCP Server
+
+> **Historical — pre-AtlasCloud.** This landscape was authored when the media
+> backend was fal.ai (the `FalBackend` + `execute_workflow` DAG pipeline). The
+> fal.ai backend, the `execute_workflow` / `segment_object` ops, and the
+> `FALAI_API_KEY` credential have since been removed. The current backend is
+> AtlasCloud (image/video/audio) + DeepInfra (remove-background/speech/transcribe).
+> The provider/endpoint catalogues below are retained as design history; read
+> `kask/mcp-servers/hkask-mcp-media/src/tools/*.rs` for the live tool surface.
 
 > **Note:** `InferenceRouter` references in this research doc describe the media MCP server's internal delegation path. In zed-kask, `hkask-inference`'s `InferenceRouter` is kept for MCP-server-internal use only; the user-facing inference surface is zed's `LanguageModelRegistry` via `kask_bridge` (D4/D8).
 

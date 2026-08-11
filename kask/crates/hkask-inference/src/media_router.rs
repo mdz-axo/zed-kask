@@ -13,7 +13,7 @@
 //!
 //! Media is routed to zed via the IPC bridge, but terminates here (the hKask
 //! `MediaRouter`) rather than zed's `LanguageModelRegistry`, because media
-//! generation uses non-chat APIs (fal.ai queue/run + app-id routing; DeepInfra
+//! generation uses non-chat APIs (AtlasCloud submit+poll task routing; DeepInfra
 //! inference/tts/transcription with binary returns) that `LanguageModel`
 //! cannot represent. If zed later adds a media trait to its registry, this
 //! terminal can delegate to it instead — until then the providers live here.
@@ -40,8 +40,8 @@ use std::sync::Arc;
 /// lazily: a provider is only registered if its API key is present. Media
 /// methods that find no supporting provider return a clear `Connection`
 /// error. The registry order encodes the preference policy: DeepInfra first
-/// (cheapest for background removal / TTS / STT, with fal.ai fallback),
-/// fal.ai for everything else.
+/// (cheapest for background removal / TTS / STT, with AtlasCloud fallback),
+/// AtlasCloud for everything else.
 pub struct MediaRouter {
     pub(crate) registry: ProviderRegistry,
 }
@@ -72,8 +72,8 @@ impl MediaRouter {
 
         if let Some(client) = &shared_client {
             // DeepInfra first: preferred for remove_background / speech /
-            // transcribe (cheapest). Registered before fal.ai so the registry
-            // tries it first and falls back to fal.ai on runtime error.
+            // transcribe (cheapest). Registered before AtlasCloud so the registry
+            // tries it first and falls back to AtlasCloud on runtime error.
             match DeepInfraBackend::new(&config, Arc::clone(client)) {
                 Ok(di) => providers.push(Arc::new(di)),
                 Err(_) => tracing::warn!(
@@ -138,7 +138,7 @@ impl MediaRouter {
         self.registry.execute(MediaOp::ImageToImage, &params).await
     }
 
-    /// Remove background from an image. DeepInfra first (cheapest), fal.ai fallback.
+    /// Remove background from an image. DeepInfra first (cheapest), AtlasCloud fallback.
     #[must_use = "result must be used"]
     pub async fn remove_background(
         &self,
@@ -200,7 +200,7 @@ impl MediaRouter {
         self.registry.execute(MediaOp::ImageToVideo, &params).await
     }
 
-    /// Generate speech from text. DeepInfra first, fal.ai fallback.
+    /// Generate speech from text. DeepInfra first, AtlasCloud fallback.
     #[must_use = "result must be used"]
     pub async fn generate_speech(
         &self,

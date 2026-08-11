@@ -7,9 +7,7 @@
 //! which OMC concept. That is the server's business, not the ontology's.
 
 use hkask_bridge_ontology::omc::OmcConcept;
-use hkask_bridge_ontology::omc::{
-    ASSET, CREATIVE_WORK, MEDIA_SOURCE, SCENE, SEQUENCE, TASK, VERSION,
-};
+use hkask_bridge_ontology::omc::{ASSET, CREATIVE_WORK, MEDIA_SOURCE, SCENE, SEQUENCE, VERSION};
 
 // Re-export the shared explain-tool dispatch so the media server's tests and
 // any in-server consumers reference the single source of truth.
@@ -34,8 +32,6 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         "gallery_search" | "gallery_find_similar" | "gallery_timeline" => Some(ASSET),
         // Audio — produces a media source (audio is a source asset).
         "generate_speech" | "audio_capture" | "record_and_transcribe" => Some(MEDIA_SOURCE),
-        // Workflow — produces a task (a multi-step production job).
-        "execute_workflow" => Some(TASK),
         // Video processing — produces a sequence (a clip is a sequence of shots).
         "video_clip" | "video_to_gif" | "image_to_video" | "video_concat" => Some(SEQUENCE),
         // Collage / extract — produces a new creative work from sources.
@@ -84,11 +80,6 @@ mod tests {
     }
 
     #[test]
-    fn workflow_maps_to_task() {
-        assert_eq!(tool_to_omc("execute_workflow"), Some(TASK));
-    }
-
-    #[test]
     fn video_processing_maps_to_sequence() {
         assert_eq!(tool_to_omc("video_clip"), Some(SEQUENCE));
         assert_eq!(tool_to_omc("video_to_gif"), Some(SEQUENCE));
@@ -113,6 +104,5 @@ mod tests {
         assert_eq!(explain_tool_for(VERSION), "describe_image");
         assert_eq!(explain_tool_for(MEDIA_SOURCE), "describe_image");
         assert_eq!(explain_tool_for(SEQUENCE), "describe_image");
-        assert_eq!(explain_tool_for(TASK), "describe_image");
     }
 }

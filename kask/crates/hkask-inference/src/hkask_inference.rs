@@ -4,14 +4,12 @@
 //!
 //! In zed-kask, chat inference routes through the zed IPC bridge
 //! (`InferenceIpcClient` → `LanguageModelRegistry`). This crate provides:
-//! - `MediaRouter` — fal.ai/DeepInfra media generation (image/video/speech/
+//! - `MediaRouter` — DeepInfra/AtlasCloud media generation (image/video/speech/
 //!   transcription), not covered by zed's `LanguageModel` abstraction.
 //! - `InferenceIpcClient` — the IPC bridge client used by MCP servers to route
 //!   chat/vision/embed through zed's `LanguageModelRegistry`.
 //! - `InferenceConfig` — shared configuration (base URLs, API keys, default model).
 //! - `ProviderId` — provider routing enum used by the training adapter router.
-
-// Used via derive macros (serde/thiserror/async_trait) — invisible to unused_crate_dependencies lint
 //!
 //! # Architecture
 //!
@@ -29,7 +27,6 @@
 //! # Model Naming
 //!
 //! - `DeepInfra/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra (via IPC bridge)
-//! - `fal.ai/flux-2` → fal.ai (media)
 //! - `OpenRouter/openai/gpt-4o` → OpenRouter (via IPC bridge)
 //! - No prefix → default model (configurable, default: OpenRouter/z-ai/glm-5.2)
 
@@ -171,7 +168,7 @@ impl RouterModelEntry {
 ///    `LanguageModelRegistry` (with guard and zed's configured
 ///    API keys). Chat, vision, embed, and list_models all go through here.
 /// 2. `MediaRouter` — constructed from `InferenceConfig::from_env()`.
-///    This handles only media generation (fal.ai/DeepInfra). Chat/vision/
+///    This handles only media generation (DeepInfra/AtlasCloud). Chat/vision/
 ///    embed return a clear error directing the operator to the IPC bridge.
 ///    Used when running standalone or when the IPC socket is not available.
 ///
