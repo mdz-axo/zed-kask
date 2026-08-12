@@ -1183,7 +1183,7 @@ pub(crate) fn apply_move_to_tasks(
 mod tests {
     use super::*;
     use gpui::{Task, TestAppContext};
-    use hkask_tool_invoker::{ToolInvoker, set_tool_invoker};
+    use hkask_tool_invoker::{InvokeError, ToolInvoker, set_tool_invoker};
     use std::sync::Arc;
 
     fn task(task_id: &str, title: &str, status: &str) -> TaskBody {
@@ -1461,7 +1461,7 @@ mod tests {
             server: &str,
             tool: &str,
             args: serde_json::Value,
-        ) -> Task<Result<String, String>> {
+        ) -> Task<Result<String, InvokeError>> {
             if let Ok(mut calls) = self.calls.lock() {
                 calls.push((server.to_string(), tool.to_string(), args));
             }

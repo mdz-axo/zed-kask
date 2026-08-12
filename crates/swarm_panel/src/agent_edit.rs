@@ -222,13 +222,18 @@ impl SwarmPanel {
             let invoker = invoker.clone();
             async move |this, cx| {
                 let result = if is_local {
+                    // The parse steps below fail with plain strings, so flatten the
+                    // typed invoke error to its message here and keep one error type
+                    // through the chain. This path only reports — it has no retry
+                    // behavior to gate on the classification.
                     let list_result = invoker
                         .invoke_tool(
                             crate::SWARM_SERVER,
                             "swarm_list_local_agents",
                             json!({ "limit": 200 }),
                         )
-                        .await;
+                        .await
+                        .map_err(|err| err.message());
                     list_result.and_then(|output| {
                         let parsed = hkask_types::tool_response::parse_tool_response(&output)
                             .ok_or_else(|| {
@@ -261,6 +266,7 @@ impl SwarmPanel {
                             json!({ "agent_name": agent_id }),
                         )
                         .await
+                        .map_err(|err| err.message())
                         .and_then(|output| {
                             let parsed = hkask_types::tool_response::parse_tool_response(&output)
                                 .ok_or_else(|| {

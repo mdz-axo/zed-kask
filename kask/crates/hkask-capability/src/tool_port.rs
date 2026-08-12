@@ -12,8 +12,30 @@ pub enum ToolPortError {
     EnergyBudgetExceeded(String),
     #[error("Tool not found: {0}")]
     NotFound(NotFound),
+    /// The tool could not be reached: the server's transport closed, it is
+    /// restarting, or it could not be (re-)started.
+    ///
+    /// Distinct from [`ToolPortError::InvocationFailed`] because the call never
+    /// ran, so a caller may retry it without risking a duplicate side effect.
+    /// Callers that render errors to a user should present this as a transient
+    /// connection state rather than a failure of the requested operation.
+    #[error("Tool unavailable: {0}")]
+    Unavailable(String),
+    /// The call reached the tool and the tool failed. Retrying repeats it.
     #[error("Tool invocation failed: {0}")]
     InvocationFailed(String),
+}
+
+impl ToolPortError {
+    /// Whether re-issuing the identical call could plausibly succeed.
+    ///
+    /// True only for [`ToolPortError::Unavailable`]: the call did not reach the
+    /// tool, so no side effect can have been applied. A cap breach needs a new
+    /// regulation tick, and a failed or unknown tool will fail identically.
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, ToolPortError::Unavailable(_))
+    }
 }
 
 impl From<NotFound> for ToolPortError {

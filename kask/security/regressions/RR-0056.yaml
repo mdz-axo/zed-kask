@@ -16,7 +16,11 @@ detection:
   # composition root failed to seed. A grep for `is_valid_for` would only catch
   # this one spelling; these tests pin the semantics.
   pattern: "unregistered_agent_is_auto_registered_not_denied"
-  include: "kask/crates/hkask-mcp/tests/invoke_gate.rs"
+  # Must be a `--lib` test path: the CI harness runs `cargo test -p <crate> --lib`,
+  # so a `tests/` integration path would resolve the crate but match 0 tests and
+  # trip the orphaned-regression check. The same invariants are also covered by
+  # kask/crates/hkask-mcp/tests/invoke_gate.rs.
+  include: "crates/hkask-mcp/src/runtime.rs"
 mitigation: |
   `McpRuntime::invoke` previously called
   `token.is_valid_for(Tool, tool, Execute)`, where `is_valid_for` is

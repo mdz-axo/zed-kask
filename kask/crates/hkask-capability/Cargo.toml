@@ -3,7 +3,7 @@ name = "hkask-capability"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "In-process capability tokens for inter-agent delegation"
+description = "Tool dispatch port and FIDES taint labels"
 
 
 [lib]
@@ -13,13 +13,7 @@ path = "src/hkask_capability.rs"
 hkask-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
-hex.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
-proptest = { workspace = true }
-hkask-test-harness = { workspace = true }
 
 [lints]
 workspace = true

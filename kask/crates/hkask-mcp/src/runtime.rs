@@ -5,6 +5,26 @@
 //! performs the MCP handshake, discovers tools dynamically, and stores
 //! live `Peer<RoleClient>` connections. `shutdown_all()` terminates
 //! all managed processes.
+//!
+//! ## Connection healing
+//!
+//! A child process can die without anyone asking it to (crash, OOM, a parent
+//! restart that races an in-flight call). Three mechanisms keep the runtime from
+//! serving a dead connection forever:
+//!
+//! 1. **Reap on death** — the keeper task that owns each `RunningService` removes
+//!    the connection from `connections` when the service loop exits on its own,
+//!    so a corpse is never left behind for `get_peer` to hand out.
+//! 2. **Liveness on read** — `get_peer` filters out a peer whose transport has
+//!    already closed, covering the window before the keeper task is scheduled.
+//! 3. **Reconnect on demand** — `start_server_with_env` records each server's
+//!    launch spec, so `call_tool_inner` can re-spawn a dead server once (subject
+//!    to [`RECONNECT_COOLDOWN`]) and retry the call rather than failing until the
+//!    next settings change.
+//!
+//! Without these, `start_server_with_env`'s presence-based idempotency check
+//! (`connections.contains_key`) would short-circuit every recovery attempt and
+//! the only route back to a working connection was an operator settings change.
 
 use hkask_capability::ToolInfo;
 use rmcp::model::CallToolRequestParams;
@@ -13,11 +33,20 @@ use rmcp::transport::TokioChildProcess;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::process::Command;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+
+/// Minimum interval between reconnect attempts for the same server.
+///
+/// Bounds the damage from a crash-looping binary: without it, a server that
+/// dies during its handshake would be re-spawned once per tool call, turning a
+/// broken binary into a process-spawn storm.
+const RECONNECT_COOLDOWN: Duration = Duration::from_secs(5);
 
 /// A simple flat-cost energy estimator.
 ///
@@ -96,6 +125,30 @@ struct ToolGovernance {
     event_sink: Arc<std::sync::RwLock<Arc<dyn hkask_types::RegulationSink>>>,
 }
 
+/// How to (re-)spawn a server, recorded at launch so a dead connection can be
+/// rebuilt without the composition root re-supplying the binary and env.
+#[derive(Clone, Debug)]
+struct LaunchSpec {
+    command: String,
+    env: HashMap<String, String>,
+}
+
+/// Monotonic generation counter for connection identity.
+///
+/// A keeper task must only reap the connection *it* installed. Without a
+/// generation stamp, a keeper whose service loop exits just after a reconnect
+/// replaced its entry would remove the healthy replacement — turning recovery
+/// into a self-inflicted outage. The counter is process-global; only equality
+/// matters.
+static CONNECTION_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// A live connection plus the generation that installed it.
+#[derive(Clone)]
+struct Connection {
+    peer: Peer<RoleClient>,
+    generation: u64,
+}
+
 #[derive(Clone)]
 pub struct McpRuntime {
     /// Registered MCP servers (metadata)
@@ -103,9 +156,13 @@ pub struct McpRuntime {
     /// Tool registry (tool_name -> server_id)
     tool_registry: Arc<RwLock<HashMap<String, String>>>,
     /// Live connections to MCP server processes, keyed by server ID
-    connections: Arc<RwLock<HashMap<String, Peer<RoleClient>>>>,
+    connections: Arc<RwLock<HashMap<String, Connection>>>,
     /// Cancellation tokens for managed server processes
     cancellation_tokens: Arc<RwLock<HashMap<String, CancellationToken>>>,
+    /// How each server was launched, so a dead connection can be rebuilt.
+    launch_specs: Arc<RwLock<HashMap<String, LaunchSpec>>>,
+    /// Last reconnect attempt per server, for [`RECONNECT_COOLDOWN`].
+    last_reconnect: Arc<RwLock<HashMap<String, Instant>>>,
     governance: Option<ToolGovernance>,
 }
 
@@ -120,6 +177,8 @@ impl McpRuntime {
             tool_registry: Arc::new(RwLock::new(HashMap::new())),
             connections: Arc::new(RwLock::new(HashMap::new())),
             cancellation_tokens: Arc::new(RwLock::new(HashMap::new())),
+            launch_specs: Arc::new(RwLock::new(HashMap::new())),
+            last_reconnect: Arc::new(RwLock::new(HashMap::new())),
             governance: None,
         }
     }
@@ -177,6 +236,12 @@ impl McpRuntime {
 
     /// Start an MCP server process and connect via rmcp stdio transport with
     /// extra environment variables for the child process.
+    ///
+    /// Idempotent per *live* connection: an already-connected server whose
+    /// transport is still open is a no-op. A server whose transport has closed is
+    /// reconnected — the check is liveness-based, not presence-based, because a
+    /// presence-based check would short-circuit every recovery attempt against
+    /// exactly the stale entry that needs replacing.
     #[must_use = "result must be used"]
     pub async fn start_server_with_env(
         &self,
@@ -186,14 +251,37 @@ impl McpRuntime {
     ) -> Result<(), ServerStartError> {
         // Acquire write lock first to prevent TOCTOU races.
         let mut connections = self.connections.write().await;
-        if connections.contains_key(server_id) {
-            info!(
-                target: "hkask.mcp",
-                server_id = %server_id,
-                "Server already connected"
-            );
-            return Ok(());
+        match connections.get(server_id) {
+            Some(existing) if !existing.peer.is_transport_closed() => {
+                info!(
+                    target: "hkask.mcp",
+                    server_id = %server_id,
+                    "Server already connected"
+                );
+                return Ok(());
+            }
+            Some(_) => {
+                // A dead entry: drop it so the fresh connection below replaces
+                // it even if the handshake takes a while.
+                tracing::warn!(
+                    target: "hkask.mcp",
+                    server_id = %server_id,
+                    "Replacing a closed connection"
+                );
+                connections.remove(server_id);
+            }
+            None => {}
         }
+
+        // Record the launch spec before spawning so a later reconnect can rebuild
+        // this server even if this attempt fails partway through.
+        self.launch_specs.write().await.insert(
+            server_id.to_string(),
+            LaunchSpec {
+                command: command.to_string(),
+                env: extra_env.clone(),
+            },
+        );
 
         // Resolve the binary path: check HKASK_MCP_{ID}_BIN first, then fall back
         // to PATH-based resolution. The env var allows pointing at a specific build
@@ -216,15 +304,56 @@ impl McpRuntime {
 
         let peer = running.peer().clone();
         let cancel = CancellationToken::new();
+        let generation = CONNECTION_GENERATION.fetch_add(1, Ordering::Relaxed);
 
         // Keep the RunningService alive in a background task.
         // When `cancel` fires, the service loop exits and the child
         // process is cleaned up by rmcp's DropGuard.
+        //
+        // When the service loop exits on its *own* (the child died, the transport
+        // closed), reap the connection so `get_peer` stops handing out a corpse.
+        // The generation stamp ensures a late-exiting keeper cannot remove a
+        // healthy replacement installed by a reconnect.
         let bg_cancel = cancel.clone();
+        let reap_connections = self.connections.clone();
+        let reap_tokens = self.cancellation_tokens.clone();
+        let reap_id = server_id.to_string();
         tokio::spawn(async move {
-            tokio::select! {
-                _ = running.waiting() => {}
-                _ = bg_cancel.cancelled() => {}
+            let reaped = tokio::select! {
+                quit = running.waiting() => {
+                    match quit {
+                        Ok(reason) => tracing::warn!(
+                            target: "hkask.mcp",
+                            server_id = %reap_id,
+                            reason = ?reason,
+                            "MCP server connection ended - reaping so the next call reconnects"
+                        ),
+                        Err(e) => tracing::warn!(
+                            target: "hkask.mcp",
+                            server_id = %reap_id,
+                            error = %e,
+                            "MCP server keeper task failed - reaping so the next call reconnects"
+                        ),
+                    }
+                    true
+                }
+                _ = bg_cancel.cancelled() => {
+                    // Deliberate stop (`stop_server` / `shutdown_all`), which
+                    // already removed the entry. Nothing to reap.
+                    false
+                }
+            };
+            if !reaped {
+                return;
+            }
+            let mut connections = reap_connections.write().await;
+            if connections
+                .get(&reap_id)
+                .is_some_and(|current| current.generation == generation)
+            {
+                connections.remove(&reap_id);
+                drop(connections);
+                reap_tokens.write().await.remove(&reap_id);
             }
         });
 
@@ -237,7 +366,7 @@ impl McpRuntime {
         })?;
 
         // Insert into the already-held write lock
-        connections.insert(server_id.to_string(), peer);
+        connections.insert(server_id.to_string(), Connection { peer, generation });
         // Drop the write lock before acquiring the cancellation_tokens lock
         drop(connections);
 
@@ -274,37 +403,92 @@ impl McpRuntime {
     }
 
     /// Get a live Peer connection for a server (if connected).
+    ///
+    /// A peer whose transport has already closed is treated as absent. The keeper
+    /// task reaps dead entries, but it is scheduled asynchronously — this check
+    /// closes the window where a caller would otherwise dispatch onto a corpse and
+    /// get `Transport closed` back.
     pub(crate) async fn get_peer(&self, server_id: &str) -> Option<Peer<RoleClient>> {
-        self.connections.read().await.get(server_id).cloned()
+        let connection = self.connections.read().await.get(server_id).cloned()?;
+        if connection.peer.is_transport_closed() {
+            return None;
+        }
+        Some(connection.peer)
     }
 
-    /// Call a tool on a connected server directly via the peer.
+    /// Re-spawn a server whose connection died, subject to
+    /// [`RECONNECT_COOLDOWN`].
     ///
-    /// Private transport primitive used by the governed `ToolPort` path.
-    #[must_use = "result must be used"]
-    async fn call_tool(
-        &self,
-        server_id: &str,
-        tool: &str,
-        arguments: serde_json::Map<String, Value>,
-    ) -> Result<rmcp::model::CallToolResult, rmcp::service::ServiceError> {
-        let peer = self
-            .get_peer(server_id)
-            .await
-            .ok_or_else(|| rmcp::service::ServiceError::TransportClosed)?;
+    /// Returns `true` when a live connection exists afterwards. Requires a launch
+    /// spec recorded by a prior `start_server_with_env` — a server that was only
+    /// ever `register_server`'d (metadata, no process) cannot be reconnected, and
+    /// reports `false` rather than pretending to recover.
+    async fn try_reconnect(&self, server_id: &str) -> bool {
+        let Some(spec) = self.launch_specs.read().await.get(server_id).cloned() else {
+            return false;
+        };
 
-        let params = CallToolRequestParams::new(tool.to_string()).with_arguments(arguments);
-        peer.call_tool(params).await
+        // Cooldown check and stamp under one write lock so concurrent callers
+        // cannot both pass the gate and spawn duplicate processes.
+        {
+            let mut last = self.last_reconnect.write().await;
+            if let Some(previous) = last.get(server_id)
+                && previous.elapsed() < RECONNECT_COOLDOWN
+            {
+                tracing::debug!(
+                    target: "hkask.mcp",
+                    server_id = %server_id,
+                    "Reconnect suppressed by cooldown"
+                );
+                return false;
+            }
+            last.insert(server_id.to_string(), Instant::now());
+        }
+
+        info!(
+            target: "hkask.mcp",
+            server_id = %server_id,
+            "Reconnecting to MCP server after transport loss"
+        );
+        match self
+            .start_server_with_env(server_id, &spec.command, spec.env)
+            .await
+        {
+            Ok(()) => {
+                info!(
+                    target: "hkask.mcp",
+                    server_id = %server_id,
+                    "MCP server reconnected"
+                );
+                true
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp",
+                    server_id = %server_id,
+                    error = %e,
+                    "MCP server reconnect failed"
+                );
+                false
+            }
+        }
     }
 
     /// Shut down all managed server processes.
+    ///
+    /// Clears the launch specs too: a deliberate shutdown must not leave a
+    /// reconnect path that would resurrect servers the caller just stopped.
     pub async fn shutdown_all(&self) {
+        // Drop the connections before cancelling so a keeper task racing the
+        // cancellation finds nothing of its own generation to reap.
+        self.connections.write().await.clear();
         let mut tokens = self.cancellation_tokens.write().await;
         for (_, cancel) in tokens.drain() {
             cancel.cancel();
         }
         drop(tokens);
-        self.connections.write().await.clear();
+        self.launch_specs.write().await.clear();
+        self.last_reconnect.write().await.clear();
     }
 
     /// Stop a single managed server process and drop its tool registry.
@@ -317,11 +501,20 @@ impl McpRuntime {
     /// connection and would no-op on an already-connected server).
     ///
     /// Idempotent: stopping an unknown or already-stopped server is a no-op.
+    ///
+    /// Drops the server's launch spec so the reconnect path does not resurrect a
+    /// server that was deliberately stopped. The restart path re-records the spec
+    /// when it calls `start_server_with_env` again.
     pub async fn stop_server(&self, server_id: &str) {
+        // Remove the connection first: the keeper task's cancellation arm does not
+        // reap, so removing here (before cancelling) keeps the two paths from
+        // racing over the same entry.
+        self.connections.write().await.remove(server_id);
         if let Some(cancel) = self.cancellation_tokens.write().await.remove(server_id) {
             cancel.cancel();
         }
-        self.connections.write().await.remove(server_id);
+        self.launch_specs.write().await.remove(server_id);
+        self.last_reconnect.write().await.remove(server_id);
         // Drop the server's tools from the registry so stale names do not
         // resolve to a dead connection.
         let mut servers = self.servers.write().await;
@@ -505,43 +698,142 @@ impl hkask_capability::ToolPort for McpRuntime {
 
 impl McpRuntime {
     /// Inner tool call: live-connection check, JSON-RPC dispatch, result parsing.
+    ///
+    /// Heals a lost connection rather than reporting it: when the server has no
+    /// live peer, or the dispatch itself fails because the transport closed under
+    /// it, this reconnects once (bounded by [`RECONNECT_COOLDOWN`]) and retries.
+    /// Exactly one retry — a second transport failure is reported, because a
+    /// server that dies immediately after a successful handshake is broken, not
+    /// transiently unavailable, and retrying would spin.
     async fn call_tool_inner(
         &self,
         server: &str,
         tool: &str,
         args: Value,
     ) -> Result<Value, hkask_capability::ToolPortError> {
-        if self.get_peer(server).await.is_some() {
-            // `args` is owned and unused after this point — move the map out
-            // instead of cloning (non-object args collapse to an empty map,
-            // matching the prior `as_object().cloned().unwrap_or_default()`).
-            let arguments = match args {
-                Value::Object(map) => map,
-                _ => serde_json::Map::new(),
-            };
-            let result = self
-                .call_tool(server, tool, arguments)
-                .await
-                .map_err(|e| hkask_capability::ToolPortError::InvocationFailed(e.to_string()))?;
-            if result.is_error.unwrap_or(false) {
-                return Err(hkask_capability::ToolPortError::InvocationFailed(
-                    extract_text_content(&result),
-                ));
+        // `args` is owned and unused after this point — move the map out instead
+        // of cloning (non-object args collapse to an empty map, matching the prior
+        // `as_object().cloned().unwrap_or_default()`).
+        let arguments = match args {
+            Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+
+        if self.get_peer(server).await.is_none() {
+            // No live peer. Reconnect before deciding this is a failure — the
+            // connection may have died since the last call.
+            if !self.try_reconnect(server).await {
+                return Err(self.unavailable_error(server, tool).await);
             }
-            return Ok(parse_call_result(&result));
         }
+
+        match self.dispatch(server, tool, arguments.clone()).await {
+            Err(DispatchError::TransportLost(detail)) => {
+                tracing::warn!(
+                    target: "hkask.mcp",
+                    server_id = %server,
+                    tool = %tool,
+                    detail = %detail,
+                    "Tool dispatch lost the transport - reconnecting and retrying once"
+                );
+                if !self.try_reconnect(server).await {
+                    return Err(hkask_capability::ToolPortError::Unavailable(format!(
+                        "Server '{server}' transport closed and could not be reconnected: {detail}"
+                    )));
+                }
+                self.dispatch(server, tool, arguments)
+                    .await
+                    .map_err(DispatchError::into_port_error)
+            }
+            other => other.map_err(DispatchError::into_port_error),
+        }
+    }
+
+    /// One dispatch attempt against the currently-registered peer.
+    ///
+    /// Separates "the transport went away" from "the tool itself failed" so the
+    /// caller can retry only the former. A blanket retry would re-run
+    /// state-changing tools whose failure was semantic, not transport-level.
+    async fn dispatch(
+        &self,
+        server: &str,
+        tool: &str,
+        arguments: serde_json::Map<String, Value>,
+    ) -> Result<Value, DispatchError> {
+        let Some(peer) = self.get_peer(server).await else {
+            return Err(DispatchError::TransportLost(format!(
+                "server '{server}' has no live connection"
+            )));
+        };
+        if peer.is_transport_closed() {
+            return Err(DispatchError::TransportLost(format!(
+                "server '{server}' transport closed"
+            )));
+        }
+
+        let params = CallToolRequestParams::new(tool.to_string()).with_arguments(arguments);
+        let result = match peer.call_tool(params).await {
+            Ok(result) => result,
+            Err(rmcp::service::ServiceError::TransportClosed) => {
+                return Err(DispatchError::TransportLost("transport closed".to_string()));
+            }
+            Err(e @ rmcp::service::ServiceError::TransportSend(_)) => {
+                return Err(DispatchError::TransportLost(e.to_string()));
+            }
+            Err(e) => return Err(DispatchError::Failed(e.to_string())),
+        };
+        if result.is_error.unwrap_or(false) {
+            return Err(DispatchError::Failed(extract_text_content(&result)));
+        }
+        Ok(parse_call_result(&result))
+    }
+
+    /// The error for a server with no live connection and no working reconnect,
+    /// distinguishing an unknown tool from an unavailable server.
+    async fn unavailable_error(
+        &self,
+        server: &str,
+        tool: &str,
+    ) -> hkask_capability::ToolPortError {
         if !self.tool_exists(tool).await {
-            return Err(hkask_capability::ToolPortError::NotFound(
-                hkask_types::NotFound {
-                    entity_type: "tool".to_string(),
-                    id: format!("Tool '{}' not found in MCP runtime", tool),
-                },
-            ));
+            return hkask_capability::ToolPortError::NotFound(hkask_types::NotFound {
+                entity_type: "tool".to_string(),
+                id: format!("Tool '{}' not found in MCP runtime", tool),
+            });
         }
-        Err(hkask_capability::ToolPortError::InvocationFailed(format!(
-            "Server '{}' registered but not connected — call start_server_with_env() first",
-            server
-        )))
+        let known_launch = self.launch_specs.read().await.contains_key(server);
+        if known_launch {
+            hkask_capability::ToolPortError::Unavailable(format!(
+                "Server '{server}' is not connected and could not be restarted — check that the \
+                 hkask-mcp-{server} binary runs (set HKASK_MCP_{}_BIN to override the path)",
+                server.to_uppercase()
+            ))
+        } else {
+            hkask_capability::ToolPortError::Unavailable(format!(
+                "Server '{server}' registered but never started — call start_server_with_env() first"
+            ))
+        }
+    }
+}
+
+/// Outcome of a single dispatch attempt, split by whether a retry could help.
+enum DispatchError {
+    /// The transport went away. Reconnecting may recover.
+    TransportLost(String),
+    /// The call reached the server and failed there. A retry would only repeat it.
+    Failed(String),
+}
+
+impl DispatchError {
+    fn into_port_error(self) -> hkask_capability::ToolPortError {
+        match self {
+            DispatchError::TransportLost(detail) => {
+                hkask_capability::ToolPortError::Unavailable(format!("transport closed: {detail}"))
+            }
+            DispatchError::Failed(detail) => {
+                hkask_capability::ToolPortError::InvocationFailed(detail)
+            }
+        }
     }
 }
 
@@ -615,4 +907,82 @@ mod tests {
                 name: server_id.to_string(),
                 tools: vec![McpTool {
                     name: tool_name.to_string(),
-                    description:
+                    description: "test tool".to_string(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    server_id: server_id.to_string(),
+                }],
+            })
+            .await;
+    }
+
+    /// RR-0057: an agent the composition root never seeded must be
+    /// auto-registered and allowed through, not refused. Regression for the
+    /// persona mismatch where `main.rs` seeded only `swarm-panel` while the IPC
+    /// dispatch used `kask-panel` and the cascade used `manifest-executor`,
+    /// so the old fail-closed cap denied every call on both paths.
+    #[tokio::test]
+    async fn unregistered_agent_is_auto_registered_not_denied() {
+        let runtime = McpRuntime::new().with_governance(cybernetics(), Arc::new(NoopEventSink));
+        register_test_tool(&runtime, "test-server", "test_tool").await;
+
+        let unseeded = hkask_types::WebID::from_persona(b"never-registered-persona");
+        let result = runtime
+            .invoke("test-server", "test_tool", serde_json::json!({}), unseeded)
+            .await;
+
+        assert!(
+            !matches!(result, Err(ToolPortError::EnergyBudgetExceeded(_))),
+            "an unseeded agent must be auto-registered and allowed through, not refused: {result:?}"
+        );
+    }
+
+    /// RR-0057: the one pre-dispatch refusal — a runaway loop that burns its
+    /// whole per-tick ceiling.
+    #[tokio::test]
+    async fn exhausted_ceiling_trips_the_runaway_breaker() {
+        let cyber = cybernetics();
+        let agent = hkask_types::WebID::from_persona(b"ceiling-test-agent");
+        cyber.read().await.register_call_cap(agent, 1).await;
+
+        let runtime = McpRuntime::new().with_governance(cyber, Arc::new(NoopEventSink));
+        register_test_tool(&runtime, "test-server", "test_tool").await;
+
+        let first = runtime
+            .invoke("test-server", "test_tool", serde_json::json!({}), agent)
+            .await;
+        assert!(
+            !matches!(first, Err(ToolPortError::EnergyBudgetExceeded(_))),
+            "the first call fits within a ceiling of 1: {first:?}"
+        );
+
+        let second = runtime
+            .invoke("test-server", "test_tool", serde_json::json!({}), agent)
+            .await;
+        assert!(
+            matches!(second, Err(ToolPortError::EnergyBudgetExceeded(_))),
+            "exhausting the per-tick ceiling must trip the breaker: {second:?}"
+        );
+    }
+
+    /// RR-0056: metering is accounting, not authorization — its absence must not
+    /// refuse the call.
+    #[tokio::test]
+    async fn no_governance_dispatches_unmetered() {
+        let runtime = McpRuntime::new();
+        register_test_tool(&runtime, "test-server", "test_tool").await;
+
+        let result = runtime
+            .invoke(
+                "test-server",
+                "test_tool",
+                serde_json::json!({}),
+                hkask_types::WebID::from_persona(b"any-agent"),
+            )
+            .await;
+
+        assert!(
+            !matches!(result, Err(ToolPortError::EnergyBudgetExceeded(_))),
+            "an unmetered runtime must dispatch rather than refuse: {result:?}"
+        );
+    }
+}

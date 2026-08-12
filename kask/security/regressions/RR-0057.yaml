@@ -12,7 +12,8 @@ severity: high
 detection:
   kind: cargo-test
   pattern: "exhausted_ceiling_trips_the_runaway_breaker"
-  include: "kask/crates/hkask-mcp/tests/invoke_gate.rs"
+  # `--lib` path — see the note in RR-0056 on the harness's cargo test invocation.
+  include: "crates/hkask-mcp/src/runtime.rs"
 mitigation: |
   The call cap is a runaway-loop breaker and a usage meter, NOT an authorization
   gate. Its previous fail-closed behavior (`can_proceed` returning false for any

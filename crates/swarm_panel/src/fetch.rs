@@ -5,6 +5,7 @@
 //! same extraction pattern.
 
 use gpui::Context;
+use hkask_tool_invoker::InvokeError;
 use hkask_types::tool_response::parse_tool_response;
 use serde_json::json;
 
@@ -20,11 +21,12 @@ impl SwarmPanel {
     /// Fetch agents and swarms via the governed MCP tool path.
     pub(crate) fn fetch_all(&mut self, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.agents_error = Some(
-                "Tool invoker not wired — the swarm MCP server is unavailable. \
-                 Ensure kask MCP servers are enabled (kask.mcp.load_default)."
-                    .into(),
-            );
+            // Not an error state yet: the invoker is wired asynchronously by the
+            // deferred post-login task, so a panel opened during startup reaches
+            // here before the dispatch path exists. Retry rather than presenting a
+            // dead end.
+            self.agents_error = Some(hkask_tool_invoker::NOT_WIRED_MESSAGE.into());
+            self.schedule_fetch_retry(cx);
             cx.notify();
             return;
         };
@@ -97,6 +99,7 @@ impl SwarmPanel {
                                     this.entries.retain(|e| matches!(e, SwarmEntry::Swarm(_)));
                                     this.entries.extend(agents);
                                     this.agents_error = None;
+                                    this.note_fetch_success();
                                     this.filter_entries(Self::current_swarm_mode(cx), cx);
                                 }
                                 None => {
@@ -107,8 +110,19 @@ impl SwarmPanel {
                             }
                         }
                         Err(err) => {
-                            this.agents_error =
-                                Some(format!("Failed to list agents: {err}").into());
+                            // A closed MCP transport (server restarting after a
+                            // settings change, child process replaced) is transient
+                            // — schedule a retry instead of leaving the panel empty
+                            // until the operator reopens it.
+                            if err.is_retryable() {
+                                this.agents_error = Some(
+                                    format!("Reconnecting to the swarm server… ({err})").into(),
+                                );
+                                this.schedule_fetch_retry(cx);
+                            } else {
+                                this.agents_error =
+                                    Some(format!("Failed to list agents: {err}").into());
+                            }
                             this.filter_entries(Self::current_swarm_mode(cx), cx);
                         }
                     }
@@ -183,11 +197,19 @@ impl SwarmPanel {
                             }
                         }
                         Err(err) => {
-                            // Local agents fetch failure is not fatal — the
-                            // panel still shows cloud agents. Log and continue.
-                            log::debug!(
-                                "swarm-panel: local agents fetch failed (non-fatal): {err}"
-                            );
+                            // Local agents fetch failure is not fatal — the panel
+                            // still shows cloud agents. A transport loss is worth a
+                            // warn (it means the whole server is gone, so the cloud
+                            // list is stale too); anything else stays at debug.
+                            if err.is_retryable() {
+                                log::warn!(
+                                    "swarm-panel: local agents fetch lost the MCP transport: {err}"
+                                );
+                            } else {
+                                log::debug!(
+                                    "swarm-panel: local agents fetch failed (non-fatal): {err}"
+                                );
+                            }
                         }
                     }
                     cx.notify();
@@ -287,6 +309,7 @@ impl SwarmPanel {
                                             });
                                     }
                                     this.swarms_error = None;
+                                    this.note_fetch_success();
                                     this.filter_entries(Self::current_swarm_mode(cx), cx);
                                 }
                                 None => {
@@ -298,11 +321,24 @@ impl SwarmPanel {
                             }
                         }
                         Err(err) => {
-                            // Auth failures here are expected when no key is configured —
-                            // degrade to agents-only rather than an error state.
-                            log::warn!(
-                                "swarm-panel: could not fetch workspaces (agents-only mode): {err}"
-                            );
+                            // Two very different causes previously collapsed into one
+                            // silent `log::warn!` labelled "agents-only mode":
+                            //
+                            // - No ABW key configured: genuinely expected, and
+                            //   agents-only is the right degradation. Stays quiet.
+                            // - The MCP transport closed: NOT expected, and silence
+                            //   here is what made a routine server restart look like
+                            //   a permanent empty panel. Surfaced and retried.
+                            if err.is_retryable() {
+                                this.swarms_error = Some(
+                                    format!("Reconnecting to the swarm server… ({err})").into(),
+                                );
+                                this.schedule_fetch_retry(cx);
+                            } else {
+                                log::warn!(
+                                    "swarm-panel: could not fetch workspaces (agents-only mode): {err}"
+                                );
+                            }
                             this.filter_entries(Self::current_swarm_mode(cx), cx);
                         }
                     }
@@ -359,11 +395,18 @@ impl SwarmPanel {
                             }
                         }
                         Err(err) => {
-                            // Local swarms fetch failure is not fatal — the
-                            // panel still shows cloud swarms. Log and continue.
-                            log::debug!(
-                                "swarm-panel: local swarms fetch failed (non-fatal): {err}"
-                            );
+                            // Local swarms fetch failure is not fatal — the panel
+                            // still shows cloud swarms. A transport loss is worth a
+                            // warn; anything else stays at debug.
+                            if err.is_retryable() {
+                                log::warn!(
+                                    "swarm-panel: local swarms fetch lost the MCP transport: {err}"
+                                );
+                            } else {
+                                log::debug!(
+                                    "swarm-panel: local swarms fetch failed (non-fatal): {err}"
+                                );
+                            }
                         }
                     }
                     cx.notify();

@@ -604,7 +604,7 @@ impl MediaWidget {
                         this.explain_error = None;
                     }
                     Err(error) => {
-                        this.explain_error = Some(error);
+                        this.explain_error = Some(error.message());
                         this.explain_result = None;
                     }
                 }
@@ -873,7 +873,7 @@ mod tests {
     /// A `MockToolInvoker` whose calls and canned result are configurable.
     struct MockToolInvoker {
         calls: Mutex<Vec<(String, String, serde_json::Value)>>,
-        result: Mutex<Result<String, String>>,
+        result: Mutex<Result<String, hkask_tool_invoker::InvokeError>>,
     }
 
     impl hkask_tool_invoker::ToolInvoker for MockToolInvoker {
@@ -882,7 +882,7 @@ mod tests {
             server: &str,
             tool: &str,
             args: serde_json::Value,
-        ) -> Task<Result<String, String>> {
+        ) -> Task<Result<String, hkask_tool_invoker::InvokeError>> {
             self.calls.lock().unwrap_or_else(|e| e.into_inner()).push((
                 server.to_string(),
                 tool.to_string(),
@@ -1055,7 +1055,9 @@ mod tests {
         let _restore = InvokerGuard;
         let mock = Arc::new(MockToolInvoker {
             calls: Mutex::new(Vec::new()),
-            result: Mutex::new(Err("describe_image unavailable".to_string())),
+            result: Mutex::new(Err(hkask_tool_invoker::InvokeError::Failed(
+                "describe_image unavailable".to_string(),
+            ))),
         });
         hkask_tool_invoker::set_tool_invoker(Some(mock));
 

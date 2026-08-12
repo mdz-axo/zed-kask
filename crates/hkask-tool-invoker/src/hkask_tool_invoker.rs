@@ -7,7 +7,7 @@
 //!    `crates/swarm_panel/src/tool_invoker.rs`. The production impl
 //!    (`PanelToolInvoker`) lives in `crates/zed/src/main.rs` and delegates to
 //!    `McpRuntime` (which implements `ToolPort`), so every call flows through
-//!    the same governed, OCAP-gated, gas-budgeted path as agent-initiated tool
+//!    the same metered, call-capped path as agent-initiated tool
 //!    calls. Relocating the trait to a leaf crate lets the kask GPUI widget
 //!    crates dispatch MCP tools without depending on the heavy `swarm_panel`
 //!    crate (which would invert sane layering: leaf widgets → heavy panel).
@@ -39,14 +39,74 @@ use gpui::Task;
 use serde::Deserialize;
 use serde_json::Value;
 
+/// Why a UI-initiated tool call failed, at the granularity a panel needs to
+/// decide what to do next.
+///
+/// The seam previously carried a bare `String`, which forced every panel to
+/// either treat all failures as terminal or substring-match the message. Both
+/// were wrong in the same direction: a transient MCP transport loss (server
+/// restarting after a settings change, child process replaced) was rendered as a
+/// permanent error, and the panel never re-fetched. Classifying here lets a panel
+/// retry exactly the failures a retry can fix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InvokeError {
+    /// No invoker is wired yet (pre-login, or MCP servers disabled). Not a
+    /// failure of the request — the dispatch path does not exist yet.
+    NotWired,
+    /// The server could not be reached: transport closed, restarting, or it
+    /// could not be re-started. The call never ran, so retrying it is safe.
+    Unavailable(String),
+    /// The call reached the tool and failed there, or was refused before
+    /// dispatch (call cap, unknown tool). Retrying repeats the same outcome.
+    Failed(String),
+}
+
+impl InvokeError {
+    /// Whether re-issuing the identical call could plausibly succeed.
+    ///
+    /// [`InvokeError::NotWired`] is retryable because wiring happens
+    /// asynchronously at startup: a panel constructed before the deferred
+    /// post-login task runs will find an invoker moments later.
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, InvokeError::NotWired | InvokeError::Unavailable(_))
+    }
+
+    /// The operator-facing message.
+    #[must_use]
+    pub fn message(&self) -> String {
+        match self {
+            InvokeError::NotWired => NOT_WIRED_MESSAGE.to_string(),
+            InvokeError::Unavailable(detail) | InvokeError::Failed(detail) => detail.clone(),
+        }
+    }
+}
+
+/// The message shown when no invoker is wired. Shared so every panel explains
+/// the same condition the same way.
+pub const NOT_WIRED_MESSAGE: &str =
+    "The kask MCP servers are not connected yet. If this persists, ensure they are enabled \
+     (kask.mcp.load_default).";
+
+impl std::fmt::Display for InvokeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message())
+    }
+}
+
 /// Invoke MCP tools directly from UI surfaces (panels, widgets), bypassing the
 /// agent conversation loop. The implementation (in `main.rs` as
 /// `PanelToolInvoker`) delegates to `McpRuntime` (which implements `ToolPort`),
-/// so every call flows through the same governed, OCAP-gated, gas-budgeted path
-/// as agent-initiated tool calls.
+/// so every call flows through the same governed, gas-budgeted path as
+/// agent-initiated tool calls.
 pub trait ToolInvoker: Send + Sync {
     /// Invoke a tool on a specific MCP server. Returns the result as JSON text.
-    fn invoke_tool(&self, server: &str, tool: &str, args: Value) -> Task<Result<String, String>>;
+    fn invoke_tool(
+        &self,
+        server: &str,
+        tool: &str,
+        args: Value,
+    ) -> Task<Result<String, InvokeError>>;
 }
 
 static TOOL_INVOKER: std::sync::Mutex<Option<Arc<dyn ToolInvoker>>> = std::sync::Mutex::new(None);

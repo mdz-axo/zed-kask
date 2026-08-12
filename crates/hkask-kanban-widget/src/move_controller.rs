@@ -230,7 +230,7 @@ impl KanbanMoveController {
                         this.move_controller.optimistic_move = None;
                     }
                     Err(error) => {
-                        this.move_controller.dispatch_error = Some(error);
+                        this.move_controller.dispatch_error = Some(error.message());
                         this.move_controller
                             .rollback_optimistic_move(&mut this.columns, &this.column_meta);
                     }

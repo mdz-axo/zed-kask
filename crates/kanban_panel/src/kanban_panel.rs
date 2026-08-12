@@ -3,7 +3,7 @@
 //! kanban board. Mirrors the `swarm_panel` crate's center-pane `Item` pattern.
 //!
 //! The panel fetches boards and tasks from the `hkask-mcp-kata-kanban` MCP
-//! server through the global `ToolInvoker` hook (the governed, OCAP-gated MCP
+//! server through the global `ToolInvoker` hook (the metered MCP
 //! runtime path), then renders them via the `KanbanWidget` — the same widget
 //! that renders ```` ```kanban ```` fenced blocks inline in agent markdown.
 //! The panel is the persistent, always-visible counterpart to the agent's

@@ -207,18 +207,22 @@ static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 /// env var.
 static INFERENCE_SOCKET_PATH: OnceLock<String> = OnceLock::new();
 
-/// Per-tick call cap for the `swarm-panel` persona — the authority behind the
-/// kask panel's `ToolInvoker`, the FlowDef skill cascade's tool calls, and
-/// the inference-IPC `tool_invoke` dispatch (swarm delegated agents).
+/// Per-tick call ceiling seeded for the `swarm-panel` persona (the kask panel's
+/// `ToolInvoker`).
 ///
-/// `CallCapManager::can_proceed` DENIES agents without a registered cap
-/// (fail-closed), and no other production path registers caps (the curator
-/// directive channel is not wired and cap persistence is not configured).
-/// Without this seed, every governed tool call — including the swarm server's
-/// delegated-tool dispatch — fails with `EnergyBudgetExceeded`. One call is
-/// charged per governed tool invocation; the cap resets to the ceiling each
-/// regulation tick (10s), so normal panel/curator activity never exhausts it
-/// while a runaway delegated loop is still bounded to `ceiling` calls per tick.
+/// This is a runaway-loop breaker and a usage meter, not an authority: one call
+/// is charged per tool invocation and the ceiling resets each regulation tick
+/// (10s), so normal activity never reaches it while a non-terminating delegated
+/// loop stays bounded to `ceiling` calls per tick.
+///
+/// Seeding is no longer load-bearing for correctness. `charge_call_metered`
+/// auto-registers an unseeded agent at
+/// `hkask_regulation::DEFAULT_RUNAWAY_CALL_CEILING` and logs the gap instead of
+/// refusing (RR-0057) — the prior fail-closed behavior silently broke the two
+/// paths that mint *different* personas (`kask-panel` on the inference-IPC
+/// dispatch, `manifest-executor` in the skill cascade), since those derive
+/// different WebIDs than the one seeded here. This seed now only sets an
+/// explicit ceiling for the panel persona.
 const SWARM_PANEL_CALL_CAP: u32 = 10_000;
 
 /// Install a panic hook that logs the panic (location + payload + backtrace)
@@ -640,7 +644,7 @@ fn main() {
 
         // D1 composition root: wire the hKask manifest executor into the SkillTool.
         // After this call, skill activations run the hKask cascade (KnowAct/FlowDef/
-        // RenderAct + PDCA + gas/rjoule + OCAP) instead of injecting the SKILL.md body.
+        // RenderAct + PDCA + gas/rjoule budgets) instead of injecting the SKILL.md body.
         // The SKILL.md files in .agents/skills/ remain the discovery-only catalog entries.
         // The manifest YAMLs in kask/registry/manifests/ drive the cascade.
         //
@@ -650,9 +654,10 @@ fn main() {
         // `kask_bridge::BUILT_IN_MCP_SERVERS` (single source of truth).
 
         // D3: Construct the McpRuntime (manages MCP server child processes).
-        // The McpRuntime implements ToolPort — OCAP-gated tool invocation with a
-        // per-agent call cap (one call charged per invocation) and reg.tool.*
-        // span emission. MCP servers are started as child processes (stdio).
+        // The McpRuntime implements ToolPort — tool dispatch with a per-agent
+        // call meter (one call charged per invocation, runaway-loop breaker) and
+        // reg.tool.* span emission. It does NOT authorize (RR-0056). MCP servers
+        // are started as child processes (stdio).
         //
         // Server auto-launch happens after settings::init() (below) so we
         // can read KaskSettings to determine which servers to load.
@@ -855,12 +860,13 @@ fn main() {
         log::info!("Curator directive sink wired to CuratorDirectiveTool");
         let mcp_runtime_for_startup = mcp_runtime.clone();
         let tool_port = mcp_runtime;
-        // OCAP token verification is self-referential (token.verify() checks
-        // the signature against the public key embedded in the token itself,
-        // not against a trusted authority), so no secret is threaded through
-        // the bridge. Token minting uses `panel_default_token` with a static
-        // key. The capability-match gate in McpRuntime::invoke is what denies
-        // mismatched tool/resource declarations.
+        // No capability token is threaded through the bridge. `McpRuntime::invoke`
+        // performs no per-call authorization: its former capability-match gate
+        // compared a caller-supplied tool name against itself and could deny
+        // nothing (RR-0056). `invoke` takes an `agent: WebID` for call metering
+        // only. Delegated-dispatch authority is the per-request `tool_allowlist`
+        // in `kask_bridge::inference_ipc_server` (fail-closed), the swarm card
+        // `mcp_tools` allowlist, and the per-server MCP env allowlists.
 
         // D5: Keystore uses the `keyring` crate directly for all keychain
         // reads/writes (synchronous OS keychain I/O). API keys for inference
@@ -2121,9 +2127,9 @@ fn main() {
                     }
                 });
 
-                // Launch MCP servers via McpRuntime for app-global governed
-                // dispatch (OCAP/gas/regulation). These instances serve the
-                // skill cascade (FlowDef) and kask panel.
+                // Launch MCP servers via McpRuntime for app-global metered
+                // dispatch (call metering + regulation spans). These instances
+                // serve the skill cascade (FlowDef) and kask panel.
                 //
                 // Zed's ContextServerStore (per-project) launches separate
                 // instances for the agent tool picker — registered via
@@ -3160,6 +3166,29 @@ async fn kask_server_env(
     mcp_env
 }
 
+/// The env keys whose presence or value differs between two server env maps.
+///
+/// Keys only — several values are credentials and must not reach the log.
+fn changed_env_keys(
+    previous: &std::collections::HashMap<String, String>,
+    current: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    let mut keys: Vec<String> = previous
+        .iter()
+        .filter(|(key, value)| current.get(*key) != Some(*value))
+        .map(|(key, _)| key.clone())
+        .chain(
+            current
+                .keys()
+                .filter(|key| !previous.contains_key(*key))
+                .cloned(),
+        )
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
 // zed-kask: D3/D8 — F25: sync_kask_mcp_runtime_servers (governed McpRuntime restart).
 /// Re-sync the governed `McpRuntime` server processes when kask settings
 /// change (e.g. `kask.swarm.mode`, credit ceilings, provider toggles).
@@ -3214,7 +3243,16 @@ fn sync_kask_mcp_runtime_servers(
             if previous == env {
                 continue;
             }
-            log::info!("Kask MCP server '{server_id}' env changed — restarting (McpRuntime)");
+            // Name the keys that changed. A restart tears down live connections
+            // and fails every in-flight panel call, so "env changed" alone is not
+            // enough to tell a deliberate settings toggle from an ordering artifact
+            // (e.g. a credential that only resolved after launch). Values are
+            // never logged — several are credentials.
+            log::info!(
+                "Kask MCP server '{server_id}' env changed — restarting (McpRuntime); \
+                 changed keys: {}",
+                changed_env_keys(&previous, &env).join(", ")
+            );
             changed.push((server_id, format!("hkask-mcp-{server_id}"), env));
         }
         if changed.is_empty() {
@@ -3234,16 +3272,31 @@ fn sync_kask_mcp_runtime_servers(
                     .await
                 {
                     Ok(()) => {
-                        *last_env
+                        // `insert`, not `get_mut().expect()`: the baseline entry is
+                        // written by the launch loop, but this observer can fire
+                        // concurrently with it, and a missing entry must record the
+                        // new baseline rather than panic (`.rules`: no `expect` on
+                        // fallible lookups).
+                        last_env
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
-                            .get_mut(server_id)
-                            .expect("baseline recorded before start") = env;
+                            .insert(server_id.to_string(), env);
                     }
                     Err(e) => {
                         // Keep the old baseline so a subsequent settings
                         // change retries the restart.
-                        log::warn!("Kask MCP server '{server_id}' restart failed: {e}");
+                        //
+                        // `stop_server` already dropped the connection, so the
+                        // runtime has no live server for `server_id` right now.
+                        // `McpRuntime::call_tool_inner` reconnects on demand from
+                        // the recorded launch spec, so panel calls recover without
+                        // another settings change — but the failure is still an
+                        // operator-visible warning, since a broken binary will not
+                        // heal on its own.
+                        log::warn!(
+                            "Kask MCP server '{server_id}' restart failed: {e} — the runtime \
+                             will retry the connection on the next tool call"
+                        );
                     }
                 }
             }
@@ -3326,9 +3379,9 @@ impl kask_bridge::WorktreeSpawner for AgentPanelWorktreeSpawner {
 }
 
 /// `SkillExecPort` impl that forwards skill execution to the agent's
-/// `ManifestExecutor` (its own call-cap/OCAP enforcement). Same
-/// pattern as `SkillTool`. The cascade runs with the executor's own
-/// call-cap/OCAP enforcement on this side; the wrapper only forwards name + task.
+/// `ManifestExecutor`. Same pattern as `SkillTool`. The cascade runs on this
+/// side with its own gas/rjoule budget, call metering, and FIDES runtime policy
+/// check; the wrapper only forwards name + task.
 struct AgentSkillExec;
 
 impl hkask_types::SkillExecPort for AgentSkillExec {
@@ -3388,7 +3441,7 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
         server: &str,
         tool: &str,
         args: serde_json::Value,
-    ) -> gpui::Task<Result<String, String>> {
+    ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
         use hkask_capability::ToolPort;
         use hkask_types::WebID;
 
@@ -3400,9 +3453,19 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
         let tool = tool.to_string();
 
         self.executor.spawn(async move {
+            // Preserve the retryable/terminal distinction across the seam. A
+            // blanket `e.to_string()` erased it and forced panels to treat a
+            // restarting MCP server as a permanent failure.
             let result = ToolPort::invoke(&*tool_port, &server, &tool, args, webid)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|error| {
+                    let message = error.to_string();
+                    if error.is_retryable() {
+                        hkask_tool_invoker::InvokeError::Unavailable(message)
+                    } else {
+                        hkask_tool_invoker::InvokeError::Failed(message)
+                    }
+                })?;
             Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()))
         })
     }

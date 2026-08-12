@@ -60,12 +60,23 @@ The Magna Carta is a **charter (OUGHT)** — it states the sovereignty principle
 | Surface | Location | Role |
 |---|---|---|
 | `Visibility` enum (`Private`/`Shared`/`Public`) | `hkask-types/src/visibility.rs:34-39` | Per-h_mem data-category classification |
-| `DelegationToken` struct | `hkask-capability/src/token_types.rs:25-32` | In-process capability token (minted/consumed in-process; no signature, no expiry) |
-| `DelegationToken::is_valid_for` | `hkask-capability/src/token_types.rs:80-84` | Triple-match capability check (resource, resource_id, action) |
-| `McpRuntime::invoke` OCAP gate | `hkask-mcp/src/runtime.rs:508-514` (impl), gate at `:531-535` | The live capability-match gate; calls `is_valid_for` + `verify_capability_domain` |
-| `verify_capability_domain` | `hkask-mcp/src/runtime.rs:621-631` | Agent domain-shorthand resolution |
+| Delegated-tool allowlist (per request, fail-closed on missing/empty) | `kask_bridge/src/inference_ipc_server.rs` `tool_invoke` dispatch | **The authority gate for delegated dispatch.** Refuses any `server/tool` outside the child-declared allowlist, before dispatch |
+| Per-agent `mcp_tools` allowlist | `hkask-mcp-swarm/src/agent_executor.rs:238,340` | Restricts which tools a swarm agent may call at all |
+| Per-server MCP env / credential allowlists | `kask_bridge/src/mcp_servers.rs` | Scopes credentials per server (RR-0038) |
+| FIDES `Source`→`Sink` runtime policy check | `hkask-templates/src/step_actions.rs` `invoke_tool` | Live information-flow gate (`Block`/`RequireHuman`/`Log`), RR-0053 |
+| Call meter / runaway-loop breaker | `hkask-regulation::CallCapManager`, charged in `McpRuntime::invoke` | Bounds non-terminating loops and meters usage. **Fail-open** on an unseeded agent (RR-0057) — not an authorization gate |
 
-This is the **sole live enforcement membrane**: every governed tool invocation passes through `McpRuntime::invoke`, which requires a matching `DelegationToken`. There is no signature verification and no token expiry — tokens are plain in-process structs.
+> **Removed 2026-08-12 — `McpRuntime::invoke` is NOT an authorization gate.**
+> The former OCAP capability-match gate (`DelegationToken::is_valid_for` +
+> `verify_capability_domain`) was deleted because it could not deny anything: all
+> three production mint sites derived the token's `resource_id` from the same tool
+> name they passed to `invoke`, so the check compared a caller-supplied value
+> against itself. `DelegationToken`, `panel_default_token`, `capabilities_match`,
+> and `ToolPortError::CapabilityDenied` no longer exist; `invoke` takes
+> `agent: WebID` for metering only. See `security/regressions/RR-0056.yaml`.
+>
+> There is no longer a single "enforcement membrane." Authority is the allowlist
+> rows above — boundaries whose list the caller being checked does not choose.
 
 ### Intended design (OUGHT) — NOT in code as of 2026-08-04
 
@@ -78,10 +89,10 @@ The following charter types are **design intentions, not verifiable code**. Each
 | `DefaultSpecCurator` / `check_sovereignty` | OUGHT — zero hits | The prior `hkask-pods::curator_agent::DefaultSpecCurator` was deleted with the pod abstraction; no successor exists |
 | `SovereigntyConsent` / `DenyAllConsent` | OUGHT — zero hits | Intended consent port and fail-closed default |
 | `require_sovereignty` | OUGHT — zero hits | Intended data-class policy gate; not yet enforced |
-| `require_capability` | OUGHT as a named fn — zero hits | The *concept* is live (the `is_valid_for` call in `McpRuntime::invoke`), but no function is literally named `require_capability` |
+| `require_capability` | OUGHT — zero hits, and the concept is no longer live per-call | The `is_valid_for` check this once pointed at was removed as vacuous (RR-0056). Per-call capability gating is deliberately not implemented; capability *separation* is, via the allowlists above |
 | `SovereigntyChecker` | OUGHT — doc-comment only | Appears only in doc comments at `hkask-types/src/visibility.rs:18-20` and `:29-30`; no struct or impl exists |
 
-The live default-deny enforcement today is the OCAP capability-match gate in `McpRuntime::invoke` — a call without a matching `DelegationToken` is denied. The `Visibility` enum carries the per-category sovereign/shared/public classification but does not yet expose a `require_sovereignty` gate function. **Do not implement against the OUGHT types in the rest of this document as if they were live code.**
+The live default-deny enforcement today is the **delegated-tool allowlist** on the inference IPC `tool_invoke` dispatch: a request whose `server/tool` is absent from the child-declared allowlist — or that declares no allowlist at all — is refused before dispatch. (The OCAP capability-match gate this paragraph previously cited was removed as vacuous; see the note above and RR-0056.) The `Visibility` enum carries the per-category sovereign/shared/public classification but does not yet expose a `require_sovereignty` gate function. **Do not implement against the OUGHT types in the rest of this document as if they were live code.**
 
 ---
 
@@ -184,7 +195,7 @@ Most-specific grant wins. The verification manifest asserts that consent resolut
 
 ### Fail-Closed Default
 
-`DenyAllConsent` is the **intended** default implementation (OUGHT — not yet implemented in code as of 2026-08-04; zero hits in `kask/crates/`, see [IS vs OUGHT Status](#is-vs-ought-status)) — it denies everything until explicitly granted. If the consent port is misconfigured or missing, the system denies all access. Sovereignty must fail closed. The intended `DataSovereigntyBoundary::hkask_default()` (OUGHT — not yet implemented; `hkask-types/src/curation.rs` does not exist) would set `requires_affirmative_consent = true`, which would be the structural expression of this default-deny principle. The live default-deny enforcement today is the OCAP capability-match gate in `McpRuntime::invoke` (`hkask-mcp/src/runtime.rs:531`) — a call without a matching `DelegationToken` is denied.
+`DenyAllConsent` is the **intended** default implementation (OUGHT — not yet implemented in code as of 2026-08-04; zero hits in `kask/crates/`, see [IS vs OUGHT Status](#is-vs-ought-status)) — it denies everything until explicitly granted. If the consent port is misconfigured or missing, the system denies all access. Sovereignty must fail closed. The intended `DataSovereigntyBoundary::hkask_default()` (OUGHT — not yet implemented; `hkask-types/src/curation.rs` does not exist) would set `requires_affirmative_consent = true`, which would be the structural expression of this default-deny principle. The live default-deny enforcement today is the delegated-tool allowlist on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`) — a request outside the declared allowlist, or one declaring no allowlist, is refused before dispatch. (The OCAP capability-match gate previously cited here was removed as vacuous; see RR-0056.)
 
 ---
 
@@ -216,39 +227,58 @@ User preferences are inherently idiosyncratic and diverge from LLM aggregate def
 
 ## Principle 4: Clear Boundaries
 
-Principles 1–3 are enforced through explicit capability boundaries. Every agent, pod, and template invocation operates within in-process capability tokens.
+Principles 1–3 are enforced through explicit capability boundaries — **allowlists
+held outside the caller**, not per-call tokens.
 
 ### Dual Enforcement Gate
 
-The charter specifies two gates for every resource access. **Only one is
-live today.**
+The charter specifies two gates for every resource access. **Neither is a
+per-call capability token today.**
 
-1. **`require_capability` (IS — live)** — Verify the caller holds an in-process
-   capability token for the requested operation. Enforced at
-   `McpRuntime::invoke` (`hkask-mcp/src/runtime.rs:508-514`), which calls
-   `DelegationToken::is_valid_for` (`hkask-capability/src/token_types.rs:80-84`)
-   plus `verify_capability_domain` (`hkask-mcp/src/runtime.rs:621-631`). No
-   function is literally named `require_capability`; the gate is the
-   `is_valid_for` call.
+1. **`require_capability` (partially live — as separation, not per-call gating)** —
+   The per-call token check this once named was removed on 2026-08-12 as vacuous
+   (RR-0056): every production mint site set the token's `resource_id` from the
+   tool name it then invoked, so the check compared a value against itself and
+   denied nothing. What *is* live is capability **separation** — which tools a
+   caller may reach at all:
+   - the per-request delegated-tool allowlist on the inference IPC `tool_invoke`
+     dispatch (`kask_bridge/src/inference_ipc_server.rs`), fail-closed on a
+     missing or empty allowlist;
+   - each swarm agent card's declared `mcp_tools` allowlist
+     (`hkask-mcp-swarm/src/agent_executor.rs`);
+   - the per-server MCP env/credential allowlists (`kask_bridge/src/mcp_servers.rs`).
 2. **`require_sovereignty` (OUGHT — not yet enforced)** — Verify the data
    category access is permitted by the user's sovereignty boundary and explicit
    consent. Zero hits in `kask/crates/` as of 2026-08-04; no `SovereigntyChecker`
    struct or `require_sovereignty` function exists. See
    [IS vs OUGHT Status](#is-vs-ought-status).
 
-The charter's intent is that no code path bypasses both gates. **Today only
-the capability gate is enforced**; the sovereignty gate is not yet
-implemented, so the "no bypass" claim holds for the capability gate only.
+The charter's intent is that no code path bypasses both gates. **Today the live
+authority is the allowlist set above**; the sovereignty gate is not implemented,
+and per-call capability gating was deliberately removed rather than repaired — a
+check whose authority list is chosen by the party being checked is not a gate.
 
-### Token Properties
+### Boundary Properties
 
-- **In-process** — Tokens are minted and consumed in-process via `DelegationToken::new()`. There is no cryptographic signature or unforgeability — the token is a plain struct passed by reference.
-- **Capability-matched** — `McpRuntime::invoke` checks `token.is_valid_for(resource, resource_id, action)` — a triple match of the token's declared capability against the invoked tool.
-- **No admin override** — There is no "god token" or admin bypass. All access goes through the same `is_valid_for` gate.
+- **Caller-independent authority** — An allowlist is a gate only because the
+  caller does not choose its contents. This is the property the deleted token
+  lacked.
+- **Enforced before dispatch** — The IPC allowlist check runs before any tool is
+  dispatched, so it does not depend on the child process's own matching being
+  correct.
+- **Fail-closed on absence** — A `tool_invoke` request that declares no allowlist
+  is refused outright, never treated as an implicit grant-all.
+- **No admin override** — There is no "god token" or admin bypass; there is no
+  token at all. `McpRuntime::invoke` takes an `agent: WebID` used solely for call
+  metering and span attribution.
 
 ### Capability and Generative Access
 
-The capability tokens for generative settings (P3) are obtained through the affirmative consent process (P2). The capability-match gate gates everything, but P3 ensures the gates for generative settings are equally and transparently accessible through the consent hierarchy. No special role or elevated capability is required beyond what P2's affirmative consent provides.
+Access to generative settings (P3) is obtained through the affirmative consent
+process (P2). The allowlist boundaries gate what an agent can reach, but P3
+ensures those boundaries are equally and transparently accessible through the
+consent hierarchy. No special role or elevated capability is required beyond what
+P2's affirmative consent provides.
 
 ### Verification as Holistic Enforcement
 
@@ -405,7 +435,7 @@ assertions:
 | p3c | Generative Space | Generative resources are open-source with exposed weights and settings | Structural + behavioral |
 | p3e | Generative Space | User preference overrides take precedence over LLM aggregate defaults | Absence check |
 | p4a | Clear Boundaries | Every access path goes through `require_capability` *(IS)* + `require_sovereignty` *(OUGHT)* | Structural + behavioral |
-| p4b | Clear Boundaries | Capability tokens checked by `is_valid_for` — no bypass exists | Structural |
+| p4b | Clear Boundaries | Tool authority is allowlisted outside the caller (IPC `tool_allowlist`, swarm `mcp_tools`, per-server env) — the per-call token check was removed as vacuous (RR-0056) | Structural |
 | p4c | Clear Boundaries | Generative settings tokens obtainable through P2's affirmative consent | Structural |
 | p4d | Clear Boundaries | Connected inference providers expose settings (open-source requirement) | Structural |
 

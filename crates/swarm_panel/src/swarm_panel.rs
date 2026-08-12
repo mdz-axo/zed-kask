@@ -4,7 +4,7 @@
 //!
 //! Entities are **agents** (from the ABW catalogue) and **swarms** (the
 //! operator's workspaces), not skills. Data is fetched through the global
-//! `ToolInvoker` hook (the governed, OCAP-gated MCP runtime path), so all
+//! `ToolInvoker` hook (the metered MCP runtime path), so all
 //! ABW calls flow through `hkask-mcp-swarm` and the kask MCP runtime rather
 //! than ad-hoc HTTP from the UI.
 //!
@@ -96,6 +96,15 @@ actions!(
 
 /// The MCP server id (matches `BUILT_IN_MCP_SERVERS`).
 const SWARM_SERVER: &str = "swarm";
+
+/// First automatic-retry delay after a retryable fetch failure. Doubles per
+/// attempt (1s, 2s, 4s, 8s, 16s).
+const FETCH_RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
+
+/// Maximum consecutive automatic retries before the panel settles on a visible
+/// error and waits for a manual refresh. Bounded so a permanently broken server
+/// does not become an unbounded background poll.
+const MAX_FETCH_RETRIES: u32 = 5;
 
 /// The kanban MCP server id. References the canonical single source of truth
 /// in `hkask_types::kanban_wire::KANBAN_SERVER_NAME` (no duplicated literal) so
@@ -428,6 +437,18 @@ pub struct SwarmPanel {
     /// swarms error (and vice versa) — the H1 cross-clobber finding.
     agents_error: Option<SharedString>,
     swarms_error: Option<SharedString>,
+    /// Pending automatic retry after a *retryable* fetch failure (MCP transport
+    /// closed, invoker not yet wired). Held so it is cancelled on drop and so a
+    /// manual refresh can supersede it.
+    ///
+    /// Without this the panel fetched exactly once, in the constructor: a single
+    /// MCP server restart — which happens routinely when settings change or the
+    /// inference socket resolves after launch — left the panel permanently empty
+    /// with only a `log::warn!` the operator never sees.
+    retry_task: Option<Task<()>>,
+    /// Consecutive retryable-failure count, for backoff. Reset on any success or
+    /// manual refresh.
+    retry_attempt: u32,
     filter: SwarmFilter,
     entries: Vec<SwarmEntry>,
     filtered_entry_indices: Vec<usize>,
@@ -633,6 +654,8 @@ impl SwarmPanel {
                 in_flight: 0,
                 agents_error: None,
                 swarms_error: None,
+                retry_task: None,
+                retry_attempt: 0,
                 filter: SwarmFilter::All,
                 entries: Vec::new(),
                 filtered_entry_indices: Vec::new(),
@@ -684,6 +707,58 @@ impl SwarmPanel {
     /// status strip whenever present (not only in the empty state).
     fn visible_error(&self) -> Option<&SharedString> {
         self.agents_error.as_ref().or(self.swarms_error.as_ref())
+    }
+
+    /// Re-fetch now, cancelling any pending automatic retry and resetting the
+    /// backoff. Bound to the refresh affordance.
+    pub(crate) fn refresh_now(&mut self, cx: &mut Context<Self>) {
+        self.retry_task = None;
+        self.retry_attempt = 0;
+        self.fetch_all(cx);
+    }
+
+    /// Schedule a re-fetch after a retryable failure, with exponential backoff.
+    ///
+    /// Called by the fetchers when a failure is transport-level rather than
+    /// semantic. Backoff is capped at [`MAX_FETCH_RETRIES`] attempts so a
+    /// genuinely broken server produces a bounded number of retries and then a
+    /// stable visible error, rather than an unbounded poll.
+    pub(crate) fn schedule_fetch_retry(&mut self, cx: &mut Context<Self>) {
+        if self.retry_task.is_some() {
+            // A retry is already pending; the sibling fetch's failure rides on it
+            // rather than stacking a second timer.
+            return;
+        }
+        if self.retry_attempt >= MAX_FETCH_RETRIES {
+            log::warn!(
+                "swarm-panel: giving up after {MAX_FETCH_RETRIES} retries — \
+                 use the refresh button once the MCP server is available"
+            );
+            return;
+        }
+        self.retry_attempt += 1;
+        // 1s, 2s, 4s, 8s, 16s.
+        let delay = FETCH_RETRY_BASE_DELAY * 2u32.pow(self.retry_attempt - 1);
+        log::info!(
+            "swarm-panel: fetch failed transiently — retrying in {}s (attempt {}/{})",
+            delay.as_secs(),
+            self.retry_attempt,
+            MAX_FETCH_RETRIES
+        );
+        self.retry_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            this.update(cx, |this, cx| {
+                this.retry_task = None;
+                this.fetch_all(cx);
+            })
+            .ok();
+        }));
+    }
+
+    /// Clear the retry backoff after a successful fetch, so a later transient
+    /// failure starts from the short delay again.
+    pub(crate) fn note_fetch_success(&mut self) {
+        self.retry_attempt = 0;
     }
 
     fn set_mode(&mut self, mode: PanelMode, window: &mut Window, cx: &mut Context<Self>) {

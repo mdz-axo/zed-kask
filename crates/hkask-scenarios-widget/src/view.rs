@@ -584,7 +584,7 @@ impl ScenariosWidget {
                         this.dispatch_error = None;
                     }
                     Err(error) => {
-                        this.dispatch_error = Some(error);
+                        this.dispatch_error = Some(error.message());
                         this.dispatch_result = None;
                     }
                 }

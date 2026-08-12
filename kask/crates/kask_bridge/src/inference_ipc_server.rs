@@ -1061,7 +1061,7 @@ mod tests {
     }
 
     /// `ToolPort` stub that records `(server, tool, args)` and returns a canned
-    /// JSON value. The OCAP token is ignored — the stub does not enforce
+    /// JSON value. The agent identity is ignored — the stub does not enforce
     /// capabilities (that is `McpRuntime`'s job in production).
     struct StubToolPort {
         recorded: Mutex<Option<(String, String, serde_json::Value)>>,

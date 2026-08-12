@@ -592,7 +592,7 @@ impl PortfolioWidget {
                     // The conversation is the durable record; the widget only
                     // surfaces in-flight + error states (T5 spec).
                     Ok(_) => this.dispatch_error = None,
-                    Err(error) => this.dispatch_error = Some(error),
+                    Err(error) => this.dispatch_error = Some(error.message()),
                 }
                 cx.notify();
             })
@@ -706,7 +706,7 @@ impl PortfolioWidget {
                         this.explain_error = None;
                     }
                     Err(error) => {
-                        this.explain_error = Some(error);
+                        this.explain_error = Some(error.message());
                         this.explain_result = None;
                     }
                 }
@@ -1244,7 +1244,7 @@ mod tests {
             server: &str,
             tool: &str,
             args: serde_json::Value,
-        ) -> gpui::Task<Result<String, String>> {
+        ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
             self.calls
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
@@ -1409,7 +1409,7 @@ mod tests {
     /// explain-success test can assert the surfaced result text verbatim.
     struct ExplainMockInvoker {
         calls: std::sync::Mutex<Vec<(String, String, serde_json::Value)>>,
-        result: std::sync::Mutex<Result<String, String>>,
+        result: std::sync::Mutex<Result<String, hkask_tool_invoker::InvokeError>>,
     }
 
     impl hkask_tool_invoker::ToolInvoker for ExplainMockInvoker {
@@ -1418,7 +1418,7 @@ mod tests {
             server: &str,
             tool: &str,
             args: serde_json::Value,
-        ) -> gpui::Task<Result<String, String>> {
+        ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
             self.calls
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
@@ -1570,7 +1570,9 @@ mod tests {
         let _restore = InvokerGuard;
         let mock = std::sync::Arc::new(ExplainMockInvoker {
             calls: std::sync::Mutex::new(Vec::new()),
-            result: std::sync::Mutex::new(Err("research_search unavailable".to_string())),
+            result: std::sync::Mutex::new(Err(hkask_tool_invoker::InvokeError::Failed(
+                "research_search unavailable".to_string(),
+            ))),
         });
         hkask_tool_invoker::set_tool_invoker(Some(mock));
 
