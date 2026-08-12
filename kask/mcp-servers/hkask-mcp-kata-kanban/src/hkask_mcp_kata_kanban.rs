@@ -93,6 +93,22 @@ fn build_task_agent_card(
     }
 }
 
+/// Derive a one-line `TaskActivity` from a task's most recent comment (R3).
+/// The spawn/delegation flow already appends durable comments ("Spawn
+/// executed: agent=…, tokens=…", "Spawned worktree agent for task …"), so
+/// this surfaces the latest one as the card's status strip without a new
+/// ingest channel. The live per-tool-call hook path is a follow-up that
+/// swaps this data source without touching the widget.
+fn derive_task_activity(task: &Task) -> Option<TaskActivity> {
+    let comment = task.comments.last()?;
+    Some(TaskActivity {
+        text: comment.body.clone(),
+        kind: "comment".to_string(),
+        at: comment.created_at.to_rfc3339(),
+        ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+    })
+}
+
 #[tool_router(server_handler)]
 impl KanbanServer {
     #[tool(description = "Create a new kanban board with optional custom columns")]
@@ -301,16 +317,21 @@ impl KanbanServer {
                     Ok(tasks) => Ok(serde_json::to_value(TaskListResponse {
                         tasks: tasks
                             .into_iter()
-                            .map(|t| TaskInfo {
-                                task_id: t.id.to_string(),
-                                board_id: t.board_id.to_string(),
-                                title: t.title,
-                                status: t.status.to_string(),
-                                assignee: t.assignee.map(|a| a.to_string()),
-                                criteria_count: t.criteria.len(),
-                                gas_remaining: t.gas_remaining,
-                                rjoule_remaining: t.rjoule_remaining,
-                                ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+                            .map(|t| {
+                                let activity = derive_task_activity(&t);
+                                TaskInfo {
+                                    task_id: t.id.to_string(),
+                                    board_id: t.board_id.to_string(),
+                                    title: t.title,
+                                    status: t.status.to_string(),
+                                    assignee: t.assignee.map(|a| a.to_string()),
+                                    criteria_count: t.criteria.len(),
+                                    gas_remaining: t.gas_remaining,
+                                    rjoule_remaining: t.rjoule_remaining,
+                                    swarm_id: t.swarm_id.clone(),
+                                    activity,
+                                    ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+                                }
                             })
                             .collect(),
                     })
@@ -749,6 +770,7 @@ impl KanbanServer {
             memory_scope,
             gas_budget,
             rjoule_budget,
+            swarm_id,
         }): Parameters<TaskSpawnRequest>,
     ) -> String {
         execute_tool_semantic(
@@ -789,7 +811,8 @@ impl KanbanServer {
                 let skills_for_agent = delegated_skills.clone();
                 let spec = crate::SpawnSpec::new(tid)
                     .with_level(&delegation_level)
-                    .with_skills(delegated_skills);
+                    .with_skills(delegated_skills)
+                    .with_swarm(swarm_id.clone());
                 let spec = if let Some(ref ms) = memory_scope {
                     spec.with_memory(ms)
                 } else {

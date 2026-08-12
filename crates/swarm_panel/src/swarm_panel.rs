@@ -97,6 +97,12 @@ actions!(
 /// The MCP server id (matches `BUILT_IN_MCP_SERVERS`).
 const SWARM_SERVER: &str = "swarm";
 
+/// The kanban MCP server id. References the canonical single source of truth
+/// in `hkask_types::kanban_wire::KANBAN_SERVER_NAME` (no duplicated literal) so
+/// a rename in the server propagates here. The kanban board is the durable
+/// coordination source of truth; tasks link to swarms via `kanban_task_spawn`.
+const KANBAN_SERVER: &str = hkask_types::kanban_wire::KANBAN_SERVER_NAME;
+
 /// The system prompt injected into the Steer mode `ConversationView`. Tells
 /// the curator it is scoped to the swarm MCP server and that the
 /// `swarm-intelligence` skill is available for composition/steering. The
@@ -257,6 +263,25 @@ fn steer_system_prompt(
          reconfigure_agent action (C6) via swarm_reconfigure_local_agent when\n\
          ORIENT attributes fault (C5).\n"
     );
+    // C1: Append the kanban coordination substrate so an agent steering a swarm
+    // can see and move the board tracking its tasks, and knows the
+    // `kanban_task_spawn` / `kanban_task_delegate_result` bridge. Appended as a
+    // second `format!` (raw string — no `\n\` escape noise) so the diff stays
+    // surgical; the `debug_assert!` below validates the combined prompt.
+    let prompt = format!(
+        r#"{prompt}
+
+## Kanban Coordination Substrate
+
+The `{KANBAN_SERVER}` MCP server is the durable coordination source of truth for task state. A kanban board tracks the work a swarm executes; each task links to its swarm via `kanban_task_spawn`. The board and the swarm are two views of the same coordination graph — steer both.
+
+**Kanban tools** (available in both backends): `kanban_board_list` and `kanban_task_list` read the current board state; `kanban_task_create` adds a task to a board; `kanban_task_move` advances a task between columns (Backlog → Ready → InProgress → Review → Done). The swarm↔kanban bridge is `kanban_task_spawn`, which delegates a task to a swarm agent (worktree-isolated when the zed IPC bridge is open, else the in-memory local runtime) and records the structured result back on the task. Read it back with `kanban_task_delegate_result` — it returns the `delegate_result`, `deterministic_verdict`, and swarm_id linking the task to its swarm. Append feedback with `kanban_task_comment`; record completion evidence with `kanban_task_verify`.
+
+When the operator asks to plan or decompose work, the `kanban-task-decomposition`, `kanban-task-delegation`, and `kanban-task-management` skill cascades are available. Pass the board id and (when known) the swarm id so the cascade writes the durable link on every spawned task.
+
+Pass the swarm id to `kanban_task_spawn` (the swarm_id arg) whenever the task is scoped to the active swarm — this stamps the durable `Task.swarm_id` link so `kanban_task_delegate_result` can answer "which swarm is running this task?" without parsing free-text comments.
+"#
+    );
     debug_assert!(
         prompt
             .split('`')
@@ -267,11 +292,15 @@ fn steer_system_prompt(
                     .chars()
                     .take_while(|c| c.is_alphanumeric() || *c == '_')
                     .collect();
-                !name.starts_with("swarm_")
-                    || name.len() <= "swarm_".len()
-                    || parse::SWARM_TOOLS.contains(&name.as_str())
+                if name.starts_with("swarm_") && name.len() > "swarm_".len() {
+                    return parse::SWARM_TOOLS.contains(&name.as_str());
+                }
+                if name.starts_with("kanban_") && name.len() > "kanban_".len() {
+                    return parse::KANBAN_TOOLS.contains(&name.as_str());
+                }
+                true
             }),
-        "steer_system_prompt advertises a swarm_* tool not in SWARM_TOOLS"
+        "steer_system_prompt advertises a swarm_* or kanban_* tool not in SWARM_TOOLS/KANBAN_TOOLS"
     );
     prompt.into()
 }
@@ -3027,6 +3056,8 @@ mod tests {
     #[test]
     fn steer_prompt_mentions_only_known_tools() {
         let known: std::collections::HashSet<&str> = parse::SWARM_TOOLS.iter().copied().collect();
+        let kanban_known: std::collections::HashSet<&str> =
+            parse::KANBAN_TOOLS.iter().copied().collect();
         for prompt in [
             steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Abw),
             steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Local),
@@ -3052,7 +3083,77 @@ mod tests {
                          — update the const or the prompt"
                     );
                 }
+                if name.starts_with("kanban_") && name.len() > "kanban_".len() {
+                    assert!(
+                        kanban_known.contains(name.as_str()),
+                        "steer prompt advertises `{name}` which is not in KANBAN_TOOLS \
+                         — update the const or the prompt"
+                    );
+                }
             }
+        }
+    }
+
+    #[test]
+    fn kanban_tool_names_match_server() {
+        // `KANBAN_TOOLS` must match the #[tool] fn names in
+        // `hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs`. Keep in sync when
+        // adding/removing a server tool — a rename in the kanban server must be
+        // reflected here so the steer prompt never advertises a stale name.
+        assert_eq!(KANBAN_SERVER, "hkask-mcp-kata-kanban");
+
+        // Pin the count so adding or removing a server tool without updating
+        // the const is caught.
+        assert_eq!(
+            parse::KANBAN_TOOLS.len(),
+            20,
+            "tool count changed — update KANBAN_TOOLS to match \
+             hkask-mcp-kata-kanban #[tool] fns"
+        );
+
+        for tool in parse::KANBAN_TOOLS {
+            assert!(
+                tool.starts_with("kanban_") || *tool == "contract_propose_expect",
+                "tool name `{tool}` must start with `kanban_` or be the \
+                 `contract_propose_expect` exception"
+            );
+        }
+
+        // No duplicates.
+        let mut sorted = parse::KANBAN_TOOLS.to_vec();
+        sorted.sort();
+        let before = sorted.len();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            before,
+            "duplicate tool names in KANBAN_TOOLS list"
+        );
+    }
+
+    #[test]
+    fn steer_prompt_advertises_kanban_tools() {
+        // C7 guard: the steer prompt MUST advertise the kanban coordination
+        // substrate and the swarm↔kanban bridge tools. Without this, an agent
+        // steering a swarm is kanban-blind (the C1 finding). Pin the core
+        // bridge tools so a future edit that drops the kanban section is caught.
+        let prompt = steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Local);
+        assert!(
+            prompt.contains(KANBAN_SERVER),
+            "steer prompt must name the kanban MCP server ({KANBAN_SERVER})"
+        );
+        for required in [
+            "kanban_task_spawn",
+            "kanban_task_delegate_result",
+            "kanban_board_list",
+            "kanban_task_list",
+            "kanban_task_move",
+        ] {
+            assert!(
+                prompt.contains(required),
+                "steer prompt must advertise the `{required}` kanban tool \
+                 (the swarm↔kanban bridge)"
+            );
         }
     }
 }

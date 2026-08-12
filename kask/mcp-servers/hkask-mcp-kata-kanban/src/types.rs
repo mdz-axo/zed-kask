@@ -100,6 +100,26 @@ pub struct TaskListResponse {
     pub tasks: Vec<TaskInfo>,
 }
 
+/// The latest recorded activity on a task — a one-line status the kanban
+/// widget renders on the card (R3). Derived from the task's most recent
+/// comment by the server; the live per-tool-call hook ingest path is a
+/// follow-up. This field is the passive-rendering seam: the data model and
+/// card strip exist now, and swapping the data source (comments → live hooks)
+/// is a later change that does not touch the widget.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TaskActivity {
+    /// The activity text (e.g. the latest comment body or a spawn summary).
+    pub text: String,
+    /// The activity kind. Currently `"comment"` (derived from the comment
+    /// thread). Future kinds: `"tool_call"`, `"delegation"`, `"verification"`.
+    pub kind: String,
+    /// ISO-8601 timestamp of the activity.
+    pub at: String,
+    /// Ontology concept: <https://w3id.org/pko#StepExecution>
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ontology: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaskInfo {
     pub task_id: String,
@@ -108,13 +128,19 @@ pub struct TaskInfo {
     pub status: String,
     pub assignee: Option<String>,
     pub criteria_count: usize,
-    /// Remaining gas/rJoules in the subagent's budget (None = no budget set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gas_remaining: Option<u64>,
-    /// Remaining rJoules for inference/API calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rjoule_remaining: Option<u64>,
-    /// Ontology concept: <https://w3id.org/pko#Step>
+    /// The swarm this task belongs to, when coordinated via a local swarm.
+    /// Mirrors `Task.swarm_id` so the kanban widget can render a visible
+    /// swarm↔kanban link on the card (R1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swarm_id: Option<String>,
+    /// The latest recorded activity on this task (R3). `None` when the task
+    /// has no comments yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<TaskActivity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }
@@ -339,6 +365,12 @@ pub struct TaskSpawnRequest {
     /// rJoule budget to grant on spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rjoule_budget: Option<u64>,
+    /// The swarm this task belongs to, when the task is coordinated via a
+    /// local swarm. Written to `Task.swarm_id` by `KanbanService::spawn_task`
+    /// so `kanban_task_delegate_result` returns the durable link. `None` when
+    /// the spawn is not scoped to a swarm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swarm_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -10,7 +10,7 @@
 > divergences are the D-seams listed below + the `[workspace.members]` /
 > `[workspace.dependencies]` arrays in the root `Cargo.toml`.
 
-## The divergence surface (D1–D23)
+## The divergence surface (D1–D24)
 
 Every hKask integration maps to a named, isolated change in zed-kask. These
 are the _only_ edits to zed-kask's tree outside `kask/`. Any hKask behavior
@@ -42,7 +42,7 @@ an hKask crate behind one of these seams instead.
 | D23 | `AgentPanelSiblingHost` visibility + worktree spawn wiring                              | `crates/agent_ui/src/agent_panel.rs` + `crates/agent_ui/src/agent_ui.rs` + `crates/zed/src/main.rs`                                                                                                                                                                                                                                                  | `AgentPanelSiblingHost` (was `pub(crate)`) is now `pub` and re-exported from `agent_ui` so `kask_bridge` can use it via the `WorktreeSpawner` trait. `main.rs` adds `AgentPanelWorktreeSpawner` (impl `WorktreeSpawner`) + a `cx.observe_new` on `AgentPanel` that sets the process-global `WORKTREE_SPAWNER` when a panel is created and clears it when dropped. The `InferenceIpcServer` GPUI-side task reads the global to dispatch `CreateWorktreeThread` IPC requests → `AgentPanelSiblingHost::create_sibling_thread` with `use_new_worktree: true`. The `kanban_task_spawn` MCP tool tries worktree spawn first, falls back to in-memory `LazyLocalSwarmRuntime`. No upstream behavioral change — the visibility widening is additive (the struct was already used cross-crate within `agent_ui`; making it `pub` extends that to `kask_bridge`). Pinned by the `kask_bridge` IPC dispatch tests (`dispatch_generate_returns_canned_result`, etc.) which pass `None` for the worktree spawn channel.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | D24 | Edit predictions via `LanguageModelRegistry` (glm-5.2)                                 | `crates/edit_prediction/src/open_ai_compatible.rs` + `crates/language_models/src/provider/open_router.rs` + `crates/zed/src/main.rs` + `kask/crates/kask_bridge/src/inference.rs` + `assets/settings/default.json`                                                                                                                               | zed-kask routes edit predictions through the `LanguageModelRegistry` using `DEFAULT_FALLBACK_MODEL` (`OpenRouter/z-ai/glm-5.2`), collapsing the edit-prediction model onto the same model + credentials the agent uses, instead of Zed's cloud Zeta endpoint (the 429-rate-limited default). Three edits: (1) `OpenRouterLanguageModel` gains `api_url()`/`api_key()` trait overrides (returning the OpenRouter base URL + API key from provider state) — the trait default returned `None`, forcing callers to resolve credentials from env vars instead of the registry; the kask embedding port already uses this pattern. (2) `open_ai_compatible.rs` gains a process-global `Mutex<Option<Arc<dyn KaskCompletionPort>>>` hook (`set_kask_completion_port`); when wired, `send_custom_server_request` delegates to the port instead of making the HTTP call. (3) `kask_bridge::BridgeEditPredictionPort` implements `KaskCompletionPort` — at construction it resolves `DEFAULT_FALLBACK_MODEL` from the registry via `resolve_model_names`, extracts `api_url()`/`api_key()`, strips the provider prefix, and makes raw `/completions` POSTs via `HttpClient` (same pattern as `LanguageModelEmbeddingPort` but `/completions` instead of `/embeddings`). Wired in `main.rs` from the same model-dependent task as `try_wire_manifest_executor` (fires when the registry resolves a model). `default.json` changes `edit_predictions.provider` from `"zed"` to `"open_ai_compatible_api"` with `prompt_format: "glm"` and `model: "z-ai/glm-5.2"` — the `Glm` FIM format (`fim.rs:189`) formats as bare `{prefix}`, and the `edit_prediction_provider_config_for_settings` router sends `OpenAiCompatibleApi` + non-Zeta format to the `Fim` model path, which calls `send_custom_server_request` (intercepted by the kask port). The `api_url`/`model` in settings are fallbacks for the pre-wiring window. When the port is `None` (before the model resolves), `send_custom_server_request` falls through to the existing HTTP path (upstream behavior). Pinned by `test_kask_completion_port_intercepts_send_custom_server_request` in `open_ai_compatible.rs`. |
 
-## Other zed-kask-modified files (supporting D1–D23)
+## Other zed-kask-modified files (supporting D1–D24)
 
 These files carry `// zed-kask:` comments but are supporting edits, not
 primary divergence seams:
@@ -94,9 +94,20 @@ The sole bidirectional seam is `kask_bridge` (D8), which lives under
 
 1. `git fetch upstream && git merge upstream/main`
 2. Conflicts will only appear in:
-   - The D-seam files listed above (D1–D23)
+   - The D-seam files listed above (D1–D24)
    - `[workspace.members]` / `[workspace.dependencies]` in root `Cargo.toml`
+   - Modify/delete conflicts — upstream may restore files zed-kask deliberately
+     deleted under D7/D16 (icons, `.desktop` templates, bundle scripts, release
+     workflows). Resolve by re-deleting; verify with
+     `bash kask/scripts/build/check-zed-isolation.sh`.
 3. Everything under `kask/` is additive → never conflicts.
 4. After resolving, run `bash kask/scripts/check-hkask-no-zed-deps.sh` to
    verify the §13.1 invariant still holds.
 5. Run `cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server` to
+   verify the bridge + foundation still compile.
+6. Run `bash kask/scripts/build/check-zed-isolation.sh` — verifies deleted
+   upstream surfaces (icons, `.desktop` templates, bundle scripts, release
+   workflows) were not silently restored by the merge. Wired into CI
+   (`kask-ci.yml` invariants job).
+7. Run `./script/clippy` (per `.rules` build guidelines — use this instead of
+   `cargo clippy`; runs under `--deny warnings`).

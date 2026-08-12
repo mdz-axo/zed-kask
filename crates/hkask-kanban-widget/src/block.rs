@@ -78,8 +78,19 @@ pub struct TaskBody {
     pub description: Option<String>,
     #[serde(default)]
     pub assignee: Option<String>,
+    /// The swarm this task belongs to, when coordinated via a local swarm (R1).
+    /// Emitted by the `kata-kanban` server on `TaskInfo`. The widget renders a
+    /// visible swarm link badge on the card so the operator can see which swarm
+    /// is running a task at a glance. `None` on tasks not scoped to a swarm.
+    #[serde(default)]
+    pub swarm_id: Option<String>,
     #[serde(default)]
     pub gas_remaining: Option<u64>,
+    /// The latest recorded activity on this task (R3) — a one-line status strip
+    /// rendered on the card. Emitted by the server (derived from the most recent
+    /// comment). `None` on tasks with no recorded activity.
+    #[serde(default)]
+    pub activity: Option<TaskActivityBody>,
     /// Ontology concept URI (e.g. `pko:Step`). Emitted by the kata-kanban server
     /// on every `TaskInfo` response. The widget carries it so the compose-back
     /// body can reference it and a future "explain this task" affordance can
@@ -147,6 +158,19 @@ pub struct GasEntryBody {
     pub reason: String,
     #[serde(default)]
     pub kind: String,
+}
+
+/// The latest recorded activity on a task (R3). Mirrors the server's
+/// `TaskActivity` shape for passive rendering as a one-line status strip on
+/// the card. See `TaskBody::activity`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TaskActivityBody {
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub at: String,
 }
 
 impl KanbanBlockBody {
@@ -298,6 +322,52 @@ mod tests {
         assert!(task.comments.is_empty());
         assert!(task.verification.is_none());
         assert!(task.gas_spend.is_empty());
+    }
+
+    #[test]
+    fn task_body_parses_swarm_id_field() {
+        // R1 S4 sensor: the kata-kanban server emits `swarm_id` on `TaskInfo`.
+        // The widget's TaskBody MUST have a `swarm_id` field to receive it — if
+        // absent, the link is silently dropped (the field-drop trap).
+        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
+            {"task_id":"t1","title":"A","status":"in_progress","swarm_id":"sw-42"}
+        ]}"#;
+        let parsed = parse_kanban_body(body).expect("valid body parses");
+        assert_eq!(parsed.tasks[0].swarm_id.as_deref(), Some("sw-42"));
+    }
+
+    #[test]
+    fn task_body_swarm_id_defaults_none_when_absent() {
+        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
+            {"task_id":"t1","title":"A","status":"backlog"}
+        ]}"#;
+        let parsed = parse_kanban_body(body).expect("valid body parses");
+        assert!(parsed.tasks[0].swarm_id.is_none());
+    }
+
+    #[test]
+    fn task_body_parses_activity_field() {
+        // R3 S4 sensor: the kata-kanban server emits `activity` on `TaskInfo`.
+        // The widget's TaskBody MUST parse it or the card status strip is
+        // silently dropped (the field-drop trap).
+        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
+            {"task_id":"t1","title":"A","status":"in_progress",
+             "activity":{"text":"Spawn executed: agent=beta","kind":"comment","at":"2026-08-11T12:00:00Z"}}
+        ]}"#;
+        let parsed = parse_kanban_body(body).expect("valid body parses");
+        let activity = parsed.tasks[0].activity.as_ref().expect("activity present");
+        assert_eq!(activity.text, "Spawn executed: agent=beta");
+        assert_eq!(activity.kind, "comment");
+        assert_eq!(activity.at, "2026-08-11T12:00:00Z");
+    }
+
+    #[test]
+    fn task_body_activity_defaults_none_when_absent() {
+        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
+            {"task_id":"t1","title":"A","status":"backlog"}
+        ]}"#;
+        let parsed = parse_kanban_body(body).expect("valid body parses");
+        assert!(parsed.tasks[0].activity.is_none());
     }
 
     #[test]

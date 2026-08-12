@@ -33,6 +33,12 @@ pub struct SpawnSpec {
     pub(crate) registries: Vec<String>,
     /// File paths or artifact roots the agent can access.
     pub(crate) artifacts: Vec<String>,
+    /// The swarm this task belongs to, when the task is coordinated via a
+    /// local swarm. Written to `Task.swarm_id` by `KanbanService::spawn_task`
+    /// so `kanban_task_delegate_result` can return the durable link without
+    /// depending on the runtime delegation path (worktree vs in-memory).
+    /// `None` when the spawn is not scoped to a swarm.
+    pub swarm_id: Option<String>,
 }
 
 impl SpawnSpec {
@@ -50,6 +56,7 @@ impl SpawnSpec {
             timeout_seconds: None,
             registries: Vec::new(),
             artifacts: Vec::new(),
+            swarm_id: None,
         }
     }
 
@@ -77,6 +84,15 @@ impl SpawnSpec {
     #[must_use = "builder methods must be chained or assigned"]
     pub fn with_memory(mut self, scope: &str) -> Self {
         self.memory_scope = scope.into();
+        self
+    }
+
+    /// Set the swarm this task belongs to. Written to `Task.swarm_id` by
+    /// `KanbanService::spawn_task` so the kanban board is the durable
+    /// coordination source of truth linking a task to its swarm.
+    #[must_use = "builder methods must be chained or assigned"]
+    pub fn with_swarm(mut self, swarm_id: Option<String>) -> Self {
+        self.swarm_id = swarm_id;
         self
     }
 }

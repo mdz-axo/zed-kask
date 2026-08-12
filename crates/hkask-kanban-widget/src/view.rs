@@ -413,6 +413,24 @@ impl KanbanWidget {
                         .color(Color::Muted),
                 )
             })
+            // R1: the visible swarm↔kanban link. When the server emits a
+            // `swarm_id` on the task, render a badge so the operator can see
+            // which swarm is running the task at a glance.
+            .when_some(task.swarm_id.clone(), |this, swarm_id| {
+                this.child(
+                    div()
+                        .id(format!("kanban-swarm-{}", task.task_id))
+                        .tooltip(Tooltip::text(format!(
+                            "Running in swarm {swarm_id} — the durable \
+                             coordination link (Task.swarm_id)."
+                        )))
+                        .child(
+                            Label::new(format!("◈ {swarm_id}"))
+                                .size(LabelSize::XSmall)
+                                .color(Color::Accent),
+                        ),
+                )
+            })
             .when_some(task.gas_remaining, |this, gas| {
                 this.child(
                     div()
@@ -444,6 +462,25 @@ impl KanbanWidget {
                     Label::new(format!("✓ {} criteria", task.criteria.len()))
                         .size(LabelSize::XSmall)
                         .color(Color::Muted),
+                )
+            })
+            // R3: a one-line activity status strip so the operator sees the
+            // latest recorded update on the task at a glance (the largest UX
+            // gap vs. cline/kanban's live hook activity). `min_w_0` +
+            // `truncate` protect the text column so a long update ellipsizes
+            // instead of blowing out the 220px card.
+            .when_some(task.activity.clone(), |this, activity| {
+                this.child(
+                    h_flex()
+                        .gap_1()
+                        .min_w_0()
+                        .child(Label::new("●").size(LabelSize::XSmall).color(Color::Accent))
+                        .child(
+                            Label::new(activity.text)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .truncate(),
+                        ),
                 )
             })
             .child(self.render_move_affordance(task, in_flight_any, cx))
@@ -1097,7 +1134,9 @@ mod tests {
             status: status.to_string(),
             description: None,
             assignee: None,
+            swarm_id: None,
             gas_remaining: None,
+            activity: None,
             ontology: None,
             priority: None,
             labels: Vec::new(),

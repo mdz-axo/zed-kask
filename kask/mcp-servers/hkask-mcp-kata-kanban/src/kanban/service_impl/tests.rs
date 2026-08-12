@@ -1,6 +1,6 @@
 use super::service::KanbanService;
 use crate::VerificationCriterion;
-use crate::kanban::{Board, ColumnDef, TaskFilter, TaskSpec, TaskStatus};
+use crate::kanban::{Board, ColumnDef, SpawnSpec, TaskFilter, TaskSpec, TaskStatus};
 use hkask_storage::HMemStore;
 use hkask_types::WebID;
 use hkask_types::id::BoardId;
@@ -284,6 +284,42 @@ fn task_swarm_fields_default_to_none() {
     assert!(
         task.deterministic_verdict.is_none(),
         "deterministic_verdict should default to None"
+    );
+}
+
+#[test]
+fn spawn_task_writes_swarm_id_when_spec_carries_it() {
+    // C2: `spawn_task` writes `SpawnSpec.swarm_id` to `Task.swarm_id` so the
+    // durable link is set before the worktree/fallback branch in
+    // `kanban_task_spawn`. Both execution paths then expose the link via
+    // `kanban_task_delegate_result` without each having to set it.
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc
+        .task_create(board.id, TaskSpec::new("Spawn task".into()), owner)
+        .unwrap();
+    let spec = SpawnSpec::new(task.id).with_swarm(Some("sw-42".to_string()));
+    svc.spawn_task(task.id, spec, owner).unwrap();
+    let reloaded = svc.task_get(task.id).unwrap().expect("task should persist");
+    assert_eq!(
+        reloaded.swarm_id.as_deref(),
+        Some("sw-42"),
+        "spawn_task must persist the spec's swarm_id"
+    );
+}
+
+#[test]
+fn spawn_task_leaves_swarm_id_none_when_spec_omits_it() {
+    // C2: a spec with `swarm_id: None` (the default) must not set a swarm link.
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc
+        .task_create(board.id, TaskSpec::new("Spawn task".into()), owner)
+        .unwrap();
+    let spec = SpawnSpec::new(task.id);
+    svc.spawn_task(task.id, spec, owner).unwrap();
+    let reloaded = svc.task_get(task.id).unwrap().expect("task should persist");
+    assert!(
+        reloaded.swarm_id.is_none(),
+        "spawn_task with no swarm_id must leave Task.swarm_id as None"
     );
 }
 

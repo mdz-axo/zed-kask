@@ -244,6 +244,39 @@ pub(crate) const SWARM_TOOLS: &[&str] = &[
     "swarm_execute_plan_local",
 ];
 
+/// The kanban MCP server's `#[tool]` fn names, mirrored from
+/// `hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs`. Keep in sync when
+/// adding/removing a server tool — the `steer_system_prompt` `debug_assert!`
+/// and the `kanban_tool_names_match_server` test catch drift. One tool
+/// (`contract_propose_expect`) does not use the `kanban_` prefix.
+pub(crate) const KANBAN_TOOLS: &[&str] = &[
+    // Board tools.
+    "kanban_board_create",
+    "kanban_board_list",
+    "kanban_board_delete",
+    // Task tools.
+    "kanban_task_create",
+    "kanban_task_list",
+    "kanban_task_move",
+    "kanban_task_assign",
+    "kanban_task_verify",
+    "kanban_task_add_gas",
+    "kanban_task_add_rjoules",
+    "kanban_task_comment",
+    "kanban_task_comments_since",
+    "kanban_task_add_deliverable",
+    "kanban_task_reopen",
+    // Kata prompt tools.
+    "kanban_task_kata_coaching",
+    "kanban_task_kata_improvement",
+    "kanban_task_kata_practice",
+    // Swarm delegation bridge (kanban → swarm).
+    "kanban_task_spawn",
+    "kanban_task_delegate_result",
+    // Contract grounding proposals (no `kanban_` prefix).
+    "contract_propose_expect",
+];
+
 /// Extract the algedonic wallet balance from a tool response (the
 /// `with_wallet` shape: `content.wallet.balance`). Returns `None` when
 /// absent — never a fabricated zero.

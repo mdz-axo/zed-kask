@@ -373,6 +373,66 @@ mod task_list {
     }
 
     #[tokio::test]
+    async fn carries_activity_after_comment() {
+        // R3: kanban_task_list surfaces the latest comment as `activity` on each
+        // TaskInfo so the widget can render a one-line status strip on the card.
+        // R1: the response also carries a `swarm_id` field (null when the task is
+        // not scoped to a swarm) so the widget can render the swarm link.
+        let server = make_server();
+        let bid = make_board(&server, "B").await;
+        let tid = make_task(&server, &bid, "T1").await;
+        // Add a comment — the server derives `activity` from the latest comment.
+        server
+            .kanban_task_comment(rmcp::handler::server::wrapper::Parameters(
+                TaskCommentRequest {
+                    task_id: tid.clone(),
+                    body: "Spawn executed: agent=beta, tokens=120".to_string(),
+                },
+            ))
+            .await;
+        let req = TaskListRequest {
+            board_id: bid,
+            status: None,
+        };
+        let out = server
+            .kanban_task_list(rmcp::handler::server::wrapper::Parameters(req))
+            .await;
+        let v = parse(&out);
+        let task = v
+            .get("tasks")
+            .and_then(|t| t.as_array())
+            .and_then(|a| a.first())
+            .expect("missing tasks array entry");
+        // R1: `swarm_id` is omitted (skip_serializing_if) when the task is not
+        // spawned under a swarm. The positive case (present when set) is pinned
+        // by the spawn_task lib tests (C2) + the TaskInfo mapping reads
+        // `t.swarm_id.clone()`.
+        assert!(
+            task.get("swarm_id").is_none(),
+            "swarm_id must be absent when the task is not spawned under a swarm"
+        );
+        // R3: the `activity` field is populated from the latest comment.
+        let activity = task
+            .get("activity")
+            .expect("TaskInfo must carry `activity` after a comment (R3)");
+        assert_eq!(
+            activity.get("kind").and_then(|k| k.as_str()),
+            Some("comment")
+        );
+        assert_eq!(
+            activity.get("text").and_then(|t| t.as_str()),
+            Some("Spawn executed: agent=beta, tokens=120")
+        );
+        assert!(
+            activity
+                .get("at")
+                .and_then(|a| a.as_str())
+                .is_some_and(|s| !s.is_empty()),
+            "activity.at must be a non-empty ISO timestamp"
+        );
+    }
+
+    #[tokio::test]
     async fn empty_result() {
         // REQ: empty-result — board with no tasks
         let server = make_server();
@@ -941,6 +1001,7 @@ mod task_spawn {
             memory_scope: Some("episodic".to_string()),
             gas_budget: Some(1000),
             rjoule_budget: None,
+            swarm_id: None,
         };
         let out = server
             .kanban_task_spawn(rmcp::handler::server::wrapper::Parameters(req))
@@ -959,6 +1020,7 @@ mod task_spawn {
             memory_scope: None,
             gas_budget: None,
             rjoule_budget: None,
+            swarm_id: None,
         };
         let out = server
             .kanban_task_spawn(rmcp::handler::server::wrapper::Parameters(req))
