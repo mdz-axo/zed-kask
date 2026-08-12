@@ -8,14 +8,21 @@ const CANONICAL_ACTIONS: &[&str] = &[
     "flowdef", "loop", "choice", "abort", "escalate",
 ];
 
-/// Valid manifest categories.
-const VALID_CATEGORIES: &[&str] = &[
-    "skill",
-    "qa-script",
-    "runtime-config",
-    "daemon-process",
-    "pipeline",
-];
+/// Valid categories for a manifest in `registry/manifests/`.
+///
+/// Only `skill` is permitted. The 41 non-`skill` manifests (`pipeline`,
+/// `qa-script`, `runtime-config`, `daemon-process`) were deleted after an audit
+/// found no runtime consumer for any of them: `resolve_manifest` rejects
+/// non-`skill` categories with `NotASkill` (`manifest_loader.rs`), and the
+/// execution boundary rejects again (`kask_bridge::skill_executor`), so they
+/// were embedded by `build.rs`, seeded to disk, and never read.
+///
+/// The `category` field itself is retained: it is the security gate for
+/// `lisp.eval` and `shell.exec` (see `compute.rs`), which must run only in
+/// operator-reviewed `skill` manifests. Narrowing this list to `skill` makes a
+/// reintroduced infrastructure manifest fail CI rather than ship as dead
+/// surface. To add a new category, first wire a loader that can execute it.
+const VALID_CATEGORIES: &[&str] = &["skill"];
 
 /// Regression test: every loadable manifest must use only canonical actions,
 /// have a gas block with cap > 0, have an rjoule block when inference is used,

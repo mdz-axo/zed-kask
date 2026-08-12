@@ -25,31 +25,48 @@ mds_categories: [domain, composition]
 
 ---
 
-## Registry counts (verified 2026-08-05)
+## Registry counts (verified 2026-08-12)
 
 | Surface                                               | Count  | Notes                                                                                        |
 | ----------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------- |
-| FlowDef manifests (`kask/registry/manifests/*.yaml`)  | **97** | All categories (see taxonomy below)                                                          |
-| … of which `category: skill`                          | **54** | Agent-facing PDCA loops (listed below) — **1:1 with SKILL.md dirs**                          |
-| … infrastructure categories                           | **43** | `pipeline` (22), `qa-script` (11), `runtime-config` (7), `daemon-process` (3)                |
-| Template crates (`kask/registry/templates/*/`)        | **83** | Includes non-skill crates (`shared`, `process`, `kanban-task-*`, `docproc`, `replica`, etc.) |
-| SKILL.md directories (`.agents/skills/*/`, repo root) | **53** | Every directory contains a `SKILL.md`                                                        |
+| FlowDef manifests (`kask/registry/manifests/*.yaml`)  | **63** | All `category: skill` — **1:1 with SKILL.md dirs**                                           |
+| Template crates (`kask/registry/templates/*/`)        | **89** | Includes non-skill crates (`shared`, `process`, `kanban-task-*`, `docproc`, `replica`, etc.) |
+| SKILL.md directories (`.agents/skills/*/`, repo root) | **63** | Every directory contains a `SKILL.md`                                                        |
 
-**Category rule (verified 2026-08-05):** a manifest with `category: skill` is
-agent-facing and **must** have a matching `.agents/skills/<name>/SKILL.md`
-companion; infrastructure categories (`pipeline`, `qa-script`, `runtime-config`,
-`daemon-process`) are **not** agent-facing, must **not** have a SKILL.md, and are
-not registered as skills. The 53 skill manifests and 53 SKILL.md directories are
-in exact 1:1 correspondence (diff-verified; note: naive `grep 'category: skill'`
-overcounts by 5 — several manifests carry the comment "gated to category: skill
-manifests only"; match the anchored field only).
+**Category rule:** only `category: skill` manifests exist in
+`registry/manifests/`, and each **must** have a matching
+`.agents/skills/<name>/SKILL.md` companion. The 63 manifests and 63 SKILL.md
+directories are in exact 1:1 correspondence, enforced by
+`every_skill_md_has_a_process_manifest` and `every_skill_manifest_has_a_skill_md`
+(`hkask-templates/tests/skill_companion_consistency.rs`). Note: a naive
+`grep 'category: skill'` overcounts — several manifests carry the comment "gated
+to category: skill manifests only"; match the anchored field only.
+
+**Infrastructure categories were removed (2026-08-12).** 41 manifests carrying
+`pipeline` (20), `qa-script` (11), `runtime-config` (7), and `daemon-process` (3)
+were deleted after an audit found **no runtime consumer for any of them**.
+`resolve_manifest` rejects non-`skill` categories with `NotASkill`
+(`manifest_loader.rs`) and the execution boundary rejects again
+(`kask_bridge::skill_executor`), so no loader for these categories ever existed:
+they were embedded into the binary by `build.rs`, seeded to the user's disk,
+version-bumped by CI, schema-validated — and never read. Two of them
+(`harness-evolve-cycle`, `qa-mcp-server-smoke`) were additionally shadowed by
+hand-rolled shell scripts that reimplemented the same loop, and
+`qa-mcp-server-smoke.yaml` conceded in its own header that it needed a
+`QaScriptRunner` type that does not exist.
+
+The `manifest.category` **field** is retained: it is the security gate for
+`lisp.eval` and `shell.exec` (`hkask-templates/src/compute.rs`), which must run
+only in operator-reviewed `skill` manifests. `manifest_compliance.rs` now
+allows `skill` only, so a reintroduced infrastructure manifest fails CI rather
+than shipping as dead surface. To add a category back, first wire a loader that
+can actually execute it.
 
 Reconciliation notes:
 
-- **`curator-metacognition`** — has a FlowDef manifest (`kask/registry/manifests/curator-metacognition.yaml`) but its `category` is `runtime-config`, **not** `skill`, so it cannot bind as an agent `process_manifest` and is excluded from the 53-skill count. It has **no** template crate and **no** SKILL.md directory. It is a Curator runtime-configuration manifest: metacognitive reasoning for system sense-making, performance monitoring, and coordination with the hKask Administrator on system evolution.
 - **`skill-router`** — has a template crate (`kask/registry/templates/skill-router/`) but **no** FlowDef manifest and **no** SKILL.md directory. It is a stateless `KnowAct` matching service (template-only, not a PDCA loop): route tasks to installed skills with ranked fit-scored recommendations plus uncovered capability gap signals. Invoked by the orchestrator and by process-skill templates; cannot bind as `process_manifest`.
-- **SKILL.md ↔ skill-manifest alignment:** all 53 `category: skill` manifests have a matching `.agents/skills/` directory and vice versa (diff-verified 2026-08-05). Two of them (`swarm-compose-guide`, documented below) have no dedicated template crate — the manifest reuses templates from another crate. No `.agents/skills/` directory is orphaned.
-- **`skill-translation`** is `category: pipeline` (not `skill`) — a convergent translation process for importing external skill definitions; its template crate is `skill-translator/`.
+- **`swarm-compose-guide`** has no dedicated template crate — its manifest reuses templates from another crate. No `.agents/skills/` directory is orphaned.
+- **Orphaned template crates:** deleting the 41 infrastructure manifests left several template crates without a manifest consumer (e.g. `composition/`, `prompt-defense/`, `rag/`, `rca/`, `replica/`, `skill-translator/`, `prompt-templates/`). These were **not** deleted in the same pass because some are still referenced from Rust (`docproc`, `memory`, `web`) and the shared-vs-orphan split needs per-crate verification. Tracked as follow-up.
 
 ---
 
@@ -108,7 +125,7 @@ Reconciliation notes:
 
 ---
 
-## Meta & Maintenance (6 skills + 1 template + 1 runtime-config manifest)
+## Meta & Maintenance (6 skills + 1 template)
 
 | Skill                   | Type                         | Purpose                                                                                                                                                                                                                                                                                                                                            | Artifacts                                                                                                     |
 | ----------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -119,7 +136,7 @@ Reconciliation notes:
 | `skill-router`          | Template                     | Route tasks to installed skills: ranked fit-scored recommendations + uncovered capability gap signals. Stateless `KnowAct` matching service invoked by the orchestrator and by process-skill templates (not a PDCA loop; cannot bind as `process_manifest`). **No FlowDef manifest and no SKILL.md directory** — template crate only.              | `registry/templates/skill-router/manifest.yaml` (template metadata only) · `registry/templates/skill-router/` |
 | `gpa-evolution`         | Skill                        | Genetic-Pareto evolutionary optimization over text artifacts: sample, reflect, mutate, recombine Pareto frontier                                                                                                                                                                                                                                   | `registry/manifests/gpa-evolution.yaml` · `registry/templates/gpa-evolution/`                                 |
 | `create-skill`          | Skill                        | Convergent kask-native skill creation with ontological grounding: research phase finds academic/industry anchors, PDCA shape emerges from anchors, artifacts annotated with ontology references (PKO, Dublin Core, GOLEM, MovieLabs OMC, ESO). Delegates to skill-maintenance-build for scaffolding and skill-maintenance-validate for validation. | `registry/manifests/create-skill.yaml` · `registry/templates/create-skill/`                                   |
-| `curator-metacognition` | Runtime-config (not a skill) | Metacognitive reasoning for system sense-making, performance monitoring, and coordination with the hKask Administrator on system evolution. `category: runtime-config` — cannot bind as an agent `process_manifest`. **No template crate and no SKILL.md directory** — manifest only.                                                              | `registry/manifests/curator-metacognition.yaml`                                                               |
+
 
 ---
 
@@ -165,11 +182,11 @@ Reconciliation notes:
 | Core Development     | 13                                            | Skills                             |
 | Reasoning & Analysis | 10                                            | Skills                             |
 | Kata & Coaching      | 3                                             | Skills                             |
-| Meta & Maintenance   | 6 skills + 1 template + 1 runtime-config      | Skills + Template + Runtime-config |
+| Meta & Maintenance   | 6 skills + 1 template                         | Skills + Template                  |
 | Security & Posture   | 3                                             | Skills                             |
 | Specialized          | 17                                            | Skills                             |
-| **Catalogued here**  | **52 skills + 1 template + 1 runtime-config** | **54 capabilities**                |
+| **Catalogued here**  | **52 skills + 1 template**                    | **53 capabilities**                |
 
-> **Filesystem reality (verified 2026-08-05):** `kask/registry/templates/` contains 83 template directories; `kask/registry/manifests/` contains 97 FlowDef manifests (53 `category: skill`, 43 infrastructure, 1 schema file); `.agents/skills/` (repo root) contains 53 SKILL.md directories. The 53 skill manifests align 1:1 with the 53 SKILL.md directories. `skill-router` is template-crate-only (no FlowDef manifest, no SKILL.md); `curator-metacognition` is manifest-only (`runtime-config`, no template crate, no SKILL.md); `swarm-compose-guide` is manifest + SKILL.md but shares the `swarm-intelligence` template crate.
+> **Filesystem reality (verified 2026-08-12):** `kask/registry/manifests/` contains 63 FlowDef manifests, all `category: skill`; `.agents/skills/` (repo root) contains 63 SKILL.md directories, aligned 1:1 (test-enforced). The 41 infrastructure manifests were deleted — see "Infrastructure categories were removed" above. `skill-router` is template-crate-only (no FlowDef manifest, no SKILL.md); `swarm-compose-guide` is manifest + SKILL.md but shares the `swarm-intelligence` template crate. This catalogue section lists a subset of the 63 and is not itself count-enforced — trust the tests, not the table.
 >
 > **Consolidation history (2026-07-25):** Deleted `self-critique-revision` (superseded by metacognition), `pragmatic-laziness` (thin wrapper duplicating essentialist), `handoff` (session handoff — low value, replaced by native Zed session persistence), `qa-script-builder` (no consumers — dead code), `kata` bundle (dead code — `KataEngine::run_bundle` never called; `kata-coaching` and `kata-improvement` work independently). Deleted 8 `platform-*` infrastructure manifests + `platform-engineer` templates (aspirational Curator self-monitoring — compiled into registry but never invoked by any code). Folded `kata-starter` → `kata-improvement` (beginner_mode), `attack-taxonomy-mapper` → `kali-audit` (taxonomy_map phase), `skill-logic-audit` → `skill-maintenance` (validate sub-operation), `strangler-fig` → `refactor-service-layer` (migration-strategy phase), `zoom-out` → `graph-audit` (context-expansion mode). Merged `codegraph` + `semantic-graph-audit` → `graph-audit` (3-mode skill: code, semantic, dual). Merged `improve-codebase-architecture` + `refactor-service-layer` → `refactor-architecture` (end-to-end: discover → audit → strangle → verify). Archived `magna-carta-verifier` (deleted; recoverable from git history).
