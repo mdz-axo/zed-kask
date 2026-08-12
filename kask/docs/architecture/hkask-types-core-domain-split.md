@@ -14,7 +14,7 @@ mds_categories: [composition, lifecycle]
 
 ## Context
 
-`hkask-types` is the dependency root of the hKask crate tree — depended on by every `hkask-*` crate, `kask_bridge`, and all 12 MCP servers (24+ consumers). It currently exposes **~197 public items** across 34 files.
+`hkask-types` is the dependency root of the hKask crate tree — depended on by every `hkask-*` crate, `kask_bridge`, and all 13 MCP servers (24+ consumers). It currently exposes **~197 public items** across 34 files.
 
 Its declared purpose has drifted from its actual surface:
 

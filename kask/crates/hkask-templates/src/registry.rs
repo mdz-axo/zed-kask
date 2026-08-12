@@ -893,4 +893,35 @@ mod tests {
             "swarm-steering is single-pass (max_iterations 1) — it produces a directive, the Curator/human executes"
         );
     }
+
+    // zed-kask: pins that skill-router is published as an installable skill
+    // (process manifest embedded + parses). skill-router is the route half of
+    // the route/discover loop with skill-discovery; task-breakdown emits
+    // skill_match_query for it. Guards against regressions to the prior
+    // "template crate only, no published manifest" state.
+    #[test]
+    fn skill_router_manifest_is_published_and_one_shot() {
+        let yaml = process_manifest_yaml("skill-router")
+            .expect("skill-router process manifest must be embedded (published)");
+        let manifest = load_manifest_from_yaml(yaml).expect("skill-router manifest must parse");
+
+        assert_eq!(manifest.id, "skill-router");
+        // One-shot routing: a single match pass over the catalog (swarm-steering
+        // precedent — ExitKind::MaxedOut is an Ok result, not an error).
+        assert_eq!(
+            manifest.convergence.max_iterations, 1,
+            "skill-router is one-shot (max_iterations 1)"
+        );
+        let match_step = manifest
+            .steps
+            .iter()
+            .find(|s| s.ordinal == 1)
+            .expect("skill-router has a step 1 (the match)");
+        assert_eq!(match_step.action, "select");
+        assert_eq!(
+            match_step.template_ref.as_deref(),
+            Some("skill-router/skill-router-match"),
+            "step 1 must render the skill-router-match template"
+        );
+    }
 }

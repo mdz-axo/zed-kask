@@ -29,13 +29,16 @@ manifest:
   visibility: Public
 
 convergence:
-  convergence_mode: "cauchy"
+  # One-shot routing: the match is a single pass over a fixed catalog, so the
+  # ranked set is produced once. convergence_mode "" with max_iterations 1 and
+  # on_not_reached: proceed runs the match exactly once and exits cleanly
+  # (ExitKind::MaxedOut is an Ok result, not an error — the swarm-steering
+  # precedent). No cauchy/convergence-signal re-match is needed.
+  convergence_mode: ""
+  max_iterations: 1
+  min_iterations: 0
+  on_not_reached: proceed
   target_artifacts_field: "step_1_result.recommendations"
-  cauchy_epsilon: 0.03
-  cauchy_window: 3
-  max_iterations: 3
-  min_iterations: 2
-  on_not_reached: escalate
 
 gas:
   cap: 100000
@@ -93,15 +96,12 @@ steps:
 
   - ordinal: 2
     action: loop
-    description: Re-enter the match if the recommendation set has not stabilized.
+    description: >
+      One-shot terminal. With max_iterations 1 this caps the cascade after a
+      single match pass (ExitKind::MaxedOut — an Ok result per the swarm-steering
+      one-shot precedent); it does not re-enter step 1.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # The match is a single pass over a fixed catalog — the ranked set is
-      # produced in one pass. A constant convergence signal guarantees Cauchy
-      # convergence at min_iterations (deep-module precedent: a stable signal
-      # fires after min_iterations), so a one-shot routing succeeds without
-      # escalation rather than depending on LLM-nondeterministic counts.
-      convergence_signal: "{{ 0 }}"
 
 error_handling:
   on_gas_exceeded: abort

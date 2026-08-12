@@ -43,16 +43,16 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 
 ## MCP Servers (`KaskMcpSettings`)
 
-Toggle which of the 12 built-in kask MCP servers are loaded.[^mcp-spec-settings]
-The 12 servers (settings.rs:37 comment still says 11 — the `Default` and the
+Toggle which of the 13 built-in kask MCP servers are loaded.[^mcp-spec-settings]
+The 13 servers (settings.rs:37 comment still says 11 — the `Default` and the
 `BUILT_IN_MCP_SERVERS_IDS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:323-336`
 are authoritative): `codegraph`, `companies`, `condenser`, `corpus`, `curator`,
-`kata-kanban`, `media`, `research`, `scenarios`, `prediction-markets`, `swarm`,
-`training`. The crates live under `kask/mcp-servers/` (12 `hkask-mcp-*` crates).
+`kata-kanban`, `media`, `portfolio`, `research`, `scenarios`, `prediction-markets`,
+`swarm`, `training`. The crates live under `kask/mcp-servers/` (13 `hkask-mcp-*` crates).
 
 | Field | Type | Default |
-|-------|------|---------|
-| `load_default` | `bool` | `true` — load all 12 servers |
+|-------|------|--------|
+| `load_default` | `bool` | `true` — load all 13 servers |
 | `overrides` | `HashMap<String, bool>` | empty — per-server overrides (e.g. `"curator": false`) |
 
 The master `load_default` toggle controls all servers; individual `overrides`

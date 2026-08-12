@@ -57,6 +57,7 @@ hKask ships **13 in-process MCP servers** hosted by zed's `context_server`. They
 - `refactor-architecture` — End-to-end architecture refactoring (discover → audit → strangle → verify).
 - `kali-audit` / `supply-chain-sentinel` — Security posture.
 - `lora-training` — PEFT method selection + math-contract gates (pre-flight before training job).
+- `skill-router` — Match tasks to installed skills (fit-scored recommendations, gap signals for skill-discovery).
 - `skill-discovery` — Detect capability gaps, search catalog, evaluate candidates, guide installation.
 
 ### Ensemble / Coaching (Multi-agent interaction)
@@ -123,7 +124,7 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 | LoRA/QLoRA training config audit | `lora-training` | `tdd` (training-loop code) |
 | GPU training pod creation | [`kask/docs/research/archive/gpu-provider-research-2026-07-23.md`](kask/docs/research/archive/gpu-provider-research-2026-07-23.md) | `lora-training` (config audit) |
 | Self-improvement / prompt evolution | `metacognition` | `gpa-evolution` (post-convergence) |
-| Skill matching for a task | `skill-discovery` | `task-breakdown` (if work needs decomposition first) |
+| Skill matching for a task | `skill-router` | `task-breakdown` (decompose) then `skill-discovery` (if gaps found) |
 | Capability gap detection | `skill-discovery` | `skill-maintenance` (install/validate the new skill) |
 | Multi-agent coaching | `kata-coaching` | `improv` (interaction grammar) |
 

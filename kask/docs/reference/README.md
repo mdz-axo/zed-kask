@@ -14,7 +14,7 @@ Neutral, complete, descriptive-only documentation of the hKask system as it is h
 zed-kask. No procedures, no opinions, no explanations of why — only what.
 
 hKask runs in-process inside zed-kask: 20 kask crates (19 `hkask-*` + `kask_bridge`) compiled
-into the editor and 12 MCP servers hosted on disk via zed's `context_server` infrastructure.
+into the editor and 13 MCP servers hosted on disk via zed's `context_server` infrastructure.
 The standalone `kask` CLI, HTTP API server, Matrix transport, daemon process, and REPL surfaces
 have been **deleted** and are not referenced here as current. See
 [`docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md)
