@@ -285,6 +285,16 @@ hkask_mcp_server::mcp_server!(
     }
 );
 
+#[cfg(test)]
+mod router_count_probe {
+    use super::*;
+    #[test]
+    fn print_router_len() {
+        let n = CuratorServer::tool_router().list_all().len();
+        panic!("COUNT_curator={n}");
+    }
+}
+
 #[tool_router(server_handler)]
 impl CuratorServer {
     // ── Liveness ───────────────────────────────────────────────────────

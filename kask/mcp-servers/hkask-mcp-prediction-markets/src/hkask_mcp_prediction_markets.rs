@@ -1531,6 +1531,16 @@ impl PredictionMarketsServer {
 #[tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for PredictionMarketsServer {}
 
+#[cfg(test)]
+mod router_count_probe {
+    use super::*;
+    #[test]
+    fn print_router_len() {
+        let n = PredictionMarketsServer::combined_router().list_all().len();
+        panic!("COUNT_prediction_markets={n}");
+    }
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -1955,6 +1955,16 @@ impl ScenariosServer {
 #[rmcp::tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for ScenariosServer {}
 
+#[cfg(test)]
+mod router_count_probe {
+    use super::*;
+    #[test]
+    fn print_router_len() {
+        let n = ScenariosServer::combined_router().list_all().len();
+        panic!("COUNT_scenarios={n}");
+    }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 fn parse_time_horizon(s: Option<&str>) -> TimeHorizon {

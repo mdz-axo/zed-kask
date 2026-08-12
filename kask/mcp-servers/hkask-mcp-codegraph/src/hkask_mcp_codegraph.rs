@@ -197,6 +197,16 @@ pub struct StatsRequest {
 
 // ── Tools ─────────────────────────────────────────────────────────
 
+#[cfg(test)]
+mod router_count_probe {
+    use super::*;
+    #[test]
+    fn print_router_len() {
+        let n = CodeGraphServer::tool_router().list_all().len();
+        panic!("COUNT_codegraph={n}");
+    }
+}
+
 #[tool_router(server_handler)]
 impl CodeGraphServer {
     #[tool(

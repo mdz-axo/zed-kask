@@ -109,6 +109,16 @@ fn derive_task_activity(task: &Task) -> Option<TaskActivity> {
     })
 }
 
+#[cfg(test)]
+mod router_count_probe {
+    use super::*;
+    #[test]
+    fn print_router_len() {
+        let n = KanbanServer::tool_router().list_all().len();
+        panic!("COUNT_kata_kanban={n}");
+    }
+}
+
 #[tool_router(server_handler)]
 impl KanbanServer {
     #[tool(description = "Create a new kanban board with optional custom columns")]

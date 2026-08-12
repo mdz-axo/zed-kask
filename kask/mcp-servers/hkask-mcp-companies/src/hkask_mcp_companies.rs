@@ -271,6 +271,16 @@ impl CompaniesServer {
 #[rmcp::tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for CompaniesServer {}
 
+#[cfg(test)]
+mod router_count_probe {
+    use super::*;
+    #[test]
+    fn print_router_len() {
+        let n = CompaniesServer::combined_router().list_all().len();
+        panic!("COUNT_companies={n}");
+    }
+}
+
 // ── Entry point ─────────────────────────────────────────────────────
 
 /// Run the companies MCP server (used by binary target).

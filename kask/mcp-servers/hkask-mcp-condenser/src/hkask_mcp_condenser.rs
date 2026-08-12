@@ -171,6 +171,16 @@ impl CondenserServer {
     }
 }
 
+#[cfg(test)]
+mod router_count_probe {
+    use super::*;
+    #[test]
+    fn print_router_len() {
+        let n = CondenserServer::tool_router().list_all().len();
+        panic!("COUNT_condenser={n}");
+    }
+}
+
 #[tool_router(server_handler)]
 impl CondenserServer {
     #[tool(description = "Liveness and profile info")]

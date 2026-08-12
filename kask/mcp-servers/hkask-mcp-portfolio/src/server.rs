@@ -547,6 +547,16 @@ impl PortfolioServer {
 #[tool_handler(router = Self::portfolio_router())]
 impl rmcp::ServerHandler for PortfolioServer {}
 
+#[cfg(test)]
+mod router_count_probe {
+    use super::*;
+    #[test]
+    fn print_router_len() {
+        let n = PortfolioServer::portfolio_router().list_all().len();
+        panic!("COUNT_portfolio={n}");
+    }
+}
+
 // ── Entry point ─────────────────────────────────────────────────────
 
 /// Run the portfolio MCP server (used by binary target).

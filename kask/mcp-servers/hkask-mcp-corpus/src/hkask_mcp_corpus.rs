@@ -598,6 +598,16 @@ impl CorpusServer {
 #[rmcp::tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for CorpusServer {}
 
+#[cfg(test)]
+mod router_count_probe {
+    use super::*;
+    #[test]
+    fn print_router_len() {
+        let n = CorpusServer::combined_router().list_all().len();
+        panic!("COUNT_corpus={n}");
+    }
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 /// Run the corpus MCP server (used by binary target).

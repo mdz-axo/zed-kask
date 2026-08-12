@@ -123,6 +123,16 @@ macro_rules! require_rss_db {
 
 // ── Tool implementations ──
 
+#[cfg(test)]
+mod router_count_probe {
+    use super::*;
+    #[test]
+    fn print_router_len() {
+        let n = ResearchServer::tool_router().list_all().len();
+        panic!("COUNT_research={n}");
+    }
+}
+
 #[tool_router(server_handler)]
 impl ResearchServer {
     // ═══════════════════ Web tools ═══════════════════

@@ -1454,6 +1454,16 @@ impl MediaServer {
 #[rmcp::tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for MediaServer {}
 
+#[cfg(test)]
+mod router_count_probe {
+    use super::*;
+    #[test]
+    fn print_router_len() {
+        let n = MediaServer::combined_router().list_all().len();
+        panic!("COUNT_media={n}");
+    }
+}
+
 /// Run the media MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // Do NOT call `dotenvy::dotenv()` here — it mutates the process
