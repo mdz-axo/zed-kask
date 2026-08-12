@@ -80,7 +80,7 @@ flowchart TD
     subgraph Independent["Independent Tools"]
         triage["scenario_triage\nGoldilocks classification"]
         status["scenario_status\nState snapshot"]
-        companies["scenario_from_companies\nFIBO bridge"]
+        companies["scenario_from_companies\nDEPRECATED: use scenario_impact_valuation"]
         full["scenario_full\nAll-in-one pipeline"]
     end
 
@@ -149,7 +149,7 @@ status: VERIFIED (v3 — tool count updated to 21: added scenario_propagate, sce
 |------|-------------|------------|
 | `scenario_from_markets` | Convert a prediction-market record (from `hkask-mcp-prediction-markets` `market_lookup`/`market_match`) into a `ScenarioEvent` anchored on the market-implied base rate; applies the domain-bias correction deterministically and withholds `base_rate` on low reliability or weak match confidence. | `market_record`, `match_confidence` |
 | `scenario_from_markets_set` | Compose a set of prediction-market records into a validated `EventTree` with caller-authored dependency edges; per-record gates, duplicate-question flags, cycle and CPT-size rejection; returns resolved tree (marginals, joint probability) plus warnings. | `market_records`, `match_confidences`, `dependency_specs` |
-| `scenario_from_companies` | Convert companies MCP server output (DCF/scenario analysis) into scenario events for forecast tracking. | companies output JSON |
+| `scenario_from_companies` | DEPRECATED: Use `scenario_impact_valuation` on hkask-mcp-companies instead. Converts DCF output into tracking events — wrong direction. Retained for backward compatibility. | companies output JSON |
 
 ### Computation (5)
 
@@ -193,8 +193,8 @@ status: VERIFIED (v3 — tool count updated to 21: added scenario_propagate, sce
 
 - **Standard pipeline:** `scenario_frame` → `scenario_frame_document` → `scenario_brainstorm` → `scenario_build` → `scenario_quantify` → `scenario_calibrate` → `scenario_synthesize` → `scenario_score` → `scenario_assess`[^tetlock-key-paths]
 - **Research entry:** `scenario_research` → `scenario_build` (skip brainstorming if events are extracted from web text)
-- **Companies bridge (forward):** `scenario_from_companies` → `scenario_quantify` (skip framing/brainstorming — events come from DCF model)
-- **Companies bridge (reverse):** `scenario_quantify` → user authors per-node impact mappings → `scenario_impact_valuation` on `hkask-mcp-companies` (exogenous scenario events drive the company's DCF via additive assumption deltas, weighted by path probability)
+- **Companies bridge (primary):** `scenario_quantify` → user authors per-node impact mappings → `scenario_impact_valuation` on `hkask-mcp-companies` (exogenous scenario events drive the company's DCF via additive assumption deltas, weighted by path probability)
+- **Companies bridge (deprecated):** `scenario_from_companies` → `scenario_quantify` (wrong direction — fabricated tracking events from DCF output; use `scenario_impact_valuation` instead)
 - **Markets bridge:** `scenario_from_markets` (single market) or `scenario_from_markets_set` (full tree) → `scenario_quantify`; market records come from `hkask-mcp-prediction-markets` (`market_lookup` / `market_match`)
 - **Update loop:** `scenario_propagate` re-propagates a tree after a prior revision; `scenario_update` applies a one-off Bayesian revision
 - **Single-call:** `scenario_full` delegates to `triage_question`, `build_event_tree`, `sensitivity_ranking`, `calibrate_from_fermi`, `outside_view_adjustment`, `synthesize_perspectives`, `assess_project`

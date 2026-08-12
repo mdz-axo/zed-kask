@@ -62,3 +62,15 @@ Return a JSON object:
 ```
 
 `transitions` contains only valid moves to apply. `blocked_moves` preserves deferred moves and their reasons.
+
+## MCP Tool Calls (Agent Action)
+
+After producing the transition plan, the agent should execute each valid move:
+
+1. For each entry in `transitions`, call `kanban_task_move` with:
+   - `task_id`: the task's ID (look up from the task list by title)
+   - `target_status`: the `to_status` field (lowercase: `backlog`, `ready`, `in_progress`, `review`, `done`)
+2. Record `blocked_moves` in a `kanban_task_comment` on the affected tasks so the coordinator knows why the move was deferred.
+3. If a move fails (e.g., WIP limit exceeded), the server returns an error — record it and continue with remaining transitions.
+
+All tools are on the `hkask-mcp-kata-kanban` server.

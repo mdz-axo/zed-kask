@@ -54,3 +54,13 @@ Return a JSON object:
 ```
 
 Return an empty `escalations` array when no candidate needs human intervention.
+
+## MCP Tool Calls (Agent Action)
+
+After producing escalation records, the agent should record them on the tasks:
+
+1. For each entry in `escalations`, call `kanban_task_comment` with `{"task_id": "...", "body": "..."}` using the `message` field. This records the escalation in the task's comment thread so the human operator can see the full context.
+2. Do NOT move the task to a different column — the task stays where it is until the human resolves the escalation.
+3. The `message` field is human-operator-ready; surface it in the chat stream for the operator to act on.
+
+All tools are on the `hkask-mcp-kata-kanban` server.

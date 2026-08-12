@@ -61,3 +61,19 @@ Return a JSON object:
 ```
 
 This output is a proposed spawn configuration. It must contain no hidden capabilities, credentials, or parameters.
+
+## MCP Tool Calls (Agent Action)
+
+After producing the spawn configuration, the agent should execute the delegation:
+
+1. Call `kanban_task_spawn` with:
+   - `task_id`: the task being delegated
+   - `delegation_level`: from this output
+   - `delegated_skills`: from this output
+   - `memory_scope`: from this output (or omit if "none")
+   - `gas_budget`: from this output (or omit if 0)
+2. If `swarm_id` is available in the task context, include it in the spawn call.
+3. After the spawn completes, call `kanban_task_delegate_result` with the `task_id` to read the structured result.
+4. The spawn result (agent_id, model, tokens, cost, response) is recorded on the task as a comment by the server.
+
+All tools are on the `hkask-mcp-kata-kanban` server.

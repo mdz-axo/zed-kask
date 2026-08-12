@@ -65,3 +65,13 @@ Return a JSON object:
 ```
 
 All arrays may be empty. `responses` are board-comment-ready messages; `resolved_blockers` records only resolved issues; `escalation_candidates` records issues that require the escalation step.
+
+## MCP Tool Calls (Agent Action)
+
+After producing the coordination output, the agent should act on it:
+
+1. For each entry in `responses`, call `kanban_task_comment` with `{"task_id": "...", "body": "..."}` using the `comment` field. This posts the coordinator reply to the task's comment thread.
+2. For each entry in `resolved_blockers`, call `kanban_task_comment` with a resolution summary. The blocker is now resolved; the comment records how.
+3. For each entry in `escalation_candidates`, do NOT post a comment — pass these to the escalate step (step 6 in the process manifest).
+
+All tools are on the `hkask-mcp-kata-kanban` server.

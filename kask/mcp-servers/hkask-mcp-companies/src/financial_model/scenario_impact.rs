@@ -77,6 +77,8 @@ pub struct ScenarioNodeImpact {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ScenarioTreeNode {
     pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
     pub marginal_probability: f64,
     #[serde(default)]
     pub depends_on: Vec<ScenarioTreeDependency>,
@@ -168,6 +170,10 @@ pub enum ScenarioImpactError {
     UnknownImpactNode(String),
     #[error("conditional probability table for node '{0}' has {1} entries, expected {2}")]
     InvalidCptLength(String, usize, usize),
+    #[error(
+        "topological order fallback invalid: node '{0}' depends on '{1}' but appears before it in the node array — provide topological_order explicitly"
+    )]
+    InvalidTopoOrder(String, String),
     #[error("all path probabilities are zero")]
     ZeroProbability,
 }
@@ -191,8 +197,36 @@ pub fn scenario_impact_dcf(
     }
 
     // Use topological order if provided, otherwise use node array order.
+    // When falling back, validate that parents appear before children
+    // (required for correct CPT-based path probability computation).
     let topo_order: Vec<String> = if tree.topological_order.is_empty() {
-        nodes.iter().map(|n| n.id.clone()).collect()
+        let fallback: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+        let position: std::collections::HashMap<&str, usize> = fallback
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
+        for node in nodes {
+            for dep in &node.depends_on {
+                for parent_id in &dep.parent_event_ids {
+                    let parent_pos = position
+                        .get(parent_id.as_str())
+                        .copied()
+                        .unwrap_or(usize::MAX);
+                    let child_pos = position
+                        .get(node.id.as_str())
+                        .copied()
+                        .unwrap_or(usize::MAX);
+                    if parent_pos >= child_pos {
+                        return Err(ScenarioImpactError::InvalidTopoOrder(
+                            node.id.clone(),
+                            parent_id.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        fallback
     } else {
         tree.topological_order.clone()
     };
@@ -342,7 +376,7 @@ pub fn scenario_impact_dcf(
 
         node_sensitivities.push(NodeSensitivity {
             node_id: node.id.clone(),
-            node_name: None,
+            node_name: node.name.clone(),
             intrinsic_if_yes,
             intrinsic_if_no,
             sensitivity: (intrinsic_if_yes - intrinsic_if_no).abs(),
@@ -541,11 +575,13 @@ mod tests {
             nodes: vec![
                 ScenarioTreeNode {
                     id: "regulation".into(),
+                    name: Some("Regulation passes".into()),
                     marginal_probability: 0.3,
                     depends_on: vec![],
                 },
                 ScenarioTreeNode {
                     id: "competitor".into(),
+                    name: Some("Competitor launches product".into()),
                     marginal_probability: 0.4,
                     depends_on: vec![],
                 },
@@ -658,11 +694,13 @@ mod tests {
             nodes: vec![
                 ScenarioTreeNode {
                     id: "a".into(),
+                    name: Some("Event A".into()),
                     marginal_probability: 0.6,
                     depends_on: vec![],
                 },
                 ScenarioTreeNode {
                     id: "b".into(),
+                    name: Some("Event B".into()),
                     marginal_probability: 0.0, // not used for dependent nodes
                     depends_on: vec![ScenarioTreeDependency {
                         parent_event_ids: vec!["a".into()],
@@ -719,6 +757,7 @@ mod tests {
             nodes: (0..=MAX_SCENARIO_NODES)
                 .map(|i| ScenarioTreeNode {
                     id: format!("n{i}"),
+                    name: None,
                     marginal_probability: 0.5,
                     depends_on: vec![],
                 })
@@ -746,5 +785,66 @@ mod tests {
 
         let result = scenario_impact_dcf(&hist, &assumptions, &tree, &impacts, 100.0);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_topo_order_fallback() {
+        let hist = sample_hist();
+        let assumptions = ProjectionAssumptions::from_history(&hist);
+        // Child "b" appears before parent "a" in node array, no topo_order provided.
+        let tree = ScenarioTreeInput {
+            nodes: vec![
+                ScenarioTreeNode {
+                    id: "b".into(),
+                    name: None,
+                    marginal_probability: 0.0,
+                    depends_on: vec![ScenarioTreeDependency {
+                        parent_event_ids: vec!["a".into()],
+                        conditionals: vec![0.2, 0.8],
+                    }],
+                },
+                ScenarioTreeNode {
+                    id: "a".into(),
+                    name: None,
+                    marginal_probability: 0.6,
+                    depends_on: vec![],
+                },
+            ],
+            topological_order: vec![], // empty → fallback to node array order
+        };
+
+        let result = scenario_impact_dcf(&hist, &assumptions, &tree, &[], 100.0);
+        assert!(result.is_err(), "should reject invalid topo order fallback");
+    }
+
+    #[test]
+    fn node_name_populated_in_sensitivity() {
+        let hist = sample_hist();
+        let assumptions = ProjectionAssumptions::from_history(&hist);
+        let tree = sample_tree_two_independent();
+        let impacts = vec![
+            ScenarioNodeImpact {
+                node_id: "regulation".into(),
+                yes_deltas: AssumptionDelta {
+                    revenue_growth_delta: Some(-0.03),
+                    ..Default::default()
+                },
+                no_deltas: AssumptionDelta::default(),
+            },
+            ScenarioNodeImpact {
+                node_id: "competitor".into(),
+                yes_deltas: AssumptionDelta::default(),
+                no_deltas: AssumptionDelta::default(),
+            },
+        ];
+
+        let result = scenario_impact_dcf(&hist, &assumptions, &tree, &impacts, 100.0).unwrap();
+
+        let reg = result
+            .node_sensitivities
+            .iter()
+            .find(|s| s.node_id == "regulation")
+            .expect("regulation node in sensitivities");
+        assert_eq!(reg.node_name.as_deref(), Some("Regulation passes"));
     }
 }

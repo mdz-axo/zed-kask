@@ -64,3 +64,21 @@ Return a JSON object:
 ```
 
 `board_tasks` is the complete, creation-ready list for the board. Do not add rejected, duplicate, or new tasks.
+
+## MCP Tool Calls (Agent Action)
+
+After producing `board_tasks`, the agent should materialize the board:
+
+1. Call `kanban_board_create` with `{"name": "{{ project_name }}", "columns": null}` (standard 5-column layout). Record the returned `board_id`.
+2. For each task in `board_tasks`, call `kanban_task_create` with:
+   - `board_id`: the board_id from step 1
+   - `title`: the task title
+   - `description`: the task description
+   - `criteria`: the acceptance criteria array
+   - `gas_budget`: estimated_hours × 1000 (or story_points × 500, minimum 2000)
+3. Call `kanban_board_list` + `kanban_task_list` with the `board_id` to verify.
+4. Emit the combined result as a ```kanban fenced block for KanbanWidget rendering.
+
+Alternatively, pass this output to the `kanban-board-builder` skill, which handles the full materialization pipeline.
+
+All tools are on the `hkask-mcp-kata-kanban` server.

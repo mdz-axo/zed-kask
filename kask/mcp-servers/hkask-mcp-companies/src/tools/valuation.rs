@@ -648,6 +648,7 @@ impl CompaniesServer {
             let node_sensitivities: Vec<serde_json::Value> = result.node_sensitivities.iter()
                 .map(|s| serde_json::json!({
                     "node_id": s.node_id,
+                    "node_name": s.node_name,
                     "intrinsic_if_yes": s.intrinsic_if_yes,
                     "intrinsic_if_no": s.intrinsic_if_no,
                     "sensitivity": s.sensitivity,
@@ -661,6 +662,8 @@ impl CompaniesServer {
                         .map(|o| serde_json::json!({
                             "node_id": o.node_id,
                             "outcome": o.outcome,
+                            "applied_growth": o.applied_growth,
+                            "applied_margin": o.applied_margin,
                         }))
                         .collect();
                     serde_json::json!({

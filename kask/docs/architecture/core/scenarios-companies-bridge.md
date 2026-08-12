@@ -18,11 +18,13 @@ mds_categories: [domain, composition]
 
 The scenarios server and the companies server share the same math engine (`hkask-forecast`) but serve different domains. The companies server specializes in FIBO-anchored financial modeling (DCF, Schwartz 2×2 scenario analysis, intrinsic value distributions). The scenarios server specializes in Tetlock/Chermack forecast tracking (event trees, Brier scoring, calibration curves, project assessment).
 
-The `scenario_from_companies` tool bridges them: financial projections from the companies server become trackable binomial forecasts in the scenarios server.[^anthropic-mcp]
+The correct bridge direction is **scenarios → companies**: exogenous scenario events (regulatory, competitive, macro, technology) are the drivers, and the company's financial forecast is the system being impacted. The `scenario_impact_valuation` tool on the companies server implements this — the user maps each scenario node's Yes/No outcome to additive deltas on DCF assumptions, the tool enumerates all 2^N leaf paths, computes path probabilities from the CPTs, runs DCF under each path, and weights by path probability.[^anthropic-mcp]
+
+The former `scenario_from_companies` tool (companies → scenarios) is **deprecated**. It fabricated tracking events from DCF output — "Will the stock trade within 20% of intrinsic value X?" — which are not causal drivers. Scenarios don't come from companies; company forecasts come from scenarios.
 
 ## Bridge Path
 
-### Forward: companies → scenarios (DCF output → trackable events)
+### Deprecated: companies → scenarios (DCF output → trackable events)
 
 ```
 hkask-mcp-companies                    hkask-mcp-scenarios
@@ -40,7 +42,7 @@ calibrate_forecast                     scenario_from_companies
                                   scenario_score (Brier tracking)
 ```
 
-### Reverse: scenarios → companies (exogenous events → financial forecast)
+### Primary: scenarios → companies (exogenous events → financial forecast)
 
 ```
 hkask-mcp-scenarios                    hkask-mcp-companies

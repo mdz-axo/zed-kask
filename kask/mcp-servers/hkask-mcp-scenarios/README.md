@@ -16,7 +16,7 @@ Scenario-planning MCP server. It turns a framed decision into candidate events, 
 |---|---|
 | `scenario_status` | Return the current scenario-server state snapshot. |
 | `scenario_full` | Run the complete scenario pipeline in one call. |
-| `scenario_from_companies` | Convert company data into forecast events. |
+| `scenario_from_companies` | DEPRECATED: Use `scenario_impact_valuation` on hkask-mcp-companies instead. |
 | `scenario_frame` | Start the seven-turn framing conversation. |
 | `scenario_frame_document` | Convert framing answers into a typed document. |
 | `scenario_brainstorm` | Produce a four-round scenario brainstorming protocol. |

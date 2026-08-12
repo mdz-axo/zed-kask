@@ -36,7 +36,6 @@ use std::collections::HashSet;
 
 use hkask_mcp_server::server::{CredentialRequirement, McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
-use schemars::JsonSchema;
 use serde::Deserialize;
 
 pub mod superforecast;
@@ -88,303 +87,8 @@ fn map_scenario_error(error: ScenarioError) -> McpToolError {
     }
 }
 
-// ── Request types for MCP tools ────────────────────────────────────────────
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct BuildEventsRequest {
-    /// Subject: company ticker, industry, country, or technology domain
-    pub subject: String,
-    /// Time horizon for the scenario
-    pub time_horizon: Option<String>,
-    /// Scenario type
-    pub scenario_type: Option<String>,
-    /// Natural language context about the subject
-    pub context: Option<String>,
-    /// Maximum number of events to generate
-    pub max_events: Option<usize>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct BrainstormRequest {
-    /// Subject: company ticker, industry, country, or technology domain
-    pub subject: String,
-    /// Time horizon: "tactical", "strategic", or "long_term"
-    pub time_horizon: Option<String>,
-    /// Raw text from web searches about this subject
-    pub research_context: Option<String>,
-    /// Persona names to use (e.g., 'Bull,Bear,Contrarian'). Empty = use defaults.
-    pub personas: Option<String>,
-    /// Start at a specific round (1-4). Default: 1 (full protocol).
-    pub start_round: Option<u8>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct FrameRequest {
-    /// Subject: company ticker, industry, country, or technology domain
-    pub subject: String,
-    /// Optional: pre-populated answers from a previous framing session
-    pub prior_answers: Option<String>,
-}
-
-/// Request to structure a completed framing conversation into a FramingDocument.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct FrameDocumentRequest {
-    /// Subject for the scenario project
-    pub subject: String,
-    /// JSON object with answers from the 7-turn framing conversation.
-    /// Expected keys: focal_question, decision_at_stake, time_horizon,
-    /// action_deadline, in_scope, out_of_scope, stakeholders, use_case,
-    /// success_criteria, constraints, surfaced_assumptions, exploration_prompts.
-    pub answers: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CompaniesBridgeRequest {
-    /// Company symbol
-    pub symbol: String,
-    /// JSON output from companies.calibrate_forecast
-    pub companies_output: String,
-    /// Time horizon for the scenario events
-    pub time_horizon: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct MarketsBridgeRequest {
-    /// JSON of an annotated MarketRecord from hkask-mcp-prediction-markets
-    /// (market_lookup or market_match output; for market_match, pass the
-    /// nested `market` object and set match_confidence).
-    pub market_record: String,
-    /// Match confidence from market_match ("high"/"medium"/"low") — omit when
-    /// the caller resolved the market unambiguously (e.g. direct lookup).
-    pub match_confidence: Option<String>,
-}
-
-/// One dependency edge for `scenario_from_markets_set`.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct DependencySpecRequest {
-    /// Child market id (the `market_id` of the conditioned market).
-    pub child_market_id: String,
-    /// Parent market ids (the conditioning markets).
-    pub parent_market_ids: Vec<String>,
-    /// P(child | parent truth assignment), bitmap-ordered; length must be
-    /// 2^parent_market_ids.len(). Caller-authored — the server computes
-    /// marginals but never invents conditional probabilities.
-    pub conditionals: Vec<f64>,
-}
-
-/// Request for `scenario_propagate`: update one event's prior and recompute
-/// the whole tree (T5).
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct PropagateRequest {
-    /// JSON array of ScenarioEvents (the current tree's events, e.g. from a
-    /// prior scenario_from_markets_set / scenario_quantify output).
-    pub events: String,
-    /// ID of the event whose prior is being revised.
-    pub event_id: String,
-    /// The new prior probability in [0, 1].
-    pub new_prior: f64,
-}
-
-/// Request for `scenario_from_markets_set`: compose N market records into a
-/// dependent event tree.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct MarketsSetBridgeRequest {
-    /// JSON array of annotated MarketRecords from hkask-mcp-prediction-markets.
-    pub market_records: String,
-    /// Optional per-record match confidences ("high"/"medium"/"low" or null),
-    /// parallel to the records array. Omit for direct lookups.
-    pub match_confidences: Option<Vec<Option<String>>>,
-    /// Caller-authored dependency edges. Omit for a flat (independent) tree.
-    pub dependency_specs: Option<Vec<DependencySpecRequest>>,
-}
-
-/// One dependency edge for `scenario_from_cmp_indices`. Uses CMP index IDs
-/// (`cmp:{family}:{tenor}:{orientation}`) instead of market IDs.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CmpDependencySpecRequest {
-    /// The child CMP index ID: `cmp:{family}:{tenor}:{orientation}`.
-    pub child_id: String,
-    /// The parent CMP index IDs.
-    pub parent_ids: Vec<String>,
-    /// P(child | parent truth assignment), bitmap-ordered; length must be
-    /// 2^parent_ids.len(). Caller-authored.
-    pub conditionals: Vec<f64>,
-}
-
-/// Request for `scenario_from_cmp_indices`: compose CMP indices into an
-/// EventTree with optional dependency edges (R1).
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CmpBridgeRequest {
-    /// JSON array of ProvenancedCmpIndex objects from
-    /// hkask-mcp-prediction-markets (build_cmp_indices output).
-    pub cmp_indices: String,
-    /// The observation date (YYYY-MM-DD) the CMP indices were built. The event
-    /// deadlines are observation_date + target_maturity_days.
-    pub observation_date: String,
-    /// Optional caller-authored dependency edges between CMP index IDs. Omit
-    /// for a flat (independent) tree.
-    pub dependency_specs: Option<Vec<CmpDependencySpecRequest>>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct FullPipelineRequest {
-    /// Subject: company ticker, industry, country, or technology domain
-    pub subject: String,
-    /// Events as JSON array of ScenarioEvent objects (from scenario_brainstorm or manual construction)
-    pub events: String,
-    /// Optional: perspectives for dragonfly-eye synthesis, as JSON array of Perspective objects
-    pub perspectives: Option<String>,
-    /// Optional: project-level metadata for assessment
-    pub perspective_count: Option<usize>,
-    /// Optional: how many strategies were generated from the scenarios
-    pub strategies_generated: Option<usize>,
-    /// Optional: how many strategies were actually implemented
-    pub strategies_implemented: Option<usize>,
-    /// Optional: learning events, newline-separated
-    pub learning_events: Option<String>,
-    /// Optional: whether early-warning indicators were defined
-    pub has_early_warning_indicators: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CrossValidateRequest {
-    /// Event or question identifier
-    pub event_id: String,
-    /// Label for the first estimate source (e.g., 'superforecasting_skill')
-    pub source_a: String,
-    /// First probability estimate (0.0-1.0)
-    pub estimate_a: f64,
-    /// Fermi sub-questions for estimate A as JSON array
-    pub sub_questions_a: String,
-    /// Label for the second estimate source (e.g., 'scenario_calibrate')
-    pub source_b: String,
-    /// Second probability estimate (0.0-1.0)
-    pub estimate_b: f64,
-    /// Fermi sub-questions for estimate B as JSON array
-    pub sub_questions_b: String,
-    /// Review threshold (default 0.15). Divergence above this triggers review.
-    pub review_threshold: Option<f64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct QuantifyRequest {
-    /// Events as JSON array of ScenarioEvent objects
-    pub events: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct UpdateRequest {
-    /// Forecast record ID
-    pub forecast_id: String,
-    /// Event ID being updated
-    pub event_id: String,
-    /// Current calibrated probability (prior)
-    pub prior_probability: f64,
-    /// P(evidence | hypothesis is true)
-    pub evidence_likelihood: f64,
-    /// P(evidence) — base rate of this evidence in general
-    pub evidence_base_rate: f64,
-    /// Description of the new evidence
-    pub evidence_description: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ScoreRequest {
-    /// Forecast record ID
-    pub forecast_id: String,
-    /// Events as JSON array of ScenarioEvent objects
-    pub events: String,
-    /// Outcomes: array of {event_id, occurred} objects as JSON
-    pub outcomes: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CalibrateRequest {
-    /// The forecast question
-    pub question: String,
-    /// Fermi sub-questions as JSON array of {question, estimate, confidence}
-    pub sub_questions: String,
-    /// Reference class description
-    pub reference_class: Option<String>,
-    /// Base rate from outside view
-    pub base_rate: Option<f64>,
-    /// Number of reference cases considered
-    pub reference_count: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SensitivityRequest {
-    /// Events as JSON array of ScenarioEvent objects
-    pub events: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SynthesizeRequest {
-    /// Event ID to synthesize perspectives for
-    pub event_id: String,
-    /// Perspectives as JSON array of Perspective objects
-    pub perspectives: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CalibrationRequest {
-    /// Optional: filter to a specific subject
-    pub subject: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct TriageRequest {
-    /// The forecasting question to triage
-    pub question: String,
-    /// Does the question have a specific deadline?
-    pub has_deadline: Option<bool>,
-    /// Is a reference class available?
-    pub has_reference_class: Option<bool>,
-    /// Are resolution criteria clear?
-    pub has_resolution_criteria: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ResearchRequest {
-    /// Subject: company ticker, industry, country, or technology domain
-    pub subject: String,
-    /// Raw text from web searches about this subject
-    pub research_text: String,
-    /// Time horizon for the scenario
-    pub time_horizon: Option<String>,
-    /// Scenario type
-    pub scenario_type: Option<String>,
-    /// Maximum number of events to extract
-    pub max_events: Option<usize>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct AssessRequest {
-    /// Project identifier
-    pub project_id: String,
-    /// Subject domain
-    pub subject: String,
-    /// How many perspectives were engaged
-    pub perspective_count: Option<usize>,
-    /// Disagreement score from dragonfly-eye synthesis
-    pub disagreement_score: Option<f64>,
-    /// Total events in the scenario tree
-    pub event_count: Option<usize>,
-    /// How many events have conditional dependencies
-    pub events_with_dependencies: Option<usize>,
-    /// How many strategies were generated
-    pub strategies_generated: Option<usize>,
-    /// How many strategies were actually implemented
-    pub strategies_implemented: Option<usize>,
-    /// Observable learning events (free-text descriptions)
-    pub learning_events: Option<String>,
-    /// Whether early-warning indicators were defined
-    pub has_early_warning_indicators: Option<bool>,
-}
-
-/// Empty request for scenario_status (no parameters needed).
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct StatusRequest {}
+mod requests;
+pub use requests::*;
 
 // ── Server struct ──────────────────────────────────────────────────────────
 
@@ -489,6 +193,38 @@ impl ScenariosServer {
 
 // ── MCP Tools ──────────────────────────────────────────────────────────────
 
+fn build_status_response(
+    total: usize,
+    resolved_count: usize,
+    pending_count: usize,
+    overall_brier: Option<f64>,
+    calibration: Option<serde_json::Value>,
+    recent: Vec<serde_json::Value>,
+    tree: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let provenance_args = serde_json::Value::Object(serde_json::Map::new());
+    let provenance_span_id = serde_json::Value::Null;
+    serde_json::json!({
+        "pipeline": {
+            "forecast_count": total,
+            "resolved_count": resolved_count,
+            "pending_count": pending_count,
+            "overall_brier": overall_brier,
+            "recent_forecasts": recent
+        },
+        "calibration": calibration,
+        "event_tree": tree,
+        "provenance": {
+            "tool": "scenario_status",
+            "server": "hkask-mcp-scenarios",
+            "args": provenance_args,
+            "span_id": provenance_span_id,
+            "version": SERVER_VERSION
+        },
+        "ontology": "dcterms:Dataset"
+    })
+}
+
 #[tool_router(router = scenario_router, vis = "pub")]
 impl ScenariosServer {
     /// Return the current state snapshot for TUI display.
@@ -536,7 +272,13 @@ impl ScenariosServer {
                 None
             };
 
-            let calibration = superforecast::compute_calibration_curve(&store).ok();
+            let calibration = superforecast::compute_calibration_curve(&store).ok().map(|c| serde_json::json!({
+                "total_forecasts": c.total_forecasts,
+                "resolved_forecasts": c.resolved_forecasts,
+                "overall_brier": c.overall_brier,
+                "overconfidence_score": c.overconfidence_score,
+                "interpretation": c.interpretation
+            }));
 
             let recent: Vec<_> = store.values().take(20).map(|r| serde_json::json!({
                 "forecast_id": r.forecast_id,
@@ -548,61 +290,37 @@ impl ScenariosServer {
                 "outcome": r.outcome,
             })).collect();
 
-            let tree = self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let tree = self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()).clone().map(|t| serde_json::json!({
+                "subject": t.subject,
+                "time_horizon": serde_json::to_value(t.time_horizon).unwrap_or_default(),
+                "event_count": t.nodes.len(),
+                "joint_probability": t.joint_probability,
+                "root_ids": t.root_ids,
+                "nodes": t.nodes.iter().map(|n| serde_json::json!({
+                    "id": n.event.id,
+                    "name": n.event.name,
+                    "question": n.event.question,
+                    "probability": n.event.probability,
+                    "marginal_probability": n.marginal_probability,
+                    "certainty_tier": serde_json::to_value(n.event.certainty_tier()).unwrap_or_default(),
+                    "basis": n.event.basis,
+                    "parent_ids": n.event.depends_on.iter().flat_map(|d| d.parent_event_ids.clone()).collect::<Vec<_>>(),
+                    "children": [],
+                    "sub_question_count": n.event.sub_questions.len(),
+                    "has_base_rate": n.event.base_rate.is_some(),
+                    "brier_score": n.event.brier_score
+                })).collect::<Vec<_>>()
+            }));
 
-            // Server-authoritative provenance (T3): the widget carries this so it
-            // can re-issue the originating tool with modified args (T4). `args` is
-            // the request the tool was invoked with (StatusRequest is empty);
-            // `span_id` is the reg.tool span id if available (null here -
-            // execute_tool_semantic emits the span via tracing but does not
-            // surface the id to the tool body).
-            let provenance_args = serde_json::Value::Object(serde_json::Map::new());
-            let provenance_span_id = serde_json::Value::Null;
-            let output = serde_json::json!({
-                "pipeline": {
-                    "forecast_count": total,
-                    "resolved_count": resolved_count,
-                    "pending_count": pending_count,
-                    "overall_brier": overall_brier,
-                    "recent_forecasts": recent
-                },
-                "calibration": calibration.map(|c| serde_json::json!({
-                    "total_forecasts": c.total_forecasts,
-                    "resolved_forecasts": c.resolved_forecasts,
-                    "overall_brier": c.overall_brier,
-                    "overconfidence_score": c.overconfidence_score,
-                    "interpretation": c.interpretation
-                })),
-                "event_tree": tree.map(|t| serde_json::json!({
-                    "subject": t.subject,
-                    "time_horizon": serde_json::to_value(t.time_horizon).unwrap_or_default(),
-                    "event_count": t.nodes.len(),
-                    "joint_probability": t.joint_probability,
-                    "root_ids": t.root_ids,
-                    "nodes": t.nodes.iter().map(|n| serde_json::json!({
-                        "id": n.event.id,
-                        "name": n.event.name,
-                        "question": n.event.question,
-                        "probability": n.event.probability,
-                        "marginal_probability": n.marginal_probability,
-                        "certainty_tier": serde_json::to_value(n.event.certainty_tier()).unwrap_or_default(),
-                        "basis": n.event.basis,
-                        "parent_ids": n.event.depends_on.iter().flat_map(|d| d.parent_event_ids.clone()).collect::<Vec<_>>(),
-                        "children": [],
-                        "sub_question_count": n.event.sub_questions.len(),
-                        "has_base_rate": n.event.base_rate.is_some(),
-                        "brier_score": n.event.brier_score
-                    })).collect::<Vec<_>>()
-                })),
-                "provenance": {
-                    "tool": "scenario_status",
-                    "server": "hkask-mcp-scenarios",
-                    "args": provenance_args,
-                    "span_id": provenance_span_id,
-                    "version": SERVER_VERSION
-                },
-                "ontology": "dcterms:Dataset"
-            });
+            let output = build_status_response(
+                total,
+                resolved_count,
+                pending_count,
+                overall_brier,
+                calibration,
+                recent,
+                tree,
+            );
 
             self.record_experience("scenario_status", &format!("forecasts={}, resolved={}", total, resolved_count), "success", output.clone());
             Ok(output)
@@ -990,8 +708,15 @@ impl ScenariosServer {
     /// Takes a Schwartz 2x2 calibration from hkask-mcp-companies and converts
     /// the scenario projections into binomial ScenarioEvents with Fermi
     /// sub-questions derived from growth/margin assumptions.
+    ///
+    /// DEPRECATED: This tool is the wrong composition direction. Scenarios are
+    /// exogenous drivers; company forecasts are the endogenous system being
+    /// impacted — not the other way around. Use `scenario_impact_valuation` on
+    /// hkask-mcp-companies instead, which composes a company's DCF from
+    /// scenario event-tree impact mappings (the correct direction: scenario
+    /// → company forecast).
     #[tool(
-        description = "Convert companies MCP server output into scenario events for forecast tracking."
+        description = "DEPRECATED: Use scenario_impact_valuation on hkask-mcp-companies instead. This tool converts DCF output into tracking events, but the correct composition is the reverse — scenarios drive company forecasts, not the other way around. Retained for backward compatibility."
     )]
     pub async fn scenario_from_companies(
         &self,
@@ -1033,7 +758,9 @@ impl ScenariosServer {
                     "5. scenario_synthesize → dragonfly-eye aggregation if multiple analysts",
                     "6. scenario_score → Brier scoring when outcomes are known",
                 ],
-                "bridge_note": "The companies server specializes in financial modeling (FIBO-anchored). The scenarios server specializes in forecast tracking (Tetlock/Chermack). This tool bridges them: financial projections become trackable forecasts.",
+                "bridge_note": "DEPRECATED: The correct bridge is scenario_impact_valuation on hkask-mcp-companies (scenario events drive company forecast). This tool goes the wrong way. Retained for backward compatibility.",
+                "deprecated": true,
+                "use_instead": "scenario_impact_valuation on hkask-mcp-companies",
                 "provenance": {
                     "tool": "scenario_from_companies",
                     "server": "hkask-mcp-scenarios",
