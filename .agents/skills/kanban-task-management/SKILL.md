@@ -2,76 +2,104 @@
 name: kanban-task-management
 visibility: public
 description: >
-  Manage the kanban board as agents execute delegated tasks. Monitor board
-  state, coordinate between agents through comment threads, track
-  deliverables, move tasks through columns based on progress, verify
-  completion against acceptance criteria, and escalate when agents are
-  blocked. This is the ongoing coordination skill — the board operator.
-  Ontology: PKO — monitoring = pko:ProcedureExecution, verification =
-  pko:StepVerification, transitions = pko:ChangeOfStatus.
+  Unified kanban task management across the full task lifecycle. Three
+  phases triaged at runtime: (1) decompose projects into INVEST-compliant
+  tasks with recomposition strategy, (2) delegate tasks to subagents with
+  spawn configuration and gas budgeting, (3) monitor boards, coordinate
+  agents, track deliverables, move tasks, verify completion, and escalate.
+  All phases include post-cascade MCP tool-call instructions for the agent.
+  Ontology: PKO — board = pko:Procedure, task = pko:Step, execution =
+  pko:StepExecution, verification = pko:StepVerification, transitions =
+  pko:ChangeOfStatus.
 ---
 
 # Kanban Task Management
 
-The ongoing management of the kanban board as agents work. This is the
-"board operator" skill — it monitors board state, coordinates between
-agents, tracks deliverables, manages comment threads, verifies
-completion, moves tasks through columns, and handles escalations.
+Unified kanban task management across the full task lifecycle. Three
+phases triaged at runtime based on operator inputs:
+
+```
+Decompose → Delegate → Operate
+```
+
+- **Decompose**: Break a project description into INVEST-compliant kanban
+  tasks with acceptance criteria, dependencies, and recomposition strategy.
+  The agent then calls `kanban_board_create` + `kanban_task_create`.
+- **Delegate**: Configure spawn parameters for a task and execute it via a
+  subagent. The agent then calls `kanban_task_spawn` + `kanban_task_comment`.
+- **Operate**: Monitor the board, coordinate agents through comment threads,
+  track deliverables, move tasks through columns, verify completion, and
+  escalate to the human operator. The agent calls `kanban_task_list`,
+  `kanban_task_move`, `kanban_task_verify`, `kanban_task_comment`, etc.
 
 ## When to Use
 
-- After tasks are on the board and agents are working
-- When monitoring board state and identifying blockers
-- When verifying task completion against acceptance criteria
-- When coordinating between agents through comment threads
+- Decompose: When you have a project description and need to break it into
+  board-ready tasks. Pass `project_description` as a skill input.
+- Delegate: When you have a task that needs subagent execution. Pass
+  `task_to_delegate` as a skill input.
+- Operate: When you have a board with active tasks that need monitoring,
+  coordination, or verification. Pass `board_id` as a skill input.
 
 ## When NOT to Use
 
-- For task decomposition (use `kanban-task-decomposition`)
-- For board creation (use `kanban-board-builder`)
-- For initial spawn configuration (use `kanban-task-delegation`)
+- For convergent planning with dependency graphs (use `task-breakdown`)
+- For TDD execution of vertical slices (use `tdd`)
 
-## Pipeline
+## Phase Selection (Triage)
 
-```
-Monitor → Coordinate → Track Deliverables → Move Tasks → Verify → Escalate
-```
+The first step (`triage.j2`) examines the available inputs and determines
+which phase to run:
 
-1. **Monitor** — Assess board state, identify blockers, flag overdue tasks
-2. **Coordinate** — Read comment threads, respond to questions, resolve blockers
-3. **Track Deliverables** — Assess submitted work for relevance and completeness
-4. **Move Tasks** — Recommend status transitions based on evidence, enforce WIP limits
-5. **Verify** — Evaluate deliverables against acceptance criteria, produce pass/fail
-6. **Escalate** — Convert unresolved issues into human-operator-ready escalations
+| Input present | Phase | Steps |
+|---|---|---|
+| `project_description` | decompose | gather-context → decompose-tasks → review-tasks → populate-board |
+| `task_to_delegate` | delegate | configure-spawn → execute-task |
+| `board_id` | operate | monitor-board → coordinate-agents → track-deliverables → move-tasks → verify-completion → escalate |
+
+Templates for non-active phases receive the triage phase and produce a
+skip result without meaningful work. This is necessary because the
+manifest executor runs all steps in ordinal order.
 
 ## MCP Tools
 
-| Tool | When |
-|------|------|
-| `kanban_board_list` | Call to get board list for monitoring |
-| `kanban_task_list` | Call to get tasks for monitoring and coordination |
-| `kanban_task_move` | Call for each transition produced by move-tasks |
-| `kanban_task_verify` | Call to record verification evidence from verify-completion |
-| `kanban_task_comment` | Call to post coordinator replies and escalation records |
-| `kanban_task_add_deliverable` | Call to record validated deliverables |
-| `kanban_task_comments_since` | Call to read incremental comment updates |
-| `kanban_task_reopen` | Call when verification fails and task needs rework |
+| Tool | Phase | When |
+|------|-------|------|
+| `kanban_board_create` | decompose | Post-cascade: create the board |
+| `kanban_task_create` | decompose | Post-cascade: create each task |
+| `kanban_task_list` | decompose, operate | Post-cascade: verify / pre-cascade: fetch |
+| `kanban_board_list` | operate | Pre-cascade: fetch board state |
+| `kanban_task_spawn` | delegate | Post-cascade: spawn subagent |
+| `kanban_task_delegate_result` | delegate | Post-cascade: read structured result |
+| `kanban_task_comment` | delegate, operate | Post-cascade: post progress notes / coordinator replies |
+| `kanban_task_add_deliverable` | delegate, operate | Post-cascade: record deliverable links |
+| `kanban_task_move` | operate | Post-cascade: execute status transitions |
+| `kanban_task_verify` | operate | Post-cascade: record verification evidence |
+| `kanban_task_reopen` | operate | Post-cascade: reopen for rework |
+| `kanban_task_comments_since` | operate | Pre-cascade: read incremental updates |
 
 All tools are on the `hkask-mcp-kata-kanban` server.
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `monitor-board.j2` | `KnowAct` | Assess board state, identify blockers |
-| `coordinate-agents.j2` | `KnowAct` | Prepare comment-thread replies and resolutions |
-| `track-deliverables.j2` | `KnowAct` | Assess deliverables for relevance and completeness |
-| `move-tasks.j2` | `KnowAct` | Recommend valid status transitions with WIP enforcement |
-| `verify-completion.j2` | `KnowAct` | Evaluate completion against acceptance criteria |
-| `escalate.j2` | `KnowAct` | Prepare human-decision escalation records |
+| Template | Phase | Purpose |
+|----------|-------|---------|
+| `triage.j2` | all | Determine which phase to run |
+| `gather-context.j2` | decompose | Extract structured project context |
+| `decompose-tasks.j2` | decompose | Decompose into INVEST-compliant tasks |
+| `review-tasks.j2` | decompose | Review for quality and completeness |
+| `populate-board.j2` | decompose | Board-ready format + MCP tool-call instructions |
+| `configure-spawn.j2` | delegate | Propose spawn configuration |
+| `execute-task.j2` | delegate | Execute task and report results |
+| `monitor-board.j2` | operate | Assess board state, identify blockers |
+| `coordinate-agents.j2` | operate | Prepare comment-thread replies |
+| `track-deliverables.j2` | operate | Assess deliverables for completeness |
+| `move-tasks.j2` | operate | Recommend status transitions with WIP enforcement |
+| `verify-completion.j2` | operate | Evaluate completion against criteria |
+| `escalate.j2` | operate | Prepare human-decision escalation records |
 
 ## Constraints
 
-- Gas cap: 50,000 per invocation.
+- Gas cap: 60,000 per invocation. Maximum 10 iterations.
 - Process manifest: `kask/registry/manifests/kanban-task-management.yaml`
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

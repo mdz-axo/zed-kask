@@ -23,6 +23,12 @@ work_effort = "medium"
 verbosity = "concise"
 max_tokens = 2048
 
+{% if triage_phase and triage_phase != 'decompose' %}
+This step is not active for the current phase ({{ triage_phase }}). Return:
+```json
+{"skipped": true, "phase": "{{ triage_phase }}"}
+```
+{% else %}
 You are a project context extractor. Given a project description, extract structured information needed for task decomposition.
 
 ## Project Description
@@ -42,3 +48,4 @@ Extract the following from the description. If something is not explicitly state
    - Large/complex project → 8 hours
 
 Return a JSON object with these fields. Be concise — this is input for the next step.
+{% endif %}

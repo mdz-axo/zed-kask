@@ -23,6 +23,12 @@ verbosity = "standard"
 max_tokens = 8192
 thinking_budget = "full"
 
+{% if triage_phase and triage_phase != 'decompose' %}
+This step is not active for the current phase ({{ triage_phase }}). Return:
+```json
+{"skipped": true, "phase": "{{ triage_phase }}"}
+```
+{% else %}
 You are a task decomposition expert. Your job is to break down a project into discrete, independently verifiable kanban tasks that follow INVEST criteria.
 
 ## The Project
