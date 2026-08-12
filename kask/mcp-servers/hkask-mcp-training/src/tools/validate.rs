@@ -3,9 +3,10 @@ use crate::lora_validation;
 use crate::types::TrainValidateConfigRequest;
 use hkask_mcp_server::server::execute_tool;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::tool;
+use rmcp::{tool, tool_router};
 use serde_json::json;
 
+#[tool_router(router = validate_router, vis = "pub")]
 impl TrainingServer {
     #[tool(
         description = "Validate training params against the lora-training skill's math-contract gates (G-M1 no-op-at-init, G-M2 merge equivalence, G-M3 scaling form, G-M4 rank budget, G-Q1 frozen base quantized, G-Q2 adapter dtype, G-Q4 no silent upcast, G-Q5 paged optimizer, G-H1 harness-method compatibility). Also validates dataset size (G-D1) and dataset format compatibility (G-D0) if dataset_path is provided. G-D0 detects the dataset format, checks it against the expected format for the selected trainer, and emits copy-paste Python mapping code when a fixable column-name mismatch is found. When dataset_path is provided, also profiles the dataset (G-D0) and returns a DatasetProfile with format, sample count, content length statistics, token estimates, role distribution, multi-turn detection, vision data detection, and preference pair balance. Returns findings with severity (refuse/warn/info), gate ID, message, source citation, and remediation. Emits reg.lora.audit spans. This is the runtime enforcement point for the lora-training skill's audit-config phase."

@@ -93,7 +93,6 @@ use crate::providers::{
 use hkask_memory::MemoryStore;
 use hkask_types::InferencePort;
 
-use rmcp::tool_router;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -124,7 +123,6 @@ fn compute_adapter_checksum(path: &std::path::Path) -> Option<Checksum> {
     Some(Checksum::from_hex(&format!("{:x}", hash)))
 }
 
-#[tool_router(server_handler)]
 impl TrainingServer {
     /// Build a `TrainedLoRAAdapter` from training tool parameters.
     ///
@@ -285,8 +283,47 @@ impl TrainingServer {
 }
 
 // Tool implementations live in `tools/` submodule — each tool is an
-// `impl TrainingServer` block in its own file. The `#[tool_router]` above
-// registers all `#[tool]` methods across all impl blocks in the crate.
+// `impl TrainingServer` block in its own file carrying its own
+// `#[tool_router(router = <name>_router)]`. The `combined_router()` below
+// merges every sub-router; `#[tool_handler]` wires it as the runtime
+// `ServerHandler`. (Before this, a single `#[tool_router(server_handler)]`
+// on this block registered zero tools — rmcp's macro only scans the impl
+// block it is attached to, so the `#[tool]` methods in `tools/*.rs` were
+// silently dropped. Pinned by `tool_surface_is_exactly_*_registered_tools`.)
+
+impl TrainingServer {
+    fn combined_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
+        Self::dataset_router()
+            + Self::submit_router()
+            + Self::evaluate_router()
+            + Self::status_router()
+            + Self::cancel_router()
+            + Self::validate_router()
+    }
+}
+
+#[rmcp::tool_handler(router = Self::combined_router())]
+impl rmcp::ServerHandler for TrainingServer {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Pins the full training tool surface is registered end-to-end. Before the
+    // `combined_router()` merge, a single `#[tool_router(server_handler)]` on
+    // the main impl block registered ZERO tools — rmcp's macro only scans the
+    // impl block it is attached to, so the `#[tool]` methods in `tools/*.rs`
+    // were silently dropped (the server exposed nothing). This test makes a
+    // regression a test-time failure.
+    #[test]
+    fn tool_surface_is_exactly_8_registered_tools() {
+        let n = TrainingServer::combined_router().list_all().len();
+        assert_eq!(
+            n, 8,
+            "training must register all 8 tools across the sub-routers; got {n}"
+        );
+    }
+}
 
 // ── Entry point ───────────────────────────────────────────────────────────
 

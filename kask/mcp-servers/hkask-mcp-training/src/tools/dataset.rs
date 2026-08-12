@@ -6,10 +6,11 @@ use hkask_mcp_server::server::{McpToolError, execute_tool, map_io_error, map_mem
 use hkask_storage::HMem;
 use hkask_types::{HMemOntology, Visibility};
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::tool;
+use rmcp::{tool, tool_router};
 use serde_json::json;
 use std::path::PathBuf;
 
+#[tool_router(router = dataset_router, vis = "pub")]
 impl TrainingServer {
     #[tool(
         description = "Ingest QA pairs for model training. Stores question-answer pairs with provenance in semantic memory for future fine-tuning dataset assembly."

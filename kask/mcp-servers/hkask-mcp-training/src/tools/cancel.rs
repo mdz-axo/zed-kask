@@ -3,9 +3,10 @@ use crate::tools::error_mapping::map_host_provider_error;
 use crate::types::TrainCancelRequest;
 use hkask_mcp_server::server::execute_tool;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::tool;
+use rmcp::{tool, tool_router};
 use serde_json::json;
 
+#[tool_router(router = cancel_router, vis = "pub")]
 impl TrainingServer {
     #[tool(description = "Cancel a running or queued training job.")]
     pub async fn training_cancel(

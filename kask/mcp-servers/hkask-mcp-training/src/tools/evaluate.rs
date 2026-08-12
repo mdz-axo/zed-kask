@@ -4,9 +4,10 @@ use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::tool;
+use rmcp::{tool, tool_router};
 use serde_json::json;
 
+#[tool_router(router = evaluate_router, vis = "pub")]
 impl TrainingServer {
     #[tool(
         description = "Evaluate a trained adapter against a test dataset. Supports exact_match, contains, semantic (LLM-as-judge), and benchmark (MMLU-style multiple-choice) evaluation methods. The model must be deployed and available for inference."

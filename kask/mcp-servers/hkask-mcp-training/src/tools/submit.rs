@@ -9,7 +9,7 @@ use crate::tools::error_mapping::{
 use crate::types::TrainSubmitRequest;
 use hkask_mcp_server::server::{McpToolError, execute_tool, map_io_error};
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::tool;
+use rmcp::{tool, tool_router};
 use serde_json::json;
 use sha2::Digest;
 
@@ -20,6 +20,7 @@ struct AbBaseline {
     previous_perplexity: f32,
 }
 
+#[tool_router(router = submit_router, vis = "pub")]
 impl TrainingServer {
     #[tool(
         description = "Submit a training job for execution. Ingests, normalizes, and submits a dataset for LoRA fine-tuning via the selected harness (Axolotl YAML, TRL Python, or Ludwig YAML) on Runpod. The harness is selected from params.harness (operator-accepted from the lora-training skill's G6 gate), defaulting to Axolotl. When `feedback_path` is provided, enters retrain mode: merges the original dataset with curated feedback, deduplicates by user question, increments the adapter version based on existing adapters with the same `skill_name`, and pre-registers adapter metadata so training_status can complete the A/B comparison on job completion."

@@ -723,6 +723,15 @@ impl KanbanPanel {
         .detach();
     }
 
+    /// Start the edit-task flow for a specific task.
+    #[allow(dead_code)] // WIP: per-task "Edit" trigger not yet wired (Steer-mode)
+    fn start_edit_task(&mut self, task_id: String, cx: &mut Context<Self>) {
+        // The form is created lazily in `render` where a Window is available.
+        self.edit_task_form = None;
+        self.active_action = Some(TaskActionKind::EditTask(task_id));
+        cx.notify();
+    }
+
     /// Submit the edit-task form. Calls `kanban_task_update` and refreshes.
     fn submit_edit_task(&mut self, cx: &mut Context<Self>) {
         let Some(form) = &self.edit_task_form else {
@@ -757,6 +766,14 @@ impl KanbanPanel {
         .detach();
     }
 
+    /// Start the spawn-task flow for a specific task.
+    #[allow(dead_code)] // WIP: per-task "Spawn subagent" trigger not yet wired (Steer-mode)
+    fn start_spawn_task(&mut self, task_id: String, cx: &mut Context<Self>) {
+        self.spawn_task_form = None;
+        self.active_action = Some(TaskActionKind::SpawnTask(task_id));
+        cx.notify();
+    }
+
     /// Submit the spawn-task form. Calls `kanban_task_spawn`.
     fn submit_spawn_task(&mut self, cx: &mut Context<Self>) {
         let Some(form) = &self.spawn_task_form else {
@@ -789,6 +806,51 @@ impl KanbanPanel {
             }
         })
         .detach();
+    }
+
+    /// Toggle task assignment. If assigned, unassign; if unassigned, assign.
+    #[allow(dead_code)] // WIP: per-task assign/unassign trigger not yet wired (Steer-mode)
+    fn toggle_task_assignment(
+        &mut self,
+        task_id: String,
+        is_assigned: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(invoker) = shared_tool_invoker() else {
+            self.error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let tool = if is_assigned {
+            TASK_UNASSIGN_TOOL
+        } else {
+            TASK_ASSIGN_TOOL
+        };
+        let args = json!({ "task_id": task_id });
+        let task = invoker.invoke_tool(KANBAN_SERVER, tool, args);
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(_output) => {
+                this.update(cx, |this, cx| {
+                    this.fetch_tasks(cx);
+                })
+                .log_err();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.error = Some(format!("Failed to toggle assignment: {error}").into());
+                    cx.notify();
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+
+    /// Show the delete-task confirmation dialog.
+    #[allow(dead_code)] // WIP: per-task "Delete" trigger not yet wired (Steer-mode)
+    fn confirm_delete_task(&mut self, task_id: String, cx: &mut Context<Self>) {
+        self.active_action = Some(TaskActionKind::ConfirmDeleteTask(task_id));
+        cx.notify();
     }
 
     /// Execute the task deletion.

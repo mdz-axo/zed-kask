@@ -5,9 +5,10 @@ use crate::tools::error_mapping::{map_adapter_store_error, map_host_provider_err
 use crate::types::TrainStatusRequest;
 use hkask_mcp_server::server::execute_tool;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::tool;
+use rmcp::{tool, tool_router};
 use serde_json::json;
 
+#[tool_router(router = status_router, vis = "pub")]
 impl TrainingServer {
     #[tool(
         description = "Check the status of a training job. Returns pod status, SSH connection info, uptime, GPU type, and recent log lines. When training completes (detected via HuggingFace completion manifest), automatically registers the adapter with metadata from the manifest."
