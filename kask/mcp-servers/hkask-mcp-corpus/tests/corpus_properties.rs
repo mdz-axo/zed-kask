@@ -32,7 +32,7 @@ use serde_json::{Value as JsonValue, json};
 /// (table lookup), intentionally structurally different from the source's `match`
 /// arms, so a bug in one is unlikely to appear identically in the other — the
 /// independence that makes a reference oracle worth anything.
-const PROVIDER_ALIASES: &[(&[str], &str)] = &[
+const PROVIDER_ALIASES: &[(&[&str], &str)] = &[
     (&["deepinfra", "di"], "DI"),
     (&["runpod", "rp"], "RP"),
     (&["openrouter", "or"], "OR"),
@@ -41,7 +41,7 @@ const PROVIDER_ALIASES: &[(&[str], &str)] = &[
 
 /// The serde id for every `ProviderId` variant (for the "valid provider"
 /// invariant). `OpenRouter` is the fallback, so it appears once here.
-const ALL_PROVIDER_IDS: &[str] = &["DI", "RP", "OR", "OM"];
+const ALL_PROVIDER_IDS: &[&str] = &["DI", "RP", "OR", "OM"];
 
 /// All four `ProviderId` variants — for `prop::sample::select` when generating
 /// `RouterModelEntry`.

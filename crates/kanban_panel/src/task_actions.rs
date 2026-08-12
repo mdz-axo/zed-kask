@@ -52,10 +52,10 @@ impl CreateTaskForm {
 
     /// Collect the form values into a `kanban_task_create` args JSON.
     pub(crate) fn collect_args(&self, board_id: &str, cx: &gpui::App) -> serde_json::Value {
-        let title = self.title.read(cx).text(cx).to_string();
-        let description = self.description.read(cx).text(cx).to_string();
-        let criteria_text = self.criteria.read(cx).text(cx).to_string();
-        let gas_text = self.gas_budget.read(cx).text(cx).to_string();
+        let title = self.title.read(cx).text(cx);
+        let description = self.description.read(cx).text(cx);
+        let criteria_text = self.criteria.read(cx).text(cx);
+        let gas_text = self.gas_budget.read(cx).text(cx);
 
         let mut args = json!({
             "board_id": board_id,
@@ -143,10 +143,10 @@ impl EditTaskForm {
 
     /// Collect the form values into a `kanban_task_update` args JSON.
     pub(crate) fn collect_args(&self, cx: &gpui::App) -> serde_json::Value {
-        let title = self.title.read(cx).text(cx).to_string();
-        let description = self.description.read(cx).text(cx).to_string();
-        let priority = self.priority.read(cx).text(cx).to_string();
-        let labels_text = self.labels.read(cx).text(cx).to_string();
+        let title = self.title.read(cx).text(cx);
+        let description = self.description.read(cx).text(cx);
+        let priority = self.priority.read(cx).text(cx);
+        let labels_text = self.labels.read(cx).text(cx);
 
         let mut args = json!({ "task_id": self.task_id });
 
@@ -222,10 +222,10 @@ impl SpawnTaskForm {
 
     /// Collect the form values into a `kanban_task_spawn` args JSON.
     pub(crate) fn collect_args(&self, cx: &gpui::App) -> serde_json::Value {
-        let skills_text = self.skills.read(cx).text(cx).to_string();
-        let level = self.delegation_level.read(cx).text(cx).to_string();
-        let swarm_id = self.swarm_id.read(cx).text(cx).to_string();
-        let gas_text = self.gas_budget.read(cx).text(cx).to_string();
+        let skills_text = self.skills.read(cx).text(cx);
+        let level = self.delegation_level.read(cx).text(cx);
+        let swarm_id = self.swarm_id.read(cx).text(cx);
+        let gas_text = self.gas_budget.read(cx).text(cx);
 
         let mut args = json!({
             "task_id": self.task_id,

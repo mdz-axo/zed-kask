@@ -16,7 +16,7 @@ In this repo, a skill is **not** a `SKILL.md` file. A skill is a PDCA loop execu
 
 Never author `SKILL.md` directly. Build the registry crate first, then derive the companion.
 
-For the current skill catalog (published manifests), see `kask/registry/manifests/`. Installed skill companions live in `.agents/skills/`. Note: `skill-router` is an **unpublished** template crate (`kask/registry/templates/skill-router/`) — it has no published manifest and no installed companion, so it cannot be activated; use `skill-discovery` for catalog matching until it ships.
+For the current skill catalog (published manifests), see `kask/registry/manifests/`. Installed skill companions live in `.agents/skills/`. `skill-router` matches tasks to EXISTING installed skills; `skill-discovery` acquires NEW skills when `skill-router` emits uncovered capabilities (see `kask/docs/explanation/skills-and-composition.md`).
 
 ---
 

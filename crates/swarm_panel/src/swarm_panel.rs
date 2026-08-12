@@ -101,6 +101,7 @@ const SWARM_SERVER: &str = "swarm";
 /// in `hkask_types::kanban_wire::KANBAN_SERVER_NAME` (no duplicated literal) so
 /// a rename in the server propagates here. The kanban board is the durable
 /// coordination source of truth; tasks link to swarms via `kanban_task_spawn`.
+#[allow(dead_code)] // Used in tests only after kanban coordination moved to kanban panel
 const KANBAN_SERVER: &str = hkask_types::kanban_wire::KANBAN_SERVER_NAME;
 
 /// The system prompt injected into the Steer mode `ConversationView`. Tells

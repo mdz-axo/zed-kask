@@ -79,8 +79,10 @@ const TASK_UPDATE_TOOL: &str = "kanban_task_update";
 /// The tool name for spawning a subagent on a task.
 const TASK_SPAWN_TOOL: &str = "kanban_task_spawn";
 /// The tool name for assigning a task.
+#[allow(dead_code)] // Used via cx.listener closure in toggle_task_assignment
 const TASK_ASSIGN_TOOL: &str = "kanban_task_assign";
 /// The tool name for unassigning a task.
+#[allow(dead_code)] // Used via cx.listener closure in toggle_task_assignment
 const TASK_UNASSIGN_TOOL: &str = "kanban_task_unassign";
 
 /// Auto-refresh interval for the task list.
@@ -721,14 +723,6 @@ impl KanbanPanel {
         .detach();
     }
 
-    /// Start the edit-task flow for a specific task.
-    fn start_edit_task(&mut self, task_id: String, cx: &mut Context<Self>) {
-        // The form is created lazily in `render` where a Window is available.
-        self.edit_task_form = None;
-        self.active_action = Some(TaskActionKind::EditTask(task_id));
-        cx.notify();
-    }
-
     /// Submit the edit-task form. Calls `kanban_task_update` and refreshes.
     fn submit_edit_task(&mut self, cx: &mut Context<Self>) {
         let Some(form) = &self.edit_task_form else {
@@ -763,13 +757,6 @@ impl KanbanPanel {
         .detach();
     }
 
-    /// Start the spawn-task flow for a specific task.
-    fn start_spawn_task(&mut self, task_id: String, cx: &mut Context<Self>) {
-        self.spawn_task_form = None;
-        self.active_action = Some(TaskActionKind::SpawnTask(task_id));
-        cx.notify();
-    }
-
     /// Submit the spawn-task form. Calls `kanban_task_spawn`.
     fn submit_spawn_task(&mut self, cx: &mut Context<Self>) {
         let Some(form) = &self.spawn_task_form else {
@@ -802,49 +789,6 @@ impl KanbanPanel {
             }
         })
         .detach();
-    }
-
-    /// Toggle task assignment. If assigned, unassign; if unassigned, assign.
-    fn toggle_task_assignment(
-        &mut self,
-        task_id: String,
-        is_assigned: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(invoker) = shared_tool_invoker() else {
-            self.error = Some("Tool invoker not wired.".into());
-            cx.notify();
-            return;
-        };
-        let tool = if is_assigned {
-            TASK_UNASSIGN_TOOL
-        } else {
-            TASK_ASSIGN_TOOL
-        };
-        let args = json!({ "task_id": task_id });
-        let task = invoker.invoke_tool(KANBAN_SERVER, tool, args);
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(_output) => {
-                this.update(cx, |this, cx| {
-                    this.fetch_tasks(cx);
-                })
-                .log_err();
-            }
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    this.error = Some(format!("Failed to toggle assignment: {error}").into());
-                    cx.notify();
-                })
-                .log_err();
-            }
-        })
-        .detach();
-    }
-
-    /// Show the delete-task confirmation dialog.
-    fn confirm_delete_task(&mut self, task_id: String, cx: &mut Context<Self>) {
-        self.active_action = Some(TaskActionKind::ConfirmDeleteTask(task_id));
-        cx.notify();
     }
 
     /// Execute the task deletion.
@@ -897,7 +841,7 @@ impl KanbanPanel {
             cx.notify();
             return;
         };
-        let name = editor.read(cx).text(cx).to_string();
+        let name = editor.read(cx).text(cx);
         if name.trim().is_empty() {
             return;
         }
@@ -1245,7 +1189,7 @@ impl KanbanPanel {
                 .create_task_form
                 .as_ref()
                 .map(|form| render_create_task_form(form, cx).into_any_element()),
-            Some(TaskActionKind::EditTask(task_id)) => self
+            Some(TaskActionKind::EditTask(_task_id)) => self
                 .edit_task_form
                 .as_ref()
                 .map(|form| render_edit_task_form(form, cx).into_any_element()),
@@ -1259,7 +1203,6 @@ impl KanbanPanel {
                 .map(|editor| render_create_board_form(editor, cx).into_any_element()),
             Some(TaskActionKind::ConfirmDeleteTask(task_id)) => {
                 let task_id_clone = task_id.clone();
-                let task_id_cancel = task_id.clone();
                 Some(
                     v_flex()
                         .gap_2()
@@ -1428,7 +1371,6 @@ impl Render for KanbanPanel {
         }
 
         let mode = self.mode;
-        let border_color = cx.theme().colors().border;
 
         v_flex()
             .size_full()
