@@ -1618,7 +1618,6 @@ pub struct KaskDataServiceSettingsContent {
 pub struct KaskInferenceProvidersSettingsContent {
     pub deepinfra_enabled: Option<bool>,
     pub openrouter_enabled: Option<bool>,
-    pub kilocode_enabled: Option<bool>,
     pub atlascloud_enabled: Option<bool>,
 }
 

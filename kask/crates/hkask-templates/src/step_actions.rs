@@ -11,6 +11,7 @@ use crate::ports::{Result, TemplateError};
 use crate::step_context::{ContextLookup, StepContext};
 use crate::step_graph::{ExitKind, StepId};
 use crate::step_machine::{CascadeOutcome, Infra, StepMachine};
+use crate::template_renderer::InferenceBlock;
 use futures_util::StreamExt;
 use futures_util::stream;
 use hkask_capability::ToolPort;
@@ -211,7 +212,7 @@ impl StepMachine {
         }
 
         // Render the template.
-        let (prompt, raw_template_content) =
+        let (prompt, raw_template_content, inference_block) =
             render_step_template_with_raw(node, &self.context, infra)?;
 
         // Resolve output schema for structured tool calling.
@@ -225,8 +226,24 @@ impl StepMachine {
         let tools: Option<&[ChatToolDefinition]> =
             structured_tool.as_ref().map(std::slice::from_ref);
 
-        // Call inference with streaming + timeout.
-        let params = infra.default_params.clone();
+        // Merge per-step inference parameters from the template's `[inference]`
+        // block over the default params. Templates declare temperature,
+        // max_tokens, and thinking_budget per step — without this, every call
+        // uses the default (temperature 0.6, max_tokens 2048), which is too
+        // low for complex templates that need thinking + a full JSON response.
+        let mut params = infra.default_params.clone();
+        if let Some(temp) = inference_block.temperature {
+            params.temperature = temp;
+        }
+        if let Some(max_tok) = inference_block.max_tokens {
+            params.max_tokens = max_tok;
+        }
+        if inference_block.thinking_budget.as_deref() == Some("full") {
+            params.disable_thinking = false;
+        } else if inference_block.thinking_budget.as_deref() == Some("none") {
+            params.disable_thinking = true;
+        }
+
         let timeout_dur = effective_timeout(node.timeout_seconds);
 
         let (result_text, tool_calls, cost_usd) = call_inference_stream(
@@ -734,17 +751,20 @@ fn render_step_template(
     ctx: &StepContext,
     infra: &Infra,
 ) -> Result<String> {
-    let (rendered, _) = render_step_template_with_raw(node, ctx, infra)?;
+    let (rendered, _, _) = render_step_template_with_raw(node, ctx, infra)?;
     Ok(rendered)
 }
 
-/// Render a step's template and return both the rendered prompt and the raw
-/// template content (for output-schema extraction).
+/// Render a step's template and return the rendered prompt, the raw template
+/// content (for output-schema extraction), and the parsed `[inference]` config
+/// block (for LLM parameter overrides).
 fn render_step_template_with_raw(
     node: &crate::step_graph::StepNode,
     ctx: &StepContext,
     infra: &Infra,
-) -> Result<(String, String)> {
+) -> Result<(String, String, crate::template_renderer::InferenceBlock)> {
+    use crate::template_renderer::{parse_and_strip_inference_block, strip_front_matter};
+
     let renderer = node.renderer.as_deref().unwrap_or("");
 
     match renderer {
@@ -767,8 +787,14 @@ fn render_step_template_with_raw(
                 "Rendering minijinja template"
             );
 
+            // Parse the `[inference]` block from the template body (after front
+            // matter stripping) to extract per-step LLM parameters.
+            let after_front_matter = strip_front_matter(&template_content);
+            let (_stripped_body, inference_block) =
+                parse_and_strip_inference_block(after_front_matter);
+
             let prompt = infra.template_renderer.render(&template_content, ctx)?;
-            Ok((prompt, template_content))
+            Ok((prompt, template_content, inference_block))
         }
         _ => {
             let template_content = node
@@ -784,7 +810,11 @@ fn render_step_template_with_raw(
 
             let rendered =
                 crate::template_renderer::TemplateRenderer::render_inline(template_content, ctx);
-            Ok((rendered, template_content.to_string()))
+            Ok((
+                rendered,
+                template_content.to_string(),
+                InferenceBlock::default(),
+            ))
         }
     }
 }

@@ -4844,7 +4844,7 @@ mod tests {
             })
         };
 
-        // OpenRouter / KiloCode: `usage.cost`.
+        // OpenRouter: `usage.cost`.
         assert_eq!(
             cost_of(map_completion_events(vec![event_with(usage_with_cost(
                 Some(0.001),
@@ -4862,7 +4862,7 @@ mod tests {
             ))])),
             Some(Some(0.002))
         );
-        // KiloCode BYOK: `market_cost` wins over `cost == 0` (real compute energy).
+        // BYOK: `market_cost` wins over `cost == 0` (real compute energy).
         assert_eq!(
             cost_of(map_completion_events(vec![event_with(usage_with_cost(
                 Some(0.0),

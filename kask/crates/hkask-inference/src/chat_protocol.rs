@@ -1,6 +1,6 @@
 //! Shared OpenAI-compatible chat completion protocol types and helpers.
 //!
-//! All five chat backends (DeepInfra, OpenRouter, KiloCode, Ollama,
+//! All four chat backends (DeepInfra, OpenRouter, Ollama,
 //! AtlasCloud) speak the same `/v1/chat/completions` wire format. Media
 //! backends (image/video/audio/ASR) do not use this protocol.
 //! This module provides the shared request/response types and helper functions
@@ -178,13 +178,13 @@ pub struct ChatUsage {
     pub total_tokens: u32,
     /// Observed USD cost of this inference call (provider-reported, not
     /// operator-configured). `None` when the provider doesn't report cost
-    /// (e.g. Ollama, local, $0). OpenRouter and KiloCode use this field name.
+    /// (e.g. Ollama, local, $0). OpenRouter uses this field name.
     #[serde(default)]
     pub cost: Option<f64>,
     /// DeepInfra's cost field (same meaning as `cost`, different key).
     #[serde(default)]
     pub estimated_cost: Option<f64>,
-    /// Market compute value (KiloCode BYOK). The real energy cost of the
+    /// Market compute value (BYOK). The real energy cost of the
     /// inference regardless of BYOK discounts. When present, preferred over
     /// `cost` for rJoule (energy spend) tracking.
     #[serde(default)]
@@ -886,7 +886,7 @@ data: [DONE]
     #[test]
     fn chat_result_prefers_market_cost_over_cost() {
         let raw = r#"{
-            "model": "KiloCode/qwen/qwen3-235b",
+            "model": "OpenRouter/qwen/qwen3-235b",
             "choices": [{
                 "index": 0,
                 "message": {"role": "assistant", "content": "ok"},

@@ -53,7 +53,6 @@ classDiagram
         DeepInfra
         Runpod
         OpenRouter
-        KiloCode
         Ollama
     }
     class InferenceConfig {
@@ -62,8 +61,6 @@ classDiagram
         +deepinfra_api_key: String
         +openrouter_base_url: String
         +openrouter_api_key: String
-        +kilocode_base_url: String
-        +kilocode_api_key: String
         +ollama_base_url: String
         +ollama_api_key: String
         +atlascloud_base_url: String
@@ -129,8 +126,8 @@ API key is present are constructed. Each backend also has inherent `generate`
 OpenAI-compatible chat (the standalone path; zed-kask chat routes through the
 IPC bridge instead).
 
-The `ProviderId` enum has five variants (DeepInfra, RunPod, OpenRouter,
-KiloCode, Ollama). The chat-only providers (KiloCode, Ollama) and RunPod are
+The `ProviderId` enum has four variants (DeepInfra, RunPod, OpenRouter,
+Ollama). The chat-only providers (Ollama) and RunPod are
 routed by `ProviderId` prefix but their inference is served through the zed IPC
 bridge / `LanguageModelRegistry`, not by a backend struct in this crate.
 `AtlasCloudBackend` is a media provider that is not a `ProviderId` variant

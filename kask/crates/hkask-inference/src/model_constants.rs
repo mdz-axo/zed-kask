@@ -41,7 +41,7 @@ pub const DEFAULT_TTS_MODEL: &str = "DeepInfra/hexgrad/Kokoro-82M";
 pub const DEFAULT_STT_MODEL: &str = "DeepInfra/whisper-large-v3";
 
 /// Default vision model for image analysis.
-pub const DEFAULT_VISION_MODEL: &str = "KiloCode/Qwen/Qwen3-VL-235B-A22B-Instruct";
+pub const DEFAULT_VISION_MODEL: &str = "OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct";
 
 /// Default image-gen model — DeepInfra FLUX-2-klein-4B (DeepInfraBackend::generate_image).
 pub const DEFAULT_IMAGE_GEN_MODEL: &str = "DeepInfra/black-forest-labs/FLUX-2-klein-4b";

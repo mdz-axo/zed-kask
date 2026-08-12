@@ -862,7 +862,6 @@ mod tests {
             "DEEPINFRA_API_KEY",
             "ATLASCLOUD_API_KEY",
             "OPENROUTER_API_KEY",
-            "KILOCODE_API_KEY",
             "HKASK_SMTP_PASSWORD",
             "HKASK_DB_PASSPHRASE",
         ]

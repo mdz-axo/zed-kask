@@ -16,7 +16,7 @@ This guide shows how to add a new inference provider. There are two shapes:
   `LanguageModelRegistry` over the IPC bridge): add a `ProviderId` variant,
   a prefix, config fields, a settings toggle, and an
   `InferenceProviderDescriptor`. No backend struct is needed in this crate
-  — zed serves the calls. OpenRouter / KiloCode / Ollama / Cline are this
+  — zed serves the calls. OpenRouter / Ollama / Cline are this
   shape.
 - **Media provider** (image/video/speech/transcription, served by
   `MediaRouter`): all of the chat-provider steps **plus** a backend struct

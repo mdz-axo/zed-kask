@@ -446,8 +446,8 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: Some("kask.inference_providers"),
             description: Some(
-                "Configure API keys for OpenAI-compatible inference providers \
-                 (DeepInfra, OpenRouter, KiloCode, AtlasCloud). \
+                : "Configure API keys for OpenAI-compatible inference providers \
+                 (DeepInfra, OpenRouter, AtlasCloud). \
                  When enabled, each provider appears in Settings → AI → LLM Providers \
                  and in the agent model picker."
                     .into(),
@@ -457,7 +457,6 @@ pub(crate) fn kask_page() -> SettingsPage {
                 "provider",
                 "deepinfra",
                 "openrouter",
-                "kilocode",
                 "atlascloud",
                 "glm",
                 "llm",

@@ -1,6 +1,6 @@
 //! Inference provider descriptors and `openai_compatible` settings sync.
 //!
-//! Each inference provider (DeepInfra, OpenRouter, KiloCode,
+//! Each inference provider (DeepInfra, OpenRouter,
 //! Cline, AtlasCloud) is exposed as a zed OpenAI-compatible provider. When the user enables
 //! a provider in the kask settings UI, the composition root calls
 //! `ensure_openai_compatible_entries` to write the corresponding
@@ -57,14 +57,6 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "OPENROUTER_API_KEY",
         credential_key: "openrouter",
         dashboard_url: "https://openrouter.ai/",
-    },
-    InferenceProviderDescriptor {
-        id: "KiloCode",
-        name: "KiloCode",
-        api_url: "https://api.kilo.ai/api/gateway",
-        env_var: "KILOCODE_API_KEY",
-        credential_key: "kilocode",
-        dashboard_url: "https://kilo.ai/",
     },
     InferenceProviderDescriptor {
         id: "AtlasCloud",
@@ -406,7 +398,6 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
         let enabled = match provider.credential_key {
             "deepinfra" => settings.inference_providers.deepinfra_enabled,
             "openrouter" => settings.inference_providers.openrouter_enabled,
-            "kilocode" => settings.inference_providers.kilocode_enabled,
             "atlascloud" => settings.inference_providers.atlascloud_enabled,
             _ => false,
         };
@@ -439,19 +430,18 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
     // Extract the enabled states before the closure so we don't borrow
     // `settings` inside the `move` closure.
     //
-    // fal.ai and Cline are deliberately absent: fal.ai is a media platform, not
+    // fal.ai, Cline, and KiloCode are deliberately absent: fal.ai is a media platform, not
     // an OpenAI-compatible chat endpoint (its `/v1/chat/completions` returns 404
-    // and `/v1/models` uses `Authorization: Key`, not Bearer), and Cline was
-    // removed from the kask provider set. Both are cleaned up below so stale
-    // `openai_compatible` entries left in settings.json by prior versions stop
-    // firing bogus discovery 401/404 warnings on every startup.
-    let enabled_states: [(&'static str, bool); 4] = [
+    // and `/v1/models` uses `Authorization: Key`, not Bearer), and Cline and
+    // KiloCode were removed from the kask provider set. All three are cleaned up
+    // below so stale `openai_compatible` entries left in settings.json by prior
+    // versions stop firing bogus discovery 401/404 warnings on every startup.
+    let enabled_states: [(&'static str, bool); 3] = [
         ("DeepInfra", settings.inference_providers.deepinfra_enabled),
         (
             "OpenRouter",
             settings.inference_providers.openrouter_enabled,
         ),
-        ("KiloCode", settings.inference_providers.kilocode_enabled),
         (
             "AtlasCloud",
             settings.inference_providers.atlascloud_enabled,
@@ -463,9 +453,10 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
     // OpenAI-compatible machinery stops registering/discovering a provider that
     // no longer belongs to the kask set. The api_url match guard avoids removing
     // a user's custom provider that happens to share an id.
-    let removed_providers: [(&'static str, &str); 2] = [
+    let removed_providers: [(&'static str, &str); 3] = [
         ("fal.ai", "https://api.fal.ai/v1"),
         ("Cline", "https://api.cline.bot/api/v1"),
+        ("KiloCode", "https://api.kilo.ai/api/gateway"),
     ];
 
     let fs = <dyn fs::Fs>::global(cx);
@@ -476,7 +467,7 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
             .openai_compatible
             .get_or_insert_default();
 
-        // Clean up stale entries for removed providers (fal.ai, Cline).
+        // Clean up stale entries for removed providers (fal.ai, Cline, KiloCode).
         for (id, known_api_url) in removed_providers {
             let id: std::sync::Arc<str> = std::sync::Arc::from(id);
             if let Some(existing) = openai_compatible.get(&id)

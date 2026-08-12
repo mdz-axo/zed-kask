@@ -32,25 +32,23 @@ use serde_json::{Value as JsonValue, json};
 /// (table lookup), intentionally structurally different from the source's `match`
 /// arms, so a bug in one is unlikely to appear identically in the other — the
 /// independence that makes a reference oracle worth anything.
-const PROVIDER_ALIASES: &[(&[&str], &str)] = &[
+const PROVIDER_ALIASES: &[(&[str], &str)] = &[
     (&["deepinfra", "di"], "DI"),
     (&["runpod", "rp"], "RP"),
     (&["openrouter", "or"], "OR"),
-    (&["kilocode", "kc"], "KC"),
     (&["ollama", "om"], "OM"),
 ];
 
 /// The serde id for every `ProviderId` variant (for the "valid provider"
 /// invariant). `OpenRouter` is the fallback, so it appears once here.
-const ALL_PROVIDER_IDS: &[&str] = &["DI", "RP", "OR", "KC", "OM"];
+const ALL_PROVIDER_IDS: &[str] = &["DI", "RP", "OR", "OM"];
 
-/// All five `ProviderId` variants — for `prop::sample::select` when generating
+/// All four `ProviderId` variants — for `prop::sample::select` when generating
 /// `RouterModelEntry`.
-const ALL_PROVIDERS: [ProviderId; 5] = [
+const ALL_PROVIDERS: [ProviderId; 4] = [
     ProviderId::DeepInfra,
     ProviderId::Runpod,
     ProviderId::OpenRouter,
-    ProviderId::KiloCode,
     ProviderId::Ollama,
 ];
 
@@ -89,8 +87,6 @@ fn arb_prefixed_name() -> BoxedStrategy<String> {
         Just("rp".to_string()),
         Just("openrouter".to_string()),
         Just("or".to_string()),
-        Just("kilocode".to_string()),
-        Just("kc".to_string()),
         Just("ollama".to_string()),
         Just("om".to_string()),
         Just("cline".to_string()),

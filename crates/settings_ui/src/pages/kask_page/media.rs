@@ -40,7 +40,7 @@ pub(crate) fn render_media_page(
     let vision_input = kask_string_input(
         "kask-media-vision-model",
         "Vision Model",
-        "KiloCode/Qwen/Qwen3-VL-235B-A22B-Instruct",
+        "OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct",
         vision_model,
         "media",
         "vision_model",

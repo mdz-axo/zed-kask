@@ -1,14 +1,13 @@
-//! Inference configuration — multi-provider routing for 5 chat providers: DeepInfra, RunPod (vision/OCR only), OpenRouter, KiloCode, Ollama (local).
+//! Inference configuration — multi-provider routing for 4 chat providers: DeepInfra, RunPod (vision/OCR only), OpenRouter, Ollama (local).
 //!
 //! # Environment Variables
 //!
 //! - `DEEPINFRA_BASE_URL` / `DEEPINFRA_API_KEY` — DeepInfra (cloud, required)
 //! - `ATLASCLOUD_BASE_URL` / `ATLASCLOUD_API_KEY` — AtlasCloud (cloud media + LLM)
 //! - `OPENROUTER_BASE_URL` / `OPENROUTER_API_KEY` — OpenRouter (cloud, required)
-//! - `KILOCODE_BASE_URL` / `KILOCODE_API_KEY` — KiloCode (cloud, required)
 //! - `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` — Ollama (local; key optional, header ignored)
 //! - `RUNPOD_API_KEY` / `RUNPOD_BASE_URL` or `RUNPOD_TEMPLATE_ID` — RunPod (vision/OCR only)
-//! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DeepInfra, RunPod, OpenRouter, KiloCode, ollama; default: DeepInfra)
+//! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DeepInfra, RunPod, OpenRouter, ollama; default: DeepInfra)
 //! - `HKASK_DEFAULT_MODEL` — default model (default: `OpenRouter/z-ai/glm-5.2`)
 //!
 //! # API Key Resolution
@@ -22,7 +21,6 @@
 //! Models use a full-name provider prefix:
 //! - `DeepInfra/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra (cloud)
 //! - `OpenRouter/openai/gpt-4o` → OpenRouter (cloud)
-//! - `KiloCode/anthropic/claude-sonnet-4.5` → KiloCode (cloud)
 //! - `ollama/qwen3:8b` → Ollama (local)
 //! - `RunPod/kask-ocr` → RunPod (vision/OCR only — not available for chat)
 //! - No prefix → default provider (configurable, default: DeepInfra)
@@ -42,9 +40,6 @@ pub enum ProviderId {
     /// OpenRouter (cloud) — prefix `OpenRouter/`
     #[serde(rename = "OR")]
     OpenRouter,
-    /// KiloCode (cloud) — prefix `KiloCode/`
-    #[serde(rename = "KC")]
-    KiloCode,
     /// Ollama (local) — prefix `ollama/`. No API key required; the OpenAI-compatible
     /// endpoint at `/v1/chat/completions` ignores the `Authorization` header.
     #[serde(rename = "OM")]
@@ -60,7 +55,7 @@ impl ProviderId {
     /// expect: "The system normalizes provider responses for monitoring"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — model-name routing to provider boundary
     /// pre:  model is non-empty
-    /// post: returns Some((ProviderId, stripped_model)) for DeepInfra/, RunPod/, OpenRouter/, KiloCode/, ollama/ prefixes
+    /// post: returns Some((ProviderId, stripped_model)) for DeepInfra/, RunPod/, OpenRouter/, ollama/ prefixes
     /// post: returns None for unrecognized or missing prefix
     #[must_use]
     pub fn parse_from_model(model: &str) -> Option<(Self, &str)> {
@@ -70,7 +65,6 @@ impl ProviderId {
             ("DeepInfra/", ProviderId::DeepInfra),
             ("RunPod/", ProviderId::Runpod),
             ("OpenRouter/", ProviderId::OpenRouter),
-            ("KiloCode/", ProviderId::KiloCode),
             ("ollama/", ProviderId::Ollama),
         ];
         for (prefix, provider) in PREFIXES {
@@ -105,7 +99,6 @@ impl ProviderId {
             "deepinfra" | "di" => ProviderId::DeepInfra,
             "runpod" | "rp" => ProviderId::Runpod,
             "openrouter" | "or" => ProviderId::OpenRouter,
-            "kilocode" | "kc" => ProviderId::KiloCode,
             "ollama" | "om" => ProviderId::Ollama,
             _ => ProviderId::OpenRouter,
         }
@@ -126,14 +119,13 @@ impl ProviderId {
     ///
     /// expect: "The system normalizes provider responses for monitoring"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — stable provider name for routing
-    /// post: returns "DeepInfra", "RunPod", "OpenRouter", "KiloCode", or "ollama"
+    /// post: returns "DeepInfra", "RunPod", "OpenRouter", or "ollama"
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             ProviderId::DeepInfra => "DeepInfra",
             ProviderId::Runpod => "RunPod",
             ProviderId::OpenRouter => "OpenRouter",
-            ProviderId::KiloCode => "KiloCode",
             ProviderId::Ollama => "ollama",
         }
     }
@@ -141,7 +133,7 @@ impl ProviderId {
 
 /// Configuration for the inference router.
 ///
-/// Holds connection settings for DeepInfra, OpenRouter, KiloCode,
+/// Holds connection settings for DeepInfra, OpenRouter,
 /// Ollama, and AtlasCloud. The router uses this config to construct
 /// backends and decide the default provider for unprefixed model names.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,8 +146,6 @@ pub struct InferenceConfig {
     pub deepinfra_api_key: String,
     pub openrouter_base_url: String,
     pub openrouter_api_key: String,
-    pub kilocode_base_url: String,
-    pub kilocode_api_key: String,
     /// Ollama local inference — defaults to `http://localhost:11434`. The API key
     /// is optional (Ollama ignores it) but kept as `String` for consistency with the
     /// other backends and to support remote Ollama instances that require auth.
@@ -178,8 +168,6 @@ impl Default for InferenceConfig {
             deepinfra_api_key: String::new(),
             openrouter_base_url: "https://openrouter.ai/api".to_string(),
             openrouter_api_key: String::new(),
-            kilocode_base_url: "https://api.kilo.ai/api/gateway".to_string(),
-            kilocode_api_key: String::new(),
             ollama_base_url: "http://localhost:11434".to_string(),
             ollama_api_key: String::new(),
             atlascloud_base_url: "https://api.atlascloud.ai/api/v1".to_string(),
@@ -203,7 +191,6 @@ impl InferenceConfig {
     pub fn from_env() -> Self {
         let di = ProviderConfig::from_env("DeepInfra", "https://api.deepinfra.com");
         let or = ProviderConfig::from_env("OpenRouter", "https://openrouter.ai/api");
-        let kc = ProviderConfig::from_env("KiloCode", "https://api.kilo.ai/api/gateway");
         let om = ProviderConfig::from_env("ollama", "http://localhost:11434");
 
         let atlascloud_base_url = std::env::var("ATLASCLOUD_BASE_URL")
@@ -216,8 +203,6 @@ impl InferenceConfig {
             deepinfra_api_key: di.api_key,
             openrouter_base_url: or.base_url,
             openrouter_api_key: or.api_key,
-            kilocode_base_url: kc.base_url,
-            kilocode_api_key: kc.api_key,
             ollama_base_url: om.base_url,
             ollama_api_key: om.api_key,
             atlascloud_base_url,
@@ -290,7 +275,7 @@ fn resolve_api_key(env_name: &str) -> String {
 ///
 /// Reads `HKASK_DEFAULT_PROVIDER` via [`resolve_api_key`] (env var first, then
 /// OS keychain). Accepted values: DeepInfra, RunPod, OpenRouter,
-/// KiloCode, ollama. Defaults to DeepInfra.
+/// ollama. Defaults to DeepInfra.
 fn resolve_default_provider() -> ProviderId {
     let raw = resolve_api_key("HKASK_DEFAULT_PROVIDER");
     parse_provider_code(&raw)
@@ -299,14 +284,13 @@ fn resolve_default_provider() -> ProviderId {
 /// Parse a provider code string to a ProviderId.
 ///
 /// Accepted values: full provider names (DeepInfra,
-/// RunPod, OpenRouter, KiloCode, ollama). Anything else (including
+/// RunPod, OpenRouter, ollama). Anything else (including
 /// empty) → DeepInfra.
 fn parse_provider_code(raw: &str) -> ProviderId {
     match raw {
         "DeepInfra" => ProviderId::DeepInfra,
         "RunPod" => ProviderId::Runpod,
         "OpenRouter" => ProviderId::OpenRouter,
-        "KiloCode" => ProviderId::KiloCode,
         "ollama" => ProviderId::Ollama,
         _ => ProviderId::DeepInfra,
     }
@@ -462,7 +446,6 @@ mod tests {
         assert_eq!(parse_provider_code("DeepInfra"), ProviderId::DeepInfra);
         assert_eq!(parse_provider_code("RunPod"), ProviderId::Runpod);
         assert_eq!(parse_provider_code("OpenRouter"), ProviderId::OpenRouter);
-        assert_eq!(parse_provider_code("KiloCode"), ProviderId::KiloCode);
         assert_eq!(parse_provider_code("ollama"), ProviderId::Ollama);
     }
 
@@ -549,10 +532,6 @@ mod tests {
             ProviderId::Runpod
         );
         assert_eq!(
-            ProviderId::from_prefix_segment("KiloCode"),
-            ProviderId::KiloCode
-        );
-        assert_eq!(
             ProviderId::from_prefix_segment("ollama"),
             ProviderId::Ollama
         );
@@ -563,7 +542,6 @@ mod tests {
             ProviderId::OpenRouter
         );
         assert_eq!(ProviderId::from_prefix_segment("rp"), ProviderId::Runpod);
-        assert_eq!(ProviderId::from_prefix_segment("kc"), ProviderId::KiloCode);
         assert_eq!(ProviderId::from_prefix_segment("om"), ProviderId::Ollama);
         // Unrecognized → OpenRouter fallback.
         assert_eq!(

@@ -159,11 +159,24 @@ impl TemplateRenderer {
     pub fn render(&self, template_content: &str, context: &StepContext) -> Result<String> {
         let mut env = self.env.lock().unwrap_or_else(|e| e.into_inner());
 
+        // Strip YAML front matter before rendering. hKask templates have a
+        // front matter block (metadata, contract, energy_cap) terminated by
+        // `\n---\n`. Without stripping, the front matter is sent to the LLM
+        // as literal prompt text — confusing the model and wasting tokens.
+        let after_front_matter = strip_front_matter(template_content);
+
+        // Strip the `[inference]` config block from the body. This TOML-like
+        // block declares per-step parameters (temperature, max_tokens,
+        // thinking_budget). Without stripping, it's sent to the LLM as prompt
+        // text. The parsed config is extracted separately by the caller via
+        // `parse_and_strip_inference_block` on the raw template content.
+        let (renderable, _inference_block) = parse_and_strip_inference_block(after_front_matter);
+
         // Register the per-render template under the synthetic name "step".
         // `add_template_owned` replaces any prior "step" registration (no
         // accumulation across renders). The loader handles only `{% include %}`
         // references, not "step".
-        env.add_template_owned("step", template_content.to_string())
+        env.add_template_owned("step", renderable.to_string())
             .map_err(|e| TemplateError::Render(format!("Invalid template: {}", e)))?;
 
         // `Value::from_serialize` accepts any `Serialize` type directly — the
@@ -193,6 +206,120 @@ impl TemplateRenderer {
         }
         result
     }
+}
+
+/// Strip YAML front matter from a template file before rendering.
+///
+/// hKask `.j2` templates have a front matter block at the top containing
+/// metadata (`[inference]`, `template_type`, `contract`, `energy_cap`,
+/// `visibility`) terminated by a `\n---\n` separator. The body after the
+/// separator is the actual Jinja2 prompt template.
+///
+/// Without stripping, the front matter is sent to the LLM as literal prompt
+/// text — the model sees `[inference]\ntemplate_type: KnowAct\ncontract:...`
+/// before the actual instructions, wasting tokens and confusing the model.
+///
+/// Templates without a `\n---\n` separator are returned as-is (no front
+/// matter to strip — e.g., inline templates, simple prompts).
+pub(crate) fn strip_front_matter(template_content: &str) -> &str {
+    if let Some(separator_pos) = template_content.find("\n---\n") {
+        // Skip past the separator (5 chars: \n---\n)
+        &template_content[separator_pos + 5..]
+    } else {
+        template_content
+    }
+}
+
+/// Parsed `[inference]` config block from a template body.
+///
+/// Templates declare per-step inference parameters in a TOML-like block:
+/// ```text
+/// [inference]
+/// temperature = 0.2
+/// max_tokens = 4096
+/// thinking_budget = "full"
+/// ```
+/// This struct captures the parsed values. Fields not present in the block
+/// remain `None` — the caller merges them over `LLMParameters::default()`.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct InferenceBlock {
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<u32>,
+    pub thinking_budget: Option<String>,
+}
+
+/// Parse and strip the `[inference]` config block from a template body.
+///
+/// The block starts with `[inference]` on its own line and ends at the first
+/// blank line. Key-value pairs use `key = value` syntax (TOML-like). String
+/// values are quoted; numeric values are bare.
+///
+/// Returns `(stripped_body, parsed_config)`. The stripped body has the
+/// `[inference]` block removed so it's not sent to the LLM as prompt text.
+/// If no `[inference]` block is found, returns the original text and an empty
+/// `InferenceBlock`.
+pub(crate) fn parse_and_strip_inference_block(body: &str) -> (String, InferenceBlock) {
+    // Find the `[inference]` marker on its own line.
+    let marker = "[inference]";
+    let marker_pos = match body.find(marker) {
+        Some(pos) => pos,
+        None => return (body.to_string(), InferenceBlock::default()),
+    };
+
+    // The marker must be at the start of a line (or start of string).
+    if marker_pos > 0 && body.as_bytes().get(marker_pos - 1) != Some(&b'\n') {
+        return (body.to_string(), InferenceBlock::default());
+    }
+
+    // Find the end of the block: the first blank line after the marker.
+    let after_marker = &body[marker_pos + marker.len()..];
+    let block_end = after_marker.find("\n\n").unwrap_or(after_marker.len());
+    let block_content = &after_marker[..block_end];
+
+    // Parse key = value lines.
+    let mut config = InferenceBlock::default();
+    for line in block_content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
+            // Strip surrounding quotes from string values.
+            let unquoted = value
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .unwrap_or(value);
+            match key {
+                "temperature" => {
+                    config.temperature = unquoted.parse().ok();
+                }
+                "max_tokens" => {
+                    config.max_tokens = unquoted.parse().ok();
+                }
+                "thinking_budget" => {
+                    config.thinking_budget = Some(unquoted.to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Rebuild the body without the `[inference]` block.
+    let before = &body[..marker_pos];
+    let after = if marker_pos + marker.len() + block_end < body.len() {
+        // Skip past the `\n\n` blank line separator that terminated the block.
+        let rest_start = marker_pos + marker.len() + block_end;
+        let rest = &body[rest_start..];
+        // Strip leading newlines — the blank line(s) that terminated the block.
+        rest.trim_start_matches('\n')
+    } else {
+        ""
+    };
+
+    let stripped = format!("{before}{after}");
+    (stripped, config)
 }
 
 /// Build a minijinja `Environment` configured for the renderer.
@@ -440,5 +567,64 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // ── Front matter stripping tests ──────────────────────────────────────
+
+    #[test]
+    fn strip_front_matter_removes_yaml_metadata() {
+        let template = "{# comment #}\n[inference]\ntemplate_type: KnowAct\ncontract:\n  output:\n    result: string\n---\nYou are an evaluator.\n";
+        let result = strip_front_matter(template);
+        assert!(result.starts_with("You are an evaluator."));
+        assert!(!result.contains("[inference]"));
+        assert!(!result.contains("template_type"));
+    }
+
+    #[test]
+    fn strip_front_matter_passes_through_without_separator() {
+        let template = "You are an evaluator. Respond with JSON.";
+        let result = strip_front_matter(template);
+        assert_eq!(result, template);
+    }
+
+    // ── Inference block parsing tests ─────────────────────────────────────
+
+    #[test]
+    fn parse_inference_block_extracts_temperature_and_max_tokens() {
+        let body = "[inference]\ntemperature = 0.2\nmax_tokens = 4096\nthinking_budget = \"full\"\n\nYou are a code reviewer.\n";
+        let (stripped, config) = parse_and_strip_inference_block(body);
+        assert_eq!(config.temperature, Some(0.2));
+        assert_eq!(config.max_tokens, Some(4096));
+        assert_eq!(config.thinking_budget.as_deref(), Some("full"));
+        assert!(stripped.starts_with("You are a code reviewer."));
+        assert!(!stripped.contains("[inference]"));
+        assert!(!stripped.contains("temperature ="));
+    }
+
+    #[test]
+    fn parse_inference_block_returns_empty_when_no_block() {
+        let body = "You are an evaluator. Respond with JSON.";
+        let (stripped, config) = parse_and_strip_inference_block(body);
+        assert_eq!(config.temperature, None);
+        assert_eq!(config.max_tokens, None);
+        assert_eq!(config.thinking_budget, None);
+        assert_eq!(stripped, body);
+    }
+
+    #[test]
+    fn parse_inference_block_handles_partial_config() {
+        let body = "[inference]\nmax_tokens = 8192\n\nYou are a decomposer.\n";
+        let (stripped, config) = parse_and_strip_inference_block(body);
+        assert_eq!(config.temperature, None);
+        assert_eq!(config.max_tokens, Some(8192));
+        assert_eq!(config.thinking_budget, None);
+        assert!(stripped.starts_with("You are a decomposer."));
+    }
+
+    #[test]
+    fn parse_inference_block_handles_thinking_budget_none() {
+        let body = "[inference]\ntemperature = 0.0\nthinking_budget = \"none\"\n\nYou are a triage agent.\n";
+        let (_stripped, config) = parse_and_strip_inference_block(body);
+        assert_eq!(config.thinking_budget.as_deref(), Some("none"));
     }
 }

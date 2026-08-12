@@ -13,7 +13,7 @@ crate:
     v0.31.0: empty-spec validation, context_summary to evaluators (Good Regulator),
     skill_catalog wired, algedonic escalation for catastrophic plans, mechanical
     materiality guard, refinement history in plan.md. Distinct from
-    kanban-task-decomposition (single-pass board populate) and tdd (consumes the
+    kanban-task-management (single-pass board populate) and tdd (consumes the
     plan one vertical slice at a time).
 
 templates:

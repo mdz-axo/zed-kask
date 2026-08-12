@@ -45,7 +45,7 @@ Media generation MCP server — image, video, audio, and 3D generation via Atlas
 
 ## Configuration
 
-This server reads `ATLASCLOUD_API_KEY` and `DEEPINFRA_API_KEY` for media generation. Vision-LLM calls (describe, analyze, face validation) route through the inference IPC bridge to zed's `LanguageModelRegistry` — the media process does not read `OPENROUTER_API_KEY`/`KILOCODE_API_KEY` directly (those are read by the zed process).
+This server reads `ATLASCLOUD_API_KEY` and `DEEPINFRA_API_KEY` for media generation. Vision-LLM calls (describe, analyze, face validation) route through the inference IPC bridge to zed's `LanguageModelRegistry` — the media process does not read `OPENROUTER_API_KEY` directly (that is read by the zed process).
 
 | Variable | Default | Description |
 |---|---|---|

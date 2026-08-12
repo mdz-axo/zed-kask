@@ -61,7 +61,7 @@ pub mod models {
     pub const STT_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_STT_MODEL;
     pub const STT_ENV: &str = "HKASK_MEDIA_STT_MODEL";
 
-    /// Default vision model: Qwen3-VL (Apache 2.0) via KiloCode
+    /// Default vision model: Qwen3-VL (Apache 2.0) via OpenRouter
     pub const VISION_DEFAULT: &str = hkask_inference::model_constants::DEFAULT_VISION_MODEL;
     pub const VISION_ENV: &str = "HKASK_MEDIA_VISION_MODEL";
 

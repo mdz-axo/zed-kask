@@ -96,7 +96,6 @@ enabled:[^openai-compatible-settings]
 |-------|---------|---------------------------|
 | `deepinfra_enabled` | `false` | `DEEPINFRA_API_KEY` set |
 | `openrouter_enabled` | `false` | `OPENROUTER_API_KEY` set |
-| `kilocode_enabled` | `false` | `KILOCODE_API_KEY` set |
 | `atlascloud_enabled` | `false` | `ATLASCLOUD_API_KEY` set |
 
 fal.ai is not an inference provider here — it is not OpenAI-compatible
@@ -277,7 +276,7 @@ constants, which are `const` references to the single source of truth in
 `model_constants.rs` also defines `DEFAULT_OCR_MODEL` (`"RunPod/kask-ocr"`),
 env `HKASK_OCR_MODEL`), `DEFAULT_TTS_MODEL` (`"DeepInfra/hexgrad/Kokoro-82M"`),
 `DEFAULT_STT_MODEL` (`"DeepInfra/whisper-large-v3"`), `DEFAULT_VISION_MODEL`
-(`"KiloCode/Qwen/Qwen3-VL-235B-A22B-Instruct"`), and `DEFAULT_IMAGE_GEN_MODEL`
+(`"OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct"`), and `DEFAULT_IMAGE_GEN_MODEL`
 (`"DeepInfra/black-forest-labs/FLUX-2-klein-4b"`). Every constant has an env-var accessor (e.g.
 `classifier_model()` reads `HKASK_CLASSIFIER_MODEL` first) so operators can
 override without recompiling.
@@ -391,7 +390,6 @@ comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
 |---------|--------|
 | `DEEPINFRA_API_KEY` | DeepInfra |
 | `OPENROUTER_API_KEY` | OpenRouter |
-| `KILOCODE_API_KEY` | KiloCode |
 | `ATLASCLOUD_API_KEY` | AtlasCloud |
 
 `FALAI_API_KEY` is listed under Data Services (fal.ai is a media platform,

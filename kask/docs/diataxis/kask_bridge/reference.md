@@ -66,7 +66,6 @@ classDiagram
     class KaskInferenceProvidersSettings {
         +deepinfra_enabled: bool
         +openrouter_enabled: bool
-        +kilocode_enabled: bool
         +atlascloud_enabled: bool
     }
     class KaskMemorySettings {

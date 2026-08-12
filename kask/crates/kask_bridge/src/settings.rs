@@ -169,9 +169,6 @@ pub struct KaskInferenceProvidersSettings {
     /// Enable OpenRouter (unified API for 200+ models).
     pub openrouter_enabled: bool,
 
-    /// Enable KiloCode (unified API for 200+ models + tools).
-    pub kilocode_enabled: bool,
-
     /// Enable AtlasCloud (task-based media + OpenAI-compatible LLM).
     pub atlascloud_enabled: bool,
 }
@@ -187,7 +184,6 @@ impl KaskInferenceProvidersSettings {
         Self {
             deepinfra_enabled: std::env::var("DEEPINFRA_API_KEY").is_ok(),
             openrouter_enabled: std::env::var("OPENROUTER_API_KEY").is_ok(),
-            kilocode_enabled: std::env::var("KILOCODE_API_KEY").is_ok(),
             atlascloud_enabled: std::env::var("ATLASCLOUD_API_KEY").is_ok(),
         }
     }
@@ -456,7 +452,7 @@ pub struct KaskMediaSettings {
     /// STT model override (e.g., "DeepInfra/whisper-large-v3").
     pub stt_model: String,
 
-    /// Vision model override (e.g., "KiloCode/qwen/qwen3-vl-235b-a22b-instruct").
+    /// Vision model override (e.g., "OpenRouter/qwen/qwen3-vl-235b-a22b-instruct").
     pub vision_model: String,
 
     /// Image generation model override (e.g., "DeepInfra/black-forest-labs/FLUX-2-klein-4b").
@@ -1305,7 +1301,6 @@ impl From<KaskInferenceProvidersSettingsContent> for KaskInferenceProvidersSetti
         Self {
             deepinfra_enabled: c.deepinfra_enabled.unwrap_or(from_env.deepinfra_enabled),
             openrouter_enabled: c.openrouter_enabled.unwrap_or(from_env.openrouter_enabled),
-            kilocode_enabled: c.kilocode_enabled.unwrap_or(from_env.kilocode_enabled),
             atlascloud_enabled: c.atlascloud_enabled.unwrap_or(from_env.atlascloud_enabled),
         }
     }
@@ -1839,7 +1834,6 @@ mod tests {
         let default = KaskInferenceProvidersSettings::default();
         assert!(!default.deepinfra_enabled);
         assert!(!default.openrouter_enabled);
-        assert!(!default.kilocode_enabled);
         assert!(!default.atlascloud_enabled);
     }
 
@@ -1877,10 +1871,7 @@ mod tests {
         let has_inference_key = urls.iter().any(|(env_var, _)| {
             matches!(
                 env_var.as_str(),
-                "DEEPINFRA_API_KEY"
-                    | "OPENROUTER_API_KEY"
-                    | "KILOCODE_API_KEY"
-                    | "ATLASCLOUD_API_KEY"
+                "DEEPINFRA_API_KEY" | "OPENROUTER_API_KEY" | "ATLASCLOUD_API_KEY"
             )
         });
         assert!(

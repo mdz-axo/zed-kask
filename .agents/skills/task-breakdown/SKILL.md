@@ -6,7 +6,7 @@ description: "Decompose work into small, verifiable, vertically-sliced tasks wit
 
 # Task Breakdown
 
-Decompose work into small, verifiable, vertically-sliced tasks with explicit acceptance criteria and checkpoints. Convergent PDCA: gather read-only context and dependency graph, decompose (slice + write tasks in one producer), evaluate against sizing/red-flag/checkpoint criteria, iterate until the plan is stable, then finalize tasks/plan.md + tasks/todo.md with PKO process-axis anchors. v0.31.0: empty-spec validation, context_summary to evaluators (Good Regulator), skill_catalog wired, algedonic escalation for catastrophic plans, mechanical materiality guard, refinement history in plan.md. Distinct from kanban-task-decomposition (single-pass board populate) and tdd (consumes the plan one vertical slice at a time).
+Decompose work into small, verifiable, vertically-sliced tasks with explicit acceptance criteria and checkpoints. Convergent PDCA: gather read-only context and dependency graph, decompose (slice + write tasks in one producer), evaluate against sizing/red-flag/checkpoint criteria, iterate until the plan is stable, then finalize tasks/plan.md + tasks/todo.md with PKO process-axis anchors. v0.31.0: empty-spec validation, context_summary to evaluators (Good Regulator), skill_catalog wired, algedonic escalation for catastrophic plans, mechanical materiality guard, refinement history in plan.md. Distinct from kanban-task-management (single-pass board populate) and tdd (consumes the plan one vertical slice at a time).
 
 ## When to Use
 
@@ -17,7 +17,7 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 - When the deliverable is `tasks/plan.md` + `tasks/todo.md` with PKO process-axis anchors (Procedure, Step, StepVerification, etc.) and DC+BIBO document metadata, plus a Refinement History section making the PDCA loop visible.
 - When prior outcome evidence (`prior_outcome`) or operator feedback (`prior_operator_feedback`) should calibrate the plan — the self-improvement feedback loop.
 - When the installed `skill_catalog` is available and each task should carry a `skill_match_query` for skill-router consumption.
-- When you need to distinguish this skill from kanban-task-decomposition (single-pass board populate) or tdd (consumes the plan one vertical slice at a time).
+- When you need to distinguish this skill from kanban-task-management (single-pass board populate) or tdd (consumes the plan one vertical slice at a time).
 
 ## Instructions
 
