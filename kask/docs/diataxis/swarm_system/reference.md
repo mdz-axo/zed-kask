@@ -214,11 +214,15 @@ un-acknowledged curator dispatch escalates regardless of `d`.
 
 ## Token model (do not conflate)
 
+The two ABW grants below are real, TTL-enforced, blocking gates. The third row
+records a token that no longer exists — kept so a reader who remembers it does
+not look for it.
+
 | Token                         | Scope                                       | TTL                         | Enforcement                                                                      |
 | ----------------------------- | ------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------- |
 | `ConsentGrant` (ABW spend)    | action + target + credits, single-use       | `CONSENT_TTL_SECS` enforced | real-time blocking gate (`consent.rs:184`)                                       |
 | `SessionGrant` (ABW headless) | session budget + action set                 | enforced                    | `consume_session` (`:280`)                                                       |
-| `DelegationToken` (OCAP)      | resource + resource_id + action, in-process | **none**                    | `McpRuntime::invoke` (no signature, no unforgeability — see `.rules` OCAP block) |
+| ~~`DelegationToken`~~ (removed) | —                                         | —                           | Deleted 2026-08-12 (RR-0056): the per-call capability gate compared a caller-supplied value against itself and denied nothing. `McpRuntime::invoke` now takes `agent: WebID` (accounting identity for the call meter) and performs no authorization |
 
 ## See also
 

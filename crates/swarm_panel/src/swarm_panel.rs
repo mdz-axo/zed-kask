@@ -45,7 +45,7 @@ pub use panel_button::SwarmPanelButton;
 // crate (relocated so the kask GPUI widgets can dispatch without depending on
 // this heavy panel crate). Re-exported here so existing `swarm_panel::ToolInvoker`
 // / `set_tool_invoker` / `shared_tool_invoker` call sites compile unchanged.
-pub use hkask_tool_invoker::{ToolInvoker, set_tool_invoker, shared_tool_invoker};
+pub use hkask_tool_invoker::{InvokeError, ToolInvoker, set_tool_invoker, shared_tool_invoker};
 
 use parse::{AgentCard, AgentSource, SwarmCard, extract_agent_mentions, extract_wallet_balance};
 
@@ -105,6 +105,19 @@ const FETCH_RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
 /// error and waits for a manual refresh. Bounded so a permanently broken server
 /// does not become an unbounded background poll.
 const MAX_FETCH_RETRIES: u32 = 5;
+
+/// The backoff delay for the next retry, or `None` once the attempt budget is
+/// spent.
+///
+/// Kept free of panel state and the GPUI executor so the retry *policy* is
+/// unit-testable without constructing a `Workspace` (the same reason
+/// `hkask-kanban-widget` splits its dispatch decision out of the handler).
+fn fetch_retry_delay(attempts_so_far: u32) -> Option<Duration> {
+    if attempts_so_far >= MAX_FETCH_RETRIES {
+        return None;
+    }
+    Some(FETCH_RETRY_BASE_DELAY * 2u32.pow(attempts_so_far))
+}
 
 /// The kanban MCP server id. References the canonical single source of truth
 /// in `hkask_types::kanban_wire::KANBAN_SERVER_NAME` (no duplicated literal) so
@@ -729,16 +742,14 @@ impl SwarmPanel {
             // rather than stacking a second timer.
             return;
         }
-        if self.retry_attempt >= MAX_FETCH_RETRIES {
+        let Some(delay) = fetch_retry_delay(self.retry_attempt) else {
             log::warn!(
                 "swarm-panel: giving up after {MAX_FETCH_RETRIES} retries — \
-                 use the refresh button once the MCP server is available"
+                 use the Retry button once the MCP server is available"
             );
             return;
-        }
+        };
         self.retry_attempt += 1;
-        // 1s, 2s, 4s, 8s, 16s.
-        let delay = FETCH_RETRY_BASE_DELAY * 2u32.pow(self.retry_attempt - 1);
         log::info!(
             "swarm-panel: fetch failed transiently — retrying in {}s (attempt {}/{})",
             delay.as_secs(),
@@ -2449,11 +2460,31 @@ impl Render for SwarmPanel {
                     // Fetch errors surface as a status strip whenever present,
                     // not only in the empty state (the M3 partial-degradation
                     // finding — a working list can hide a failed source).
+                    //
+                    // The strip carries a manual retry: automatic retries are
+                    // bounded (`MAX_FETCH_RETRIES`), so once they are exhausted the
+                    // operator needs a way back without closing and reopening the
+                    // panel. Two elements in this row (label + button), measured
+                    // against the `ui-layout-discipline` congestion rule.
                     .when_some(self.visible_error().cloned(), |this, err| {
                         this.child(
-                            Label::new(format!("Load warning: {err}"))
-                                .size(LabelSize::XSmall)
-                                .color(Color::Warning),
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    Label::new(format!("Load warning: {err}"))
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Warning),
+                                )
+                                .child(
+                                    Button::new("swarm-retry-fetch", "Retry")
+                                        .style(ButtonStyle::Subtle)
+                                        .label_size(LabelSize::XSmall)
+                                        .disabled(self.is_fetching())
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.refresh_now(cx);
+                                        })),
+                                ),
                         )
                     })
                     // The three surfaces: Browse (discovery/sharing), Author
@@ -2741,6 +2772,83 @@ impl SerializableItem for SwarmPanel {
 mod tests {
     use super::*;
     use crate::parse::{AgentListResponse, WorkspaceListResponse};
+
+    // ── Fetch retry policy ──────────────────────────────────────────────────
+    //
+    // The panel used to fetch exactly once, in its constructor. A single MCP
+    // server restart — routine when settings change, or when the inference
+    // socket resolves after launch — left it permanently empty with only a
+    // `log::warn!` the operator never saw. These pin the recovery policy.
+
+    /// The backoff doubles and is bounded, so a permanently broken server
+    /// produces a finite number of retries rather than an unbounded poll.
+    #[test]
+    fn fetch_retry_backs_off_then_gives_up() {
+        assert_eq!(fetch_retry_delay(0), Some(Duration::from_secs(1)));
+        assert_eq!(fetch_retry_delay(1), Some(Duration::from_secs(2)));
+        assert_eq!(fetch_retry_delay(2), Some(Duration::from_secs(4)));
+        assert_eq!(fetch_retry_delay(3), Some(Duration::from_secs(8)));
+        assert_eq!(fetch_retry_delay(4), Some(Duration::from_secs(16)));
+        assert_eq!(
+            fetch_retry_delay(MAX_FETCH_RETRIES),
+            None,
+            "the attempt budget must be finite so a broken server settles on a \
+             visible error instead of polling forever"
+        );
+    }
+
+    /// The retry budget is spent monotonically — no attempt count within the
+    /// budget may yield `None`, and none beyond it may yield `Some`.
+    #[test]
+    fn fetch_retry_budget_is_monotonic() {
+        for attempt in 0..MAX_FETCH_RETRIES {
+            assert!(
+                fetch_retry_delay(attempt).is_some(),
+                "attempt {attempt} is within the budget of {MAX_FETCH_RETRIES}"
+            );
+        }
+        for attempt in MAX_FETCH_RETRIES..(MAX_FETCH_RETRIES + 3) {
+            assert!(
+                fetch_retry_delay(attempt).is_none(),
+                "attempt {attempt} exceeds the budget of {MAX_FETCH_RETRIES}"
+            );
+        }
+    }
+
+    /// Only transport-level failures drive a retry. A tool that ran and failed,
+    /// or a refusal, must not be re-issued: doing so would repeat a side effect
+    /// for no benefit.
+    ///
+    /// This is the classification the fetchers branch on, so it belongs pinned
+    /// next to the panel that consumes it.
+    #[test]
+    fn only_transport_failures_are_retried() {
+        assert!(
+            InvokeError::NotWired.is_retryable(),
+            "the invoker is wired asynchronously post-login, so a panel opened during \
+             startup must retry rather than present a dead end"
+        );
+        assert!(
+            InvokeError::Unavailable("transport closed".into()).is_retryable(),
+            "a closed MCP transport is transient - the call never reached the tool"
+        );
+        assert!(
+            !InvokeError::Failed("ABW rejected the request".into()).is_retryable(),
+            "a tool that ran and failed must not be re-issued"
+        );
+    }
+
+    /// `NotWired` renders the shared explanation rather than an empty string, so
+    /// the startup state is legible instead of looking like a blank failure.
+    #[test]
+    fn not_wired_error_explains_itself() {
+        let message = InvokeError::NotWired.message();
+        assert_eq!(message, hkask_tool_invoker::NOT_WIRED_MESSAGE);
+        assert!(
+            message.contains("kask.mcp.load_default"),
+            "the message must name the setting an operator can act on, got: {message}"
+        );
+    }
 
     // Pins the tool name strings the panel calls. The single source of truth
     // is `parse::SWARM_TOOLS` — a rename in `hkask-mcp-swarm` must update that

@@ -1084,7 +1084,7 @@ mod tests {
             server: &str,
             tool: &str,
             args: serde_json::Value,
-        ) -> gpui::Task<Result<String, String>> {
+        ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
             self.calls
                 .lock()
                 .expect("MockToolInvoker calls mutex poisoned")

@@ -3441,9 +3441,10 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
         server: &str,
         tool: &str,
         args: serde_json::Value,
-    ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
+    ) -> gpui::Task<Result<String, swarm_panel::InvokeError>> {
         use hkask_capability::ToolPort;
         use hkask_types::WebID;
+        use swarm_panel::InvokeError;
 
         // Accounting identity for the call meter — not a credential.
         let webid = WebID::from_persona(b"swarm-panel");
@@ -3461,9 +3462,9 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
                 .map_err(|error| {
                     let message = error.to_string();
                     if error.is_retryable() {
-                        hkask_tool_invoker::InvokeError::Unavailable(message)
+                        InvokeError::Unavailable(message)
                     } else {
-                        hkask_tool_invoker::InvokeError::Failed(message)
+                        InvokeError::Failed(message)
                     }
                 })?;
             Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()))

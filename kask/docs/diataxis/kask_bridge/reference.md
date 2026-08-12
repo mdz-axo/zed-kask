@@ -113,13 +113,15 @@ Two bridge adapters implement hKask port traits against zed types:
   `SkillManifestExecutor` by delegating to hKask's `ManifestExecutor`. It
   holds an `Arc<dyn InferencePort>` (the `GuardedInferencePort`), an
   `Arc<dyn ToolPort>` (the `McpRuntime` itself — it implements `ToolPort`
-  directly, with capability-match gating, gas/rjoule budgeting, and
-  `reg.tool.*` span emission), and a `tokio::runtime::Handle` that is
+  directly: it charges the call against the agent's per-tick runaway ceiling,
+  dispatches, and emits the regulation span; it performs no per-call
+  authorization), and a `tokio::runtime::Handle` that is
   entered around manifest execution so `tokio::time::timeout` has a
   reactor. (The former `BridgeToolPort` adapter was collapsed in the
   2026-07-31 simplification pass — `McpRuntime` is passed directly as the
-  `ToolPort`. The `a2a_secret` field was deleted
-  with the OCAP/a2a secret threading.)
+  `ToolPort`. The `a2a_secret` field was deleted with the a2a secret
+  threading; the in-process capability token that replaced it was itself removed
+  2026-08-12 as a vacuous gate — see RR-0056.)
 - `BridgeMemoryPort` (`memory.rs:1615`) implements zed's `ThreadMemoryPort`
   by delegating to hKask's `MemoryPort`. It wraps an `Arc<dyn MemoryPort>`
   — a `RealMemoryPort` (`memory.rs:42`), wired once the zed user resolves

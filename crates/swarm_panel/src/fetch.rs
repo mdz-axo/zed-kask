@@ -5,7 +5,6 @@
 //! same extraction pattern.
 
 use gpui::Context;
-use hkask_tool_invoker::InvokeError;
 use hkask_types::tool_response::parse_tool_response;
 use serde_json::json;
 

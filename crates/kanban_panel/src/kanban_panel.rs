@@ -86,6 +86,30 @@ const TASK_UNASSIGN_TOOL: &str = "kanban_task_unassign";
 /// Auto-refresh interval for the task list.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 
+/// What a refresh tick should re-fetch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefreshTarget {
+    Boards,
+    Tasks,
+}
+
+/// Which fetch a refresh tick should issue.
+///
+/// Kept as a pure function so the recovery behavior is unit-testable without a
+/// `Workspace` (mirrors `hkask-kanban-widget`'s split of its dispatch decision
+/// out of the handler). The board-list branch is the load-bearing one: the loop
+/// previously skipped the tick entirely when no board was selected, so a
+/// `kanban_board_list` that failed at construction — MCP server still starting,
+/// or restarting — was never retried and the panel stayed empty for the whole
+/// session.
+fn refresh_target(has_board: bool) -> RefreshTarget {
+    if has_board {
+        RefreshTarget::Tasks
+    } else {
+        RefreshTarget::Boards
+    }
+}
+
 /// Which inline action form is currently active (if any).
 #[derive(Clone, Debug)]
 pub enum TaskActionKind {
@@ -465,11 +489,10 @@ impl KanbanPanel {
     /// first board if none is selected, which triggers a task fetch.
     fn fetch_boards(&mut self, cx: &mut Context<Self>) {
         let Some(invoker) = shared_tool_invoker() else {
-            self.error = Some(
-                "Tool invoker not wired — the kanban MCP server is unavailable. \
-                 Ensure kask MCP servers are enabled (kask.mcp.load_default)."
-                    .into(),
-            );
+            // The invoker is wired asynchronously by the deferred post-login task,
+            // so a panel opened during startup lands here before the dispatch path
+            // exists. The refresh loop retries, so this is a status, not a dead end.
+            self.error = Some(hkask_tool_invoker::NOT_WIRED_MESSAGE.into());
             cx.notify();
             return;
         };
@@ -509,7 +532,14 @@ impl KanbanPanel {
             Err(error) => {
                 this.update(cx, |this, cx| {
                     this.fetching = false;
-                    this.error = Some(error.into());
+                    // A transport loss is transient: the refresh loop re-attempts
+                    // the board list (it no longer skips ticks when no board is
+                    // selected), so say so rather than presenting it as terminal.
+                    this.error = Some(if error.is_retryable() {
+                        format!("Reconnecting to the kanban server… ({error})").into()
+                    } else {
+                        error.message().into()
+                    });
                     cx.notify();
                 })
                 .log_err();
@@ -526,11 +556,7 @@ impl KanbanPanel {
         };
 
         let Some(invoker) = shared_tool_invoker() else {
-            self.error = Some(
-                "Tool invoker not wired — the kanban MCP server is unavailable. \
-                 Ensure kask MCP servers are enabled (kask.mcp.load_default)."
-                    .into(),
-            );
+            self.error = Some(hkask_tool_invoker::NOT_WIRED_MESSAGE.into());
             cx.notify();
             return;
         };
@@ -565,7 +591,13 @@ impl KanbanPanel {
             Err(error) => {
                 this.update(cx, |this, cx| {
                     this.fetching = false;
-                    this.error = Some(error.into());
+                    // The refresh loop retries on its own cadence, so a transport
+                    // loss reads as reconnecting rather than as a failed board.
+                    this.error = Some(if error.is_retryable() {
+                        format!("Reconnecting to the kanban server… ({error})").into()
+                    } else {
+                        error.message().into()
+                    });
                     cx.notify();
                 })
                 .log_err();
@@ -643,9 +675,16 @@ impl KanbanPanel {
         cx.notify();
     }
 
-    /// Start the auto-refresh background task. Re-fetches the task list every
+    /// Start the auto-refresh background task. Re-fetches every
     /// `REFRESH_INTERVAL` seconds. The task is stored in `refresh_task` so it
     /// is cancelled when the panel is dropped.
+    ///
+    /// Refreshes the *board list* when no board is selected, and the task list
+    /// otherwise. The board-list branch is what makes the panel self-healing: the
+    /// loop previously `continue`d whenever `selected_board_id` was `None`, so a
+    /// `board_list` that failed at construction (MCP server still starting, or
+    /// restarting) was never retried and the panel stayed empty for the rest of
+    /// the session.
     fn start_refresh_task(&mut self, cx: &mut Context<Self>) {
         self.refresh_task = Some(cx.spawn(async move |this, cx| {
             loop {
@@ -653,13 +692,18 @@ impl KanbanPanel {
                 let has_board = this
                     .read_with(cx, |this, _cx| this.selected_board_id.is_some())
                     .unwrap_or(false);
-                if !has_board {
-                    continue;
+                if this
+                    .update(cx, |this, cx| match refresh_target(has_board) {
+                        RefreshTarget::Tasks => this.fetch_tasks(cx),
+                        RefreshTarget::Boards => this.fetch_boards(cx),
+                    })
+                    .log_err()
+                    .is_none()
+                {
+                    // The panel is gone; stop the loop rather than spinning on a
+                    // dead entity for the lifetime of the process.
+                    return;
                 }
-                this.update(cx, |this, cx| {
-                    this.fetch_tasks(cx);
-                })
-                .log_err();
             }
         }));
     }
@@ -1763,7 +1807,30 @@ impl SerializableItem for KanbanPanel {
 
 #[cfg(test)]
 mod tests {
-    use super::{ADVERTISED_KANBAN_TOOLS, steer_system_prompt};
+    use super::{ADVERTISED_KANBAN_TOOLS, RefreshTarget, refresh_target, steer_system_prompt};
+
+    /// A refresh tick with no board selected must re-fetch the *board list*.
+    ///
+    /// Regression for the sticky-empty-panel bug: the loop used to `continue`
+    /// whenever `selected_board_id` was `None`, so a `kanban_board_list` that
+    /// failed at construction (MCP server still starting, or restarting after a
+    /// settings change) was never retried — the panel stayed empty for the rest
+    /// of the session even after the server came back.
+    #[test]
+    fn refresh_retries_the_board_list_when_no_board_is_selected() {
+        assert_eq!(
+            refresh_target(false),
+            RefreshTarget::Boards,
+            "without a board, the tick must retry the board list so the panel recovers \
+             once the MCP server is reachable again"
+        );
+    }
+
+    /// With a board selected, the tick refreshes that board's tasks.
+    #[test]
+    fn refresh_polls_tasks_once_a_board_is_selected() {
+        assert_eq!(refresh_target(true), RefreshTarget::Tasks);
+    }
 
     /// Every `kanban_*`/`contract_*` token the Steer prompt names in backticks
     /// must be a tool the server actually exposes. Without this, a rename in

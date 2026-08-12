@@ -24,6 +24,20 @@ subsequent cleanup; it is retained as the design record. To revive: rebuild
 `kask/scripts/test` per §2.2, re-add the CI trace/mutation steps per §3.7, and
 re-verify the cycle script end-to-end.
 
+**Superseded terminology note (2026-08-12):** this document predates the removal
+of the per-call capability gate. Every mention below of `DelegationToken`,
+`Tool:Execute`, or "OCAP enforcement" refers to a mechanism that **no longer
+exists**: `McpRuntime::invoke` performs no per-call authorization, and
+`DelegationToken` (with `is_valid_for`, `panel_default_token`,
+`capabilities_match`, and `ToolPortError::CapabilityDenied`) was deleted because
+all three production mint sites derived the token's `resource_id` from the same
+tool name they passed to `invoke` — the check compared a caller-supplied value
+against itself. See `kask/security/regressions/RR-0056.yaml` (vacuous gate) and
+`RR-0057.yaml` (the call meter's fail-open correction). The critic history in §9
+is preserved as written; note that its third iteration already reached the right
+conclusion for the proposer/evaluator question — the enforcement point is
+`profile.is_tool_enabled("terminal") = false`, not any capability token.
+
 **Original status (2026-08-03, design record):** Implemented (all 6 slices +
 TDD orchestration). **All 4th + 5th critic fixes applied** (F1–F10 + B1/B5/B6/B7
 + code gap #1 branching enforcement). The design-as-implemented survived the 5th
@@ -60,21 +74,28 @@ The design addresses five papers, each contributing one design constraint:
 
 ### 2.1 `hkask-test-harness` crate
 
-**Path:** `kask/crates/hkask-test-harness/src/hkask_test_harness.rs` (113 lines, single file).
+**Path:** `kask/crates/hkask-test-harness/src/hkask_test_harness.rs` (single file).
 
-Four public items:
+Four public items, as inventoried on 2026-08-04:
 
 | Item | Signature | Role |
 |------|-----------|------|
 | `arb_json_value` | `pub fn arb_json_value() -> BoxedStrategy<JsonValue>` | Recursive JSON strategy (depth ≤ 4) |
 | `NoopToolPort` | `pub struct NoopToolPort;` impls `ToolPort` | Stub returning `NotFound` for all invokes |
-| `test_token_for_tool` | `pub fn test_token_for_tool(tool_name: &str) -> DelegationToken` | Deterministic no-expiry `Tool:Execute` token |
-| `test_agent_webid` | `pub fn test_agent_webid() -> WebID` | The `delegated_to` WebID for gas seeding |
+| ~~`test_token_for_tool`~~ | ~~`pub fn test_token_for_tool(tool_name: &str) -> DelegationToken`~~ | **Removed 2026-08-12** with the vacuous capability gate (RR-0056) — `DelegationToken` no longer exists |
+| `test_agent_webid` | `pub fn test_agent_webid() -> WebID` | The agent identity used to seed call caps in governance tests |
 
-**What is absent:** no oracle types, no invariant checkers, no trace/artifact
-storage, no domain-specific strategies (only `arb_json_value`), no `proptest!`
-runners or regression-file management. The crate is a thin fixtures-and-generators
-library.
+**What is absent (2026-08-04 inventory):** no oracle types, no invariant checkers,
+no trace/artifact storage, no domain-specific strategies (only
+`arb_json_value`), no `proptest!` runners or regression-file management. The
+crate is a thin fixtures-and-generators library.
+
+> **Since inventoried (2026-08-12):** the crate has grown past this snapshot —
+> it now also carries oracle constructors, trace writing, and security-oriented
+> proptest strategies (including `arb_taint_context` for FIDES taint tests), and
+> `NoopToolPort` gained a `with_taint` builder so a stub tool can report a
+> `ToolTaint` label. Treat the table above as the design-time baseline, not the
+> current surface; read the crate's lib root for the live list.
 
 **Consumers:** `hkask-mcp` (2 test files), `hkask-templates` (3 test files), plus
 2 Jinja templates in `kask/registry/templates/proptest/` that emit `use

@@ -12,8 +12,8 @@ pub enum ToolPortError {
     EnergyBudgetExceeded(String),
     #[error("Tool not found: {0}")]
     NotFound(NotFound),
-    /// The tool could not be reached: the server's transport closed, it is
-    /// restarting, or it could not be (re-)started.
+    /// The tool could not be reached and the request **provably never left**:
+    /// there was no live connection, or the transport rejected the send.
     ///
     /// Distinct from [`ToolPortError::InvocationFailed`] because the call never
     /// ran, so a caller may retry it without risking a duplicate side effect.
@@ -21,17 +21,31 @@ pub enum ToolPortError {
     /// connection state rather than a failure of the requested operation.
     #[error("Tool unavailable: {0}")]
     Unavailable(String),
+    /// The request was delivered but the connection dropped before a response
+    /// arrived. **The tool may or may not have applied its effect.**
+    ///
+    /// This is deliberately *not* retryable. `rmcp` reports both "the send
+    /// failed" and "the response channel dropped" as `ServiceError::
+    /// TransportClosed`, so once a request has been handed to a live peer, a
+    /// transport loss cannot be read as proof of non-delivery. Auto-retrying
+    /// here would duplicate side effects — two tasks created, a hire charged
+    /// twice. The operator must reconcile state and decide.
+    #[error("Tool outcome unknown (connection lost mid-call): {0}")]
+    Interrupted(String),
     /// The call reached the tool and the tool failed. Retrying repeats it.
     #[error("Tool invocation failed: {0}")]
     InvocationFailed(String),
 }
 
 impl ToolPortError {
-    /// Whether re-issuing the identical call could plausibly succeed.
+    /// Whether re-issuing the identical call is both plausibly useful and free
+    /// of duplicate-side-effect risk.
     ///
-    /// True only for [`ToolPortError::Unavailable`]: the call did not reach the
-    /// tool, so no side effect can have been applied. A cap breach needs a new
-    /// regulation tick, and a failed or unknown tool will fail identically.
+    /// True only for [`ToolPortError::Unavailable`], where the request provably
+    /// never reached the tool. [`ToolPortError::Interrupted`] is excluded on
+    /// purpose: its outcome is unknown, so a retry could apply an effect twice.
+    /// A cap breach needs a new regulation tick, and a failed or unknown tool
+    /// will fail identically.
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         matches!(self, ToolPortError::Unavailable(_))

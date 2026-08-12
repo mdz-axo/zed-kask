@@ -985,4 +985,175 @@ mod tests {
             "an unmetered runtime must dispatch rather than refuse: {result:?}"
         );
     }
+
+    // ── Connection healing ─────────────────────────────────────────────
+    //
+    // These cover the paths that made a routine MCP server restart look like a
+    // permanent panel outage: a dead peer left in `connections`, and a
+    // presence-based idempotency check that refused to replace it.
+
+    /// A server with no live connection reports `Unavailable`, not
+    /// `InvocationFailed`.
+    ///
+    /// The distinction is what lets a panel retry: `Unavailable` means the call
+    /// never reached the tool, so re-issuing it cannot double a side effect.
+    #[tokio::test]
+    async fn unreachable_server_reports_unavailable_not_failed() {
+        let runtime = McpRuntime::new();
+        register_test_tool(&runtime, "test-server", "test_tool").await;
+
+        let result = runtime
+            .invoke(
+                "test-server",
+                "test_tool",
+                serde_json::json!({}),
+                hkask_types::WebID::from_persona(b"any-agent"),
+            )
+            .await;
+
+        match result {
+            Err(ToolPortError::Unavailable(_)) => {}
+            other => panic!(
+                "a registered-but-unconnected server must report Unavailable so callers \
+                 know a retry is safe, got: {other:?}"
+            ),
+        }
+    }
+
+    /// `Unavailable` is the only retryable classification.
+    ///
+    /// Pins the predicate panels branch on. If `InvocationFailed` ever became
+    /// retryable, panels would re-issue state-changing tools whose failure was
+    /// semantic.
+    #[test]
+    fn only_unavailable_is_retryable() {
+        assert!(ToolPortError::Unavailable("transport closed".into()).is_retryable());
+        assert!(!ToolPortError::InvocationFailed("tool said no".into()).is_retryable());
+        assert!(!ToolPortError::EnergyBudgetExceeded("cap".into()).is_retryable());
+        assert!(
+            !ToolPortError::NotFound(hkask_types::NotFound {
+                entity_type: "tool".into(),
+                id: "nope".into(),
+            })
+            .is_retryable()
+        );
+    }
+
+    /// An unknown tool is `NotFound`, not `Unavailable` — retrying cannot
+    /// conjure a tool that was never registered.
+    #[tokio::test]
+    async fn unknown_tool_is_not_found_not_unavailable() {
+        let runtime = McpRuntime::new();
+        register_test_tool(&runtime, "test-server", "test_tool").await;
+
+        let result = runtime
+            .invoke(
+                "test-server",
+                "no_such_tool",
+                serde_json::json!({}),
+                hkask_types::WebID::from_persona(b"any-agent"),
+            )
+            .await;
+
+        match result {
+            Err(ToolPortError::NotFound(_)) => {}
+            other => panic!("an unregistered tool name must report NotFound, got: {other:?}"),
+        }
+    }
+
+    /// A server that cannot be spawned leaves a launch spec behind, so the
+    /// reconnect path keeps trying on later calls rather than requiring an
+    /// operator settings change.
+    ///
+    /// This is the regression for the sticky-dead-connection bug: recovery used to
+    /// depend on `sync_kask_mcp_runtime_servers` firing, which only happens on a
+    /// settings change.
+    #[tokio::test]
+    async fn failed_start_still_records_a_launch_spec_for_later_reconnect() {
+        let runtime = McpRuntime::new();
+        let outcome = runtime
+            .start_server_with_env(
+                "ghost",
+                "hkask-mcp-definitely-not-a-real-binary",
+                HashMap::new(),
+            )
+            .await;
+        assert!(outcome.is_err(), "a nonexistent binary must fail to start");
+
+        assert!(
+            runtime.launch_specs.read().await.contains_key("ghost"),
+            "the launch spec must survive a failed start so the reconnect path can retry; \
+             without it, recovery requires an operator settings change"
+        );
+    }
+
+    /// `stop_server` drops the launch spec, so the reconnect path does not
+    /// resurrect a server that was deliberately stopped.
+    #[tokio::test]
+    async fn stop_server_clears_the_reconnect_path() {
+        let runtime = McpRuntime::new();
+        let _ = runtime
+            .start_server_with_env("ghost", "hkask-mcp-not-real", HashMap::new())
+            .await;
+        assert!(runtime.launch_specs.read().await.contains_key("ghost"));
+
+        runtime.stop_server("ghost").await;
+
+        assert!(
+            !runtime.launch_specs.read().await.contains_key("ghost"),
+            "a deliberate stop must not leave a reconnect path that resurrects the server"
+        );
+    }
+
+    /// `shutdown_all` clears every reconnect path for the same reason.
+    #[tokio::test]
+    async fn shutdown_all_clears_every_reconnect_path() {
+        let runtime = McpRuntime::new();
+        let _ = runtime
+            .start_server_with_env("ghost-a", "hkask-mcp-not-real", HashMap::new())
+            .await;
+        let _ = runtime
+            .start_server_with_env("ghost-b", "hkask-mcp-not-real", HashMap::new())
+            .await;
+
+        runtime.shutdown_all().await;
+
+        assert!(
+            runtime.launch_specs.read().await.is_empty(),
+            "shutdown_all must not leave reconnect paths that resurrect stopped servers"
+        );
+    }
+
+    /// The reconnect cooldown bounds spawn attempts against a crash-looping
+    /// binary. Without it, every tool call would spawn another process.
+    #[tokio::test]
+    async fn reconnect_is_rate_limited_by_the_cooldown() {
+        let runtime = McpRuntime::new();
+        // Record a launch spec without a live connection, so `try_reconnect` has
+        // something to attempt.
+        let _ = runtime
+            .start_server_with_env("ghost", "hkask-mcp-not-real", HashMap::new())
+            .await;
+
+        // The failed start above already stamped an attempt, so the immediate
+        // next attempt must be suppressed.
+        assert!(
+            !runtime.try_reconnect("ghost").await,
+            "a reconnect within the cooldown window must be suppressed so a broken \
+             binary cannot become a process-spawn storm"
+        );
+    }
+
+    /// A server that was only `register_server`'d (metadata, never a process)
+    /// cannot be reconnected, and reports that rather than pretending to recover.
+    #[tokio::test]
+    async fn metadata_only_server_cannot_be_reconnected() {
+        let runtime = McpRuntime::new();
+        register_test_tool(&runtime, "metadata-only", "test_tool").await;
+
+        assert!(
+            !runtime.try_reconnect("metadata-only").await,
+            "a server with no recorded launch spec has no process to restart"
+        );
+    }
 }

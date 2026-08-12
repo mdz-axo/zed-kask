@@ -1,36 +1,59 @@
 ---
-title: "MCP Runtime Invoke — Simplified Gate Flow"
+title: "MCP Runtime Invoke — Metering and Dispatch Flow"
 audience: [architects, developers]
-last_updated: 2026-08-04
-version: "1.0.0"
+last_updated: 2026-08-12
+version: "2.0.0"
 status: "Active"
 domain: "Trust"
 mds_categories: [trust]
 ---
 
-# MCP Runtime Invoke — Simplified Gate Flow
+# MCP Runtime Invoke — Metering and Dispatch Flow
 
-Flowchart of the `McpRuntime::invoke` tool-governance gate after the 2026-08-02 OCAP removal and the 2026-08-03 gas-to-call-cap refactor. The gate is a pure capability-match + per-agent call cap — no token expiry, no signature verification, no attenuation, no gas hold-settle. Tokens are minted in-process and never expire.
+Flowchart of the `McpRuntime::invoke` path after the 2026-08-12 removal of the
+per-call capability gate (RR-0056) and the fail-open correction to the call meter
+(RR-0057). **`invoke` does not authorize.** It charges one call against the
+agent's per-tick runaway ceiling, dispatches, and emits the outcome span. The
+only pre-dispatch refusal is an exhausted ceiling.
 
 ```mermaid
 flowchart TD
-    A["invoke(server, tool, args, token)"] --> B{"governance.is_some()?"}
-    B -- "Yes" --> C{"token.is_valid_for(Tool, tool, Execute) or verify_capability_domain(token, tool)"}
-    C -- "No" --> D["Return CapabilityDenied"]
-    C -- "Yes" --> E["can_proceed(agent)?"]
-    E -- "No" --> K["Return EnergyBudgetExceeded"]
-    E -- "Yes" --> F["charge_call(agent) — one call"]
-    F --> G["Call tool inner"]
-    G --> I["Emit regulation span"]
+    A["invoke(server, tool, args, agent)"] --> B{"governance.is_some()?"}
+    B -- "No" --> G["call_tool_inner — dispatch unmetered"]
+    B -- "Yes" --> C["charge_call_metered(agent)"]
+    C -- "Charged" --> G
+    C -- "AutoRegistered (log wiring gap)" --> G
+    C -- "CeilingReached" --> K["Return EnergyBudgetExceeded<br/>(runaway-loop breaker)"]
+    G --> I["Emit reg.gas.settled span<br/>(target reg.mcp)"]
     I --> J["Return result"]
-    B -- "No" --> G
 ```
 
-## What changed (2026-08-02)
+## What changed (2026-08-12)
 
-- **Removed:** Token expiry check (`is_valid_for_at` with `now` parameter + `is_expired`), `new_with_expiry` token minting, `ocap.capability_expiry_seconds` manifest config, `OcapConfig` struct, `ocap:` manifest blocks (59 files)
-- **Simplified:** The gate now does a pure capability-match (`is_valid_for` — triple match of resource/resource_id/action) OR `verify_capability_domain` (action hierarchy: Execute ⊇ Write ⊇ Read). No expiry branch. No signature verification (tokens are minted and consumed in-process).
-> - **Unchanged:** Regulation span emission, tool dispatch (the 2026-08-03 refactor replaced the gas reserve/settle hold-settle with a per-agent `CallCap` — see "What changed" below)
+- **Removed:** the capability-match gate. `DelegationToken`, `is_valid_for`,
+  `verify_capability_domain`, `capabilities_match`, `panel_default_token`, and
+  `ToolPortError::CapabilityDenied` no longer exist. All three production mint
+  sites derived the token's `resource_id` from the same tool name they passed to
+  `invoke`, so the comparison was a caller-supplied value against itself and
+  denied nothing (RR-0056). `invoke`'s fourth argument is now `agent: WebID`, an
+  accounting identity.
+- **Changed:** the call meter is fail-open on an *unregistered* agent. It
+  auto-registers at `DEFAULT_RUNAWAY_CALL_CEILING` (10 000) and logs the wiring
+  gap rather than refusing — a missing seed is a wiring omission, not an
+  authorization decision (RR-0057). A runtime with no governance wired dispatches
+  unmetered rather than failing closed.
+- **Unchanged:** dispatch (with one bounded reconnect on a closed transport) and
+  regulation span emission.
+
+## Where authority is enforced instead
+
+- the per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch
+  (`kask/crates/kask_bridge/src/inference_ipc_server.rs`), fail-closed on a
+  missing or empty allowlist
+- each swarm agent card's declared `mcp_tools` allowlist
+  (`kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs`)
+- the per-server MCP env/credential allowlists
+  (`kask/crates/kask_bridge/src/mcp_servers.rs`, RR-0038)
 
 ## Related
 
@@ -40,7 +63,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-002
-verified_date: 2026-08-04
-verified_against: kask/crates/hkask-mcp/src/runtime.rs:507
+verified_date: 2026-08-12
+verified_against: kask/crates/hkask-mcp/src/runtime.rs (impl hkask_capability::ToolPort for McpRuntime, call_tool_inner); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome); kask/crates/hkask-mcp/tests/invoke_gate.rs
 status: VERIFIED
 -->
