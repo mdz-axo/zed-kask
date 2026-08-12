@@ -420,36 +420,41 @@ fn parse_mermaid_info(info: &str) -> Option<u32> {
     )
 }
 
+/// The mermaid directives we render. Kept at module scope (rather than inside
+/// [`is_supported_diagram_type`]) so the drift test can assert the agent system
+/// prompt advertises exactly these — the prompt and this list are one contract,
+/// enforced by `test_system_prompt_advertises_every_supported_diagram_type`
+/// rather than by a comment asking for manual sync.
+const SUPPORTED_PREFIXES: &[&str] = &[
+    "flowchart",
+    "graph",
+    "sequenceDiagram",
+    "classDiagram",
+    "stateDiagram",
+    "stateDiagram-v2",
+    "erDiagram",
+    "gantt",
+    "pie",
+    "gitGraph",
+    "mindmap",
+    "timeline",
+    "quadrantChart",
+    "xychart-beta",
+    "journey",
+    "sankey-beta",
+    "kanban",
+    "architecture-beta",
+    "radar-beta",
+    "treemap-beta",
+    "treemap",
+    "block-beta",
+    "block",
+];
+
 /// We deliberately block rendering of some diagram types, even though `merman`
 /// supports them, because we have not yet written custom CSS to ensure text is
 /// readable.
 fn is_supported_diagram_type(source: &str) -> bool {
-    /// If updating this list, also update the system prompt!
-    const SUPPORTED_PREFIXES: &[&str] = &[
-        "flowchart",
-        "graph",
-        "sequenceDiagram",
-        "classDiagram",
-        "stateDiagram",
-        "stateDiagram-v2",
-        "erDiagram",
-        "gantt",
-        "pie",
-        "gitGraph",
-        "mindmap",
-        "timeline",
-        "quadrantChart",
-        "xychart-beta",
-        "journey",
-        "sankey-beta",
-        "kanban",
-        "architecture-beta",
-        "radar-beta",
-        "treemap-beta",
-        "treemap",
-        "block-beta",
-        "block",
-    ];
     // Mermaid permits a YAML front-matter block (`---\n...\n---\n`) before the
     // diagram directive (e.g. sankey-beta config). Merman strips it before
     // detection; our matcher must too, otherwise the first token is `---` and
@@ -983,7 +988,8 @@ fn render_mermaid_code_view(contents: &SharedString) -> AnyElement {
 mod tests {
     use super::{
         CachedMermaidDiagram, MermaidDiagramCache, MermaidState, ParsedMarkdownMermaidDiagram,
-        ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, parse_mermaid_info,
+        ParsedMarkdownMermaidDiagramContents, SUPPORTED_PREFIXES, extract_mermaid_diagrams,
+        parse_mermaid_info,
     };
     use crate::{
         CodeBlockRenderer, CopyButtonVisibility, MERMAID_ZOOM_DEBOUNCE, Markdown, MarkdownElement,
@@ -1232,6 +1238,30 @@ mod tests {
                 diagrams.len(),
                 1,
                 "{prefix} should be extracted as a supported diagram type"
+            );
+        }
+    }
+
+    // The `SUPPORTED_PREFIXES` doc comment instructs "also update the system
+    // prompt!", which is a manual sync that already drifted once: the prompt
+    // advertised bare `sankey`/`xychart` (merman needs the `-beta` forms) and
+    // denied `kanban` was a mermaid type at all. This test replaces that
+    // instruction with enforcement — every allowlisted directive must appear
+    // verbatim in the agent system prompt's renderer-support sentence.
+    #[test]
+    fn test_system_prompt_advertises_every_supported_diagram_type() {
+        let prompt = include_str!("../../agent/src/templates/system_prompt.hbs");
+        let sentence = prompt
+            .lines()
+            .find(|line| line.starts_with("The renderer supports the following diagram types:"))
+            .expect("system prompt must carry the renderer-support sentence");
+
+        for prefix in SUPPORTED_PREFIXES {
+            assert!(
+                sentence.contains(prefix),
+                "system prompt does not advertise supported diagram type `{prefix}`; \
+                 update the renderer-support sentence in \
+                 crates/agent/src/templates/system_prompt.hbs"
             );
         }
     }

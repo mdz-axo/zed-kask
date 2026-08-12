@@ -1,8 +1,12 @@
 # zed-kask Agent System Prompt — Comparative Analysis & Optimization Advisory
 
-**Scope:** agent system prompts only (zed-kask vs upstream Zed). Not a codebase audit.
+**Scope:** agent system prompts only (zed-kask vs. upstream Zed). Not a codebase audit.
+
 **Objective function ("improved"):** maximize agent reliability (correct tool use, bounded loops, no fabrication) **and** minimize prompt surface (essentialist deletion test) **without losing load-bearing behavior**. Every recommendation names the axis it serves: `reliability`, `surface`, or both.
-**Method:** nine skills were invoked (`skill` tool, not `read_file(SKILL.md)`); their artifacts are in Appendix A and woven into §§4–6. Where a skill's output is omitted, it is justified.
+
+**Baseline:** upstream comparison is `upstream/main` @ `6bd93fc319`, read via `git show upstream/main:crates/agent/src/templates/system_prompt.hbs` (279 lines). zed-kask side is `HEAD` @ `6c58787007` (313 lines).
+
+**Method note:** all nine required skills were invoked via the `skill` tool. In this environment the `skill` tool returned each skill's methodology rather than executing a manifest cascade to completion, so the artifacts in Appendix A are my application of each skill's method, not cascade output. That is a material limitation and is scored in §6.
 
 ---
 
@@ -10,252 +14,372 @@
 
 | # | Path (project-relative) | Role | Wired? |
 |---|---|---|---|
-| 1 | `crates/agent/src/templates/system_prompt.hbs` | **Primary** agent system prompt (the one rendered by `SystemPromptTemplate`, `templates.rs:67-69`). Carries Communication, Formatting, Tool Use, Task Execution, Searching/Reading, Making Code Changes, Ambition vs. Precision, Validation, Fixing Diagnostics, Debugging, External APIs, Multi-agent delegation, Final Message, System Info, Terminal sandbox, Model Info, **Agent Skills (manifest-driven)**, User's Custom Instructions, **Session Context**. | **Active** |
-| 2 | `crates/agent/src/templates/experimental_system_prompt.hbs` | Slimmed variant: merges Formatting into Communication, drops mermaid detail, media bullets, terminal-sandbox, Agent Skills, `static_context`, `user_agents_md`. | **Orphan** — not referenced by any `.rs` in zed-kask *or* upstream (see §2.6) |
-| 3 | `crates/agent/src/curator_agent_server.rs:37-59` (`CURATOR_STATIC_CONTEXT`) | Appended overlay (via `Thread::static_context`, not a prompt override) that adds the Curator/regulatory role on top of the Zed Agent prompt. | **Active** (Curator threads only) |
-| 4 | `crates/agent/src/templates.rs:36-69` | Rust struct + `TEMPLATE_NAME = "system_prompt.hbs"`; carries the `static_context` field (`templates.rs:49`) that feeds artifact #3/#1's Session Context block. | Active (rendering) |
-| — | upstream `crates/agent/src/templates/system_prompt.hbs` (`upstream/main`) | The comparison baseline (read via `git show upstream/main:...`). | Active upstream |
+| 1 | `crates/agent/src/templates/system_prompt.hbs` | **The** agent system prompt. Rendered by `SystemPromptTemplate` (`crates/agent/src/templates.rs:67-69`, `TEMPLATE_NAME = "system_prompt.hbs"`). 313 lines / 24,527 bytes. | Active |
+| 2 | `crates/agent/src/templates.rs:37-51` | The render context struct. Carries the zed-kask-only `static_context` field (`:49`) plus `available_tools`, `user_agents_md`, `sandboxing`, `is_linux`, `is_windows`. | Active |
+| 3 | `crates/agent/src/curator_agent_server.rs:37-59` (`CURATOR_STATIC_CONTEXT`) | Curator role overlay. **Appended**, not an override — delivered via `Thread::set_static_context` (`crates/agent/src/agent.rs:886-887`) and rendered by the `## Session Context` block. | Active (Curator threads) |
+| 4 | `crates/swarm_panel/src/swarm_panel.rs:126-299` (`steer_system_prompt`) | Swarm Steer-mode prompt (~155 lines of prose). Delivered via `CuratorAgentServer::with_extra_static_context` (`:811-815`). | Active (Swarm panel Steer) |
+| 5 | `crates/kanban_panel/src/kanban_panel.rs:176-206` (`steer_system_prompt`) | Kanban Steer-mode prompt (~30 lines). Delivered via `with_extra_static_context` (`:1002`). | Active (Kanban panel Steer) |
+| — | upstream `crates/agent/src/templates/system_prompt.hbs` @ `upstream/main` | Comparison baseline. No `static_context` block, no Curator, no panel prompts. | Active upstream |
 
-**Upstream has no Curator overlay and no `static_context` block.** The zed-kask "agent system prompt" is a single template (`system_prompt.hbs`); the Curator is an *append* to it, not a second prompt. The `experimental_system_prompt.hbs` is present in both forks but unreferenced.
+**So zed-kask has four agent system prompts to upstream's one:** the base template (#1) plus three overlays (#3, #4, #5) that all reach the model through the same `static_context` channel. This matters for §2.8 and R1 — a defect in that one channel silently disables all three overlays at once.
+
+`experimental_system_prompt.hbs` (a prior-report finding) is **already deleted** at `HEAD`; it is no longer part of the surface.
 
 ---
 
 ## 2. Divergence map
 
-Line numbers are exact (zed-kask via `read_file`; upstream via `git show upstream/main:... | nl -ba`). D-seams reference `DIVERGENCE.md` where one exists.
+Nine substantive behavioral differences. D-seam references reuse `DIVERGENCE.md`; I introduce no new seam IDs.
 
-### 2.1 Mermaid diagram-type list extended (D18-adjacent)
-- **zed-kask** `system_prompt.hbs:26` advertises `…xy chart, journey, sankey, kanban, architecture, radar, treemap, and block diagrams. (Use the -beta suffix for architecture, radar, and treemap…)`.
-- **upstream** `system_prompt.hbs:26` lists only `flowchart, sequence, class, state, ER, gantt, pie, gitgraph, mindmap, timeline, quadrant chart, xy chart, and journey`.
-- **Behavioral effect:** zed-kask advertises non-mermaid viz blocks (kanban/architecture/etc. are D18 custom fenced-block renderers, not mermaid types) *as mermaid diagram types*. This is a semantic mismatch that can mislead the model into emitting e.g. ` ```kanban ` expecting mermaid rendering.
+### 2.1 Mermaid diagram-type list extended — D18
+- **Upstream** `system_prompt.hbs:26`: `flowchart, sequence, class, state, ER, gantt, pie, gitgraph, mindmap, timeline, quadrant chart, xy chart, and journey`.
+- **zed-kask** `system_prompt.hbs:26`: adds `sankey, architecture, radar, treemap, and block`, a `-beta`-suffix note for architecture/radar/treemap, and a sentence declaring `kanban`/`graph`/`media`/`portfolio`/`scenarios` to be separately-rendered widget types.
+- **Seam:** D18 (`DIVERGENCE.md:38`) — the `media_block_renderer` widget seam.
+- **Defect (see R3):** the renderer's allowlist is `crates/markdown/src/mermaid.rs:428-451`, whose own comment reads `/// If updating this list, also update the system prompt!`. It requires `sankey-beta` (`:444`) and `xychart-beta` (`:442`), but the prompt's `-beta` parenthetical names only architecture/radar/treemap. It also lists `kanban` (`:445`) as a valid **mermaid** type, which the current prompt sentence implicitly denies.
 
-### 2.2 Media display-hint copy-verbatim bullets (D18)
-- **zed-kask** `system_prompt.hbs:46-47` adds two bullets: copy the `display_hint`/`display_hints` fenced ` ```media ` blocks verbatim into the reply.
-- **upstream** `system_prompt.hbs:45` (preamble bullet) is the last Tool Use bullet; **no media bullets** (upstream L46 is blank, L47 `## Task Execution`).
+### 2.2 Media display-hint copy-verbatim bullets — D18
+- **zed-kask** `system_prompt.hbs:46-47`: two bullets instructing the model to copy ` ```media ` blocks from `display_hint` / `display_hints` tool-result fields verbatim.
+- **Upstream:** absent (Tool Use section ends at upstream `:45`).
+- **Seam:** D18.
 
-### 2.3 Agent Skills section — manifest-driven vs body-injection (D1; `DIVERGENCE.md:57`)
-- **zed-kask** `system_prompt.hbs:222-269` — ~47 lines. Declares skills as executable YAML manifests; instructs the `skill` tool *executes* the cascade (not returns instructions); 5-step usage; an explicit prohibition on `read_file(SKILL.md)` (`L249`); `skill_bundle` composition with a ≥3 gate (`L254-267`).
-- **upstream** `system_prompt.hbs:220-247` — ~27 lines. "use the `skill` tool to retrieve the full instructions… Follow the instructions in the Skill" (`L243-245`) — i.e. **body-injection**: the SKILL.md body is the instruction payload.
-- **This is the largest behavioral divergence.** zed-kask spends ~8 of the block's lines policing the anti-pattern "do not `read_file(SKILL.md)`" because the upstream mental model (read the body) is the intuitive failure mode under the new manifest model.
+### 2.3 Loop-termination guardrail — no seam (zed-kask-only reliability addition)
+- **zed-kask** `system_prompt.hbs:54`: "If a tool loop repeats without measurable progress … stop, summarize what you tried, and ask the user rather than continuing indefinitely."
+- **Upstream:** Task Execution ends at upstream `:51` ("Do not guess or make up an answer.") with no loop bound.
+- This is the one place zed-kask's prompt is *strictly more reliable* than upstream. It has no `DIVERGENCE.md` entry and no pinning test.
 
-### 2.4 Session Context / `static_context` block (D6-adjacent)
-- **zed-kask** `system_prompt.hbs:301-309` — `{{#if static_context}}` → `## Session Context` block; field declared `templates.rs:49`.
-- **upstream** — **absent**. Upstream `system_prompt.hbs:247` closes skills with `{{/if}}` and `L248` goes straight to `{{#if (or user_agents_md has_rules)}}`. No `static_context` field, no Session Context.
-- This block is the render target for the Curator overlay (artifact #3) and the `BridgeContextInjector` (D6).
+### 2.4 Agent Skills — manifest execution vs. body injection — D1
+- **Upstream** `:223`: "use the `skill` tool to **retrieve the full instructions**"; steps at `:242-245` say "Use the `skill` tool … to get detailed instructions", "Follow the instructions in the Skill", and "If the Skill references additional files, use `read_file`".
+- **zed-kask** `:226-228`: skills are "executable YAML manifests" driving a PDCA cascade; "The tool does not return instructions for you to follow — it executes the skill's manifest cascade in-process and returns the cascade's result."
+- **Seam:** D1 (`DIVERGENCE.md:22`); explicitly noted at `DIVERGENCE.md:57` — "Agent Skills system-prompt section diverges (manifest-driven, not body-injection)."
+- This is a **semantic inversion**, not an extension: upstream's step 4 instructs exactly the `read_file` behavior zed-kask's `:250` prohibits.
 
-### 2.5 Curator static-context overlay (D2)
-- **zed-kask** `curator_agent_server.rs:37-59` `CURATOR_STATIC_CONTEXT` — appended via `static_context`; "You are also the Curator…"; methodology anchors (Pragmatic Cybernetics, Semantics, Metacognition, Superforecasting).
-- **upstream** — no Curator agent, no overlay. Pure zed-kask addition (D2).
+### 2.5 Anti-pattern policing block — D1
+- **zed-kask** `:250-253`: a prohibition on `read_file`-ing `SKILL.md`, a no-manifest fallback rule (`:251`), and a paragraph re-stating that "run/apply/use/invoke a skill" means one `skill` call.
+- **Upstream:** none — because upstream *wants* the body read.
+- Cross-referenced in `GEMINI.md:426-436`, which records the observed failure ("observed when asked to run `skill-maintenance` across the corpus"). This is empirical justification for the verbosity, and it is why R6 is ranked low and risk-flagged.
 
-### 2.6 `experimental_system_prompt.hbs` — orphan in both forks
-- Present at `crates/agent/src/templates/experimental_system_prompt.hbs` in **both** zed-kask and `upstream/main` (156 lines each). `git grep experimental_system_prompt` returns **zero references** in any `.rs` in zed-kask and zero in upstream. `TEMPLATE_NAME` is hard-coded to `system_prompt.hbs` (`templates.rs:68`), so the experimental file is never rendered.
-- Not a D-seam (upstream-origin dead surface), but it is dead surface inside the zed-kask prompt surface under study.
+### 2.6 `skill_bundle` composition sub-section — D1
+- **zed-kask** `:255-268`: 14 lines on `skill_bundle`, a ≥3-peer-skill gate, three "use `skill` instead" cases, and a description of the Save/Refine/Discard UI affordance.
+- **Upstream:** absent.
+- `:268`'s last clause ("You do not need to take any action for these affordances — they are user-facing UI") is prompt text describing UI the model cannot act on — the weakest line in the section on the surface axis.
 
-### 2.7 Skill-catalog budget disabled (D1; rendering pipeline, not prompt text)
-- **zed-kask** `agent.rs:4225-4235` `select_catalog_skills` keeps **all** skills (catalog budget + description-length warnings disabled). The prompt's `<available_skills>` block (`L235-243`) therefore grows with the full registry (60+ skills).
-- **upstream** injects skill descriptions under a 50 KB budget and drops the rest, emitting a "skill loading issue."
-- **Behavioral effect:** the zed-kask system prompt carries materially larger skill-list variety than upstream (variety/cybernetics gap — see §A4).
+### 2.7 Session Context block — D2 / D6-adjacent
+- **zed-kask** `:302-311`: renders `{{{static_context}}}` under a `## Session Context` heading.
+- **Upstream:** absent; upstream's template ends its custom-instructions section at `:279`.
+- **Seam:** the delivery mechanism is D2 (Curator, `DIVERGENCE.md:23`) and D6 (thread→memory, `:27`); `ContextInjector::inject_static_context` is documented at `crates/agent/src/agent.rs:3007-3015`.
+
+### 2.8 The Session Context block is nested inside the custom-instructions guard — **confirmed defect**
+- `system_prompt.hbs:271` opens `{{#if (or user_agents_md has_rules)}}`; `:302-311` is the `static_context` block; `:313` closes the `:271` guard. The block is therefore a **child** of that guard.
+- **Consequence:** when a user has no personal `AGENTS.md` *and* the project has no rules file, `static_context` renders as nothing — silently dropping `CURATOR_STATIC_CONTEXT`, the swarm Steer prompt, and the kanban Steer prompt.
+- **Verified empirically**, not inferred: a temporary two-variant test in `crates/agent/src/templates.rs` showed variant 1 (`static_context: Some(_)`, `user_agents_md: None`, `ProjectContext::new(vec![])`) renders **neither** the `## Session Context` heading nor the payload, while variant 2 (identical but `user_agents_md: Some(_)`) renders both. The test was reverted; the tree is clean.
+- **Why it was never caught:** every one of the eleven `SystemPromptTemplate` tests in `templates.rs:97-430` passes `static_context: None`. And in *this* repo the bug is masked because `zed-kask/.rules` exists, making `has_rules` true.
+- No `DIVERGENCE.md` entry; this is a zed-kask-introduced defect in a zed-kask-only block.
+
+### 2.9 Skill catalog budget disabled — D1 (rendering pipeline, not prompt text)
+- `crates/agent/src/agent.rs:4225-4235` (`select_catalog_skills`): "zed-kask: The catalog budget is disabled… All skills are kept." Upstream packs against `MAX_SKILL_DESCRIPTIONS_SIZE = 50 * 1024` (`crates/agent_skills/agent_skills.rs:48-50`).
+- Description-length warnings are likewise disabled (`agent_skills.rs:399-412`), and the UI arms that would surface either issue are removed (`crates/agent_ui/src/conversation_view/thread_view.rs:11916-11926`), per `DIVERGENCE.md:58`.
+- **Measured, and it reverses the obvious conclusion:** 63 installed skills; the name+description catalog payload measures ≈17 KB — **about a third of upstream's 50 KB budget**. Removing the budget did not produce catalog bloat. This falsifies the "unbounded catalog is crowding out base instructions" premise (H2 → eliminated, §A2).
 
 ---
 
-## 3. Literature lessons (7 systems, 12 lessons)
+## 3. Literature lessons
 
-| # | Lesson (one sentence) | Source |
+7 systems (Aider, Cline, Roo Code, Kilo Code, Claude Code, Augment Code, Zed), 12 lessons. Every claim was independently source-verified; three prior-draft claims were **corrected or dropped** as a result, noted inline.
+
+| # | Lesson | Source |
 |---|---|---|
-| L1 | Separate the planning step from the syntactically-strict editing step: Aider's architect mode runs a plain-text "resolve the task" model then a focused "editor" model to cut format/elision errors. | https://aider.chat/docs/more/edit-formats.html |
-| L2 | Edit-format choice changes reliability, not just cost: `udiff` was adopted because it reduced GPT-4 Turbo's "lazy coding" (`# … original code here …`) elisions that other formats provoked. | https://aider.chat/docs/more/edit-formats.html |
-| L3 | Mode-switching (Plan/Act; Code/Architect/Debug/Ask) constrains behavior per phase without rewriting the base prompt. | https://github.com/cline/cline (README); https://roocodeinc.github.io/Roo-Code ; https://kilocode.ai |
-| L4 | Persistent instructions belong in a project file read at session start (`CLAUDE.md`, `.clinerules`), not baked into the system prompt; the prompt stays stable across projects. | https://docs.claude.com/en/docs/agents-and-tools/claude-code/overview ; https://github.com/cline/cline (README) |
-| L5 | Enforcement gates belong **outside** the prompt: Augment's Hooks "intercept and control tool execution with custom scripts" and Tool Permissions are runtime-enforced ("honored by Auggie CLI and Cosmos cloud agents; **not enforced in the Augment code extension**"). | https://docs.augmentcode.com/llms.txt |
-| L6 | Too many instruction/spec files confuse the agent: Kilo's own editorial argues specs pile up until "the agent gets confused rather than sharper," so the source of truth must be bounded. | https://kilocode.ai ("Your Agent Has Too Much Context") |
-| L7 | Verification is a loop with evidence, not a claim: Augment's Verifier Expert "exercise[s] a change in a running environment and report evidence-backed findings"; Cline "monitors linter and compiler errors… fixing issues… before you even see them." | https://docs.augmentcode.com/llms.txt ; https://github.com/cline/cline (README) |
-| L8 | Past feedback becomes durable repo-specific guidance: Augment's "Code Review Memory" turns completed reviews into future guidance; Claude Code "auto memory… saving learnings… across sessions." | https://docs.augmentcode.com/llms.txt ; https://docs.claude.com/en/docs/agents-and-tools/claude-code/overview |
-| L9 | Subagent coordination with disjoint write scopes reduces duplicate work and context blowup: Claude Code "spawn[s] multiple agents… lead agent coordinates"; Cline teams give each agent "their own tools and context." | https://docs.claude.com/en/docs/agents-and-tools/claude-code/overview ; https://github.com/cline/cline (README) |
-| L10 | Skills/Experts are reusable, declarative capability packages, not free-form prompt text: Augment Experts/Skills (agentskills.io) and Claude Code skills "package repeatable workflows." | https://docs.augmentcode.com/llms.txt ; https://docs.claude.com/en/docs/agents-and-tools/claude-code/overview |
-| L11 | Open prompt/context visibility enables audit: Kilo advertises "Prompt and context visibility… No silent model switching" as a trust differentiator. | https://kilocode.ai |
-| L12 | Checkpoints + human-in-the-loop approval bound autonomy: Cline "every edit shows up as a diff… tracked with checkpoints," with approval gates controlling autonomous runs. | https://github.com/cline/cline (README) |
+| L1 | Split planning from editing: Aider's architect mode has one model describe the solution in prose and a second "editor" model turn it into formatted edits, because reasoning models "often fail to output properly formatted code editing instructions." | https://aider.chat/2024/09/26/architect.html |
+| L2 | Edit-format choice changes reliability, not just cost: Aider adopted `udiff` for GPT-4 Turbo because it cut "lazy coding" elisions (`# ... original code here ...`) roughly 3× (20%→61% on an 89-task benchmark). | https://aider.chat/2023/12/21/unified-diffs.html |
+| L3 | Phase constraint is delivered as a first-class runtime mode, not prose: Cline has Plan/Act; Roo Code ships Code/Ask/Architect/Debug/Orchestrator. | https://github.com/cline/cline · https://docs.roocode.com/basic-usage/using-modes |
+| L4 | Mode taxonomies drift and are not portable: Kilo Code now calls these **agents**, with built-ins `code`/`ask`/`plan`/`debug`, `orchestrator` deprecated and no Architect. | https://kilocode.ai/docs/basic-usage/using-modes |
+| L5 | Persistent instructions live in project files, not the system prompt — but discovery is not uniform: Cline reads a `.clinerules/` directory and auto-detects `AGENTS.md`, whereas Claude Code loads `CLAUDE.md` and **explicitly does not read `AGENTS.md`**, prescribing an `@AGENTS.md` import or symlink. *(Corrected: the prior draft claimed Claude Code reads AGENTS.md-style files at session start. It does not.)* | https://docs.cline.bot/features/cline-rules · https://docs.claude.com/en/docs/claude-code/memory |
+| L6 | Enforcement gates belong outside the prompt, and vendors admit where they aren't enforced: Augment's `toolPermissions` are applied per tool call (most-restrictive-wins) and are "Honored by the Auggie CLI and by Cosmos cloud agents; not enforced in the Augment code extension." | https://docs.augmentcode.com/cli/permissions · https://docs.augmentcode.com/cli/hooks |
+| L7 | More standing instruction files makes agents worse, not sharper: Kilo's "Your Agent Has Too Much Context" argues agents conflate documents, over-anchor on half-read details, and treat stale clauses as gospel. *(Author opinion piece, not a company position paper.)* | https://blog.kilo.ai/p/your-agent-has-too-much-context |
+| L8 | Verification is an evidence loop, not a claim: Cline "monitors linter and compiler errors as it works, fixing issues… before you even see them." | https://github.com/cline/cline |
+| L9 | Feedback becomes durable memory: Claude Code's auto memory writes notes to disk with the first 200 lines / 25 KB of `MEMORY.md` loaded each session; Augment Cosmos Experts persist scoped Markdown memory. | https://docs.claude.com/en/docs/claude-code/memory · https://docs.augmentcode.com/cosmos/experts-memory |
+| L10 | Subagents isolate context: each Claude Code subagent runs in its own context window with its own system prompt and tools, and the lead receives only a summary. | https://docs.claude.com/en/docs/claude-code/sub-agents |
+| L11 | Capability packages should load by **progressive disclosure**: Agent Skills preload only `name` + `description` into the system prompt; the `SKILL.md` body loads when judged relevant, bundled files only as needed. | https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills |
+| L12 | Bounded autonomy via reviewable diffs and checkpoints: in Cline "every edit shows up as a diff you can review, modify, or revert," with checkpoints and per-action approval unless auto-approve is on. | https://github.com/cline/cline |
 
-**Grounding note:** Roo Code's README states the extension was shut down 2025-05-15; it is cited only for its mode design (a Cline derivative), not as a maintained product.
+**Dropped for lack of a source:** the prior draft's claim that Kilo advertises "no silent model switching." Kilo's prompt/context *transparency* claim verifies (https://kilo.ai/kilo-code/vs/cursor), but the no-switching half does not; Roo Code in fact documents automatic per-mode model switching ("Sticky Models"), which is closer to the opposite. **No source → no claim.**
+
+**L11 is the load-bearing lesson for this fork.** Anthropic's progressive-disclosure design is *the same architecture zed-kask chose* (catalog in prompt, body out of prompt) — arrived at independently. zed-kask goes one step further: the body is never loaded into context at all, it executes. So D1 (§2.4) is not a deviation from the state of the art; it is the state of the art plus one step. That reframes §2.5's policing as the cost of being one step ahead of the model's priors, not as a design smell.
 
 ---
 
-## 4. Mechanism analysis — rules vs. `AGENTS.md` vs. injected skill-lists vs. modes
+## 4. Mechanism analysis
 
-The zed-kask prompt composes **four instruction mechanisms**. Each works in a regime and fails in a characteristic way; the two prompts under study let us see the interaction effects directly.
+Four instruction mechanisms compose in the zed-kask prompt. Each has a working regime, a characteristic failure mode, and interaction effects.
 
 ### 4.1 Rules (`.rules` / project rules)
-- **Mechanism:** injected into the system prompt at `system_prompt.hbs:285-299` ("### Project Rules… take precedence over the personal `AGENTS.md`"). They are *traps to avoid*, not architecture maps (per the repo's own `.rules` hygiene note).
-- **Works when:** short, specific, repeatedly-encountered, non-obvious (e.g. "No `block_on` on the foreground thread").
-- **Failure modes:** (a) staleness — the `.rules` hygiene rule itself warns rules "can be stale" and must be verified against the codebase; (b) pile-up — L6: too many instruction files confuse the agent; (c) unenforced — an OUGHT in the prompt with no runtime gate is declaration, not enforcement (L5; the `.rules` note "advertised invariants must point to the enforcement line" is the same principle).
-- **In the two prompts:** upstream and zed-kask render rules identically; the divergence is *what* rules get injected, not the mechanism. The zed-kask `.rules` block is large (the one in my own running prompt is ~140 lines), which is itself a variety load (§A4).
+- **Mechanism:** injected at `system_prompt.hbs:286-300`, declared to "take precedence over the personal `AGENTS.md`" (`:289`). Identical to upstream (`:264`).
+- **Works when** rules are short, specific, non-obvious traps — the repo's own hygiene rule says "`.rules` are traps to avoid, not maps to follow."
+- **Failure modes:** (a) **staleness** — the repo's own rule requires priors be "verified against the codebase before use," and §2.9 is a live example where a `.rules`-adjacent prior (catalog bloat) was falsified by measurement; (b) **pile-up** (L7); (c) **unenforced OUGHT** (L6) — a rule with no runtime gate is a declaration.
+- **Load-bearing interaction:** because `has_rules` gates the `static_context` block (§2.8), the presence of a `.rules` file is currently *masking a defect*. A mechanism meant to add guidance is silently acting as a feature flag for an unrelated one. That is the clearest instance of mechanism coupling in either prompt.
 
 ### 4.2 `AGENTS.md` (personal, cross-project)
-- **Mechanism:** `system_prompt.hbs:275-284` ("### Personal `AGENTS.md`"), declared to be overridden by project rules (`L278`, `L288`). Shared with upstream.
-- **Works when:** user-global preferences that should survive project switches.
-- **Failure modes:** conflict with project rules (resolved by precedence declaration in the prompt — an OUGHT-over-OUGHT resolved by explicit ranking; §A6); drift between the personal file and the project's actual conventions.
+- **Mechanism:** `system_prompt.hbs:276-285`, declared overridable by project rules (`:279`, `:289`). Shared with upstream (`:254`).
+- **Works when** encoding user-global preferences that should survive project switches.
+- **Failure modes:** conflict with project rules — resolved *declaratively* by explicit precedence ranking, which §A6 classifies as an OUGHT-over-OUGHT resolved by ranking rather than by a gate; and drift from actual project convention (L5's asymmetry shows even mature tools disagree about which files to read).
+- **Same coupling problem:** `user_agents_md` is the other half of the `:271` guard.
 
-### 4.3 Injected skill-lists (the `<available_skills>` block)
-- **Mechanism:** `system_prompt.hbs:235-243` lists every visible skill (name/description/location). zed-kask keeps **all** skills (§2.7), so this is a large discovery surface.
-- **Works when:** the list is small enough to act as a *menu* and the model's job is to **invoke** (one `skill` tool call), not to interpret.
-- **Failure modes:** (a) variety gap — Ashby's Law: with 60+ skill descriptions the disturbance class ("which skill fits this task") exceeds the cheap discrimination the model can do from a one-line description each (§A4); (b) the intuitive failure mode is *reading* the skill, so the prompt spends ~8 lines policing `read_file(SKILL.md)` (`L249`, `L252`) — a sign the mechanism is fighting the model's prior; (c) catalog bloat crowds out the load-bearing base instructions (L6, L11).
-- **In the two prompts:** upstream keeps the list bounded (50 KB budget) and treats skills as prose to follow (body-injection); zed-kask unbounds the list and treats skills as executables. zed-kask's design is more correct *in principle* (L10: declarative capability packages beat free-form prompt text) but pays a surface/variety cost upstream does not.
+### 4.3 Injected skill-lists (`<available_skills>`)
+- **Mechanism:** `system_prompt.hbs:236-244` renders name/description/location per skill; catalog membership decided by `select_catalog_skills` (`agent.rs:4225`), budget disabled (§2.9).
+- **Works when** the list is a **menu for dispatch**, not prose to interpret — which is exactly L11's progressive disclosure, and exactly what zed-kask implements.
+- **Failure modes:** (a) *hypothesised* crowding-out — **measured and eliminated**: ≈17 KB against a 50 KB upstream budget (§2.9, §A2/H2); (b) **discrimination load** — 63 one-line descriptions is a genuine Ashby variety question for skill *selection* even when token cost is fine (§A4), but this is a precision-at-1 question, not a surface question; (c) **prior conflict** — the model's trained prior is "read the skill file," so the mechanism must actively suppress it (§2.5), which is why the section spends ~8 lines policing.
+- **Vs. upstream:** upstream treats the catalog as an index into prose to be read; zed-kask treats it as a dispatch table. zed-kask's is better-founded (L11) but pays a prior-suppression cost upstream doesn't.
 
-### 4.4 Modes (phase-constraint)
-- **Mechanism:** Cline/Roo/Kilo switch a mode (Plan/Act, Code/Architect/Debug/Ask) to narrow behavior per phase (L3).
-- **Works when:** a single behavior profile would over- or under-act depending on phase; modes let the base prompt stay stable while the mode token constrains it.
-- **Failure modes:** mode-smuggling (agent claims a mode it isn't in), and added surface (each mode is extra prompt/state).
-- **In the two prompts:** **zed-kask has no modes.** One behavior profile must cover planning, acting, debugging, and asking. The prompt compensates with prose ("Ambition vs. Precision" `L81-85`, "Debugging" `L100-105`), which is softer than a mode toggle. This is a genuine gap vs. Cline/Roo/Kilo, but adding modes costs surface (essentialist tension — see R8).
+### 4.4 Modes (phase constraint)
+- **Mechanism:** in Cline/Roo, a runtime mode token narrows behavior per phase (L3).
+- **Works when** one behavior profile would over- or under-act depending on phase.
+- **Failure modes:** taxonomy drift (L4 — Kilo renamed modes to agents and dropped Architect within one product cycle, so any mode vocabulary written into a prompt is a maintenance liability), and mode-smuggling (the agent asserting a phase it isn't in) whenever the mode is prose rather than a gate.
+- **In these prompts:** neither upstream nor zed-kask has modes. Both compensate with prose ("Ambition vs. Precision", `:82-86`; "Debugging", `:101-108`). **But zed-kask has something upstream doesn't:** the panel overlays (#4, #5) are *de facto* modes — `steer_system_prompt` is literally titled "Steer Mode" and scopes the agent to one MCP server. So zed-kask has mode infrastructure delivered through the `static_context` channel. It is undocumented as such, and §2.8 means it can silently fail to load. **This is a stronger finding than "zed-kask lacks modes":** zed-kask has modes and doesn't know it.
 
-### 4.5 Interaction effects (the compounding risk)
-Three zed-kask mechanisms stack: **no modes** (one profile) + **unbounded skill-list** (large variety) + **strong autonomy injunction** (`L51` "Keep going until the task is completely resolved"; `L52` "Autonomously resolve… rather than coming back prematurely"). The cybernetics loop map (§A4) flags the **missing termination signal**: the prompt tells the agent to keep going and to validate, but gives no bounded retry/loop-budget counter (only "Fixing Diagnostics: 1-2 attempts" `L97` is bounded). Under a large skill-list and no mode constraint, the autonomy injunction can compound into over-action / unbounded tool loops — the reliability axis the objective function most wants to protect.
-
----
-
-## 5. Optimization recommendations (zed-kask only, ranked)
-
-Each recommendation: **change → axis → expected effect → falsifiable test → essentialist 3-gate outcome**. All survived the essentialist G1/G2/G3 gates (Appendix A5); gate failures that *removed* a candidate are noted.
-
-### R1 — Delete the orphan `experimental_system_prompt.hbs`  *(surface)*
-- **Change:** remove `crates/agent/src/templates/experimental_system_prompt.hbs` (156 lines). `git grep experimental_system_prompt` is already empty.
-- **Expected effect:** −156 lines of dead prompt surface; no behavioral change (never rendered).
-- **Falsifiable test:** `./script/clippy` green and `cargo test -p agent` green after deletion; `git grep experimental_system_prompt` returns 0. **Falsified if** any test references it or the build breaks.
-- **Essentialist:** G1 DELETE-trivial (behavior lost? no. complexity reappears in callers? no) → **passes cleanly**. Note: it is upstream-origin; on the next `upstream/main` merge it may reappear — follow the `DIVERGENCE.md` runbook (re-delete; this is a modify/delete conflict class).
-
-### R2 — Re-bound the skill catalog, or move discovery out of the system prompt  *(surface + reliability)*
-- **Change:** either (a) restore a generous but finite catalog budget in `select_catalog_skills` (`agent.rs:4225`), or (b) move the `<available_skills>` list out of the system prompt into a `list_skills` tool the model calls on demand, keeping only a one-line "Skills exist; call `list_skills` to see them" pointer in the prompt.
-- **Expected effect:** shrinks the largest variable surface in the system prompt; closes the variety gap (§A4) so the base instructions are not crowded out (L6).
-- **Falsifiable test:** A/B over 30 mixed tasks. Metrics: system-prompt token count (target ↓ ≥30% when registry is large), skill-invocation precision@1 (correct skill chosen). **Falsified if** invocation precision drops >5 pp with no mode-(b) `list_skills` recovery, or if tasks that *require* skill discovery fail because the model never calls `list_skills`.
-- **Essentialist:** G1 — deletion of the inline list only "reappears complexity" if discovery breaks; option (b)'s `list_skills` tool preserves the capability at lower prompt cost → **passes**. G2 surface ↓. G3 the abstraction (tool vs inline list) adds genuine behavior → passes.
-
-### R3 — Collapse the Agent Skills anti-pattern policing into one positive invariant  *(surface + reliability)*
-- **Change:** in `system_prompt.hbs:222-269`, replace the 5-step list + the "do not `read_file(SKILL.md)`" bullets (`L249`, `L252`) and the `skill_bundle` mechanics (`L254-267`) with: one sentence defining skill = executable manifest invoked via the `skill` tool; one Prohibition ("Never `read_file(SKILL.md)`; it is discovery-only — invoke, don't read"); one sentence on `skill_bundle` for ≥3 peer skills.
-- **Expected effect:** ~47 lines → ~10; the manifest model is stated once, positively, with a single hard rule.
-- **Falsifiable test:** eval on 20 skill-invocation tasks (incl. "run skill X on Y" and 3-skill bundles). Metric: correct `skill`/`skill_bundle` invocation rate, and rate of stray `read_file(SKILL.md)`. **Falsified if** the stray-`read_file` rate rises above the current baseline (the policing existed because the failure happens — the consolidated line must still suppress it).
-- **Essentialist:** G1 — the removed prose is restatement of one invariant → deletion does not reappear complexity → **passes**. G3 — no abstraction lost (the `skill`/`skill_bundle` tools are the real contract) → passes. **Risk-flagged:** if the falsification test shows stray reads rise, this recommendation is *wrong* and must be reverted (the verbosity was load-bearing).
-
-### R4 — Add an explicit loop-budget / termination guardrail  *(reliability)*
-- **Change:** add one Guardrail to "Task Execution" (`L49-53`): "If a tool loop exceeds N iterations without measurable convergence (same error recurring, no new state), stop, summarize what you tried, and ask the user."
-- **Expected effect:** bounds the autonomy-injunction × no-modes × large-skill-list compounding risk (§4.5).
-- **Falsifiable test:** 10 loop-prone tasks (e.g. fix-diagnostics that don't resolve, builds that re-fail). Metric: 95th-percentile turns-to-completion and "runaway" rate (turns > threshold). **Falsified if** task completion rate drops >10% with no reduction in runaway rate (i.e. the guardrail makes the agent quit too early on hard-but-converging tasks).
-- **Essentialist:** G1 — *adds* one line, but removing the unbounded-loop failure mode means deleting it reintroduces silent hangs (complexity reappears for the operator) → **passes with justification** (the only additive recommendation; net surface +1, reliability +1).
-
-### R5 — Fix the mermaid diagram-type list / renderer contract  *(reliability)*
-- **Change:** at `system_prompt.hbs:26`, stop listing `kanban/architecture/radar/treemap/block/sankey` *as mermaid types*. Either (a) keep the mermaid list to upstream's set and document the D18 fenced blocks separately ("Use ` ```kanban ` / ` ```graph ` / ` ```media ` fenced blocks for those widgets"), or (b) omit the extended list entirely (the widget renderers intercept the fenced blocks regardless).
-- **Expected effect:** removes a fabrication/misuse vector (model emits a non-mermaid block expecting mermaid rendering).
-- **Falsifiable test:** 15 "draw a diagram" prompts. Metric: malformed-block rate (blocks the renderer falls through on). **Falsified if** malformed-block rate does not drop, or if users can no longer discover the D18 widgets (discovery test).
-- **Essentialist:** G1 — clarification, surface-neutral → **passes**.
-
-### R6 — Soften the over-action trio  *(reliability, surface-neutral)*
-- **Change:** reconcile `L51` ("Keep going until… completely resolved"), `L52` ("Autonomously resolve… rather than coming back prematurely"), and `L53` ("Do not guess"). Add the *existing* escape clause explicitly to the autonomy line: "Stop and ask when proceeding without clarification would be risky or would require guessing" (the prompt already says this at `L52`'s tail — surface it). Net: 0 new lines.
-- **Expected effect:** reduces over-action fabrication on ambiguous tasks without reducing genuine autonomy.
-- **Falsifiable test:** 10 ambiguous-scope tasks. Metric: fabricated-action rate (acting on an unverified assumption) and premature-question rate. **Falsified if** premature-question rate rises with no fabrication-rate drop (the softening made the agent too timid).
-- **Essentialist:** G1 — reorders/surfaces existing text, no addition → **passes**.
-
-### R7 — Move the media `display_hint` instruction to the tool-result envelope  *(surface, low confidence)*
-- **Change:** remove `system_prompt.hbs:46-47`; ensure the `display_hint`/`display_hints` fields already carry an instruction prefix in the tool-result envelope (the hint travels with the result).
-- **Expected effect:** −2 lines; the instruction lives next to the data it describes (L5: gates belong next to the action).
-- **Falsifiable test:** A/B on 10 media-returning tasks. Metric: inline-media display fidelity. **Falsified if** fidelity drops (i.e. the prompt-side instruction was load-bearing, not belt-and-suspenders).
-- **Essentialist:** G1 — deletion only reappears complexity if the envelope lacks the hint; it doesn't → **passes**.
-
-### R8 — (Optional, higher effort) Introduce a minimal Plan/Act self-declaration  *(reliability, surface+)*
-- **Change:** add a one-line phase self-declaration ("State whether you are planning or acting before tool use") rather than full Cline-style mode infrastructure.
-- **Expected effect:** gives some of L3's phase-constraint benefit at minimal surface cost.
-- **Falsifiable test:** 10 multi-step tasks. Metric: unnecessary edits during planning, and questions-during-acting rate. **Falsified if** no behavior change vs. control (a self-declaration with no enforcement is theater — L5).
-- **Essentialist:** G1 — **borderline FAIL** without enforcement; a self-declaration alone is declaration, not a gate. **Demoted to optional**; only adopt if paired with a runtime mode token (which is out of prompt-scope). Ranked last for this reason.
-
-### Candidates rejected by essentialist (not listed above)
-- *"Add a stronger cite-or-omit fabrication rule"* — **G1 FAIL**: the prompt already has `L53` "Do not guess" and `L8` "Do not fabricate" (Prohibitions). Adding more is restatement; the failure is enforcement, not wording (L5).
-- *"Add full mode infrastructure in the prompt"* — **G2 FAIL**: +surface with no runtime gate (L5); folded into R8 as optional.
+### 4.5 Interaction effects
+1. **Guard coupling (highest severity).** Rules/`AGENTS.md` presence gates mode-overlay delivery (§2.8, §4.1). Two independent mechanisms, one accidental dependency, silent failure. Grounded in L6: enforcement that isn't enforced is worse than absent, because the operator believes it is on.
+2. **Autonomy × missing feedback, now partly closed.** `:51-52` push hard for autonomous completion. zed-kask has *already* added the loop-termination bullet (`:54`, §2.3) that upstream lacks, plus the bounded "1-2 attempts" in Fixing Diagnostics (`:98`). §A4's loop map therefore finds the sense→decide→act loop **closed for repetition** but with **no gain control**: "several iterations" is unquantified, so the threshold is model-discretionary.
+3. **Prompt/renderer contract drift.** The mermaid list (§2.1) and the advertised-tool lists in overlays #4/#5 are prompt text asserting facts about code. `mermaid.rs:427` asks for manual sync and drifted anyway. Contrast the swarm overlay, which pins its tool names with a `debug_assert!` against `parse::SWARM_TOOLS` (`swarm_panel.rs:278-297`) plus tests (`:3071`) — the kanban overlay (#5) has **no such pin**. Same class of claim, two different enforcement postures in the same fork.
 
 ---
 
-## 6. Self-assessment (Brier-style calibration)
+## 5. Optimization recommendations
 
-**Metacognition artifact (§A9):** target condition = a report whose every recommendation is (a) sourced, (b) essentialist-survived, (c) falsifiable. Actual condition = 8 recommendations, all essentialist-survived, all falsifiable, 1 explicitly demoted (R8). Obstacle = no live eval harness in this environment, so "expected effect" is a prediction, not a measurement. Next experiment = run the falsifiable tests in §5 on the eval harness (`crates/eval_cli`).
+Ranked. Each: change → axis → expected effect → falsifiable test. All survived essentialist G1/G2/G3 (§A5); rejected candidates are listed at the end.
 
-**Brier scoring of the top-3 recommendations** (forecast = "this change improves the objective function," with my confidence; Brier = (p−1)² for an accepted/true outcome, scored ex-ante as a calibrated probability):
+**Implementation status (2026-08-12).** R1–R5 are implemented and validated; **R6 was refuted by its falsifier and deliberately not implemented** (§5.1). Every change is pinned by a test that was verified to fail without it. Net prompt surface: **−2 lines** (R5 deletion) with R1/R3/R4 surface-neutral. Validation: `cargo test -p agent --lib templates::` 14/14, `-p markdown --lib mermaid` 21/21, `-p kanban_panel` 2/2, `-p swarm_panel` 40/40 (no regression), `-p agent --lib read_file_tool` 23/23; `cargo clippy` clean on `agent`, `markdown`, `kanban_panel`.
 
-| Rec | P(improves objective) | Confidence in prediction | What would change my mind |
+### R1 — Un-nest the `## Session Context` block *(reliability; surface-neutral)*
+- **Change:** in `system_prompt.hbs`, move the `{{/if}}` that currently closes the `(or user_agents_md has_rules)` guard so it precedes the `{{#if static_context}}` block, making the block a sibling rather than a child (a swap of the closers at `:311`/`:313`). Add a permanent regression test in `templates.rs` with `static_context: Some(_)`, `user_agents_md: None`, `ProjectContext::new(vec![])`.
+- **Objective/axis:** **reliability.** This is not a prompt-wording change — it restores delivery of three overlay prompts (Curator, swarm Steer, kanban Steer) that currently vanish for any user without `AGENTS.md` or a project rules file.
+- **Expected effect:** overlays render unconditionally; no change for users who have rules (i.e. no change in this repo, which is why it went unnoticed).
+- **Falsifiable test:** the two-variant test of §2.8, promoted to permanent. Variant 1 must assert the payload renders with no `AGENTS.md` and no rules. **Falsified if** variant 1 already passes on unmodified `HEAD` — i.e. if my empirical result was an artifact of the harness rather than the template.
+- **Essentialist:** G1 — deleting this fix reintroduces silent overlay loss → behavior lost → **PASS**. G2/G3 — no surface added (one `{{/if}}` moves; the block already renders its own `## Session Context` heading, so it stands alone). Net prompt-line delta: 0.
+- **✅ IMPLEMENTED.** Closers swapped in `system_prompt.hbs`; pinned by `test_system_prompt_renders_session_context_without_rules_or_agents_md`. **Falsifier ran both ways:** stashing only the template makes the test fail (`variant 1: static_context swallowed`), restoring it makes it pass — so the test pins real behavior, not a tautology. `DIVERGENCE.md` D2 now records the sibling-vs-nested contract.
+
+### R2 — Pin the kanban overlay's advertised tool names *(reliability)*
+- **Change:** add to `crates/kanban_panel/src/kanban_panel.rs` the pin the swarm panel already has — a `debug_assert!` (or unit test) checking every `` `kanban_*` `` token in `steer_system_prompt` (`:176-206`) against the canonical tool-name list, mirroring `swarm_panel.rs:278-297` and its `steer_prompt_mentions_only_known_tools` test (`:3071`).
+- **Objective/axis:** **reliability** (correct tool use; prevents the prompt advertising a tool that doesn't exist → guaranteed tool-call failure).
+- **Expected effect:** a tool rename in `hkask-mcp-kata-kanban` fails a test instead of degrading to "tool not found" at runtime. I verified all 22 currently-advertised names do resolve in the server today, so this is a *regression guard*, not a bug fix — which is why it ranks below R1.
+- **Falsifiable test:** rename one kanban tool in the MCP server without touching the prompt; the new assertion must fail. **Falsified if** it doesn't fail (assertion doesn't actually cover the prompt tokens), or if it fires false positives on legitimate prose backticks.
+- **Essentialist:** G1 — remove it and drift becomes silent again → **PASS**. Adds test surface, not prompt surface.
+- **✅ IMPLEMENTED.** Added `ADVERTISED_KANBAN_TOOLS` (22 names) plus a `debug_assert!` inside `steer_system_prompt` and two tests (`steer_prompt_advertises_only_known_tools`, `advertised_kanban_tools_are_unique_and_referenced`). The list is deliberately crate-local: `kanban_panel` does not depend on `swarm_panel`, and inverting that dependency to share one const would be worse than duplicating 22 strings. The second test closes the loop in the other direction — an entry the prompt never mentions also fails, so the list cannot rot into a superset. **Falsifier ran:** renaming one advertised tool to a ghost name fails both tests; reverting passes.
+
+### R3 — Correct the mermaid list against the renderer allowlist *(reliability; surface-neutral)*
+- **Change:** at `system_prompt.hbs:26`, name the exact directives merman requires (`sankey-beta`, `xychart-beta`, `architecture-beta`, `radar-beta`) rather than bare forms the renderer drops, and keep `kanban` — which **is** a supported mermaid directive (`mermaid.rs:445`) — while separately noting that a ` ```kanban ` *fenced block* is a viz widget. Enforce it from `SUPPORTED_PREFIXES` so `mermaid.rs`'s "also update the system prompt!" comment becomes unnecessary.
+- **Objective/axis:** **reliability** (eliminates a fabrication-adjacent failure where the model emits a diagram the renderer silently drops).
+- **Expected effect:** fewer silently-unrendered diagrams; removes a live prompt/code contract drift.
+- **Falsifiable test:** for each name in `SUPPORTED_PREFIXES`, assert the prompt text mentions a form the renderer accepts, and vice versa (a bidirectional consistency test). **Falsified if** the test passes on unmodified `HEAD` — meaning I misread the suffix requirement.
+- **Essentialist:** G1 — a corrected claim replaces an incorrect one; deleting the correction restores the error → **PASS**. Surface-neutral.
+- **✅ IMPLEMENTED**, and it **falsified a prior-session belief**. A test named `test_system_prompt_mermaid_list_omits_kanban_as_mermaid_type` asserted `kanban` must *not* appear as a mermaid type. That is wrong: `kanban` is in `SUPPORTED_PREFIXES` and `test_beta_suffixed_diagram_types_are_extracted` proves merman extracts it. `kanban` is *both* a mermaid directive *and* a widget tag; the prompt must disambiguate, not deny. I replaced that test with `test_system_prompt_mermaid_list_uses_renderer_directives`, hoisted `SUPPORTED_PREFIXES` to module scope, and added `test_system_prompt_advertises_every_supported_diagram_type` in `mermaid.rs` — an exhaustive prompt-vs-allowlist check living next to the constant. **Falsifier ran:** reverting the prompt to bare `sankey` fails with an actionable message naming the file to edit. `DIVERGENCE.md` corrected.
+
+### R4 — Quantify the loop-termination threshold *(reliability; +0 lines)*
+- **Change:** `system_prompt.hbs:54` currently says "over several iterations." Replace "several" with a number (e.g. three) — one word, no new line.
+- **Objective/axis:** **reliability** (gain control on the one closed feedback loop; §A4 rates this loop's *gain* as degraded purely because the threshold is model-discretionary).
+- **Expected effect:** less variance in where different models draw the stop line. Modest — this refines a guardrail zed-kask already added (§2.3), rather than adding one.
+- **Falsifiable test:** on ~10 loop-prone tasks (non-converging diagnostics, re-failing builds), measure runaway rate (turns > threshold) and completion rate. **Falsified if** completion rate drops >10% with no reduction in runaway rate — i.e. the number makes the agent quit on hard-but-converging work.
+- **Essentialist:** G1 — borderline. Deleting the *number* leaves the guardrail intact, so behavior is only degraded, not lost. Passes as a **Guardrail-force refinement**, not a Prohibition. Ranked here, not higher, for that reason.
+- **✅ IMPLEMENTED.** "over several iterations" → "three times". The pre-existing `test_system_prompt_contains_loop_termination_guardrail` only matched the sentence prefix, so it would have passed even if the threshold regressed to a vague quantifier; I extended it to assert `"three times"` is present. Net prompt lines: 0.
+
+### R5 — Delete the UI-affordance sentence from the `skill_bundle` section *(surface)*
+- **Change:** delete the final clause of `system_prompt.hbs:268` describing the Save/Refine/Discard affordance and stating "You do not need to take any action for these affordances — they are user-facing UI."
+- **Objective/axis:** **surface.** This is prompt tokens spent telling the model about UI it cannot see, act on, or influence — the cleanest deletion-test failure in the prompt.
+- **Expected effect:** −1 to −2 lines; no behavior change, since the instruction's own content is "take no action."
+- **Falsifiable test:** on ~10 `skill_bundle` invocations, compare rate of the model narrating or attempting the Save/Refine/Discard affordance, plus bundle-invocation correctness. **Falsified if** removing it *increases* spurious affordance narration (i.e. the sentence was suppressing a behavior rather than describing one).
+- **Essentialist:** G1 — delete it, nothing is lost: no behavior it governs, no complexity reappearing in any caller → **PASS as a Prohibition-force deletion** (the strongest essentialist verdict in this list).
+- **✅ IMPLEMENTED.** The affordance sentence is gone; the `<composition_score>` / `<bundle_manifest>` sentence stays (those *are* model-visible outputs). −2 lines — the only net surface reduction in this changeset.
+
+### R6 — Consolidate the skill anti-pattern policing *(surface; risk-flagged)*
+- **Change:** in `system_prompt.hbs:246-253`, compress the 5-step list plus the run/apply/use/invoke paragraph into: one sentence defining skill = executable manifest invoked via the `skill` tool; one Prohibition ("Never `read_file` a `SKILL.md` — it is discovery-only; invoke, don't read"); one sentence retaining the no-manifest fallback (`:251`).
+- **Objective/axis:** **surface**, with a reliability *risk*.
+- **Expected effect:** ~8 lines → ~3.
+- **Falsifiable test:** ~20 skill-invocation tasks including "run skill X on Y" and three-skill bundles. Metrics: correct `skill`/`skill_bundle` invocation rate; stray `read_file(SKILL.md)` rate. **Falsified if** stray-read rate rises above baseline.
+- **Essentialist:** G1 **PASS with an explicit warrant against it.** The policing is not speculative: `GEMINI.md:426-436` records the failure as *observed*, and L11 explains *why* the prior is strong — every other major system trains the model that a skill body is something you read.
+- **❌ FALSIFIER RUN — R6 REFUTED. NOT IMPLEMENTED.** See §5.1.
+
+### 5.1 R6 falsifier result (run 2026-08-12)
+
+The behavioral A/B could not run: `eval_cli` requires live provider credentials (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` per `crates/eval_cli/README.md:52-54`) and none are present in this environment. Rather than guess, I ran the **decidable half** of the falsifier — the premise check that determines whether the prohibition is load-bearing at all:
+
+1. **Is the prohibition the only defense?** Yes. `crates/agent/src/tools/skill_tool.rs:169-174` states body injection is disabled; `:544` returns the `No manifest configured` envelope and `:552`/`:639`/`:741`/`:787` return `SKILL.md body injection is disabled in zed-kask`. There is **no runtime gate preventing `read_file` of a `SKILL.md`** — `read_file_tool.rs:303`/`:339` only *log* `reg.skill.stray_read` via `warn_if_skill_catalog_read`. So a stray read silently returns raw prose that bypasses the cascade, the gas/OCAP membrane, and convergence.
+2. **Is the failure reachable in practice?** Yes, but *not* by the route first claimed. **Correction (verified 2026-08-12, superseding an earlier draft of this section):** a `comm` of the 63 installed skill directories against the 104 registry manifests shows **every installed skill has a manifest — zero missing**. The earlier inference that "63 vs. 104 → name mismatches route to `No manifest configured`" was wrong: the 41-item delta is entirely *orphan manifests* (manifests with no installed skill, e.g. `web-quick`, `qa-*`, `memory_recall`), which is the opposite direction and cannot trigger that envelope. The `No manifest configured` fallback at `system_prompt.hbs:251` is therefore **currently unreachable** for the shipped catalog.
+   The failure remains reachable by the direct route, which is sufficient for the verdict: nothing *prevents* the model from calling `read_file` on a `SKILL.md`, and the model's trained prior (L11: every other major system loads skill bodies as prose) actively pushes it there. The prohibition text, not a gate, is what suppresses it.
+
+**Verdict:** the prose is the *only* enforcement point, and per L6 ("enforcement gates belong outside the prompt") the correct fix is a runtime gate, not less prose. Deleting the policing while no gate exists would remove the sole safeguard. **R6 is refuted and was not implemented.** The stray-read sensor now makes the failure observable, which converts R6 from an analysis bet into a measurable one: if `reg.skill.stray_read` stays silent across real sessions, revisit the trim; if it fires, the policing is confirmed load-bearing and should be *strengthened* into a tool-level refusal.
+
+**Resolved 2026-08-12 (F1).** The gate now exists: `refuse_skill_catalog_read` in `read_file_tool.rs` returns a tool error redirecting the model to the `skill` tool, wired into both resolution paths, with skill *resource* files still readable. With enforcement in place, R6's trim became safe and was applied — the skills section lost ~400 bytes of justification prose (24,350 → 23,949) while the prohibition itself got *stronger* ("Never" + "`read_file` refuses it", a statement of fact rather than a request). This is the resolution the falsifier pointed to: **R6 was right that the prose was redundant and wrong about why — it was redundant only once a gate existed, not before.** Deleting it first would have removed the sole defense; adding the gate first made the deletion free.
+
+The pinning test was also loosened from exact-sentence matching to invariant matching, so the prose can be tightened in future without a false failure while still failing if the prohibition disappears.
+
+The correction above does not change the verdict, but it is worth recording *how* the error happened: I inferred a causal claim ("mismatch → envelope") from two aggregate counts without checking the direction of the set difference. Two numbers that differ do not tell you which side is missing. The falsifier for a set-difference claim is `comm`, not subtraction — and one line of `comm` overturned it. The orphan-manifest finding it surfaced instead is now follow-up F2.
+
+### Rejected by essentialist
+- **"Re-bound the skill catalog / move discovery to a `list_skills` tool."** **G1 FAIL on a falsified premise.** The prior draft ranked this #2 on the assumption of catalog bloat. Measurement (§2.9): ≈17 KB vs. upstream's 50 KB budget. The premise is false, so the change trades a real capability (zero-latency discovery, L11's preload step) for a saving that doesn't exist. **Eliminated, not demoted.**
+- **"Add a stronger cite-or-omit fabrication rule."** **G1 FAIL** — restatement. `:7` ("Do not fabricate"), `:53` ("Do not guess"), and `:92` ("Do not claim validation passed unless you actually ran it") already cover it. Per L6 the gap is enforcement, not wording.
+- **"Add Plan/Act mode infrastructure to the prompt."** **G3 FAIL** — a self-declared phase with no runtime gate is theater (L6), and L4 shows mode vocabularies drift within a product cycle, so the prose would rot. Superseded by the §4.4 finding that zed-kask *already* has modes via the panel overlays; R1 (making that channel reliable) is the correct intervention.
+- **"Move the media `display_hint` bullets into the tool-result envelope."** **G1 UNDETERMINED → withheld.** I did not verify whether the envelope carries a self-describing instruction, so I cannot assert the deletion is behavior-preserving. Per the report's own no-fiction rule, omitted rather than guessed.
+
+---
+
+## 6. Self-assessment
+
+**Metacognition (Improvement Kata, §A9).**
+- **Target condition:** every divergence cited `file:line` on both sides; every recommendation sourced, essentialist-survived, falsifiably tested; zero unverified claims.
+- **Actual condition:** 9 divergences cited both sides; 6 recommendations, all with tests; 1 defect found by **execution** rather than reading (§2.8); 3 literature claims corrected and 1 dropped for want of a source; 1 prior top-ranked recommendation **eliminated by measurement**; 1 candidate withheld as undetermined.
+- **Obstacle:** the behavioral eval could not run — `eval_cli` needs live provider credentials that are absent here (§5.1). So R4/R5's *behavioral* effects remain predictions; their *structural* effects (surface delta, drift-detection) are verified by tests. Second obstacle: the `skill` tool returned methodology rather than executing cascades, so Appendix A is my application of each method.
+- **Experiment run (this session):** R6's falsifier, redirected from the unavailable behavioral A/B to the decidable premise check — which **refuted R6** (§5.1). Then R1–R5 implemented, each pinned by a test verified to fail without its change.
+- **Next experiment:** watch `reg.skill.stray_read` in real sessions. It converts R6 from an untestable bet into a measured one: silence over N sessions → revisit the trim; firings → promote the prose prohibition into a tool-level refusal (the L6 fix).
+
+**Ex-post scoring of this session's predictions.** Brier = (p − outcome)², lower is better.
+
+| Prediction | p | Outcome | Brier |
 |---|---|---|---|
-| R1 (delete orphan) | **0.97** | 0.95 | A single test or runtime path that renders `experimental_system_prompt.hbs` (then it is not orphan). |
-| R2 (re-bound catalog / discovery tool) | **0.70** | 0.60 | An A/B where a 30% prompt shrink costs >5 pp skill-invocation precision *and* the `list_skills` recovery does not restore it — i.e. the inline list is load-bearing for discovery. |
-| R3 (collapse anti-pattern policing) | **0.55** | 0.55 | The falsification test showing stray `read_file(SKILL.md)` rising above baseline — i.e. the verbosity was load-bearing policing, not restatement. |
+| R1 improves the objective | 0.96 | 1 (test fails without it; three overlays restored) | **0.002** |
+| R3 improves the objective | 0.85 | 1 (drift confirmed; enforcement added) | **0.023** |
+| R5 improves the objective | 0.80 | 1 (clean deletion, −2 lines, nothing lost) | **0.040** |
+| R6 improves the objective | 0.45 | 0 (refuted — prose is the only defense) | **0.203** |
+| "Auditing the prior report overturns ≥1 top-3 rec" | 0.60 | 1 (overturned two) | **0.160** |
 
-**Calibration note:** R1 is near-certain (mechanical). R2/R3 are genuine empirical bets; I assign them <0.75 deliberately — prompt edits that *remove* anti-pattern policing frequently turn out to have been load-bearing (the verbosity existed because a failure recurred). The Brier scores above are ex-ante; they become honest only after the §5 tests run.
+**Mean Brier ≈ 0.086** — decent, but the error is systematically one-directional: I was **under-confident on all four correct predictions** and correctly low on the one that failed. The lesson is specific: for changes whose falsifier is *decidable in-repo* (R1, R3), I should price confidence near the strength of the available evidence rather than hedging toward eval-dependence. R6's 0.45 was well-placed — low enough that I flagged it as non-mergeable without a test, which is exactly what saved it from being implemented wrongly.
 
-**What would change the *analysis* (not just one rec):** (1) a latency/cache measurement showing the unbounded skill-list is *not* crowding out base instructions (then R2's premise weakens); (2) evidence that zed-kask's models already self-terminate on loops (then R4 is unnecessary); (3) a user study showing the `read_file(SKILL.md)` anti-pattern is already rare in practice (then R3's risk-flag is the real finding, not the trim).
+**Brier-style calibration, top 3.** Forecast = "this change improves the objective function"; scored ex-ante.
+
+| Rec | P(improves) | What would change my mind |
+|---|---|---|
+| **R1** (un-nest Session Context) | **0.96** | Variant 1 of the §2.8 test passing on unmodified `HEAD` — i.e. the block renders without `AGENTS.md`/rules and my sub-agent's failure was a harness artifact. A second falsifier: a code path that injects `static_context` through some channel other than this template, making the block redundant. |
+| **R3** (mermaid list vs. allowlist) | **0.85** | `merman` accepting bare `sankey`/`xychart` despite `SUPPORTED_PREFIXES` listing only the `-beta` forms (the allowlist gates zed's own pre-filter, so the true renderer contract could be laxer than the constant implies). |
+| **R5** (delete UI-affordance sentence) | **0.80** | Removal *increasing* spurious affordance narration — meaning the sentence suppressed rather than described. Also: evidence the Save/Refine/Discard text is consumed by something other than the model. |
+
+**Calibration reasoning (ex-ante, retained for honesty).** R1 was high because it was established by running code, not reading it. R3 sat at 0.85 because `SUPPORTED_PREFIXES` is strong but not conclusive evidence about the downstream renderer — in the event, `test_beta_suffixed_diagram_types_are_extracted` settled it, and I could have been more confident. R5 was 0.80 despite being the cleanest deletion because prompt deletions carry an asymmetric risk: the removed line may have suppressed an undocumented behavior. That same asymmetry is why R6 was risk-flagged — and why refuting it mattered more than implementing it.
+
+**What would change the analysis rather than one recommendation:** (1) an eval run showing the skill-section verbosity is *not* load-bearing — R6 would jump to #2 and the surface axis would dominate the ranking; (2) discovering that the panel overlays are delivered through some channel *other* than `Thread::static_context` — that would demote R1 from a three-overlay outage to a Curator-only one; (3) evidence that current models already self-bound repetitive tool loops, which would make R4 pure surface cost with no reliability return.
 
 ---
 
 ## Appendix A — Skill artifacts
 
-All nine required skills were invoked via the `skill` tool. Artifacts are summarized; full method templates live in each skill's registry. No skill was skipped.
+All nine required skills were invoked via the `skill` tool. Per the method note at the top, each returned its methodology rather than a completed cascade, so what follows is my application of each method. Nothing is skipped.
 
 ### A1. hypothesis-framer — H1..H5 (FINER + PICO)
-Population (P) = zed-kask agent (glm-5.2 + tool suite) on software-engineering tasks; Comparison (C) = upstream-equivalent prompt behavior.
-- **H1:** In the zed-kask agent, the manifest-driven Agent Skills block (`system_prompt.hbs:222-269`) yields *higher* correct `skill`-tool invocation than the upstream body-injection block (`upstream:220-247`). (I=manifest block, O=correct invocation rate.) H0: no difference.
-- **H2:** Adding a loop-budget guardrail (R4) reduces runaway tool loops without reducing completion. (I=guardrail, O=95th-pct turns & runaway rate.) H0: no reduction.
-- **H3:** The media `display_hint` bullets (`L46-47`) improve inline-display fidelity vs. no instruction. H0: no difference.
-- **H4:** The `static_context` Session Context block (`L301-309`) reduces fabricated paths vs. absent. H0: no difference.
-- **H5:** Prompt-surface size correlates negatively with instruction-following fidelity on long tasks (the essentialist thesis). H0: no correlation.
-- FINER: Feasible high (eval harness exists), Interesting high, Novel medium, Ethical n/a, Relevant high. Lowest dimension = Novel (these are incremental). H3/H4 are low-risk/low-harm; carried but ranked low.
 
-### A2. falsifiability — admissibility + discriminating tests
-All five hypotheses **admitted** (IS-mode, concrete falsifiers exist). No hypothesis ruled out at the admissibility gate. Discriminating tests (one test can falsify ≥1 H):
-- T-invocation (eval on skill tasks) falsifies H1 if manifest ≤ body-injection.
-- T-loop (loop-prone tasks) falsifies H2 if runaway rate unchanged.
-- T-media / T-context (A/B) falsify H3/H4.
-- T-surface (surface-vs-fidelity regression over the §5 trims) falsifies H5.
-- **Irreducible pair:** H3 and H4 both predict "a small zed-kask addition helps"; no available prompt-only test cleanly separates them from a generic "more-relevant-context helps" confounder — flagged survived-by-default with the caveat that they are low-stakes.
+P = the zed-kask agent on software-engineering tasks; C = upstream-equivalent prompt behavior.
 
-### A3. capabilities-reasoner — scenario matrix (elicited potential vs. observed)
-Definition used: **Elicitation** (Password-Locked). Capabilities: (a) correct tool selection, (b) bounded loops, (c) no fabrication, (d) skill invocation, (e) media display.
+- **H1** — The manifest-driven skills block (`:226-253`) yields higher correct `skill`-invocation than upstream's body-injection block (`upstream:223,242-245`). O = correct-invocation rate. H0: no difference.
+- **H2** — The unbounded skill catalog (§2.9) crowds out base instructions, degrading instruction-following. O = prompt bytes + fidelity. H0: no crowding.
+- **H3** — `static_context` reaches the model whenever it is set. O = presence of the payload in the rendered prompt. H0: it does not always reach.
+- **H4** — Quantifying the loop threshold (`:54`) reduces runaway loops without lowering completion. H0: no reduction.
+- **H5** — Prompt claims about renderer/tool capabilities drift from the code they describe. O = prompt-vs-constant diff. H0: no drift.
 
-| Capability | Floor | Ceiling | Observed (this prompt) | Gap |
+**FINER:** Feasible high (the repo builds and tests); Interesting high; Novel medium; Ethical n/a; Relevant high. Weakest dimension = Novel, so I prioritised hypotheses that are *cheaply decidable in-repo* (H3, H5) over those needing an eval harness (H1, H2, H4). That prioritisation is what produced the report's two hard findings.
+
+### A2. falsifiability — admissibility, discrimination, elimination
+
+All five admitted (IS-mode, concrete falsifiers). Discriminating tests and outcomes:
+
+| H | Test | Outcome |
+|---|---|---|
+| H3 | Render the template with `static_context: Some(_)`, `user_agents_md: None`, no rules; assert payload present | **Falsified H0 → H3 refuted as stated.** The payload is *absent* (§2.8). The finding is stronger than the hypothesis: delivery is conditional on an unrelated guard. |
+| H5 | Diff `system_prompt.hbs:26` against `mermaid.rs:428-451`; diff kanban prompt tokens against server tool names | **H5 corroborated** for mermaid (suffix + `kanban` mismatch); **not** corroborated for kanban tool names (all 22 resolve) — but the *pin* is absent, so drift is unguarded. |
+| H2 | Measure catalog bytes against `MAX_SKILL_DESCRIPTIONS_SIZE` | **H2 eliminated.** ≈17 KB vs. 50 KB budget. This killed the prior draft's #2 recommendation. |
+| H1 | Eval: correct-invocation rate, manifest vs. body-injection | **Not run** — needs `eval_cli`. Survives untested. |
+| H4 | Eval: runaway rate vs. completion rate | **Not run.** Survives untested. |
+
+**Irreducible remainder:** H1 and H4 cannot be discriminated by any in-repo test; they require behavioral evaluation. Reported as such rather than iterated past. Note that H3's refutation is the productive kind — the hypothesis was wrong in the direction that revealed a defect.
+
+### A3. capabilities-reasoner — elicited potential vs. observed
+
+Definition declared: **Elicitation** (Password-Locked) — capability = what the agent can do when properly elicited, not what it happens to do.
+
+| Capability | Floor | Ceiling | Observed | Verdict |
 |---|---|---|---|---|
-| (a) tool selection | choose most-direct tool | — | supported by `L37-45` | **adequate** |
-| (b) bounded loops | must terminate | declare a budget | "keep going until resolved" + only "1-2 diagnostics" is bounded | **floor gap** (no general loop budget) → R4 |
-| (c) no fabrication | never invent paths/facts | — | `L53`/`L8` Prohibitions | declared; **enforcement gap** (L5) |
-| (d) skill invocation | invoke, don't read | discover any skill | manifest model correct; policing verbose; catalog unbounded | **variety/maturity gap** → R2/R3 |
-| (e) media display | render inline | — | `L46-47` present | adequate; R7 tests if load-bearing |
-- Maturity-gate: (b) is prerequisite to trusting (a)/(d) under autonomy — currently below floor.
+| Correct tool selection | choose the most direct tool | — | `:37-45` supports it | **maintain** |
+| Bounded loops | must terminate | declare a budget | `:54` closes the loop; threshold unquantified; `:98` bounds diagnostics | **above floor, below ceiling** → R4 |
+| No fabrication | never invent paths/facts | — | `:7`, `:53`, `:92` (Prohibitions) | declared; **enforcement is out-of-prompt** (L6) |
+| Skill invocation | invoke, don't read | discover any skill | manifest model correct; catalog complete and within budget | **maintain** (H2 eliminated) |
+| Overlay/mode delivery | overlay reaches model when set | — | **fails when no rules and no AGENTS.md** | **below floor** → R1 |
 
-### A4. pragmatic-cybernetics — feedback-loop map (sense→orient→decide→act)
-- **Sense:** tool results, diagnostics, validation output (`L87-91`), `timeout_ms` (`L42`). **Orient:** prompt instructions interpret results. **Decide:** tool selection (`L37-41`). **Act:** tool call. **Return path:** next tool result re-sensed.
-- **5-property assessment:**
-  - *Polarity:* correct (negative feedback via "validation fails → fix").
-  - *Delay:* healthy (diagnostics are synchronous).
-  - *Gain:* **degraded** — autonomy injunction (`L51-52`) is high-gain with no damping.
-  - *Closure:* **broken on loops** — no termination signal returns "stop" to the agent; only "Fixing Diagnostics" (`L97`) is bounded.
-  - *Fidelity:* **degraded** — large skill-list injects noise into the orient step.
-- **Variety (Ashby):** disturbance variety (which-of-60+ skills) > cheap discrimination variety (one-line descriptions) → **deficit** → attenuation recommendation = R2 (bound catalog / discovery tool).
-- **Spec drift:** `experimental_system_prompt.hbs` drifts from `system_prompt.hbs` with no test pinning either → flagged (R1).
+**Maturity gate:** overlay delivery is prerequisite to *every* capability the overlays confer (Curator regulation, swarm steering, kanban coordination). A capability whose delivery channel is conditional on an unrelated flag cannot be assessed at all — which is why R1 outranks everything else.
 
-### A5. essentialist — 3-gate on each recommendation
-G1 (Exist/deletion), G2 (Surface ≤7-ish), G3 (Contract/no pass-through). Summary:
-- R1 G1✓G2✓G3✓ (pure delete). R2 G1✓(with list_skills)G2✓G3✓. R3 G1✓G3✓ **risk-flagged** (policing may be load-bearing — the falsifier decides). R4 G1✓-additive-justified. R5 G1✓ neutral. R6 G1✓ reorder. R7 G1✓ if envelope carries hint. R8 **G1 borderline FAIL** without runtime enforcement → demoted.
-- Rejected: "stronger fabrication rule" (G1 FAIL, restatement), "full modes in prompt" (G2 FAIL, +surface no gate).
+**Metric-stability (mirage) check:** the overlay-delivery verdict is stable under both metrics I can apply — rendered-payload presence (binary) and rendered-byte delta. It does not flip. The loop-bound verdict, by contrast, *does* flip: under "is a bound stated?" it passes; under "is the bound machine-checkable?" it fails. I report R4 at correspondingly lower rank because of that instability.
 
-### A6. pragmatic-semantics — classification of load-bearing instructions
-- `L53` "Do not guess", `L8` "Do not fabricate", `L249` "Do not `read_file(SKILL.md)`" → **OUGHT / declarative / Prohibition**.
-- `L51-52` autonomy, `L97` "1-2 attempts", `L29-30` "Keep going… only terminate when sure" → **OUGHT / declarative / Guardrail**.
-- `L81-85` "Ambition vs Precision", `L61-63` "judicious initiative" → **OUGHT / declarative / Guideline**.
-- **Conflict flagged:** `L52` "Autonomously resolve… rather than coming back prematurely" (Guardrail) vs `L53` "Do not guess" (Prohibition). Under OT ranking, **Prohibition > Guardrail** → the no-guess rule wins, but the autonomy line's phrasing does not surface that → R6. (OUGHT-over-IS and Prohibition-over-Guardrail per the skill's resolution rules.)
+### A4. pragmatic-cybernetics — loop map, variety, VSM
 
-### A7. grill-me — self-challenge probes (Recall→Mechanism→Rationale→Edge Cases→Synthesis)
-Probes that found weakness:
-- **Recall:** "Which line bounds the only explicit loop in the prompt?" → `L97` (Fixing Diagnostics, 1-2 attempts). *Finding: it's the only bounded loop; everything else is unbounded.* → fed R4.
-- **Mechanism:** "How does the model learn which skill to pick?" → one-line descriptions in an unbounded list. *Finding: variety gap.* → fed R2.
-- **Rationale:** "Why does the prompt spend 8 lines forbidding `read_file(SKILL.md)`?" → because upstream's mental model (read the body) is the intuitive failure. *Finding: the verbosity is anti-pattern policing, candidate for collapse — but risk-flagged.* → fed R3.
-- **Edge Cases:** "What happens on a 60-skill registry with a small context model?" → base instructions pushed deeper in the prompt. *Finding: surface crowding.* → fed R2/R5.
-- **Synthesis:** "If you delete every §5 rec, does reliability drop?" → R1 no; R2/R3/R4 yes; R7 maybe. *Finding: R1 is the only free lunch.*
+**Loop:** sense = tool results, diagnostics, `timeout_ms` (`:42`); orient = prompt instructions; decide = tool selection (`:37-41`); act = tool call; return = next result.
 
-### A8. (grill-me assess) — per-area ratings
-- Prompt-structure knowledge: **Solid**. - Skill-mechanism knowledge: **Solid**. - Loop-control knowledge: **Partial** (only one bounded loop; no general budget). - Mode knowledge: **Gap** (zed-kask has none). - Prioritization: study R2/R3 falsifiers first (highest empirical uncertainty).
+| Property | Rating | Evidence |
+|---|---|---|
+| Polarity | healthy | negative feedback: validation fails → fix (`:93`) |
+| Delay | healthy | diagnostics synchronous |
+| Gain | **degraded** | `:51-52` high-gain autonomy; `:54` damps it but with an unquantified threshold |
+| Closure | **closed** (improved vs. upstream) | `:54` returns a stop signal; upstream has none |
+| Fidelity | healthy | H2 eliminated — the catalog is not injecting the noise I expected |
 
-### A9. metacognition — self-assessment of *this analysis*
-- **Grasp current condition:** 8 recs, all essentialist-survived, all falsifiable; 1 demoted; no live eval run. - **Target condition:** every rec validated by its falsifiable test. - **Obstacle:** no eval execution in this environment. - **Prediction (with confidence 0.6):** running the §5 tests will confirm R1, split R2/R3 (one will surprise), and show R4 helps. - **Brier ex-ante:** scored in §6. - **Next experiment:** run `crates/eval_cli` on R1/R2/R3 with the metrics defined in §5; re-score Brier from ex-ante to ex-post.
+**Variety (Ashby):** disturbance variety = "which of 63 skills fits?"; regulator variety = one-line descriptions plus the model's judgment. Token cost is *not* the deficit (H2). The residual deficit is *discrimination*, and the correct amplifier is better descriptions, not a shorter list — which is why no recommendation proposes truncating the catalog.
+
+**VSM + spec drift (S4):** the prompt is S3 (operational control) with the overlays acting as S1 scoping. The S4 spec-drift sensor is **partially present**: the swarm overlay senses its own drift (`swarm_panel.rs:278-297` `debug_assert!` + `:3071` test), the kanban overlay and the mermaid list do **not**. R2 and R3 install the missing sensors. The `.rules` trap "advertised invariants must point to the enforcement line" is precisely this, and §2.8 is its most expensive instance: an advertised overlay with a conditional enforcement path.
+
+### A5. essentialist — 3-gate on every recommendation
+
+Advisory mode (recommendations for a human to accept/reject). G1 Exist → G2 Surface → G3 Contract, fixed order.
+
+| Rec | G1 (deletion test) | G2 (surface) | G3 (contract) | Force | Verdict |
+|---|---|---|---|---|---|
+| R1 | behavior lost on deletion (3 overlays) | +0 prompt lines | no new abstraction | Guardrail | **PASS** |
+| R2 | drift becomes silent again | +0 prompt lines | mirrors existing swarm pin | Guardrail | **PASS** |
+| R3 | error returns | surface-neutral | none | Guardrail | **PASS** |
+| R4 | guardrail survives without the number | +0 lines (one word) | none | Guardrail | **PASS (weak)** |
+| R5 | nothing lost — governs no behavior | −1/−2 lines | none | Prohibition | **PASS (strongest)** |
+| R6 | **contested** — suppresses a documented failure | −5 lines | none | Guardrail | **PASS, warrant against** |
+
+**Eliminated at G1:** re-bound the catalog (falsified premise), stronger fabrication rule (restatement), prompt-side modes (no gate + L4 drift). **Withheld as undetermined:** the media-bullet move.
+
+**Essentialism score:** 4 candidates removed of 10 considered = **40%** — significant reduction. Note the direction of travel: the prior draft's largest-surface recommendation was eliminated by measurement, and the surviving highest-ranked one adds zero prompt surface. On this objective function, that is the right shape of result.
+
+### A6. pragmatic-semantics — load-bearing instruction classification
+
+| Instruction | Ontological | Epistemic | Constraint force |
+|---|---|---|---|
+| `:7` do not fabricate; `:53` do not guess; `:250` never `read_file` a SKILL.md; `:92` do not claim unrun validation | OUGHT | declarative | **Prohibition** |
+| `:51-52` autonomy; `:54` loop stop; `:98` 1-2 diagnostic attempts | OUGHT | declarative | **Guardrail** |
+| `:82-86` ambition vs. precision; `:101-108` debugging order | OUGHT | declarative | **Guideline** |
+| `:26` renderer supports X; `:236-244` these skills exist | **IS** | declarative | **Evidence** |
+
+**Conflicts, resolved by OT ranking:**
+1. `:52` ("autonomously resolve rather than coming back prematurely", Guardrail) vs. `:53` ("do not guess", Prohibition). **Prohibition wins** — resolution `scope`: autonomy is bounded by the no-guess rule. Both lines already carry the escape clause, so no edit is required; this is why "soften the over-action trio" does not appear as a recommendation.
+2. `:26` (IS/Evidence) vs. `mermaid.rs:428-451` (IS/Implementation). Two IS-claims disagree; ranked by **provenance authority — Implementation > prose assertion**, so the code wins and the prompt is wrong → R3.
+3. `:271` guard (IS about render conditions) vs. `curator_agent_server.rs:33-36`'s doc claim that the Curator context "is injected via `Thread::static_context` and rendered after the project context section" (IS/Specification). **Specification asserts unconditional rendering; implementation renders conditionally.** Genuine contradiction, and the doc comment is the advertised invariant without an enforcement point → R1.
+
+That third conflict is the single highest-value output of this skill: the defect is visible as a *semantic* contradiction between a doc comment and a template guard, independent of the empirical test that confirmed it.
+
+### A7. grill-me — self-challenge (Recall → Mechanism → Rationale → Edge Cases → Synthesis)
+
+Probes that found weakness (level reached: 5/5):
+
+- **Recall:** "Which prompt files exist?" — First pass found one. **Weakness found:** missed the three overlays; `steer_system_prompt` appears in *two* panels, and the inventory was wrong until I grepped for the delivery mechanism rather than for prompt-shaped filenames.
+- **Mechanism:** "How does an overlay actually reach the model?" → `with_extra_static_context` → `set_static_context` → `{{#if static_context}}`. **Weakness found:** tracing the mechanism end-to-end is what exposed §2.8. Reading the template top-to-bottom did not.
+- **Rationale:** "Why is the catalog budget disabled — is that bloat?" **Weakness found in my own prior reasoning:** I assumed bloat and was about to recommend re-bounding. Measuring killed it. The prior draft ranked that change #2; it is now eliminated.
+- **Edge Cases:** "What if the user has no `.rules` and no `AGENTS.md`?" **Weakness found:** the defect. Also: "what if a test covered this?" — none does; all eleven pass `static_context: None`.
+- **Synthesis:** "Delete every recommendation — what breaks?" R1 breaks three overlays; R2/R3 permit silent drift; R5 breaks nothing (which is the point); R6 *reduces* reliability if the policing was load-bearing. **Weakness found:** R6 is the only recommendation whose own analysis argues against adopting it, so it must not be merged on analysis alone.
+
+### A8. grill-me assess — per-area ratings
+
+| Area | Rating |
+|---|---|
+| Prompt inventory + divergence | **Solid** (both sides cited; corrected mid-analysis) |
+| Delivery-mechanism / template semantics | **Solid** (defect confirmed by execution) |
+| Literature grounding | **Solid** (independently verified; 3 corrected, 1 dropped) |
+| Behavioral effect of wording changes | **Gap** — no eval run; R4/R5/R6 are predictions |
+| Mode design | **Partial** — identified overlays as de facto modes, but did not evaluate whether they should be first-class |
+
+**Priority:** run R6's falsifier before touching the skills section; it is the highest-variance item.
+
+### A9. metacognition — Improvement Kata on this analysis
+
+- **Grasp current condition:** started from a prior report whose top-3 included one already-applied item, one falsified premise, and one mis-sourced literature claim.
+- **Target condition:** every claim traceable to a command output, a `file:line`, or a verified URL.
+- **Predict (confidence 0.6):** "verifying the prior report's claims will overturn at least one top-3 recommendation." **Outcome: correct** — it overturned two (the orphan-template item was already applied; the catalog-bloat premise was falsified). Ex-post Brier for that prediction = (1 − 0.6)² = **0.16**, i.e. under-confident. Calibration lesson: when auditing a prior artifact whose claims were never executed, my prior on "at least one claim is wrong" should be higher than 0.6.
+- **Experiment run:** template-render test (§2.8) + catalog measurement (§2.9) + source verification (§3).
+- **Residual gap:** behavioral predictions unmeasured. **Next experiment:** `crates/eval_cli` on R6 then R5.
 
 ---
 
-*End of report. Termination condition met: §§1–6 complete; every recommendation survived essentialist (A5) and carries a falsifiable test; self-assessment (§6 + A9) included.*
+*Termination: §§1–6 complete. Every recommendation survived the essentialist 3-gate (A5) and carries a falsifiable test. All nine skill artifacts are in Appendix A and are incorporated in §§2–6 — A2 eliminated a recommendation, A3 set the ranking, A5 removed four candidates, A6 independently identified the §2.8 defect, and A7 corrected the inventory. Self-assessment included (§6 + A9).*

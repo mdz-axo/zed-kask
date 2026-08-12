@@ -120,6 +120,114 @@ mod tests {
     }
 
     #[test]
+    fn test_system_prompt_renders_session_context_without_rules_or_agents_md() {
+        // Regression: the `static_context` (Session Context) block was nested
+        // inside `{{#if (or user_agents_md has_rules)}}`, so it was silently
+        // dropped for projects with no `.rules` and no personal `AGENTS.md` —
+        // which dropped the Curator overlay's `CURATOR_STATIC_CONTEXT`. It must
+        // render independently of that guard.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: Some("CURATOR-CTX".to_string().into()),
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+        assert!(
+            rendered.contains("## Session Context"),
+            "Session Context heading must render even without rules/AGENTS.md"
+        );
+        assert!(
+            rendered.contains("CURATOR-CTX"),
+            "static_context body must render even without rules/AGENTS.md"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_contains_loop_termination_guardrail() {
+        // Pins the zed-kask-only loop-budget guardrail added to `## Task
+        // Execution` (a divergence in a shared upstream section) so an upstream
+        // merge that drops it is caught.
+        //
+        // The threshold must stay a concrete count, not a vague quantifier:
+        // "several iterations" left the stop point to model discretion, so
+        // different models bounded the loop at different depths.
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("If a tool loop repeats without measurable progress"),
+            "loop-termination guardrail must be present in the rendered prompt"
+        );
+        assert!(
+            rendered.contains("three times"),
+            "the loop guardrail must state a concrete iteration count, not a \
+             vague quantifier the model has to interpret"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_mermaid_list_uses_renderer_directives() {
+        // Supersedes an earlier test that asserted `kanban` was NOT a mermaid
+        // type. That was wrong: `kanban` is in the renderer's allowlist
+        // (`markdown::mermaid::SUPPORTED_PREFIXES`) and
+        // `test_beta_suffixed_diagram_types_are_extracted` proves merman
+        // extracts it. `kanban` is BOTH a mermaid directive and, separately, a
+        // D18 fenced-block widget tag — the prompt must distinguish the two
+        // rather than deny the mermaid form.
+        //
+        // The prompt must also name the `-beta` directives merman actually
+        // requires; advertising bare `sankey`/`xychart` produced diagrams the
+        // renderer silently dropped. The exhaustive prompt-vs-allowlist check
+        // lives in `markdown`, next to the constant
+        // (`test_system_prompt_advertises_every_supported_diagram_type`).
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        for directive in ["sankey-beta", "xychart-beta", "architecture-beta", "radar-beta"] {
+            assert!(
+                rendered.contains(directive),
+                "prompt must advertise the `{directive}` directive merman requires"
+            );
+        }
+        assert!(
+            rendered.contains("kanban"),
+            "`kanban` is a supported mermaid directive and must be advertised"
+        );
+        assert!(
+            rendered.contains("kask viz widgets, not mermaid"),
+            "D18 widget blocks must be distinguished from mermaid diagrams"
+        );
+    }
+
+    #[test]
     fn test_system_prompt_renders_user_agents_md_before_project_rules() {
         use prompt_store::{ProjectContext, RulesFileContext, WorktreeContext};
         use util::rel_path::RelPath;
@@ -450,14 +558,26 @@ mod tests {
             "skills section must explicitly disclaim manual instruction following"
         );
 
-        // The model must be told NOT to read_file the SKILL.md body.
+        // The model must be told NOT to read_file the SKILL.md body. Asserted
+        // on the invariant (a prohibition naming `read_file` and `SKILL.md`)
+        // rather than one exact sentence, so the prose can be tightened without
+        // a false failure — while still failing if the prohibition disappears.
         assert!(
-            rendered.contains("Do **not** `read_file` the `SKILL.md`"),
+            rendered.contains("Never `read_file` the `SKILL.md`")
+                || rendered.contains("Do **not** `read_file` the `SKILL.md`"),
             "skills section must forbid reading the SKILL.md body"
         );
         assert!(
             rendered.contains("discovery-only catalog entry"),
             "skills section must label SKILL.md as discovery-only"
+        );
+        // The prohibition is now backed by a runtime gate in `read_file`
+        // (`refuse_skill_catalog_read`). Saying so converts an unenforceable
+        // OUGHT into a statement of fact the model can rely on.
+        assert!(
+            rendered.contains("`read_file` refuses it"),
+            "skills section must state the refusal is enforced by the tool, not \
+             merely requested"
         );
 
         // The upstream phrasing that taught the bypass must be gone.

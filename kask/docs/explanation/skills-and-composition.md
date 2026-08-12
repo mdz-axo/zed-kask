@@ -854,7 +854,7 @@ The following Mermaid diagrams were inlined from the former `docs/diagrams/` dir
 
 The Improvement Kata PDCA cycle in `hkask-mcp-kata-kanban` (folded from `hkask-services-kata-kanban`) executes as a 5-step **singlepass** sequential pipeline within the `KataEngine` that maps to four conceptual PDCA phases. Each step runs an LLM inference via the registered template (e.g., `kata-improvement/improvement-step1-direction`), validates output against the step's `output_schema`, records a `StepExperience`, and emits Regulation spans. The `KataEngine::run_improvement_from()` iterates through steps **exactly once** (`for step in &manifest.steps` — no re-entry loop). The cycle is bounded by `gas.cap` (default 15,000). Metric capture flanks the execution: `metric_before` is captured pre-cycle and `metric_after` post-cycle, yielding an `ImprovementSignal` (Positive/Negative/Stalled/NotMeasured). Regulation algedonic alerts fire if variety deficit exceeds threshold.[^rother-kata][^deming-pdca-kata]
 
-**Convergence iteration lives elsewhere:** The convergence loop (`max_iterations`, threshold, re-entry with updated data) is implemented in `ManifestExecutor::execute_manifest()` in `crates/hkask-templates/src/executor.rs` — the Pattern A Skills Model execution engine. The kata engine is a *step executor* called within that loop; it does not drive convergence itself. In zed-kask, `KataEngine` is constructed and `execute()` is invoked via the kata-kanban MCP server (one of the 13 MCP servers, run as a child process over stdio); the deleted `kask kata start` CLI is gone. The kanban service's prompt-generation tools (`kanban_task_kata_improvement`) do not invoke the engine — they render prompt text only.
+**Convergence iteration lives elsewhere:** The convergence loop (`max_iterations`, threshold, re-entry with updated data) is implemented in `ManifestExecutor::execute_manifest()` in `crates/hkask-templates/src/executor.rs` — the Pattern A Skills Model execution engine. The `kata-improvement` / `kata-coaching` skills are PDCA manifests executed by that in-process `ManifestExecutor` with their Jinja2 templates — that is the live kata execution path. `KataEngine` (in the `hkask-mcp-kata-kanban` crate, `src/kata.rs`) is a library-level kata engine exercised only by tests (`tests/gas_feedback_loop.rs`); it is **not** a step executor in `ManifestExecutor`'s loop and is **not** invoked by the kata-kanban MCP server in production. The kata-kanban MCP server (a child process over stdio) exposes kanban board/task tools plus kata prompt-generation tools (`kanban_task_kata_improvement`) that render prompt text only — they do not execute a kata loop. The deleted `kask kata start` CLI has no direct successor.
 
 **Key source:** `mcp-servers/hkask-mcp-kata-kanban/src/kata.rs:333-486` (`execute` — single-pass orchestration), `mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs:20-121` (`run_improvement_from` — single-pass `for` loop, no re-entry), `mcp-servers/hkask-mcp-kata-kanban/src/kata/metrics.rs:6-133` (metric capture + signal).
 
@@ -995,7 +995,7 @@ stateDiagram-v2
 - **Init → Plan:** Curator consent required for Improvement Kata; `consent_check` must return `Ok(())`. Self-consent suffices for Starter; Learner consent for Coaching.
 - **Gas gate (any step):** `state.gas_consumed + step_gas > manifest.gas.cap` → `Err(KataError::GasExceeded)`. No soft continue; hard abort per `error_handling.on_gas_exceeded: abort`.
 - **Output schema check:** If step has `output_schema`, all `properties` keys must exist in the inference output JSON. Missing keys → Regulation `debug!` log, check returns `false`.
-- **Convergence threshold:** Default 0.15; `improvement_gate: threshold_only`. On `not_reached: escalate`, Curator is notified. **Note:** Convergence checking and re-iteration (`max_iterations: 3`, `min_iterations: 1`) are performed by `ManifestExecutor::execute_manifest()` in `crates/hkask-templates`, **not** by the kata engine. The kata engine is a single-pass executor consumed within that outer loop.[^rother-guards]
+- **Convergence threshold:** Default 0.15; `improvement_gate: threshold_only`. On `not_reached: escalate`, Curator is notified. **Note:** Convergence checking and re-iteration (`max_iterations: 3`, `min_iterations: 1`) are performed by `ManifestExecutor::execute_manifest()` in `crates/hkask-templates`, **not** by the kata engine. The kata engine is a single-pass library-level executor (exercised only by tests); it is **not** consumed by `ManifestExecutor`. The production kata path is `ManifestExecutor` + the `kata-improvement`/`kata-coaching` skill manifests, which do not invoke `KataEngine`.[^rother-guards]
 - **Regulation algedonic: `algedonic_threshold: 100` variety deficit → warning emitted to `reg.kata` target with `escalation_target: Curator`.
 
 ## Regulation Span Diagram
@@ -1018,7 +1018,7 @@ The span taxonomy follows a hierarchical structured-logging convention.[^otel-sp
 id: DIAG-FW-005
 verified_date: 2026-07-24
 verified_against: mcp-servers/hkask-mcp-kata-kanban/src/kata.rs (execute:333-486), mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs (run_improvement_from:20-121 — single-pass for loop, no re-entry), mcp-servers/hkask-mcp-kata-kanban/src/kata/metrics.rs (capture_before/after:6-105, compute_improvement_signal:76-105), mcp-servers/hkask-mcp-kata-kanban/src/kata/manifest.rs (KataStep, KataManifest, convergence config), mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/status.rs (TaskStatus transitions), registry/manifests/kata-improvement.yaml (step definitions, convergence parameters, Regulation spans:150-160), crates/hkask-templates/src/executor.rs (execute_manifest:209-686 — convergence loop, check_convergence:746-799)
-status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; convergence loop is ManifestExecutor concern)
+status: VERIFIED (v3 — hkask-cli deleted; kata engine is library-level/test-only, not invoked in production — production kata execution is ManifestExecutor (D1) + kata skill manifests; convergence loop is ManifestExecutor concern)
 -->
 
 ## Cross-Reference
@@ -1040,9 +1040,9 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; c
 
 # Kata-Kanban Execution Boundary
 
-This reference sequence separates the two Kata paths. The Kanban MCP exposes task-scoped **prompt generation**. Full Kata execution is available through the kata-kanban MCP server (a child process over stdio), which constructs `KataEngine` directly and calls `execute()`. The MCP prompt tools do not invoke the engine; the distinction is operationally important because prompt generation does not execute the manifest's convergence, budget, or capability declarations.
+This reference sequence separates the two Kata paths. The kata-kanban MCP server (a child process over stdio) exposes task-scoped **prompt generation** tools that render prompt text only. Full Kata execution (the PDCA loop) runs in-process via the `ManifestExecutor` (D1) executing the `kata-improvement` / `kata-coaching` skill manifests with their Jinja2 templates — `KataEngine` (this crate) is a library-level engine exercised only by tests and is not wired into either path in production. The MCP prompt tools do not invoke the engine; the distinction is operationally important because prompt generation does not execute the manifest's convergence, budget, or capability declarations.
 
-> **Note:** The deleted `kask kata start` CLI is gone. Kata execution is invoked via the kata-kanban MCP server (one of the 13 MCP servers, a child process over stdio) — it constructs `KataEngine` and runs `execute()`. The Agent Panel is the user-facing entry point.
+> **Note:** The deleted `kask kata start` CLI has no direct successor. Kata execution (the PDCA loop) runs in-process via the `ManifestExecutor` (D1) executing the `kata-improvement` / `kata-coaching` skill manifests — not via `KataEngine`, which is a library-level engine exercised only by tests. The kata-kanban MCP server (a child process over stdio) provides kanban tools + kata prompt generation (prompt text only). The Agent Panel is the user-facing entry point.
 
 ```mermaid
 sequenceDiagram
@@ -1050,7 +1050,6 @@ sequenceDiagram
     participant MCP as Kanban MCP
     participant Service as KanbanService
     participant Task as Task Store
-    participant Engine as KataEngine
 
     Caller->>+MCP: kanban_task_kata_improvement(task_id)
     MCP->>+Service: task_improvement_prompt(task_id)
@@ -1059,22 +1058,14 @@ sequenceDiagram
     Service-->>-MCP: rendered prompt text
     MCP-->>-Caller: TaskKataResponse
 
-    opt Full kata execution (in-process)
-        Caller->>+MCP: kata_execute(manifest, learner, context)
-        MCP->>+Engine: KataEngine::from_registry(registry)
-        MCP->>+Engine: execute(manifest, learner, context)
-        Engine-->>-MCP: KataResult
-        MCP-->>-Caller: KataResult
-    end
-
-    Note over MCP,Engine: The MCP prompt tools do not invoke the engine.<br/>Full execution is in-process via the kata-kanban MCP server,<br/>not via a deleted CLI surface.
+    note over Caller,MCP: Full kata execution (the PDCA loop) runs in-process via the ManifestExecutor (D1) + kata-improvement/kata-coaching skill manifests — NOT via a kata_execute MCP tool. KataEngine is library-level/test-only; there is no kata_execute tool and no production KataEngine construction.
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-FW-006
 verified_date: 2026-07-24
 verified_against: mcp-servers/hkask-mcp-kata-kanban/src/lib.rs:656-686 (kanban_task_kata_improvement calls task_improvement_prompt); mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/kata.rs:104-177 (task_improvement_prompt); mcp-servers/hkask-mcp-kata-kanban/src/kata.rs:334-498 (KataEngine::execute)
-status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process via the kata-kanban MCP server)
+status: VERIFIED (v3 — hkask-cli deleted; kata engine is library-level/test-only, not invoked in production; the kata-kanban MCP server exposes prompt-generation tools only; production kata execution is ManifestExecutor (D1) + kata skill manifests)
 -->
 
 ## Cross-reference
@@ -1173,7 +1164,7 @@ status: VERIFIED
     Cited for the PDCA conceptual phases the 5-step single-pass pipeline maps onto.
 
 [^rother-guards]: Rother, M. (2010). *Toyota Kata: Managing People for Improvement, Adaptiveness, and Superior Results*. McGraw-Hill.
-    Cited for the threshold-based convergence design the kata engine delegates to the ManifestExecutor.
+    Cited for the threshold-based convergence design; the kata engine is single-pass (no convergence) and library-level/test-only — convergence is a ManifestExecutor concern, and the production kata path is ManifestExecutor + skill manifests (which do not invoke KataEngine).
 
 [^otel-span-diagram]: OpenTelemetry. (2024). *OpenTelemetry Specification*. Cloud Native Computing Foundation. https://opentelemetry.io/docs/specs/otel/
     Cited for the hierarchical span taxonomy the Regulation span diagram follows.
