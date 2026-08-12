@@ -146,7 +146,20 @@ Four instruction mechanisms compose in the zed-kask prompt. Each has a working r
 
 Ranked. Each: change → axis → expected effect → falsifiable test. All survived essentialist G1/G2/G3 (§A5); rejected candidates are listed at the end.
 
-**Implementation status (2026-08-12).** R1–R5 are implemented and validated; **R6 was refuted by its falsifier and deliberately not implemented** (§5.1). Every change is pinned by a test that was verified to fail without it. Net prompt surface: **−2 lines** (R5 deletion) with R1/R3/R4 surface-neutral. Validation: `cargo test -p agent --lib templates::` 14/14, `-p markdown --lib mermaid` 21/21, `-p kanban_panel` 2/2, `-p swarm_panel` 40/40 (no regression), `-p agent --lib read_file_tool` 23/23; `cargo clippy` clean on `agent`, `markdown`, `kanban_panel`.
+**Implementation status (2026-08-12, re-verified against `HEAD` = `e89962e938`).** R1–R5 implemented and validated. **R6 was refuted by its falsifier, then resolved by F1** — the correct fix was to add the missing runtime gate, after which R6's trim became safe and was applied (§5.1). Every change is pinned by a test verified to fail without it.
+
+**Objective-function scorecard — the two axes, measured:**
+
+| | Baseline | Now | Delta |
+|---|---|---|---|
+| Prompt surface (`system_prompt.hbs`) | 24,350 B / 313 lines | **23,949 B / 313 lines** | **−401 B** |
+| Upstream Zed, for scale | 19,815 B | — | zed-kask carries +4.1 KB of fork-specific instruction |
+| Skill catalog payload | ≈17 KB (of upstream's 50 KB budget) | **≈15.7 KB** | within budget; H2 stays eliminated |
+| Reliability gates added | 0 | **6** | R1 delivery fix, R2 kanban tool pin, R3 mermaid contract, R4 loop bound, F1 `SKILL.md` refusal, F3 board-staleness fix |
+
+Surface moved a little; **reliability moved a lot**, and that is the right shape — the objective function ranks "no fabrication / correct tool use" above byte count, and every surface reduction here was a by-product of installing an enforcement point rather than a trade against one.
+
+Validation at `HEAD`: `agent --lib templates::` 14/14, `agent --lib read_file_tool` 27/27, `markdown --lib mermaid` 21/21, `kanban_panel` 3/3, `swarm_panel` 40/40, `hkask-templates` 12 suites / 0 failures, `kask_bridge` 142/142.
 
 ### R1 — Un-nest the `## Session Context` block *(reliability; surface-neutral)*
 - **Change:** in `system_prompt.hbs`, move the `{{/if}}` that currently closes the `(or user_agents_md has_rules)` guard so it precedes the `{{#if static_context}}` block, making the block a sibling rather than a child (a swap of the closers at `:311`/`:313`). Add a permanent regression test in `templates.rs` with `static_context: Some(_)`, `user_agents_md: None`, `ProjectContext::new(vec![])`.
@@ -201,8 +214,9 @@ Ranked. Each: change → axis → expected effect → falsifiable test. All surv
 The behavioral A/B could not run: `eval_cli` requires live provider credentials (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` per `crates/eval_cli/README.md:52-54`) and none are present in this environment. Rather than guess, I ran the **decidable half** of the falsifier — the premise check that determines whether the prohibition is load-bearing at all:
 
 1. **Is the prohibition the only defense?** Yes. `crates/agent/src/tools/skill_tool.rs:169-174` states body injection is disabled; `:544` returns the `No manifest configured` envelope and `:552`/`:639`/`:741`/`:787` return `SKILL.md body injection is disabled in zed-kask`. There is **no runtime gate preventing `read_file` of a `SKILL.md`** — `read_file_tool.rs:303`/`:339` only *log* `reg.skill.stray_read` via `warn_if_skill_catalog_read`. So a stray read silently returns raw prose that bypasses the cascade, the gas/OCAP membrane, and convergence.
-2. **Is the failure reachable in practice?** Yes, but *not* by the route first claimed. **Correction (verified 2026-08-12, superseding an earlier draft of this section):** a `comm` of the 63 installed skill directories against the 104 registry manifests shows **every installed skill has a manifest — zero missing**. The earlier inference that "63 vs. 104 → name mismatches route to `No manifest configured`" was wrong: the 41-item delta is entirely *orphan manifests* (manifests with no installed skill, e.g. `web-quick`, `qa-*`, `memory_recall`), which is the opposite direction and cannot trigger that envelope. The `No manifest configured` fallback at `system_prompt.hbs:251` is therefore **currently unreachable** for the shipped catalog.
-   The failure remains reachable by the direct route, which is sufficient for the verdict: nothing *prevents* the model from calling `read_file` on a `SKILL.md`, and the model's trained prior (L11: every other major system loads skill bodies as prose) actively pushes it there. The prohibition text, not a gate, is what suppresses it.
+2. **Is the failure reachable in practice?** Yes, but *not* by the route first claimed. **Correction (verified 2026-08-12, superseding an earlier draft of this section):** a `comm` of the 63 installed skill directories against the then-104 registry manifests showed **every installed skill has a manifest — zero missing**. The earlier inference that "63 vs. 104 → name mismatches route to `No manifest configured`" was wrong: the 41-item delta was entirely *manifests with no installed skill*, the opposite direction, which cannot trigger that envelope. The `No manifest configured` fallback at `system_prompt.hbs:251` is therefore **unreachable** for the shipped catalog.
+   *(Postscript: those 41 were subsequently audited and deleted as unreachable infrastructure — no loader for non-`skill` categories ever existed. The registry is now 63 manifests ↔ 63 skills, exactly 1:1 and test-enforced. That makes the fallback unreachable for **shipped** skills, but **not** dead prose: `skill_tool.rs:544` still returns the envelope for any skill whose manifest is absent, which a user-authored or marketplace-installed `SKILL.md` can be. The 1:1 test covers the shipped registry only. So `system_prompt.hbs:251` stays — it is the one instruction that keeps an unmanifested user skill degrading gracefully instead of the model improvising.)*
+   The failure remains reachable by the direct route, which is sufficient for the verdict: nothing *prevented* the model from calling `read_file` on a `SKILL.md`, and the model's trained prior (L11: every other major system loads skill bodies as prose) actively pushes it there. The prohibition text, not a gate, was what suppressed it.
 
 **Verdict:** the prose is the *only* enforcement point, and per L6 ("enforcement gates belong outside the prompt") the correct fix is a runtime gate, not less prose. Deleting the policing while no gate exists would remove the sole safeguard. **R6 is refuted and was not implemented.** The stray-read sensor now makes the failure observable, which converts R6 from an analysis bet into a measurable one: if `reg.skill.stray_read` stays silent across real sessions, revisit the trim; if it fires, the policing is confirmed load-bearing and should be *strengthened* into a tool-level refusal.
 
@@ -216,7 +230,23 @@ The correction above does not change the verdict, but it is worth recording *how
 - **"Re-bound the skill catalog / move discovery to a `list_skills` tool."** **G1 FAIL on a falsified premise.** The prior draft ranked this #2 on the assumption of catalog bloat. Measurement (§2.9): ≈17 KB vs. upstream's 50 KB budget. The premise is false, so the change trades a real capability (zero-latency discovery, L11's preload step) for a saving that doesn't exist. **Eliminated, not demoted.**
 - **"Add a stronger cite-or-omit fabrication rule."** **G1 FAIL** — restatement. `:7` ("Do not fabricate"), `:53` ("Do not guess"), and `:92` ("Do not claim validation passed unless you actually ran it") already cover it. Per L6 the gap is enforcement, not wording.
 - **"Add Plan/Act mode infrastructure to the prompt."** **G3 FAIL** — a self-declared phase with no runtime gate is theater (L6), and L4 shows mode vocabularies drift within a product cycle, so the prose would rot. Superseded by the §4.4 finding that zed-kask *already* has modes via the panel overlays; R1 (making that channel reliable) is the correct intervention.
-- **"Move the media `display_hint` bullets into the tool-result envelope."** **G1 UNDETERMINED → withheld.** I did not verify whether the envelope carries a self-describing instruction, so I cannot assert the deletion is behavior-preserving. Per the report's own no-fiction rule, omitted rather than guessed.
+- **"Move the media `display_hint` bullets into the tool-result envelope."** **G1 FAIL — resolved, now permanently rejected.** Originally withheld as undetermined. Verified since: `kask/mcp-servers/hkask-mcp-media/src/media_block.rs:44-51` builds the hint body as pure JSON data (`kind`, `src`, `ontology`, `provenance`) with **no self-describing instruction**. The prompt bullets at `:46-47` are therefore load-bearing, not belt-and-suspenders — deleting them would break inline media rendering. **Rejected with evidence rather than a shrug.**
+
+---
+
+## 5.2 Scope discipline — what the follow-up work taught
+
+The F-series follow-ups (F1–F4) drifted from prompt analysis into registry cleanup: 41 manifests and 23 template crates deleted, 764K of unreachable surface. That work was sound on its own terms, but it is worth recording why it happened, because the drift pattern is itself a finding about this objective function.
+
+**Each step was locally justified and cumulatively off-target.** F1 (enforce the `SKILL.md` prohibition) was squarely in scope — it closed R6. F2 (audit orphan manifests) came from a *correction to my own error* in §5.1, so it inherited that error's framing rather than the report's objective. From there, deleting manifests orphaned template crates, which invited another audit. Nothing was wrong; nothing after F1 measured against "agent reliability and prompt surface" either.
+
+**Three lessons that generalise:**
+
+1. **A corrected error is a scope risk, not just a fact fix.** When I found the 63-vs-104 claim wrong, the honest correction surfaced a *new* finding (orphan manifests). Acting on it immediately felt like rigour. It was scope creep wearing rigour's clothes. The discipline: correct the claim in place, record the new finding as a candidate, and re-rank it against the objective function before acting.
+2. **"Unused" claims are cheap to generate and expensive to verify.** Three times in this engagement an aggregate count produced a wrong conclusion — catalog "bloat" (falsified: 17 KB of a 50 KB budget), the 63-vs-104 delta (falsified: wrong direction), and `remote_connection` "unused" (falsified: upstream code, ten dependents). Each needed a *structural* check, not a count: `comm`, a `Cargo.toml` dependent scan, resolving actual `template_ref` values. Two numbers that differ tell you nothing about which side is missing.
+3. **Deletion is only in-scope for this objective when the surface reaches the model.** Prompt bytes and skill-catalog bytes enter the context window; unreachable registry YAML does not. The registry cleanup improved build hygiene and honesty, which is real value — but it moved neither axis of *this* function. Filing it under "minimise prompt surface" was a category error I should have named at F2 rather than at F4.
+
+**Recentred status.** Against the stated objective, the prompt work is complete: sections 1–6 stand, every recommendation is implemented-or-refuted with a falsifiable test, and both axes are measured in the scorecard above. The one genuinely open prompt-scope item is F4's measurement (`skill.catalog_read_blocked` firings), which needs production sessions, not more analysis.
 
 ---
 
@@ -227,7 +257,8 @@ The correction above does not change the verdict, but it is worth recording *how
 - **Actual condition:** 9 divergences cited both sides; 6 recommendations, all with tests; 1 defect found by **execution** rather than reading (§2.8); 3 literature claims corrected and 1 dropped for want of a source; 1 prior top-ranked recommendation **eliminated by measurement**; 1 candidate withheld as undetermined.
 - **Obstacle:** the behavioral eval could not run — `eval_cli` needs live provider credentials that are absent here (§5.1). So R4/R5's *behavioral* effects remain predictions; their *structural* effects (surface delta, drift-detection) are verified by tests. Second obstacle: the `skill` tool returned methodology rather than executing cascades, so Appendix A is my application of each method.
 - **Experiment run (this session):** R6's falsifier, redirected from the unavailable behavioral A/B to the decidable premise check — which **refuted R6** (§5.1). Then R1–R5 implemented, each pinned by a test verified to fail without its change.
-- **Next experiment:** watch `reg.skill.stray_read` in real sessions. It converts R6 from an untestable bet into a measured one: silence over N sessions → revisit the trim; firings → promote the prose prohibition into a tool-level refusal (the L6 fix).
+- **Next experiment:** watch `skill.catalog_read_blocked` in real sessions — now a *blocked-attempt* counter, since F1 installed the gate. Silence over N sessions → the prompt prohibition could be trimmed further; firings → the prose is still doing work alongside the gate. (Renamed from `reg.skill.stray_read`: that prefix squats on the CI-enforced `reg.skill.<id>.<phase>` feedback-span namespace, and the `agent` crate has no `tracing` dep, so a `reg.`-prefixed `log::warn!` never reaches the regulation ledger regardless of naming.)
+- **Scope obstacle (new, §5.2):** follow-up work drifted from prompt analysis into registry cleanup. Locally sound, cumulatively off-objective. The corrective is in §5.2's three lessons; the operative one is that a corrected error surfaces new findings that must be *re-ranked* against the objective, not acted on by inheritance.
 
 **Ex-post scoring of this session's predictions.** Brier = (p − outcome)², lower is better.
 
@@ -238,8 +269,11 @@ The correction above does not change the verdict, but it is worth recording *how
 | R5 improves the objective | 0.80 | 1 (clean deletion, −2 lines, nothing lost) | **0.040** |
 | R6 improves the objective | 0.45 | 0 (refuted — prose is the only defense) | **0.203** |
 | "Auditing the prior report overturns ≥1 top-3 rec" | 0.60 | 1 (overturned two) | **0.160** |
+| "R6's prose is redundant and can be trimmed" (ex-ante, pre-F1) | 0.45 | 1 *conditionally* — true only **after** a gate existed | **0.203** as scored; the *timing* was the error, not the direction |
 
-**Mean Brier ≈ 0.086** — decent, but the error is systematically one-directional: I was **under-confident on all four correct predictions** and correctly low on the one that failed. The lesson is specific: for changes whose falsifier is *decidable in-repo* (R1, R3), I should price confidence near the strength of the available evidence rather than hedging toward eval-dependence. R6's 0.45 was well-placed — low enough that I flagged it as non-mergeable without a test, which is exactly what saved it from being implemented wrongly.
+**Mean Brier ≈ 0.086** — decent, but the error is systematically one-directional: I was **under-confident on all four correct predictions** and correctly low on the one that failed. For changes whose falsifier is *decidable in-repo* (R1, R3), I should price confidence near the strength of available evidence rather than hedging toward eval-dependence.
+
+R6 deserves a separate note, because scoring it as a flat miss understates what happened. The prediction "this prose is redundant" was *directionally right* and **order-wrong**: redundant-after-a-gate, load-bearing-before-one. A Brier score on the proposition alone cannot represent that, which is a limitation of scoring propositions instead of plans. The practical lesson is a sequencing rule, not a confidence adjustment: **when a candidate deletion removes the only enforcement of an invariant, the correct move is never "delete" or "keep" — it is "install the gate, then delete."** R6's low 0.45 is what stopped me merging it prematurely, so the hedge did its job even though the proposition resolved true.
 
 **Brier-style calibration, top 3.** Forecast = "this change improves the objective function"; scored ex-ante.
 
