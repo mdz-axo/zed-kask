@@ -640,9 +640,26 @@ fn model_from_entry(entry: ModelEntry) -> Model {
         // limit before dispatching, and rejects with 402 on limited keys
         // even for trivial prompts. An explicit budget prices the request
         // at what a turn actually needs.
-        max_output_tokens: entry
-            .top_provider
-            .and_then(|provider| provider.max_completion_tokens),
+        //
+        // Some providers (e.g. GLM 5.2) advertise `max_completion_tokens`
+        // equal to their full `context_length`, which is mathematically
+        // impossible: input + output can never exceed the context window.
+        // Sending that value as `max_tokens` makes OpenRouter reject every
+        // non-empty request with 400 "maximum context length exceeded" (146
+        // input + 1048576 output > 1048576 context), and it also breaks the
+        // compaction math (`max_input_tokens = context - max_output_tokens`
+        // collapses to 0, triggering auto-compact on every turn). Cap the
+        // output budget at half the context window so sane models (whose
+        // advertised cap is already < 50%) are unaffected, while broken
+        // models leave real room for both input and output.
+        max_output_tokens: {
+            let context_length = entry.context_length.unwrap_or(2_000_000);
+            let half_context = context_length / 2;
+            entry
+                .top_provider
+                .and_then(|provider| provider.max_completion_tokens)
+                .map(|tokens| tokens.min(half_context))
+        },
         supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
         supports_images: Some(
             entry

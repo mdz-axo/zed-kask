@@ -1170,6 +1170,42 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_max_output_tokens_capped_at_half_context_length() {
+        // zed-kask: GLM 5.2 advertises `max_completion_tokens` equal to its
+        // `context_length` (1048576). That value is mathematically impossible
+        // (input + output can never exceed the context window), so sending it
+        // as `max_tokens` makes OpenRouter reject every non-empty request with
+        // 400, and it also breaks compaction math (`max_input_tokens =
+        // context - max_output_tokens` collapses to 0). The output budget is
+        // capped at half the context window so sane models (advertised cap
+        // already < 50%) are unaffected while broken models leave room for
+        // both input and output.
+        let entry = open_router::ModelEntry {
+            id: "z-ai/glm-5.2".into(),
+            name: "Z.ai: GLM 5.2".into(),
+            created: 0,
+            description: String::new(),
+            context_length: Some(1048576),
+            supported_parameters: vec!["tools".into()],
+            architecture: None,
+            top_provider: Some(open_router::TopProvider {
+                max_completion_tokens: Some(1048576),
+            }),
+        };
+        let models = open_router::parse_models_response_for_test(entry)
+            .await
+            .unwrap();
+        let model = &models[0];
+        assert_eq!(model.max_token_count(), 1048576);
+        assert_eq!(
+            model.max_output_tokens(),
+            Some(524288),
+            "max_output_tokens must be capped at half the context window so \
+             input + output never exceeds context_length"
+        );
+    }
+
+    #[gpui::test]
     async fn test_session_id_uses_thread_id() {
         let model = open_router::Model::new(
             "openai/gpt-4o",
