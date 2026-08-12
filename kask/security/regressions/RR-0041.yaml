@@ -13,7 +13,7 @@ detection:
   kind: grep
   pattern: 'OcapConfig|required_capabilities|template_capabilities|CapabilityAwareValidator'
   include: "crates/ mcp-servers/"
-mitigation: "OcapConfig, required_capabilities, template_capabilities (SQL table), and CapabilityAwareValidator were removed as dead code. CapabilityAwareValidator had zero production call sites and expected flat strings while manifests wrote objects. The real OCAP gate is McpRuntime::invoke + per-agent mcp_tools allowlist. Do not re-add these without wiring them into the runtime gate. See .rules: Manifest ocap: is declared config, not a security gate."
+mitigation: "OcapConfig, required_capabilities, template_capabilities (SQL table), and CapabilityAwareValidator were removed as dead code. CapabilityAwareValidator had zero production call sites and expected flat strings while manifests wrote objects. The enforced boundaries are the inference IPC per-request tool_allowlist, the per-agent mcp_tools allowlist, and the per-server MCP env/credential allowlists. Do not re-add these without wiring them into one of those boundaries. NOTE (2026-08-12): McpRuntime::invoke is no longer a gate — its capability check was removed as vacuous (see RR-0056); do not cite it as an enforcement point."
 source: ".rules: Manifest ocap: is declared config, not a security gate"
 ci_gate: scripts/check-kali-regressions.sh
 status: enforced

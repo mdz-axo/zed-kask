@@ -138,7 +138,6 @@ error_handling:
   on_timeout: retry
   max_retries: 2
   retry_backoff_seconds: 2
-  on_capability_denied: escalate
 
 ledger:
   emit_spans: true

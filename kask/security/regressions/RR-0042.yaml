@@ -11,9 +11,10 @@ discovered_at: 2026-08-04
 severity: high
 detection:
   kind: grep
-  pattern: 'expires_at|new_with_expiry|is_valid_for_at|is_expired'
+  pattern: 'expires_at|new_with_expiry|is_valid_for_at|is_expired|DelegationToken'
   include: "crates/hkask-capability/src/token_types.rs"
-mitigation: "DelegationToken carries no expires_at field. is_valid_for checks only (resource, resource_id, action) equality. All tokens are no-expiry. If token expiry is re-introduced, add an expires_at field, an is_valid_for_at method that rejects expired tokens, and wire it into McpRuntime::invoke in the same change. See .rules: Token expiry is NOT enforced."
+mitigation: "DelegationToken was deleted entirely (2026-08-12) along with the per-call capability gate it fed; token_types.rs now holds only SYSTEM_MAX_RECURSION. There is no token to expire. If any token type is reintroduced here it must be wired into a boundary that can actually deny — see RR-0056 for why the prior gate could not. Authority lives in the inference IPC tool_allowlist, swarm card mcp_tools, and per-server env allowlists."
 source: ".rules: Token expiry is NOT enforced"
 ci_gate: scripts/check-kali-regressions.sh
 status: enforced
+note: "Broadened 2026-08-12: the pattern now also catches DelegationToken itself, since the type was removed. Previously it only guarded an expiry field on a type that still existed."

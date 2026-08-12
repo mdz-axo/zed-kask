@@ -283,7 +283,7 @@ mod tests {
     use crate::step_graph::{ExitKind, StepId};
     use crate::step_machine::CascadeOutcome;
     use hkask_capability::tool_taint::ToolTaint;
-    use hkask_capability::{DelegationToken, ToolFuture, ToolInfo};
+    use hkask_capability::{ToolFuture, ToolInfo};
     use hkask_types::InferenceError;
     use std::future::Future;
     use std::pin::Pin;
@@ -341,7 +341,7 @@ mod tests {
             _server: &'a str,
             _tool: &'a str,
             _args: Value,
-            _token: &'a DelegationToken,
+            _agent: hkask_types::WebID,
         ) -> ToolFuture<'a, std::result::Result<Value, hkask_capability::ToolPortError>> {
             Box::pin(async {
                 Err(hkask_capability::ToolPortError::InvocationFailed(

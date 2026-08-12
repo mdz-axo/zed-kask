@@ -105,7 +105,6 @@ error_handling:
   max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort
-  on_capability_denied: escalate
 
 ledger:
   span_namespace: reg.skill.harness-optimize

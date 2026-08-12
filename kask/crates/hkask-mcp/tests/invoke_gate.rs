@@ -1,32 +1,38 @@
-//! MCP runtime invoke gate tests — the real OCAP + call-cap boundary.
+//! MCP runtime invoke path — call metering, not authorization.
 //!
-//! Exercises `McpRuntime::invoke`'s governance gate: OCAP token verification
-//! (`DelegationToken::is_valid_for` / `verify_capability_domain`) and the
-//! per-agent call cap (`CyberneticsLoop::can_proceed` + `charge_call`).
+//! `McpRuntime::invoke` performs no per-call capability check. The prior
+//! `DelegationToken` gate was removed because every production mint site derived
+//! the token's `resource_id` from the same tool name it passed to `invoke`, so
+//! the comparison was a value against itself and could not deny. Authority is
+//! enforced at the allowlist boundaries (inference IPC `tool_allowlist`, swarm
+//! card `mcp_tools`, per-server env allowlists), not here.
 //!
-//! The lifecycle integration tests cover registration only; these tests cover
-//! the invoke path's governance membrane — the surface `.rules` calls "the
-//! real OCAP boundary."
+//! What remains on this path is the runaway-loop breaker. These tests pin its
+//! three behaviors.
 //!
 //! # Oracle
-//! - Invariant: a wrong-token invoke MUST return `CapabilityDenied`
-//! - Invariant: a no-cap invoke MUST return `EnergyBudgetExceeded`
-//! - Invariant: a valid-token + seeded-cap invoke MUST NOT return a
-//!   governance error (the gate allowed it through; any failure is downstream)
+//! - Invariant: an agent with no registered ceiling is auto-registered and
+//!   allowed through (a wiring omission must not fail the call)
+//! - Invariant: an agent that exhausts its ceiling MUST get `EnergyBudgetExceeded`
+//! - Invariant: a runtime without governance dispatches unmetered rather than
+//!   refusing
 
 use hkask_capability::{ToolPort, ToolPortError};
 use hkask_mcp::{McpRuntime, McpServer, McpTool};
 use hkask_regulation::{CyberneticsLoop, NoopEventSink, RegulationLedger};
-use hkask_test_harness::{test_agent_webid, test_token_for_tool};
+use hkask_test_harness::test_agent_webid;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Build a `McpRuntime` with governance wired (OCAP + call cap + NoopEventSink).
-fn governed_runtime() -> McpRuntime {
+fn cybernetics() -> Arc<RwLock<CyberneticsLoop>> {
     let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(10)));
-    let cybernetics = Arc::new(RwLock::new(CyberneticsLoop::new(ledger)));
-    McpRuntime::new().with_governance(cybernetics, Arc::new(NoopEventSink))
+    Arc::new(RwLock::new(CyberneticsLoop::new(ledger)))
+}
+
+/// Build a `McpRuntime` with governance (metering + event sink) wired.
+fn governed_runtime() -> McpRuntime {
+    McpRuntime::new().with_governance(cybernetics(), Arc::new(NoopEventSink))
 }
 
 /// Register a minimal server with one tool so the runtime has metadata.
@@ -45,89 +51,93 @@ async fn register_test_tool(runtime: &McpRuntime, server_id: &str, tool_name: &s
     runtime.register_server(server).await;
 }
 
+/// An agent the composition root never seeded must NOT be refused. This is the
+/// regression for the persona-mismatch bug: `main.rs` seeded only `swarm-panel`,
+/// while the IPC dispatch and the cascade used `kask-panel` and
+/// `manifest-executor`, so the old fail-closed cap denied every one of their
+/// tool calls.
 #[tokio::test]
-async fn governance_denies_wrong_tool_token() {
+async fn unregistered_agent_is_auto_registered_not_denied() {
     let runtime = governed_runtime();
     register_test_tool(&runtime, "test-server", "test_tool").await;
 
-    let token = test_token_for_tool("wrong_tool");
+    let unseeded = hkask_types::WebID::from_persona(b"never-registered-persona");
     let result = runtime
-        .invoke("test-server", "test_tool", json!({}), &token)
+        .invoke("test-server", "test_tool", json!({}), unseeded)
         .await;
 
     assert!(
-        matches!(result, Err(ToolPortError::CapabilityDenied(_))),
-        "wrong-tool token must be denied, got: {result:?}"
+        !matches!(result, Err(ToolPortError::EnergyBudgetExceeded(_))),
+        "an agent with no registered ceiling must be auto-registered and allowed \
+         through, not refused (wiring omission != authorization decision), got: {result:?}"
     );
 }
 
+/// The one pre-dispatch refusal: a runaway loop that burns its whole per-tick
+/// ceiling.
 #[tokio::test]
-async fn governance_denies_no_budget() {
-    let runtime = governed_runtime();
-    register_test_tool(&runtime, "test-server", "test_tool").await;
-
-    // Valid token (resource_id matches tool name) but no call cap seeded.
-    let token = test_token_for_tool("test_tool");
-    let result = runtime
-        .invoke("test-server", "test_tool", json!({}), &token)
-        .await;
-
-    assert!(
-        matches!(result, Err(ToolPortError::EnergyBudgetExceeded(_))),
-        "no-cap invoke must be denied by the call-cap gate, got: {result:?}"
-    );
-}
-
-#[tokio::test]
-async fn governance_allows_valid_token_with_budget() {
-    let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(10)));
-    let cybernetics = Arc::new(RwLock::new(CyberneticsLoop::new(ledger)));
+async fn exhausted_ceiling_trips_the_runaway_breaker() {
+    let cybernetics = cybernetics();
     let agent = test_agent_webid();
-
-    // Seed a call cap large enough for the test's invocations.
-    cybernetics
-        .read()
-        .await
-        .register_call_cap(agent, 1000)
-        .await;
+    // Ceiling of 1: the first call consumes it, the second must trip.
+    cybernetics.read().await.register_call_cap(agent, 1).await;
 
     let runtime = McpRuntime::new().with_governance(cybernetics, Arc::new(NoopEventSink));
     register_test_tool(&runtime, "test-server", "test_tool").await;
 
-    let token = test_token_for_tool("test_tool");
-    let result = runtime
-        .invoke("test-server", "test_tool", json!({}), &token)
+    let first = runtime
+        .invoke("test-server", "test_tool", json!({}), agent)
         .await;
-
-    // The gate allowed the request through. The failure (if any) is from
-    // call_tool_inner (no live connection), NOT from governance.
     assert!(
-        !matches!(result, Err(ToolPortError::CapabilityDenied(_))),
-        "valid token must not be denied by OCAP, got: {result:?}"
+        !matches!(first, Err(ToolPortError::EnergyBudgetExceeded(_))),
+        "the first call fits within a ceiling of 1, got: {first:?}"
     );
+
+    let second = runtime
+        .invoke("test-server", "test_tool", json!({}), agent)
+        .await;
     assert!(
-        !matches!(result, Err(ToolPortError::EnergyBudgetExceeded(_))),
-        "seeded cap must not be denied by the call-cap gate, got: {result:?}"
+        matches!(second, Err(ToolPortError::EnergyBudgetExceeded(_))),
+        "exhausting the per-tick ceiling must trip the runaway-loop breaker, got: {second:?}"
     );
 }
 
+/// A seeded agent with headroom is not refused by the meter. Any failure is
+/// downstream (no live connection in this test).
 #[tokio::test]
-async fn no_governance_fails_closed() {
-    let runtime = McpRuntime::new();
+async fn metering_allows_agent_with_headroom() {
+    let cybernetics = cybernetics();
+    let agent = test_agent_webid();
+    cybernetics.read().await.register_call_cap(agent, 1000).await;
+
+    let runtime = McpRuntime::new().with_governance(cybernetics, Arc::new(NoopEventSink));
     register_test_tool(&runtime, "test-server", "test_tool").await;
 
-    // Governance is None — invoke must fail closed rather than bypass the
-    // OCAP + call-cap membrane. A production embedder that forgets `with_governance`
-    // would otherwise silently lose capability verification and cap
-    // accounting. See the .rules "Process-global hooks set at runtime need a
-    // startup-failure signal" and the OCAP gate trap.
-    let token = test_token_for_tool("test_tool");
     let result = runtime
-        .invoke("test-server", "test_tool", json!({}), &token)
+        .invoke("test-server", "test_tool", json!({}), agent)
         .await;
 
     assert!(
-        matches!(result, Err(ToolPortError::CapabilityDenied(_))),
-        "no-governance runtime must fail closed (CapabilityDenied) instead of bypassing the gate, got: {result:?}"
+        !matches!(result, Err(ToolPortError::EnergyBudgetExceeded(_))),
+        "an agent with headroom must not be refused by the meter, got: {result:?}"
+    );
+}
+
+/// Metering is accounting, not authorization — its absence must not refuse the
+/// call. This inverts the prior `no_governance_fails_closed` expectation: that
+/// fail-closed branch made `McpRuntime::new()` unusable for any embedder that
+/// did not also wire regulation, while denying nothing an attacker could reach.
+#[tokio::test]
+async fn no_governance_dispatches_unmetered() {
+    let runtime = McpRuntime::new();
+    register_test_tool(&runtime, "test-server", "test_tool").await;
+
+    let result = runtime
+        .invoke("test-server", "test_tool", json!({}), test_agent_webid())
+        .await;
+
+    assert!(
+        !matches!(result, Err(ToolPortError::EnergyBudgetExceeded(_))),
+        "an unmetered runtime must dispatch rather than refuse, got: {result:?}"
     );
 }

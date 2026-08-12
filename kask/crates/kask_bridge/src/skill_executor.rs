@@ -1305,7 +1305,7 @@ steps:
             _server: &'a str,
             _tool: &'a str,
             _args: serde_json::Value,
-            _token: &'a hkask_capability::DelegationToken,
+            _agent: hkask_types::WebID,
         ) -> hkask_capability::ToolFuture<
             'a,
             Result<serde_json::Value, hkask_capability::ToolPortError>,

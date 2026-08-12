@@ -20,6 +20,31 @@ use tokio::sync::RwLock;
 /// Alert threshold ratio (used/ceiling) above which the regulation loop throttles.
 pub const DEFAULT_CALL_CAP_ALERT_THRESHOLD: f64 = 0.8;
 
+/// Per-tick call ceiling applied to an agent the composition root never
+/// registered.
+///
+/// This is a runaway-loop breaker, not a budget: it is set high enough that no
+/// terminating task reaches it, and low enough that a non-terminating tool loop
+/// cannot run unbounded between regulation ticks. An unregistered agent is
+/// auto-registered at this ceiling rather than denied, because a missing
+/// registration is a wiring omission, not an authorization decision.
+pub const DEFAULT_RUNAWAY_CALL_CEILING: u32 = 10_000;
+
+/// Result of metering one call against an agent's runaway ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallMeterOutcome {
+    /// The call was charged against an already-registered ceiling.
+    Charged,
+    /// The agent had no ceiling; one was created at
+    /// [`DEFAULT_RUNAWAY_CALL_CEILING`] and the call charged against it. The
+    /// caller should log this once — it means the composition root did not seed
+    /// this persona.
+    AutoRegistered,
+    /// The agent has burned its whole per-tick ceiling. The call must not
+    /// proceed; the cap resets on the next regulation tick.
+    CeilingReached { ceiling: u32 },
+}
+
 /// A hard per-agent call ceiling with a mutable remaining counter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallCap {
@@ -182,6 +207,39 @@ impl CallCapManager {
                 remaining: cap.remaining(),
                 ceiling: cap.ceiling(),
             })
+        }
+    }
+
+    /// Meter one call, auto-registering an unknown agent at
+    /// [`DEFAULT_RUNAWAY_CALL_CEILING`].
+    ///
+    /// This is the tool-dispatch path's entry point. Unlike [`Self::charge`], an
+    /// unregistered agent is not an error: the ceiling exists to break runaway
+    /// loops and to meter usage, so a missing registration auto-creates one and
+    /// lets the call through (reporting [`CallMeterOutcome::AutoRegistered`] so
+    /// the caller can log the wiring gap). The single refusal is
+    /// [`CallMeterOutcome::CeilingReached`].
+    ///
+    /// Charging is a single write-locked read-modify-write, so concurrent callers
+    /// cannot both observe remaining capacity and both charge it.
+    pub async fn charge_metered(&self, agent: &WebID) -> CallMeterOutcome {
+        let mut caps = self.caps.write().await;
+        match caps.get_mut(agent) {
+            Some(cap) => {
+                if cap.charge() {
+                    CallMeterOutcome::Charged
+                } else {
+                    CallMeterOutcome::CeilingReached {
+                        ceiling: cap.ceiling(),
+                    }
+                }
+            }
+            None => {
+                let mut cap = CallCap::new(DEFAULT_RUNAWAY_CALL_CEILING);
+                cap.charge();
+                caps.insert(*agent, cap);
+                CallMeterOutcome::AutoRegistered
+            }
         }
     }
 

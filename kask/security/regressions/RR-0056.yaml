@@ -1,0 +1,50 @@
+id: RR-0056
+title: "Per-call capability gate that compares a caller-supplied value against itself (vacuous authorization)"
+surface: mcp
+cwe: CWE-1230
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0008
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-mcp/src/runtime.rs (ToolPort::invoke), kask/crates/hkask-capability/src/token_types.rs (DelegationToken::is_valid_for)
+discovered_by: kali-audit
+discovered_at: 2026-08-12
+severity: high
+detection:
+  kind: cargo-test
+  # The invariant is behavioral, not textual: the dispatch path must not carry a
+  # per-call authorization argument, and metering must not refuse an agent the
+  # composition root failed to seed. A grep for `is_valid_for` would only catch
+  # this one spelling; these tests pin the semantics.
+  pattern: "unregistered_agent_is_auto_registered_not_denied"
+  include: "kask/crates/hkask-mcp/tests/invoke_gate.rs"
+mitigation: |
+  `McpRuntime::invoke` previously called
+  `token.is_valid_for(Tool, tool, Execute)`, where `is_valid_for` is
+  `resource_id == resource_id` equality. All three production mint sites
+  (crates/zed/src/main.rs PanelToolInvoker, kask_bridge inference_ipc_server
+  tool_invoke dispatch, hkask-templates step_actions invoke_tool) built the
+  token's `resource_id` from the same `tool` value they then passed to
+  `invoke`, so the comparison was a caller-supplied value against itself and
+  returned true unconditionally. It denied nothing while running on every tool
+  call, and DIVERGENCE.md D3 advertised it as "the enforced gate."
+
+  The gate, `DelegationToken`, `panel_default_token`, `capabilities_match`,
+  `capability_from_server_id`, and `ToolPortError::CapabilityDenied` were
+  deleted. `ToolPort::invoke` now takes `agent: WebID` (an accounting identity)
+  instead of a token.
+
+  A capability check is only a gate when the authority list is NOT chosen by the
+  caller being checked. The enforced boundaries are:
+    - the per-request `tool_allowlist` on the inference IPC dispatch
+      (fail-closed on missing/empty) — pinned by
+      `dispatch_tool_invoke_rejects_unallowed_tool`
+    - each swarm agent card's declared `mcp_tools` allowlist
+    - the per-server MCP env/credential allowlists (RR-0038)
+
+  Do not reintroduce a per-call authorization argument on `ToolPort::invoke`.
+  If one is ever needed, the authority must come from a source the caller cannot
+  set, and the change must ship with a test proving a mismatched request is
+  refused on a path production can actually produce.
+source: "https://cwe.mitre.org/data/definitions/1230.html — CWE-1230 Exposure of Sensitive Information Through Metadata / vacuous access check; OWASP LLM06:2025 Excessive Agency"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

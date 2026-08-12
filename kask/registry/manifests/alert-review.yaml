@@ -152,7 +152,6 @@ error_handling:
   on_timeout: retry
   max_retries: 2
   retry_backoff_seconds: 1
-  on_capability_denied: escalate
 
 # Regulation Monitoring
 ledger:

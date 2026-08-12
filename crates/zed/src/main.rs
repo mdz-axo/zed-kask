@@ -3389,26 +3389,18 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
         tool: &str,
         args: serde_json::Value,
     ) -> gpui::Task<Result<String, String>> {
-        use hkask_capability::{
-            DelegationAction, DelegationResource, ToolPort, panel_default_token,
-        };
+        use hkask_capability::ToolPort;
         use hkask_types::WebID;
 
+        // Accounting identity for the call meter — not a credential.
         let webid = WebID::from_persona(b"swarm-panel");
-        let token = panel_default_token(
-            DelegationResource::Tool,
-            tool.to_string(),
-            DelegationAction::Execute,
-            webid,
-            webid,
-        );
 
         let tool_port = self.tool_port.clone();
         let server = server.to_string();
         let tool = tool.to_string();
 
         self.executor.spawn(async move {
-            let result = ToolPort::invoke(&*tool_port, &server, &tool, args, &token)
+            let result = ToolPort::invoke(&*tool_port, &server, &tool, args, webid)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()))

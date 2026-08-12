@@ -28,7 +28,9 @@
 //! in `SetPoints` + regulation actions via `InferenceRegulation`.
 
 use crate::dampener::{Dampener, StagnationDetector};
-use crate::energy::{AgentCallCapStatus, CallCap, CallCapError, CallCapManager};
+use crate::energy::{
+    AgentCallCapStatus, CallCap, CallCapError, CallCapManager, CallMeterOutcome,
+};
 
 use crate::runtime::{RegulationCycleEntry, RegulationLedger};
 use crate::sensor_provider::{EnergyBudgetSensor, SensorBus, ToolReliabilitySensor, VarietySensor};
@@ -609,6 +611,19 @@ impl CyberneticsLoop {
     /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
     pub async fn charge_call(&self, agent: &WebID) -> Result<(), CallCapError> {
         self.call_cap_manager.read().await.charge(agent).await
+    }
+
+    /// Meter one governed tool call, auto-registering an unknown agent at the
+    /// default runaway ceiling. The tool-dispatch path uses this rather than
+    /// [`Self::charge_call`] — see [`CallCapManager::charge_metered`].
+    ///
+    /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
+    pub async fn charge_call_metered(&self, agent: &WebID) -> CallMeterOutcome {
+        self.call_cap_manager
+            .read()
+            .await
+            .charge_metered(agent)
+            .await
     }
 
     /// Returns `None` if the agent has no registered cap.

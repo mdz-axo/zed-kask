@@ -674,27 +674,18 @@ async fn dispatch(
         };
     }
 
-    // Tool dispatch requests route to the governed `McpRuntime` (as
-    // `ToolPort`) on the zed side. The child MCP server (e.g. the swarm
-    // server's local delegate loop) never holds token material — the panel
-    // default token is minted here, giving the dispatch the same authority
-    // as the kask panel's own tool calls (OCAP + gas + reg spans all apply
-    // inside `McpRuntime::invoke`).
+    // Tool dispatch requests route to the `McpRuntime` (as `ToolPort`) on the
+    // zed side. The child MCP server (e.g. the swarm server's local delegate
+    // loop) holds no credential — the `tool_allowlist` check below IS the
+    // authority boundary for this dispatch, and it is enforced here rather than
+    // in the child so it does not depend on the child's own matching being
+    // correct.
     //
-    // Design tradeoff (R4): the token's `resource_id` is the tool name
-    // only, not the `server/tool` pair — `is_valid_for` checks
-    // `resource_id == tool` without server scoping. The token authorizes
-    // the tool on any server, but `McpRuntime::invoke` routes to the
-    // specific `server` parameter, so the actual tool called is on the
-    // specified server. The card's `mcp_tools` allowlist (in the swarm
-    // delegate loop) gates the full `server/tool` pair before the model's
-    // call reaches this dispatch — the allowlist is the effective gate.
-    // The `PanelToolInvoker` (kask panel's own calls) uses the identical
-    // tool-name-only scoping, so the IPC bridge is consistent with the
-    // panel. Adding server-scoping would require changing
-    // `panel_default_token` in `hkask-capability` and all callers — a
-    // cross-crate change that would tighten the OCAP token without
-    // changing the threat model (same-uid processes are trusted).
+    // This replaced a `DelegationToken` capability check inside
+    // `McpRuntime::invoke` that could not deny anything: the token's
+    // `resource_id` was set from the same `tool` value passed to `invoke`, so
+    // the check compared a value against itself. The allowlist below is the
+    // real gate because the caller does not choose its contents.
     if matches!(request.method, InferenceMethod::ToolInvoke) {
         let Some(tool_port) = tool_port else {
             return InferenceOutcome::Error {
@@ -757,15 +748,9 @@ async fn dispatch(
                 };
             }
         }
+        // Accounting identity for the call meter — not a credential.
         let webid = hkask_types::WebID::from_persona(b"kask-panel");
-        let token = hkask_capability::panel_default_token(
-            hkask_capability::DelegationResource::Tool,
-            tool.clone(),
-            hkask_capability::DelegationAction::Execute,
-            webid,
-            webid,
-        );
-        return match tool_port.invoke(&server, &tool, args, &token).await {
+        return match tool_port.invoke(&server, &tool, args, webid).await {
             Ok(value) => InferenceOutcome::ToolResult { result: value },
             Err(e) => InferenceOutcome::Error {
                 error: InferenceErrorPayload {
@@ -996,7 +981,7 @@ mod tests {
     use std::sync::Mutex;
 
     use hkask_capability::ToolInfo;
-    use hkask_capability::{DelegationToken, ToolFuture, ToolPort, ToolPortError};
+    use hkask_capability::{ToolFuture, ToolPort, ToolPortError};
     use hkask_types::inference_ipc::InferenceParams;
     use hkask_types::{InferenceUsage, LLMParameters, SkillExecError, SkillExecPort};
     use tokio::sync::mpsc;
@@ -1102,7 +1087,7 @@ mod tests {
             server: &'a str,
             tool: &'a str,
             args: serde_json::Value,
-            _token: &'a DelegationToken,
+            _agent: hkask_types::WebID,
         ) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>> {
             *self.recorded.lock().expect("tool lock") =
                 Some((server.to_string(), tool.to_string(), args));

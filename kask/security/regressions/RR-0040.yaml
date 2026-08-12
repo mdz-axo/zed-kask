@@ -13,7 +13,7 @@ detection:
   kind: grep
   pattern: '^ocap:'
   include: "registry/manifests/ registry/templates/"
-mitigation: "The ocap: manifest block and OcapConfig struct were removed (2026-08-02). The real OCAP boundary is McpRuntime::invoke (capability match) + per-agent mcp_tools allowlist at ToolDispatchPort. Do not re-add an ocap: manifest block without wiring it into the runtime gate — silent manifest-only config is theater. See .rules: Manifest ocap: is declared config, not a security gate."
+mitigation: "The ocap: manifest block and OcapConfig struct were removed (2026-08-02). The enforced boundaries are the inference IPC per-request tool_allowlist (fail-closed on missing/empty), the per-agent mcp_tools allowlist, and the per-server MCP env/credential allowlists. Do not re-add an ocap: manifest block without wiring it into one of those — silent manifest-only config is theater. NOTE (2026-08-12): the McpRuntime::invoke capability match this entry used to cite was removed as vacuous (see RR-0056) — it is not an enforcement point. The on_capability_denied manifest field is likewise accepted-but-ignored and was stripped from the shipped manifests."
 source: ".rules: Manifest ocap: is declared config, not a security gate"
 ci_gate: scripts/check-kali-regressions.sh
 status: enforced

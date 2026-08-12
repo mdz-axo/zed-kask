@@ -29,8 +29,6 @@ pub enum TemplateError {
     PathTraversal(String),
     #[error("Sandbox violation: {0}")]
     SandboxViolation(String),
-    #[error("Capability denied: {0}")]
-    CapabilityDenied(String),
 
     /// Failed to load a skill from disk (typed replacement for `anyhow::anyhow!`
     /// in `skill_loader.rs`). Carries the path so callers can surface it in
@@ -70,7 +68,9 @@ impl TemplateError {
             Self::Validation(_) => "HKASK-SKILL-007",
             Self::PathTraversal(_) => "HKASK-SKILL-008",
             Self::SandboxViolation(_) => "HKASK-SKILL-009",
-            Self::CapabilityDenied(_) => "HKASK-SKILL-010",
+            // HKASK-SKILL-010 was `CapabilityDenied`, removed with the vacuous
+            // per-call capability gate. The code is retired, not reused, so old
+            // logs remain unambiguous.
             Self::SkillLoad { .. } => "HKASK-SKILL-011",
             Self::Frontmatter { .. } => "HKASK-SKILL-012",
         }

@@ -329,13 +329,20 @@ pub struct ErrorHandlingConfig {
     pub max_retries: u32,
     pub retry_backoff_seconds: u32,
     pub on_validation_failure: String,
-    /// Policy when an OCAP capability check denies a tool invocation.
-    /// Wired into the executor: when `invoke_tool` returns
-    /// `ToolPortError::CapabilityDenied`, the executor checks this field.
-    /// `"escalate"` emits an escalation span and returns an error;
-    /// `"abort"` emits a convergence span and breaks the cascade;
-    /// any other value (including empty) propagates the raw error.
-    /// 10 manifests declare `escalate`.
+    /// **Accepted but ignored.** No code reads this field.
+    ///
+    /// It described a policy for `ToolPortError::CapabilityDenied`, which no
+    /// longer exists: the per-call capability gate it reacted to was removed
+    /// because every production mint site derived the token's `resource_id` from
+    /// the tool name it then invoked, so the check compared a value against
+    /// itself and could not deny. Even before that removal this field had no
+    /// reader — the "wired into the executor" claim it previously carried was
+    /// never true.
+    ///
+    /// Retained only so manifests already seeded to disk keep parsing under
+    /// `deny_unknown_fields`. It is stripped from the shipped manifests and must
+    /// not be reintroduced or given behavior; authority belongs at the allowlist
+    /// boundaries, not in per-skill config.
     #[serde(default)]
     pub on_capability_denied: String,
 }
@@ -347,7 +354,9 @@ impl Default for ErrorHandlingConfig {
             max_retries: 2,
             retry_backoff_seconds: 1,
             on_validation_failure: "abort".into(),
-            on_capability_denied: "escalate".into(),
+            // Ignored (see the field docs); default to empty rather than
+            // implying an active "escalate" policy.
+            on_capability_denied: String::new(),
         }
     }
 }

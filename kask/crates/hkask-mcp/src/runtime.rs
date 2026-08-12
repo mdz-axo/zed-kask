@@ -594,3 +594,25 @@ fn parse_call_result(result: &rmcp::model::CallToolResult) -> Value {
         .collect();
     Value::Array(items)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_capability::{ToolPort, ToolPortError};
+    use hkask_regulation::{CyberneticsLoop, NoopEventSink, RegulationLedger};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn cybernetics() -> Arc<RwLock<CyberneticsLoop>> {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(10)));
+        Arc::new(RwLock::new(CyberneticsLoop::new(ledger)))
+    }
+
+    async fn register_test_tool(runtime: &McpRuntime, server_id: &str, tool_name: &str) {
+        runtime
+            .register_server(McpServer {
+                id: server_id.to_string(),
+                name: server_id.to_string(),
+                tools: vec![McpTool {
+                    name: tool_name.to_string(),
+                    description:

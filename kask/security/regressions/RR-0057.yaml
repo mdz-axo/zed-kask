@@ -1,0 +1,45 @@
+id: RR-0057
+title: "Runaway-loop call meter must not refuse an agent the composition root never seeded (fail-open breaker, fail-closed gate)"
+surface: runtime
+cwe: CWE-754
+owasp_llm_2025: LLM10
+atlas_tactic: AML.TA0007
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-mcp/src/runtime.rs (ToolPort::invoke call meter), kask/crates/hkask-regulation/src/energy.rs (CallCapManager)
+discovered_by: kali-audit
+discovered_at: 2026-08-12
+severity: high
+detection:
+  kind: cargo-test
+  pattern: "exhausted_ceiling_trips_the_runaway_breaker"
+  include: "kask/crates/hkask-mcp/tests/invoke_gate.rs"
+mitigation: |
+  The call cap is a runaway-loop breaker and a usage meter, NOT an authorization
+  gate. Its previous fail-closed behavior (`can_proceed` returning false for any
+  agent without a registered ceiling) broke live paths instead of protecting
+  them: `crates/zed/src/main.rs` seeded a ceiling only for
+  `WebID::from_persona(b"swarm-panel")`, while the IPC dispatch minted
+  `b"kask-panel"` and the cascade minted `b"manifest-executor"`. Different
+  persona bytes derive different WebIDs, so every IPC `tool_invoke` and every
+  cascade tool call was refused with `EnergyBudgetExceeded` — while
+  DIVERGENCE.md D8 claimed the seed existed "so swarm/skill dispatches succeed."
+  A missing registration is a wiring omission, not an authorization decision.
+
+  Correct shape (`CallCapManager::charge_metered` →
+  `CallMeterOutcome`):
+    - unregistered agent  → auto-register at `DEFAULT_RUNAWAY_CALL_CEILING`,
+      charge, allow, and `log::info!` the wiring gap (`AutoRegistered`)
+    - ceiling exhausted   → refuse with `EnergyBudgetExceeded` (`CeilingReached`)
+      — the ONLY pre-dispatch refusal; resets next regulation tick
+    - otherwise           → charge and allow (`Charged`)
+
+  Charging is one write-locked read-modify-write so concurrent callers cannot
+  both observe headroom and both consume it.
+
+  Do not restore a fail-closed branch on the *absence* of a ceiling, and do not
+  reuse this meter as a permission check. Keep the `reg.*` span emission on the
+  dispatch path — usage tracking is the meter's second purpose and the substrate
+  for cost optimization over time.
+source: "Ashby, Design for a Brain (regulation via error-controlled feedback); .rules: unwrap_or(0) on regulation-loop sense inputs is a broken feedback loop"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

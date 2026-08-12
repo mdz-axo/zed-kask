@@ -29,7 +29,8 @@ pub mod runtime_policy; // Layer 6 — runtime action policy (VeriGuard + AgentG
 pub use algedonic::{AlertEmailSink, AlertEscalationSink, RuntimeAlert};
 pub use cybernetics_loop::CyberneticsLoop;
 pub use energy::{
-    AgentCallCapStatus, CallCap, CallCapError, CallCapManager, DEFAULT_CALL_CAP_ALERT_THRESHOLD,
+    AgentCallCapStatus, CallCap, CallCapError, CallCapManager, CallMeterOutcome,
+    DEFAULT_CALL_CAP_ALERT_THRESHOLD, DEFAULT_RUNAWAY_CALL_CEILING,
 };
 pub use metacognition::{
     AlertEvent, AlertSink, EscalationAlert, EscalationTrigger, HealthSnapshot, MetacognitionConfig,

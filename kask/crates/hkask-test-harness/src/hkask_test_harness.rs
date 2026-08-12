@@ -5,16 +5,14 @@
 //!
 //! Existing items:
 //! - [`arb_json_value`]: recursive JSON value strategy for proptest
-//! - [`test_token_for_tool`]: deterministic `DelegationToken` fixture for governance tests
-//! - [`test_agent_webid`]: the `delegated_to` WebID for gas-budget seeding
+//! - [`test_agent_webid`]: the accounting WebID for call-ceiling seeding
 //!
 //! Harness evolution items (trace filesystem + oracle taxonomy):
 //! - [`Oracle`] trait + [`OracleVerdict`]: three oracle strategies (HarnessLLM)
 //! - [`oracle_hardcoded`] / [`oracle_reference`] / [`oracle_invariant`] / [`oracle_inconclusive`]: constructors
 //! - [`write_trace`] + [`TraceEntry`]: structured trace persistence (explicit trace dir, collision-safe)
-//! - [`arb_delegation_token`] / [`arb_trace_entry`]: proptest generators for governance + trace property tests
+//! - [`arb_trace_entry`]: proptest generator for trace property tests
 
-use hkask_capability::{DelegationAction, DelegationResource, DelegationToken};
 use hkask_types::WebID;
 use proptest::prelude::*;
 use serde_json::Value as JsonValue;
@@ -301,26 +299,10 @@ pub fn arb_json_value() -> BoxedStrategy<JsonValue> {
     .boxed()
 }
 
-// ── Token fixture ────────────────────────────────────────────────────────
+// ── Agent identity fixture ───────────────────────────────────────────────
 
-/// Deterministic `DelegationToken` fixture for governance tests.
-///
-/// Mints a `Tool:Execute` token for the named tool, using fixed test personas.
-/// The `delegated_to` field (the gas-budget owner) is `WebID::from_persona(b"test-agent")`.
-/// Seed gas budgets for this WebID to test the allow path.
-#[must_use]
-pub fn test_token_for_tool(tool_name: &str) -> DelegationToken {
-    DelegationToken::new(
-        DelegationResource::Tool,
-        tool_name.to_string(),
-        DelegationAction::Execute,
-        WebID::from_persona(b"test-from"),
-        WebID::from_persona(b"test-agent"),
-    )
-}
-
-/// The `delegated_to` WebID used by [`test_token_for_tool`].
-/// Seed gas budgets for this agent in governance tests.
+/// The accounting identity used by call-meter tests. Register a call ceiling for
+/// this WebID to exercise the runaway-loop breaker.
 #[must_use]
 pub fn test_agent_webid() -> WebID {
     WebID::from_persona(b"test-agent")
@@ -328,48 +310,11 @@ pub fn test_agent_webid() -> WebID {
 
 // ── Proptest generators ─────────────────────────────────────────────────
 
-/// Generates arbitrary `DelegationResource` variants.
-pub fn arb_resource() -> BoxedStrategy<DelegationResource> {
-    prop::sample::select(&[
-        DelegationResource::Tool,
-        DelegationResource::Template,
-        DelegationResource::Registry,
-        DelegationResource::Key,
-    ])
-    .boxed()
-}
-
-/// Generates arbitrary `DelegationAction` variants.
-pub fn arb_action() -> BoxedStrategy<DelegationAction> {
-    prop::sample::select(&[
-        DelegationAction::Read,
-        DelegationAction::Write,
-        DelegationAction::Execute,
-    ])
-    .boxed()
-}
-
 /// Generates arbitrary `WebID` personas from short lowercase strings.
 pub fn arb_webid() -> BoxedStrategy<WebID> {
     prop::string::string_regex("[a-z]{1,12}")
         .expect("valid regex")
         .prop_map(|s| WebID::from_persona(s.as_bytes()))
-        .boxed()
-}
-
-/// Generates arbitrary `DelegationToken` values across all resource/action
-/// combinations with arbitrary resource IDs and WebID personas.
-pub fn arb_delegation_token() -> BoxedStrategy<DelegationToken> {
-    (
-        arb_resource(),
-        prop::string::string_regex("[a-z_][a-z0-9_/]{0,20}").expect("valid regex"),
-        arb_action(),
-        arb_webid(),
-        arb_webid(),
-    )
-        .prop_map(|(resource, resource_id, action, from, to)| {
-            DelegationToken::new(resource, resource_id, action, from, to)
-        })
         .boxed()
 }
 
@@ -479,7 +424,7 @@ impl hkask_capability::ToolPort for NoopToolPort {
         _server: &'a str,
         _tool: &'a str,
         _args: serde_json::Value,
-        _token: &'a hkask_capability::DelegationToken,
+        _agent: hkask_types::WebID,
     ) -> hkask_capability::ToolFuture<'a, Result<serde_json::Value, hkask_capability::ToolPortError>>
     {
         Box::pin(async {
@@ -505,7 +450,6 @@ impl hkask_capability::ToolPort for NoopToolPort {
                     description: "noop tool".to_string(),
                     input_schema: serde_json::json!({}),
                     server_id: "noop".to_string(),
-                    required_capability: None,
                     taint: *taint,
                 })
         })

@@ -1083,24 +1083,14 @@ async fn invoke_tool(
         }
     }
 
+    // Accounting identity for the call meter — not a credential. The cascade's
+    // authority comes from which tools the manifest may name, not from this.
     let executor_webid = hkask_types::WebID::from_persona(b"manifest-executor");
-    let token = hkask_capability::DelegationToken::new(
-        hkask_capability::DelegationResource::Tool,
-        tool_name.to_string(),
-        hkask_capability::DelegationAction::Execute,
-        executor_webid,
-        executor_webid,
-    );
 
     let result = tools
-        .invoke(&tool_info.server_id, tool_name, input, &token)
+        .invoke(&tool_info.server_id, tool_name, input, executor_webid)
         .await
-        .map_err(|error| match error {
-            hkask_capability::ToolPortError::CapabilityDenied(message) => {
-                TemplateError::CapabilityDenied(message)
-            }
-            other => TemplateError::Mcp(Box::new(other)),
-        })?;
+        .map_err(|error| TemplateError::Mcp(Box::new(error)))?;
 
     Ok((result, tool_info.taint))
 }
