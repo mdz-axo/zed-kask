@@ -636,27 +636,26 @@ impl PredictionMarketsServer {
                 .await
                 {
                     Ok(markets) => {
-                        let observations: Vec<(String, calibration::ResolvedObservation)> =
-                            markets
-                                .iter()
-                                .filter_map(|market| {
-                                    let outcome = match market.result.as_str() {
-                                        "yes" => Some(true),
-                                        "no" => Some(false),
-                                        _ => None,
-                                    }?;
-                                    let bucket = types::canonical_bucket(&market.event_ticker);
-                                    let probability =
-                                        provider_kalshi::parse_fp(&market.last_price_dollars)?;
-                                    Some((
-                                        bucket,
-                                        calibration::ResolvedObservation {
-                                            probability,
-                                            outcome,
-                                        },
-                                    ))
-                                })
-                                .collect();
+                        let observations: Vec<(String, calibration::ResolvedObservation)> = markets
+                            .iter()
+                            .filter_map(|market| {
+                                let outcome = match market.result.as_str() {
+                                    "yes" => Some(true),
+                                    "no" => Some(false),
+                                    _ => None,
+                                }?;
+                                let bucket = types::canonical_bucket(&market.event_ticker);
+                                let probability =
+                                    provider_kalshi::parse_fp(&market.last_price_dollars)?;
+                                Some((
+                                    bucket,
+                                    calibration::ResolvedObservation {
+                                        probability,
+                                        outcome,
+                                    },
+                                ))
+                            })
+                            .collect();
                         self.scan_and_record_provider(
                             observations,
                             &mut recorded,
@@ -1088,9 +1087,7 @@ impl PredictionMarketsServer {
     ) -> base_event::EconomicContext {
         let default_ctx = markets
             .first()
-            .and_then(|m| {
-                base_event::classify_base_event_text(&m.title, &m.subtitle, &series, "")
-            })
+            .and_then(|m| base_event::classify_base_event_text(&m.title, &m.subtitle, &series, ""))
             .map(|be| be.default_economic_context())
             .unwrap_or_else(|| base_event::EconomicContext {
                 reference: 0.0,
@@ -1152,8 +1149,7 @@ impl PredictionMarketsServer {
             else {
                 continue;
             };
-            let days = (deadline.with_timezone(&chrono::Utc) - now).num_seconds() as f64
-                / 86_400.0;
+            let days = (deadline.with_timezone(&chrono::Utc) - now).num_seconds() as f64 / 86_400.0;
             if days <= 0.0 {
                 continue;
             }
@@ -1163,8 +1159,7 @@ impl PredictionMarketsServer {
                 continue;
             };
             let setting = base_event.default_materiality();
-            let level =
-                cmp_portfolio::materiality_level(&setting, ctx.volatility, 30, &config);
+            let level = cmp_portfolio::materiality_level(&setting, ctx.volatility, 30, &config);
             let orientation = match level {
                 Some(level) => cmp_portfolio::classify_orientation(
                     ctx.predicted_level,
@@ -1197,8 +1192,9 @@ impl PredictionMarketsServer {
         let mut oriented: Vec<cmp_portfolio::OrientedConstituent> = Vec::new();
         let mut market_ids: Vec<String> = Vec::new();
         for record in records {
-            let r: AnnotatedMarketRecord = serde_json::from_value(record)
-                .map_err(|e| McpToolError::internal(format!("record deserialization failed: {e}")))?;
+            let r: AnnotatedMarketRecord = serde_json::from_value(record).map_err(|e| {
+                McpToolError::invalid_argument(format!("record deserialization failed: {e}"))
+            })?;
             oriented.push(cmp_portfolio::OrientedConstituent {
                 constituent: cmp_portfolio::Constituent {
                     days_to_expiration: r.days_to_expiration,

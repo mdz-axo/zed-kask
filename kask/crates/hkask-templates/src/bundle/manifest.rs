@@ -21,8 +21,20 @@ use hkask_types::Visibility;
 /// Default concurrency for step execution within a PDCA iteration.
 const DEFAULT_CONCURRENCY: u32 = 32;
 
+/// Default per-step timeout in seconds. Used when a manifest step omits
+/// `timeout_seconds` — serde's `#[serde(default = "default_timeout_seconds")]`
+/// calls this function instead of `u32::default()` (0). A zero timeout
+/// causes `tokio::time::timeout` to fire immediately without polling the
+/// future, silently breaking every `select` (inference) and `execute` (tool)
+/// step that doesn't explicitly set a timeout.
+const DEFAULT_STEP_TIMEOUT_SECONDS: u32 = 120;
+
 pub(crate) fn default_concurrency() -> u32 {
     DEFAULT_CONCURRENCY
+}
+
+pub(crate) fn default_timeout_seconds() -> u32 {
+    DEFAULT_STEP_TIMEOUT_SECONDS
 }
 
 /// Maximum allowed concurrency (safety cap).
@@ -61,7 +73,9 @@ pub struct BundleManifestStep {
     #[serde(default)]
     pub gas_cap: u32,
     /// Per-step timeout in seconds (hard — enforced via tokio::time::timeout).
-    #[serde(default)]
+    /// Defaults to 120s when omitted — a zero timeout fires immediately without
+    /// polling the future, silently breaking inference and tool calls.
+    #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: u32,
     #[serde(default)]
     pub input_mapping: Option<serde_json::Value>,
@@ -354,5 +368,33 @@ impl ValidationResult {
     /// post: returns true if warnings is non-empty; false otherwise
     pub fn has_warnings(&self) -> bool {
         !self.warnings.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `timeout_seconds` defaults to 120 when omitted from a manifest step.
+    /// A zero timeout causes `tokio::time::timeout` to fire immediately without
+    /// polling the future, silently breaking every `select` (inference) and
+    /// `execute` (tool) step that doesn't explicitly set a timeout. This was
+    /// the root cause of skill cascades failing — the first `select` step would
+    /// time out at 0s before the inference call was even dispatched.
+    #[test]
+    fn timeout_seconds_defaults_to_nonzero_when_omitted() {
+        let yaml = r#"
+ordinal: 1
+action: select
+description: test
+renderer: default
+template_ref: test.j2
+"#;
+        let step: BundleManifestStep = serde_yaml_neo::from_str(yaml).expect("parses");
+        assert_eq!(
+            step.timeout_seconds, DEFAULT_STEP_TIMEOUT_SECONDS,
+            "timeout_seconds must default to {DEFAULT_STEP_TIMEOUT_SECONDS}, not 0 — \
+             a zero timeout breaks inference calls in the skill cascade"
+        );
     }
 }

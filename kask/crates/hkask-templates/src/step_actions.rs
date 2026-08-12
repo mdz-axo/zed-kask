@@ -227,7 +227,7 @@ impl StepMachine {
 
         // Call inference with streaming + timeout.
         let params = infra.default_params.clone();
-        let timeout_dur = std::time::Duration::from_secs(node.timeout_seconds as u64);
+        let timeout_dur = effective_timeout(node.timeout_seconds);
 
         let (result_text, tool_calls, cost_usd) = call_inference_stream(
             &infra.inference,
@@ -406,16 +406,31 @@ impl StepMachine {
                 )
             });
 
-        // Invoke the tool.
-        let (result, tool_taint) = invoke_tool(
-            &infra.tools,
-            &infra.runtime_policy,
-            &mcp_ref,
-            input,
-            self.context.entries().count() as u64,
-            has_untrusted_input,
+        // Invoke the tool with a timeout. Without this, a hung MCP tool call
+        // blocks the cascade forever — the tokio task has no external watchdog.
+        let timeout_dur = effective_timeout(node.timeout_seconds);
+        let (result, tool_taint) = match tokio::time::timeout(
+            timeout_dur,
+            invoke_tool(
+                &infra.tools,
+                &infra.runtime_policy,
+                &mcp_ref,
+                input,
+                self.context.entries().count() as u64,
+                has_untrusted_input,
+            ),
         )
-        .await?;
+        .await
+        {
+            Ok(inner) => inner?,
+            Err(_elapsed) => {
+                return Err(TemplateError::Manifest(format!(
+                    "Tool step {} timed out after {}s",
+                    node.ordinal,
+                    timeout_dur.as_secs()
+                )));
+            }
+        };
 
         Ok(Effect::Stored {
             step_id: node.id,
@@ -774,6 +789,25 @@ fn render_step_template_with_raw(
     }
 }
 
+/// Convert a step's `timeout_seconds` into a `Duration`, treating 0 as
+/// "no explicit timeout" and substituting a 300s fallback. This is defense
+/// in depth: the serde default on `BundleManifestStep::timeout_seconds` is
+/// 120s, but manifests loaded through other paths (inline YAML, programmatic
+/// construction) could still produce 0, which causes
+/// `tokio::time::timeout(Duration::ZERO, ...)` to fire immediately without
+/// polling the future.
+fn effective_timeout(timeout_seconds: u32) -> std::time::Duration {
+    if timeout_seconds == 0 {
+        tracing::warn!(
+            target: "hkask.templates.effective_timeout",
+            "timeout_seconds is 0 — substituting 300s fallback to avoid zero-timeout"
+        );
+        std::time::Duration::from_secs(300)
+    } else {
+        std::time::Duration::from_secs(timeout_seconds as u64)
+    }
+}
+
 /// Call inference with streaming, timeout, and reasoning-delta forwarding.
 /// Returns (text, tool_calls, cost_usd).
 ///
@@ -791,6 +825,20 @@ async fn call_inference_stream(
     progress: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<(String, Vec<hkask_types::StructuredToolCall>, Option<f64>)> {
     use futures_util::StreamExt;
+
+    // Defense in depth: if a caller passes Duration::ZERO (e.g. from a
+    // manifest step with timeout_seconds: 0 loaded through a path that
+    // bypasses the serde default), tokio::time::timeout fires immediately
+    // without polling the inference future. Substitute a 300s fallback.
+    let timeout = if timeout == std::time::Duration::ZERO {
+        tracing::warn!(
+            target: "hkask.templates.call_inference_stream",
+            "timeout is Duration::ZERO — substituting 300s fallback"
+        );
+        std::time::Duration::from_secs(300)
+    } else {
+        timeout
+    };
 
     let stream = inference.generate_stream(prompt, params, tools);
 
@@ -1025,5 +1073,23 @@ mod tests {
             "query": "static text"
         });
         assert!(!check_untrusted_input(&mapping, &ctx));
+    }
+
+    #[test]
+    fn effective_timeout_substitutes_fallback_for_zero() {
+        // A zero timeout_seconds must not produce Duration::ZERO — that
+        // causes tokio::time::timeout to fire immediately without polling
+        // the inference future, silently breaking every select/execute step.
+        let result = effective_timeout(0);
+        assert_eq!(result, std::time::Duration::from_secs(300));
+    }
+
+    #[test]
+    fn effective_timeout_passes_through_nonzero() {
+        let result = effective_timeout(120);
+        assert_eq!(result, std::time::Duration::from_secs(120));
+
+        let result = effective_timeout(1);
+        assert_eq!(result, std::time::Duration::from_secs(1));
     }
 }

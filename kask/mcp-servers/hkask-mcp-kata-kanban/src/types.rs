@@ -41,6 +41,10 @@ pub struct ColumnInfo {
     pub id: String,
     pub name: String,
     pub status: String,
+    /// Optional WIP limit — maximum tasks allowed in this column.
+    /// None means no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wip_limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -56,6 +60,11 @@ pub struct BoardInfo {
     pub board_id: String,
     pub name: String,
     pub column_count: usize,
+    /// Column definitions including WIP limits. Populated from the board's
+    /// `ColumnDef` list so consumers (kanban panel, agent) can render WIP
+    /// limits without a separate fetch.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<ColumnInfo>,
     /// Ontology concept: <https://w3id.org/pko#Procedure>
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,

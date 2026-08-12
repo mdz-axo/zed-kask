@@ -181,12 +181,20 @@ pub fn granted_write_path_to_location(
 /// Rebuild a grant for enforcement, or log and drop it (fail-closed) if it
 /// can't be verified.
 ///
-/// A failure here is frequently the symlink-TOCTOU defense firing: the grant's
-/// canonical was redirected or replaced by a symlink since approval, so
-/// [`sandbox::HostFilesystemLocation::reopen`] refuses it. That is a
-/// security-relevant event, so it must be logged rather than silently
-/// swallowed. The grant is dropped (the command runs without it) rather than
-/// bound unverified.
+/// A failure here is one of two cases:
+///
+/// * **ENOENT** — the granted directory was simply removed (a stale-settings
+///   condition). This is logged at `info` so a stale grant doesn't flood the
+///   log on every terminal spawn; the user should prune the entry from
+///   settings or recreate the directory.
+/// * **Anything else** — frequently the symlink-TOCTOU defense firing: the
+///   grant's canonical was redirected or replaced by a symlink since approval,
+///   so [`sandbox::HostFilesystemLocation::reopen`] refuses it. That is a
+///   security-relevant event, so it is logged at `warn` rather than silently
+///   swallowed.
+///
+/// In both cases the grant is dropped (the command runs without it) rather
+/// than bound unverified.
 ///
 /// Only for **display** policies (the sandbox-status UI), where a stale grant
 /// should simply not be shown. Enforcement must not drop grants silently — a
@@ -198,10 +206,18 @@ pub fn granted_write_path_to_location_or_log(
 ) -> Option<sandbox::HostFilesystemLocation> {
     granted_write_path_to_location(granted)
         .inspect_err(|error| {
-            log::warn!(
-                "dropping sandbox write grant {}: {error}",
-                granted.requested.display()
-            );
+            if error.kind() == std::io::ErrorKind::NotFound {
+                log::info!(
+                    "sandbox write grant {} no longer exists on disk; remove the \
+                     grant from settings or recreate the directory",
+                    granted.requested.display()
+                );
+            } else {
+                log::warn!(
+                    "dropping sandbox write grant {}: {error}",
+                    granted.requested.display()
+                );
+            }
         })
         .ok()
 }

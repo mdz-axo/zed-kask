@@ -100,6 +100,12 @@ pub struct BridgeManifestExecutor {
     tokio_handle: tokio::runtime::Handle,
     /// Profile resolver for proposer/evaluator separation enforcement.
     profile_resolver: Option<Arc<dyn ProfileResolver>>,
+    /// Cache of parsed manifests keyed by skill name, with file modification
+    /// time for invalidation. Avoids re-reading + re-parsing the same YAML on
+    /// every invocation (e.g. repeated skill calls within a conversation).
+    manifest_cache: std::sync::Mutex<
+        std::collections::HashMap<String, (std::time::SystemTime, hkask_templates::BundleManifest)>,
+    >,
 }
 
 impl BridgeManifestExecutor {
@@ -123,6 +129,7 @@ impl BridgeManifestExecutor {
             registry_templates_dir,
             tokio_handle,
             profile_resolver: None,
+            manifest_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -162,6 +169,51 @@ impl BridgeManifestExecutor {
         None
     }
 
+    /// Load and parse a skill manifest, with an in-memory cache keyed by
+    /// skill name and invalidated by file modification time. Avoids
+    /// re-reading + re-parsing the same YAML on repeated invocations of
+    /// the same skill within a conversation.
+    fn load_cached_manifest(
+        &self,
+        skill_name: &str,
+    ) -> Result<hkask_templates::BundleManifest, String> {
+        let path = self.manifest_path(skill_name);
+        let mtime = std::fs::metadata(&path)
+            .map(|m| m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH))
+            .map_err(|e| {
+                format!(
+                    "No manifest found for skill '{skill_name}' on disk at {}: {e}",
+                    path.display()
+                )
+            })?;
+
+        // Fast path: cache hit with matching mtime
+        if let Ok(cache) = self.manifest_cache.lock() {
+            if let Some((cached_mtime, manifest)) = cache.get(skill_name) {
+                if *cached_mtime == mtime {
+                    return Ok(manifest.clone());
+                }
+            }
+        }
+
+        // Slow path: read from disk + parse
+        let yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
+            format!(
+                "No manifest found for skill '{skill_name}' on disk at {}",
+                path.display()
+            )
+        })?;
+        let manifest = load_manifest_from_yaml(&yaml)
+            .map_err(|e| format!("Failed to load manifest '{skill_name}': {e}"))?;
+
+        // Update cache
+        if let Ok(mut cache) = self.manifest_cache.lock() {
+            cache.insert(skill_name.to_string(), (mtime, manifest.clone()));
+        }
+
+        Ok(manifest)
+    }
+
     /// Run a named skill's manifest cascade and return the full context
     /// HashMap (not just the final text). Used by `compose_and_execute_bundle`
     /// to extract structured fields (composed manifest, composition score)
@@ -178,15 +230,7 @@ impl BridgeManifestExecutor {
         progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
         title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     ) -> Result<CascadeOutcome, String> {
-        let manifest_yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
-            format!(
-                "No manifest found for skill '{skill_name}' on disk at {}",
-                self.manifest_path(skill_name).display()
-            )
-        })?;
-
-        let manifest = load_manifest_from_yaml(&manifest_yaml)
-            .map_err(|e| format!("Failed to load manifest '{skill_name}': {e}"))?;
+        let manifest = self.load_cached_manifest(skill_name)?;
 
         if !manifest.is_skill() {
             return Err(format!(
@@ -492,41 +536,25 @@ pub async fn seed_registry_to_disk(fs: &dyn Fs, registry_root: &Path) {
 #[async_trait]
 impl agent::SkillManifestExecutor for BridgeManifestExecutor {
     fn has_manifest(&self, skill_name: &str) -> bool {
-        self.manifest_yaml(skill_name).is_some()
+        // Use path.is_file() instead of manifest_yaml() to avoid reading
+        // the full file content just to check existence. Called once per
+        // available skill name on every agent turn.
+        self.manifest_path(skill_name).is_file()
     }
 
     async fn execute_skill(
         &self,
         skill_name: &str,
-        mut context: HashMap<String, Value>,
+        context: HashMap<String, Value>,
         progress: Option<agent::CascadeProgress>,
         title: Option<agent::CascadeProgress>,
     ) -> Result<String, String> {
-        // Load the manifest FIRST so we can validate the caller-supplied context
-        // against its declared `inputs` (Layer A) before injecting runtime
-        // defaults or running the cascade. Validating before the model-default
-        // injection keeps the user-supplied keys distinguishable from the
-        // runtime-injected system keys (listed in SKILL_CONTEXT_SYSTEM_KEYS).
-        let manifest_yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
-            format!(
-                "No manifest found for skill '{skill_name}' on disk at {}",
-                self.manifest_path(skill_name).display()
-            )
-        })?;
-
-        let manifest = load_manifest_from_yaml(&manifest_yaml)
-            .map_err(|e| format!("Failed to load manifest '{skill_name}': {e}"))?;
+        // Load the manifest with caching. Loaded before validation so we can
+        // check the caller-supplied context against declared `inputs` (Layer A)
+        // before injecting runtime defaults.
+        let manifest = self.load_cached_manifest(skill_name)?;
 
         // Enforce the category labelling system at the execution boundary.
-        // `resolve_manifest` enforces `is_skill()` on the `flowdef` sub-cascade
-        // binding path, but this primary path (`execute_skill` →
-        // `load_manifest_from_yaml` → `execute_manifest`) bypasses it. Without
-        // this check, an infra manifest (pipeline, runtime-config, qa-script,
-        // daemon-process) in the embedded registry could execute via the skill
-        // tool if its name were passed to `execute_skill`. This makes the
-        // `compute_ref` "gated to category: skill manifests only" comment in
-        // create-skill.yaml redundant — all manifests reaching the executor
-        // through this path are guaranteed to be skills.
         if !manifest.is_skill() {
             return Err(format!(
                 "Skill '{skill_name}' has category '{:?}' — only `skill` manifests may execute via the skill tool",
@@ -541,9 +569,6 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             match &self.profile_resolver {
                 Some(resolver) => {
                     if resolver.is_tool_enabled("terminal") {
-                        // `needs_profile_check` above guarantees a step with a
-                        // `profile` exists, so these `if let`s always match —
-                        // but the non-panicking form avoids `expect` (`.rules`).
                         if let Some(step) = manifest.steps.iter().find(|s| s.profile.is_some())
                             && let Some(profile_name) = step.profile.as_ref()
                         {
@@ -570,11 +595,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             }
         }
 
-        // Layer A: enforce the manifest's declared `inputs` contract at the
-        // boundary. Opt-in via `enforce_inputs: true` in the manifest; skills
-        // that don't opt in are unaffected (back-compat). Turns silent wrong-
-        // params (missing required, wrong-typed) into a structured error that
-        // propagates to the UI as a `SkillToolOutput::Error`.
+        // Layer A: enforce the manifest's declared `inputs` contract.
         if let Err(e) = validate_inputs(
             manifest.enforce_inputs,
             manifest.inputs.as_ref(),
@@ -584,38 +605,17 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             return Err(format!("Skill '{skill_name}' input validation failed: {e}"));
         }
 
-        // Inject config-driven model defaults and construct the executor.
-        // Factored into `inject_model_defaults` and `build_executor` so the
-        // single-skill and bundle-composition paths share the same wiring.
-        // Values come from (in priority order):
-        // 1. KaskSettings (settings.json "kask" section) — if non-empty
-        // 2. HKASK_* env vars (.env file) — via model_constants functions
-        // 3. Compile-time defaults in model_constants.rs
-        self.inject_model_defaults(&mut context);
-        let executor = self.build_executor(progress, title);
+        // Delegate to the shared cascade path — model defaults injection,
+        // executor construction, and tokio spawning are handled there.
+        // This eliminates the duplicated spawn block that was previously
+        // inline in this method.
+        let result = self
+            .run_manifest_cascade_with_manifest(&manifest, context, progress, title)
+            .await?;
 
-        // Spawn manifest execution on the tokio runtime. ManifestExecutor
-        // uses tokio::time::timeout internally, which requires a tokio reactor.
-        // The SkillTool runs on GPUI's foreground executor, not tokio, so we
-        // can't hold a tokio EnterGuard across .await (it's not Send). Spawning
-        // on the tokio handle and awaiting the JoinHandle is the Send-safe way.
-        let join_handle = self.tokio_handle.spawn(async move {
-            executor
-                .execute_manifest_into(manifest, context)
-                .await
-                .map_err(|e| format!("Manifest execution failed: {e}"))
-        });
-
-        let result = join_handle
-            .await
-            .map_err(|e| format!("Manifest execution task failed: {e}"))??;
-
-        // (K5) `result` is the typed `CascadeOutcome`; `extract_final_step_result`
-        // selects `last_result_step`'s value (deterministic — the machine tracks
-        // it, no randomized HashMap scan).
-        let output = extract_final_step_result(&result);
-
-        Ok(output)
+        // (K5) `extract_final_step_result` selects `last_result_step`'s
+        // value (deterministic — the machine tracks it, O(1)).
+        Ok(extract_final_step_result(&result))
     }
 
     async fn compose_and_execute_bundle(

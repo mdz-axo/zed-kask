@@ -20304,6 +20304,7 @@ dependencies = [
  "log",
  "marketplace_ui_common",
  "project",
+ "remote_connection",
  "serde",
  "serde_json",
  "settings",

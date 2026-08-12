@@ -155,6 +155,7 @@ impl KanbanServer {
                                 id: c.id.to_string(),
                                 name: c.name.clone(),
                                 status: c.status.to_string(),
+                                wip_limit: c.wip_limit,
                             })
                             .collect(),
                         ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
@@ -185,6 +186,16 @@ impl KanbanServer {
                                 board_id: b.id.to_string(),
                                 name: b.name,
                                 column_count: b.columns.len(),
+                                columns: b
+                                    .columns
+                                    .iter()
+                                    .map(|c| ColumnInfo {
+                                        id: c.id.to_string(),
+                                        name: c.name.clone(),
+                                        status: c.status.to_string(),
+                                        wip_limit: c.wip_limit,
+                                    })
+                                    .collect(),
                                 ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
                             })
                             .collect(),

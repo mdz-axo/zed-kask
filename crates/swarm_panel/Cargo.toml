@@ -11,6 +11,18 @@ workspace = true
 [lib]
 path = "src/swarm_panel.rs"
 
+[features]
+# Without `workspace/test-support`, `--all-features` builds enable
+# `remote/test-support` (via `acp_thread` -> `project` -> `remote`), which
+# exposes `RemoteConnectionIdentity::Mock` in the `remote` crate without the
+# matching cfg-gated match arm in `workspace/src/persistence.rs`, causing a
+# non-exhaustive match error. `remote_connection/test-support` is needed for
+# the same reason: `remote_connection` matches on `RemoteConnectionOptions`
+# whose `Mock` variant is gated on `remote`'s `test-support`, and the match
+# arm is gated on `remote_connection`'s own `test-support`. Both must be in
+# sync with `remote/test-support` whenever it is on.
+test-support = ["workspace/test-support", "remote_connection/test-support"]
+
 [dependencies]
 agent.workspace = true
 agent_ui.workspace = true
@@ -32,3 +44,17 @@ ui.workspace = true
 workspace.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
+
+[dev-dependencies]
+# Feature-propagation-only dev-dep: not `use`d in source, but its
+# `test-support` feature must be enabled (via the `test-support` feature above)
+# to keep `remote_connection`'s cfg-gated `Mock` match arm in sync with
+# `remote`'s `Mock` variant. No features are hardcoded here — the `test-support`
+# feature controls when `remote_connection/test-support` is on, so
+# `cargo test -p swarm_panel` (without `--all-features`) does not leak
+# `remote/test-support` into the graph and break other crates' cfg-gated
+# matches.
+remote_connection.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["remote_connection"]

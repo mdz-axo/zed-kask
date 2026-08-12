@@ -4748,7 +4748,20 @@ impl Thread {
                 .iter()
                 .filter_map(|(tool_name, tool)| {
                     log::trace!("Including tool: {}", tool_name);
+                    // Truncate tool descriptions to avoid token bloat. The
+                    // LLM needs enough to select the right tool; full detail
+                    // is not needed for selection. The first sentence is
+                    // usually sufficient.
                     let mut description = tool.description().to_string();
+                    if description.len() > 200 {
+                        // Truncate at the first sentence boundary within 200 chars.
+                        if let Some(pos) = description[..200].find(". ") {
+                            description.truncate(pos + 1);
+                        } else {
+                            description.truncate(197);
+                            description.push_str("...");
+                        }
+                    }
                     let mut schema = tool.input_schema(model.tool_input_format()).log_err()?;
                     // TEMPORARY (sandboxing feature flag): with the flag off,
                     // the fetch and create_directory descriptions/schemas must

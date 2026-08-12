@@ -486,12 +486,13 @@ mod tests {
     #[test]
     fn all_kanban_manifest_templates_exist() {
         let templates = [
-            "kanban-task-decomposition/gather-context",
-            "kanban-task-decomposition/decompose-tasks",
-            "kanban-task-decomposition/review-tasks",
-            "kanban-task-decomposition/populate-board",
-            "kanban-task-delegation/configure-spawn",
-            "kanban-task-delegation/execute-task",
+            "kanban-task-management/triage",
+            "kanban-task-management/gather-context",
+            "kanban-task-management/decompose-tasks",
+            "kanban-task-management/review-tasks",
+            "kanban-task-management/populate-board",
+            "kanban-task-management/configure-spawn",
+            "kanban-task-management/execute-task",
             "kanban-task-management/monitor-board",
             "kanban-task-management/coordinate-agents",
             "kanban-task-management/track-deliverables",

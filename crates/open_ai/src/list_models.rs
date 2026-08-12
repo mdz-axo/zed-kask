@@ -140,8 +140,19 @@ pub async fn list_models(
 
 impl DiscoveredModel {
     /// Whether the provider advertises tool support via `supported_parameters`.
+    ///
+    /// When `supported_parameters` is absent (empty), the provider didn't
+    /// advertise capabilities — that's "unknown", not "unsupported".
+    /// Default to `true` so providers like DeepInfra (which omit the field but
+    /// whose models do support tools) don't get tool calling silently disabled.
+    /// This matches `OpenAiCompatibleModelCapabilities::default()` (tools: true)
+    /// used for the manual-config path, so discovery and manual config agree.
     pub fn supports_tools(&self) -> bool {
-        self.supported_parameters.iter().any(|p| p == "tools")
+        if self.supported_parameters.is_empty() {
+            true
+        } else {
+            self.supported_parameters.iter().any(|p| p == "tools")
+        }
     }
 
     /// Whether the provider advertises image input support via architecture
@@ -206,7 +217,10 @@ mod tests {
         let parsed: ListModelsResponse = serde_json::from_str(&body.to_string()).unwrap();
         assert_eq!(parsed.data.len(), 2);
         assert_eq!(parsed.data[0].id, "gpt-4o");
-        assert!(!parsed.data[0].supports_tools());
+        // No `supported_parameters` field → unknown, not unsupported. Default
+        // to `true` so providers that omit the field (DeepInfra, standard
+        // OpenAI) don't get tool calling silently disabled.
+        assert!(parsed.data[0].supports_tools());
         assert!(!parsed.data[0].supports_images());
     }
 

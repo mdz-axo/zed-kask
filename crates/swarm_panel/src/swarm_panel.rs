@@ -277,7 +277,7 @@ The `{KANBAN_SERVER}` MCP server is the durable coordination source of truth for
 
 **Kanban tools** (available in both backends): `kanban_board_list` and `kanban_task_list` read the current board state; `kanban_task_create` adds a task to a board; `kanban_task_move` advances a task between columns (Backlog → Ready → InProgress → Review → Done). The swarm↔kanban bridge is `kanban_task_spawn`, which delegates a task to a swarm agent (worktree-isolated when the zed IPC bridge is open, else the in-memory local runtime) and records the structured result back on the task. Read it back with `kanban_task_delegate_result` — it returns the `delegate_result`, `deterministic_verdict`, and swarm_id linking the task to its swarm. Append feedback with `kanban_task_comment`; record completion evidence with `kanban_task_verify`.
 
-When the operator asks to plan or decompose work, the `kanban-task-decomposition`, `kanban-task-delegation`, and `kanban-task-management` skill cascades are available. Pass the board id and (when known) the swarm id so the cascade writes the durable link on every spawned task.
+When the operator asks to plan or decompose work, the `kanban-task-management` skill cascade is available (it subsumes board building, task decomposition, and task delegation). Pass the board id and (when known) the swarm id so the cascade writes the durable link on every spawned task.
 
 Pass the swarm id to `kanban_task_spawn` (the swarm_id arg) whenever the task is scoped to the active swarm — this stamps the durable `Task.swarm_id` link so `kanban_task_delegate_result` can answer "which swarm is running this task?" without parsing free-text comments.
 "#
@@ -2495,9 +2495,24 @@ impl Render for SwarmPanel {
                     .size_full()
                     .overflow_y_hidden()
                     .map(|this| match self.mode {
-                        PanelMode::Author => this.child(self.render_author(cx)).into_any_element(),
+                        PanelMode::Author => this
+                            .child(
+                                div()
+                                    .id("author-scroll")
+                                    .size_full()
+                                    .overflow_y_scroll()
+                                    .child(self.render_author(cx)),
+                            )
+                            .into_any_element(),
                         PanelMode::Compose => {
-                            this.child(self.render_compose(cx)).into_any_element()
+                            this.child(
+                                div()
+                                    .id("compose-scroll")
+                                    .size_full()
+                                    .overflow_y_scroll()
+                                    .child(self.render_compose(cx)),
+                            )
+                            .into_any_element()
                         }
                         PanelMode::Steer => {
                             // The `ConversationView` is lazily constructed
