@@ -11116,6 +11116,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "kanban_panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "gpui_util",
+ "hkask-kanban-widget",
+ "hkask-tool-invoker",
+ "hkask-types",
+ "marketplace_ui_common",
+ "project",
+ "serde",
+ "serde_json",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "kask_bridge"
 version = "0.34.0"
 dependencies = [
@@ -25993,6 +26011,7 @@ dependencies = [
  "itertools 0.14.0",
  "journal",
  "json_schema_store",
+ "kanban_panel",
  "kask_bridge",
  "kask_extensions_ui",
  "keymap_editor",

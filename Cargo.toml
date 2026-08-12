@@ -56,6 +56,7 @@ members = [
     "crates/dev_container",
     "crates/kask_extensions_ui",
     "crates/swarm_panel",
+    "crates/kanban_panel",
     "crates/marketplace_ui_common",
     "crates/diagnostics",
     "crates/docs_preprocessor",
@@ -387,6 +388,7 @@ dev_container = { path = "crates/dev_container" }
 
 kask_extensions_ui = { path = "crates/kask_extensions_ui" }
 swarm_panel = { path = "crates/swarm_panel" }
+kanban_panel = { path = "crates/kanban_panel" }
 marketplace_ui_common = { path = "crates/marketplace_ui_common" }
 kask_bridge = { path = "kask/crates/kask_bridge" }
 hkask_tool_invoker = { path = "crates/hkask-tool-invoker", package = "hkask-tool-invoker" }

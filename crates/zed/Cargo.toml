@@ -76,6 +76,7 @@ hkask-email.workspace = true
 
 kask_extensions_ui.workspace = true
 swarm_panel.workspace = true
+kanban_panel.workspace = true
 agent_settings.workspace = true
 agent_skills.workspace = true
 agent_ui = { workspace = true, features = ["audio"] }

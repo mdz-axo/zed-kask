@@ -1919,6 +1919,7 @@ mod tests {
             thinking_effort: Some("high".into()),
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2105,6 +2106,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2206,6 +2208,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2291,6 +2294,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2357,6 +2361,7 @@ mod tests {
             thinking_effort: Some("high".into()),
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2403,6 +2408,7 @@ mod tests {
                 thinking_effort: None,
                 speed,
                 compact_at_tokens: None,
+                max_tokens: None,
             };
 
             let response = into_open_ai_response(
@@ -2455,6 +2461,7 @@ mod tests {
                 thinking_effort: None,
                 speed,
                 compact_at_tokens: None,
+                max_tokens: None,
             };
 
             let chat = into_open_ai(
@@ -2500,6 +2507,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let chat = into_open_ai(
@@ -2539,6 +2547,7 @@ mod tests {
             thinking_effort: Some("high".into()),
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2580,6 +2589,7 @@ mod tests {
             thinking_effort: Some("none".into()),
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2633,6 +2643,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2725,6 +2736,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2815,6 +2827,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -3985,6 +3998,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let result = into_open_ai(
