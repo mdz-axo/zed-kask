@@ -727,14 +727,17 @@ impl McpRuntime {
             }
         }
 
+        // Retry only a dispatch that never reached a live peer. Once a request
+        // has been handed to one, a transport loss is `Interrupted` — see
+        // `DispatchError::Interrupted` for why that must not be retried here.
         match self.dispatch(server, tool, arguments.clone()).await {
-            Err(DispatchError::TransportLost(detail)) => {
+            Err(DispatchError::NotDelivered(detail)) => {
                 tracing::warn!(
                     target: "hkask.mcp",
                     server_id = %server,
                     tool = %tool,
                     detail = %detail,
-                    "Tool dispatch lost the transport - reconnecting and retrying once"
+                    "Tool dispatch found no live transport - reconnecting and retrying once"
                 );
                 if !self.try_reconnect(server).await {
                     return Err(hkask_capability::ToolPortError::Unavailable(format!(
@@ -751,9 +754,16 @@ impl McpRuntime {
 
     /// One dispatch attempt against the currently-registered peer.
     ///
-    /// Separates "the transport went away" from "the tool itself failed" so the
-    /// caller can retry only the former. A blanket retry would re-run
-    /// state-changing tools whose failure was semantic, not transport-level.
+    /// Classifies the failure by whether the request could have been *delivered*,
+    /// which is what determines retry safety:
+    ///
+    /// - [`DispatchError::NotDelivered`] — there was no live peer to send to, so
+    ///   the tool provably did not run.
+    /// - [`DispatchError::Interrupted`] — a live peer accepted the call and the
+    ///   connection then failed. `rmcp` reports both a failed send and a dropped
+    ///   response channel as `ServiceError::TransportClosed`, so this cannot be
+    ///   narrowed to non-delivery; the effect may have been applied.
+    /// - [`DispatchError::Failed`] — the tool ran and failed.
     async fn dispatch(
         &self,
         server: &str,
@@ -761,24 +771,27 @@ impl McpRuntime {
         arguments: serde_json::Map<String, Value>,
     ) -> Result<Value, DispatchError> {
         let Some(peer) = self.get_peer(server).await else {
-            return Err(DispatchError::TransportLost(format!(
+            return Err(DispatchError::NotDelivered(format!(
                 "server '{server}' has no live connection"
             )));
         };
         if peer.is_transport_closed() {
-            return Err(DispatchError::TransportLost(format!(
-                "server '{server}' transport closed"
+            return Err(DispatchError::NotDelivered(format!(
+                "server '{server}' transport closed before the request was sent"
             )));
         }
 
         let params = CallToolRequestParams::new(tool.to_string()).with_arguments(arguments);
         let result = match peer.call_tool(params).await {
             Ok(result) => result,
-            Err(rmcp::service::ServiceError::TransportClosed) => {
-                return Err(DispatchError::TransportLost("transport closed".to_string()));
-            }
-            Err(e @ rmcp::service::ServiceError::TransportSend(_)) => {
-                return Err(DispatchError::TransportLost(e.to_string()));
+            // The peer was live when we handed off, so we cannot distinguish
+            // "the send was rejected" from "the server died after receiving it."
+            // Report the outcome as unknown rather than assuming either.
+            Err(
+                error @ (rmcp::service::ServiceError::TransportClosed
+                | rmcp::service::ServiceError::TransportSend(_)),
+            ) => {
+                return Err(DispatchError::Interrupted(error.to_string()));
             }
             Err(e) => return Err(DispatchError::Failed(e.to_string())),
         };
@@ -816,10 +829,16 @@ impl McpRuntime {
     }
 }
 
-/// Outcome of a single dispatch attempt, split by whether a retry could help.
+/// Outcome of a single dispatch attempt, split by whether the request could
+/// have been delivered — which is what determines retry safety.
 enum DispatchError {
-    /// The transport went away. Reconnecting may recover.
-    TransportLost(String),
+    /// No live peer accepted the request, so the tool provably did not run.
+    /// Reconnecting and retrying is safe.
+    NotDelivered(String),
+    /// A live peer accepted the request and the connection then failed. The
+    /// effect may or may not have been applied, so this must not be retried
+    /// automatically.
+    Interrupted(String),
     /// The call reached the server and failed there. A retry would only repeat it.
     Failed(String),
 }
@@ -827,8 +846,11 @@ enum DispatchError {
 impl DispatchError {
     fn into_port_error(self) -> hkask_capability::ToolPortError {
         match self {
-            DispatchError::TransportLost(detail) => {
-                hkask_capability::ToolPortError::Unavailable(format!("transport closed: {detail}"))
+            DispatchError::NotDelivered(detail) => {
+                hkask_capability::ToolPortError::Unavailable(format!("not delivered: {detail}"))
+            }
+            DispatchError::Interrupted(detail) => {
+                hkask_capability::ToolPortError::Interrupted(detail)
             }
             DispatchError::Failed(detail) => {
                 hkask_capability::ToolPortError::InvocationFailed(detail)

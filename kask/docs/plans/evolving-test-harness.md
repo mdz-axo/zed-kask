@@ -439,7 +439,8 @@ pairwise refinement (N vs N−1), 3–5 iterations.
 4. Does **not** run the tests. The proposer is separated from the evaluator
    (anti-pattern prevention — §6.2). CI runs the proposed tests.
 
-**OCAP enforcement of proposer/evaluator separation (not a prompt convention):**
+**Profile-level enforcement of proposer/evaluator separation (not a prompt
+convention):**
 the `harness-optimize` skill runs under an agent profile whose built-in
 `terminal` tool is **disabled** — `profile.is_tool_enabled("terminal")` returns
 `false` (enforced at `crates/agent_settings/src/agent_profile.rs` L114:
@@ -869,6 +870,10 @@ written. It found **two breaks** and three lesser issues:
 | 5 Synthesis | No — protection reports failure as success | `max_iterations = 5` is the only stop in the trivial-tests scenario, and it fires under a false "converged" label |
 
 ### 9.2 Fixes Applied (second iteration)
+
+> Historical record. The capability-gate mechanism named in the third row was
+> found wrong by the next critic (§9.3 point 4) and corrected in §9.4; it was
+> then deleted from the codebase entirely on 2026-08-12 (RR-0056).
 
 | Break | Fix |
 |-------|-----|

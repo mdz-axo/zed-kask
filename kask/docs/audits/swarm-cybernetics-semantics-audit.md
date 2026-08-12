@@ -130,6 +130,16 @@ breaks or where an advertised invariant lacks an enforcement point.
 
 ### Gap S4 — Consent TTL is enforced; do not conflate with DelegationToken expiry
 
+> **Superseded 2026-08-12.** The finding's *conclusion* still holds — the ABW
+> consent grant is a real TTL-enforced blocking gate — but its contrast case is
+> gone: `DelegationToken` and the per-call capability gate in
+> `McpRuntime::invoke` were deleted because the check compared a caller-supplied
+> value against itself and could not deny (`RR-0056.yaml`). There is no longer a
+> second token to conflate the consent grant with. The remaining non-authorizing
+> bound on the invoke path is the runaway-loop call meter, which is fail-open on
+> an unseeded agent (`RR-0057.yaml`). The original text is preserved below as the
+> 2026-08-05 record.
+
 - **Claim (`.rules` OCAP block):** "Token expiry is NOT enforced …
   `DelegationToken` carries no `expires_at` field."
 - **Implementation (`consent.rs:77`, `:890` test):** `CONSENT_TTL_SECS` exists and
@@ -307,7 +317,7 @@ magnitude gap — worth fixing for composition quality, not urgency.
 | S1 | Tool-count drift (31 vs 47) in SKILL.md + architecture diagram | Medium (doc drift, `.rules` trap) | docs |
 | S2 | Steer prompt omits `swarm_pipeline_local` | Low | docs |
 | S3 | `task_success` determinism enforced by convention, not code | Medium (advertised invariant, weak enforcement point) | C0 |
-| S4 | Consent TTL is enforced — do not conflate with OCAP `DelegationToken` | None (clarification) | consent |
+| S4 | Consent TTL is enforced — do not conflate with OCAP `DelegationToken` (contrast case removed 2026-08-12, RR-0056; conclusion unaffected) | None (clarification) | consent |
 | A-closure | PDCA loop closure contingent on execution mode (advisory default) | Medium | Loop A closure |
 | B-fidelity | C5/C6 fault attribution is binary (`ok`), not task success | **High** | Loop B fidelity |
 | C-fidelity | Local-mode balance sensed reactively, not proactively at SENSE | Low–Medium | Loop C fidelity |
