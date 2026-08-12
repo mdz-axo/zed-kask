@@ -434,10 +434,7 @@ mod tests {
         let body = parse_kanban_body(json).expect("valid body parses");
         assert!(body.provenance.is_dispatchable());
         assert_eq!(body.provenance.tool.as_deref(), Some("kanban_task_list"));
-        assert_eq!(
-            body.provenance.server.as_deref(),
-            Some("kata-kanban")
-        );
+        assert_eq!(body.provenance.server.as_deref(), Some("kata-kanban"));
         assert_eq!(body.provenance.args["board_id"], "b1");
     }
 }

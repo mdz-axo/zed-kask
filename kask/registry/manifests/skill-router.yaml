@@ -1,0 +1,111 @@
+# Skill Router Process Manifest
+# ℏKask v0.34.0 — Task-to-skill matching as convergent PDCA
+#
+# Publishes the skill-router template crate (kask/registry/templates/skill-router/)
+# as an installable skill. The match step (skill-router-match) ranks installed
+# skills against a task/slice description and emits uncovered_capabilities as
+# gap signals for skill-discovery. The loop re-enters with a constant
+# convergence signal so Cauchy fires at min_iterations — the match is a single
+# pass over a fixed catalog, so the ranked set is produced once and stabilizes
+# (deep-module precedent: a stable signal lets Cauchy fire after min_iterations).
+
+manifest:
+  id: skill-router
+  category: skill
+  name: Skill Router
+  description: >
+    Convergent task-to-skill routing process. Matches a task/slice description
+    against the installed skill catalog, scoring each candidate skill 0.0–1.0
+    on capability overlap, description alignment, and trigger alignment. Returns
+    ranked recommendations with fit scores, applicable templates, and invocation
+    hints, and emits uncovered_capabilities as gap signals for skill-discovery.
+    Distinct from skill-discovery (which acquires NEW skills): skill-router
+    matches tasks to EXISTING skills. Primary integration point is
+    task-breakdown's decompose phase, which emits skill_match_query per slice;
+    skill-router consumes those queries.
+  functional_role: flowdef
+  version: "0.34.0"
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  convergence_mode: "cauchy"
+  target_artifacts_field: "step_1_result.recommendations"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 3
+  min_iterations: 2
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 2
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: task_description
+    type: string
+    required: true
+  - name: task_context
+    type: string
+    required: false
+  - name: skill_catalog
+    type: array
+    description: "Installed skill catalog (same array passed to skill-discovery)"
+    required: false
+  - name: max_recommendations
+    type: number
+    required: false
+    default: 3
+  - name: epistemic_state
+    type: object
+    required: false
+
+ledger:
+  span_namespace: reg.skill.skill-router
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Match the task against the installed skill catalog. Scores each candidate
+      skill on capability overlap (0.50), description alignment (0.25), and
+      trigger alignment (0.25); returns ranked recommendations with fit_score,
+      match_reason, applicable templates, and invocation hints, plus
+      uncovered_capabilities (gap signals for skill-discovery). Emits
+      coverage_assessment: full / partial / none.
+    renderer: minijinja
+    template_ref: skill-router/skill-router-match
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      task_description: "{{ task_description }}"
+      task_context: "{{ task_context | default('') }}"
+      skill_catalog: "{{ skill_catalog | default([]) }}"
+      max_recommendations: "{{ max_recommendations | default(3) }}"
+      epistemic_state: "{{ epistemic_state | default({}) }}"
+
+  - ordinal: 2
+    action: loop
+    description: Re-enter the match if the recommendation set has not stabilized.
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      # The match is a single pass over a fixed catalog — the ranked set is
+      # produced in one pass. A constant convergence signal guarantees Cauchy
+      # convergence at min_iterations (deep-module precedent: a stable signal
+      # fires after min_iterations), so a one-shot routing succeeds without
+      # escalation rather than depending on LLM-nondeterministic counts.
+      convergence_signal: "{{ 0 }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort

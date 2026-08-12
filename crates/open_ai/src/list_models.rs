@@ -62,7 +62,13 @@ pub struct DiscoveredModel {
     /// `context_length`; others do not. OpenRouter nests it under
     /// `top_provider.max_completion_tokens` — `resolve_provider_fallbacks`
     /// folds that into this field when the top-level value is absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// AtlasCloud uses the field name `max_output_length` for the same
+    /// quantity, handled via the serde alias.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "max_output_length"
+    )]
     pub max_output_tokens: Option<u64>,
     /// Optional list of supported parameters. Used to detect tool support
     /// (presence of `"tools"`) and reasoning support (presence of
@@ -288,6 +294,36 @@ mod tests {
         assert!(model.supports_tools());
         assert!(model.supports_images());
         assert_eq!(model.display_name(), "Llama 3.3 70B Instruct");
+    }
+
+    #[test]
+    fn test_atlascloud_max_output_length_alias() {
+        // AtlasCloud uses the field name `max_output_length` (not
+        // `max_output_tokens`, not `top_provider.max_completion_tokens`) for
+        // the per-model output cap, and wraps the list in {code, msg, data}.
+        // Without the serde alias, every AtlasCloud model would discover with
+        // `max_output_tokens: None` and the agent would send no output cap —
+        // the same mid-tool-call truncation class as the OpenRouter bug.
+        let body = json!({
+            "code": 200,
+            "msg": "succeed",
+            "data": [{
+                "id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+                "name": "Qwen3-235B-A22B-Instruct-2507",
+                "context_length": 131072,
+                "max_output_length": 131072
+            }]
+        });
+        let mut parsed: ListModelsResponse = serde_json::from_str(&body.to_string()).unwrap();
+        // The {code, msg} wrapper is ignored — only `data` is parsed.
+        let model = parsed.data.get_mut(0).unwrap();
+        model.resolve_provider_fallbacks();
+        assert_eq!(
+            model.max_output_tokens,
+            Some(131072),
+            "AtlasCloud's max_output_length must deserialize into max_output_tokens via the alias"
+        );
+        assert_eq!(model.context_length, Some(131072));
     }
 
     #[test]

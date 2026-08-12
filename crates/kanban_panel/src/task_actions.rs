@@ -6,11 +6,11 @@
 //! persists across re-renders.
 
 use editor::Editor;
-use gpui::{Context, Entity, SharedString, Window};
+use gpui::{Context, Entity, Window};
 use serde_json::json;
-use ui::{IconName, IconSize, Tooltip, prelude::*};
+use ui::prelude::*;
 
-use crate::{KANBAN_SERVER, TaskActionKind};
+use crate::KanbanPanel;
 
 /// The form state for creating a new task.
 pub(crate) struct CreateTaskForm {
@@ -21,7 +21,7 @@ pub(crate) struct CreateTaskForm {
 }
 
 impl CreateTaskForm {
-    pub(crate) fn new(window: &mut Window, cx: &mut Context<crate::KanbanPanel>) -> Self {
+    pub(crate) fn new(window: &mut Window, cx: &mut Context<KanbanPanel>) -> Self {
         Self {
             title: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
@@ -35,7 +35,11 @@ impl CreateTaskForm {
             }),
             criteria: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Acceptance criteria, semicolon-separated (optional)", window, cx);
+                editor.set_placeholder_text(
+                    "Acceptance criteria, semicolon-separated (optional)",
+                    window,
+                    cx,
+                );
                 editor
             }),
             gas_budget: cx.new(|cx| {
@@ -96,7 +100,7 @@ impl EditTaskForm {
         current_priority: Option<&str>,
         current_labels: &[String],
         window: &mut Window,
-        cx: &mut Context<crate::KanbanPanel>,
+        cx: &mut Context<KanbanPanel>,
     ) -> Self {
         let title = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -180,17 +184,25 @@ impl SpawnTaskForm {
     pub(crate) fn for_task(
         task_id: &str,
         window: &mut Window,
-        cx: &mut Context<crate::KanbanPanel>,
+        cx: &mut Context<KanbanPanel>,
     ) -> Self {
         Self {
             skills: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Skills, comma-separated (e.g. tdd, bug-hunt)", window, cx);
+                editor.set_placeholder_text(
+                    "Skills, comma-separated (e.g. tdd, bug-hunt)",
+                    window,
+                    cx,
+                );
                 editor
             }),
             delegation_level: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Delegation level: minimal, standard, maximal", window, cx);
+                editor.set_placeholder_text(
+                    "Delegation level: minimal, standard, maximal",
+                    window,
+                    cx,
+                );
                 editor.set_text("standard".to_string(), window, cx);
                 editor
             }),
@@ -241,15 +253,18 @@ impl SpawnTaskForm {
 /// Render the create-task form.
 pub(crate) fn render_create_task_form(
     form: &CreateTaskForm,
-    cx: &mut Context<crate::KanbanPanel>,
+    cx: &mut Context<KanbanPanel>,
 ) -> impl IntoElement {
+    let border_color = cx.theme().colors().border;
+    let bg = cx.theme().colors().editor_background;
+
     v_flex()
         .gap_2()
         .p_3()
         .rounded_md()
         .border_1()
-        .border_color(cx.theme().colors().border)
-        .bg(cx.theme().colors().editor_background)
+        .border_color(border_color)
+        .bg(bg)
         .child(
             h_flex()
                 .gap_2()
@@ -270,14 +285,14 @@ pub(crate) fn render_create_task_form(
                         .px_3()
                         .py_1()
                         .rounded_md()
-                        .bg(cx.theme().colors().accent)
+                        .bg(Color::Accent.color(cx))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.submit_create_task(cx);
                         }))
                         .child(
                             Label::new("Create Task")
                                 .size(LabelSize::Small)
-                                .color(Color::Accent),
+                                .color(Color::Default),
                         ),
                 )
                 .child(
@@ -302,15 +317,18 @@ pub(crate) fn render_create_task_form(
 /// Render the edit-task form.
 pub(crate) fn render_edit_task_form(
     form: &EditTaskForm,
-    cx: &mut Context<crate::KanbanPanel>,
+    cx: &mut Context<KanbanPanel>,
 ) -> impl IntoElement {
+    let border_color = cx.theme().colors().border;
+    let bg = cx.theme().colors().editor_background;
+
     v_flex()
         .gap_2()
         .p_3()
         .rounded_md()
         .border_1()
-        .border_color(cx.theme().colors().border)
-        .bg(cx.theme().colors().editor_background)
+        .border_color(border_color)
+        .bg(bg)
         .child(
             h_flex()
                 .gap_2()
@@ -335,14 +353,14 @@ pub(crate) fn render_edit_task_form(
                         .px_3()
                         .py_1()
                         .rounded_md()
-                        .bg(cx.theme().colors().accent)
+                        .bg(Color::Accent.color(cx))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.submit_edit_task(cx);
                         }))
                         .child(
                             Label::new("Save")
                                 .size(LabelSize::Small)
-                                .color(Color::Accent),
+                                .color(Color::Default),
                         ),
                 )
                 .child(
@@ -367,15 +385,18 @@ pub(crate) fn render_edit_task_form(
 /// Render the spawn-task form.
 pub(crate) fn render_spawn_task_form(
     form: &SpawnTaskForm,
-    cx: &mut Context<crate::KanbanPanel>,
+    cx: &mut Context<KanbanPanel>,
 ) -> impl IntoElement {
+    let border_color = cx.theme().colors().border;
+    let bg = cx.theme().colors().editor_background;
+
     v_flex()
         .gap_2()
         .p_3()
         .rounded_md()
         .border_1()
-        .border_color(cx.theme().colors().border)
-        .bg(cx.theme().colors().editor_background)
+        .border_color(border_color)
+        .bg(bg)
         .child(
             h_flex()
                 .gap_2()
@@ -400,14 +421,14 @@ pub(crate) fn render_spawn_task_form(
                         .px_3()
                         .py_1()
                         .rounded_md()
-                        .bg(cx.theme().colors().accent)
+                        .bg(Color::Accent.color(cx))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.submit_spawn_task(cx);
                         }))
                         .child(
                             Label::new("Spawn")
                                 .size(LabelSize::Small)
-                                .color(Color::Accent),
+                                .color(Color::Default),
                         ),
                 )
                 .child(
@@ -432,15 +453,18 @@ pub(crate) fn render_spawn_task_form(
 /// Render the create-board form.
 pub(crate) fn render_create_board_form(
     name_editor: &Entity<Editor>,
-    cx: &mut Context<crate::KanbanPanel>,
+    cx: &mut Context<KanbanPanel>,
 ) -> impl IntoElement {
+    let border_color = cx.theme().colors().border;
+    let bg = cx.theme().colors().editor_background;
+
     v_flex()
         .gap_2()
         .p_3()
         .rounded_md()
         .border_1()
-        .border_color(cx.theme().colors().border)
-        .bg(cx.theme().colors().editor_background)
+        .border_color(border_color)
+        .bg(bg)
         .child(
             h_flex()
                 .gap_2()
@@ -458,14 +482,14 @@ pub(crate) fn render_create_board_form(
                         .px_3()
                         .py_1()
                         .rounded_md()
-                        .bg(cx.theme().colors().accent)
+                        .bg(Color::Accent.color(cx))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.submit_create_board(cx);
                         }))
                         .child(
                             Label::new("Create Board")
                                 .size(LabelSize::Small)
-                                .color(Color::Accent),
+                                .color(Color::Default),
                         ),
                 )
                 .child(
@@ -484,105 +508,5 @@ pub(crate) fn render_create_board_form(
                                 .color(Color::Muted),
                         ),
                 ),
-        )
-}
-
-/// Render a task action toolbar (delete, edit, spawn, assign buttons).
-pub(crate) fn render_task_action_toolbar(
-    task_id: &str,
-    assignee: Option<&str>,
-    cx: &mut Context<crate::KanbanPanel>,
-) -> impl IntoElement {
-    let task_id_owned = task_id.to_string();
-    let task_id_edit = task_id.to_string();
-    let task_id_spawn = task_id.to_string();
-    let task_id_delete = task_id.to_string();
-    let task_id_assign = task_id.to_string();
-
-    h_flex()
-        .gap_1()
-        .child(
-            Tooltip::new("Edit task")
-                .child(
-                    div()
-                        .id("kanban-task-edit")
-                        .cursor_pointer()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .hover(|this| this.bg(cx.theme().colors().border))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.start_edit_task(task_id_edit.clone(), cx);
-                        }))
-                        .child(
-                            Icon::new(IconName::Pencil)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
-                ),
-        )
-        .child(
-            Tooltip::new("Spawn subagent")
-                .child(
-                    div()
-                        .id("kanban-task-spawn")
-                        .cursor_pointer()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .hover(|this| this.bg(cx.theme().colors().border))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.start_spawn_task(task_id_spawn.clone(), cx);
-                        }))
-                        .child(
-                            Icon::new(IconName::Play)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
-                ),
-        )
-        .child(
-            Tooltip::new(if assignee.is_some() { "Unassign task" } else { "Assign task" })
-                .child(
-                    div()
-                        .id("kanban-task-assign")
-                        .cursor_pointer()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .hover(|this| this.bg(cx.theme().colors().border))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.toggle_task_assignment(task_id_assign.clone(), assignee.is_some(), cx);
-                        }))
-                        .child(
-                            Icon::new(if assignee.is_some() { IconName::UserMinus } else { IconName::UserPlus })
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
-                ),
-        )
-        .child(
-            Tooltip::new("Delete task")
-                .child(
-                    div()
-                        .id("kanban-task-delete")
-                        .cursor_pointer()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .hover(|this| this.bg(cx.theme().colors().border))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.confirm_delete_task(task_id_delete.clone(), cx);
-                        }))
-                        .child(
-                            Icon::new(IconName::Trash)
-                                .size(IconSize::Small)
-                                .color(Color::Warning),
-                        ),
-                ),
-        )
-        .child(
-            // Keep task_id_owned alive for the toolbar element's lifetime.
-            div().invisible().child(Label::new(task_id_owned)),
         )
 }

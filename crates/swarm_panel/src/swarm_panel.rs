@@ -263,23 +263,15 @@ fn steer_system_prompt(
          reconfigure_agent action (C6) via swarm_reconfigure_local_agent when\n\
          ORIENT attributes fault (C5).\n"
     );
-    // C1: Append the kanban coordination substrate so an agent steering a swarm
-    // can see and move the board tracking its tasks, and knows the
-    // `kanban_task_spawn` / `kanban_task_delegate_result` bridge. Appended as a
-    // second `format!` (raw string — no `\n\` escape noise) so the diff stays
-    // surgical; the `debug_assert!` below validates the combined prompt.
+    // C1: The kanban panel now hosts all kanban coordination (board/task
+    // management, spawn, delegate). The swarm panel's steer prompt references
+    // the kanban panel rather than duplicating the kanban tool advertising.
     let prompt = format!(
         r#"{prompt}
 
-## Kanban Coordination Substrate
+## Kanban Coordination
 
-The `{KANBAN_SERVER}` MCP server is the durable coordination source of truth for task state. A kanban board tracks the work a swarm executes; each task links to its swarm via `kanban_task_spawn`. The board and the swarm are two views of the same coordination graph — steer both.
-
-**Kanban tools** (available in both backends): `kanban_board_list` and `kanban_task_list` read the current board state; `kanban_task_create` adds a task to a board; `kanban_task_move` advances a task between columns (Backlog → Ready → InProgress → Review → Done). The swarm↔kanban bridge is `kanban_task_spawn`, which delegates a task to a swarm agent (worktree-isolated when the zed IPC bridge is open, else the in-memory local runtime) and records the structured result back on the task. Read it back with `kanban_task_delegate_result` — it returns the `delegate_result`, `deterministic_verdict`, and swarm_id linking the task to its swarm. Append feedback with `kanban_task_comment`; record completion evidence with `kanban_task_verify`.
-
-When the operator asks to plan or decompose work, the `kanban-task-management` skill cascade is available (it subsumes board building, task decomposition, and task delegation). Pass the board id and (when known) the swarm id so the cascade writes the durable link on every spawned task.
-
-Pass the swarm id to `kanban_task_spawn` (the swarm_id arg) whenever the task is scoped to the active swarm — this stamps the durable `Task.swarm_id` link so `kanban_task_delegate_result` can answer "which swarm is running this task?" without parsing free-text comments.
+The kanban panel (View → Kanban Board) is the durable coordination source of truth for task state. It hosts all kanban tools — board/task CRUD, task spawn, delegate results, and kata coaching. Open the kanban panel's Steer mode to decompose work, create tasks, and spawn subagents. The swarm↔kanban bridge is `kanban_task_spawn` (pass the swarm_id arg to link the task to this swarm).
 "#
     );
     debug_assert!(
@@ -3156,27 +3148,18 @@ mod tests {
 
     #[test]
     fn steer_prompt_advertises_kanban_tools() {
-        // C7 guard: the steer prompt MUST advertise the kanban coordination
-        // substrate and the swarm↔kanban bridge tools. Without this, an agent
-        // steering a swarm is kanban-blind (the C1 finding). Pin the core
-        // bridge tools so a future edit that drops the kanban section is caught.
+        // C7 guard: the steer prompt MUST reference the kanban panel as the
+        // coordination substrate and mention the swarm↔kanban bridge tool.
+        // The full kanban tool advertising now lives in the kanban panel's
+        // own Steer mode (moved from the swarm panel).
         let prompt = steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Local);
         assert!(
-            prompt.contains(KANBAN_SERVER),
-            "steer prompt must name the kanban MCP server ({KANBAN_SERVER})"
+            prompt.contains("kanban panel"),
+            "steer prompt must reference the kanban panel as the coordination substrate"
         );
-        for required in [
-            "kanban_task_spawn",
-            "kanban_task_delegate_result",
-            "kanban_board_list",
-            "kanban_task_list",
-            "kanban_task_move",
-        ] {
-            assert!(
-                prompt.contains(required),
-                "steer prompt must advertise the `{required}` kanban tool \
-                 (the swarm↔kanban bridge)"
-            );
-        }
+        assert!(
+            prompt.contains("kanban_task_spawn"),
+            "steer prompt must mention the `kanban_task_spawn` bridge tool"
+        );
     }
 }

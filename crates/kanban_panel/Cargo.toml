@@ -26,3 +26,6 @@ anyhow.workspace = true
 marketplace_ui_common.workspace = true
 editor.workspace = true
 log.workspace = true
+agent.workspace = true
+agent_ui.workspace = true
+fs.workspace = true

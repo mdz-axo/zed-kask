@@ -302,7 +302,9 @@ impl KanbanServer {
         .await
     }
 
-    #[tool(description = "Update editable fields on a task (title, description, criteria, priority, labels). Only the task owner can edit.")]
+    #[tool(
+        description = "Update editable fields on a task (title, description, criteria, priority, labels). Only the task owner can edit."
+    )]
     pub async fn kanban_task_update(
         &self,
         Parameters(TaskUpdateRequest {
@@ -488,7 +490,9 @@ impl KanbanServer {
         .await
     }
 
-    #[tool(description = "Delete a task and its board index entry. Exposes KanbanService::task_delete as an MCP tool.")]
+    #[tool(
+        description = "Delete a task and its board index entry. Exposes KanbanService::task_delete as an MCP tool."
+    )]
     pub async fn kanban_task_delete(
         &self,
         Parameters(TaskDeleteRequest { task_id }): Parameters<TaskDeleteRequest>,
@@ -510,7 +514,9 @@ impl KanbanServer {
         .await
     }
 
-    #[tool(description = "Unassign a task — remove the current assignee. Only the task owner can unassign.")]
+    #[tool(
+        description = "Unassign a task — remove the current assignee. Only the task owner can unassign."
+    )]
     pub async fn kanban_task_unassign(
         &self,
         Parameters(TaskUnassignRequest { task_id }): Parameters<TaskUnassignRequest>,

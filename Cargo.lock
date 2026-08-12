@@ -11119,8 +11119,11 @@ dependencies = [
 name = "kanban_panel"
 version = "0.1.0"
 dependencies = [
+ "agent",
+ "agent_ui",
  "anyhow",
  "editor",
+ "fs",
  "gpui",
  "gpui_util",
  "hkask-kanban-widget",
