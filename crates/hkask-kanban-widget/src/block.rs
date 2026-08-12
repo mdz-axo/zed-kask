@@ -430,13 +430,13 @@ mod tests {
     fn provenance_parses_when_present() {
         let json = r#"{"viz":"kanban","board_id":"b1","tasks":[
             {"task_id":"t1","title":"A","status":"backlog"}],
-            "provenance":{"tool":"kanban_task_list","server":"hkask-mcp-kata-kanban","args":{"board_id":"b1"}}}"#;
+            "provenance":{"tool":"kanban_task_list","server":"kata-kanban","args":{"board_id":"b1"}}}"#;
         let body = parse_kanban_body(json).expect("valid body parses");
         assert!(body.provenance.is_dispatchable());
         assert_eq!(body.provenance.tool.as_deref(), Some("kanban_task_list"));
         assert_eq!(
             body.provenance.server.as_deref(),
-            Some("hkask-mcp-kata-kanban")
+            Some("kata-kanban")
         );
         assert_eq!(body.provenance.args["board_id"], "b1");
     }

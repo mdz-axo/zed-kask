@@ -619,7 +619,7 @@ impl LanguageModelEmbeddingPort {
 fn strip_provider_prefix(model: &str) -> String {
     // Long-form prefixes (case-insensitive). Order matters only for
     // overlapping prefixes; none overlap here.
-    const LONG_FORM: &[str] = &["DeepInfra/", "RunPod/", "OpenRouter/", "ollama/"];
+    const LONG_FORM: &[&str] = &["DeepInfra/", "RunPod/", "OpenRouter/", "ollama/"];
     for prefix in LONG_FORM {
         if let Some(rest) = model.strip_prefix(prefix) {
             return rest.to_string();

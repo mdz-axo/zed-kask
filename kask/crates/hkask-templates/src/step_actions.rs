@@ -238,10 +238,25 @@ impl StepMachine {
         if let Some(max_tok) = inference_block.max_tokens {
             params.max_tokens = max_tok;
         }
-        if inference_block.thinking_budget.as_deref() == Some("full") {
-            params.disable_thinking = false;
-        } else if inference_block.thinking_budget.as_deref() == Some("none") {
-            params.disable_thinking = true;
+        match inference_block.thinking_budget.as_deref() {
+            Some("full") | Some("on") => {
+                params.disable_thinking = false;
+            }
+            Some("off") | Some("none") => {
+                params.disable_thinking = true;
+            }
+            Some(other) => {
+                // LLMParameters only has a boolean disable_thinking —
+                // intermediate values ("minimal", "low", "medium", etc.)
+                // can't be represented. Warn so operators can distinguish
+                // "not configured" from "configured but unrecognized".
+                tracing::warn!(
+                    target: "hkask.templates.inference_block",
+                    thinking_budget = %other,
+                    "Unrecognized thinking_budget value — falling back to default disable_thinking"
+                );
+            }
+            None => {}
         }
 
         let timeout_dur = effective_timeout(node.timeout_seconds);

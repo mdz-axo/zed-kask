@@ -176,7 +176,7 @@ impl TemplateRenderer {
         // `add_template_owned` replaces any prior "step" registration (no
         // accumulation across renders). The loader handles only `{% include %}`
         // references, not "step".
-        env.add_template_owned("step", renderable.to_string())
+        env.add_template_owned("step", renderable)
             .map_err(|e| TemplateError::Render(format!("Invalid template: {}", e)))?;
 
         // `Value::from_serialize` accepts any `Serialize` type directly — the
@@ -626,5 +626,19 @@ mod tests {
         let body = "[inference]\ntemperature = 0.0\nthinking_budget = \"none\"\n\nYou are a triage agent.\n";
         let (_stripped, config) = parse_and_strip_inference_block(body);
         assert_eq!(config.thinking_budget.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn parse_inference_block_handles_thinking_budget_off() {
+        let body = "[inference]\nthinking_budget = \"off\"\n\nFormat probe results.\n";
+        let (_stripped, config) = parse_and_strip_inference_block(body);
+        assert_eq!(config.thinking_budget.as_deref(), Some("off"));
+    }
+
+    #[test]
+    fn parse_inference_block_handles_thinking_budget_on() {
+        let body = "[inference]\nthinking_budget = \"on\"\n\nGenerate a response.\n";
+        let (_stripped, config) = parse_and_strip_inference_block(body);
+        assert_eq!(config.thinking_budget.as_deref(), Some("on"));
     }
 }

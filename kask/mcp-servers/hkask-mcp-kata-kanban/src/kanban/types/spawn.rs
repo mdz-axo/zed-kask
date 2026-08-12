@@ -51,7 +51,7 @@ impl SpawnSpec {
             delegation_level: "standard".into(),
             delegated_skills: vec!["kanban".into()],
             memory_scope: "episodic".into(),
-            tool_servers: vec!["hkask-mcp-kata-kanban".into()],
+            tool_servers: vec!["kata-kanban".into()],
             gas_budget: None,
             timeout_seconds: None,
             registries: Vec::new(),

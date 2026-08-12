@@ -1258,7 +1258,7 @@ mod tests {
     fn dispatchable_provenance() -> BlockProvenance {
         BlockProvenance {
             tool: Some("kanban_task_list".into()),
-            server: Some("hkask-mcp-kata-kanban".into()),
+            server: Some("kata-kanban".into()),
             args: serde_json::json!({ "board_id": "b1" }),
             span_id: None,
         }
@@ -1269,7 +1269,7 @@ mod tests {
         let provenance = dispatchable_provenance();
         let (server, tool, args) =
             build_move_dispatch_args(&provenance, "t1", "ready").expect("dispatchable");
-        assert_eq!(server, "hkask-mcp-kata-kanban");
+        assert_eq!(server, "kata-kanban");
         // The tool is the move tool, not the task-list tool that produced the
         // block — the move affordance invokes a different tool.
         assert_eq!(tool, "kanban_task_move");
@@ -1346,13 +1346,13 @@ mod tests {
         // the move args are built fresh from the card, so null args don't matter.
         let provenance = BlockProvenance {
             tool: Some("kanban_task_list".into()),
-            server: Some("hkask-mcp-kata-kanban".into()),
+            server: Some("kata-kanban".into()),
             args: serde_json::Value::Null,
             span_id: None,
         };
         let (server, tool, args) =
             build_move_dispatch_args(&provenance, "t1", "review").expect("dispatchable");
-        assert_eq!(server, "hkask-mcp-kata-kanban");
+        assert_eq!(server, "kata-kanban");
         assert_eq!(tool, "kanban_task_move");
         assert_eq!(args["task_id"], "t1");
         assert_eq!(args["target_status"], "review");
@@ -1549,7 +1549,7 @@ mod tests {
         let calls = recorded.lock().map(|c| c.clone()).unwrap_or_default();
         assert_eq!(calls.len(), 1, "exactly one kanban_task_move dispatch");
         let (server, tool, args) = calls.into_iter().next().expect("one call");
-        assert_eq!(server, "hkask-mcp-kata-kanban");
+        assert_eq!(server, "kata-kanban");
         assert_eq!(tool, "kanban_task_move");
         assert_eq!(args["task_id"], "t1");
         assert_eq!(args["target_status"], "ready");

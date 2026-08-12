@@ -3123,7 +3123,7 @@ mod tests {
         // `hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs`. Keep in sync when
         // adding/removing a server tool — a rename in the kanban server must be
         // reflected here so the steer prompt never advertises a stale name.
-        assert_eq!(KANBAN_SERVER, "hkask-mcp-kata-kanban");
+        assert_eq!(KANBAN_SERVER, "kata-kanban");
 
         // Pin the count so adding or removing a server tool without updating
         // the const is caught.

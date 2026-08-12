@@ -771,4 +771,54 @@ mod linux_tests {
         wrap.to_policy()
             .expect("uncapturable protected paths must be dropped, not fail the policy");
     }
+
+    /// `granted_write_path_to_location_or_log` drops a grant (returns `None`)
+    /// in both the ENOENT and non-ENOENT cases — fail-closed — but branches
+    /// the log level on `error.kind() == NotFound`: `info` for a stale grant
+    /// (not security-relevant), `warn` for anything else (possibly the
+    /// symlink-TOCTOU defense firing). This test pins the error-kind
+    /// distinction that drives that branch so a future swap is caught.
+    #[test]
+    fn grant_drop_error_kind_distinguishes_stale_from_security() {
+        // ENOENT: a non-existent absolute path fails with NotFound. The
+        // `or_log` variant logs this at `info` (stale settings, not a
+        // security event).
+        let missing = settings::GrantedWritePath::resolved(
+            PathBuf::from("/nonexistent/absolute/path/that/does/not/exist"),
+            PathBuf::from("/nonexistent/absolute/path/that/does/not/exist"),
+        );
+        let error = granted_write_path_to_location(&missing)
+            .err()
+            .expect("missing path should fail capture");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::NotFound,
+            "a removed directory must fail with NotFound (drives info-level log)"
+        );
+        assert!(
+            granted_write_path_to_location_or_log(&missing).is_none(),
+            "or_log variant must drop the grant (fail-closed)"
+        );
+
+        // Non-ENOENT: a relative path is rejected by `require_absolute` with
+        // `InvalidInput` — not `NotFound`, so the `or_log` variant logs this
+        // at `warn` (potentially security-relevant).
+        let relative = settings::GrantedWritePath {
+            requested: PathBuf::from("relative/path"),
+            resolved: None,
+            on_windows_fs: false,
+        };
+        let error = granted_write_path_to_location(&relative)
+            .err()
+            .expect("relative path should fail capture");
+        assert_ne!(
+            error.kind(),
+            std::io::ErrorKind::NotFound,
+            "a non-ENOENT error must not be NotFound (drives warn-level log)"
+        );
+        assert!(
+            granted_write_path_to_location_or_log(&relative).is_none(),
+            "or_log variant must drop the grant (fail-closed)"
+        );
+    }
 }
