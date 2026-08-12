@@ -1,5 +1,5 @@
 # MCP Document Knowledge — Document Extraction Manifest
-# ℏKask v0.33.7 - A Minimal Viable Container for UserPods
+# ℏKask v0.34.0 - A Minimal Viable Container for UserPods
 
 manifest:
   id: prompt-templates/doc_extract
@@ -9,7 +9,7 @@ manifest:
     Extract structured content from documents (PDF, DOCX, HTML, etc.).
     Supports custom extraction schemas and metadata capture.
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
 

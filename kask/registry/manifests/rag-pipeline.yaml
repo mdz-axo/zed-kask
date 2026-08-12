@@ -1,5 +1,5 @@
 # RAG Pipeline Manifest
-# ℏKask v0.33.7 — A Minimal Viable Container for UserPods
+# ℏKask v0.34.0 — A Minimal Viable Container for UserPods
 # Retrieval-Augmented Generation — query reformulation, multi-source retrieval, grounded synthesis, citation verification
 
 manifest:
@@ -11,7 +11,7 @@ manifest:
     retrieves from semantic memory and web sources, synthesizes a grounded
     answer with inline citations, and verifies citation fidelity.
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
 

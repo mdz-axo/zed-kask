@@ -11,7 +11,7 @@ manifest:
   name: Memory Remember
   description: Extracts episodic and semantic hMems from agent operations
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
 

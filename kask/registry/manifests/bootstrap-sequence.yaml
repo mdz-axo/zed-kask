@@ -1,5 +1,5 @@
 # Bootstrap Sequence — hKask System Initialization
-# ℏKask v0.33.7 - A Minimal Viable Container for UserPods
+# ℏKask v0.34.0 - A Minimal Viable Container for UserPods
 
 manifest:
   id: bootstrap-sequence
@@ -8,7 +8,7 @@ manifest:
   description: >
     Ordered system initialization with dependency resolution.
     Topological sort ensures no circular dependencies.
-  version: "0.33.7"
+  version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
 

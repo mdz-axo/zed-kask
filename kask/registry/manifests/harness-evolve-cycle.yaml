@@ -2,7 +2,7 @@ manifest:
   id: harness-evolve-cycle
   category: qa-script
   name: Harness Evolve Cycle
-  version: "0.33.7"
+  version: "0.34.0"
   # BROKEN since 009b04066a (2026-08-04): step 1 `command` references
   # `./scripts/test --trace`, but `kask/scripts/test` was deleted in that
   # commit. The cycle will fail at step 1 until `scripts/test` is rebuilt

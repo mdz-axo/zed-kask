@@ -1,5 +1,5 @@
 # Superforecasting Process Manifest
-# ℏKask v0.33.7 — Tetlock pipeline as convergent PDCA
+# ℏKask v0.34.0 — Tetlock pipeline as convergent PDCA
 # Inside view (stage 3) is split: hypothesis generation → falsifiability-hypothesize,
 # counterfactual necessary-conditions → falsifiability-counterfactual, probability
 # estimation + anchor adjustment → superforecasting/stage_3_probability_estimate.
@@ -16,7 +16,7 @@ manifest:
     update, synthesis, calibration, and forecast recording, then computes
     convergence for iterative refinement.
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
 

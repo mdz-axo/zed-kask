@@ -1,4 +1,4 @@
-# Alert Review — v0.33.7
+# Alert Review — v0.34.0
 #
 # Closes the cybernetic feedback loop for algedonic alerts:
 #   sense (CyberneticsLoop detects variety deficit / call-cap exhaustion /
@@ -30,7 +30,7 @@ manifest:
     with issue, severity, proposed action, and status for each pending
     alert. The report is presented to the user; further actions (resolve,
     dismiss, investigate) happen in the resulting chat with the Curator.
-  version: "0.33.7"
+  version: "0.34.0"
   editor: system
   visibility: Public
 

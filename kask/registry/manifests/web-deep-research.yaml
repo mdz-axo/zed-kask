@@ -1,5 +1,5 @@
 # Web Deep Research Manifest
-# ℏKask v0.33.7 - A Minimal Viable Container for UserPods
+# ℏKask v0.34.0 - A Minimal Viable Container for UserPods
 
 manifest:
   id: mcp/web-deep-research
@@ -9,7 +9,7 @@ manifest:
     Multi-phase research pipeline: compound search across all providers with RRF fusion,
     findSimilar expansion, content extraction, iteration on related questions, and synthesis.
     Use for comprehensive research requiring cross-referencing and depth.
-  version: "0.33.7"
+  version: "0.34.0"
   functional_role: flowdef
   editor: curator-or-human-admin
   visibility: Public

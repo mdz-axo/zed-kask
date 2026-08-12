@@ -1,5 +1,5 @@
 # Pragmatic Semantics Process Manifest
-# ℏKask v0.33.7 — Epistemic classification as convergent PDCA
+# ℏKask v0.34.0 — Epistemic classification as convergent PDCA
 # EXTENDED: Wired provenance-trace and conflict-resolve templates (previously orphaned).
 
 manifest:
@@ -12,7 +12,7 @@ manifest:
     and iterates until certainty/provenance classification is stable for decision
     support.
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
 

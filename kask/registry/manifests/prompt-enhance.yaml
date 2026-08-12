@@ -1,5 +1,5 @@
 # Prompt-Enhance Skill Manifest
-# hKask v0.33.7 — Streamlined typed prompt enhancement
+# hKask v0.34.0 — Streamlined typed prompt enhancement
 #
 # Reference model:
 #   Liu, Y.-Y., Zheng, Z., Zhang, F. et al. "A comprehensive taxonomy of
@@ -40,7 +40,7 @@ manifest:
     output. Default output is the enhanced prompt returned inline in a
     copyable code block; optional file save or both.
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
 

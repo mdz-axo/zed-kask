@@ -1,9 +1,9 @@
 # Template crate manifest for upstream-rebase skill
-# hKask v0.33.7
+# hKask v0.34.0
 
 crate:
   name: upstream-rebase
-  version: "0.33.7"
+  version: "0.34.0"
   description: >
     Manage upstream Zed rebases for zed-kask. Decides per-D-seam-file strategy
     (git merge vs. mapped re-application), executes the chosen strategy, pins

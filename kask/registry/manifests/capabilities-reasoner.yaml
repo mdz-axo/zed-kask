@@ -1,5 +1,5 @@
 # Capabilities Reasoner Process Manifest
-# ℏKask v0.33.7 — Capability reasoning as phased PDCA
+# ℏKask v0.34.0 — Capability reasoning as phased PDCA
 # Decomposed into: Register → Elicit → Evaluate → Reason → Report → Convergence
 #
 # Substrate ontology: the convergent insight — monotone capability sets bounded
@@ -51,7 +51,7 @@ manifest:
     authorization), and converges via metric-stability check (verdicts
     must survive metric change — the mirage paper's counterpoint).
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
 

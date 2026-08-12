@@ -1,5 +1,5 @@
 # Essentialist Process Manifest
-# ℏKask v0.33.7 — 3-gate elimination as convergent PDCA
+# ℏKask v0.34.0 — 3-gate elimination as convergent PDCA
 
 manifest:
   id: essentialist
@@ -10,7 +10,7 @@ manifest:
     computes convergence, and iterates until no material eliminations or
     contract violations remain.
   functional_role: flowdef
-  version: "0.33.7"  # synced with hKask release; SKILL.md lacks version field — should be added for traceability
+  version: "0.34.0"  # synced with hKask release; SKILL.md lacks version field — should be added for traceability
   editor: curator-or-human-admin
   visibility: Public
 

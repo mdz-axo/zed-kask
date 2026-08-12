@@ -1,5 +1,5 @@
 # UI Layout Discipline Process Manifest
-# hKask v0.33.7 — Measured layout discipline as phased PDCA
+# hKask v0.34.0 — Measured layout discipline as phased PDCA
 # Sense → Orient → Decide → Act → Review → Convergence
 #
 # The skill enforces a measurement-first discipline: no element is added
@@ -22,7 +22,7 @@ manifest:
     (long-label, narrow-container, localized-text, high-count probes).
     Emits reg.ui_layout.* spans. Any userpod may invoke this skill.
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
 

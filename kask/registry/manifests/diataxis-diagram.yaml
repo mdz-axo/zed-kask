@@ -1,5 +1,5 @@
 # Diataxis Diagram Process Manifest
-# hKask v0.33.7 — Convergent Mermaid diagram generation
+# hKask v0.34.0 — Convergent Mermaid diagram generation
 # Anchored in https://diataxis.fr/ methodology and https://mermaid.js.org/ syntax
 #
 # PDCA cycle:
@@ -25,7 +25,7 @@ manifest:
     sequence (from message flows), class (from traits/structs). Outputs to
     docs/diagrams/ with Diataxis-appropriate prose descriptions.
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
 

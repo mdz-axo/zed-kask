@@ -1,5 +1,5 @@
 # STT / TTS Voice Integration Pipeline Manifest
-# hKask v0.33.7 — Verified wiring: media server (audio.rs) + inference router + skills (caveman/ttbs)
+# hKask v0.34.0 — Verified wiring: media server (audio.rs) + inference router + skills (caveman/ttbs)
 # Design gap: REPL/chat coordinating loop (S1→S5) unimplemented — see architecture analysis.
 # Deepgram deferred; current backends = DeepInfra (STT_DEFAULT: DeepInfra/whisper-large-v3; TTS_DEFAULT: DeepInfra/hexgrad/Kokoro-82M). AtlasCloud handles video/image-to-image/upscale/audio.
 
@@ -11,7 +11,7 @@ manifest:
     Vertical pipeline: agent text → TTbS simplification (caveman/compression grammar) → VoiceDesign mapping → TTS (generate_speech).
     User speech → audio_capture → STT (transcribe/transcribe_bundle) → agent receives. Uses media server (audio.rs) + inference router (DeepInfra/AtlasCloud backends).
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.34.0"
   visibility: Public
 
 convergence:

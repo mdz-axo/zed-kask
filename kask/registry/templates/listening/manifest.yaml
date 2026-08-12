@@ -1,10 +1,10 @@
 # Template crate manifest for listening skill
-# hKask v0.33.7
+# hKask v0.34.0
 # Design: kask/docs/explanation/earnings-transcript-analysis-design.md §(b)
 
 crate:
   name: listening
-  version: "0.33.7"
+  version: "0.34.0"
   description: >
     Applies the MAIA v3 listening template to an earnings-call transcript.
     Extracts per-section verdicts with verbatim evidence quotes, classifies

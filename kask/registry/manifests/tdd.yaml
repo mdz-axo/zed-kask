@@ -1,5 +1,5 @@
 # TDD Process Manifest
-# ℏKask v0.33.7 — Contract-anchored TDD as convergent PDCA
+# ℏKask v0.34.0 — Contract-anchored TDD as convergent PDCA
 
 manifest:
   id: tdd
@@ -10,7 +10,7 @@ manifest:
     executes a tracer bullet, proposes refactors, verifies quality,
     checks requirement coverage, computes convergence, and iterates.
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
 

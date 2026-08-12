@@ -188,7 +188,7 @@ The `docs/diataxis/` set carries one diagram per artifact across 10 crates (`hka
 
 ---
 
-_ℏKask v0.33.7 — A Sovereign Chat Client for Human Users with AI Skills — Diagram Verification Registry_
+_ℏKask v0.34.0 — A Sovereign Chat Client for Human Users with AI Skills — Diagram Verification Registry_
 _Mermaid-First Mandate: Every interaction pattern, data flow, and object model is diagrammed._
 _2026-08-03: deleted-parent entries purged; new surviving diagrams + D18 widgets added; stale paths corrected._
 _2026-08-05: prediction-markets class diagram added (DIAG-RF-PM); swarm tool count 50→51 (pinned by `tool_surface_is_exactly_51_registered_tools`); phantom `SpendGate` struct removed from class-swarm-server; §13 rows for deleted plans (skill-signing, media-refactor, semantic-memory-wiki) removed; counts refreshed._

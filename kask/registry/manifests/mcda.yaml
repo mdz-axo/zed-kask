@@ -1,5 +1,5 @@
 # MCDA Process Manifest
-# ℏKask v0.33.7 — Multi-criteria analysis as convergent PDCA
+# ℏKask v0.34.0 — Multi-criteria analysis as convergent PDCA
 
 manifest:
   id: mcda
@@ -10,7 +10,7 @@ manifest:
     ranks options, runs sensitivity analysis, computes convergence, and iterates
     until decision robustness is stable.
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
 

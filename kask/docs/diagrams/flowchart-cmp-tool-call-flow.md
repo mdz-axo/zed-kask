@@ -2,7 +2,7 @@
 title: "CMP Tool Call Flow"
 audience: [developers, agents, operators]
 last_updated: 2026-08-07
-version: "0.33.7"
+version: "0.34.0"
 status: "Active"
 domain: "Bayesian-APT research"
 mds_categories: [domain, composition, curation]

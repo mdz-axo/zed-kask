@@ -1,5 +1,5 @@
 # Kanban Task Management Skill
-# ℏKask v0.33.7 — Agent coordination via kanban boards
+# ℏKask v0.34.0 — Agent coordination via kanban boards
 #
 # The ongoing management of the kanban board as agents work.
 # This is the "board operator" skill — it monitors board state,
@@ -17,7 +17,7 @@ manifest:
   id: kanban-task-management
   category: pipeline
   name: Kanban Task Management
-  version: "0.33.7"
+  version: "0.34.0"
   description: >
     Manage the kanban board as agents execute delegated tasks.
     Monitor board state, coordinate between agents through comment

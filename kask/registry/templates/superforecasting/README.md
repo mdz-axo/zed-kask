@@ -2,7 +2,7 @@
 
 **Location:** `registry/manifests/superforecasting.yaml`
 **Templates:** `registry/templates/superforecasting/`
-**Version:** 0.33.7
+**Version:** 0.34.0
 
 ## Overview
 
