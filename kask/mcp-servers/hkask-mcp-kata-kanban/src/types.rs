@@ -13,6 +13,15 @@ use serde::{Deserialize, Serialize};
 pub struct BoardCreateRequest {
     pub name: String,
     pub columns: Option<Vec<ColumnDefInput>>,
+    /// Opaque client-generated key making this create replay-safe.
+    ///
+    /// A caller that retries after a lost connection sends the *same* key, and
+    /// the server returns the original response instead of creating a second
+    /// board. Optional and `#[serde(default)]` so existing callers are
+    /// unaffected — they simply get no replay protection. See
+    /// `crate::idempotency`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -78,6 +87,10 @@ pub struct TaskCreateRequest {
     pub title: String,
     pub description: Option<String>,
     pub criteria: Option<Vec<String>>,
+    /// Opaque client-generated key making this create replay-safe. See
+    /// [`BoardCreateRequest::idempotency_key`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
 
     /// Gas/rJoule budget for the subagent working on this task.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -360,6 +373,13 @@ pub struct TaskKataResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaskSpawnRequest {
     pub task_id: String,
+    /// Opaque client-generated key making this spawn replay-safe.
+    ///
+    /// Load-bearing here beyond duplicate rows: a spawn burns gas and starts a
+    /// subagent, so a blind retry costs real budget. See
+    /// [`BoardCreateRequest::idempotency_key`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
     /// Delegation level: "minimal", "standard", or "maximal".
     pub delegation_level: String,
     /// Skills to delegate (e.g. ["bug-hunt", "tdd"]).

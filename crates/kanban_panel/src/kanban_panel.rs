@@ -93,6 +93,54 @@ enum RefreshTarget {
     Tasks,
 }
 
+/// Tools that accept an `idempotency_key` and therefore absorb a replay
+/// server-side.
+///
+/// These are exactly the kanban tools that mint a fresh server-side identity, so
+/// a duplicate call would create a second row or burn a second spawn. Every other
+/// mutation is already idempotent by construction (`task_update` converges;
+/// `task_delete` of a deleted task is a no-op), so it needs no key.
+///
+/// Keep in sync with the `with_idempotency` wiring in
+/// `hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs`. A tool listed here that
+/// the server does not protect would make an interrupted call *look* replay-safe
+/// while actually duplicating — `idempotent_tools_are_creates_or_spawns` pins the
+/// list shape against that drift.
+const IDEMPOTENT_TOOLS: &[&str] = &[TASK_CREATE_TOOL, BOARD_CREATE_TOOL, TASK_SPAWN_TOOL];
+
+/// Whether `tool` absorbs a replayed call server-side.
+fn is_idempotent_tool(tool: &str) -> bool {
+    IDEMPOTENT_TOOLS.contains(&tool)
+}
+
+/// Attach a fresh `idempotency_key` to `args` for a replay-safe tool.
+///
+/// Called once per operator gesture, *before* the retry loop, so all attempts
+/// share one key. A non-object `args` is a programming error rather than an
+/// operator-visible condition, but it is reported instead of silently dropping
+/// the key — a silently missing key would leave the retry path believing it was
+/// protected when it was not.
+fn attach_idempotency_key(
+    tool: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    if !is_idempotent_tool(tool) {
+        return Ok(args);
+    }
+    let mut args = args;
+    let Some(object) = args.as_object_mut() else {
+        return Err(format!(
+            "internal error: {tool} arguments must be a JSON object to carry an \
+             idempotency key"
+        ));
+    };
+    object.insert(
+        "idempotency_key".to_string(),
+        serde_json::Value::String(uuid::Uuid::new_v4().to_string()),
+    );
+    Ok(args)
+}
+
 /// First retry delay for a state-changing tool call whose request never left.
 /// Doubles per attempt (250ms, 500ms, 1s).
 const MUTATION_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
@@ -640,13 +688,20 @@ impl KanbanPanel {
     ///
     /// # Retry safety
     ///
-    /// Only [`InvokeError::Unavailable`] (and `NotWired`) is retried — those mean
-    /// the request never left. [`InvokeError::Interrupted`] is **never** retried:
-    /// the request reached the server and the connection dropped before the
-    /// response, so the mutation may already have applied. Retrying would risk a
-    /// second task, a second board, a second spawn. In that case the panel
-    /// refreshes and tells the operator the outcome is unknown, which is the only
-    /// honest thing it can do without idempotency keys on the server side.
+    /// [`InvokeError::Unavailable`] (and `NotWired`) is always retried — the
+    /// request provably never left, so nothing can have been applied twice.
+    ///
+    /// [`InvokeError::Interrupted`] means the request reached the server and the
+    /// connection dropped before the response, so the outcome is unknown. Whether
+    /// that is retryable depends on the *server*, not the client:
+    ///
+    /// - Tools listed in [`IDEMPOTENT_TOOLS`] accept an `idempotency_key`. The key
+    ///   is generated once per operator gesture and reused across attempts, so a
+    ///   replay is absorbed server-side and returns the original result. These are
+    ///   retried.
+    /// - Everything else is not retried: a blind retry could create a second task
+    ///   or charge a second spawn. The panel refreshes and reports that the
+    ///   outcome is unknown so the operator can see the true state.
     ///
     /// `label` names the operation in operator-facing messages (e.g. "create
     /// task"). `refresh` selects which list to re-read on completion — board
@@ -687,6 +742,19 @@ impl KanbanPanel {
         };
         cx.notify();
 
+        // One key per operator gesture, generated before the retry loop so every
+        // attempt carries the SAME key. Generating it per attempt would defeat the
+        // purpose entirely — the server would see each retry as new work.
+        let args = match attach_idempotency_key(tool, args) {
+            Ok(args) => args,
+            Err(error) => {
+                self.error = Some(format!("Could not {label}: {error}").into());
+                cx.notify();
+                return;
+            }
+        };
+        let replay_safe = is_idempotent_tool(tool);
+
         cx.spawn(async move |this, cx| {
             let mut attempt: u32 = 0;
             loop {
@@ -708,7 +776,10 @@ impl KanbanPanel {
                         .log_err();
                         return;
                     }
-                    Err(error) if error.is_retryable() => {
+                    // An interrupted call on a replay-safe tool is retryable: the
+                    // shared idempotency key means the server absorbs the replay
+                    // and returns the original result rather than repeating work.
+                    Err(error) if error.is_retryable() || (replay_safe && error.is_outcome_unknown()) => {
                         let Some(delay) = mutation_retry_delay(attempt) else {
                             this.update(cx, |this, cx| {
                                 this.error = Some(
@@ -1856,13 +1927,143 @@ impl SerializableItem for KanbanPanel {
 #[cfg(test)]
 mod tests {
     use super::{
-        ADVERTISED_KANBAN_TOOLS, MAX_MUTATION_RETRIES, RefreshTarget, mutation_retry_delay,
+        ADVERTISED_KANBAN_TOOLS, BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, IDEMPOTENT_TOOLS,
+        MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL, TASK_DELETE_TOOL, TASK_SPAWN_TOOL,
+        TASK_UPDATE_TOOL, attach_idempotency_key, is_idempotent_tool, mutation_retry_delay,
         refresh_target, steer_system_prompt,
     };
     use hkask_tool_invoker::InvokeError;
     use std::time::Duration;
 
-    // ── Mutation retry policy ─────────────────────────────────────────────
+    // ── Idempotency keys ────────────────────────────────────────────────────
+    //
+    // A key makes an interrupted create safe to retry: the server absorbs the
+    // replay and returns the original result. The key must be per *gesture*, not
+    // per attempt, or every retry looks like new work and the protection is
+    // worthless.
+
+    /// Only the three tools that mint a fresh server-side identity carry keys.
+    ///
+    /// Guards against drift in both directions. Adding a tool here that the
+    /// server does not protect would make an interrupted call *look* replay-safe
+    /// while actually duplicating — the exact bug the keys exist to prevent.
+    #[test]
+    fn idempotent_tools_are_exactly_the_identity_minting_creates() {
+        assert!(is_idempotent_tool(TASK_CREATE_TOOL));
+        assert!(is_idempotent_tool(BOARD_CREATE_TOOL));
+        assert!(is_idempotent_tool(TASK_SPAWN_TOOL));
+        assert_eq!(
+            IDEMPOTENT_TOOLS.len(),
+            3,
+            "the protected set must match the server's `with_idempotency` wiring; \
+             adding one here without wiring the server would make an interrupted \
+             call look replay-safe while actually duplicating"
+        );
+    }
+
+    /// Already-idempotent mutations carry no key.
+    ///
+    /// They converge on the same state (`task_update`) or are no-ops when
+    /// repeated (`task_delete`), so a key would be dead weight suggesting a
+    /// guarantee the server was never asked for.
+    #[test]
+    fn convergent_mutations_do_not_carry_keys() {
+        for tool in [TASK_UPDATE_TOOL, TASK_DELETE_TOOL, BOARD_DELETE_TOOL] {
+            assert!(
+                !is_idempotent_tool(tool),
+                "{tool} is already idempotent by construction and needs no key"
+            );
+        }
+    }
+
+    /// A protected tool gets a key; an unprotected one is left untouched.
+    #[test]
+    fn key_is_attached_only_for_protected_tools() {
+        let protected =
+            attach_idempotency_key(TASK_CREATE_TOOL, serde_json::json!({ "title": "x" }))
+                .expect("object args accept a key");
+        let key = protected
+            .get("idempotency_key")
+            .and_then(|k| k.as_str())
+            .expect("a protected create must carry a key");
+        assert!(!key.trim().is_empty(), "the key must be non-empty");
+        // Original arguments survive.
+        assert_eq!(protected.get("title").and_then(|t| t.as_str()), Some("x"));
+
+        let unprotected =
+            attach_idempotency_key(TASK_UPDATE_TOOL, serde_json::json!({ "task_id": "t" }))
+                .expect("pass-through");
+        assert!(
+            unprotected.get("idempotency_key").is_none(),
+            "an unprotected tool must not be sent a key the server ignores"
+        );
+    }
+
+    /// Each gesture gets a distinct key.
+    ///
+    /// Two separate operator gestures must not collide, or the second would be
+    /// silently absorbed as a replay of the first and the operator's work would
+    /// vanish.
+    #[test]
+    fn separate_gestures_get_distinct_keys() {
+        let first = attach_idempotency_key(TASK_CREATE_TOOL, serde_json::json!({})).unwrap();
+        let second = attach_idempotency_key(TASK_CREATE_TOOL, serde_json::json!({})).unwrap();
+        assert_ne!(
+            first.get("idempotency_key"),
+            second.get("idempotency_key"),
+            "distinct gestures must get distinct keys, or the second would be \
+             absorbed as a replay of the first"
+        );
+    }
+
+    /// Non-object args are reported, not silently unprotected.
+    ///
+    /// Dropping the key silently would leave the retry path believing a call was
+    /// replay-protected when it was not — the worst of both behaviors.
+    #[test]
+    fn non_object_args_are_reported_rather_than_silently_unprotected() {
+        let outcome = attach_idempotency_key(TASK_CREATE_TOOL, serde_json::json!("not-an-object"));
+        assert!(
+            outcome.is_err(),
+            "a key that cannot be attached must surface, not vanish"
+        );
+    }
+
+    /// An interrupted call is retryable only for the protected tools.
+    ///
+    /// This is the composition the dispatch loop relies on: `is_retryable()`
+    /// stays false for `Interrupted` (it is unsafe in general), and the panel
+    /// widens it only where a server-side key makes the replay safe.
+    #[test]
+    fn interrupted_is_retryable_only_for_replay_safe_tools() {
+        // Mirrors the guard in `dispatch_mutation`'s retry arm. Kept as one
+        // expression so the test fails if either half of the condition drifts,
+        // rather than asserting each half in isolation (where
+        // `A && B` / `!A || B` shapes can be trivially true).
+        let should_retry =
+            |error: &InvokeError, tool: &str| error.is_retryable() || (is_idempotent_tool(tool) && error.is_outcome_unknown());
+
+        let interrupted = InvokeError::Interrupted("connection reset".into());
+        assert!(
+            !interrupted.is_retryable(),
+            "the transport-level verdict must stay conservative on its own"
+        );
+        assert!(
+            should_retry(&interrupted, TASK_CREATE_TOOL),
+            "an interrupted create IS retryable: the shared key makes the server \
+             absorb the replay"
+        );
+        assert!(
+            !should_retry(&interrupted, TASK_UPDATE_TOOL),
+            "an interrupted call on an unprotected tool must NOT be retried"
+        );
+        // A clean failure is never retried, protected or not.
+        let failed = InvokeError::Failed("rejected".into());
+        assert!(!should_retry(&failed, TASK_CREATE_TOOL));
+        assert!(!should_retry(&failed, TASK_UPDATE_TOOL));
+    }
+
+    // ── Mutation retry policy ─────────────────────────────────────────
     //
     // Every mutation used to surface one transport failure as terminal, so a
     // routine MCP server restart read as "Failed to create task" even though

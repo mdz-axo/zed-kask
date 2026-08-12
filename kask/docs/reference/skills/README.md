@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 | Surface                                               | Count  | Notes                                                                                        |
 | ----------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------- |
 | FlowDef manifests (`kask/registry/manifests/*.yaml`)  | **63** | All `category: skill` — **1:1 with SKILL.md dirs**                                           |
-| Template crates (`kask/registry/templates/*/`)        | **89** | Includes non-skill crates (`shared`, `process`, `kanban-task-*`, `docproc`, `replica`, etc.) |
+| Template crates (`kask/registry/templates/*/`)        | **66** | Includes crates consumed from Rust rather than a manifest (`docproc`, `training`, `heal`)    |
 | SKILL.md directories (`.agents/skills/*/`, repo root) | **63** | Every directory contains a `SKILL.md`                                                        |
 
 **Category rule:** only `category: skill` manifests exist in
@@ -66,7 +66,9 @@ Reconciliation notes:
 
 - **`skill-router`** — has a template crate (`kask/registry/templates/skill-router/`) but **no** FlowDef manifest and **no** SKILL.md directory. It is a stateless `KnowAct` matching service (template-only, not a PDCA loop): route tasks to installed skills with ranked fit-scored recommendations plus uncovered capability gap signals. Invoked by the orchestrator and by process-skill templates; cannot bind as `process_manifest`.
 - **`swarm-compose-guide`** has no dedicated template crate — its manifest reuses templates from another crate. No `.agents/skills/` directory is orphaned.
-- **Orphaned template crates:** deleting the 41 infrastructure manifests left several template crates without a manifest consumer (e.g. `composition/`, `prompt-defense/`, `rag/`, `rca/`, `replica/`, `skill-translator/`, `prompt-templates/`). These were **not** deleted in the same pass because some are still referenced from Rust (`docproc`, `memory`, `web`) and the shared-vs-orphan split needs per-crate verification. Tracked as follow-up.
+- **Orphaned template crates were removed (2026-08-12).** Deleting the 41 infrastructure manifests orphaned 23 template crates, since each was reachable only from a now-deleted manifest: `chat-template`, `composition`, `curator`, `git`, `gml`, `inference`, `knowact`, `memory`, `process`, `prompt-defense`, `prompt-templates`, `rag`, `rca`, `reasoning`, `registry`, `regulation`, `replica`, `shared`, `skill-translator`, `ttbs`, `voice`, `web`, `wordact` (536K). Verified per-crate: zero `template_ref` from the 63 surviving manifests, zero non-`build.rs` Rust references, zero cross-crate Jinja `include`/`from`. `build.rs` embeds `registry/templates/` **by directory glob**, so anything left here ships inside the binary whether or not it is reachable — a glob is not a consumer.
+- **Name mismatch is the trap when auditing this tree.** A crate's directory name is not its reference name: `logo-builder/`'s manifest holds no templates of its own and catalogs `media/*` via `path: ../media/…`, so `logo-builder` looks orphaned by name while both crates are live. Always resolve the actual `template_ref` values.
+- **`heal/` was kept** despite having no runtime consumer: security regression `RR-0037` (`status: enforced`) greps `registry/templates/heal` for `RunCommand|SetEnv` via `check-kali-regressions.sh`. The gate fails on a *match*, so an absent directory passes silently — deleting the crate would retire the regression by accident rather than by decision. Retire `RR-0037` first if `heal/` should go.
 
 ---
 

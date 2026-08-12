@@ -11132,6 +11132,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ui",
+ "uuid",
  "workspace",
 ]
 

@@ -13,7 +13,12 @@ no-default-features = false
 [advisories]
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained but has no safe upgrade; transitive via pulp (← exr ← image ← gpui/hkask-media-widget) and simba (← nalgebra ← manatee git pin). The former utoipa-axum chain is gone. Reviewed 2026-08-04 — re-review 2026-11-04." },
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is unmaintained; transitive dep of stacksafe-macro (← stacksafe ← gpui/markdown, upstream Zed). The former aquamarine chain was removed (hkask-communication deleted; aquamarine no longer in Cargo.lock). No safe upgrade. Reviewed 2026-08-06 — re-review 2026-10-22."" },
+    # RUSTSEC-2026-0173 (proc-macro-error2) removed 2026-08-12: cargo-deny reports
+    # `advisory-not-detected` and proc-macro-error2 is absent from Cargo.lock
+    # (`grep -c 'name = "proc-macro-error2"' Cargo.lock` -> 0). The stacksafe-macro
+    # chain it cited no longer pulls it. This was also the line whose doubled quote
+    # made the whole config unparseable, so the dead entry was load-bearing for a
+    # total policy outage. Re-add only if the advisory is actually detected again.
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained but has no safe upgrade; required transitively by current lopdf and imageproc for PDF/font processing. Reviewed 2026-07-22 — re-review 2026-10-22." },
     # Upstream-Zed transitive advisories (verified 2026-08-04: every reverse-dep
     # chain terminates in an upstream Zed crate — rpc, language_models, gpui, agent,
@@ -26,19 +31,52 @@ ignore = [
     { id = "RUSTSEC-2025-0052", reason = "async-std discontinued; transitive via runtimelib (upstream). Not kask-introduced." },
     { id = "RUSTSEC-2025-0141", reason = "bincode 1.x unmaintained; transitive via upstream zed crate. Not kask-introduced." },
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; transitive via rustls 0.21 (upstream aws-smithy chain). Not kask-introduced." },
-    { id = "RUSTSEC-2026-0058", reason = "quick-xml 0.30 quadratic duplicate-attr check; build-dep of xcb/zed-scap (upstream git pin). Not kask-introduced." },
-    { id = "RUSTSEC-2026-0098", reason = "quick-xml 0.38 quadratic duplicate-attr check; transitive via upstream crates/agent. Not kask-introduced." },
-    { id = "RUSTSEC-2026-0099", reason = "quick-xml unbounded namespace allocation DoS; same chains as 2026-0058/0098. Not kask-introduced." },
+    # NOTE (2026-08-12, kali-audit pass 7): the reason strings on these six were
+    # mutually swapped — the quick-xml IDs carried rustls-webpki text and vice
+    # versa — so a reviewer re-reviewing "the rustls-webpki block" would never
+    # learn that sub-0.41 quick-xml is still in the tree. Corrected against
+    # ~/.cargo/advisory-db (`package =` field of each advisory).
+    { id = "RUSTSEC-2026-0058", reason = "tokio-io unmaintained (advisory-db: package = tokio-io); transitive via futures-util (upstream). Not kask-introduced." },
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki wildcard name constraints; rustls-webpki 0.101.7 via rustls 0.21 (upstream aws-smithy chain). Patched >=0.103.12. Not kask-introduced." },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki CRL parsing panic; same 0.101.7 chain as 2026-0098. Patched >=0.103.12. Not kask-introduced." },
     { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101 URI name constraints; transitive via rustls 0.21 (upstream aws-smithy chain). Not kask-introduced." },
-    { id = "RUSTSEC-2026-0194", reason = "rustls-webpki wildcard name constraints; same chain as 2026-0104. Not kask-introduced." },
-    { id = "RUSTSEC-2026-0195", reason = "rustls-webpki CRL parsing panic; same chain as 2026-0104. Not kask-introduced." },
+    # quick-xml DoS pair (patched >= 0.41.0). The kask-owned XLSX path (corpus via
+    # calamine 0.36 -> quick-xml 0.41.0) IS patched — see RR-0021. These ignores
+    # cover the four sub-0.41 copies that remain transitively: 0.39.3 (zbus_xml <-
+    # atspi <- accesskit_unix <- gpui_linux), 0.38.3 (agent + mermaid_render
+    # dev-deps), 0.37.5 (wayland-scanner), 0.30.0 (xcb build-dep). The 0.39.3 copy
+    # is reachable from the Linux GUI path, not only dev-deps — re-check when
+    # upstream accesskit/zbus bump. Re-review 2026-11-04.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml quadratic duplicate-attribute check (advisory-db: package = quick-xml, patched >= 0.41.0); four sub-0.41 copies remain transitively via upstream chains. kask corpus path is on 0.41.0. Not kask-introduced." },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml unbounded namespace-declaration allocation in NsReader (advisory-db: package = quick-xml, patched >= 0.41.0); same four transitive copies as 2026-0194. kask corpus path is on 0.41.0. Not kask-introduced." },
     { id = "RUSTSEC-2026-0196", reason = "cgmath unmaintained; transitive via upstream mermaid_render dev-dep. Not kask-introduced." },
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz unmaintained; transitive via resvg/gpui (upstream). Not kask-introduced." },
+    # Surfaced 2026-08-12 once the config parse error on line 16 was fixed — the
+    # doubled quote had made cargo-deny abort before reading ANY rule, so this
+    # whole file was inert and these eight were invisible. Every chain below was
+    # verified with `cargo tree -i` to terminate in an upstream Zed crate; none is
+    # kask-introduced. Six have a patched release available upstream — these are
+    # ignores pending an upstream bump, NOT accepted risk. Re-review 2026-11-04.
+    { id = "RUSTSEC-2026-0190", reason = "anyhow 1.0.102 Error::downcast_mut unsoundness; workspace-wide dep of upstream Zed crates. Patched >=1.0.103 — drop this ignore when the workspace bumps anyhow. Not kask-introduced." },
+    { id = "RUSTSEC-2026-0204", reason = "crossbeam-epoch 0.9.18 invalid pointer dereference in fmt::Pointer; transitive via crossbeam (upstream crates/audio), crossbeam-deque (rayon/ignore) and moka. Patched >=0.9.20. Not kask-introduced." },
+    { id = "RUSTSEC-2026-0222", reason = "wasmtime 36.0.12 store type-index mix-up; transitive via upstream extension_host (Zed extension WASM host). Patched >=36.0.13. Not kask-introduced — kask ships no WASM extensions." },
+    { id = "RUSTSEC-2026-0256", reason = "circular-buffer 1.2.0 panic-safety unsoundness (UAF/double-free); DEV-dependency of upstream crates/project only — not in the shipped graph (`cargo tree -i circular-buffer` shows [dev-dependencies]). Patched >=2.0.1. Not kask-introduced." },
+    { id = "RUSTSEC-2026-0253", reason = "lru 0.16.4 potential use-after-free in LruCache::pop; DEV-dependency of upstream crates/agent_ui only — not in the shipped graph. Patched >=0.18.2. Not kask-introduced." },
+    { id = "RUSTSEC-2026-0193", reason = "ammonia 4.1.2 mXSS via MathML annotation-xml; docs tooling only (mdbook chain, all-features=true surfaces it) — not in the shipped binary, and kask renders no untrusted HTML through ammonia. Patched >=4.1.3. Not kask-introduced." },
+    { id = "RUSTSEC-2026-0213", reason = "ammonia 4.1.2 XSS via SVG animate/set tags; same docs-tooling chain as 2026-0193. Patched >=4.1.4. Not kask-introduced." },
+    { id = "RUSTSEC-2025-0057", reason = "fxhash unmaintained with no safe upgrade; transitive via upstream tooling (surfaced only under all-features=true; absent from the normal dep graph). Not kask-introduced." },
 ]
 
 [licenses]
 # face_id and nom-exif lack Cargo.toml license fields but are functionally
 # permissive (face_id: BSD-style, nom-exif: MIT — verified via repo LICENSE files).
+#
+# `private.ignore` (below) excludes THIS workspace's own crates from the license
+# check. Without it the run produced 222 `rejected` errors of which 210 were the
+# repo's own `GPL-3.0-or-later` crates (acp_thread, action_log, xtask, ...) — the
+# allowlist below is a policy for THIRD-PARTY code, and zed-kask is itself GPL,
+# so checking our own crates against it is a category error that drowned the 4
+# genuine third-party rejections in noise.
 allow = [
     "MIT",
     "MIT-0",
@@ -60,7 +98,21 @@ allow = [
 confidence-threshold = 0.8
 exceptions = [
     { crate = "ring", allow = ["ISC", "MIT", "OpenSSL"] },
+    # Genuine third-party licenses outside the allowlist, reviewed 2026-08-12.
+    # WTFPL is a public-domain-equivalent permissive license; bzip2-1.0.6 is the
+    # BSD-style zlib/libbz2 license. All three are build/runtime deps of the
+    # upstream video path and the compression stack, not kask-introduced.
+    { crate = "ffmpeg-next", allow = ["WTFPL"] },
+    { crate = "ffmpeg-sys-next", allow = ["WTFPL"] },
+    { crate = "libbz2-rs-sys", allow = ["bzip2-1.0.6"] },
+    # nvim-rs is LGPL-3.0 and reached only through the upstream `vim` crate's git
+    # pin. LGPL linking obligations apply to it, not to kask code.
+    { crate = "nvim-rs", allow = ["LGPL-3.0"] },
 ]
+
+[licenses.private]
+# Do not apply the third-party allowlist to this workspace's own GPL crates.
+ignore = true
 
 [[licenses.clarify]]
 crate = "ring"
@@ -80,4 +132,53 @@ deny = [
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-git = []
+# Enumerated 2026-08-12. `allow-git = []` with 25 declared git dependencies meant
+# `check sources` emitted 74 `source-not-allowed` errors and could never pass — a
+# gate guaranteed to be red is a gate nobody runs. Every host below is an
+# upstream-Zed git dependency pinned to an immutable 40-hex `rev` in the root
+# Cargo.toml, except the two weaknesses noted below.
+#
+# The kask subtree declares ZERO git dependencies — all 32 kask manifests are
+# registry- or path-sourced. Adding a git dep under kask/ is a supply-chain
+# decision, not a routine change.
+#
+# Known pin weaknesses, tracked rather than silently allowed:
+#   - crates/mermaid_render: merman uses a MUTABLE `tag = "v0.7.0-with-patches"`,
+#     force-movable upstream; only Cargo.lock prevents drift. Prefer a `rev`.
+#   - crates/etw_tracing: wprcontrol uses an abbreviated 7-char `rev = "cd811f7"`;
+#     prefer the full 40-hex SHA (Cargo.lock resolves it to
+#     cd811f7d744f65291e13131b1d907fda63ed91a1).
+allow-git = [
+    "https://github.com/camdencheek/tree-sitter-go-mod",
+    "https://github.com/KillTheMule/nvim-rs",
+    "https://github.com/microsoft/python-environment-tools",
+    "https://github.com/proptest-rs/proptest",
+    "https://github.com/RustAudio/rodio",
+    "https://github.com/smol-rs/async-task",
+    "https://github.com/tree-sitter/tree-sitter-cpp",
+    "https://github.com/zed-industries/alacritty",
+    "https://github.com/zed-industries/async-pipe-rs",
+    "https://github.com/zed-industries/async-process",
+    "https://github.com/zed-industries/calloop",
+    "https://github.com/zed-industries/dap-types",
+    "https://github.com/zed-industries/font-kit",
+    "https://github.com/zed-industries/gh-workflow",
+    "https://github.com/zed-industries/livekit-rust-sdks",
+    "https://github.com/zed-industries/lsp-types",
+    "https://github.com/zed-industries/merman",
+    "https://github.com/zed-industries/notify",
+    "https://github.com/zed-industries/reqwest",
+    "https://github.com/zed-industries/scap",
+    "https://github.com/zed-industries/trash-rs",
+    "https://github.com/zed-industries/tree-sitter-git-commit",
+    "https://github.com/zed-industries/tree-sitter-go-work",
+    "https://github.com/zed-industries/tree-sitter-heex",
+    "https://github.com/zed-industries/tree-sitter-markdown",
+    "https://github.com/zed-industries/tree-sitter-typescript",
+    "https://github.com/zed-industries/tree-sitter-yaml",
+    "https://github.com/zed-industries/wasm_thread",
+    "https://github.com/zed-industries/windows-capture",
+    "https://github.com/zed-industries/wprcontrol",
+    "https://github.com/zed-industries/xim-rs",
+    "https://github.com/zed-industries/yawc",
+]

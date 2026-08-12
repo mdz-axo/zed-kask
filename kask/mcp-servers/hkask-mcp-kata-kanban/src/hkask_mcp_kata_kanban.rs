@@ -8,6 +8,7 @@
 //! The KanbanServer struct and tool methods are exported from the library
 //! target to enable fuzz testing (P5 Testing Discipline, P4 Clear Boundaries).
 
+pub mod idempotency;
 pub mod kanban;
 pub mod kata;
 pub mod pko;
@@ -56,8 +57,106 @@ hkask_mcp_server::mcp_server!(
         /// unavailable (no IPC socket, no active workspace), falls back to
         /// in-memory spawn.
         pub worktree_spawn_port: Arc<dyn hkask_types::WorktreeSpawnPort>,
+        /// Replay protection for the three tools a duplicate call would harm
+        /// (`kanban_board_create`, `kanban_task_create`, `kanban_task_spawn`).
+        /// Shares the kanban database, so protection has the same durability as
+        /// the writes it guards. See `crate::idempotency`.
+        pub idempotency: Arc<idempotency::IdempotencyStore>,
     }
 );
+
+/// Run `work` under replay protection when the caller supplied a key.
+///
+/// Without a key this is a plain pass-through, so the three protected tools keep
+/// working for callers that do not opt in.
+///
+/// With a key, the three outcomes map to what the client can safely do:
+/// - first call → run the work, record the response for later replays;
+/// - replay of a completed call → return the original response verbatim, marked
+///   `replayed: true`, without re-running;
+/// - replay of a call that never completed → refuse, because whether the work
+///   landed is exactly what is unknown. Re-running could duplicate it and
+///   claiming success could invent a result.
+///
+/// A failed call releases the claim so a retry starts clean rather than
+/// inheriting an "outcome unknown" verdict for work that demonstrably did not
+/// happen.
+async fn with_idempotency<F>(
+    store: &idempotency::IdempotencyStore,
+    tool: &'static str,
+    key: Option<&str>,
+    work: F,
+) -> Result<serde_json::Value, McpToolError>
+where
+    F: std::future::Future<Output = Result<serde_json::Value, McpToolError>>,
+{
+    let Some(key) = key else {
+        return work.await;
+    };
+    idempotency::IdempotencyStore::validate_key(key).map_err(McpToolError::invalid_argument)?;
+
+    // Fail closed: if the claim cannot be recorded, the caller asked for replay
+    // protection and must not be handed a call that silently lacks it.
+    let reservation = store.reserve(tool, key).map_err(|error| {
+        McpToolError::unavailable(format!(
+            "replay-protection store unavailable, refusing to run {tool} unprotected: {error}"
+        ))
+    })?;
+
+    match reservation {
+        idempotency::Reservation::Replay { response } => {
+            // Return the first call's result. `replayed` lets a caller
+            // distinguish "your retry was absorbed" from "this ran now".
+            let mut value: serde_json::Value = serde_json::from_str(&response).map_err(|e| {
+                McpToolError::internal(format!("stored idempotent response is not JSON: {e}"))
+            })?;
+            if let Some(object) = value.as_object_mut() {
+                object.insert("replayed".to_string(), serde_json::Value::Bool(true));
+            }
+            Ok(value)
+        }
+        idempotency::Reservation::Pending => Err(McpToolError::unavailable(format!(
+            "a previous {tool} call with this idempotency_key did not complete — its \
+             outcome is unknown. Re-read the board to see whether it took effect; do not \
+             reuse this key."
+        ))),
+        idempotency::Reservation::Fresh => match work.await {
+            Ok(mut value) => {
+                // Tell the caller when the guarantee is only process-local, so a
+                // restart-crossing retry is not wrongly believed to be protected.
+                if !store.is_durable()
+                    && let Some(object) = value.as_object_mut()
+                {
+                    object.insert(
+                        "idempotency_durable".to_string(),
+                        serde_json::Value::Bool(false),
+                    );
+                }
+                match serde_json::to_string(&value) {
+                    Ok(response) => store.record(tool, key, &response),
+                    Err(error) => {
+                        // The work succeeded; only bookkeeping failed. Release so a
+                        // retry re-runs rather than being told "outcome unknown".
+                        tracing::warn!(
+                            target: "hkask.mcp.kata_kanban",
+                            tool = %tool,
+                            %error,
+                            "could not serialize response for replay protection - \
+                             releasing the claim"
+                        );
+                        store.release(tool, key);
+                    }
+                }
+                Ok(value)
+            }
+            Err(error) => {
+                // Clean failure: nothing landed, so free the key for a retry.
+                store.release(tool, key);
+                Err(error)
+            }
+        },
+    }
+}
 
 /// Build a task-specific local agent card for `kanban_task_spawn` when no
 /// reusable expert agent covers the requested skills. The agent runs in-memory
@@ -132,13 +231,21 @@ impl KanbanServer {
     #[tool(description = "Create a new kanban board with optional custom columns")]
     pub async fn kanban_board_create(
         &self,
-        Parameters(BoardCreateRequest { name, columns }): Parameters<BoardCreateRequest>,
+        Parameters(BoardCreateRequest {
+            name,
+            columns,
+            idempotency_key,
+        }): Parameters<BoardCreateRequest>,
     ) -> String {
         execute_tool_semantic(
             self,
             "kanban_board_create",
             kanban_type_to_pko("kanban_board_create"),
-            async {
+            with_idempotency(
+                &self.idempotency,
+                "kanban_board_create",
+                idempotency_key.as_deref(),
+                async {
                 let column_defs = match columns {
                     Some(inputs) => inputs
                         .into_iter()
@@ -181,7 +288,8 @@ impl KanbanServer {
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
-            },
+                },
+            ),
         )
         .await
     }
@@ -279,6 +387,7 @@ impl KanbanServer {
             title,
             description,
             criteria,
+            idempotency_key,
             gas_budget,
             rjoule_budget,
         }): Parameters<TaskCreateRequest>,
@@ -287,7 +396,11 @@ impl KanbanServer {
             self,
             "kanban_task_create",
             kanban_type_to_pko("kanban_task_create"),
-            async {
+            with_idempotency(
+                &self.idempotency,
+                "kanban_task_create",
+                idempotency_key.as_deref(),
+                async {
                 let bid = parse_board_id(&board_id)?;
                 let mut spec = TaskSpec::new(title);
                 if let Some(d) = description {
@@ -315,7 +428,8 @@ impl KanbanServer {
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
-            },
+                },
+            ),
         )
         .await
     }
@@ -907,6 +1021,7 @@ impl KanbanServer {
         &self,
         Parameters(TaskSpawnRequest {
             task_id,
+            idempotency_key,
             delegation_level,
             delegated_skills,
             memory_scope,
@@ -919,7 +1034,11 @@ impl KanbanServer {
             self,
             "kanban_task_spawn",
             kanban_type_to_pko("kanban_task_spawn"),
-            async {
+            with_idempotency(
+                &self.idempotency,
+                "kanban_task_spawn",
+                idempotency_key.as_deref(),
+                async {
                 let tid = self.validate_and_prepare_spawn(
                     &task_id,
                     &delegation_level,
@@ -981,7 +1100,8 @@ impl KanbanServer {
                     .spawn_via_local_runtime(tid, &task, gas_budget, &agent)
                     .await?;
                 serde_json::to_value(response).map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
-            },
+                },
+            ),
         )
         .await
     }
@@ -1393,6 +1513,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         pool,
                         kanban_db_path.as_str(),
                     ));
+                // Clone the handle before `HMemStore` takes ownership: replay
+                // protection lives in the same database as the writes it guards.
+                let idempotency_driver = driver.clone();
                 let store = HMemStore::from_driver(driver)
                     .map_err(|e| anyhow::anyhow!("hmem store init: {e}"))?;
                 let service = KanbanService::new(store);
@@ -1460,7 +1583,42 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             .block_on(hkask_inference::resolve_worktree_spawn_port())
                     });
 
-                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry, worktree_spawn_port))
+                // Replay protection shares the kanban driver, so it inherits the
+                // same durability and encryption as the writes it guards. When
+                // the DB is in-memory (no passphrase), the store reports
+                // `is_durable() == false` and every protected response carries
+                // `idempotency_durable: false` — an operator must not be told a
+                // call was replay-protected across restarts when it was not.
+                let idempotency = match idempotency::IdempotencyStore::with_driver(
+                    idempotency_driver,
+                ) {
+                    Ok(store) => {
+                        if !store.is_durable() {
+                            tracing::warn!(
+                                target: "hkask.mcp.kata_kanban",
+                                "Replay protection is process-local (in-memory kanban DB) — \
+                                 a retry after a server restart may duplicate a create. \
+                                 Set HKASK_DB_PASSPHRASE for durable replay protection."
+                            );
+                        }
+                        store
+                    }
+                    Err(error) => {
+                        // Fall back to the in-memory store rather than failing
+                        // startup: the server is still useful, but say plainly
+                        // that the guarantee is weaker.
+                        tracing::warn!(
+                            target: "hkask.mcp.kata_kanban",
+                            %error,
+                            "Could not initialise the replay-protection schema — falling back \
+                             to process-local protection. Retries after a restart may \
+                             duplicate a create."
+                        );
+                        idempotency::IdempotencyStore::default()
+                    }
+                };
+
+                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry, worktree_spawn_port, Arc::new(idempotency)))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
                 context: "kanban server init".into(),

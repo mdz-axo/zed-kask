@@ -23,6 +23,8 @@ project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+# Per-gesture idempotency keys for replay-safe kanban mutations.
+uuid.workspace = true
 marketplace_ui_common.workspace = true
 editor.workspace = true
 agent.workspace = true

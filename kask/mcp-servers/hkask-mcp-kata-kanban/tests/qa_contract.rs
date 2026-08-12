@@ -54,6 +54,7 @@ fn make_server() -> KanbanServer {
         local_runtime,
         local_registry,
         worktree_spawn_port,
+        Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
     )
 }
 
@@ -92,6 +93,7 @@ async fn make_board(server: &KanbanServer, name: &str) -> String {
     let req = BoardCreateRequest {
         name: name.to_string(),
         columns: None,
+        idempotency_key: None,
     };
     let out = server
         .kanban_board_create(rmcp::handler::server::wrapper::Parameters(req))
@@ -112,6 +114,7 @@ async fn make_task(server: &KanbanServer, board_id: &str, title: &str) -> String
         criteria: None,
         gas_budget: None,
         rjoule_budget: None,
+        idempotency_key: None,
     };
     let out = server
         .kanban_task_create(rmcp::handler::server::wrapper::Parameters(req))
@@ -135,6 +138,7 @@ mod board_create {
         let req = BoardCreateRequest {
             name: "QA Board".to_string(),
             columns: None,
+            idempotency_key: None,
         };
         let out = server
             .kanban_board_create(rmcp::handler::server::wrapper::Parameters(req))
@@ -204,6 +208,7 @@ mod board_create {
                 status: "not_a_status".to_string(),
                 wip_limit: None,
             }]),
+            idempotency_key: None,
         };
         let out = server
             .kanban_board_create(rmcp::handler::server::wrapper::Parameters(req))
@@ -219,6 +224,7 @@ mod board_create {
         let req = BoardCreateRequest {
             name: long_name.clone(),
             columns: None,
+            idempotency_key: None,
         };
         let out = server
             .kanban_board_create(rmcp::handler::server::wrapper::Parameters(req))
@@ -291,6 +297,7 @@ mod task_create {
             criteria: None,
             gas_budget: None,
             rjoule_budget: None,
+            idempotency_key: None,
         };
         let out = server
             .kanban_task_create(rmcp::handler::server::wrapper::Parameters(req))
@@ -311,6 +318,7 @@ mod task_create {
             criteria: None,
             gas_budget: None,
             rjoule_budget: None,
+            idempotency_key: None,
         };
         let out = server
             .kanban_task_create(rmcp::handler::server::wrapper::Parameters(req))
@@ -329,6 +337,7 @@ mod task_create {
             criteria: None,
             gas_budget: None,
             rjoule_budget: None,
+            idempotency_key: None,
         };
         let out = server
             .kanban_task_create(rmcp::handler::server::wrapper::Parameters(req))
@@ -1002,6 +1011,7 @@ mod task_spawn {
             gas_budget: Some(1000),
             rjoule_budget: None,
             swarm_id: None,
+            idempotency_key: None,
         };
         let out = server
             .kanban_task_spawn(rmcp::handler::server::wrapper::Parameters(req))
@@ -1021,6 +1031,7 @@ mod task_spawn {
             gas_budget: None,
             rjoule_budget: None,
             swarm_id: None,
+            idempotency_key: None,
         };
         let out = server
             .kanban_task_spawn(rmcp::handler::server::wrapper::Parameters(req))
