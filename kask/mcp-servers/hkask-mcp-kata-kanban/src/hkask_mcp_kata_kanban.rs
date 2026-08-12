@@ -110,12 +110,20 @@ fn derive_task_activity(task: &Task) -> Option<TaskActivity> {
 }
 
 #[cfg(test)]
-mod router_count_probe {
+mod tool_surface_tests {
     use super::*;
+
+    // Pins the registered tool-surface count end-to-end. Catches silent
+    // registration drops — a `#[tool]` impl block without `#[tool_router]`
+    // silently registers nothing (`cargo check` passes on an unwired orphan).
+    // Mirrors the swarm pin.
     #[test]
-    fn print_router_len() {
+    fn tool_surface_is_exactly_23_registered_tools() {
         let n = KanbanServer::tool_router().list_all().len();
-        panic!("COUNT_kata_kanban={n}");
+        assert_eq!(
+            n, 23,
+            "kata-kanban registered tool surface changed; got {n}"
+        );
     }
 }
 

@@ -1532,12 +1532,20 @@ impl PredictionMarketsServer {
 impl rmcp::ServerHandler for PredictionMarketsServer {}
 
 #[cfg(test)]
-mod router_count_probe {
+mod tool_surface_tests {
     use super::*;
+
+    // Pins the registered tool-surface count end-to-end. Catches silent
+    // registration drops — a `#[tool]` impl block without `#[tool_router]`, or
+    // a sub-router missing from `combined_router()`, silently registers nothing
+    // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
     #[test]
-    fn print_router_len() {
+    fn tool_surface_is_exactly_32_registered_tools() {
         let n = PredictionMarketsServer::combined_router().list_all().len();
-        panic!("COUNT_prediction_markets={n}");
+        assert_eq!(
+            n, 32,
+            "prediction-markets registered tool surface changed; got {n}"
+        );
     }
 }
 

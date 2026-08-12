@@ -198,12 +198,20 @@ pub struct StatsRequest {
 // ── Tools ─────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod router_count_probe {
+mod tool_surface_tests {
     use super::*;
+
+    // Pins the registered tool-surface count end-to-end. Catches silent
+    // registration drops — a `#[tool]` impl block without `#[tool_router]`
+    // silently registers nothing (`cargo check` passes on an unwired orphan).
+    // Mirrors the swarm pin.
     #[test]
-    fn print_router_len() {
+    fn tool_surface_is_exactly_9_registered_tools() {
         let n = CodeGraphServer::tool_router().list_all().len();
-        panic!("COUNT_codegraph={n}");
+        assert_eq!(
+            n, 9,
+            "codegraph registered tool surface changed; got {n}"
+        );
     }
 }
 

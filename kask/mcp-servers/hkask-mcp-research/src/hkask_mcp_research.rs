@@ -124,12 +124,20 @@ macro_rules! require_rss_db {
 // ── Tool implementations ──
 
 #[cfg(test)]
-mod router_count_probe {
+mod tool_surface_tests {
     use super::*;
+
+    // Pins the registered tool-surface count end-to-end. Catches silent
+    // registration drops — a `#[tool]` impl block without `#[tool_router]`
+    // silently registers nothing (`cargo check` passes on an unwired orphan).
+    // Mirrors the swarm pin.
     #[test]
-    fn print_router_len() {
+    fn tool_surface_is_exactly_21_registered_tools() {
         let n = ResearchServer::tool_router().list_all().len();
-        panic!("COUNT_research={n}");
+        assert_eq!(
+            n, 21,
+            "research registered tool surface changed; got {n}"
+        );
     }
 }
 
