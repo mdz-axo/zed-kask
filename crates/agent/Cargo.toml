@@ -114,9 +114,20 @@ rand.workspace = true
 reqwest_client.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
 
+# Feature-propagation-only dev-dep: not `use`d in source. `project`'s
+# `test-support` above pulls in `remote/test-support`, which exposes
+# `RemoteConnectionOptions::Mock`. The match arm handling that variant in
+# `remote_connection` is gated on `remote_connection`'s own `test-support`, so
+# both must be on together or the match is non-exhaustive (E0004) whenever this
+# crate's dev-deps are in the graph. Same trap as `swarm_panel`'s dev-dep.
+remote_connection = { workspace = true, "features" = ["test-support"] }
+
 theme = { workspace = true, "features" = ["test-support"] }
 theme_settings.workspace = true
 
 unindent = { workspace = true }
 
 zlog.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["remote_connection"]

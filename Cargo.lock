@@ -355,6 +355,7 @@ dependencies = [
  "rand 0.9.4",
  "regex",
  "release_channel",
+ "remote_connection",
  "reqwest_client",
  "rust-embed",
  "sandbox",
