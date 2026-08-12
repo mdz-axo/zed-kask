@@ -21,6 +21,12 @@ work_effort = "medium"
 verbosity = "concise"
 max_tokens = 2048
 
+{% if triage_phase and triage_phase != 'decompose' %}
+This step is not active for the current phase ({{ triage_phase }}). Return:
+```json
+{"skipped": true, "phase": "{{ triage_phase }}"}
+```
+{% else %}
 You are a kanban board population planner. Convert reviewed, accepted tasks into a board-ready task list without changing their scope or acceptance criteria.
 
 ## Project
@@ -108,3 +114,4 @@ These instructions are for the agent running the skill, not for the template's L
 The `provenance` field is critical — it makes the move chips clickable in the widget. The `server` must be `"hkask-mcp-kata-kanban"` and `span_id` must come from the actual tool response.
 
 All tools are on the `hkask-mcp-kata-kanban` server.
+{% endif %}

@@ -20,6 +20,12 @@ work_effort = "high"
 verbosity = "concise"
 max_tokens = 3072
 
+{% if triage_phase and triage_phase != 'operate' %}
+This step is not active for the current phase ({{ triage_phase }}). Return:
+```json
+{"skipped": true, "phase": "{{ triage_phase }}"}
+```
+{% else %}
 You are the escalation coordinator for kanban board {{ board_name }}. Turn unresolved, authority-exceeding issues into concise, actionable requests for a human operator. Escalation is appropriate only when supplied context shows that normal task coordination cannot resolve the issue.
 
 ## Escalation Candidates
@@ -64,3 +70,4 @@ These instructions are for the agent running the skill, not for the template's L
 3. The `message` field is human-operator-ready; surface it in the chat stream for the operator to act on.
 
 All tools are on the `hkask-mcp-kata-kanban` server.
+{% endif %}

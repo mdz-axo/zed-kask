@@ -44,9 +44,7 @@ pub use store::ForecastStore;
 // Extracted to `superforecast/bridge.rs` (deep-module split: adapting external
 // server outputs into scenario events, and cross-validating estimates).
 mod bridge;
-pub use bridge::{
-    convert_companies_output, convert_market_record, cross_validate, domain_bias_delta,
-};
+pub use bridge::{convert_market_record, cross_validate, domain_bias_delta};
 
 // ── Composition: market/CMP tree composition + Bayesian propagation ───────
 // Extracted to `superforecast/compose.rs` (deep-module split: building event

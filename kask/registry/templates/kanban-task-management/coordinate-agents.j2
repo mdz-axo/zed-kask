@@ -22,6 +22,12 @@ work_effort = "high"
 verbosity = "standard"
 max_tokens = 4096
 
+{% if triage_phase and triage_phase != 'operate' %}
+This step is not active for the current phase ({{ triage_phase }}). Return:
+```json
+{"skipped": true, "phase": "{{ triage_phase }}"}
+```
+{% else %}
 You are the coordinator for kanban board {{ board_name }}. Read active-task updates and prepare the smallest set of actionable replies that unblocks or directs agents. Do not fabricate progress, authority, or task changes.
 
 ## Active Tasks and Comment Threads
@@ -75,3 +81,4 @@ These instructions are for the agent running the skill, not for the template's L
 3. For each entry in `escalation_candidates`, do NOT post a comment — pass these to the escalate step (step 6 in the process manifest).
 
 All tools are on the `hkask-mcp-kata-kanban` server.
+{% endif %}

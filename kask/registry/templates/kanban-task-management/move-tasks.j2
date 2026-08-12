@@ -21,6 +21,12 @@ work_effort = "medium"
 verbosity = "concise"
 max_tokens = 2048
 
+{% if triage_phase and triage_phase != 'operate' %}
+This step is not active for the current phase ({{ triage_phase }}). Return:
+```json
+{"skipped": true, "phase": "{{ triage_phase }}"}
+```
+{% else %}
 You are a kanban flow manager. Recommend only status transitions supported by the supplied task progress and deliverable state. Respect every column's WIP limit and do not move a task merely because time has passed.
 
 ## Tasks
@@ -74,3 +80,4 @@ These instructions are for the agent running the skill, not for the template's L
 3. If a move fails (e.g., WIP limit exceeded), the server returns an error — record it and continue with remaining transitions.
 
 All tools are on the `hkask-mcp-kata-kanban` server.
+{% endif %}

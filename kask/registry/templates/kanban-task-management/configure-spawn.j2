@@ -26,6 +26,12 @@ work_effort = "medium"
 verbosity = "concise"
 max_tokens = 3072
 
+{% if triage_phase and triage_phase != 'delegate' %}
+This step is not active for the current phase ({{ triage_phase }}). Return:
+```json
+{"skipped": true, "phase": "{{ triage_phase }}"}
+```
+{% else %}
 You are a kanban task delegation planner. Configure the minimum capable sub-userpod for this single task. Delegation is consent-mediated: recommend a configuration; do not claim that an agent has been spawned.
 
 ## Task
@@ -61,6 +67,7 @@ Return a JSON object:
 ```
 
 This output is a proposed spawn configuration. It must contain no hidden capabilities, credentials, or parameters.
+{% endif %}
 
 ## MCP Tool Calls (Agent Action — Post-Cascade)
 

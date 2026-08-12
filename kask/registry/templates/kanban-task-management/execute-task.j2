@@ -24,6 +24,12 @@ work_effort = "high"
 verbosity = "standard"
 max_tokens = 4096
 
+{% if triage_phase and triage_phase != 'delegate' %}
+This step is not active for the current phase ({{ triage_phase }}). Return:
+```json
+{"skipped": true, "phase": "{{ triage_phase }}"}
+```
+{% else %}
 You are the sub-userpod assigned to execute one kanban task. Work only within the task's acceptance criteria and the approved spawn configuration. Record progress for the coordinator; do not move board columns or self-verify completion.
 
 ## Assigned Task
@@ -82,3 +88,4 @@ These instructions are for the agent running the skill, not for the template's L
 5. Call `kanban_task_delegate_result` with the `task_id` to read the structured delegation result if the spawn was via `kanban_task_spawn`.
 
 All tools are on the `hkask-mcp-kata-kanban` server.
+{% endif %}

@@ -30,7 +30,7 @@
 //! - `scenario_cross_validate` — LLM vs computation cross-validation
 //! - `scenario_assess` — Chermack five-phase project evaluation
 //! - `scenario_full` — Full pipeline orchestrator (single call)
-//! - `scenario_from_companies` — DEPRECATED: use scenario_impact_valuation on hkask-mcp-companies
+//! - `scenario_from_markets` — Bridge from prediction-markets MCP server
 
 use std::collections::HashSet;
 
@@ -460,10 +460,10 @@ impl ScenariosServer {
     }
 
     /// Bridge: convert a prediction-market record into a scenario event.
-    /// Caller-mediated (like scenario_from_companies): the agent pastes the
-    /// annotated MarketRecord JSON from hkask-mcp-prediction-markets. The
-    /// domain-bias correction is applied deterministically here; low
-    /// reliability or weak match confidence withholds the base rate.
+    /// Caller-mediated: the agent pastes the annotated MarketRecord JSON
+    /// from hkask-mcp-prediction-markets. The domain-bias correction is
+    /// applied deterministically here; low reliability or weak match
+    /// confidence withholds the base rate.
     #[tool(
         description = "Convert a prediction-market record (from hkask-mcp-prediction-markets market_lookup/market_match) into a ScenarioEvent anchored on the market-implied base rate. Applies the domain-bias correction deterministically; withholds base_rate on low reliability or weak match confidence."
     )]
@@ -699,84 +699,6 @@ impl ScenariosServer {
                 "ontology": "dcterms:Dataset"
             });
 
-            Ok(output)
-        })
-        .await
-    }
-
-    /// Bridge: convert companies MCP server output into scenario events.
-    /// Takes a Schwartz 2x2 calibration from hkask-mcp-companies and converts
-    /// the scenario projections into binomial ScenarioEvents with Fermi
-    /// sub-questions derived from growth/margin assumptions.
-    ///
-    /// DEPRECATED: This tool is the wrong composition direction. Scenarios are
-    /// exogenous drivers; company forecasts are the endogenous system being
-    /// impacted — not the other way around. Use `scenario_impact_valuation` on
-    /// hkask-mcp-companies instead, which composes a company's DCF from
-    /// scenario event-tree impact mappings (the correct direction: scenario
-    /// → company forecast).
-    #[tool(
-        description = "DEPRECATED: Use scenario_impact_valuation on hkask-mcp-companies instead. This tool converts DCF output into tracking events, but the correct composition is the reverse — scenarios drive company forecasts, not the other way around. Retained for backward compatibility."
-    )]
-    pub async fn scenario_from_companies(
-        &self,
-        Parameters(req): Parameters<CompaniesBridgeRequest>,
-    ) -> String {
-        execute_tool_semantic(self, "scenario_from_companies", Some(Self::ontology_anchor("scenario_from_companies")), async {
-            let horizon = parse_time_horizon(req.time_horizon.as_deref());
-            let companies_json: serde_json::Value = serde_json::from_str(&req.companies_output)
-                .map_err(|e| McpToolError::invalid_argument(format!("invalid companies output JSON: {}", e)))?;
-
-            let events = superforecast::convert_companies_output(&req.symbol, &companies_json, horizon)
-                .map_err(map_scenario_error)?;
-
-            let output = serde_json::json!({
-                "symbol": req.symbol,
-                "source": "hkask-mcp-companies calibrate_forecast output",
-                "time_horizon": horizon.display(),
-                "event_count": events.len(),
-                "events": events.iter().map(|e| {
-                    serde_json::json!({
-                        "id": e.id,
-                        "name": e.name,
-                        "question": e.question,
-                        "probability": e.probability,
-                        "sub_questions": e.sub_questions.iter().map(|sq| {
-                            serde_json::json!({
-                                "question": sq.question,
-                                "estimate": sq.estimate,
-                                "confidence": sq.confidence,
-                            })
-                        }).collect::<Vec<_>>(),
-                    })
-                }).collect::<Vec<_>>(),
-                "pipeline": [
-                    "1. companies.calibrate_forecast → Schwartz 2x2 scenario analysis",
-                    "2. scenario_from_companies → convert to ScenarioEvents (this tool)",
-                    "3. scenario_quantify → resolve conditional probability tree",
-                    "4. scenario_calibrate → Fermi decomposition + base rate calibration",
-                    "5. scenario_synthesize → dragonfly-eye aggregation if multiple analysts",
-                    "6. scenario_score → Brier scoring when outcomes are known",
-                ],
-                "bridge_note": "DEPRECATED: The correct bridge is scenario_impact_valuation on hkask-mcp-companies (scenario events drive company forecast). This tool goes the wrong way. Retained for backward compatibility.",
-                "deprecated": true,
-                "use_instead": "scenario_impact_valuation on hkask-mcp-companies",
-                "provenance": {
-                    "tool": "scenario_from_companies",
-                    "server": "hkask-mcp-scenarios",
-                    "version": SERVER_VERSION,
-                    "source": "hkask-mcp-companies calibrate_forecast",
-                    "ontology": "fibo-fbc-fct-ra:ForecastIdentifier"
-                },
-                "ontology": "dcterms:Dataset"
-            });
-
-            self.record_experience(
-                "scenario_from_companies",
-                &format!("symbol={}, events={}", req.symbol, events.len()),
-                "success",
-                output.clone(),
-            );
             Ok(output)
         })
         .await

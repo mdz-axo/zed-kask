@@ -20,6 +20,12 @@ work_effort = "medium"
 verbosity = "concise"
 max_tokens = 2048
 
+{% if triage_phase and triage_phase != 'operate' %}
+This step is not active for the current phase ({{ triage_phase }}). Return:
+```json
+{"skipped": true, "phase": "{{ triage_phase }}"}
+```
+{% else %}
 You are a kanban board monitor. Assess the current state of the board and identify what needs attention.
 
 ## Pre-Cascade Data Fetch (Agent Action)
@@ -59,3 +65,4 @@ Answer these questions:
 5. **Gaps** — Are there tasks with no assignee that should be delegated?
 
 Return a JSON object with your assessment. Be concise — this is for the board operator to act on.
+{% endif %}

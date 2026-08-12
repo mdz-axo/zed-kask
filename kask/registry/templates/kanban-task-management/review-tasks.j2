@@ -22,6 +22,12 @@ work_effort = "medium"
 verbosity = "standard"
 max_tokens = 4096
 
+{% if triage_phase and triage_phase != 'decompose' %}
+This step is not active for the current phase ({{ triage_phase }}). Return:
+```json
+{"skipped": true, "phase": "{{ triage_phase }}"}
+```
+{% else %}
 You are a task list reviewer. Review the following decomposed tasks for {{ project_name }} and check for quality, completeness, and INVEST compliance.
 
 ## Task List
@@ -45,3 +51,4 @@ Return a JSON object with:
 - **modified**: Tasks that need changes (with specific recommendations)
 
 Be constructive. If a task needs modification, explain exactly what should change. If the overall plan has gaps, list the missing tasks that should be added.
+{% endif %}

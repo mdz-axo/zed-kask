@@ -22,6 +22,12 @@ work_effort = "medium"
 verbosity = "concise"
 max_tokens = 3072
 
+{% if triage_phase and triage_phase != 'operate' %}
+This step is not active for the current phase ({{ triage_phase }}). Return:
+```json
+{"skipped": true, "phase": "{{ triage_phase }}"}
+```
+{% else %}
 You are a kanban deliverable tracker. Assess whether the submitted deliverables are present, attributable to this task, and sufficient to send the task to formal completion verification. Do not mark acceptance criteria as passed; that is the verifier's responsibility.
 
 ## Task
@@ -69,3 +75,4 @@ These instructions are for the agent running the skill, not for the template's L
 4. For each valid deliverable, call `kanban_task_add_deliverable` to ensure it is recorded on the task (if not already present).
 
 All tools are on the `hkask-mcp-kata-kanban` server.
+{% endif %}

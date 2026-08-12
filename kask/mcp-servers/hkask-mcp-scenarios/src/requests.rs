@@ -52,16 +52,6 @@ pub struct FrameDocumentRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CompaniesBridgeRequest {
-    /// Company symbol
-    pub symbol: String,
-    /// JSON output from companies.calibrate_forecast
-    pub companies_output: String,
-    /// Time horizon for the scenario events
-    pub time_horizon: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarketsBridgeRequest {
     /// JSON of an annotated MarketRecord from hkask-mcp-prediction-markets
     /// (market_lookup or market_match output; for market_match, pass the

@@ -1,12 +1,10 @@
-//! Bridge — cross-validation of estimates and conversion of external server
-//! outputs (companies + prediction-markets) into `ScenarioEvent`s. Adapts the
-//! `hkask-mcp-companies`/`-prediction-markets` data shapes into the scenario
-//! forecast model.
+//! Bridge — cross-validation of estimates and conversion of prediction-market
+//! records into `ScenarioEvent`s. Adapts the `hkask-mcp-prediction-markets`
+//! data shape into the scenario forecast model.
 //!
 //! Extracted from `superforecast.rs` (deep-module split).
 
 use super::ForecastStore;
-use super::calibrate_from_fermi;
 
 use crate::types::{
     CrossValidation, ScenarioError, ScenarioEvent, ScenarioType, SubQuestion,
@@ -127,129 +125,7 @@ pub fn cross_validate(
     }
 }
 
-// ── Companies Server Bridge ────────────────────────────────────────────────
-
-/// Convert a companies server calibrate_forecast output into ScenarioEvents
-/// that can be quantified by the scenarios pipeline.
-///
-/// The companies server produces Schwartz 2×2 scenario results with
-/// intrinsic values per quadrant. This function converts those into
-/// binomial events with Fermi sub-questions, ready for scenario_quantify
-/// and scenario_calibrate.
-///
-/// Bridge path: companies.calibrate_forecast → this function → scenario_quantify → scenario_synthesize
-pub fn convert_companies_output(
-    symbol: &str,
-    companies_json: &serde_json::Value,
-    time_horizon: TimeHorizon,
-) -> Result<Vec<ScenarioEvent>, ScenarioError> {
-    let scenarios = companies_json
-        .get("scenarios")
-        .and_then(|s| s.as_array())
-        .ok_or(ScenarioError::NoEvents)?;
-
-    let mut events = Vec::new();
-    // Derive deadline from time horizon
-    let today = chrono::Utc::now().date_naive();
-    let deadline = match time_horizon {
-        TimeHorizon::Tactical => today + chrono::TimeDelta::days(540),
-        TimeHorizon::Strategic => today + chrono::TimeDelta::days(1460),
-        TimeHorizon::LongTerm => today + chrono::TimeDelta::days(2920),
-    };
-
-    for (i, scenario) in scenarios.iter().enumerate() {
-        let name = scenario
-            .get("name")
-            .and_then(|n| n.as_str())
-            .unwrap_or("unknown");
-        let intrinsic = scenario
-            .get("intrinsic_per_share")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        let current_price = companies_json
-            .get("current_price")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-
-        let upside = if current_price > 0.0 {
-            (intrinsic - current_price) / current_price
-        } else {
-            0.0
-        };
-
-        let question = format!(
-            "Will {} trade within 20% of the {} scenario intrinsic value ({:.2}) by {}",
-            symbol,
-            name.to_lowercase(),
-            intrinsic,
-            deadline.format("%Y-%m-%d")
-        );
-
-        let growth = scenario.get("applied_growth").and_then(|v| v.as_f64());
-        let margin = scenario.get("applied_margin").and_then(|v| v.as_f64());
-
-        let mut sub_questions = Vec::new();
-        if let Some(g) = growth {
-            sub_questions.push(SubQuestion {
-                question: format!("Will revenue growth reach {:.0}%?", g * 100.0),
-                estimate: if g > 0.1 { 0.6 } else { 0.4 },
-                confidence: 0.5,
-            });
-        }
-        if let Some(m) = margin {
-            sub_questions.push(SubQuestion {
-                question: format!("Will gross margins hold at {:.0}%?", m * 100.0),
-                estimate: if m > 0.4 { 0.6 } else { 0.4 },
-                confidence: 0.5,
-            });
-        }
-
-        // Probability: Fermi-calibrate from sub-questions when available.
-        let prob = if !sub_questions.is_empty() {
-            calibrate_from_fermi(&sub_questions).unwrap_or_else(|_| {
-                if upside > 0.2 {
-                    0.65
-                } else if upside > 0.0 {
-                    0.55
-                } else if upside > -0.2 {
-                    0.40
-                } else {
-                    0.25
-                }
-            })
-        } else if upside > 0.2 {
-            0.65
-        } else if upside > 0.0 {
-            0.55
-        } else if upside > -0.2 {
-            0.40
-        } else {
-            0.25
-        };
-
-        events.push(ScenarioEvent {
-            id: format!("comp-{}-{}", symbol, i),
-            name: format!("{} {}", symbol, name),
-            question,
-            deadline,
-            time_horizon,
-            scenario_type: ScenarioType::CompanyAnalysis,
-            subject: symbol.to_string(),
-            probability: prob,
-            basis: Some("financial_model".into()),
-            depends_on: vec![],
-            sub_questions,
-            base_rate: None,
-            reference_class: Some("Company DCF scenario analysis, 2×2 Schwartz matrix".into()),
-            brier_score: None,
-            update_count: 0,
-        });
-    }
-
-    Ok(events)
-}
-
-/// Per-domain de-compression strength δ, derived from measured calibration.
+// ── Domain Bias Correction ────────────────────────────────────────────────
 ///
 /// Returns the weighted bias (expected_rate − hit_rate) over resolved
 /// forecasts in `store` matching `category` (case-insensitive substring
@@ -322,9 +198,8 @@ pub fn domain_bias_delta(store: Option<&ForecastStore>, category: &str) -> f64 {
 
 /// Convert an annotated prediction-market record (from
 /// hkask-mcp-prediction-markets `market_lookup`/`market_match`, pasted by
-/// the caller — the same caller-mediated bridge pattern as
-/// `scenario_from_companies`) into a ScenarioEvent anchored on the
-/// market-implied base rate.
+/// the caller via the caller-mediated bridge pattern) into a ScenarioEvent
+/// anchored on the market-implied base rate.
 ///
 /// Gates (deliberate refusals, mirroring the contract's epistemic posture):
 /// - `reliability_tier` low ⇒ no anchor (`base_rate: None` + warning)
