@@ -1,7 +1,7 @@
 ---
 name: gradient-hunter
 visibility: public
-description: "Find steep gradients between populated and unpopulated regions of a codebase/telemetry/test field and investigate the reason for the gradient. The signal is in the gradient shape and its cause, not in the absence itself. Anchored to a substrate ontology (Parisi spin glass theory: non-ergodicity, frustration, metastable valleys) and seven surface gradient-shape ontologies (wombling, regression discontinuity, Rubin MCAR/MAR/MNAR, persistent homology, edge detection, oracle gap, Monod allostery with agentic-orchestrator corollary). Decomposed into phased templates: Prior → Map → Detect → Hypothesize → Report → Convergence. Composes graph-audit, pragmatic-cybernetics, falsifiability, metacognition. Emits reg.gradient.* spans. Any userpod may invoke this skill."
+description: "Find steep gradients between populated and unpopulated regions of a codebase, telemetry, or test field and investigate the reason. The signal is in the gradient shape and its cause, not in the absence itself."
 ---
 
 # Gradient Hunter

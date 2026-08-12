@@ -1,16 +1,6 @@
 ---
 name: prompt-enhance
-description: >-
-  General-purpose prompt enhancement skill for prompts destined for the
-  zed-kask platform. Typed routing over a 7-type prompt taxonomy (coding,
-  reasoning, creative, classification, extraction, agent-task, meta) with a
-  3-tier effort knob (low/medium/high). Single-pass pipeline: classify,
-  rewrite (with inline audit), verify (decoupled critic at medium/high),
-  output. Default output is the enhanced prompt returned inline in a
-  copyable code block; optional file save or both. Use when enhancing,
-  refining, or optimizing any prompt that will be consumed by the zed-kask
-  platform — skill .j2 templates, agent system prompts, chat/REPL prompts,
-  or infrastructure Jinja2 templates.
+description: "General-purpose prompt enhancement for the zed-kask platform. Typed routing over a 7-type prompt taxonomy with a 3-tier effort knob. Use when enhancing prompts for skill templates, agent system prompts, or chat REPL prompts."
 ---
 
 # Prompt Enhance

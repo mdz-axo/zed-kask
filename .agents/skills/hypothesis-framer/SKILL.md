@@ -1,7 +1,7 @@
 ---
 name: hypothesis-framer
 visibility: public
-description: "Research question framing and hypothesis formulation using FINER criteria and PICO process. Evaluates broad research topics through Feasibility, Interest, Novelty, Ethics, and Relevance (FINER) gates, structures questions via Population-Intervention-Comparison-Outcome (PICO) framework, derives testable hypotheses with null hypothesis formulation, operationalizes into aims and objectives, and verifies alignment. Iterative PDCA refinement until the question-hypothesis-aims chain is coherent and testable."
+description: "Research question framing and hypothesis formulation using FINER criteria and PICO process. Evaluates topics through Feasibility, Interest, Novelty, Ethics, and Relevance gates, structures questions, derives testable hypotheses."
 ---
 
 # Hypothesis Framer

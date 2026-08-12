@@ -1,8 +1,7 @@
 ---
 name: wardley-mapper
 visibility: public
-description: "Generic Wardley mapping methodology. Given a set of components and their relationships, inventories them, classifies each on the evolution axis (Genesis → Custom → Product → Commodity), maps them on the value chain (visibility vs evolution), identifies strategic movement (what to commoditize, invest in, divest, or build), and produces a Wardley map with recommendations. Applicable to any system — software platforms, business capabilities, technology stacks.
-"
+description: "Generic Wardley mapping methodology. Given components and their relationships, classifies each on the evolution axis (Genesis to Custom to Product to Commodity), maps them on the value chain, identifies strategic movement, and produces a Wardley map."
 ---
 
 # Wardley Mapper

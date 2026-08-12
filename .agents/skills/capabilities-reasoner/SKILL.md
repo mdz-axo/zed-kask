@@ -1,7 +1,7 @@
 ---
 name: capabilities-reasoner
 visibility: public
-description: "Reason about a system's capabilities against a typed registry with floor, ceiling, and maturity-gate limits. Fuses two lineages: the capability approach (Sen/Nussbaum — feasible functionings with thresholds; object-capability security — authority only attenuates; CMMI — prerequisite DAGs) and ML capability evaluation (HELM — multi-metric scenario matrix; EvalTree — hierarchical capability tree; Password-Locked Models — capability is elicited potential not observed behavior; 'Are Emergent Abilities a Mirage?' — capability is metric-dependent). Decomposed into phased templates: Register → Elicit → Evaluate → Reason → Report → Convergence. Composes structured-extraction, falsifiability, pragmatic-cybernetics, graph-audit. Emits reg.capability.* spans. Any userpod may invoke this skill."
+description: "Reason about a system's capabilities against a typed registry with floor, ceiling, and maturity-gate limits. Evaluates elicited potential vs observed behavior across a multi-metric scenario matrix."
 ---
 
 # Capabilities Reasoner

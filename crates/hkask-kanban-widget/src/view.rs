@@ -170,6 +170,65 @@ impl KanbanWidget {
         }
     }
 
+    /// Update the board data from a new block body, preserving UI state
+    /// (pending moves, expanded descriptions, detail panel, disagree draft).
+    ///
+    /// When a move is in flight or pending, the columns are NOT updated — the
+    /// optimistic move reflects the in-progress dispatch, and the next refresh
+    /// after the dispatch completes will carry the server-authoritative state.
+    /// The board name, column metadata, and provenance are always updated
+    /// because they don't change during a move.
+    pub fn set_body(&mut self, body: KanbanBlockBody, cx: &mut Context<Self>) {
+        let (_board_id, board_name, tasks) = body.board_with_tasks();
+        let tasks = tasks.to_vec();
+        let column_meta = body.columns.clone();
+
+        if !self.move_controller.in_flight_any() {
+            self.columns = group_tasks_into_columns(tasks, &column_meta);
+        }
+
+        self.board_name = board_name;
+        self.column_meta = column_meta;
+        self.provenance = body.provenance;
+
+        let new_task_ids: HashSet<String> = body.tasks.iter().map(|t| t.task_id.clone()).collect();
+        self.expanded_descriptions
+            .retain(|id| new_task_ids.contains(id));
+        if let Some(ref open_id) = self.detail_open {
+            if !new_task_ids.contains(open_id) {
+                self.detail_open = None;
+            }
+        }
+
+        cx.notify();
+    }
+
+    /// Update a single task's comments in the cached columns. Used by the
+    /// kanban panel to populate comments on demand when the card detail
+    /// panel is opened.
+    pub fn update_task_comments(
+        &mut self,
+        task_id: &str,
+        comments: Vec<crate::block::CommentBody>,
+        cx: &mut Context<Self>,
+    ) {
+        for column in &mut self.columns {
+            for task in &mut column.tasks {
+                if task.task_id == task_id {
+                    task.comments = comments.clone();
+                    break;
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// The task id whose card-detail panel is currently open, if any.
+    /// The kanban panel reads this to fetch comments on demand.
+    pub fn detail_open(&self) -> Option<&str> {
+        self.detail_open.as_deref()
+    }
+
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .gap_2()

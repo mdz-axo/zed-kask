@@ -1,7 +1,7 @@
 ---
 name: refactor-architecture
 visibility: public
-description: "End-to-end architecture refactoring: discover friction, rank deepening candidates, walk the design tree, audit duplication, plan strangler-fig migration, and verify integrity. Merged from improve-codebase-architecture (discover phase) and refactor-service-layer (execution phase). Includes the migration-strategy phase (folded from the standalone strangler-fig skill). Composes tdd, coding-guidelines, pragmatic-semantics, graph-audit (code mode, context-expansion), deep-module, essentialist, and pragmatic-cybernetics."
+description: "End-to-end architecture refactoring: discover friction, rank deepening candidates, walk the design tree, audit duplication, plan strangler-fig migration, and verify integrity. Composes tdd, coding-guidelines, graph-audit, deep-module, essentialist."
 ---
 
 # Refactor Architecture

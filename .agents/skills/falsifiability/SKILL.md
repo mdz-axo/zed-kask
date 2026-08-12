@@ -1,7 +1,7 @@
 ---
 name: falsifiability
 visibility: public
-description: "Domain-agnostic eliminative inference engine anchored to Popper (falsifiability), Platt (strong inference), and Chamberlin (multiple working hypotheses), with Pearl/Halpern counterfactual reasoning as the alternative generator. Rules out what is not testable at the question level (admissibility gate), generates multiple falsifiable hypotheses, constructs minimal counterfactuals, designs discriminating tests, and eliminates the hypotheses that fail — corroborating the survivors, never confirming them. A delegation target: diagnose, hypothesis-framer, and superforecasting delegate their falsification stages here; sequential-inquiry may delegate when a counterfactual scenario must be explored."
+description: "Domain-agnostic eliminative inference engine. Rules out untestable questions (admissibility gate), generates multiple falsifiable hypotheses, constructs minimal counterfactuals, designs discriminating tests, and eliminates hypotheses that fail."
 ---
 
 # Falsifiability

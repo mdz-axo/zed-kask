@@ -1,8 +1,7 @@
 ---
 name: kali-audit
 visibility: public
-description: "Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML manifests, supply chain, MCP surfaces, and LLM I/O boundaries for security vulnerabilities. Anchored to OWASP LLM Top 10 (2025), MITRE ATLAS v5.1, NIST SSDF SP 800-218A. Forward-adaptable: consumes the security regression library at runtime, checks defense-layer coverage (8 layers), and discovers surfaces dynamically. Single skill with a surface parameter — not a bundle.
-"
+description: "Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML manifests, supply chain, MCP surfaces, and LLM I/O boundaries for vulnerabilities. Forward-adaptable: consumes the security regression library at runtime."
 ---
 
 # Kali Audit

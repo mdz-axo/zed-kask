@@ -1,19 +1,6 @@
 ---
 name: constraint-forces-recast
-description: >
-  Core generative process for interdisciplinary concept generation. Recasts
-  a seed concept from a source ontology A into a target ontology B's
-  constraint context via minimal-satisfiability projection (the mutant is
-  the nearest model of B to the seed concept, measured by structural delta).
-  Produces a three-criterion mutant that is (i) expressible in A's
-  signature, (ii) absent from A, (iii) consistent under B's axioms.
-  Generates a relabel control and compares structural deltas — a valid
-  mutant must outperform the relabel, discriminating constraint-forces
-  from random perturbation. Runs an evolutionary loop over a seed set,
-  keeping the Pareto frontier on (novelty, validity, cost-inverted) stable
-  for ≥2 iterations. The forcing operator is minimal-satisfiability
-  projection. Scope boundary: translational research moves insights into
-  the target vocabulary; CFR keeps the mutant in the source vocabulary.
+description: "Interdisciplinary concept generation via minimal-satisfiability projection. Recasts a seed concept from ontology A into ontology B's constraint context, producing mutants expressible in A, absent from A, and consistent under B's axioms."
 ---
 
 # Constraint-Forces Recast

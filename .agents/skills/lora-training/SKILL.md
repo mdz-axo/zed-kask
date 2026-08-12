@@ -1,20 +1,7 @@
 ---
 name: lora-training
 visibility: public
-description: >
-  LoRA/QLoRA training configuration and contract enforcement skill for hKask
-  (v0.32.0). Produces an advisory, composable PEFT recommendation through a
-  deterministic 8-gate refinement (adapter purpose → dataset analysis →
-  memory → task distance → quality/cost → knowledge preservation → harness
-  capability); the operator accepts, overrides, or rejects it, and the runtime
-  enforces established hard contracts against concrete accepted configuration.
-  Training approach selection (G0-G5) precedes harness selection (G6). Audits
-  math, quantization, data/evaluation, forgetting, runtime alert, persistence
-  preflight, and harness-method compatibility gates. Runtime metrics (loss,
-  grad_norm, alerts) are sourced from the completion manifest and evaluated by
-  G-R1 during training_status. PDCA iteration loop is mechanically closed by
-  the process manifest. Emits reg.lora.* spans plus outcome and
-  operator_feedback spans that close the self-improvement feedback loop.
+description: "LoRA/QLoRA training configuration and contract enforcement for hKask. Produces an advisory PEFT recommendation through a deterministic 8-gate refinement; the operator accepts, overrides, or rejects it, and the runtime enforces hard contracts."
 ---
 
 # LoRA Training

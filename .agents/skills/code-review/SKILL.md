@@ -1,7 +1,7 @@
 ---
 name: code-review
 visibility: public
-description: "Convergent code review of a change against its stated spec. Phased PDCA: scope (real diff + Fagan sizing + change model) -> perspectives (multi-axis detection: PERFECT x addyosmani five-axis) -> adjudicate (pragmatic-semantics IS/OUGHT + constraint-force severity + falsifier + grill-me + file:line no-fiction) -> report (verdict + named structural remedies + coverage honesty) -> optional implement. Comprehensive-by-default; variety via delegation to kali-audit/bug-hunt/refactor-architecture, not toggleable modes. Grounded in Fagan, Bacchelli & Bird, Sadowski & Stolee, PERFECT (Bastrich), Ousterhout. Convergence: blocker_delta (Cauchy). Emits reg.codereview.* spans. OCAP-gated. Steer via skill-tool context: change_spec, diff_base, focus[], delegate_security/bug_hunt/architecture (bool), fix_mode (none|blockers|should_fix|all; default none = review-only; a non-none value enables the implement phase = consent to modify code)."
+description: "Convergent code review of a change against its stated spec. Multi-axis detection, IS/OUGHT adjudication, falsifier, file:line no-fiction. Optional implement phase via fix_mode context. Grounded in Fagan, PERFECT, Ousterhout."
 ---
 
 # Code Review

@@ -1,7 +1,7 @@
 ---
 name: essentialist
 visibility: public
-description: "General-purpose recursive eliminative interrogation. Enforces 'always take away, never add' through a 3-gate challenge loop (Exist → Surface → Contract) that every artifact must survive before being committed. Delegates G1 to deep-module deletion test, G2 to deep-module surface assessment, and G3 to coding-guidelines abstraction audit."
+description: "General-purpose recursive eliminative interrogation. Enforces 'always take away, never add' through a 3-gate challenge loop (Exist, Surface, Contract) that every artifact must survive before being committed."
 ---
 
 

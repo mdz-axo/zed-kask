@@ -213,6 +213,14 @@ pub struct KanbanPanel {
     /// Auto-refresh task — periodically re-fetches the task list. Cancelled
     /// when the panel is dropped.
     refresh_task: Option<Task<()>>,
+    /// The task id whose card-detail panel was open on the last render. Used
+    /// to detect when the operator opens a new card detail so the panel can
+    /// fetch comments for that task on demand.
+    last_detail_open: Option<String>,
+    /// Tasks for which comments have already been fetched. Avoids re-fetching
+    /// comments on every refresh for tasks whose detail panel was previously
+    /// opened.
+    comments_fetched: HashSet<String>,
     /// Subscriptions.
     _subscriptions: Vec<gpui::Subscription>,
 }

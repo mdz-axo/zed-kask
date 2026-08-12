@@ -1,7 +1,7 @@
 ---
 name: self-improvement
 visibility: public
-description: "General multi-purpose self-improvement skill for FM-based agents. Implements the unified self-induced update operator from Ren et al. (2026, arXiv:2607.13104). Drives persistent, endogenous adaptation across two pathways — Foundation Model Improvement (θ) and Scaffolding Improvement (Σ) — through intrinsic generative demonstrations, intrinsic evaluative feedback, and extrinsic exploratory experience. Embeds its own PDCA loops at the improvement-cycle level and wraps an outer Improvement Kata loop around all algorithmic approaches, following the Toyota Improvement Kata (direction → current condition → target condition → experiment). Any userpod that needs to durably modify its own configuration — prompts, memory, tools, control logic, or (when permitted) model parameters — can invoke this skill."
+description: "General self-improvement skill for FM-based agents. Drives persistent, endogenous adaptation across Foundation Model Improvement and Scaffolding Improvement via intrinsic demonstrations, evaluative feedback, and extrinsic exploratory experience."
 ---
 
 # Self-Improvement

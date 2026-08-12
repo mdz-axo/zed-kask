@@ -1,16 +1,7 @@
 ---
 name: kanban-task-management
 visibility: public
-description: >
-  Unified kanban task management across the full task lifecycle. Three
-  phases triaged at runtime: (1) decompose projects into INVEST-compliant
-  tasks with recomposition strategy, (2) delegate tasks to subagents with
-  spawn configuration and gas budgeting, (3) monitor boards, coordinate
-  agents, track deliverables, move tasks, verify completion, and escalate.
-  All phases include post-cascade MCP tool-call instructions for the agent.
-  Ontology: PKO — board = pko:Procedure, task = pko:Step, execution =
-  pko:StepExecution, verification = pko:StepVerification, transitions =
-  pko:ChangeOfStatus.
+description: "Unified kanban task management across the full task lifecycle. Decompose projects into INVEST-compliant tasks, delegate to subagents with spawn config and gas budgeting, monitor boards, coordinate agents, verify completion, and escalate."
 ---
 
 # Kanban Task Management

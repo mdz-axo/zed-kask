@@ -1,8 +1,7 @@
 ---
 name: logo-builder
 visibility: public
-description: "Pragmatic and principled logo design using LLM-assisted generation. Synthesizes Martin (Made By James — Minimum Viable Brand), Bokhua (Principles of Logo Design — five formal gates), and Peters (Logos That Last — iterative case study method). Three-phase pipeline: discovery (brand-to-design mapping), formal generation (Bokhua gates), and iterative refinement (weighted critique loop). Uses the media server's generate_image and describe_image tools. Logos stored in the gallery as regular images — no separate storage.
-"
+description: "Pragmatic logo design using LLM-assisted generation. Three-phase pipeline: discovery (brand-to-design mapping), formal generation (five formal gates), and iterative refinement (weighted critique loop). Uses generate_image and describe_image tools."
 ---
 
 # Logo Builder

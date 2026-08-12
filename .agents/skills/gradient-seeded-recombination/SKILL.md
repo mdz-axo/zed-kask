@@ -1,17 +1,6 @@
 ---
 name: gradient-seeded-recombination
-description: >
-  Find where to apply constraint-forces recast. Inventories a set of ontology
-  namespaces (the project's 6 domain-supplement + 2 universal axes + 5W1H
-  core, or extended via OBO Foundry / OntoBee / BioPortal with per-ontology
-  license check), builds a complete-graph prior, maps the actual
-  recombination field, detects gradients between populated and unpopulated
-  regions using the gradient-hunter eight-shape taxonomy, generates reason
-  hypotheses via the seven-class taxonomy, prioritizes sites, and selects
-  seed concepts (most central by graph degree). Produces a reusable gradient
-  map consumed by constraint-forces-recast. Distinct from gradient-hunter:
-  GSR hunts gradients between ontologies, while gradient-hunter hunts
-  gradients within a codebase or telemetry field.
+description: "Find where to apply constraint-forces recast. Inventories ontology namespaces, builds a complete-graph prior, maps the recombination field, detects gradients, generates reason hypotheses, and selects seed concepts."
 ---
 
 # Gradient-Seeded Recombination

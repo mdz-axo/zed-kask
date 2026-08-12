@@ -1,20 +1,7 @@
 ---
 name: runtime-posture-monitor
 visibility: public
-description: >
-  Runtime security posture monitoring skill for hKask (v0.31.0). Observes
-  runtime telemetry (reg.* canonical spans, reg.outcome events) to detect
-  runtime threats: API endpoint abuse, bot traffic, LLM usage anomalies, and
-  runtime dependency behavior anomalies. Distinct from supply-chain-sentinel
-  (static manifest audit, P4 manifest boundary) — this skill observes runtime
-  behavior (P4 runtime boundary). Anchored to MITRE CWE (CWE-1357, CWE-829,
-  CWE-200), OWASP LLM Top 10 (LLM06, LLM07), MITRE ATLAS (AML.TA0010).
-  Consumes security/regressions/; proposes RR-NNNN.yaml entries with
-  surface: runtime. Emits reg.runtime.* spans (P9). Decomposed into 4 phases
-  matching bug-hunt, kali-audit, and supply-chain-sentinel pipeline. Minimal
-  (P5): answers all 5W1H; single skill, no bundle; complements
-  supply-chain-sentinel (distinct P4 boundaries) and adversarial-red-team
-  (synthetic vs real traffic — zero overlap).
+description: "Runtime security posture monitoring for hKask. Observes runtime telemetry (reg.* spans, reg.outcome events) to detect runtime threats: API endpoint abuse, bot traffic, LLM usage anomalies, and runtime dependency behavior anomalies."
 ---
 
 # Runtime Posture Monitor

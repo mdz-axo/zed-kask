@@ -1,7 +1,7 @@
 ---
 name: harness-optimize
 visibility: public
-description: "Suite-level test harness proposer. Reads raw execution traces from the trace filesystem (test results, mutation scores, bug-hunt findings), identifies under-tested areas, and proposes test improvements. Dispatches to proptest in generate_only mode for specific functions. Cannot run tests — enforced by the agent profile (terminal tool disabled). Composes with bug-hunt (exploratory) and proptest (per-function) in the harness-evolve-cycle loop."
+description: "Suite-level test harness proposer. Reads execution traces (test results, mutation scores, bug-hunt findings), identifies under-tested areas, and proposes test improvements. Cannot run tests — enforced by the agent profile."
 ---
 
 # Harness Optimize

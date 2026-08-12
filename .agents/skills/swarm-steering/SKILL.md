@@ -1,7 +1,7 @@
 ---
 name: swarm-steering
 visibility: public
-description: "Focused local-swarm steering skill for the Kask Curator or a human in the loop. Codifies the execute-and-feed-back loop: take a swarm-intelligence plan (emitted_calls), produce the swarm_execute_plan_local delegation sequence + the delegate_results collection shape (LocalDelegateResult array with task_success verdicts) + the re-invoke instruction. The Curator/human calls swarm_execute_plan_local and feeds delegate_results back to swarm-intelligence, closing the C5/C6 feedback loop. Anchored to PKO (procedure execution) and the Conant-Ashby Good Regulator (the actuator must model the swarm it steers). Pairs with swarm-intelligence (the planner). Emits reg.skill.swarm-steering.* spans. Any userpod may invoke this skill."
+description: "Local-swarm steering skill for the Kask Curator or a human in the loop. Takes a swarm-intelligence plan, produces the delegation sequence + delegate_results collection shape + re-invoke instruction, closing the execute-and-feed-back loop."
 ---
 
 # Swarm Steering

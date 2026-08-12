@@ -1,6 +1,6 @@
 ---
 name: metacognition
-description: "Master self-reflection skill following the Toyota Improvement Kata. Grasps the current metacognitive condition (meta-knowledge, confidence, obstacles), establishes a target condition, makes a prediction about which calibration will close the gap, runs the experiment (applies a Falstaffian perspective rotation, ellipsis analysis, or strategy adjustment), then measures the gap and scores the prediction via Brier. Convergence is detected deterministically: gap closure (limit of a sequence), iterate stabilization (Cauchy criterion), or prediction calibration (Brier score). Any userpod may invoke this skill."
+description: "Master self-reflection skill following the Toyota Improvement Kata. Grasps the current metacognitive condition, establishes a target, predicts which calibration closes the gap, runs the experiment, then measures the gap and scores it via Brier."
 ---
 
 # Metacognition

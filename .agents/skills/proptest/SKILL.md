@@ -1,7 +1,7 @@
 ---
 name: proptest
 visibility: public
-description: "Property-based testing skill. Identifies testable properties from a target function's contract, designs input strategies using the shared hkask-test-harness crate, generates proptest code, executes it, analyzes shrunk counterexamples, and reports verified properties. Complements TDD by writing the universal test that covers the full input space."
+description: "Property-based testing skill. Identifies testable properties from a target function's contract, designs input strategies, generates proptest code, executes it, analyzes shrunk counterexamples, and reports verified properties. Complements TDD."
 ---
 
 # Proptest

@@ -1,6 +1,6 @@
 ---
 name: sankey-flow
-description: "Dynamic Sankey flow diagramming. Takes a natural-language prompt, classifies the flow domain (process, data-pipeline, resource-allocation, user-journey, energy-material, decision-funnel, value-stream, cost-breakdown, conversion, system-architecture), gathers quantities, and renders a Mermaid sankey-beta diagram in Zed. Runs an incremental interrogation loop when the prompt under-specifies nodes, links, or weights. Can delegate research to structured-extraction or sequential-inquiry. Anchors flows to the Procedural Knowledge Ontology (PKO): a Sankey visualizes a PKO Procedure — nodes are Steps, edges are flow between Steps, weights are StepExecution quantities. Convergent PDCA: classify, gather, draft, evaluate, refine, max 3 iterations."
+description: "Dynamic Sankey flow diagramming. Takes a natural-language prompt, classifies the flow domain, gathers quantities, and renders a Mermaid sankey-beta diagram in Zed. Runs an interrogation loop when the prompt under-specifies nodes, links, or weights."
 ---
 
 # Sankey Flow

@@ -1,7 +1,7 @@
 ---
 name: task-breakdown
 visibility: public
-description: "Decompose work into small, verifiable, vertically-sliced tasks with explicit acceptance criteria and checkpoints. Convergent PDCA: gather read-only context and dependency graph, decompose (slice + write tasks in one producer), evaluate against sizing/red-flag/checkpoint criteria, iterate until the plan is stable, then finalize tasks/plan.md + tasks/todo.md with PKO process-axis anchors. v0.31.0: empty-spec validation, context_summary to evaluators (Good Regulator), skill_catalog wired, algedonic escalation for catastrophic plans, mechanical materiality guard, refinement history in plan.md. Distinct from kanban-task-decomposition (single-pass board populate) and tdd (consumes the plan one vertical slice at a time)."
+description: "Decompose work into small, verifiable, vertically-sliced tasks with explicit acceptance criteria and checkpoints. Convergent PDCA: gather context and dependency graph, decompose, evaluate against criteria, iterate until stable, then finalize plan."
 ---
 
 # Task Breakdown

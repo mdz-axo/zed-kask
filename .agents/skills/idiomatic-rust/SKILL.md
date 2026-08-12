@@ -1,7 +1,7 @@
 ---
 name: idiomatic-rust
 visibility: public
-description: "Idiomatic Rust design through Graydon Hoare's lens, grounded by rust-analyzer and clippy as extrinsic oracles. Convergent inquiry loop: anchor design problems against Hoare's principles using compiler diagnostics as ground truth, propose type-driven solutions informed by LSP code actions, challenge and refine through adversarial review verified against compiler feedback, and converge toward deeper, more idiomatic designs."
+description: "Idiomatic Rust design through Graydon Hoare's lens, grounded by rust-analyzer and clippy as extrinsic oracles. Propose type-driven solutions informed by LSP code actions and refine through adversarial review verified against compiler feedback."
 ---
 
 # Idiomatic Rust

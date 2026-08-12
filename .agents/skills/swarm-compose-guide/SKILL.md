@@ -1,7 +1,7 @@
 ---
 name: swarm-compose-guide
 visibility: public
-description: "Agent/swarm composition authoring and validation aid. Given partial form inputs (surface, mode, action, and the author/compose fields), renders the swarm-compose-guide Jinja2 guidance template and returns either suggested completions for unfilled fields (action=suggest) or a validation verdict over the supplied fields (action=validate). Read-only authoring aid — no ledger debit, no consent. Used by the swarm panel's AI Assist / Validate buttons via the swarm_ai_assist MCP tool."
+description: "Agent/swarm composition authoring and validation aid. Given partial form inputs, renders guidance templates and returns either suggested completions for unfilled fields (action=suggest) or a validation verdict over supplied fields (action=validate)."
 ---
 
 

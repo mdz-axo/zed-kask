@@ -1,7 +1,7 @@
 ---
 name: eqm
 visibility: public
-description: "Explanation Quality Markers measurement instrument. Scores forecast rationales against the 60 EQMs from Karvetski et al. (2026, Forecasting Research Institute) via the market_score_rationale MCP tool, aggregates to forecast-level and forecaster-level composites, validates against realized outcomes (Brier) with gaming detection, and emits an overconfidence_bias signal that feeds back into superforecasting's calibration-adjustment step. Asymmetric: strong red-flag screen, weak green-flag detector — the decision rule weights red flags over green flags. Composes with eqm-improvement (which consumes the score profile to drive rationale improvement) and kata-improvement (which consumes the before/after delta for forecaster-level learning)."
+description: "Explanation Quality Markers measurement instrument. Scores forecast rationales against 60 EQMs via the market_score_rationale MCP tool, aggregates to composites, validates against realized outcomes (Brier), and emits an overconfidence_bias signal."
 ---
 
 # EQM — Explanation Quality Markers (Measurement Instrument)

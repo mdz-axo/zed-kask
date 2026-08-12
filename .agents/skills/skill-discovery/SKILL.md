@@ -1,7 +1,7 @@
 ---
 name: skill-discovery
 visibility: public
-description: "Acquire NEW skills for hKask. Full lifecycle: detect capability gaps in the skill corpus, search the catalog for candidates that could fill each gap, evaluate candidates against format/quality/safety criteria, and guide installation. Distinct from skill-router (which matches tasks to EXISTING skills): skill-discovery acquires NEW skills. skill-router feeds uncovered capabilities to skill-discovery as gap signals."
+description: "Acquire NEW skills for hKask. Full lifecycle: detect capability gaps, search the catalog for candidates, evaluate against format/quality/safety criteria, and guide installation. Distinct from skill-router (matches tasks to existing skills)."
 ---
 
 # Skill Discovery

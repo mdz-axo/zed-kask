@@ -1,7 +1,7 @@
 ---
 name: lean-prover
 visibility: public
-description: "Machine-checked proof construction through the lens of Curry-Howard, de Bruijn, and Carneiro. Convergent inquiry loop: anchor proof obligations against the Prop/Type discipline, construct proofs via tactics and term mode, challenge through counterexample search and proof irrelevance analysis, and converge toward proofs that compile and erase. Sibling to falsifiability — where falsifiability designs discriminating tests, lean-prover constructs machine-checked proofs that discriminate."
+description: "Machine-checked proof construction. Anchor proof obligations against the Prop/Type discipline, construct proofs via tactics and term mode, challenge through counterexample search, and converge toward proofs that compile and erase."
 ---
 
 # Lean Prover

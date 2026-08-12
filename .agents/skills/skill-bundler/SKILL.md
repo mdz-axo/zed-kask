@@ -1,8 +1,7 @@
 ---
 name: skill-bundler
 visibility: public
-description: "Orchestrate and compose multiple skills into a cohesive bundle. Activates a set of skills together, resolves conflicts, determines application order, and produces a manifest that governs how the skills compose. Re-composes the manifest when skills evolve.
-"
+description: "Orchestrate and compose multiple skills into a cohesive bundle. Activates skills together, resolves conflicts, determines application order, and produces a manifest that governs how the skills compose. Re-composes when skills evolve."
 ---
 
 # Skill Bundler

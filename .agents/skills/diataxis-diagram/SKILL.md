@@ -1,7 +1,7 @@
 ---
 name: diataxis-diagram
 visibility: public
-description: "Generate Mermaid diagrams from code using Diataxis methodology. Convergent PDCA loop: classify target and diagram type, extract entities from source, generate Mermaid syntax, evaluate against Diataxis quality criteria, iterate until convergence. Core types (ERD, flowchart, state, sequence, class) plus extended types (architecture, block, radar, treemap, sankey, kanban, gantt, pie, gitgraph, mindmap, timeline, quadrant, xychart, journey). All diagrams render natively in Zed."
+description: "Generate Mermaid diagrams from code using Diataxis methodology. Supports core types (ERD, flowchart, state, sequence, class) plus extended types (architecture, sankey, gantt, mindmap, timeline, and more). Renders natively in Zed."
 ---
 
 

@@ -1,15 +1,6 @@
 ---
 name: listening
-description: >
-  Apply the MAIA v3 listening template to an earnings-call transcript using a
-  retrieve-cite-verify process. The transcript is split into numbered chunks;
-  the model searches the chunks for evidence and cites what it found
-  (chunk_id + substring + char_offset); a post-processing step verifies each
-  cited substring is present in the referenced chunk. The no-fabrication
-  invariant is enforced by the process, not by the prompt. Single-pass
-  (sense→act, not iterative). Anchored to the MAIA guidebook (company-analysis,
-  financial-signposts, time-horizons, company-template) and the operator's
-  2026-08-05 seam clarification (12–36mo = tactical→strategic transition zone).
+description: "Apply the MAIA v3 listening template to an earnings-call transcript using a retrieve-cite-verify process. Splits the transcript into chunks, searches for evidence, and verifies each cited substring is present. Enforces no-fabrication by process."
 ---
 
 # Listening

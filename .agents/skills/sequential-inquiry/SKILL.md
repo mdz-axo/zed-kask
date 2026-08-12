@@ -1,6 +1,6 @@
 ---
 name: sequential-inquiry
-description: "Dynamic chain-of-thought reasoning engine following the Toyota Improvement Kata. Grasps the current understanding, establishes a target, predicts which deep-dive delegation will close the gap, runs the engine with delegation, and measures convergence deterministically (gap + Brier). Delegates to hypothesis-framer, mcda, diagnose, and falsifiability. Subsumes the deprecated sequential-thinking skill."
+description: "Dynamic chain-of-thought reasoning engine following the Toyota Improvement Kata. Grasps current understanding, establishes a target, predicts which delegation closes the gap, runs the engine, and measures convergence deterministically (gap + Brier)."
 ---
 
 # Sequential Inquiry

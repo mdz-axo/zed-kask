@@ -1,7 +1,7 @@
 ---
 name: graph-audit
 visibility: public
-description: "Unified graph analysis skill with three modes. Code mode: query, traverse, analyze, and assemble context from the code graph via the hkask-mcp-codegraph MCP server. Semantic mode: domain-agnostic dependency graph health analysis — classify edges by constraint force, detect cycles/redundancies/gaps/orphans, evaluate through pragmatic-semantics, pragmatic-cybernetics, essentialist, and grill-me lenses. Dual mode: extract the code graph via MCP tools, then run the semantic audit on the extracted graph. Any userpod may invoke this skill."
+description: "Unified graph analysis skill with three modes. Code mode: query, traverse, and analyze the code graph via the hkask-mcp-codegraph MCP server. Semantic mode: dependency graph health analysis. Dual mode: extract then audit."
 ---
 
 # Graph Audit

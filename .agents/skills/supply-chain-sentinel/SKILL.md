@@ -1,20 +1,7 @@
 ---
 name: supply-chain-sentinel
 visibility: public
-description: >
-  Dependency and software supply chain audit skill for hKask (v0.31.0).
-  Probes dependency manifests (Cargo.toml, deny.toml, package-lock.json,
-  go.sum) for version pinning, registry verification, license conflicts,
-  unmaintained indicators, and transitive dependency visibility.
-  Anchored to MITRE CWE (CWE-1104, CWE-829, CWE-1357), OWASP Supply
-  Chain taxonomy, OSC&R framework (Open Software Supply Chain Attack
-  Reference — `github.com/pbom-dev/OSCAR`).
-  Consumes security/regressions/; proposes RR-NNNN.yaml entries with
-  surface: supply-chain. Emits reg.supply_chain.* spans (P9). Decomposed
-  into 4 phases matching bug-hunt and kali-audit pipeline.
-  Minimal (P5): answers all 5W1H; single skill, no bundle; complements
-  kali-audit (deeper supply-chain focus) and adversarial-red-team (LLM
-  boundary — zero overlap).
+description: "Dependency and software supply chain audit for hKask. Probes dependency manifests (Cargo.toml, deny.toml, package-lock.json, go.sum) for version pinning, registry verification, license conflicts, unmaintained indicators, and transitive visibility."
 ---
 
 # Supply-Chain Sentinel

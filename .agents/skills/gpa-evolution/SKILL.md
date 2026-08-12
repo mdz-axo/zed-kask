@@ -2,7 +2,7 @@
 
 name: gpa-evolution
 visibility: public
-description: "GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. Samples execution trajectories, reflects in natural language to diagnose failures and surface high-level rules, proposes and tests mutations, and recombines complementary lessons from the Pareto frontier of (quality, cost) until the frontier stabilizes. v1 implements the prompt artifact path."
+description: "GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. Samples execution trajectories, reflects in natural language to diagnose failures and surface rules, and recombines lessons from the Pareto frontier of (quality, cost)."
 ---
 
 

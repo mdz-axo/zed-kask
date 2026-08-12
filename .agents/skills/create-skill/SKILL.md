@@ -1,19 +1,7 @@
 ---
 name: create-skill
 visibility: public
-description: >
-  Create a new kask skill as a complete registry crate: manifest.yaml + .j2
-  templates + process manifest (FlowDef with gas/rjoule/convergence blocks)
-  + SKILL.md companion. Overrides the built-in Zed create-skill, which
-  only produces SKILL.md files. The kask-native version produces the full
-  registry-first structure with ontological grounding: a research phase
-  finds academic/industry anchors for the skill's domain, the PDCA shape
-  emerges from those anchors (not from a generic template), and the
-  artifacts are annotated with ontology references (PKO, Dublin Core,
-  GOLEM, MovieLabs OMC, ESO, or domain-specific ontologies). Delegates to
-  skill-maintenance-build for mechanical scaffolding and
-  skill-maintenance-validate for post-creation validation. Any userpod
-  may invoke this skill.
+description: "Create a new kask skill as a complete registry crate: manifest.yaml + .j2 templates + process manifest + SKILL.md companion. Overrides the built-in Zed create-skill, which only produces SKILL.md files."
 ---
 
 # Create Skill (kask-native)

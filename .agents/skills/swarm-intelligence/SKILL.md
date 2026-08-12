@@ -1,7 +1,7 @@
 ---
 name: swarm-intelligence
 visibility: public
-description: "Convergent swarm-composition process. Senses swarm state against Onto4MAT and the swarm backend APIs; orients via Ashby requisite variety and PSO cognitive/social balance; decides composition adjustments isomorphic to PSO velocity tuning, ACO pheromone deposition, and Reynolds flocking; acts via gated swarm_delegate/swarm_delegate_local calls with a budget gate; checks spend against the algedonic channel; converges via Cauchy criterion on the swarm-state distance metric. Mode-aware: abw mode fetches from ABW REST and delegates via swarm_delegate; local mode reads the local agent registry + ledger and delegates via swarm_execute_plan_local (batch) or swarm_delegate_local (single). Composes pragmatic-cybernetics, kata-improvement, essentialist. Emits reg.swarm.* spans. Any userpod may invoke this skill."
+description: "Convergent swarm-composition process. Senses swarm state, orients via Ashby requisite variety and PSO balance, decides composition adjustments (PSO velocity, ACO pheromone, Reynolds flocking), and acts via gated delegation calls with a budget gate."
 ---
 
 # Swarm Intelligence

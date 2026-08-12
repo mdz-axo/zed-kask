@@ -1,18 +1,6 @@
 ---
 name: ui-layout-discipline
-description: >-
-  Enforces measured layout discipline for GPUI card/panel renderers. Prevents
-  unmeasured action congestion — adding N elements (buttons, labels) to a
-  container without checking available width, counting elements, verifying
-  the text column won't collapse, or matching codebase patterns. Anchored
-  to Fitts's Law, Hick's Law, Gestalt proximity, Rosenholtz feature
-  congestion, Tufte data-ink ratio, Nielsen progressive disclosure, and
-  Fagan inspection. Runs Sense → Orient → Decide → Act → Review: measures
-  container and children, counts actions against a budget, gates on hard
-  constraints (no overflow, primary visible, text ≥ min width, on-grid
-  spacing), applies PopoverMenu/truncate/flex remedies, and runs
-  adversarial probes (long-label, narrow-container, localized). Emits
-  reg.ui_layout.* spans. Any userpod may invoke this skill.
+description: "Enforces measured layout discipline for GPUI card/panel renderers. Prevents unmeasured action congestion — adding elements without checking width, counting elements, or verifying text columns. Measures, gates on constraints, applies remedies."
 ---
 
 # UI Layout Discipline

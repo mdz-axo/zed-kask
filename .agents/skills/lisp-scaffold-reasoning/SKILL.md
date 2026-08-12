@@ -1,7 +1,7 @@
 ---
 name: lisp-scaffold-reasoning
 visibility: public
-description: "Reference skill demonstrating deterministic Lisp scaffolding of LLM probabilistic reasoning, after de la Torre (2025, arXiv:2506.10021). Interleaves LLM hypothesis-generation steps with stateless lisp.eval compute steps that check structural invariants the LLM cannot reliably self-evaluate (count, completeness, diversity, mutual exclusivity). Realizes the symbolic-neural scaffolding thesis via kask's manifest cascade rather than a persistent REPL. Read its manifest to see the lisp.eval pattern."
+description: "Reference skill demonstrating deterministic Lisp scaffolding of LLM probabilistic reasoning. Interleaves LLM hypothesis-generation steps with stateless lisp.eval compute steps that check structural invariants the LLM cannot reliably self-evaluate."
 ---
 
 # Lisp-Scaffold-Reasoning

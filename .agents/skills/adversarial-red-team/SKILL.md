@@ -2,7 +2,7 @@
 
 name: adversarial-red-team
 visibility: public
-description: "Adversarial robustness testing with defense-layer awareness. Select targets, generate adversarial inputs across multiple categories (injection, hijacking, exfiltration, tool misuse) at configurable persistence levels (single-shot, iterative multi-turn, or persistent adaptive attacks), and evaluate resistance rates against generated adversarial inputs. Evolved: now probes hKask's actual deployed defenses (8-layer defense-in-depth stack) and reports which layers were bypassed by each attack."
+description: "Adversarial robustness testing with defense-layer awareness. Generates adversarial inputs (injection, hijacking, exfiltration, tool misuse) at configurable persistence levels and reports which defense layers each attack bypasses."
 ---
 
 

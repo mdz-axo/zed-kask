@@ -1,7 +1,7 @@
 ---
 name: idiomatic-lisp
 visibility: public
-description: "Idiomatic Lisp design through the lens of McCarthy, Sussman, and Graham. Convergent inquiry loop: anchor design problems against Lisp's founding principles (homoiconicity, metacircularity, data-as-program), propose macro- and data-driven solutions with code examples, challenge and refine through adversarial review with REPL evaluation as the extrinsic oracle, and converge toward deeper, more idiomatic designs."
+description: "Idiomatic Lisp design through the lens of McCarthy, Sussman, and Graham. Convergent inquiry loop: anchor against Lisp's founding principles, propose macro- and data-driven solutions, and refine through adversarial review with REPL evaluation."
 ---
 
 # Idiomatic Lisp

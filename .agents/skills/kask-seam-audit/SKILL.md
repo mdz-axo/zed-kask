@@ -1,19 +1,6 @@
 ---
 name: kask-seam-audit
-description: >-
-  Convergent multi-skill audit of the zed-kask Kask↔Zed seam (DIVERGENCE.md
-  D1-D24). Three tracks: kali-audit (security: OWASP LLM Top-10, MITRE ATLAS,
-  NIST SSDF, 8-layer defense coverage), refactor-architecture (dead-surface
-  removal + deepening + strangler-fig), ui-layout-discipline (GPUI measured
-  layout + Zed interaction-language gaps). Findings adjudicated with
-  pragmatic-semantics + pragmatic-cybernetics + essentialist; remediations
-  ranked by mcda with +-20% sensitivity analysis and applied only if
-  essentialist-surviving and seam-scoped. Stateless lisp.eval gates verify
-  structural invariants (prior-verdict exclusivity, finding citation +
-  severity exclusivity, remediation test-pinning + divergence-surface
-  membership) between phases, not LLM self-assessment. Hard-stops on any
-  upstream non-D-seam touch. Every finding cites file:line; missing evidence
-  is deferred with a reason, never fabricated. Any userpod may invoke it.
+description: "Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERGENCE.md D1-D24). Three tracks: kali-audit (security), refactor-architecture (dead-surface removal), ui-layout-discipline (GPUI layout). Every finding cites file:line."
 ---
 
 # Kask Seam Audit

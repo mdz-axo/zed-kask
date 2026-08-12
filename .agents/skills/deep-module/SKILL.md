@@ -1,7 +1,7 @@
 ---
 name: deep-module
 visibility: public
-description: "Module design discipline based on John Ousterhout's 'A Philosophy of Software Design.' Apply the deletion test to evaluate whether a module deserves to exist: delete the callers — if complexity reappears, extract. Delete the module — if complexity vanishes, don't create it. Enforces depth (high benefit/cost ratio), interface minimalism (≤7 public functions), and dependency direction."
+description: "Module design discipline based on Ousterhout's 'A Philosophy of Software Design.' Apply the deletion test to evaluate whether a module deserves to exist. Enforces depth, interface minimalism, and dependency direction."
 ---
 
 

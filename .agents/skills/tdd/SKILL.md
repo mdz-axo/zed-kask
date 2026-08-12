@@ -1,7 +1,7 @@
 ---
 name: tdd
 visibility: public
-description: "Test-driven development with red-green-refactor loop, codegraph-anchored testing with Dublin Core + PKO ontology, and gap analysis. Builds features or fixes bugs one vertical slice at a time. Enforces behavior testing through public interfaces, codegraph entity anchoring via dcterms:identifier tags, anti-horizontal-slicing, and minimal-implementation discipline. Five MDS categories: domain, composition, trust, lifecycle, curation. Orchestrates proptest (strengthen — universal test over the input space) and bug-hunt (explore — codegraph blind spots) as delegates within its red-green-refactor loop, and produces traces for the suite-level harness-optimize loop."
+description: "Test-driven development with red-green-refactor loop and codegraph-anchored testing. Builds features or fixes bugs one vertical slice at a time. Enforces behavior testing through public interfaces and minimal-implementation discipline."
 ---
 
 # Tdd

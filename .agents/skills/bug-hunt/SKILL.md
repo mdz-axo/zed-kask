@@ -1,7 +1,7 @@
 ---
 name: bug-hunt
 visibility: public
-description: "Bug hunting: explores a target crate for threats to user-defined quality. Applies Weinberg's quality definition, Beizer's bug taxonomy, Bach/Bolton's heuristic test strategy model, and Hendrickson's exploratory testing charters. Decomposed into phased templates (Charter → Probe → Oracle → Taxonomize → Report → Convergence) with inline reasoning patterns from pragmatic-semantics, pragmatic-cybernetics, diagnose, grill-me, and adversarial-red-team. Emits reg.bughunt.* spans. OCAP-gated: requires Tool:test:Execute and Tool:regulation:Read."
+description: "Exploratory bug hunting: explores a target crate for threats to user-defined quality using heuristic test strategy and exploratory testing charters. Emits reg.bughunt.* spans."
 ---
 
 # Bug Hunt

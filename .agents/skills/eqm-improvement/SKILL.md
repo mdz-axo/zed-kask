@@ -1,7 +1,7 @@
 ---
 name: eqm-improvement
 visibility: public
-description: "Improve a forecast rationale's quality by reverse-engineering the reasoning patterns the 60 EQMs (Karvetski et al. 2026) specify. Improvement Kata PDCA loop modeled on the metacognition skill: grasp current EQM scores (via the eqm skill / market_score_rationale), establish marker-level targets, predict which intervention will close the gap (with confidence), experiment (rewrite the rationale guided by EQM descriptions), re-score, compute marker-space gap, Brier-score the prediction, and iterate to convergence. Preserves the forecast probability (alignment invariant). Grounds evidence in real sources via delegation to superforecasting/research/falsifiability — never fabricates. Composes with eqm (measurement) and kata-improvement (forecaster-level learning across forecasts)."
+description: "Improve a forecast rationale's quality by reverse-engineering the reasoning patterns the 60 EQMs specify. PDCA loop: score, target, rewrite, re-score, iterate to convergence. Preserves the forecast probability and grounds evidence in real sources."
 ---
 
 # EQM Improvement — Reverse-Engineer Quality Forecasts (Improvement Instrument)

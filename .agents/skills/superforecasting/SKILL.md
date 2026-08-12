@@ -1,8 +1,7 @@
 ---
 name: superforecasting
 visibility: public
-description: "Superforecasting pipeline following Tetlock's Good Judgment Project methodology. Eight-stage process from question triage through Fermi decomposition, outside/inside views, Bayesian evidence updating, dragonfly-eye synthesis, probability calibration, and forecast recording.
-"
+description: "Superforecasting pipeline following Tetlock's Good Judgment Project methodology. Eight-stage process: question triage, Fermi decomposition, outside/inside views, Bayesian updating, dragonfly-eye synthesis, calibration, and forecast recording."
 ---
 
 # Superforecasting
