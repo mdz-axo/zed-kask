@@ -385,7 +385,8 @@ impl SwarmPanel {
                             // Restore the banner so the operator can retry from
                             // the checks they already reviewed.
                             this.publish.pending = pending;
-                            this.spend.hire_error = Some(format!("Failed to publish: {err}").into());
+                            this.spend.hire_error =
+                                Some(format!("Failed to publish: {err}").into());
                         }
                     }
                     cx.notify();

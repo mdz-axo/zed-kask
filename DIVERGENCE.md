@@ -110,4 +110,5 @@ The sole bidirectional seam is `kask_bridge` (D8), which lives under
    workflows) were not silently restored by the merge. Wired into CI
    (`kask-ci.yml` invariants job).
 7. Run `./script/clippy` (per `.rules` build guidelines — use this instead of
-   `cargo clippy`; runs under `--deny warnings`).
+   `cargo clippy`; runs under `--deny warnings`). A `rust-toolchain.toml` bump
+   may promote previously-allowed lints to denied — clippy catches these.

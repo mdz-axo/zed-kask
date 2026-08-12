@@ -277,7 +277,8 @@ impl SwarmPanel {
                             }
                         }
                         Err(err) => {
-                            this.spend.hire_error = Some(format!("Failed to fire agent: {err}").into());
+                            this.spend.hire_error =
+                                Some(format!("Failed to fire agent: {err}").into());
                         }
                     }
                     cx.notify();
@@ -430,7 +431,8 @@ impl SwarmPanel {
                             this.fetch_all(cx);
                         }
                         Err(err) => {
-                            this.spend.hire_error = Some(format!("Failed to delete swarm: {err}").into());
+                            this.spend.hire_error =
+                                Some(format!("Failed to delete swarm: {err}").into());
                         }
                     }
                     cx.notify();

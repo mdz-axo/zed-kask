@@ -879,6 +879,7 @@ pub struct OpenAiResponseEventMapper {
     function_calls_by_item: HashMap<String, PendingResponseFunctionCall>,
     custom_tool_calls_by_item: HashMap<String, PendingResponseCustomToolCall>,
     reasoning_items: Vec<ResponseReasoningInputItem>,
+    current_reasoning_summary_part: Option<(String, usize)>,
     current_message_phase: Option<String>,
     pending_stop_reason: Option<StopReason>,
     pending_compaction_items: usize,
@@ -904,6 +905,7 @@ impl OpenAiResponseEventMapper {
             function_calls_by_item: HashMap::default(),
             custom_tool_calls_by_item: HashMap::default(),
             reasoning_items: Vec::new(),
+            current_reasoning_summary_part: None,
             current_message_phase: None,
             pending_stop_reason: None,
             pending_compaction_items: 0,
@@ -984,8 +986,24 @@ impl OpenAiResponseEventMapper {
                 }
                 events
             }
-            ResponsesStreamEvent::ReasoningSummaryTextDelta { delta, .. }
-            | ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id,
+                summary_index,
+                delta,
+                ..
+            } => {
+                if delta.is_empty() {
+                    Vec::new()
+                } else {
+                    let mut events = self.begin_reasoning_summary_part(&item_id, summary_index);
+                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                        text: delta,
+                        signature: None,
+                    }));
+                    events
+                }
+            }
+            ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
                 if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -1138,16 +1156,11 @@ impl OpenAiResponseEventMapper {
                 let error = error.into_response_error();
                 vec![Err(completion_error_from_response_error(&error))]
             }
-            ResponsesStreamEvent::ReasoningSummaryPartAdded { summary_index, .. } => {
-                if summary_index > 0 {
-                    vec![Ok(LanguageModelCompletionEvent::Thinking {
-                        text: "\n\n".to_string(),
-                        signature: None,
-                    })]
-                } else {
-                    Vec::new()
-                }
-            }
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id,
+                summary_index,
+                ..
+            } => self.begin_reasoning_summary_part(&item_id, summary_index),
             ResponsesStreamEvent::OutputItemDone { item, .. } => match item {
                 ResponseOutputItem::Reasoning(reasoning) => self.capture_reasoning_item(&reasoning),
                 ResponseOutputItem::Message(message) => self.capture_message_phase(&message),
@@ -1185,6 +1198,27 @@ impl OpenAiResponseEventMapper {
             | ResponsesStreamEvent::Created { .. }
             | ResponsesStreamEvent::InProgress { .. }
             | ResponsesStreamEvent::Unknown => Vec::new(),
+        }
+    }
+
+    fn begin_reasoning_summary_part(
+        &mut self,
+        item_id: &str,
+        summary_index: usize,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let part = (item_id.to_string(), summary_index);
+        if self.current_reasoning_summary_part.as_ref() == Some(&part) {
+            return Vec::new();
+        }
+
+        let separator = self.current_reasoning_summary_part.replace(part).is_some();
+        if separator {
+            vec![Ok(LanguageModelCompletionEvent::Thinking {
+                text: "\n\n".to_string(),
+                signature: None,
+            })]
+        } else {
+            Vec::new()
         }
     }
 
@@ -3448,11 +3482,13 @@ mod tests {
             ResponsesStreamEvent::ReasoningSummaryTextDelta {
                 item_id: "rs_123".into(),
                 output_index: 0,
+                summary_index: 0,
                 delta: "Thinking about".into(),
             },
             ResponsesStreamEvent::ReasoningSummaryTextDelta {
                 item_id: "rs_123".into(),
                 output_index: 0,
+                summary_index: 0,
                 delta: " the answer".into(),
             },
             ResponsesStreamEvent::ReasoningSummaryTextDone {
@@ -3465,14 +3501,10 @@ mod tests {
                 output_index: 0,
                 summary_index: 0,
             },
-            ResponsesStreamEvent::ReasoningSummaryPartAdded {
-                item_id: "rs_123".into(),
-                output_index: 0,
-                summary_index: 1,
-            },
             ResponsesStreamEvent::ReasoningSummaryTextDelta {
                 item_id: "rs_123".into(),
                 output_index: 0,
+                summary_index: 1,
                 delta: "Second part".into(),
             },
             ResponsesStreamEvent::ReasoningSummaryTextDone {
@@ -3547,6 +3579,65 @@ mod tests {
         assert!(mapped.iter().any(
             |e| matches!(e, LanguageModelCompletionEvent::Text(t) if t == "The answer is 42")
         ));
+    }
+
+    #[test]
+    fn responses_stream_separates_reasoning_summary_items() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_1",
+                    vec![],
+                    None,
+                    None,
+                )),
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id: "rs_1".into(),
+                output_index: 0,
+                summary_index: 0,
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id: "rs_1".into(),
+                output_index: 0,
+                summary_index: 0,
+                delta: "**First item**".into(),
+            },
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 1,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_2",
+                    vec![],
+                    None,
+                    None,
+                )),
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id: "rs_2".into(),
+                output_index: 1,
+                summary_index: 0,
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id: "rs_2".into(),
+                output_index: 1,
+                summary_index: 0,
+                delta: "**Second item**".into(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        let thinking = mapped
+            .into_iter()
+            .filter_map(|event| match event {
+                LanguageModelCompletionEvent::Thinking { text, signature: _ } => Some(text),
+                _ => None,
+            })
+            .collect::<String>();
+
+        assert_eq!(thinking, "**First item**\n\n**Second item**");
     }
 
     #[test]
