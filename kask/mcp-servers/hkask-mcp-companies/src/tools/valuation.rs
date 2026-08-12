@@ -582,7 +582,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Scenario impact valuation. Takes a resolved scenario event tree (from hkask-mcp-scenarios `scenario_quantify`) and per-node impact mappings, then runs DCF under each scenario path. For each scenario node, the user maps how its Yes/No outcome additively changes the company's DCF assumptions (revenue growth, gross margin, capex, etc.). Enumerates all 2^N leaf paths, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity (which scenario nodes drive the most valuation variance), and the intrinsic value distribution (percentiles, prob-undervalued). Max 12 scenario nodes. This replaces the deprecated `scenario_from_companies`: exogenous scenario events drive the company's financial forecast, not the other way around."
+        description = "Scenario impact valuation. Takes a resolved scenario event tree (from hkask-mcp-scenarios `scenario_quantify`) and per-node impact mappings, then runs DCF under each scenario path. For each scenario node, the user maps how its Yes/No outcome additively changes the company's DCF assumptions (revenue growth, gross margin, capex, etc.). Enumerates all 2^N leaf paths, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity (which scenario nodes drive the most valuation variance), and the intrinsic value distribution (percentiles, prob-undervalued). Max 12 scenario nodes. This is the scenario scenario events drive the company's financial forecast, not the other way around."
     )]
     pub async fn scenario_impact_valuation(
         &self,
@@ -703,7 +703,7 @@ impl CompaniesServer {
                 },
                 "node_sensitivities": node_sensitivities,
                 "paths": output_paths,
-                "bridge_note": "Replacement for the deprecated scenario_from_companies. Exogenous scenario events (from hkask-mcp-scenarios scenario_quantify) drive the company financial forecast. Each scenario node Yes/No outcome maps to additive deltas on DCF assumptions. The tool enumerates all 2^N leaf paths, computes path probabilities from the CPTs, applies stacked deltas, runs DCF under each path, and weights by path probability.",
+                "bridge_note": "Scenario scenario events (from hkask-mcp-scenarios scenario_quantify) drive the company financial forecast. Each scenario node Yes/No outcome maps to additive deltas on DCF assumptions. The tool enumerates all 2^N leaf paths, computes path probabilities from the CPTs, applies stacked deltas, runs DCF under each path, and weights by path probability.",
                 "pipeline": [
                     "1. scenario_quantify (hkask-mcp-scenarios) → resolved event tree",
                     "2. User authors per-node impact mappings (node_id → yes_deltas, no_deltas)",

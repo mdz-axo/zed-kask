@@ -20,9 +20,6 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// Re-export the structured event type so the bridge can wire `with_events`.
-pub use crate::step_machine::CascadeEvent;
-
 /// Extract the feedback phase from a template reference for span emission.
 ///
 /// Maps the last path segment of a template_ref to a canonical phase name
@@ -79,7 +76,6 @@ pub struct ManifestExecutor {
     terminal_check: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
-    events: Option<Arc<dyn Fn(CascadeEvent) + Send + Sync>>,
 }
 
 impl ManifestExecutor {
@@ -100,7 +96,6 @@ impl ManifestExecutor {
             terminal_check: None,
             progress: None,
             title: None,
-            events: None,
         }
     }
 
@@ -123,13 +118,6 @@ impl ManifestExecutor {
     #[must_use]
     pub fn with_title(mut self, title: Arc<dyn Fn(&str) + Send + Sync>) -> Self {
         self.title = Some(title);
-        self
-    }
-
-    /// Wire a structured event callback for rich UI feedback.
-    #[must_use]
-    pub fn with_events(mut self, events: Arc<dyn Fn(CascadeEvent) + Send + Sync>) -> Self {
-        self.events = Some(events);
         self
     }
 

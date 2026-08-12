@@ -807,6 +807,9 @@ async fn call_inference_stream(
                         }
                     }
                     if !chunk.text_delta.is_empty() {
+                        if let Some(progress) = progress {
+                            progress(&chunk.text_delta);
+                        }
                         full_text.push_str(&chunk.text_delta);
                     }
                     final_chunk = Some(chunk);

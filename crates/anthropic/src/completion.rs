@@ -943,6 +943,7 @@ mod tests {
             thinking_effort: Some("xhigh".into()),
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -994,6 +995,7 @@ mod tests {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_tokens: None,
             };
 
             let anthropic_request = into_anthropic(

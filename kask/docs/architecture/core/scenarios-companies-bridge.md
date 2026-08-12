@@ -72,7 +72,7 @@ scenario_quantify                      scenario_impact_valuation
 
 - [Scenario Forecasting Pipeline Diagram](../../reference/mcp-servers/scenarios.md) — tool flow including the companies bridge entry point (DIAG-RF-005, inline)
 - [Superforecasting: Layered Model](../../explanation/forecasting-and-scenarios.md) — shared math engine architecture
-- Scenarios Adversarial Review — code review including `convert_companies_output` analysis[^anthropic-mcp]
+- Scenarios Adversarial Review — code review including former `convert_companies_output` analysis (now deleted)[^anthropic-mcp]
 
 ---
 

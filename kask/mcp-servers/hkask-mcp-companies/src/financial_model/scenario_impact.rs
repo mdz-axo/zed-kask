@@ -1,8 +1,7 @@
 //! Scenario impact valuation: compose a company's financial forecast from
 //! the impact of scenario event-tree nodes on DCF assumptions.
 //!
-//! This replaces the deprecated `scenario_from_companies` (which converted DCF
-//! output into scenario events — the wrong direction). Here, an exogenous scenario event tree —
+//! This is the scenario → company bridge: an exogenous scenario event tree —
 //! built from research, prediction markets, or brainstorming — is the
 //! driver, and the company's financial forecast is the system being
 //! impacted. The user maps each scenario node's Yes/No outcome to additive

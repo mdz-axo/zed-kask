@@ -3583,6 +3583,7 @@ impl GitPanel {
                     thinking_effort: None,
                     speed: None,
                     compact_at_tokens: None,
+                    max_tokens: None,
                 };
 
                 let stream = model.stream_completion_text(request, cx);

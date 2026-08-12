@@ -451,6 +451,11 @@ pub fn into_open_router(
     // we should revise this to use that instead.
     let is_anthropic_model = model.id().starts_with("anthropic/");
     let session_id = open_router_session_id(request.thread_id);
+    // zed-kask: D13 — read the per-request output budget before `request` is
+    // partially moved by the message loop below. When set (skill cascade), it
+    // overrides the model's default `max_output_tokens`; when `None` (agent
+    // chat), the model default is used as before.
+    let request_max_tokens = request.max_tokens;
 
     let mut messages = Vec::new();
     let mut any_message_wants_cache = false;
@@ -586,7 +591,7 @@ pub fn into_open_router(
         session_id,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(0.4),
-        max_tokens: max_output_tokens,
+        max_tokens: request_max_tokens.or(max_output_tokens),
         parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
             Some(false)
         } else {
@@ -1206,6 +1211,66 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_per_request_max_tokens_overrides_model_default() {
+        // zed-kask: D13 — the skill cascade sets max_tokens from
+        // LLMParameters (typically 2048) so the provider requests a tight
+        // output budget instead of the model full default. The per-request
+        // value wins; when None (agent chat), the model default is used.
+        let entry = open_router::ModelEntry {
+            id: "z-ai/glm-5.2".into(),
+            name: "Z.ai: GLM 5.2".into(),
+            created: 0,
+            description: String::new(),
+            context_length: Some(1048576),
+            supported_parameters: vec!["tools".into()],
+            architecture: None,
+            top_provider: Some(open_router::TopProvider {
+                max_completion_tokens: Some(1048576),
+            }),
+        };
+        let models = open_router::parse_models_response_for_test(entry)
+            .await
+            .unwrap();
+        let model = &models[0];
+        assert_eq!(model.max_output_tokens(), Some(524288));
+
+        // Per-request override (cascade path) wins over the model default.
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            max_tokens: Some(2048),
+            ..Default::default()
+        };
+        let result = into_open_router(request, model, model.max_output_tokens()).unwrap();
+        assert_eq!(
+            result.max_tokens,
+            Some(2048),
+            "per-request max_tokens must override the model default"
+        );
+
+        // Agent chat path (max_tokens None) falls back to the model default.
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+        let result = into_open_router(request, model, model.max_output_tokens()).unwrap();
+        assert_eq!(
+            result.max_tokens,
+            Some(524288),
+            "when max_tokens is None the model default is used as before"
+        );
+    }
+
+    #[gpui::test]
     async fn test_session_id_uses_thread_id() {
         let model = open_router::Model::new(
             "openai/gpt-4o",
@@ -1328,6 +1393,7 @@ mod tests {
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();
@@ -1467,6 +1533,7 @@ mod tests {
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();
@@ -1530,6 +1597,7 @@ mod tests {
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();

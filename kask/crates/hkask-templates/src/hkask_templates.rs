@@ -32,7 +32,6 @@ pub mod template_renderer;
 
 pub use bundle::BundleManifest;
 pub use bundle::BundleRegistryIndex;
-pub use executor::CascadeEvent;
 pub use executor::ManifestExecutor;
 pub use executor::extract_final_step_result;
 pub use step_machine::CascadeOutcome;

@@ -552,6 +552,7 @@ impl CodegenAlternative {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_tokens: None,
             }
         }))
     }
@@ -633,6 +634,7 @@ impl CodegenAlternative {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_tokens: None,
             }
         }))
     }

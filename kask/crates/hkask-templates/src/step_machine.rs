@@ -27,44 +27,6 @@ use hkask_types::ports::inference_port::InferencePort;
 use hkask_types::template::LLMParameters;
 use std::sync::Arc;
 
-/// Structured event emitted during cascade execution for rich UI feedback.
-/// Wired via `ManifestExecutor::with_events`.
-#[derive(Debug, Clone)]
-pub enum CascadeEvent {
-    IterationStart {
-        iteration: u32,
-        max_iterations: u32,
-    },
-    StepStart {
-        ordinal: u32,
-        action: String,
-        description: String,
-        step_index: usize,
-        total_steps: usize,
-    },
-    StepStream {
-        ordinal: u32,
-        chunk: String,
-    },
-    StepComplete {
-        ordinal: u32,
-        result_summary: String,
-    },
-    ConvergenceUpdate {
-        signal: f64,
-        threshold: f64,
-        distance: f64,
-        iteration: u32,
-    },
-    Converged {
-        iterations: u32,
-        final_signal: f64,
-    },
-    Aborted {
-        reason: String,
-    },
-}
-
 /// Infrastructure ports and callbacks passed to each `StepAction::execute`.
 /// Replaces the 10+ fields on `ManifestExecutor` that were accessed via
 /// `&self` inside the 720-line `run_cascade`.

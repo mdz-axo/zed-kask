@@ -291,6 +291,13 @@ impl LanguageModelInferencePort {
             messages: req_messages,
             tools: req_tools,
             temperature: Some(parameters.temperature),
+            // zed-kask: D13/D8 — propagate the cascade's output budget so the
+            // provider doesn't fall back to the model's full context window.
+            // Without this, OpenRouter receives no `max_tokens` and reserves
+            // the model's max output (e.g. 1,048,576 for GLM-5.2), making
+            // input + output exceed `context_length` → 400 on every cascade
+            // call. `LLMParameters::default()` sets 2048.
+            max_tokens: Some(parameters.max_tokens as u64),
             tool_choice: if tools.is_some() {
                 Some(LanguageModelToolChoice::Auto)
             } else {

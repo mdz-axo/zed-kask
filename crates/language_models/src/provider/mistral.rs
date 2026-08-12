@@ -880,6 +880,7 @@ mod tests {
             thinking_effort: None,
             speed: Default::default(),
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let (mistral_request, affinity) =
@@ -912,6 +913,7 @@ mod tests {
             thinking_effort: None,
             speed: Default::default(),
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let (mistral_request, _) =
@@ -955,6 +957,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_tokens: None,
         };
 
         let (mistral_request, _) =

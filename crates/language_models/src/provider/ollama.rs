@@ -465,6 +465,14 @@ impl OllamaLanguageModel {
             stream: true,
             options: Some(ChatOptions {
                 num_ctx: Some(self.model.max_tokens),
+                // Cap output tokens to prevent input + output from exceeding
+                // the context window. Without this, Ollama proxies (e.g. to
+                // OpenRouter) interpret the missing num_predict as "full
+                // context window as output," which causes a 400 when combined
+                // with any input tokens. The cap is generous (65536 tokens ≈
+                // 50K words) — enough for template rendering, reasoning, and
+                // code generation, but never the full context window.
+                num_predict: Some(self.max_output_tokens().unwrap_or(65536) as isize),
                 // Only send stop tokens if explicitly provided. When empty/None,
                 // Ollama will use the model's default stop tokens from its Modelfile.
                 // Sending an empty array would override and disable the defaults.
@@ -540,6 +548,18 @@ impl LanguageModel for OllamaLanguageModel {
 
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
+    }
+
+    /// Cap output tokens to half the context window, up to 65536.
+    /// Without this, the Ollama provider sends no `num_predict` to the
+    /// Ollama server, which proxies to OpenRouter as "full context window
+    /// as output" — causing a 400 when input + output exceeds the limit.
+    /// The cap is generous enough for reasoning, code generation, and
+    /// cascade template rendering, while ensuring input + output ≤ context
+    /// window. Also used by the agent's compaction logic to compute
+    /// `max_input_tokens = max_token_count - max_output_tokens`.
+    fn max_output_tokens(&self) -> Option<u64> {
+        Some((self.model.max_tokens / 2).min(65536))
     }
 
     fn stream_completion(
@@ -1250,5 +1270,37 @@ mod tests {
             "3b model should have its own display_name"
         );
         assert_eq!(model_3b.max_tokens, 6000);
+    }
+
+    /// The output token cap formula used by `max_output_tokens()` and
+    /// `to_ollama_request`. Caps at 65536 and never exceeds half the
+    /// context window, ensuring input + output ≤ context window.
+    fn output_token_cap(max_tokens: u64) -> u64 {
+        (max_tokens / 2).min(65536)
+    }
+
+    #[test]
+    fn test_output_token_cap_large_context() {
+        // A 1M context window must not request 1M output tokens.
+        // The cap is 65536 — generous enough for reasoning, code
+        // generation, and cascade template rendering, but never the
+        // full context window.
+        assert_eq!(output_token_cap(1_048_576), 65536);
+    }
+
+    #[test]
+    fn test_output_token_cap_small_context() {
+        // For small context windows, the cap is half the context window
+        // to ensure input + output ≤ context window.
+        assert_eq!(output_token_cap(4096), 2048);
+        assert_eq!(output_token_cap(32768), 16384);
+    }
+
+    #[test]
+    fn test_output_token_cap_mid_context() {
+        // 128K context: half is 65536, which is exactly the cap.
+        assert_eq!(output_token_cap(131072), 65536);
+        // 100K context: half is 50000, under the cap.
+        assert_eq!(output_token_cap(100_000), 50_000);
     }
 }
