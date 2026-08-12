@@ -24,28 +24,28 @@ deliberately deferred depth items with documented re-entry triggers.
 
 ### Shipped and verified
 
-| Capability | State | Evidence |
-|---|---|---|
-| `hkask-mcp-prediction-markets` server (18 market tools + status) | ✅ live | 85 server tests; 3 live smoke probes |
-| `hkask-mcp-portfolio` server (13 portfolio tools) | ✅ shipped | 42 server tests; extracted from companies |
-| Annotated `MarketRecord` contract (never a bare probability) | ✅ enforced | contract tests; live lookups |
-| Dual-axis ontology mapping (PKO + Dublin Core) | ✅ live-verified | `market_ontology_map` over stdio |
-| Polymarket + Kalshi read-only providers | ✅ live-verified | T0 spike + fixtures + live calls |
-| Entity-resolution matcher (`market_match`) | ✅ tested | deterministic, refusal-gated |
-| Calibration feedback loop (negative-only) | ✅ **live-firing** | live demotion of a poisoned bucket |
-| Self-feeding resolution scanner | ✅ live-verified | idempotent; 19 recorded on first scan |
-| CMP curve + published index + slope | ✅ live-verified | 6-tenor FED curve from 12 cohorts |
-| CMP index storage as transaction ledgers | ✅ shipped | `market_cmp_index_store` + `market_cmp_portfolio_store` |
-| DR-AS structural volatility model (arXiv:2607.08199) | ✅ shipped | `market_volatility` tool; 16 volatility tests |
-| Strike extraction from Kalshi market titles | ✅ shipped | 8 extraction tests; auto-fills `predicted_level` |
-| Curated default economic context + live FRED/CoinGecko fetch | ✅ shipped | `market_cmp_context_suggest` tool |
-| Residual-risk decomposition | ✅ live-verified | 81 observations on real FED pair |
-| Realized variance + volatility regime | ✅ live-verified | 94-observation FED history |
-| Scenarios bridge (`scenario_from_markets`) | ✅ live-verified | base_rate + provenance end-to-end |
-| Superforecasting + scenario-builder injection | ✅ wired | FlowDef `market_context` inputs |
-| Settings plumbing + UI sub-page | ✅ compiles | `mcp_env()` fix; full `zed` binary builds |
-| Portfolio widget holdings rendering (any portfolio type) | ✅ shipped | `render_holdings` + `HoldingsBody` |
-| No-trading boundary | ✅ pinned by test | `credentials: Some(&["HKASK_FRED_API_KEY"])`; Kalshi WS excluded |
+| Capability                                                       | State              | Evidence                                                         |
+| ---------------------------------------------------------------- | ------------------ | ---------------------------------------------------------------- |
+| `hkask-mcp-prediction-markets` server (18 market tools + status) | ✅ live            | 85 server tests; 3 live smoke probes                             |
+| `hkask-mcp-portfolio` server (13 portfolio tools)                | ✅ shipped         | 42 server tests; extracted from companies                        |
+| Annotated `MarketRecord` contract (never a bare probability)     | ✅ enforced        | contract tests; live lookups                                     |
+| Dual-axis ontology mapping (PKO + Dublin Core)                   | ✅ live-verified   | `market_ontology_map` over stdio                                 |
+| Polymarket + Kalshi read-only providers                          | ✅ live-verified   | T0 spike + fixtures + live calls                                 |
+| Entity-resolution matcher (`market_match`)                       | ✅ tested          | deterministic, refusal-gated                                     |
+| Calibration feedback loop (negative-only)                        | ✅ **live-firing** | live demotion of a poisoned bucket                               |
+| Self-feeding resolution scanner                                  | ✅ live-verified   | idempotent; 19 recorded on first scan                            |
+| CMP curve + published index + slope                              | ✅ live-verified   | 6-tenor FED curve from 12 cohorts                                |
+| CMP index storage as transaction ledgers                         | ✅ shipped         | `market_cmp_index_store` + `market_cmp_portfolio_store`          |
+| DR-AS structural volatility model (arXiv:2607.08199)             | ✅ shipped         | `market_volatility` tool; 16 volatility tests                    |
+| Strike extraction from Kalshi market titles                      | ✅ shipped         | 8 extraction tests; auto-fills `predicted_level`                 |
+| Curated default economic context + live FRED/CoinGecko fetch     | ✅ shipped         | `market_cmp_context_suggest` tool                                |
+| Residual-risk decomposition                                      | ✅ live-verified   | 81 observations on real FED pair                                 |
+| Realized variance + volatility regime                            | ✅ live-verified   | 94-observation FED history                                       |
+| Scenarios bridge (`scenario_from_markets`)                       | ✅ live-verified   | base_rate + provenance end-to-end                                |
+| Superforecasting + scenario-builder injection                    | ✅ wired           | FlowDef `market_context` inputs                                  |
+| Settings plumbing + UI sub-page                                  | ✅ compiles        | `mcp_env()` fix; full `zed` binary builds                        |
+| Portfolio widget holdings rendering (any portfolio type)         | ✅ shipped         | `render_holdings` + `HoldingsBody`                               |
+| No-trading boundary                                              | ✅ pinned by test  | `credentials: Some(&["HKASK_FRED_API_KEY"])`; Kalshi WS excluded |
 
 **Totals:** 299+ tests passing across the touched crates; `cargo clippy` clean; full `zed` binary compiles.
 
@@ -59,14 +59,14 @@ workstream "done" rather than "paused."**
 
 ## Deliberately deferred (with re-entry triggers)
 
-| Item | Why deferred | Reopens when |
-|---|---|---|
-| Graph event base | T12 deletion test: zero demonstrated relationship queries | ≥2 consumers need multi-hop traversal a flat store can't serve (`03-event-base-decision.md`) |
-| Embedding-based matcher | lexical matcher has no documented failures yet | a wrong-event match or missed match is observed in practice |
-| Kalshi WebSocket | requires a trading-capable credential — permanently excluded by the no-trading boundary | never (hard boundary) |
-| Scheduled CMP index snapshots | index computes on-demand; no consumer yet needs a daily published series | a consumer asks for curve *history*, not the current curve |
-| Polymarket event-level CMP (`bucketed_sparse`) | Kalshi covers the current registry's tenor needs | the registry adds a Polymarket-only base event family |
-| Third platform (Manifold, Metaculus) | two providers validate the contract | a real consumer need a second source can't meet |
+| Item                                           | Why deferred                                                                            | Reopens when                                                                                 |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Graph event base                               | T12 deletion test: zero demonstrated relationship queries                               | ≥2 consumers need multi-hop traversal a flat store can't serve (`03-event-base-decision.md`) |
+| Embedding-based matcher                        | lexical matcher has no documented failures yet                                          | a wrong-event match or missed match is observed in practice                                  |
+| Kalshi WebSocket                               | requires a trading-capable credential — permanently excluded by the no-trading boundary | never (hard boundary)                                                                        |
+| Scheduled CMP index snapshots                  | index computes on-demand; no consumer yet needs a daily published series                | a consumer asks for curve _history_, not the current curve                                   |
+| Polymarket event-level CMP (`bucketed_sparse`) | Kalshi covers the current registry's tenor needs                                        | the registry adds a Polymarket-only base event family                                        |
+| Third platform (Manifold, Metaculus)           | two providers validate the contract                                                     | a real consumer need a second source can't meet                                              |
 
 ## Key design decisions (the "why" record)
 
@@ -98,8 +98,12 @@ workstream "done" rather than "paused."**
 
 ## Footnotes
 
-[^tetlock]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting*. Crown. — outside-view anchoring discipline.
-[^jia]: Jia, Zhou, Zhang, Cong, Li, Sun (2026). *Unlocking the Forecasting Economy.* arXiv:2604.20421. — full-lifecycle data model; 50-50 resolution finding.
-[^le]: Le, N. A. (2026). *Decomposing Crowd Wisdom.* arXiv:2602.19520. — politics underconfidence; domain/horizon calibration structure.
-[^xi]: Xi, Moallemi, Pai, Wang (2026). *Volatility in Prediction Markets.* arXiv:2607.08199. — structural volatility (deadline + coin-flip effects).
-[^madrigal]: Madrigal-Cianci, Monsalve Maya, Breakey (2026). *Prediction Markets as Bayesian Inverse Problems.* arXiv:2601.18815. — price+volume as evidence, not point estimate.
+[^tetlock]: Tetlock, P. E., & Gardner, D. (2015). _Superforecasting_. Crown. — outside-view anchoring discipline.
+
+[^jia]: Jia, Zhou, Zhang, Cong, Li, Sun (2026). _Unlocking the Forecasting Economy._ arXiv:2604.20421. — full-lifecycle data model; 50-50 resolution finding.
+
+[^le]: Le, N. A. (2026). _Decomposing Crowd Wisdom._ arXiv:2602.19520. — politics underconfidence; domain/horizon calibration structure.
+
+[^xi]: Xi, Moallemi, Pai, Wang (2026). _Volatility in Prediction Markets._ arXiv:2607.08199. — structural volatility (deadline + coin-flip effects).
+
+[^madrigal]: Madrigal-Cianci, Monsalve Maya, Breakey (2026). _Prediction Markets as Bayesian Inverse Problems._ arXiv:2601.18815. — price+volume as evidence, not point estimate.

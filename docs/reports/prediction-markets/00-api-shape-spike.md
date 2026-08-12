@@ -14,6 +14,7 @@
 **Embedded market fields (live):** `id`, `question`, `conditionId`, `slug`, `endDate`, `outcomes` (JSON-string array, e.g. `"[\"Yes\", \"No\"]"`), **`outcomePrices` (JSON-string array of decimal strings, e.g. `"[\"0\", \"1\"]"`)**, `volume`, `active`, `closed`, `closedTime`, `resolvedBy`, `questionID`, `umaEndDate`, **`umaResolutionStatus: "resolved"`** (confirms the previously-unverified resolution field), `umaBond`, `umaReward`, `clobTokenIds` (JSON-string array of ERC1155 token IDs), `orderPriceMinTickSize`, `orderMinSize`, `negRisk`, `volumeNum`, plus `volume{1wk,1mo,1yr}Clob`.
 
 **Contract mapping notes:**
+
 - `probability` ← `outcomePrices[0]` (Yes leg) parsed from the embedded JSON string. Prices are decimal strings in [0,1].
 - `deadline` ← market `endDate`; `status` ← `active`/`closed` + `umaResolutionStatus`; `resolution_source` ← `resolvedBy` address presence + `umaResolutionStatus`.
 - `volatility`/`price_history` requires CLOB `/prices-history` (per token ID from `clobTokenIds[0]`) — not in Gamma.
@@ -28,6 +29,7 @@
 **Market fields (live, via `GET /markets?series_ticker=KXFED`):** `ticker`, `event_ticker`, `title`, `subtitle`, `yes_bid_dollars`, `yes_ask_dollars`, `no_bid_dollars`, `no_ask_dollars`, `yes_bid_size_fp`, `yes_ask_size_fp`, `last_price_dollars`, `previous_price_dollars`, `volume_fp`, `volume_24h_fp`, `open_interest_fp`, `liquidity_dollars`, `status: "active"`, `close_time`, `expiration_time`, `expected_expiration_time`, `floor_strike`, `strike_type` ("greater"), `price_ranges`, `market_type: "binary"`, `rules_primary`, `rules_secondary`, `result` (empty pre-settlement), `settlement_timer_seconds`, `can_close_early`.
 
 **Contract mapping notes:**
+
 - `probability` ← midpoint of `yes_bid_dollars`/`yes_ask_dollars` (both present live — the "bids-only orderbook" concern R13 applies to the `/orderbook` endpoint; the market object itself carries both sides). `spread` = `yes_ask_dollars − yes_bid_dollars` directly.
 - **R12 resolved:** this API generation returns `_dollars` fixed-point strings throughout (no legacy cents fields observed in these responses). Parser should still tolerate both, but dollars are what production serves.
 - `open_interest` ← `open_interest_fp` (string, fixed-point). `volume` ← `volume_fp`. **All numeric fields are strings** — parse via a decimal/f64-from-string helper, never bare `f64` serde.

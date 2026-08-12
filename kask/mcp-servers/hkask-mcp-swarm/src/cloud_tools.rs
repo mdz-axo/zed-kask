@@ -457,7 +457,6 @@ impl SwarmServer {
         .await
     }
 
-    /// Delegate a task to an agent in a workspace (spends credits). Consent-gated.
     /// Pre-flight cost estimate for hiring an agent + its dependency team.
     ///
     /// This is the consent gate's data source: read-only, spends nothing, and
@@ -1879,7 +1878,7 @@ impl SwarmServer {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_execute_response;
+    use super::{build_create_agent_card, extract_execute_response};
     use serde_json::json;
 
     #[test]
@@ -1889,7 +1888,7 @@ mod tests {
             "evidence": [{ "summary": "s1", "key_findings": ["f1"] }],
             "status": "Success",
         });
-        assert_eq!
+        assert_eq!(
             extract_execute_response(&data),
             Some("The market is trending up.".to_string())
         );
@@ -1956,5 +1955,122 @@ mod tests {
             extract_execute_response(&data),
             Some("Current shape".to_string())
         );
+    }
+
+    // ── Property-based tests ───────────────────────────────────────────
+    //
+    // These exercise the full input space (via proptest + hkask-test-harness)
+    // rather than individual hand-picked inputs. They complement the
+    // example-based tests above by verifying universal invariants.
+
+    use hkask_test_harness::arb_json_value;
+    use proptest::prelude::*;
+
+    use crate::request_types::CreateAgentRequest;
+
+    // P4 (panic_freedom): `extract_execute_response` must never panic on
+    // arbitrary JSON — ABW responses are untrusted third-party payloads and
+    // a panic would crash the MCP server process. No `prop_assume!` — every
+    // generated JSON is accepted.
+    proptest! {
+        #[test]
+        fn extract_execute_response_never_panics(data in arb_json_value()) {
+            let _ = extract_execute_response(&data);
+        }
+
+        // P1 (invariant): when the function returns Some, the string is
+        // never empty — an empty response is indistinguishable from no
+        // response and would mislead the caller.
+        #[test]
+        fn extract_execute_response_never_returns_empty(data in arb_json_value()) {
+            if let Some(text) = extract_execute_response(&data) {
+                prop_assert!(!text.is_empty(), "extracted response must be non-empty, got: {:?}", text);
+            }
+        }
+    }
+
+    prop_compose! {
+        fn arb_create_agent_request()
+            (agent_name in any::<String>(),
+             agent_type in any::<String>(),
+             system_prompt in any::<String>(),
+             description in any::<String>(),
+             model in prop::option::of(any::<String>()),
+             temperature in prop::option::of(any::<f64>()),
+             tags in prop::option::of(prop::collection::vec(any::<String>(), 0..4)),
+             sample_queries in prop::option::of(prop::collection::vec(any::<String>(), 0..4)),
+             dependencies_required in prop::option::of(prop::collection::vec(any::<String>(), 0..4)),
+             dependencies_optional in prop::option::of(prop::collection::vec(any::<String>(), 0..4)),
+             mcp_tools in prop::option::of(prop::collection::vec(any::<String>(), 0..4)),
+             skills in prop::option::of(prop::collection::vec(any::<String>(), 0..4)),
+             visibility in prop::option::of(any::<String>()))
+            -> CreateAgentRequest {
+            CreateAgentRequest {
+                agent_name,
+                agent_type,
+                system_prompt,
+                description,
+                model,
+                temperature,
+                tags,
+                sample_queries,
+                dependencies_required,
+                dependencies_optional,
+                mcp_tools,
+                mcp_servers: None,
+                skills,
+                visibility,
+                valence: None,
+            }
+        }
+    }
+
+    proptest! {
+        // P4 (panic_freedom): the card builder must never panic on any
+        // combination of request fields — it is the boundary between
+        // operator input and the ABW REST API.
+        #[test]
+        fn build_create_agent_card_never_panics(req in arb_create_agent_request()) {
+            let _ = build_create_agent_card(&req, "default-model");
+        }
+
+        // P1 (round_trip): scalar request fields appear verbatim in the
+        // output card.
+        #[test]
+        fn build_create_agent_card_round_trips_scalars(req in arb_create_agent_request()) {
+            let card = build_create_agent_card(&req, "default-model");
+            prop_assert_eq!(card.get("agent_name").and_then(|v| v.as_str()), Some(req.agent_name.as_str()));
+            prop_assert_eq!(card.get("agent_type").and_then(|v| v.as_str()), Some(req.agent_type.as_str()));
+            prop_assert_eq!(card.get("system_prompt").and_then(|v| v.as_str()), Some(req.system_prompt.as_str()));
+        }
+
+        // P1 (invariant): capabilities.model is the request's model when
+        // supplied, else the default.
+        #[test]
+        fn build_create_agent_card_model_default_fallback(req in arb_create_agent_request()) {
+            let card = build_create_agent_card(&req, "default-model");
+            let expected = req.model.as_deref().unwrap_or("default-model");
+            let got = card.get("capabilities").and_then(|c| c.get("model")).and_then(|v| v.as_str());
+            prop_assert_eq!(got, Some(expected));
+        }
+
+        // P1 (invariant): capabilities.mcp_tools defaults to an empty array
+        // when the caller supplies None.
+        #[test]
+        fn build_create_agent_card_mcp_tools_defaults_empty(req in arb_create_agent_request()) {
+            let card = build_create_agent_card(&req, "default-model");
+            let tools = card.get("capabilities").and_then(|c| c.get("mcp_tools")).and_then(|v| v.as_array());
+            let expected = req.mcp_tools.as_deref().unwrap_or(&[]);
+            prop_assert_eq!(tools.map(|a| a.len()).unwrap_or(0), expected.len());
+        }
+
+        // P1 (invariant): the `dependencies` object is present iff the
+        // caller supplied required or optional deps.
+        #[test]
+        fn build_create_agent_card_dependencies_presence(req in arb_create_agent_request()) {
+            let card = build_create_agent_card(&req, "default-model");
+            let has_deps = req.dependencies_required.is_some() || req.dependencies_optional.is_some();
+            prop_assert_eq!(card.get("dependencies").is_some(), has_deps);
+        }
     }
 }

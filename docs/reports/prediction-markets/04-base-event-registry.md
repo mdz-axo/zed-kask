@@ -10,13 +10,13 @@
 
 A base event is to scenario forecasting what the constant-maturity treasury is to fixed income: a **widely-traded, continuously-priced benchmark** whose term structure other events are priced against. Selection criteria (FINER-adapted):
 
-| Criterion | Test | Why |
-|---|---|---|
-| **Systematic** | The event's outcome moves many downstream events | It must be a shared risk factor, not idiosyncratic |
-| **Tenor density** | ≥3 distinct deadline cohorts live simultaneously | CMP interpolation needs bracketing points (T14) |
-| **Liquidity** | Reliable two-sided quotes + meaningful volume/OI | The reliability gate (reliability_tier) must clear |
-| **Clean resolution** | Unambiguous, machine-readable resolution source | Feeds the calibration loop without dispute noise |
-| **Persistence** | The series recurs (new cohorts replace expiring ones) | A one-off event can't sustain a curve |
+| Criterion            | Test                                                  | Why                                                |
+| -------------------- | ----------------------------------------------------- | -------------------------------------------------- |
+| **Systematic**       | The event's outcome moves many downstream events      | It must be a shared risk factor, not idiosyncratic |
+| **Tenor density**    | ≥3 distinct deadline cohorts live simultaneously      | CMP interpolation needs bracketing points (T14)    |
+| **Liquidity**        | Reliable two-sided quotes + meaningful volume/OI      | The reliability gate (reliability_tier) must clear |
+| **Clean resolution** | Unambiguous, machine-readable resolution source       | Feeds the calibration loop without dispute noise   |
+| **Persistence**      | The series recurs (new cohorts replace expiring ones) | A one-off event can't sustain a curve              |
 
 ## 2. Live sampling results (2026-08-05)
 
@@ -24,7 +24,7 @@ A base event is to scenario forecasting what the constant-maturity treasury is t
 
 **Polymarket** (top economy-tag events by volume): `how-many-fed-rate-cuts-in-2026` $46.9M, `fed-decision-in-september` $14.9M, `fed-rate-hike-in-2026` $6.3M, `us-recession-by-end-of-2026` $1.7M, `what-will-fed-rate-hit-before-2027` $1.7M, `how-high-will-inflation-get-in-2026` $1.4M.
 
-**Key structural finding:** Kalshi's macro series are **strike ladders per meeting/release** (e.g. KXFEDDECISION has rate-bucket strikes per FOMC date — 4+ deadline cohorts verified in T0). Polymarket's macro coverage is **event-level tenor ladders** (rate cuts "in 2026" vs "by September" vs "before 2027"). The two shapes are complementary: Kalshi gives tenor density *within* a question family; Polymarket gives tenor density *across* deadline variants of the same risk.
+**Key structural finding:** Kalshi's macro series are **strike ladders per meeting/release** (e.g. KXFEDDECISION has rate-bucket strikes per FOMC date — 4+ deadline cohorts verified in T0). Polymarket's macro coverage is **event-level tenor ladders** (rate cuts "in 2026" vs "by September" vs "before 2027"). The two shapes are complementary: Kalshi gives tenor density _within_ a question family; Polymarket gives tenor density _across_ deadline variants of the same risk.
 
 ## 3. Recommended registry (v1)
 
@@ -69,8 +69,8 @@ politics:presidential-election-winner-2028 # politics base event (128 legs, $677
 {
   "kask": {
     "prediction_markets": {
-      "base_events": "economics:KXFEDDECISION,economics:KXCPI,economics:KXPAYROLLS,economics:KXGDP,crypto:KXBTCD,crypto:KXETH,energy:KXWTI,equities:KXNASDAQ100"
-    }
-  }
+      "base_events": "economics:KXFEDDECISION,economics:KXCPI,economics:KXPAYROLLS,economics:KXGDP,crypto:KXBTCD,crypto:KXETH,energy:KXWTI,equities:KXNASDAQ100",
+    },
+  },
 }
 ```

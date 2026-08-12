@@ -624,4 +624,49 @@ mod tests {
                 "clean input must pass through trimmed");
         }
     }
+
+    // P1 (invariant) + P4 (panic_freedom) for `sanitize_abw_text` — the
+    // injection-redaction core. These are security-relevant: the function is
+    // the defense against ABW/LLM-generated content carrying prompt-injection
+    // payloads into the agent's context.
+    proptest! {
+        // P4: never panics on any string.
+        #[test]
+        fn sanitize_abw_text_never_panics(text in any::<String>()) {
+            let _ = sanitize_abw_text(&text);
+        }
+
+        // P1 (invariant): the output never contains any of the redacted
+        // injection trigger phrases. The function does literal `.replace()`
+        // of each, and the replacement texts ("[redacted: ...]") do not
+        // themselves contain any trigger, so no trace survives.
+        #[test]
+        fn sanitize_abw_text_redacts_all_injection_triggers(text in any::<String>()) {
+            let sanitized = sanitize_abw_text(&text);
+            for trigger in [
+                "ignore previous instructions",
+                "ignore all previous instructions",
+                "disregard prior instructions",
+                "you are now",
+                "new instructions:",
+            ] {
+                prop_assert!(
+                    !sanitized.contains(trigger),
+                    "sanitized output still contains trigger {:?}: {:?}",
+                    trigger, sanitized
+                );
+            }
+        }
+
+        // P1 (idempotency): sanitize(sanitize(x)) == sanitize(x). The
+        // replacement texts contain no trigger phrases, so a second pass is a
+        // no-op. This is what makes the sanitizer safe to apply repeatedly
+        // (e.g. once on extraction, once before display) without un-redacting.
+        #[test]
+        fn sanitize_abw_text_is_idempotent(text in any::<String>()) {
+            let once = sanitize_abw_text(&text);
+            let twice = sanitize_abw_text(&once);
+            prop_assert_eq!(once, twice);
+        }
+    }
 }

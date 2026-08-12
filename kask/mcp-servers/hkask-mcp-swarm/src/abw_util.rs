@@ -339,4 +339,109 @@ mod tests {
         });
         assert_eq!(effective_hire_cost(&with_deps), 5);
     }
+
+    // ── Property-based tests ───────────────────────────────────────────
+    //
+    // `make_swarm_slug` had a historical panic (byte-slice mid-codepoint on
+    // multi-byte UTF-8 + pre-epoch clock). `url_encode_segment` is the URL
+    // path-safety boundary. Both are pure functions over arbitrary strings —
+    // ideal proptest targets.
+
+    use proptest::prelude::*;
+
+    proptest! {
+        // P4 (panic_freedom): must never panic on any string, including
+        // multi-byte UTF-8 and empty strings. The prior inline version
+        // panicked via `&string[..4]` on an empty millis suffix; the
+        // extracted helper uses safe char-boundary slicing.
+        #[test]
+        fn make_swarm_slug_never_panics(base in any::<String>()) {
+            let now = std::time::SystemTime::now();
+            let _ = make_swarm_slug(&base, now);
+        }
+
+        // P1 (invariant): the slug never exceeds ABW's 64-char cap. The
+        // helper truncates the base to leave room for the millis suffix.
+        #[test]
+        fn make_swarm_slug_caps_at_64_chars(base in any::<String>()) {
+            let now = std::time::SystemTime::now();
+            let slug = make_swarm_slug(&base, now);
+            prop_assert!(
+                slug.len() <= 64,
+                "slug must fit ABW's 64-char cap, got {} chars: {:?}",
+                slug.len(), slug
+            );
+        }
+
+        // P1 (invariant): the slug always ends with `_<digits>` — the
+        // millis suffix is always present regardless of the base. This is the
+        // disambiguation contract: two same-name swarms created at different
+        // times must not collide. `make_swarm_slug` itself does NOT lowercase
+        // the base (the caller `swarm_create_swarm` does), so we test the
+        // suffix contract, not the charset.
+        #[test]
+        fn make_swarm_slug_ends_with_millis_suffix(base in any::<String>()) {
+            let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+            let slug = make_swarm_slug(&base, now);
+            let suffix = slug.rsplit_once('_').map(|(_, s)| s);
+            prop_assert!(
+                suffix.is_some_and(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())),
+                "slug must end with _<digits>, got: {:?}",
+                slug
+            );
+        }
+    }
+
+    proptest! {
+        // P4 (panic_freedom): must never panic on any string.
+        #[test]
+        fn url_encode_segment_never_panics(segment in any::<String>()) {
+            let _ = url_encode_segment(&segment);
+        }
+
+        // P1 (invariant): the encoded segment contains no unencoded
+        // path-unsafe characters (space, ?, &, #, /). These would corrupt
+        // the URL path when interpolated into an ABW endpoint.
+        #[test]
+        fn url_encode_segment_no_unsafe_chars(segment in any::<String>()) {
+            let encoded = url_encode_segment(&segment);
+            for unsafe_byte in [b' ', b'?', b'&', b'#', b'/'] {
+                prop_assert!(
+                    !encoded.bytes().any(|b| b == unsafe_byte),
+                    "encoded segment still contains unsafe byte {:?}: {:?}",
+                    unsafe_byte as char, encoded
+                );
+            }
+        }
+
+        // P1 (invariant): the encoded segment only contains unreserved
+        // characters (RFC 3986 §2.3: ALPHA / DIGIT / "-" / "_" / "." / "~")
+        // and well-formed percent-encoded triplets (% + two hex digits). No
+        // raw path-unsafe byte survives. This is stronger than idempotency
+        // (which does NOT hold — `%` is not unreserved, so re-encoding
+        // double-encodes `%XX` → `%25XX`; the function is a one-shot encoder).
+        #[test]
+        fn url_encode_segment_only_unreserved_and_percent_encoded(segment in any::<String>()) {
+            let encoded = url_encode_segment(&segment);
+            let mut chars = encoded.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '%' {
+                    let h1 = chars.next();
+                    let h2 = chars.next();
+                    prop_assert!(
+                        h1.is_some_and(|c| c.is_ascii_hexdigit())
+                            && h2.is_some_and(|c| c.is_ascii_hexdigit()),
+                        "invalid percent-encoding in {:?}: % not followed by two hex digits",
+                        encoded
+                    );
+                } else {
+                    prop_assert!(
+                        c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~'),
+                        "non-unreserved character {:?} in encoded segment: {:?}",
+                        c, encoded
+                    );
+                }
+            }
+        }
+    }
 }
