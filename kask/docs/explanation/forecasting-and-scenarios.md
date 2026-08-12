@@ -10,8 +10,8 @@ mds_categories: [domain, composition]
 
 # Forecasting and Scenarios
 
-The scenarios and companies MCP servers run as builtin in-process servers
-inside zed-kask (D1–D3).
+The scenarios and companies MCP servers run as builtin context servers (child
+processes over stdio) inside zed-kask (D1–D3).
 
 **Diataxis type:** Explanation
 **Status:** Active (v0.33.1)

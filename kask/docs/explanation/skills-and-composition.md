@@ -10,7 +10,7 @@ mds_categories: [domain, composition, lifecycle, trust]
 
 # Skills and Composition
 
-Design, invoke, audit, publish, and compose hKask skills. Skills are PDCA (Plan-Do-Check-Act) templates loaded from a two-zone model and executed in-process by the `BridgeManifestExecutor` (D1), which implements the `SkillManifestExecutor` trait defined in zed's `agent` crate. This guide also covers building MCP servers that provide tool surfaces for skills and agents — in zed-kask, MCP servers register as builtin in-process servers inside the editor, not as standalone binaries started via a CLI.
+Design, invoke, audit, publish, and compose hKask skills. Skills are PDCA (Plan-Do-Check-Act) templates loaded from a two-zone model and executed in-process by the `BridgeManifestExecutor` (D1), which implements the `SkillManifestExecutor` trait defined in zed's `agent` crate. This guide also covers building MCP servers that provide tool surfaces for skills and agents — in zed-kask, MCP servers register as builtins inside the editor and are launched as child processes over stdio by zed's `context_server` host (D3); the standalone `kask mcp start <id>` CLI is deleted.
 
 ---
 
@@ -1042,7 +1042,7 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; c
 
 This reference sequence separates the two Kata paths. The Kanban MCP exposes task-scoped **prompt generation**. Full Kata execution is available through the kata-kanban MCP server (a child process over stdio), which constructs `KataEngine` directly and calls `execute()`. The MCP prompt tools do not invoke the engine; the distinction is operationally important because prompt generation does not execute the manifest's convergence, budget, or capability declarations.
 
-> **Note:** The deleted `kask kata start` CLI is gone. Kata execution is invoked via the kata-kanban MCP server (one of the 13 MCP servers, a child process over stdio) — it constructs `KataEngine` and runs `execute()` in the kata-kanban server process. The Agent Panel is the user-facing entry point.
+> **Note:** The deleted `kask kata start` CLI is gone. Kata execution is invoked via the kata-kanban MCP server (one of the 13 MCP servers, a child process over stdio) — it constructs `KataEngine` and runs `execute()`. The Agent Panel is the user-facing entry point.
 
 ```mermaid
 sequenceDiagram
@@ -1161,7 +1161,7 @@ status: VERIFIED
     Cited for the cybernetic feedback-loop design the skill-router/skill-discovery pair implements.
 
 [^mcp-spec-build]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
-    Cited for the MCP protocol every builtin in-process server follows.
+    Cited for the MCP protocol every builtin MCP server follows.
 
 [^ousterhout-mcp-build]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
     Cited for the deep-module principle that the composition root wires individual components directly instead of a `KaskCore` singleton.

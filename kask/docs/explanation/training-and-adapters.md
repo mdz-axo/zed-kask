@@ -31,7 +31,7 @@ All training scripts live in the HuggingFace repo `Axolotl-Partners/rust-adapter
 
 ### Current Limitations
 
-The generic CLI commands `kask docproc ingest`, `kask training create-dataset`, `kask training start`, and `kask training status` were **not implemented CLI commands** and have been removed entirely. Training is driven by the HF-hosted scripts (curl-piped to RunPod pods) and the in-process training MCP server for adapter lifecycle management (described below).
+The generic CLI commands `kask docproc ingest`, `kask training create-dataset`, `kask training start`, and `kask training status` were **not implemented CLI commands** and have been removed entirely. Training is driven by the HF-hosted scripts (curl-piped to RunPod pods) and the training MCP server (child process over stdio) for adapter lifecycle management (described below).
 
 ---
 
@@ -234,7 +234,7 @@ The `AdapterRouter` is constructed inside the training server's `run()` when a d
 - [Unsloth Qwen3.5 Fine-tuning Guide](https://unsloth.ai/docs/models/qwen3.5/fine-tune) — QLoRA not recommended for Qwen3.5/3.6
 - [QwenLM Qwen3 Training with Unsloth](https://github.com/QwenLM/Qwen3/blob/main/docs/source/training/unsloth.md) — 75% reasoning / 25% non-reasoning dataset ratio
 - [Qwen3.6 Training Reference](#qwen36-training-hyperparameters-merged-from-qwen36-training-hyperparametersmd) — Full hyperparameter rationale and literature survey
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D3 in-process MCP server registration (training server)
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D3 builtin MCP server registration (training server, child process over stdio)
 ---
 
 ## Qwen3.6 Training Hyperparameters

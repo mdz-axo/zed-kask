@@ -200,7 +200,7 @@ export HKASK_FERMI_DEFAULTS='{"growth":[{"estimate":0.70,"confidence":0.8}],"mar
 
 ## Quick start
 
-The companies server is a builtin in-process MCP server in zed-kask — no
+The companies server is a builtin MCP server in zed-kask (a child process over stdio) — no
 standalone CLI command is needed. It is registered alongside the other
 builtin MCP servers and started automatically by the host.[^mcp-spec-companies-quickstart]
 
@@ -240,7 +240,7 @@ The suite covers provider-error handling, EODHD normalization, valuation request
     Cited for the object-capability model the dispatcher-membrane governance follows.
 
 [^mcp-spec-companies-quickstart]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
-    Cited for the in-process MCP server model the quick-start section describes.
+    Cited for the builtin MCP server model the quick-start section describes.
 
 [^bach-bolton-companies-validation]: Bach, J., & Bolton, M. (2019). *Rapid Software Testing*. Satisfice, Inc. https://www.satisfice.com/rapid-software-testing
     Cited for the exploratory-testing methodology the validation suite's coverage gaps reflect.

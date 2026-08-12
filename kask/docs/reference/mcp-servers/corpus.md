@@ -125,7 +125,7 @@ Centroid computation is persona-specific (no trait, no QA equivalent).
 
 ## Quick Start
 
-The corpus server is a builtin in-process MCP server in zed-kask — it
+The corpus server is a builtin MCP server in zed-kask (a child process over stdio) — it
 auto-starts when enabled via KaskSettings (D9a). No standalone CLI command
 is needed.[^mcp-spec-corpus-quickstart]
 
@@ -138,4 +138,4 @@ is needed.[^mcp-spec-corpus-quickstart]
     Cited for the instruction-conditioned embedding paradigm the strategy traits implement for the persona and QA branches.
 
 [^mcp-spec-corpus-quickstart]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
-    Cited for the in-process MCP server model the quick-start section describes.
+    Cited for the builtin MCP server model the quick-start section describes.
