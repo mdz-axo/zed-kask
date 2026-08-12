@@ -59,7 +59,7 @@ impl SwarmPanel {
                     if let Ok(balance) = &cloud_result
                         && let Some(b) = extract_wallet_balance(balance)
                     {
-                        this.wallet_balance = Some(b);
+                        this.spend.wallet_balance = Some(b);
                     }
                     match cloud_result {
                         Ok(output) => {
@@ -206,7 +206,7 @@ impl SwarmPanel {
                         Ok(output) => {
                             let parsed = parse_tool_response(&output);
                             if let Some(content) = parsed {
-                                this.local_balance =
+                                this.spend.local_balance =
                                     content.get("balance").and_then(|b| b.as_i64());
                             }
                         }
@@ -235,7 +235,7 @@ impl SwarmPanel {
                     match result {
                         Ok(output) => {
                             if let Some(b) = extract_wallet_balance(&output) {
-                                this.wallet_balance = Some(b);
+                                this.spend.wallet_balance = Some(b);
                             }
                             match parse_tool_response(&output).and_then(|c| {
                                 serde_json::from_value::<WorkspaceListResponse>(c).ok()
@@ -381,11 +381,11 @@ impl SwarmPanel {
     /// list so the source badge updates to `synced`.
     pub(crate) fn clone_to_local(&mut self, agent_name: String, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
-        self.spend_in_flight = Some(format!("clone-{agent_name}"));
+        self.spend.in_flight = Some(format!("clone-{agent_name}"));
         cx.notify();
         cx.spawn({
             let invoker = invoker.clone();
@@ -398,14 +398,14 @@ impl SwarmPanel {
                     )
                     .await;
                 this.update(cx, |this, cx| {
-                    this.spend_in_flight = None;
+                    this.spend.in_flight = None;
                     match result {
                         Ok(_) => {
                             // Re-fetch to update the source badge.
                             this.fetch_all(cx);
                         }
                         Err(err) => {
-                            this.hire_error =
+                            this.spend.hire_error =
                                 Some(format!("Failed to clone to local: {err}").into());
                         }
                     }
@@ -424,11 +424,11 @@ impl SwarmPanel {
     /// `synced`.
     pub(crate) fn push_to_cloud(&mut self, agent_name: String, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
-        self.spend_in_flight = Some(format!("push-{agent_name}"));
+        self.spend.in_flight = Some(format!("push-{agent_name}"));
         cx.notify();
         cx.spawn({
             let invoker = invoker.clone();
@@ -441,13 +441,13 @@ impl SwarmPanel {
                     )
                     .await;
                 this.update(cx, |this, cx| {
-                    this.spend_in_flight = None;
+                    this.spend.in_flight = None;
                     match result {
                         Ok(_) => {
                             this.fetch_all(cx);
                         }
                         Err(err) => {
-                            this.hire_error =
+                            this.spend.hire_error =
                                 Some(format!("Failed to push to cloud: {err}").into());
                         }
                     }

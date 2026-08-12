@@ -115,7 +115,7 @@ impl SwarmPanel {
                                 .child(
                                     Button::new(
                                         SharedString::from(format!("hire-{agent_name}")),
-                                        if self.spend_in_flight.as_deref()
+                                        if self.spend.in_flight.as_deref()
                                             == Some(agent_name.as_str())
                                         {
                                             "Hiring…"
@@ -125,7 +125,7 @@ impl SwarmPanel {
                                     )
                                     .style(ButtonStyle::Filled)
                                     .label_size(LabelSize::XSmall)
-                                    .disabled(self.spend_in_flight.is_some())
+                                    .disabled(self.spend.in_flight.is_some())
                                     .tooltip(Tooltip::text(
                                         "Hire this agent into the selected swarm. \
                                          Pre-flighted for cost and consent-gated.",

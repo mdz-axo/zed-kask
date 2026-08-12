@@ -118,7 +118,7 @@ impl SwarmPanel {
                             } else {
                                 "ABW agent name to hire into this workspace."
                             }))
-                            .child(self.swarm_add_agent_editor.clone()),
+                            .child(self.detail.add_agent_editor.clone()),
                     )
                     .child(
                         Button::new(
@@ -127,13 +127,14 @@ impl SwarmPanel {
                         )
                         .style(ButtonStyle::Filled)
                         .label_size(LabelSize::XSmall)
-                        .disabled(self.spend_in_flight.is_some())
+                        .disabled(self.spend.in_flight.is_some())
                         .tooltip(Tooltip::text(add_tooltip))
                         .on_click(cx.listener({
                             let workspace_id = detail.workspace_id.clone();
                             move |this, _, window, cx| {
                                 let agent_name = this
-                                    .swarm_add_agent_editor
+                                    .detail
+                                    .add_agent_editor
                                     .read(cx)
                                     .text(cx)
                                     .trim()
@@ -153,7 +154,8 @@ impl SwarmPanel {
                                 }
                                 // Clear the input whether the add/hire
                                 // succeeded or is awaiting consent.
-                                this.swarm_add_agent_editor
+                                this.detail
+                                    .add_agent_editor
                                     .update(cx, |editor, cx| editor.clear(window, cx));
                             }
                         })),
@@ -192,7 +194,7 @@ impl SwarmPanel {
                             )
                             .style(ButtonStyle::Subtle)
                             .label_size(LabelSize::XSmall)
-                            .disabled(self.spend_in_flight.is_some())
+                            .disabled(self.spend.in_flight.is_some())
                             .tooltip(Tooltip::text(if row_is_local {
                                 "Removes this agent from the swarm's roster. \
                                  Idempotent. The agent card is not deleted."
@@ -242,7 +244,7 @@ impl SwarmPanel {
                         )
                         .style(ButtonStyle::Subtle)
                         .label_size(LabelSize::XSmall)
-                        .disabled(self.spend_in_flight.is_some())
+                        .disabled(self.spend.in_flight.is_some())
                         .tooltip(Tooltip::text(
                             "Permanently deletes this local swarm and its \
                                  roster. Member agent cards are NOT deleted.",

@@ -10,7 +10,6 @@
 use crate::ocr::PipelineError;
 use image::DynamicImage;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Render a PDF to per-page images.
 ///
@@ -43,14 +42,14 @@ pub async fn pdf_to_images(pdf_path: &Path, dpi: u32) -> Result<Vec<DynamicImage
     let prefix = temp_dir.path().join("page");
 
     // Invoke pdftoppm
-    #[allow(clippy::disallowed_methods)]
-    let output = Command::new("pdftoppm")
+    let output = tokio::process::Command::new("pdftoppm")
         .arg("-png")
         .arg("-r")
         .arg(dpi.to_string())
         .arg(pdf_path)
         .arg(&prefix)
         .output()
+        .await
         .map_err(|e| pdftoppm_error(&e.to_string()))?;
 
     if !output.status.success() {
@@ -162,8 +161,7 @@ pub async fn pdf_to_images_for_pages(
     })?;
     let prefix = temp_dir.path().join("page");
 
-    #[allow(clippy::disallowed_methods)]
-    let output = Command::new("pdftoppm")
+    let output = tokio::process::Command::new("pdftoppm")
         .arg("-png")
         .arg("-r")
         .arg(dpi.to_string())
@@ -174,6 +172,7 @@ pub async fn pdf_to_images_for_pages(
         .arg(pdf_path)
         .arg(&prefix)
         .output()
+        .await
         .map_err(|e| pdftoppm_error(&e.to_string()))?;
 
     if !output.status.success() {
@@ -335,6 +334,7 @@ fn pdftoppm_error(detail: &str) -> PipelineError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     /// Check if pdftoppm is available on this system.
     fn pdftoppm_available() -> bool {

@@ -7592,6 +7592,68 @@ mod internal_tests {
         }
     }
 
+    /// Pin that Curator sessions register both the `curator_status` and
+    /// `curator_directive` tools. The directive tool is the enforcement
+    /// point for the CuratorDirective channel — without it, the
+    /// `CURATOR_STATIC_CONTEXT` prompt advertising directive issuance is
+    /// theater (the `.rules` "Advertised invariants need enforcement
+    /// points" trap).
+    #[gpui::test]
+    async fn test_curator_session_registers_directive_tool(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let server_struct = CuratorAgentServer::new(fs.clone(), thread_store);
+        let connection = cx
+            .update(|cx| {
+                server_struct.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("connect");
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("new_session");
+
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let agent = connection
+            .downcast::<NativeAgentConnection>()
+            .expect("curator connection is NativeAgentConnection");
+        let thread = cx.update(|cx| native_thread_for_session(&agent.0, &session_id, cx));
+
+        cx.update(|cx| {
+            thread.read_with(cx, |thread, _cx| {
+                assert!(
+                    thread.has_registered_tool("curator_status"),
+                    "curator sessions must register curator_status"
+                );
+                assert!(
+                    thread.has_registered_tool("curator_directive"),
+                    "curator sessions must register curator_directive — \
+                     without it the CURATOR_STATIC_CONTEXT prompt advertises \
+                     directive issuance with no enforcement point"
+                );
+            });
+        });
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
         cx.update(|cx| {

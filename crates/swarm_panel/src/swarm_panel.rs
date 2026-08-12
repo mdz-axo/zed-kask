@@ -387,6 +387,41 @@ enum SwarmEntry {
 
 // ── Panel ──────────────────────────────────────────────────────────────────
 
+/// R2: the algedonic + consent surface — wallet/ledger balances, in-flight
+/// spend, the pending hire consent, and hire-flow errors. Grouped so the
+/// spend/consent concern is one cohesive state object.
+struct SpendState {
+    in_flight: Option<String>,
+    pending_hire: Option<PendingHire>,
+    wallet_balance: Option<i64>,
+    local_balance: Option<i64>,
+    hire_error: Option<SharedString>,
+}
+
+/// R2: the browse-mode drill-down state — the swarm roster detail view, the
+/// run-status strip, and the add-agent editor. Only active in Browse mode.
+struct DetailState {
+    swarm_detail: Option<SwarmDetailView>,
+    run_status: Option<RunStatusView>,
+    add_agent_editor: Entity<Editor>,
+}
+
+/// R2: AI Assist / validation state — shared by the Author and Compose
+/// surfaces (suggestions + validation verdict from `swarm_ai_assist`).
+struct AiAssistState {
+    busy: bool,
+    action: Option<String>,
+    suggestions: Option<AiSuggestions>,
+    validation: Option<ValidationResult>,
+}
+
+/// R2: the publish-flow state — the pending publish consent and the
+/// force-publish reason editor.
+struct PublishState {
+    pending: Option<PendingPublish>,
+    reason: Entity<Editor>,
+}
+
 pub struct SwarmPanel {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
@@ -400,48 +435,15 @@ pub struct SwarmPanel {
     /// swarms error (and vice versa) — the H1 cross-clobber finding.
     agents_error: Option<SharedString>,
     swarms_error: Option<SharedString>,
-    /// Error from the hire/consent flow (begin_hire, confirm_hire). Surfaced
-    /// near the consent banner, distinct from fetch errors.
-    hire_error: Option<SharedString>,
     filter: SwarmFilter,
     entries: Vec<SwarmEntry>,
     filtered_entry_indices: Vec<usize>,
     query_editor: Entity<Editor>,
     _subscriptions: [gpui::Subscription; 2],
     search_task: Option<Task<()>>,
-    /// Current ABW wallet balance (the algedonic channel). `None` = unknown
-    /// (unauthenticated or the balance query failed) — never a fabricated zero.
-    wallet_balance: Option<i64>,
-    /// Current local ledger balance (v2 §15). `None` = unknown or the local
-    /// runtime isn't initialized. Displayed in the header when the backend
-    /// mode is `local`.
-    local_balance: Option<i64>,
-    /// In-flight consent prompt for a hire action: the agent being considered
-    /// plus its pre-flight cost estimate. `Some` renders the consent banner.
-    pending_hire: Option<PendingHire>,
-    /// In-flight publish prompt (fermi v0.10.15). `Some` renders the publish
-    /// banner — a Confirm path when `can_publish`, or a force-publish path with
-    /// a reason input when checks fail.
-    pending_publish: Option<PendingPublish>,
-    /// Single-line editor for the force-publish reason (audited to
-    /// `admin_bypass_events`). Only read when the operator confirms a force
-    /// publish.
-    publish_reason: Entity<Editor>,
     /// The workspace (swarm) id new hires target. Defaults to the first
     /// workspace once swarms load; selectable when there are several.
     selected_workspace: Option<String>,
-    /// A spend currently in flight (after consent), shown as a busy state.
-    spend_in_flight: Option<String>,
-    /// The swarm roster drill-down (item 4). `Some` renders the detail view
-    /// instead of the browse list.
-    swarm_detail: Option<SwarmDetailView>,
-    /// Single-line editor for the swarm-detail "add agent" affordance. Reads
-    /// the agent id to add to the open swarm's roster. Only read when the
-    /// detail view is open and the operator clicks Add.
-    swarm_add_agent_editor: Entity<Editor>,
-    /// The most recently requested swarm run status (item 3), rendered as a
-    /// dismissible strip. `None` = no status shown.
-    run_status: Option<RunStatusView>,
     /// Which surface is active: browse, author, compose, or steer.
     mode: PanelMode,
     /// Authoring form state.
@@ -466,18 +468,16 @@ pub struct SwarmPanel {
     /// Per-view connection store for the Steer `ConversationView`. One store =
     /// one connection = one prompt, preventing cross-view prompt bleed.
     steer_connection_store: Option<Entity<AgentConnectionStore>>,
-    /// True while an AI Assist / validate call to `swarm_ai_assist` is in
-    /// flight. Gates the AI Assist / Validate buttons and shows a busy label.
-    ai_assist_busy: bool,
-    /// The action ("suggest" / "validate") of the in-flight AI Assist call, so
-    /// the busy label can distinguish "Assisting…" from "Validating…".
-    ai_assist_action: Option<String>,
-    /// The last AI Assist suggestion result (action: "suggest"). `Some`
-    /// renders the suggestions banner with an Apply / Dismiss pair.
-    ai_assist_suggestions: Option<AiSuggestions>,
-    /// The last AI Assist validation verdict (action: "validate"). `Some`
-    /// renders the validation banner (success or issues list) with Dismiss.
-    validation_result: Option<ValidationResult>,
+    /// R2: spend/consent state (balances, in-flight spend, hire consent,
+    /// hire-flow errors).
+    spend: SpendState,
+    /// R2: browse-mode drill-down state (roster detail, run-status strip,
+    /// add-agent editor).
+    detail: DetailState,
+    /// R2: AI Assist / validation state.
+    ai_assist: AiAssistState,
+    /// R2: publish-flow state (pending consent + reason editor).
+    publish: PublishState,
 }
 
 /// A hire awaiting operator consent. The gate holds the pre-flight estimate
@@ -640,23 +640,13 @@ impl SwarmPanel {
                 in_flight: 0,
                 agents_error: None,
                 swarms_error: None,
-                hire_error: None,
                 filter: SwarmFilter::All,
                 entries: Vec::new(),
                 filtered_entry_indices: Vec::new(),
                 query_editor,
                 _subscriptions: subscriptions,
                 search_task: None,
-                wallet_balance: None,
-                local_balance: None,
-                pending_hire: None,
-                pending_publish: None,
-                publish_reason,
                 selected_workspace: None,
-                spend_in_flight: None,
-                swarm_detail: None,
-                swarm_add_agent_editor,
-                run_status: None,
                 mode: PanelMode::Browse,
                 author,
                 pending_author_load: None,
@@ -664,10 +654,28 @@ impl SwarmPanel {
                 compose,
                 steer_conversation: None,
                 steer_connection_store: None,
-                ai_assist_busy: false,
-                ai_assist_action: None,
-                ai_assist_suggestions: None,
-                validation_result: None,
+                spend: SpendState {
+                    in_flight: None,
+                    pending_hire: None,
+                    wallet_balance: None,
+                    local_balance: None,
+                    hire_error: None,
+                },
+                detail: DetailState {
+                    swarm_detail: None,
+                    run_status: None,
+                    add_agent_editor: swarm_add_agent_editor,
+                },
+                ai_assist: AiAssistState {
+                    busy: false,
+                    action: None,
+                    suggestions: None,
+                    validation: None,
+                },
+                publish: PublishState {
+                    pending: None,
+                    reason: publish_reason,
+                },
             };
             this.fetch_all(cx);
             this
@@ -990,7 +998,7 @@ impl SwarmPanel {
                 match result {
                     Ok(output) => {
                         if let Some(b) = extract_wallet_balance(&output) {
-                            this.wallet_balance = Some(b);
+                            this.spend.wallet_balance = Some(b);
                         }
                         this.author.status =
                             Some(format!("Agent '{}' created.", name.trim()).into());
@@ -1179,7 +1187,7 @@ impl SwarmPanel {
                 match result {
                     Ok(output) => {
                         if let Some(b) = extract_wallet_balance(&output) {
-                            this.wallet_balance = Some(b);
+                            this.spend.wallet_balance = Some(b);
                         }
                         // Surface any per-hire errors the server reported
                         // (BH-07): the workspace is created but some hires may
@@ -1309,7 +1317,7 @@ impl SwarmPanel {
                 match result {
                     Ok(output) => {
                         if let Some(b) = extract_wallet_balance(&output) {
-                            this.wallet_balance = Some(b);
+                            this.spend.wallet_balance = Some(b);
                         }
                         let parsed = parse_tool_response(&output);
                         if let Some(content) = parsed {
@@ -1405,13 +1413,13 @@ impl SwarmPanel {
             )
         };
 
-        self.ai_assist_busy = true;
-        self.ai_assist_action = Some(action.to_string());
+        self.ai_assist.busy = true;
+        self.ai_assist.action = Some(action.to_string());
         // Clear stale banners so the operator doesn't see the previous result
         // while a new call is in flight (mirrors the Xaman Ek stale-suggestion
         // fix, L5).
-        self.ai_assist_suggestions = None;
-        self.validation_result = None;
+        self.ai_assist.suggestions = None;
+        self.ai_assist.validation = None;
         cx.notify();
 
         let surface_owned = surface.to_string();
@@ -1435,8 +1443,8 @@ impl SwarmPanel {
                 )
                 .await;
             this.update(cx, |this, cx| {
-                this.ai_assist_busy = false;
-                this.ai_assist_action = None;
+                this.ai_assist.busy = false;
+                this.ai_assist.action = None;
                 match result {
                     Ok(output) => {
                         if let Some(content) = parse_tool_response(&output) {
@@ -1448,7 +1456,7 @@ impl SwarmPanel {
                                         .map(str::to_string)
                                         .unwrap_or_default()
                                 };
-                                this.ai_assist_suggestions = Some(AiSuggestions {
+                                this.ai_assist.suggestions = Some(AiSuggestions {
                                     surface: surface_owned.clone(),
                                     name: pick("name"),
                                     agent_type: pick("agent_type"),
@@ -1471,7 +1479,7 @@ impl SwarmPanel {
                                             .collect()
                                     })
                                     .unwrap_or_default();
-                                this.validation_result = Some(ValidationResult {
+                                this.ai_assist.validation = Some(ValidationResult {
                                     surface: surface_owned.clone(),
                                     valid,
                                     issues,
@@ -1503,7 +1511,7 @@ impl SwarmPanel {
     /// (research/creative/meta). Clears `ai_assist_suggestions` after applying.
     /// Requires `&mut Window` because `Editor::set_text` needs it.
     fn apply_ai_suggestions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(s) = self.ai_assist_suggestions.clone() else {
+        let Some(s) = self.ai_assist.suggestions.clone() else {
             return;
         };
         if s.surface == "agent" {
@@ -1536,19 +1544,19 @@ impl SwarmPanel {
                 editor.update(cx, |e, cx| e.set_text(s.agents, window, cx));
             }
         }
-        self.ai_assist_suggestions = None;
+        self.ai_assist.suggestions = None;
         cx.notify();
     }
 
     /// Dismiss the AI Assist suggestions banner without applying.
     fn dismiss_ai_suggestions(&mut self, cx: &mut Context<Self>) {
-        self.ai_assist_suggestions = None;
+        self.ai_assist.suggestions = None;
         cx.notify();
     }
 
     /// Dismiss the validation banner.
     fn dismiss_validation(&mut self, cx: &mut Context<Self>) {
-        self.validation_result = None;
+        self.ai_assist.validation = None;
         cx.notify();
     }
 
@@ -1800,7 +1808,7 @@ impl SwarmPanel {
     /// enforcement point for the `.rules` "advertised invariants need
     /// enforcement points" trap (the gate blocks, it does not just warn).
     fn render_consent_banner(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let pending = self.pending_hire.clone()?;
+        let pending = self.spend.pending_hire.clone()?;
         let border = cx.theme().colors().border;
         let warning = cx.theme().status().warning;
 
@@ -1909,8 +1917,8 @@ impl SwarmPanel {
         form_busy: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let disabled = form_busy || self.ai_assist_busy;
-        let busy_label = match self.ai_assist_action.as_deref() {
+        let disabled = form_busy || self.ai_assist.busy;
+        let busy_label = match self.ai_assist.action.as_deref() {
             Some("validate") => "Validating…",
             Some("suggest") => "Assisting…",
             _ => "",
@@ -1961,7 +1969,7 @@ impl SwarmPanel {
         surface: &str,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        let s = self.ai_assist_suggestions.clone()?;
+        let s = self.ai_assist.suggestions.clone()?;
         if s.surface != surface {
             return None;
         }
@@ -2081,7 +2089,7 @@ impl SwarmPanel {
         surface: &str,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        let v = self.validation_result.clone()?;
+        let v = self.ai_assist.validation.clone()?;
         if v.surface != surface {
             return None;
         }
@@ -2144,10 +2152,10 @@ impl SwarmPanel {
     /// Confirm path when `can_publish`, or a force-publish path listing the
     /// failing checks plus a reason input (audited to `admin_bypass_events`).
     fn render_publish_banner(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let pending = self.pending_publish.clone()?;
+        let pending = self.publish.pending.clone()?;
         let border = cx.theme().colors().border;
         let warning = cx.theme().status().warning;
-        let busy = self.spend_in_flight.is_some();
+        let busy = self.spend.in_flight.is_some();
 
         let header = if pending.can_publish {
             format!("Publish '{}' to the catalogue?", pending.agent_name)
@@ -2193,7 +2201,7 @@ impl SwarmPanel {
                                     .border_1()
                                     .border_color(border)
                                     .rounded_sm()
-                                    .child(self.publish_reason.clone()),
+                                    .child(self.publish.reason.clone()),
                             ),
                     )
                 })
@@ -2276,7 +2284,7 @@ impl Render for SwarmPanel {
                             // balance is always visible when known, so a spend
                             // never happens out of sight. Hidden when unknown
                             // (unauthenticated) — never a fabricated zero.
-                            .when_some(self.wallet_balance, |this, balance| {
+                            .when_some(self.spend.wallet_balance, |this, balance| {
                                 this.child(
                                     Label::new(format!("⛽ {balance} credits"))
                                         .size(LabelSize::Small)
@@ -2294,7 +2302,7 @@ impl Render for SwarmPanel {
                             .when(
                                 Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local,
                                 |this| {
-                                    this.when_some(self.local_balance, |this, balance| {
+                                    this.when_some(self.spend.local_balance, |this, balance| {
                                         this.child(
                                             Label::new(format!("■ {balance} local credits"))
                                                 .size(LabelSize::Small)
@@ -2363,7 +2371,7 @@ impl Render for SwarmPanel {
                     .children(self.render_consent_banner(cx))
                     .children(self.render_publish_banner(cx))
                     // Hire-flow errors surface near the consent banner.
-                    .when_some(self.hire_error.clone(), |this, err| {
+                    .when_some(self.spend.hire_error.clone(), |this, err| {
                         this.child(
                             Label::new(err)
                                 .size(LabelSize::Small)
@@ -2518,13 +2526,13 @@ impl Render for SwarmPanel {
                         PanelMode::Browse => {
                             // Run-status strip (dismissible) above the list.
                             let content = this
-                                .when_some(self.run_status.clone(), |this, status| {
+                                .when_some(self.detail.run_status.clone(), |this, status| {
                                     this.child(self.render_run_status_strip(&status, cx))
                                 })
-                                .when_some(self.swarm_detail.clone(), |this, detail| {
+                                .when_some(self.detail.swarm_detail.clone(), |this, detail| {
                                     this.child(self.render_swarm_detail(&detail, cx))
                                 });
-                            if self.swarm_detail.is_some() {
+                            if self.detail.swarm_detail.is_some() {
                                 content.into_any_element()
                             } else {
                                 let count = self.filtered_entry_indices.len();

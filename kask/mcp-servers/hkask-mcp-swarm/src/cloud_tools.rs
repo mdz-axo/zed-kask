@@ -84,6 +84,66 @@ pub fn build_create_agent_card(
     card
 }
 
+/// Extract the agent's textual output from an ABW execute-agent response.
+///
+/// Fermi's `execute_agent_handler` returns the agent's narrative in
+/// `metadata.reasoning` and structured findings in `evidence[]`; it does
+/// not emit a top-level `response` field. Older ABW deploys used a
+/// top-level `response` string. This helper tries the current shape first,
+/// falls back to evidence summaries, then to the legacy `response` field,
+/// so the extraction works against both current `main` and older deploys.
+pub fn extract_execute_response(data: &serde_json::Value) -> Option<String> {
+    // Current fermi shape: metadata.reasoning (the LLM's narrative output).
+    if let Some(reasoning) = data
+        .get("metadata")
+        .and_then(|m| m.get("reasoning"))
+        .and_then(|r| r.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(reasoning.to_string());
+    }
+    // Fallback: join evidence summaries + key findings (structured output).
+    if let Some(evidence) = data.get("evidence").and_then(|e| e.as_array()) {
+        let parts: Vec<String> = evidence
+            .iter()
+            .filter_map(|e| {
+                let mut bits: Vec<String> = Vec::new();
+                if let Some(s) = e
+                    .get("summary")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                {
+                    bits.push(s.to_string());
+                }
+                if let Some(kf) = e.get("key_findings").and_then(|v| v.as_array()) {
+                    for f in kf {
+                        if let Some(t) = f.as_str().filter(|s| !s.is_empty()) {
+                            bits.push(t.to_string());
+                        }
+                    }
+                }
+                if bits.is_empty() {
+                    None
+                } else {
+                    Some(bits.join("\n"))
+                }
+            })
+            .collect();
+        if !parts.is_empty() {
+            return Some(parts.join("\n\n"));
+        }
+    }
+    // Legacy: top-level `response` string (older ABW deploys).
+    if let Some(resp) = data
+        .get("response")
+        .and_then(|r| r.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(resp.to_string());
+    }
+    None
+}
+
 #[tool_router(router = cloud_router, vis = "pub")]
 impl SwarmServer {
     /// Browse the ABW agent catalogue. Works without an API key.
@@ -140,19 +200,36 @@ impl SwarmServer {
                     let sanitized_desc = sanitize_abw_response_plain(a.get("description"));
                     serde_json::json!({
                         "agent_id": a.get("agent_id"),
+                        "uuid": a.get("uuid"),
                         "agent_type": a.get("agent_type"),
+                        "tier": a.get("tier"),
+                        "status": a.get("status"),
                         "description": sanitized_desc,
                         "author": a.get("author"),
                         "tags": a.get("tags"),
                         "model": a.get("capabilities").and_then(|c| c.get("model")),
-                        "dependencies": a.get("dependencies"),
+                        "llm_provider": a.get("llm_provider"),
+                        // Composition signals (fermi `build_agent_json`):
+                        // `accepts`/`produces` drive I/O compatibility checks,
+                        // `valence` drives homophily scoring, `min_tier` gates
+                        // cognition tier, `requires_secrets` enables funding-gate
+                        // pre-check (avoids hire-then-fail on unfunded agents).
+                        "min_tier": a.get("min_tier"),
+                        "accepts": a.get("accepts"),
+                        "produces": a.get("produces"),
+                        "valence": a.get("valence"),
+                        "requires_secrets": a.get("requires_secrets"),
                         "execution_stats": a.get("execution_stats"),
                         "dreaming": a.get("dreaming"),
-                        // fermi v0.10.27: `agents.updated_at` (backfilled from
-                        // `created_at`). A freshness signal for staleness checks —
-                        // the agent analogue of the superforecasting
-                        // `chronic_staleness_days` setting. Forwarded so the panel
-                        // and the curator can surface stale agents.
+                        "workspace_count": a.get("workspace_count"),
+                        // Not emitted by fermi's list endpoint — fetch via
+                        // `swarm_hire_cost` (`GET /agents/{id}/dependencies`).
+                        // Forwarded as null for schema stability.
+                        "dependencies": a.get("dependencies"),
+                        // `agents.updated_at` exists in fermi's DB (mig-166) but
+                        // `build_agent_json` does not expose it in the list
+                        // response. Forwarded as null for schema stability;
+                        // re-enable when fermi adds it.
                         "updated_at": a.get("updated_at"),
                     })
                 })
@@ -353,17 +430,34 @@ impl SwarmServer {
                 .await
                 .map_err(SwarmError::into_tool_error)?;
 
+            // Fermi's execute handler returns the agent's output in
+            // `metadata.reasoning` and `evidence[]`, not a top-level
+            // `response` field. `extract_execute_response` handles the
+            // current shape, the evidence fallback, and the legacy
+            // `response` field for older deploys.
+            let response_text = extract_execute_response(&data);
+            let response_value = response_text
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null);
             Ok(self
                 .client
                 .with_wallet(serde_json::json!({
                     "agent_name": req.agent_name,
-                    "response": sanitize_abw_response(data.get("response")),
+                    "response": sanitize_abw_response(Some(&response_value)),
+                    // Forward the structured fields fermi emits so the
+                    // caller sees status, cost, and confidence alongside
+                    // the narrative.
+                    "status": data.get("status"),
+                    "confidence": data.get("confidence"),
+                    "episode_id": data.get("episode_id"),
+                    "credits_charged": data.get("credits_charged"),
                 }))
                 .await)
         })
         .await
     }
 
+    /// Delegate a task to an agent in a workspace (spends credits). Consent-gated.
     /// Pre-flight cost estimate for hiring an agent + its dependency team.
     ///
     /// This is the consent gate's data source: read-only, spends nothing, and
@@ -1780,5 +1874,87 @@ impl SwarmServer {
                 .await)
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_execute_response;
+    use serde_json::json;
+
+    #[test]
+    fn extract_execute_response_prefers_metadata_reasoning() {
+        let data = json!({
+            "metadata": { "reasoning": "The market is trending up." },
+            "evidence": [{ "summary": "s1", "key_findings": ["f1"] }],
+            "status": "Success",
+        });
+        assert_eq!
+            extract_execute_response(&data),
+            Some("The market is trending up.".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_execute_response_falls_back_to_evidence() {
+        let data = json!({
+            "metadata": { "reasoning": null },
+            "evidence": [
+                { "summary": "Chip supply tightening", "key_findings": ["TSMC capacity full", "Price up 12%"] },
+                { "summary": "Demand strong", "key_findings": [] },
+            ],
+        });
+        let result = extract_execute_response(&data).unwrap();
+        assert!(result.contains("Chip supply tightening"));
+        assert!(result.contains("TSMC capacity full"));
+        assert!(result.contains("Price up 12%"));
+        assert!(result.contains("Demand strong"));
+    }
+
+    #[test]
+    fn extract_execute_response_uses_legacy_response_field() {
+        let data = json!({
+            "response": "Legacy narrative output",
+        });
+        assert_eq!(
+            extract_execute_response(&data),
+            Some("Legacy narrative output".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_execute_response_returns_none_when_empty() {
+        let data = json!({
+            "metadata": { "reasoning": "" },
+            "evidence": [],
+            "response": null,
+        });
+        assert_eq!(extract_execute_response(&data), None);
+    }
+
+    #[test]
+    fn extract_execute_response_skips_empty_evidence_entries() {
+        let data = json!({
+            "evidence": [
+                { "summary": "", "key_findings": [] },
+                { "summary": "Real finding", "key_findings": [] },
+            ],
+        });
+        assert_eq!(
+            extract_execute_response(&data),
+            Some("Real finding".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_execute_response_prefers_reasoning_over_legacy_response() {
+        let data = json!({
+            "metadata": { "reasoning": "Current shape" },
+            "response": "Legacy shape",
+        });
+        assert_eq!(
+            extract_execute_response(&data),
+            Some("Current shape".to_string())
+        );
     }
 }

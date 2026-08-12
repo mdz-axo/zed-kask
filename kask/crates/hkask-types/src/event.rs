@@ -167,6 +167,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.curation.matrix",
     "reg.curator",
     "reg.curator.consolidation",
+    "reg.curator.directive",
     "reg.curator.efficiency.exceeded",
     "reg.curator.metacognition",
     // ── Cybernetics ──

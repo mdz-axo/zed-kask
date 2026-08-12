@@ -328,7 +328,7 @@ impl KanbanServer {
                                     criteria_count: t.criteria.len(),
                                     gas_remaining: t.gas_remaining,
                                     rjoule_remaining: t.rjoule_remaining,
-                                    swarm_id: t.swarm_id.clone(),
+                                    swarm_id: t.swarm_id,
                                     activity,
                                     ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
                                 }

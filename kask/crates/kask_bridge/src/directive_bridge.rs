@@ -102,10 +102,120 @@ impl CuratorDirectiveSink for BridgeCuratorDirectiveSink {
             .send(hkask_directive)
             .map_err(|e| format!("regulation loop channel closed: {:?}", e.0))?;
         tracing::info!(
-            target: "reg.curator_directive",
+            target: "reg.curator.directive",
             directive_type = %directive_type,
             "Curator directive queued for CyberneticsLoop processing"
         );
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent::CuratorDirectiveRequest;
+
+    #[test]
+    fn calibrate_threshold_round_trips() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CuratorDirective>();
+        let sink = BridgeCuratorDirectiveSink::new(tx);
+        let accepted = sink
+            .send_directive(CuratorDirectiveRequest::CalibrateThreshold {
+                domain: "inference".to_string(),
+                new_threshold: 42,
+            })
+            .expect("send should succeed");
+        assert!(accepted, "directive should be accepted");
+        let directive = rx.try_recv().expect("directive should be in channel");
+        match directive {
+            CuratorDirective::CalibrateThreshold {
+                domain,
+                new_threshold,
+            } => {
+                assert_eq!(domain, "inference");
+                assert_eq!(new_threshold, 42);
+            }
+            other => panic!("expected CalibrateThreshold, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn update_capabilities_converts_agent_name_to_webid() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CuratorDirective>();
+        let sink = BridgeCuratorDirectiveSink::new(tx);
+        sink.send_directive(CuratorDirectiveRequest::UpdateCapabilities {
+            agent: "curator".to_string(),
+            additions: vec!["regulation:read".to_string()],
+            removals: vec![],
+        })
+        .unwrap();
+        let directive = rx.try_recv().unwrap();
+        match directive {
+            CuratorDirective::UpdateCapabilities {
+                agent,
+                additions,
+                removals,
+            } => {
+                assert_eq!(agent, WebID::for_agent_name("curator"));
+                assert_eq!(additions, vec!["regulation:read"]);
+                assert!(removals.is_empty());
+            }
+            other => panic!("expected UpdateCapabilities, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn escalate_domain_parses_severity_string() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CuratorDirective>();
+        let sink = BridgeCuratorDirectiveSink::new(tx);
+        sink.send_directive(CuratorDirectiveRequest::EscalateDomain {
+            domain: "storage".to_string(),
+            severity: "critical".to_string(),
+            evidence: "db corruption".to_string(),
+        })
+        .unwrap();
+        let directive = rx.try_recv().unwrap();
+        match directive {
+            CuratorDirective::EscalateDomain {
+                domain,
+                severity,
+                evidence,
+            } => {
+                assert_eq!(domain, "storage");
+                assert_eq!(severity, EscalationSeverity::Critical);
+                assert_eq!(evidence, "db corruption");
+            }
+            other => panic!("expected EscalateDomain, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_severity_defaults_to_warning() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CuratorDirective>();
+        let sink = BridgeCuratorDirectiveSink::new(tx);
+        sink.send_directive(CuratorDirectiveRequest::EscalateDomain {
+            domain: "test".to_string(),
+            severity: "xyzzy".to_string(),
+            evidence: "test".to_string(),
+        })
+        .unwrap();
+        let directive = rx.try_recv().unwrap();
+        match directive {
+            CuratorDirective::EscalateDomain { severity, .. } => {
+                assert_eq!(severity, EscalationSeverity::Warning);
+            }
+            other => panic!("expected EscalateDomain, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn closed_channel_returns_error() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<CuratorDirective>();
+        drop(rx);
+        let sink = BridgeCuratorDirectiveSink::new(tx);
+        let result = sink.send_directive(CuratorDirectiveRequest::ClearOverride {
+            agent: "curator".to_string(),
+        });
+        assert!(result.is_err(), "send to closed channel should fail");
     }
 }

@@ -34,12 +34,12 @@ impl SwarmPanel {
         cx: &mut Context<Self>,
     ) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
         let is_local = source == AgentSource::Local;
-        self.swarm_detail = Some(SwarmDetailView {
+        self.detail.swarm_detail = Some(SwarmDetailView {
             workspace_id: workspace_id.clone(),
             name,
             mission,
@@ -73,7 +73,7 @@ impl SwarmPanel {
                         .await
                 };
                 this.update(cx, |this, cx| {
-                    let Some(detail) = this.swarm_detail.as_mut() else {
+                    let Some(detail) = this.detail.swarm_detail.as_mut() else {
                         return;
                     };
                     detail.loading = false;
@@ -119,7 +119,7 @@ impl SwarmPanel {
 
     /// Back out of the roster drill-down.
     pub(crate) fn close_swarm_detail(&mut self, cx: &mut Context<Self>) {
-        self.swarm_detail = None;
+        self.detail.swarm_detail = None;
         cx.notify();
     }
 
@@ -132,11 +132,11 @@ impl SwarmPanel {
         cx: &mut Context<Self>,
     ) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
-        self.run_status = Some(RunStatusView {
+        self.detail.run_status = Some(RunStatusView {
             name,
             loading: true,
             error: None,
@@ -154,7 +154,7 @@ impl SwarmPanel {
                     )
                     .await;
                 this.update(cx, |this, cx| {
-                    let Some(status) = this.run_status.as_mut() else {
+                    let Some(status) = this.detail.run_status.as_mut() else {
                         return;
                     };
                     status.loading = false;
@@ -184,7 +184,7 @@ impl SwarmPanel {
 
     /// Dismiss the run-status strip.
     pub(crate) fn dismiss_run_status(&mut self, cx: &mut Context<Self>) {
-        self.run_status = None;
+        self.detail.run_status = None;
         cx.notify();
     }
 
@@ -194,11 +194,11 @@ impl SwarmPanel {
     /// source badges update.
     pub(crate) fn remove_local_agent(&mut self, agent_name: String, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
-        self.spend_in_flight = Some(format!("remove-{agent_name}"));
+        self.spend.in_flight = Some(format!("remove-{agent_name}"));
         cx.notify();
         cx.spawn({
             let invoker = invoker.clone();
@@ -211,13 +211,13 @@ impl SwarmPanel {
                     )
                     .await;
                 this.update(cx, |this, cx| {
-                    this.spend_in_flight = None;
+                    this.spend.in_flight = None;
                     match result {
                         Ok(_) => {
                             this.fetch_all(cx);
                         }
                         Err(err) => {
-                            this.hire_error =
+                            this.spend.hire_error =
                                 Some(format!("Failed to remove local agent: {err}").into());
                         }
                     }
@@ -241,11 +241,11 @@ impl SwarmPanel {
         cx: &mut Context<Self>,
     ) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
-        self.spend_in_flight = Some(format!("fire-{agent_id}"));
+        self.spend.in_flight = Some(format!("fire-{agent_id}"));
         cx.notify();
         cx.spawn({
             let invoker = invoker.clone();
@@ -258,12 +258,12 @@ impl SwarmPanel {
                     )
                     .await;
                 this.update(cx, |this, cx| {
-                    this.spend_in_flight = None;
+                    this.spend.in_flight = None;
                     match result {
                         Ok(_) => {
                             // Re-open the detail so the fired agent disappears
                             // from the roster.
-                            if let Some(detail) = this.swarm_detail.clone() {
+                            if let Some(detail) = this.detail.swarm_detail.clone() {
                                 this.open_swarm_detail(
                                     detail.workspace_id.clone(),
                                     detail.name,
@@ -277,7 +277,7 @@ impl SwarmPanel {
                             }
                         }
                         Err(err) => {
-                            this.hire_error = Some(format!("Failed to fire agent: {err}").into());
+                            this.spend.hire_error = Some(format!("Failed to fire agent: {err}").into());
                         }
                     }
                     cx.notify();
@@ -298,11 +298,11 @@ impl SwarmPanel {
         cx: &mut Context<Self>,
     ) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
-        self.spend_in_flight = Some(format!("add-{agent_name}"));
+        self.spend.in_flight = Some(format!("add-{agent_name}"));
         cx.notify();
         cx.spawn({
             let invoker = invoker.clone();
@@ -315,10 +315,10 @@ impl SwarmPanel {
                     )
                     .await;
                 this.update(cx, |this, cx| {
-                    this.spend_in_flight = None;
+                    this.spend.in_flight = None;
                     match result {
                         Ok(_) => {
-                            if let Some(detail) = this.swarm_detail.clone() {
+                            if let Some(detail) = this.detail.swarm_detail.clone() {
                                 this.open_swarm_detail(
                                     detail.workspace_id.clone(),
                                     detail.name,
@@ -332,7 +332,7 @@ impl SwarmPanel {
                             }
                         }
                         Err(err) => {
-                            this.hire_error =
+                            this.spend.hire_error =
                                 Some(format!("Failed to add agent to swarm: {err}").into());
                         }
                     }
@@ -354,11 +354,11 @@ impl SwarmPanel {
         cx: &mut Context<Self>,
     ) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
-        self.spend_in_flight = Some(format!("roster-remove-{agent_name}"));
+        self.spend.in_flight = Some(format!("roster-remove-{agent_name}"));
         cx.notify();
         cx.spawn({
             let invoker = invoker.clone();
@@ -371,10 +371,10 @@ impl SwarmPanel {
                     )
                     .await;
                 this.update(cx, |this, cx| {
-                    this.spend_in_flight = None;
+                    this.spend.in_flight = None;
                     match result {
                         Ok(_) => {
-                            if let Some(detail) = this.swarm_detail.clone() {
+                            if let Some(detail) = this.detail.swarm_detail.clone() {
                                 this.open_swarm_detail(
                                     detail.workspace_id.clone(),
                                     detail.name,
@@ -388,7 +388,7 @@ impl SwarmPanel {
                             }
                         }
                         Err(err) => {
-                            this.hire_error =
+                            this.spend.hire_error =
                                 Some(format!("Failed to remove agent from swarm: {err}").into());
                         }
                     }
@@ -406,11 +406,11 @@ impl SwarmPanel {
     /// list so the deleted swarm disappears.
     pub(crate) fn delete_local_swarm(&mut self, swarm_id: String, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
-        self.spend_in_flight = Some(format!("delete-swarm-{swarm_id}"));
+        self.spend.in_flight = Some(format!("delete-swarm-{swarm_id}"));
         cx.notify();
         cx.spawn({
             let invoker = invoker.clone();
@@ -423,14 +423,14 @@ impl SwarmPanel {
                     )
                     .await;
                 this.update(cx, |this, cx| {
-                    this.spend_in_flight = None;
+                    this.spend.in_flight = None;
                     match result {
                         Ok(_) => {
                             this.close_swarm_detail(cx);
                             this.fetch_all(cx);
                         }
                         Err(err) => {
-                            this.hire_error = Some(format!("Failed to delete swarm: {err}").into());
+                            this.spend.hire_error = Some(format!("Failed to delete swarm: {err}").into());
                         }
                     }
                     cx.notify();

@@ -20,17 +20,17 @@ impl SwarmPanel {
     /// nothing, and populates `pending_hire` so the banner renders.
     pub(crate) fn begin_hire(&mut self, agent_name: String, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
         // Clear any stale pending consent — a new Hire click replaces it, and
         // a failed cost fetch must not leave a confirmable banner against an
         // unknown cost basis (the M2 finding).
-        if self.pending_hire.take().is_some() {
+        if self.spend.pending_hire.take().is_some() {
             log::info!("swarm-panel: replaced pending hire consent with a new request");
         }
-        self.hire_error = None;
+        self.spend.hire_error = None;
         cx.spawn(async move |this, cx| {
             let result = invoker
                 .invoke_tool(
@@ -43,7 +43,7 @@ impl SwarmPanel {
                 match result {
                     Ok(output) => {
                         if let Some(b) = extract_wallet_balance(&output) {
-                            this.wallet_balance = Some(b);
+                            this.spend.wallet_balance = Some(b);
                         }
                         // Parse the pre-flight estimate out of the content envelope.
                         match parse_tool_response(&output) {
@@ -59,7 +59,7 @@ impl SwarmPanel {
                                 let Some(total_hire_cost) =
                                     content.get("total_hire_cost").and_then(|c| c.as_u64())
                                 else {
-                                    this.hire_error = Some(
+                                    this.spend.hire_error = Some(
                                         "Hire cost unknown — the server response was \
                                          missing total_hire_cost."
                                             .into(),
@@ -67,7 +67,7 @@ impl SwarmPanel {
                                     cx.notify();
                                     return;
                                 };
-                                this.pending_hire = Some(PendingHire {
+                                this.spend.pending_hire = Some(PendingHire {
                                     agent_name: agent_name.clone(),
                                     total_hire_cost,
                                     required_cost: content
@@ -99,13 +99,13 @@ impl SwarmPanel {
                                 });
                             }
                             None => {
-                                this.hire_error =
+                                this.spend.hire_error =
                                     Some(format!("Failed to parse hire cost: {output}").into());
                             }
                         }
                     }
                     Err(err) => {
-                        this.hire_error =
+                        this.spend.hire_error =
                             Some(format!("Failed to estimate hire cost: {err}").into());
                     }
                 }
@@ -121,24 +121,24 @@ impl SwarmPanel {
     /// with it. The token is action-scoped ("hire") and target-scoped (the
     /// agent name), so it cannot be replayed for a different agent or spend.
     pub(crate) fn confirm_hire(&mut self, cx: &mut Context<Self>) {
-        let Some(pending) = self.pending_hire.take() else {
+        let Some(pending) = self.spend.pending_hire.take() else {
             return;
         };
         let Some(workspace_id) = self.selected_workspace.clone() else {
-            self.hire_error =
+            self.spend.hire_error =
                 Some("No swarm selected to hire into. Create a workspace on ABW first.".into());
             cx.notify();
             return;
         };
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
 
         let agent_name = pending.agent_name.clone();
         let credits = pending.total_hire_cost as u32;
-        self.spend_in_flight = Some(agent_name.clone());
+        self.spend.in_flight = Some(agent_name.clone());
         cx.notify();
 
         cx.spawn(async move |this, cx| {
@@ -163,11 +163,11 @@ impl SwarmPanel {
                 }),
                 Err(err) => {
                     this.update(cx, |this, cx| {
-                        this.spend_in_flight = None;
+                        this.spend.in_flight = None;
                         // Restore the banner so the operator can retry from the
                         // estimate they already reviewed (the M4 finding).
-                        this.pending_hire = Some(pending.clone());
-                        this.hire_error = Some(format!("Consent failed: {err}").into());
+                        this.spend.pending_hire = Some(pending.clone());
+                        this.spend.hire_error = Some(format!("Consent failed: {err}").into());
                         cx.notify();
                     })
                     .ok();
@@ -177,9 +177,9 @@ impl SwarmPanel {
 
             let Some(token) = token else {
                 this.update(cx, |this, cx| {
-                    this.spend_in_flight = None;
-                    this.pending_hire = Some(pending.clone());
-                    this.hire_error = Some("Consent did not return a token.".into());
+                    this.spend.in_flight = None;
+                    this.spend.pending_hire = Some(pending.clone());
+                    this.spend.hire_error = Some("Consent did not return a token.".into());
                     cx.notify();
                 })
                 .ok();
@@ -202,11 +202,11 @@ impl SwarmPanel {
                 .await;
 
             this.update(cx, |this, cx| {
-                this.spend_in_flight = None;
+                this.spend.in_flight = None;
                 match hire {
                     Ok(output) => {
                         if let Some(b) = extract_wallet_balance(&output) {
-                            this.wallet_balance = Some(b);
+                            this.spend.wallet_balance = Some(b);
                         }
                         log::info!("swarm-panel: hired '{agent_name}' into {workspace_id}");
                         // Refresh so the new hire appears in the swarm roster.
@@ -218,7 +218,7 @@ impl SwarmPanel {
                         // workspace — a browse-card hire (which targets
                         // `selected_workspace`, not necessarily the open detail)
                         // must not refresh an unrelated roster.
-                        if let Some(detail) = this.swarm_detail.clone() {
+                        if let Some(detail) = this.detail.swarm_detail.clone() {
                             if detail.workspace_id == workspace_id {
                                 this.open_swarm_detail(
                                     detail.workspace_id.clone(),
@@ -234,7 +234,7 @@ impl SwarmPanel {
                         }
                     }
                     Err(err) => {
-                        this.hire_error = Some(format!("Hire failed: {err}").into());
+                        this.spend.hire_error = Some(format!("Hire failed: {err}").into());
                     }
                 }
                 cx.notify();
@@ -246,7 +246,7 @@ impl SwarmPanel {
 
     /// Operator declined the hire — clear the gate without spending.
     pub(crate) fn cancel_hire(&mut self, cx: &mut Context<Self>) {
-        if let Some(pending) = self.pending_hire.take() {
+        if let Some(pending) = self.spend.pending_hire.take() {
             log::info!(
                 "swarm-panel: operator declined hire of '{}' (gate aborted)",
                 pending.agent_name
@@ -261,14 +261,14 @@ impl SwarmPanel {
     /// and a reason input for the admin force-publish path.
     pub(crate) fn begin_publish(&mut self, agent_name: String, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
-        if self.pending_publish.take().is_some() {
+        if self.publish.pending.take().is_some() {
             log::info!("swarm-panel: replaced pending publish with a new request");
         }
-        self.hire_error = None;
+        self.spend.hire_error = None;
         cx.spawn(async move |this, cx| {
             let result = invoker
                 .invoke_tool(
@@ -281,7 +281,7 @@ impl SwarmPanel {
                 match result {
                     Ok(output) => {
                         let Some(checks) = parse_tool_response(&output) else {
-                            this.hire_error = Some(
+                            this.spend.hire_error = Some(
                                 format!("Unexpected publish-checks response: {output}").into(),
                             );
                             cx.notify();
@@ -289,15 +289,15 @@ impl SwarmPanel {
                         };
                         match parse_publish_checks(agent_name.clone(), &checks) {
                             Ok(pending) => {
-                                this.pending_publish = Some(pending);
+                                this.publish.pending = Some(pending);
                             }
                             Err(msg) => {
-                                this.hire_error = Some(msg.into());
+                                this.spend.hire_error = Some(msg.into());
                             }
                         }
                     }
                     Err(err) => {
-                        this.hire_error =
+                        this.spend.hire_error =
                             Some(format!("Failed to preflight publish: {err}").into());
                     }
                 }
@@ -313,16 +313,16 @@ impl SwarmPanel {
     /// audited to `admin_bypass_events`); an empty reason is refused client-side
     /// so the audit row is never blank.
     pub(crate) fn confirm_publish(&mut self, cx: &mut Context<Self>) {
-        let Some(pending) = self.pending_publish.clone() else {
+        let Some(pending) = self.publish.pending.clone() else {
             return;
         };
         let agent_name = pending.agent_name.clone();
         let (force, reason) = if pending.can_publish {
             (false, String::new())
         } else {
-            let reason = self.publish_reason.read(cx).text(cx);
+            let reason = self.publish.reason.read(cx).text(cx);
             if reason.trim().is_empty() {
-                self.hire_error = Some(
+                self.spend.hire_error = Some(
                     "A reason is required to force-publish past failing checks \
                      (audited to admin_bypass_events)."
                         .into(),
@@ -337,7 +337,7 @@ impl SwarmPanel {
 
     /// Operator cancelled the publish — clear the banner without publishing.
     pub(crate) fn cancel_publish(&mut self, cx: &mut Context<Self>) {
-        if self.pending_publish.take().is_some() {
+        if self.publish.pending.take().is_some() {
             log::info!("swarm-panel: operator cancelled publish (gate aborted)");
         }
         cx.notify();
@@ -353,12 +353,12 @@ impl SwarmPanel {
         cx: &mut Context<Self>,
     ) {
         let Some(invoker) = crate::shared_tool_invoker() else {
-            self.hire_error = Some("Tool invoker not wired.".into());
+            self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
-        let pending = self.pending_publish.clone();
-        self.spend_in_flight = Some(format!("publish-{agent_name}"));
+        let pending = self.publish.pending.clone();
+        self.spend.in_flight = Some(format!("publish-{agent_name}"));
         cx.notify();
         cx.spawn({
             let invoker = invoker.clone();
@@ -375,17 +375,17 @@ impl SwarmPanel {
                     )
                     .await;
                 this.update(cx, |this, cx| {
-                    this.spend_in_flight = None;
+                    this.spend.in_flight = None;
                     match result {
                         Ok(_) => {
-                            this.pending_publish = None;
+                            this.publish.pending = None;
                             this.fetch_all(cx);
                         }
                         Err(err) => {
                             // Restore the banner so the operator can retry from
                             // the checks they already reviewed.
-                            this.pending_publish = pending;
-                            this.hire_error = Some(format!("Failed to publish: {err}").into());
+                            this.publish.pending = pending;
+                            this.spend.hire_error = Some(format!("Failed to publish: {err}").into());
                         }
                     }
                     cx.notify();
