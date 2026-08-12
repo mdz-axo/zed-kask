@@ -366,7 +366,6 @@ impl McpRuntime {
                 description: t.description.clone(),
                 input_schema: t.input_schema.clone(),
                 server_id: server_id.clone(),
-                required_capability: hkask_capability::capability_from_server_id(server_id),
                 taint: hkask_capability::tool_taint::ToolTaint::Pure,
             })
     }
@@ -386,18 +385,19 @@ impl Default for McpRuntime {
 
 // ── ToolPort implementation ──────────────────────────────────────────────
 //
-// McpRuntime implements ToolPort directly. When governance is configured
-// (via `with_governance`), `invoke` checks the token's declared capability,
-// reserves gas, emits a Regulation span, calls the tool, settles gas, and
-// emits the outcome span. When governance is not configured, it calls the
-// tool directly (for tests and lightweight embedders). One tool, one path —
-// no wrapper layers.
+// McpRuntime implements ToolPort directly. When governance is configured (via
+// `with_governance`), `invoke` meters the call against the agent's runaway-loop
+// ceiling, dispatches, and emits the outcome span. When governance is not
+// configured it dispatches directly. One tool, one path — no wrapper layers.
 //
-// Note: the capability check compares the token's declared resource/action
-// against the invoked tool. Tokens are minted in-process (there is no
-// untrusted transport boundary), and signature verification against a
-// trusted authority is NOT enforced — do not describe this gate as OCAP
-// authentication.
+// There is deliberately NO per-call capability check here. The prior gate
+// compared a `DelegationToken`'s declared `(resource, resource_id, action)`
+// against the invoked tool, but all three production mint sites built
+// `resource_id` from the same tool name they passed to `invoke` — the
+// comparison was a value against itself and could not deny. Authority lives at
+// the boundaries that hold a list the caller cannot choose: the per-request
+// `tool_allowlist` on the inference IPC dispatch, each swarm card's `mcp_tools`
+// allowlist, and the per-server MCP env/credential allowlists.
 
 impl hkask_capability::ToolPort for McpRuntime {
     fn invoke<'a>(
@@ -405,11 +405,11 @@ impl hkask_capability::ToolPort for McpRuntime {
         server: &'a str,
         tool: &'a str,
         args: Value,
-        token: &'a hkask_capability::DelegationToken,
+        agent: hkask_types::WebID,
     ) -> hkask_capability::ToolFuture<'a, Result<Value, hkask_capability::ToolPortError>> {
         Box::pin(async move {
-            // Governance gate: OCAP verify + call-cap charge + span emit.
-            // Skipped when governance is not configured (tests, lightweight embedders).
+            // Metering + span emit. Skipped when governance is not configured
+            // (tests, lightweight embedders).
             if let Some(governance) = &self.governance {
                 let cyber = &governance.cybernetics;
                 // Clone the current sink out of the lock — the composition
@@ -419,52 +419,45 @@ impl hkask_capability::ToolPort for McpRuntime {
                     .read()
                     .map(|guard| guard.clone())
                     .unwrap_or_else(|_| std::sync::Arc::new(hkask_regulation::NoopEventSink));
-                let agent = token.delegated_to;
-                // Capability match: the token must declare authority for this tool.
-                // (No signature verification — tokens are minted and consumed
-                // in-process; see the comment above the impl.)
-                let authorized = token.is_valid_for(
-                    hkask_capability::DelegationResource::Tool,
-                    tool,
-                    hkask_capability::DelegationAction::Execute,
-                ) || self.verify_capability_domain(token, tool).await;
-                if !authorized {
-                    return Err(hkask_capability::ToolPortError::CapabilityDenied(format!(
-                        "token does not authorize tool: {tool}"
-                    )));
-                }
 
-                // Call cap: charge one call against the agent's per-tick ceiling.
-                // `can_proceed` + `charge_call` are a single decision — if the
-                // agent has no cap or it is exhausted, the call is denied
-                // fail-closed (the same gate the prior gas hold-settle enforced,
-                // minus the reservation ceremony).
+                // Runaway-loop breaker. The ceiling exists to stop an agent that
+                // has entered a non-terminating tool loop and to meter usage for
+                // later optimization — it is not a permission check, so an agent
+                // the composition root never registered is auto-registered at the
+                // default ceiling rather than denied. Denying would fail the call
+                // for a wiring omission (which is exactly what happened: the
+                // `kask-panel` and `manifest-executor` personas were never
+                // seeded, so every IPC and cascade tool call died here).
                 let cyber_lock = cyber.read().await;
-                if !cyber_lock.can_proceed(&agent).await {
-                    return Err(hkask_capability::ToolPortError::EnergyBudgetExceeded(
-                        format!("call cap exhausted for {:?}, tool {tool}", agent),
-                    ));
-                }
-                if let Err(e) = cyber_lock.charge_call(&agent).await {
-                    // Fail closed: if the charge could not be recorded the call
-                    // would be uncounted — a persistently-failing cap store
-                    // would otherwise let every tool through with zero
-                    // accounting, defeating the gate (the broken-feedback-loop
-                    // class the .rules "unwrap_or(0) on regulation sense inputs"
-                    // trap generalizes).
-                    tracing::warn!(
-                        target: "reg.mcp.cap",
-                        error = %e,
-                        agent = ?agent,
-                        tool = %tool,
-                        "charge_call failed - denying the call (fail-closed) to preserve the cap gate"
-                    );
-                    return Err(hkask_capability::ToolPortError::EnergyBudgetExceeded(
-                        format!(
-                            "call could not be charged for {:?}, tool {tool}: {e}",
-                            agent
-                        ),
-                    ));
+                match cyber_lock.charge_call_metered(&agent).await {
+                    hkask_regulation::CallMeterOutcome::Charged => {}
+                    hkask_regulation::CallMeterOutcome::AutoRegistered => {
+                        tracing::info!(
+                            target: "reg.mcp.cap",
+                            agent = ?agent,
+                            tool = %tool,
+                            ceiling = hkask_regulation::DEFAULT_RUNAWAY_CALL_CEILING,
+                            "no call ceiling registered for agent - auto-registered at the default runaway ceiling"
+                        );
+                    }
+                    hkask_regulation::CallMeterOutcome::CeilingReached { ceiling } => {
+                        // The only pre-dispatch refusal. A loop that has burned
+                        // its whole per-tick ceiling is almost certainly not
+                        // making progress; the cap resets next regulation tick.
+                        tracing::warn!(
+                            target: "reg.mcp.cap",
+                            agent = ?agent,
+                            tool = %tool,
+                            ceiling,
+                            "runaway-loop breaker tripped - agent exhausted its per-tick call ceiling"
+                        );
+                        return Err(hkask_capability::ToolPortError::EnergyBudgetExceeded(
+                            format!(
+                                "runaway-loop breaker: {agent:?} reached its per-tick ceiling of \
+                                 {ceiling} calls (tool {tool}); resets next regulation tick"
+                            ),
+                        ));
+                    }
                 }
                 drop(cyber_lock);
 
@@ -487,16 +480,13 @@ impl hkask_capability::ToolPort for McpRuntime {
 
                 result
             } else {
-                // No governance configured - fail closed. The OCAP + call-cap
-                // membrane is the security gate; invoking a tool without it
-                // would bypass capability verification and cap accounting
-                // entirely. Production must wire `with_governance` (the zed
-                // composition root does; see main.rs). `McpRuntime::new()`
-                // remains usable for registration/discovery testing that does
-                // not call `invoke`.
-                Err(hkask_capability::ToolPortError::CapabilityDenied(
-                    "governance not configured - call McpRuntime::with_governance before invoking tools".to_string(),
-                ))
+                // No governance configured: dispatch unmetered. Metering is an
+                // accounting and loop-breaking concern, not an authorization
+                // one, so its absence is not a reason to refuse the call — the
+                // prior fail-closed refusal here made `McpRuntime::new()`
+                // unusable for any embedder that did not also wire regulation.
+                // Production wires `with_governance` (see main.rs).
+                self.call_tool_inner(server, tool, args).await
             }
         })
     }
@@ -514,41 +504,6 @@ impl hkask_capability::ToolPort for McpRuntime {
 }
 
 impl McpRuntime {
-    /// Verify OCAP authority via domain-based capability matching.
-    /// Agent tokens use domain shorthand (e.g., `regulation` not `regulation_health`).
-    async fn verify_capability_domain(
-        &self,
-        token: &hkask_capability::DelegationToken,
-        tool_name: &str,
-    ) -> bool {
-        let Some(required) = self.required_capability_for(tool_name).await else {
-            return false;
-        };
-        let token_cap = format!("tool:{}:{}", token.resource_id, token.action.as_str());
-        hkask_capability::capabilities_match(&token_cap, &required)
-    }
-
-    /// Lightweight capability lookup: walks `tool_registry` → `servers` →
-    /// `server_id` → `capability_from_server_id(server_id)` WITHOUT cloning
-    /// the tool's `input_schema`/`description` (unlike `get_tool_info`, which
-    /// materializes a full `ToolInfo`). Mirrors the lookup path of
-    /// `get_tool_info` so capability resolution behavior is identical.
-    async fn required_capability_for(&self, tool_name: &str) -> Option<String> {
-        let tool_registry = self.tool_registry.read().await;
-        let server_id = tool_registry.get(tool_name)?;
-        // Hold the servers read lock only while we confirm the server exists.
-        // `capability_from_server_id` derives the capability from the server_id
-        // string alone — it does not inspect the server's stored tool list —
-        // so we can drop the lock before calling it.
-        {
-            let servers = self.servers.read().await;
-            if !servers.contains_key(server_id) {
-                return None;
-            }
-        }
-        hkask_capability::capability_from_server_id(server_id)
-    }
-
     /// Inner tool call: live-connection check, JSON-RPC dispatch, result parsing.
     async fn call_tool_inner(
         &self,

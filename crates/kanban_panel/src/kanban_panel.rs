@@ -1093,6 +1093,14 @@ impl KanbanPanel {
         self.kanban_widget = None;
         self.comments_fetched.clear();
         self.last_detail_open = None;
+        // The Steer conversation bakes the active board id into its system
+        // prompt at construction (`ensure_steer_conversation` reads
+        // `selected_board_id` once). Switching boards while Steer is open would
+        // leave the curator creating and moving tasks on the previously selected
+        // board. Drop the conversation so the next Steer selection rebuilds with
+        // the new board. Mirrors `set_swarm_mode` in the swarm panel, which
+        // drops its Steer conversation for the same reason.
+        self.steer_conversation = None;
         self.fetch_tasks(cx);
         cx.notify();
     }
@@ -1790,6 +1798,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The Steer prompt bakes the active board id in at construction, so the
+    /// board id must appear in the prompt for the staleness concern to be real —
+    /// and `select_board` must drop the conversation (see its `take()` call) so a
+    /// board switch rebuilds it. This pins the first half (the prompt is
+    /// board-scoped); the `take()` is the fix for the second.
+    #[test]
+    fn steer_prompt_is_scoped_to_the_selected_board() {
+        let with_board = steer_system_prompt(Some("board-alpha"));
+        assert!(
+            with_board.contains("board-alpha"),
+            "prompt must name the active board, otherwise the curator writes to \
+             an unspecified board: {with_board}"
+        );
+
+        // A different selection must produce a different prompt — if it didn't,
+        // dropping the conversation on switch would be pointless.
+        let other_board = steer_system_prompt(Some("board-beta"));
+        assert_ne!(
+            with_board.as_ref(),
+            other_board.as_ref(),
+            "prompt must differ per board, or the rebuild-on-switch is a no-op"
+        );
+
+        // With no board selected the prompt must not invent one.
+        let no_board = steer_system_prompt(None);
+        assert!(
+            !no_board.contains("The active board is"),
+            "prompt must not claim an active board when none is selected: {no_board}"
+        );
     }
 
     /// The allowlist is only meaningful if the prompt actually exercises it, and

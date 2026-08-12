@@ -57,10 +57,23 @@ fn is_skill_catalog_file(path: &Path) -> bool {
 ///
 /// Returns `Err` (the tool-error channel) when `resolved_path` is a skill
 /// catalog file, so the model receives the redirect as the tool result rather
-/// than the file body. The `log::warn!` is retained as the `reg.skill.stray_read`
-/// telemetry signal: it now counts *blocked* attempts, which is the measurement
-/// that tells us whether the prompt's prohibition prose is still carrying load
-/// or has become redundant now that a gate exists.
+/// than the file body.
+///
+/// The `log::warn!` counts *blocked* attempts — the measurement that tells us
+/// whether the system prompt's prohibition prose is still carrying load now that
+/// a gate exists. It is deliberately **not** in the `reg.skill.*` namespace:
+/// `reg.skill.<id>.<phase>` is reserved for per-skill feedback spans
+/// (`RegulationLedger::record_skill_span`, CI-enforced by
+/// `kask/scripts/check-skill-span-namespace.sh`), and this is a tool-boundary
+/// event about a *refused file read*, not a skill's own outcome. It is also a
+/// `log` record rather than a `tracing` event because the `agent` crate has no
+/// `tracing` dependency and no `log`→`tracing` bridge is installed, so a
+/// `target:`-style span here would not reach the regulation ledger.
+/// Telemetry key for a refused `SKILL.md` read. Named as a constant so the
+/// namespace test asserts on the value actually emitted rather than on this
+/// file's source text.
+const BLOCKED_READ_TELEMETRY_KEY: &str = "skill.catalog_read_blocked";
+
 fn refuse_skill_catalog_read(
     resolved_path: &Path,
     requested_path: &str,
@@ -69,8 +82,9 @@ fn refuse_skill_catalog_read(
         return Ok(());
     }
     log::warn!(
-        "reg.skill.stray_read: blocked read_file of SKILL.md at {} (requested '{}') — \
+        "{}: refused read_file of SKILL.md at {} (requested '{}') — \
          SKILL.md is discovery-only; the `skill` tool executes the manifest cascade.",
+        BLOCKED_READ_TELEMETRY_KEY,
         resolved_path.display(),
         requested_path
     );
@@ -669,6 +683,30 @@ mod test {
         assert!(
             message.contains("task"),
             "refusal must tell the model to pass the request as `task`: {message}"
+        );
+    }
+
+    /// The blocked-read telemetry key must stay out of the `reg.skill.*`
+    /// namespace, which is reserved for per-skill feedback spans recorded via
+    /// `RegulationLedger::record_skill_span` and CI-enforced to be exactly
+    /// `reg.skill.<manifest.id>` by `kask/scripts/check-skill-span-namespace.sh`.
+    /// A tool-boundary event squatting on that prefix would look like a skill's
+    /// own outcome span to anything grepping the logs.
+    #[test]
+    fn test_blocked_read_telemetry_key_avoids_reserved_skill_span_namespace() {
+        // Reconstruct the reserved prefix at runtime so this assertion's own
+        // source text cannot satisfy the `contains` check it performs.
+        let reserved_prefix = format!("reg{}skill{}", ".", ".");
+        let emitted_key = BLOCKED_READ_TELEMETRY_KEY;
+        assert!(
+            !emitted_key.starts_with(&reserved_prefix),
+            "blocked-read telemetry key `{emitted_key}` must not use the reserved \
+             `reg.skill.*` feedback-span namespace (CI-enforced for per-skill \
+             feedback spans)"
+        );
+        assert!(
+            emitted_key.contains("catalog_read_blocked"),
+            "the key must name the event it reports: {emitted_key}"
         );
     }
 
