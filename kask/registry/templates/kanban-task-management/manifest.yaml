@@ -1,61 +1,137 @@
-# Template crate manifest for kanban-task-management skill
-# hKask v0.28.0
+# Template crate manifest for kanban-task-management skill (unified)
+# hKask v0.34.0 — Merged decomposition + delegation + management into one skill
+#
+# Three phases of kanban task management, triaged at runtime:
+#   Phase 1 (Decompose): gather-context → decompose-tasks → review-tasks → populate-board
+#   Phase 2 (Delegate):  configure-spawn → execute-task
+#   Phase 3 (Operate):   monitor-board → coordinate-agents → track-deliverables → move-tasks → verify-completion → escalate
+#
+# All templates share the PKO ontology: board = pko:Procedure, task = pko:Step,
+# execution = pko:StepExecution, verification = pko:StepVerification.
 
 crate:
   name: kanban-task-management
-  version: "0.31.0"
+  version: "0.34.0"
   description: >
-    Kanban board monitoring and task verification. Monitors board state with
-    summary statistics and verifies individual task completion against
-    acceptance criteria.
+    Unified kanban task management: decompose projects into tasks, delegate
+    tasks to subagents, and monitor/coordinate boards. Three phases triaged
+    at runtime based on operator inputs.
 
 templates:
+  # ── Triage ──────────────────────────────────────────────────────────────
+  - id: kanban-task-management/triage
+    name: "Determine which kanban management phase to run"
+    path: triage.j2
+    type: KnowAct
+    description: >
+      Triage step. Examines available inputs (project_description,
+      task_to_delegate, board_id) and determines which phase to run:
+      decompose, delegate, or operate.
+
+  # ── Phase 1: Decompose ────────────────────────────────────────────────
+  - id: kanban-task-management/gather-context
+    name: "Extract structured project context from an unstructured description"
+    path: gather-context.j2
+    type: KnowAct
+    description: >
+      Extract structured project context: project name, goals, constraints,
+      resources, and target task size. Phase: decompose.
+
+  - id: kanban-task-management/decompose-tasks
+    name: "Decompose a project description into INVEST-compliant kanban tasks"
+    path: decompose-tasks.j2
+    type: KnowAct
+    description: >
+      Decompose a project into INVEST-compliant tasks with vertical slicing,
+      dependencies, recomposition strategy, and acceptance criteria.
+      Phase: decompose.
+
+  - id: kanban-task-management/review-tasks
+    name: "Review a decomposed task list for INVEST quality and completeness"
+    path: review-tasks.j2
+    type: KnowAct
+    description: >
+      Review decomposed tasks for INVEST compliance, completeness, and
+      recomposition viability. Phase: decompose.
+
+  - id: kanban-task-management/populate-board
+    name: "Convert accepted tasks into board-ready format with MCP tool-call instructions"
+    path: populate-board.j2
+    type: KnowAct
+    description: >
+      Convert accepted tasks into board-ready format. Includes post-cascade
+      instructions for the agent to call kanban_board_create and
+      kanban_task_create. Phase: decompose.
+
+  # ── Phase 2: Delegate ─────────────────────────────────────────────────
+  - id: kanban-task-management/configure-spawn
+    name: "Propose minimum-capable subagent spawn configuration for one task"
+    path: configure-spawn.j2
+    type: KnowAct
+    description: >
+      Configure spawn parameters: delegation level, skills, memory scope,
+      gas budget, timeout. Includes post-cascade instructions for the agent
+      to call kanban_task_spawn. Phase: delegate.
+
+  - id: kanban-task-management/execute-task
+    name: "Execute a delegated kanban task and report status, deliverables, blockers"
+    path: execute-task.j2
+    type: KnowAct
+    description: >
+      Execute a delegated task within its approved configuration. Includes
+      post-cascade instructions for the agent to call kanban_task_comment
+      and kanban_task_add_deliverable. Phase: delegate.
+
+  # ── Phase 3: Operate ──────────────────────────────────────────────────
   - id: kanban-task-management/monitor-board
     name: "Monitor kanban board state across all columns"
     path: monitor-board.j2
     type: KnowAct
     description: >
-      Monitor kanban board state across all columns. Produces summary counts,
-      identifies stuck or blocked tasks, and flags issues requiring attention.
-
-  - id: kanban-task-management/verify-completion
-    name: "Verify a task's completion by evaluating each acceptance criterion…"
-    path: verify-completion.j2
-    type: KnowAct
-    description: >
-      Verify a task's completion by evaluating each acceptance criterion
-      against deliverables and evidence. Produces pass/fail with
-      per-criterion results and detailed reasoning.
+      Monitor board state, identify blockers, flag overdue tasks. Includes
+      pre-cascade instructions for the agent to fetch board data via
+      kanban_board_list and kanban_task_list. Phase: operate.
 
   - id: kanban-task-management/coordinate-agents
-    name: "Prepare task-thread replies, grounded blocker resolutions, and human…"
+    name: "Prepare task-thread replies and blocker resolutions"
     path: coordinate-agents.j2
     type: KnowAct
     description: >
-      Prepare task-thread replies, grounded blocker resolutions, and human
-      escalation candidates from active agents' updates.
+      Read active-task comment threads and prepare actionable replies.
+      Includes post-cascade instructions for the agent to call
+      kanban_task_comment. Phase: operate.
 
   - id: kanban-task-management/track-deliverables
-    name: "Assess submitted deliverables for relevance and evidence, identify…"
+    name: "Assess submitted deliverables for relevance and review readiness"
     path: track-deliverables.j2
     type: KnowAct
     description: >
-      Assess submitted deliverables for relevance and evidence, identify
-      missing artifacts, and recommend whether a task is ready for review.
+      Assess deliverables for completeness. Includes post-cascade
+      instructions for the agent to call kanban_task_move and
+      kanban_task_add_deliverable. Phase: operate.
 
   - id: kanban-task-management/move-tasks
-    name: "Produce valid, evidence-based kanban status transitions while…"
+    name: "Produce valid kanban status transitions with WIP enforcement"
     path: move-tasks.j2
     type: KnowAct
     description: >
-      Produce valid, evidence-based kanban status transitions while enforcing
-      WIP limits and documenting moves deferred by capacity or prerequisites.
+      Recommend status transitions based on evidence. Includes post-cascade
+      instructions for the agent to call kanban_task_move. Phase: operate.
+
+  - id: kanban-task-management/verify-completion
+    name: "Verify task completion against acceptance criteria"
+    path: verify-completion.j2
+    type: KnowAct
+    description: >
+      Evaluate deliverables against acceptance criteria. Includes
+      post-cascade instructions for the agent to call kanban_task_verify
+      and kanban_task_move. Phase: operate.
 
   - id: kanban-task-management/escalate
-    name: "Convert unresolved, authority-exceeding task issues into concise,…"
+    name: "Prepare human-decision escalation records"
     path: escalate.j2
     type: KnowAct
     description: >
-      Convert unresolved, authority-exceeding task issues into concise,
-      human-operator-ready escalation records with the required decision and
-      delivery impact.
+      Convert unresolved issues into human-operator-ready escalations.
+      Includes post-cascade instructions for the agent to call
+      kanban_task_comment. Phase: operate.

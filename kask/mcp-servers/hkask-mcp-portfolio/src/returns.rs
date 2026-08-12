@@ -132,7 +132,7 @@ pub fn returns(
         &cash_flow_events,
         from_days,
         to_days,
-    );
+    )?;
 
     Ok(ReturnsReport {
         portfolio: name.to_string(),
@@ -156,24 +156,22 @@ pub fn returns(
 /// `cash_flow_events` are `(date_string, amount)` pairs occurring strictly
 /// between `from` and `to`. `from_days` is the `num_days_from_ce()` of the
 /// period start date; `to_days` is the day offset from `from_days` to the
-/// period end date. Returns `(irr_rate, converged)`.
+/// period end date. Returns `Ok((irr_rate, converged))` or propagates a
+/// `PortfolioError` if a cash-flow date is malformed.
 pub fn compute_irr(
     total_start: f64,
     total_end: f64,
     cash_flow_events: &[(String, f64)],
     from_days: i32,
     to_days: f64,
-) -> (f64, bool) {
+) -> Result<(f64, bool), PortfolioError> {
     // The first cash flow (-total_start) is at day 0 (the `from` date);
     // subsequent flows are relative to it. Using the absolute day number
     // here would put the exponent at ~738000/365 ≈ 2021, causing Newton's
     // method to diverge numerically.
     let mut cfs: Vec<(f64, f64)> = vec![(-total_start, 0.0)];
     for (date_str, amt) in cash_flow_events {
-        let cf_date = match parse_ymd(date_str, "cash flow date") {
-            Ok(d) => d,
-            Err(_) => return (0.0, false),
-        };
+        let cf_date = parse_ymd(date_str, "cash flow date")?;
         let days = (cf_date.num_days_from_ce() - from_days) as f64;
         cfs.push((*amt, days));
     }
@@ -213,7 +211,7 @@ pub fn compute_irr(
         }
     }
 
-    (r, converged)
+    Ok((r, converged))
 }
 
 /// Parse a `YYYY-MM-DD` date, surfacing a malformed value as `InvalidArgument`

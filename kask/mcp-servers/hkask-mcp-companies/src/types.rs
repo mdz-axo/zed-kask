@@ -614,7 +614,7 @@ pub struct ResearchSearchRequest {
     pub query: String,
 }
 
-// ── Scenario impact valuation request (reverse bridge) ────────────────────
+// ── Scenario impact valuation request ─────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ScenarioImpactValuationRequest {

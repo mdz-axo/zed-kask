@@ -1,166 +1,325 @@
-# Kanban Task Management Skill
-# ℏKask v0.34.0 — Agent coordination via kanban boards
+# Kanban Task Management Skill (unified)
+# hKask v0.34.0 — Decompose + Delegate + Operate in one skill
 #
-# The ongoing management of the kanban board as agents work.
-# This is the "board operator" skill — it monitors board state,
-# coordinates between agents, tracks deliverables, manages comment
-# threads, verifies completion, moves tasks through columns, and
-# handles escalations.
+# Three phases of kanban task management, triaged at runtime:
+#   Phase 1 (Decompose): gather-context → decompose-tasks → review-tasks → populate-board
+#   Phase 2 (Delegate):  configure-spawn → execute-task
+#   Phase 3 (Operate):   monitor-board → coordinate-agents → track-deliverables →
+#                        move-tasks → verify-completion → escalate
 #
-# Distinct from decomposition (breaking work into tasks) and
-# delegation (spawning agents for individual tasks). Management
-# is the continuous coordination across all tasks on the board.
+# The triage step (step 1) determines which phase to run based on inputs:
+#   - project_description present → decompose
+#   - task_to_delegate present → delegate
+#   - board_id present → operate
 #
-# Process: Monitor → Coordinate → Track → Move → Verify → Escalate
+# Templates for non-active phases receive the triage phase and produce a
+# skip result ({"skipped": true, "phase": "..."}) without meaningful LLM
+# work. This is necessary because the manifest executor runs all steps
+# in ordinal order — there is no conditional step-skip mechanism.
+#
+# Ontological anchor: PKO (Procedural Knowledge Ontology, Carriero et al. 2025).
+#   - Board = pko:Procedure, Task = pko:Step
+#   - Decomposition = Procedure specification
+#   - Delegation = StepExecution
+#   - Monitoring = ProcedureExecution
+#   - Verification = StepVerification
+#   - Transitions = ChangeOfStatus
 
 manifest:
   id: kanban-task-management
-  category: pipeline
+  category: skill
   name: Kanban Task Management
-  version: "0.34.0"
   description: >
-    Manage the kanban board as agents execute delegated tasks.
-    Monitor board state, coordinate between agents through comment
-    threads, track deliverables, move tasks through columns based
-    on progress, verify completion against acceptance criteria,
-    and escalate when agents are blocked. This is the ongoing
-    coordination skill — the board operator that keeps work flowing.
-  editor: Curator
+    Unified kanban task management across the full task lifecycle. Three
+    phases triaged at runtime: (1) decompose projects into INVEST-compliant
+    tasks with recomposition strategy, (2) delegate tasks to subagents with
+    spawn configuration and gas budgeting, (3) monitor boards, coordinate
+    agents, track deliverables, move tasks, verify completion, and escalate.
+    All phases include post-cascade MCP tool-call instructions for the agent.
+    Ontology: PKO — board = pko:Procedure, task = pko:Step.
+  functional_role: flowdef
+  version: "0.34.0"
+  editor: curator-or-human-admin
   visibility: Public
 
-gas:
-  cap: 50000
-  alert_threshold: 0.7
-  hard_limit: true
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 1
+  on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
-rjoule:
-  cap: 2
+gas:
+  cap: 60000
+  cost_per_iteration: 100
   alert_threshold: 0.8
   hard_limit: true
 
-steps:
-  - ordinal: 1
-    action: populate
+rjoule:
+  cap: 5
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: project_description
+    type: string
     description: >
-      Monitor the board. Check the status of all tasks, identify
-      blockers (tasks stuck in a column beyond expected time),
-      flag overdue tasks, and note tasks ready for verification.
-      This is the board-level situational awareness step.
+      Project description to decompose. When present, the triage step
+      selects the "decompose" phase. Absent for delegate/operate phases.
+    required: false
+  - name: task_to_delegate
+    type: object
+    description: >
+      Task object to delegate to a subagent. When present (and no
+      project_description), the triage step selects the "delegate" phase.
+      Should include: task_id, title, description, criteria, estimated_hours.
+    required: false
+  - name: board_id
+    type: string
+    description: >
+      Board ID to monitor and coordinate. When present (and no
+      project_description or task_to_delegate), the triage step selects
+      the "operate" phase.
+    required: false
+  - name: board_name
+    type: string
+    description: "Board name (for display). Used in operate phase."
+    required: false
+  - name: tasks
+    type: array
+    description: "Pre-fetched task list (agent fetches via kanban_task_list before invoking operate phase)."
+    required: false
+  - name: swarm_id
+    type: string
+    description: "Swarm ID to link spawned tasks to. Used in delegate phase."
+    required: false
+  - name: available_skills
+    type: array
+    description: "Available skill catalog for spawn configuration. Used in delegate phase."
+    required: false
+  - name: available_tool_servers
+    type: array
+    description: "Available tool servers for spawn configuration. Used in delegate phase."
+    required: false
+
+steps:
+  # ── Step 1: Triage — always runs, determines phase ────────────────────
+  - ordinal: 1
+    action: select
+    description: >
+      TRIAGE — Determine which phase to run based on available inputs.
+      Produces: phase ("decompose" | "delegate" | "operate") and rationale.
+    renderer: minijinja
+    template_ref: kanban-task-management/triage
+    gas_cap: 500
+    timeout_seconds: 10
+    input_mapping:
+      project_description: "{{ project_description | default('') }}"
+      task_to_delegate: "{{ task_to_delegate | default({}) }}"
+      board_id: "{{ board_id | default('') }}"
+
+  # ── Phase 1: Decompose (steps 2-5) ────────────────────────────────────
+  - ordinal: 2
+    action: select
+    description: >
+      DECOMPOSE-1 — Gather project context. Extract project name, goals,
+      constraints, resources, target task size. Skips if triage phase is
+      not "decompose".
+    renderer: minijinja
+    template_ref: kanban-task-management/gather-context
+    gas_cap: 3000
+    timeout_seconds: 30
+    input_mapping:
+      project_description: "{{ project_description | default('') }}"
+      triage_phase: "{{ step_1_result.phase | default('') }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      DECOMPOSE-2 — Decompose into INVEST-compliant tasks with vertical
+      slicing, dependencies, recomposition strategy. Skips if triage phase
+      is not "decompose".
+    renderer: minijinja
+    template_ref: kanban-task-management/decompose-tasks
+    gas_cap: 10000
+    timeout_seconds: 90
+    input_mapping:
+      project_description: "{{ project_description | default('') }}"
+      target_task_hours: "{{ step_2_result.target_task_hours | default(5) }}"
+      goals: "{{ step_2_result.goals | default([]) }}"
+      constraints: "{{ step_2_result.constraints | default([]) }}"
+      triage_phase: "{{ step_1_result.phase | default('') }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      DECOMPOSE-3 — Review decomposed tasks for INVEST quality and
+      completeness. Skips if triage phase is not "decompose".
+    renderer: minijinja
+    template_ref: kanban-task-management/review-tasks
+    gas_cap: 4000
+    timeout_seconds: 30
+    input_mapping:
+      tasks: "{{ step_3_result.tasks | default([]) }}"
+      project_name: "{{ step_2_result.project_name | default('Untitled Project') }}"
+      triage_phase: "{{ step_1_result.phase | default('') }}"
+
+  - ordinal: 5
+    action: select
+    description: >
+      DECOMPOSE-4 — Populate board-ready task list. Includes post-cascade
+      MCP tool-call instructions for the agent to call kanban_board_create
+      and kanban_task_create. Skips if triage phase is not "decompose".
+    renderer: minijinja
+    template_ref: kanban-task-management/populate-board
+    gas_cap: 2000
+    timeout_seconds: 20
+    input_mapping:
+      project_name: "{{ step_2_result.project_name | default('Untitled Project') }}"
+      accepted_tasks: "{{ step_4_result.accepted | default([]) }}"
+      recomposition: "{{ step_3_result.recomposition | default({}) }}"
+      triage_phase: "{{ step_1_result.phase | default('') }}"
+
+  # ── Phase 2: Delegate (steps 6-7) ─────────────────────────────────────
+  - ordinal: 6
+    action: select
+    description: >
+      DELEGATE-1 — Configure spawn parameters for one task. Includes
+      post-cascade instructions for the agent to call kanban_task_spawn.
+      Skips if triage phase is not "delegate".
+    renderer: minijinja
+    template_ref: kanban-task-management/configure-spawn
+    gas_cap: 3000
+    timeout_seconds: 30
+    input_mapping:
+      task: "{{ task_to_delegate | default({}) }}"
+      available_skills: "{{ available_skills | default([]) }}"
+      available_tool_servers: "{{ available_tool_servers | default([]) }}"
+      triage_phase: "{{ step_1_result.phase | default('') }}"
+
+  - ordinal: 7
+    action: select
+    description: >
+      DELEGATE-2 — Execute the delegated task and report status,
+      deliverables, blockers. Includes post-cascade instructions for the
+      agent to call kanban_task_comment and kanban_task_add_deliverable.
+      Skips if triage phase is not "delegate".
+    renderer: minijinja
+    template_ref: kanban-task-management/execute-task
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      task: "{{ task_to_delegate | default({}) }}"
+      spawn_configuration: "{{ step_6_result | default({}) }}"
+      comment_thread: "{{ task_to_delegate.comments | default([]) }}"
+      triage_phase: "{{ step_1_result.phase | default('') }}"
+
+  # ── Phase 3: Operate (steps 8-13) ─────────────────────────────────────
+  - ordinal: 8
+    action: select
+    description: >
+      OPERATE-1 — Monitor board state, identify blockers, flag overdue
+      tasks. Includes pre-cascade instructions for the agent to fetch
+      board data. Skips if triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/monitor-board
     gas_cap: 4000
     timeout_seconds: 30
-    output_schema:
-      type: object
-      properties:
-        board_summary:
-          type: object
-          properties:
-            total_tasks:
-              type: integer
-            by_status:
-              type: object
-            blocked_tasks:
-              type: array
-              items:
-                type: string
-            ready_for_review:
-              type: array
-              items:
-                type: string
-            overdue:
-              type: array
-              items:
-                type: string
+    input_mapping:
+      board_name: "{{ board_name | default('') }}"
+      tasks: "{{ tasks | default([]) }}"
+      triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 2
-    action: populate
+  - ordinal: 9
+    action: select
     description: >
-      Coordinate with agents. Read comment threads on active tasks,
-      respond to questions, provide guidance, and resolve blockers.
-      This is the bidirectional communication step — the coordinator
-      reads what agents have posted and replies inline through the
-      task's comment thread.
+      OPERATE-2 — Coordinate with agents through comment threads. Includes
+      post-cascade instructions for the agent to call kanban_task_comment.
+      Skips if triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/coordinate-agents
     gas_cap: 5000
     timeout_seconds: 60
+    input_mapping:
+      board_name: "{{ board_name | default('') }}"
+      active_tasks: "{{ tasks | default([]) }}"
+      triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 3
-    action: populate
+  - ordinal: 10
+    action: select
     description: >
-      Track deliverables. Check that file links submitted by agents
-      are valid, review the deliverable contents against task
-      requirements, and flag any missing or incomplete deliverables.
-      Update the task's deliverable list as work progresses.
+      OPERATE-3 — Track deliverables for relevance and review readiness.
+      Includes post-cascade instructions for kanban_task_move and
+      kanban_task_add_deliverable. Skips if triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/track-deliverables
     gas_cap: 4000
     timeout_seconds: 45
+    input_mapping:
+      task: "{{ tasks | first | default({}) }}"
+      deliverables: "{{ tasks | first | default({}) | get('deliverables', []) }}"
+      triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 4
-    action: populate
+  - ordinal: 11
+    action: select
     description: >
-      Move tasks through columns. Based on agent progress and
-      deliverable status, advance tasks to the next column.
-      Enforce WIP limits — don't move a task into a column
-      that's at capacity. Update task status and record the
-      transition.
+      OPERATE-4 — Move tasks through columns with WIP enforcement.
+      Includes post-cascade instructions for kanban_task_move. Skips if
+      triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/move-tasks
     gas_cap: 2000
     timeout_seconds: 20
+    input_mapping:
+      tasks: "{{ tasks | default([]) }}"
+      columns: "{{ step_8_result.board_summary | default({}) | get('columns', []) }}"
+      triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 5
-    action: populate
+  - ordinal: 12
+    action: select
     description: >
-      Verify completion. For tasks in Review, evaluate submitted
-      deliverables against acceptance criteria. Check each criterion:
-      does the work satisfy it? Produce structured pass/fail per
-      criterion with specific, actionable feedback for the agent.
-      If passed, move to Done. If failed, return to InProgress
-      with feedback in the comment thread.
+      OPERATE-5 — Verify task completion against acceptance criteria.
+      Includes post-cascade instructions for kanban_task_verify and
+      kanban_task_move. Skips if triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/verify-completion
     gas_cap: 6000
     timeout_seconds: 60
-    output_schema:
-      type: object
-      properties:
-        passed:
-          type: boolean
-        reasoning:
-          type: string
-        criteria_results:
-          type: array
-          items:
-            type: object
-            properties:
-              criterion:
-                type: string
-              satisfied:
-                type: boolean
-              evidence:
-                type: string
-              feedback:
-                type: string
-        action:
-          type: string
-          enum: [move_to_done, return_to_inprogress, request_changes]
+    input_mapping:
+      task_title: "{{ tasks | first | default({}) | get('title', '') }}"
+      criteria: "{{ tasks | first | default({}) | get('criteria', []) }}"
+      deliverables: "{{ tasks | first | default({}) | get('deliverables', []) }}"
+      evidence: "{{ step_10_result | default({}) | tojson }}"
+      triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 6
-    action: populate
+  - ordinal: 13
+    action: select
     description: >
-      Escalate when needed. If an agent is blocked, unresponsive,
-      or consistently failing verification, escalate to the human
-      operator. Provide context: what task, what's blocked, what
-      has been tried, and what decision is needed. Escalation is
-      a coordination tool, not a failure — it brings human judgment
-      to situations the board operator cannot resolve alone.
+      OPERATE-6 — Escalate unresolved issues to human operator. Includes
+      post-cascade instructions for kanban_task_comment. Skips if triage
+      phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/escalate
     gas_cap: 3000
     timeout_seconds: 30
+    input_mapping:
+      board_name: "{{ board_name | default('') }}"
+      escalation_candidates: "{{ step_9_result.escalation_candidates | default([]) }}"
+      triage_phase: "{{ step_1_result.phase | default('') }}"
+
+  # ── Step 14: Convergence ──────────────────────────────────────────────
+  - ordinal: 14
+    action: loop
+    description: >
+      Convergence check. The active phase is complete when its final step
+      produces a non-skipped result. If the phase skipped or produced
+      errors, re-enter at the triage step with the error context.
+    compute_ref: kata.convergence_check
+    input_mapping:
+      current_artifacts: "{{ step_13_result | default(step_7_result | default(step_5_result | default({}))) }}"
+      prior_artifacts: "{{ step_13_result | default({}) }}"
 
 ledger:
   emit_spans: true

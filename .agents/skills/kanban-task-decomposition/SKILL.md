@@ -3,12 +3,14 @@ name: kanban-task-decomposition
 visibility: public
 description: >
   Decompose a project description into discrete, independently verifiable
+  :
   kanban tasks following INVEST criteria (Independent, Negotiable, Valuable,
   Estimable, Small, Testable). Prompt-chaining pipeline: gather context,
   decompose with vertical slicing and recomposition strategy, review for
-  quality, and populate board-ready task list. Output feeds
-  kanban-board-builder for MCP tool materialization. Ontology: PKO —
-  board = pko:Procedure, task = pko:Step.
+  quality, and populate board-ready task list. The populate-board template
+  includes post-cascade instructions for the agent to call kanban_board_create
+  and kanban_task_create directly. Ontology: PKO — board = pko:Procedure,
+  task = pko:Step.
 ---
 
 # Kanban Task Decomposition
@@ -43,8 +45,9 @@ Gather Context → Decompose → Review → Populate Board
 
 ## Output
 
-Produces a `board_tasks` JSON array. Feed this to `kanban-board-builder`
-to materialize the board via `kanban_board_create` + `kanban_task_create`.
+Produces a `board_tasks` JSON array. The agent then materializes the board
+by calling `kanban_board_create` + `kanban_task_create` directly (see the
+`populate-board.j2` template's post-cascade instructions).
 
 ## Registry Templates
 

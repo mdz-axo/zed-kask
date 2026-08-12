@@ -63,9 +63,9 @@ Return a JSON object:
 
 `transitions` contains only valid moves to apply. `blocked_moves` preserves deferred moves and their reasons.
 
-## MCP Tool Calls (Agent Action)
+## MCP Tool Calls (Agent Action — Post-Cascade)
 
-After producing the transition plan, the agent should execute each valid move:
+These instructions are for the agent running the skill, not for the template's LLM. The cascade produces the transition plan; the agent then executes each valid move:
 
 1. For each entry in `transitions`, call `kanban_task_move` with:
    - `task_id`: the task's ID (look up from the task list by title)

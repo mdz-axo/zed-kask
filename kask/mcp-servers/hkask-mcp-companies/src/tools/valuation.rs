@@ -582,7 +582,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Scenario impact valuation. Takes a resolved scenario event tree (from hkask-mcp-scenarios `scenario_quantify`) and per-node impact mappings, then runs DCF under each scenario path. For each scenario node, the user maps how its Yes/No outcome additively changes the company's DCF assumptions (revenue growth, gross margin, capex, etc.). Enumerates all 2^N leaf paths, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity (which scenario nodes drive the most valuation variance), and the intrinsic value distribution (percentiles, prob-undervalued). Max 12 scenario nodes. This is the reverse of `scenario_from_companies`: exogenous scenario events drive the company's financial forecast, not the other way around."
+        description = "Scenario impact valuation. Takes a resolved scenario event tree (from hkask-mcp-scenarios `scenario_quantify`) and per-node impact mappings, then runs DCF under each scenario path. For each scenario node, the user maps how its Yes/No outcome additively changes the company's DCF assumptions (revenue growth, gross margin, capex, etc.). Enumerates all 2^N leaf paths, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity (which scenario nodes drive the most valuation variance), and the intrinsic value distribution (percentiles, prob-undervalued). Max 12 scenario nodes. This replaces the deprecated `scenario_from_companies`: exogenous scenario events drive the company's financial forecast, not the other way around."
     )]
     pub async fn scenario_impact_valuation(
         &self,
@@ -656,19 +656,28 @@ impl CompaniesServer {
                 }))
                 .collect();
 
-            let paths: Vec<serde_json::Value> = result.paths.iter()
+            let max_output_paths = 50;
+            let paths_truncated = result.paths.len() > max_output_paths;
+            let mut sorted_paths = result.paths.clone();
+            sorted_paths.sort_by(|a, b| {
+                b.probability
+                    .partial_cmp(&a.probability)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let output_paths: Vec<serde_json::Value> = sorted_paths.iter()
+                .take(max_output_paths)
                 .map(|p| {
                     let outcomes: Vec<serde_json::Value> = p.outcomes.iter()
                         .map(|o| serde_json::json!({
                             "node_id": o.node_id,
                             "outcome": o.outcome,
-                            "applied_growth": o.applied_growth,
-                            "applied_margin": o.applied_margin,
                         }))
                         .collect();
                     serde_json::json!({
                         "probability": p.probability,
                         "intrinsic_per_share": p.intrinsic_per_share,
+                        "applied_growth": p.applied_growth,
+                        "applied_margin": p.applied_margin,
                         "outcomes": outcomes,
                     })
                 })
@@ -680,6 +689,8 @@ impl CompaniesServer {
                 "base_intrinsic": result.base_intrinsic,
                 "probability_weighted_intrinsic": result.probability_weighted_intrinsic,
                 "path_count": result.path_count,
+                "total_probability": result.total_probability,
+                "paths_truncated": paths_truncated,
                 "distribution": {
                     "min": result.distribution.min,
                     "p10": result.distribution.p10,
@@ -691,8 +702,8 @@ impl CompaniesServer {
                     "prob_undervalued": result.distribution.prob_undervalued,
                 },
                 "node_sensitivities": node_sensitivities,
-                "paths": paths,
-                "bridge_note": "Reverse bridge: exogenous scenario events (from hkask-mcp-scenarios scenario_quantify) drive the company's financial forecast. Each scenario node's Yes/No outcome maps to additive deltas on DCF assumptions. The tool enumerates all 2^N leaf paths, computes path probabilities from the CPTs, applies stacked deltas, runs DCF under each path, and weights by path probability. This is the reverse of scenario_from_companies (which converts DCF output into scenario events).",
+                "paths": output_paths,
+                "bridge_note": "Replacement for the deprecated scenario_from_companies. Exogenous scenario events (from hkask-mcp-scenarios scenario_quantify) drive the company financial forecast. Each scenario node Yes/No outcome maps to additive deltas on DCF assumptions. The tool enumerates all 2^N leaf paths, computes path probabilities from the CPTs, applies stacked deltas, runs DCF under each path, and weights by path probability.",
                 "pipeline": [
                     "1. scenario_quantify (hkask-mcp-scenarios) → resolved event tree",
                     "2. User authors per-node impact mappings (node_id → yes_deltas, no_deltas)",

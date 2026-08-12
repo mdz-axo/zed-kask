@@ -30,7 +30,7 @@
 //! - `scenario_cross_validate` — LLM vs computation cross-validation
 //! - `scenario_assess` — Chermack five-phase project evaluation
 //! - `scenario_full` — Full pipeline orchestrator (single call)
-//! - `scenario_from_companies` — Bridge from companies MCP server
+//! - `scenario_from_companies` — DEPRECATED: use scenario_impact_valuation on hkask-mcp-companies
 
 use std::collections::HashSet;
 
@@ -521,14 +521,14 @@ impl ScenariosServer {
     ///
     /// MATURITY NOTE: this is the detailed end of the scenario-modeling
     /// ladder. The simple path — companies `scenario_analysis` (Schwartz 2x2)
-    /// → `scenario_from_companies` → single-market `scenario_from_markets` —
-    /// is the intended on-ramp; an analyst typically arrives at a full tree
-    /// only after research (company, industry, economy, technology,
-    /// management, domain experts) reveals which events actually condition
-    /// each other. The 2x2 mode is retained as a first-class citizen, not a
-    /// legacy path.
+    /// → `scenario_impact_valuation` on hkask-mcp-companies → single-market
+    /// `scenario_from_markets` — is the intended on-ramp; an analyst typically
+    /// arrives at a full tree only after research (company, industry, economy,
+    /// technology, management, domain experts) reveals which events actually
+    /// condition each other. The 2x2 mode is retained as a first-class citizen,
+    /// not a legacy path.
     #[tool(
-        description = "Compose a set of prediction-market records (from hkask-mcp-prediction-markets) into a validated EventTree with caller-authored dependency edges. Each record passes the scenario_from_markets gates; question-overlap duplicates are flagged; cycles and CPT-size violations are rejected. Returns the resolved tree (marginals, joint probability) plus composition warnings. Detailed-mode tool: the simpler 2x2 path (companies scenario_analysis → scenario_from_companies) is the intended on-ramp before wiring full trees."
+        description = "Compose a set of prediction-market records (from hkask-mcp-prediction-markets) into a validated EventTree with caller-authored dependency edges. Each record passes the scenario_from_markets gates; question-overlap duplicates are flagged; cycles and CPT-size violations are rejected. Returns the resolved tree (marginals, joint probability) plus composition warnings. Detailed-mode tool: the simpler 2x2 path (companies scenario_analysis → scenario_impact_valuation on hkask-mcp-companies) is the intended on-ramp before wiring full trees."
     )]
     pub async fn scenario_from_markets_set(
         &self,

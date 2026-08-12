@@ -1,8 +1,8 @@
 //! Scenario impact valuation: compose a company's financial forecast from
 //! the impact of scenario event-tree nodes on DCF assumptions.
 //!
-//! This is the reverse of `scenario_from_companies` (which converts DCF
-//! output into scenario events). Here, an exogenous scenario event tree —
+//! This replaces the deprecated `scenario_from_companies` (which converted DCF
+//! output into scenario events — the wrong direction). Here, an exogenous scenario event tree —
 //! built from research, prediction markets, or brainstorming — is the
 //! driver, and the company's financial forecast is the system being
 //! impacted. The user maps each scenario node's Yes/No outcome to additive
@@ -104,6 +104,7 @@ pub struct ScenarioTreeInput {
 pub struct ScenarioImpactResult {
     pub base_intrinsic: f64,
     pub probability_weighted_intrinsic: f64,
+    pub total_probability: f64,
     pub path_count: usize,
     pub paths: Vec<PathResult>,
     pub node_sensitivities: Vec<NodeSensitivity>,
@@ -115,6 +116,8 @@ pub struct PathResult {
     pub path_mask: usize,
     pub probability: f64,
     pub intrinsic_per_share: f64,
+    pub applied_growth: f64,
+    pub applied_margin: f64,
     pub outcomes: Vec<PathOutcome>,
 }
 
@@ -122,8 +125,6 @@ pub struct PathResult {
 pub struct PathOutcome {
     pub node_id: String,
     pub outcome: bool,
-    pub applied_growth: f64,
-    pub applied_margin: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -164,12 +165,18 @@ pub enum ScenarioImpactError {
     TooManyNodes(usize),
     #[error("node '{0}' not found in topological order")]
     NodeNotInTopoOrder(String),
+    #[error("duplicate node id '{0}'")]
+    DuplicateNodeId(String),
     #[error("node '{0}' in topological order not found in nodes")]
     TopoNodeMissing(String),
     #[error("impact mapping references unknown node '{0}'")]
     UnknownImpactNode(String),
+    #[error("duplicate impact mapping for node '{0}'")]
+    DuplicateImpactNode(String),
     #[error("conditional probability table for node '{0}' has {1} entries, expected {2}")]
     InvalidCptLength(String, usize, usize),
+    #[error("node '{0}' depends on unknown parent node '{1}'")]
+    UnknownParentNode(String, String),
     #[error(
         "topological order fallback invalid: node '{0}' depends on '{1}' but appears before it in the node array — provide topological_order explicitly"
     )]
@@ -232,8 +239,13 @@ pub fn scenario_impact_dcf(
     };
 
     // Validate topological order references.
-    let node_map: std::collections::HashMap<&str, &ScenarioTreeNode> =
-        nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let mut node_map: std::collections::HashMap<&str, &ScenarioTreeNode> =
+        std::collections::HashMap::with_capacity(nodes.len());
+    for node in nodes {
+        if node_map.insert(node.id.as_str(), node).is_some() {
+            return Err(ScenarioImpactError::DuplicateNodeId(node.id.clone()));
+        }
+    }
     for id in &topo_order {
         if !node_map.contains_key(id.as_str()) {
             return Err(ScenarioImpactError::TopoNodeMissing(id.clone()));
@@ -256,10 +268,26 @@ pub fn scenario_impact_dcf(
                     expected,
                 ));
             }
+            // Validate that all parent IDs exist in the node set.
+            for parent_id in &dep.parent_event_ids {
+                if !node_map.contains_key(parent_id.as_str()) {
+                    return Err(ScenarioImpactError::UnknownParentNode(
+                        node.id.clone(),
+                        parent_id.clone(),
+                    ));
+                }
+            }
         }
     }
-    let impact_map: std::collections::HashMap<&str, &ScenarioNodeImpact> =
-        impacts.iter().map(|i| (i.node_id.as_str(), i)).collect();
+    let mut impact_map: std::collections::HashMap<&str, &ScenarioNodeImpact> =
+        std::collections::HashMap::with_capacity(impacts.len());
+    for impact in impacts {
+        if impact_map.insert(impact.node_id.as_str(), impact).is_some() {
+            return Err(ScenarioImpactError::DuplicateImpactNode(
+                impact.node_id.clone(),
+            ));
+        }
+    }
     for impact in impacts {
         if !node_map.contains_key(impact.node_id.as_str()) {
             return Err(ScenarioImpactError::UnknownImpactNode(
@@ -319,8 +347,6 @@ pub fn scenario_impact_dcf(
                 PathOutcome {
                     node_id: node.id.clone(),
                     outcome: is_yes,
-                    applied_growth: modified.revenue_growth,
-                    applied_margin: modified.gross_margin,
                 }
             })
             .collect();
@@ -329,6 +355,8 @@ pub fn scenario_impact_dcf(
             path_mask,
             probability: path_prob,
             intrinsic_per_share: model.intrinsic_per_share,
+            applied_growth: modified.revenue_growth,
+            applied_margin: modified.gross_margin,
             outcomes,
         });
     }
@@ -374,12 +402,21 @@ pub fn scenario_impact_dcf(
             0.0
         };
 
+        // Sensitivity is meaningful only when both outcomes have probability
+        // mass. If one outcome is impossible (P=0), the node has no impact on
+        // valuation uncertainty.
+        let sensitivity = if yes_weight > 0.0 && no_weight > 0.0 {
+            (intrinsic_if_yes - intrinsic_if_no).abs()
+        } else {
+            0.0
+        };
+
         node_sensitivities.push(NodeSensitivity {
             node_id: node.id.clone(),
             node_name: node.name.clone(),
             intrinsic_if_yes,
             intrinsic_if_no,
-            sensitivity: (intrinsic_if_yes - intrinsic_if_no).abs(),
+            sensitivity,
             marginal_probability: node.marginal_probability,
         });
     }
@@ -397,6 +434,7 @@ pub fn scenario_impact_dcf(
     Ok(ScenarioImpactResult {
         base_intrinsic,
         probability_weighted_intrinsic,
+        total_probability: total_prob,
         path_count: path_results.len(),
         paths: path_results,
         node_sensitivities,
@@ -490,6 +528,11 @@ fn clamp_assumptions(assumptions: &mut ProjectionAssumptions) {
     assumptions.tax_rate = assumptions.tax_rate.clamp(0.00, 1.00);
     assumptions.discount_rate = assumptions.discount_rate.clamp(0.05, 0.30);
     assumptions.terminal_growth = assumptions.terminal_growth.clamp(0.00, 0.10);
+    // Guard against division by zero in the terminal value formula
+    // (project_model divides by discount_rate - terminal_growth).
+    if assumptions.terminal_growth >= assumptions.discount_rate {
+        assumptions.terminal_growth = assumptions.discount_rate * 0.5;
+    }
 }
 
 fn compute_distribution(
@@ -846,5 +889,66 @@ mod tests {
             .find(|s| s.node_id == "regulation")
             .expect("regulation node in sensitivities");
         assert_eq!(reg.node_name.as_deref(), Some("Regulation passes"));
+    }
+
+    #[test]
+    fn rejects_duplicate_node_ids() {
+        let hist = sample_hist();
+        let assumptions = ProjectionAssumptions::from_history(&hist);
+        let tree = ScenarioTreeInput {
+            nodes: vec![
+                ScenarioTreeNode {
+                    id: "dup".into(),
+                    name: None,
+                    marginal_probability: 0.5,
+                    depends_on: vec![],
+                },
+                ScenarioTreeNode {
+                    id: "dup".into(),
+                    name: None,
+                    marginal_probability: 0.5,
+                    depends_on: vec![],
+                },
+            ],
+            topological_order: vec!["dup".into()],
+        };
+
+        let result = scenario_impact_dcf(&hist, &assumptions, &tree, &[], 100.0);
+        assert!(result.is_err(), "should reject duplicate node IDs");
+    }
+
+    #[test]
+    fn terminal_growth_never_equals_discount_rate() {
+        let hist = sample_hist();
+        let assumptions = ProjectionAssumptions::from_history(&hist);
+        let tree = ScenarioTreeInput {
+            nodes: vec![ScenarioTreeNode {
+                id: "x".into(),
+                name: None,
+                marginal_probability: 0.5,
+                depends_on: vec![],
+            }],
+            topological_order: vec!["x".into()],
+        };
+        // Push terminal_growth above discount_rate via deltas.
+        let impacts = vec![ScenarioNodeImpact {
+            node_id: "x".into(),
+            yes_deltas: AssumptionDelta {
+                terminal_growth_delta: Some(0.20),
+                discount_rate_delta: Some(-0.10),
+                ..Default::default()
+            },
+            no_deltas: AssumptionDelta::default(),
+        }];
+
+        let result = scenario_impact_dcf(&hist, &assumptions, &tree, &impacts, 100.0).unwrap();
+        // Every path should produce a finite intrinsic (no NaN/inf from div-by-zero).
+        for path in &result.paths {
+            assert!(
+                path.intrinsic_per_share.is_finite(),
+                "intrinsic is finite: {}",
+                path.intrinsic_per_share
+            );
+        }
     }
 }
