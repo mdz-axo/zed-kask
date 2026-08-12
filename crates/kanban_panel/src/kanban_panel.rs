@@ -28,6 +28,7 @@ use gpui::{
     WeakEntity, Window, actions,
 };
 use gpui_util::ResultExt;
+use editor::Editor;
 use hkask_kanban_widget::block::{KanbanBlockBody, TaskActivityBody, TaskBody};
 use hkask_kanban_widget::view::KanbanWidget;
 use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
@@ -35,7 +36,7 @@ use hkask_types::kanban_wire::KANBAN_SERVER_NAME;
 use hkask_types::tool_response::parse_tool_response;
 use serde::Deserialize;
 use serde_json::json;
-use ui::{CommonAnimationExt, IconName, prelude::*};
+use ui::{CommonAnimationExt, IconName, Tooltip, prelude::*};
 use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem},
@@ -43,7 +44,14 @@ use workspace::{
 };
 
 pub mod panel_button;
+pub mod task_actions;
 pub use panel_button::KanbanPanelButton;
+
+use task_actions::{
+    CreateTaskForm, EditTaskForm, SpawnTaskForm, render_create_board_form,
+    render_create_task_form, render_edit_task_form, render_spawn_task_form,
+    render_task_action_toolbar,
+};
 
 /// The MCP server id (matches `KANBAN_SERVER_NAME` in `hkask_types::kanban_wire`).
 const KANBAN_SERVER: &str = KANBAN_SERVER_NAME;
@@ -52,9 +60,38 @@ const KANBAN_SERVER: &str = KANBAN_SERVER_NAME;
 const BOARD_LIST_TOOL: &str = "kanban_board_list";
 /// The tool name for listing tasks on a board.
 const TASK_LIST_TOOL: &str = "kanban_task_list";
+/// The tool name for creating a board.
+const BOARD_CREATE_TOOL: &str = "kanban_board_create";
+/// The tool name for deleting a board.
+const BOARD_DELETE_TOOL: &str = "kanban_board_delete";
+/// The tool name for creating a task.
+const TASK_CREATE_TOOL: &str = "kanban_task_create";
+/// The tool name for deleting a task.
+const TASK_DELETE_TOOL: &str = "kanban_task_delete";
+/// The tool name for updating a task.
+const TASK_UPDATE_TOOL: &str = "kanban_task_update";
+/// The tool name for spawning a subagent on a task.
+const TASK_SPAWN_TOOL: &str = "kanban_task_spawn";
+/// The tool name for assigning a task.
+const TASK_ASSIGN_TOOL: &str = "kanban_task_assign";
+/// The tool name for unassigning a task.
+const TASK_UNASSIGN_TOOL: &str = "kanban_task_unassign";
 
 /// Auto-refresh interval for the task list.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Which inline action form is currently active (if any).
+#[derive(Clone, Debug)]
+pub enum TaskActionKind {
+    CreateTask,
+    EditTask(String),
+    SpawnTask(String),
+    CreateBoard,
+    /// Confirmation dialog for deleting a task.
+    ConfirmDeleteTask(String),
+    /// Confirmation dialog for deleting a board.
+    ConfirmDeleteBoard,
+}
 
 actions!(
     kanban_panel,
@@ -250,6 +287,18 @@ pub struct KanbanPanel {
     /// comments on every refresh for tasks whose detail panel was previously
     /// opened.
     comments_fetched: HashSet<String>,
+    /// The active inline action form (create task, edit task, spawn task,
+    /// create board, delete confirmation). `None` when no action form is open.
+    active_action: Option<TaskActionKind>,
+    /// The create-task form state. Lazily initialized when the operator
+    /// activates the create-task action.
+    create_task_form: Option<CreateTaskForm>,
+    /// The edit-task form state. Lazily initialized for a specific task.
+    edit_task_form: Option<EditTaskForm>,
+    /// The spawn-task form state. Lazily initialized for a specific task.
+    spawn_task_form: Option<SpawnTaskForm>,
+    /// The create-board form state (a single-line editor for the board name).
+    create_board_editor: Option<Entity<Editor>>,
     /// Subscriptions.
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -276,6 +325,11 @@ impl KanbanPanel {
                 refresh_task: None,
                 last_detail_open: None,
                 comments_fetched: HashSet::new(),
+                active_action: None,
+                create_task_form: None,
+                edit_task_form: None,
+                spawn_task_form: None,
+                create_board_editor: None,
                 _subscriptions: Vec::new(),
             };
             this.fetch_boards(cx);
@@ -548,7 +602,311 @@ impl KanbanPanel {
         }
     }
 
-    /// Select a board by ID and fetch its tasks.
+    // ── Task action handlers ───────────────────────────────────────────────
+
+    /// Start the create-task flow: show the inline form.
+    fn start_create_task(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.create_task_form = Some(CreateTaskForm::new(window, cx));
+        self.active_action = Some(TaskActionKind::CreateTask);
+        cx.notify();
+    }
+
+    /// Submit the create-task form. Calls `kanban_task_create` and refreshes.
+    fn submit_create_task(&mut self, cx: &mut Context<Self>) {
+        let Some(form) = &self.create_task_form else {
+            return;
+        };
+        let Some(board_id) = self.selected_board_id.clone() else {
+            return;
+        };
+        let Some(invoker) = shared_tool_invoker() else {
+            self.error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let args = form.collect_args(&board_id, cx);
+        self.active_action = None;
+        self.create_task_form = None;
+        cx.notify();
+
+        let task = invoker.invoke_tool(KANBAN_SERVER, TASK_CREATE_TOOL, args);
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(_output) => {
+                this.update(cx, |this, cx| {
+                    this.fetch_tasks(cx);
+                })
+                .log_err();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.error = Some(format!("Failed to create task: {error}").into());
+                    cx.notify();
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+
+    /// Start the edit-task flow for a specific task.
+    fn start_edit_task(&mut self, task_id: String, cx: &mut Context<Self>) {
+        let task = self.tasks.iter().find(|t| t.task_id == task_id);
+        let (title, description, priority, labels) = match task {
+            Some(t) => (
+                t.title.as_str(),
+                None,
+                None,
+                Vec::new(),
+            ),
+            None => return,
+        };
+        // We need a Window to create editors — store the task id and create
+        // the form on the next render when we have a Window.
+        // For now, use cx.new which doesn't need a Window for single_line.
+        // Actually Editor::single_line needs a Window. We'll use a workaround:
+        // store the task_id and create the form in render.
+        self.edit_task_form = None;
+        self.active_action = Some(TaskActionKind::EditTask(task_id));
+        cx.notify();
+    }
+
+    /// Submit the edit-task form. Calls `kanban_task_update` and refreshes.
+    fn submit_edit_task(&mut self, cx: &mut Context<Self>) {
+        let Some(form) = &self.edit_task_form else {
+            return;
+        };
+        let Some(invoker) = shared_tool_invoker() else {
+            self.error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let args = form.collect_args(cx);
+        self.active_action = None;
+        self.edit_task_form = None;
+        cx.notify();
+
+        let task = invoker.invoke_tool(KANBAN_SERVER, TASK_UPDATE_TOOL, args);
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(_output) => {
+                this.update(cx, |this, cx| {
+                    this.fetch_tasks(cx);
+                })
+                .log_err();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.error = Some(format!("Failed to update task: {error}").into());
+                    cx.notify();
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+
+    /// Start the spawn-task flow for a specific task.
+    fn start_spawn_task(&mut self, task_id: String, cx: &mut Context<Self>) {
+        self.spawn_task_form = None;
+        self.active_action = Some(TaskActionKind::SpawnTask(task_id));
+        cx.notify();
+    }
+
+    /// Submit the spawn-task form. Calls `kanban_task_spawn`.
+    fn submit_spawn_task(&mut self, cx: &mut Context<Self>) {
+        let Some(form) = &self.spawn_task_form else {
+            return;
+        };
+        let Some(invoker) = shared_tool_invoker() else {
+            self.error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let args = form.collect_args(cx);
+        self.active_action = None;
+        self.spawn_task_form = None;
+        cx.notify();
+
+        let task = invoker.invoke_tool(KANBAN_SERVER, TASK_SPAWN_TOOL, args);
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(_output) => {
+                this.update(cx, |this, cx| {
+                    this.fetch_tasks(cx);
+                })
+                .log_err();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.error = Some(format!("Failed to spawn subagent: {error}").into());
+                    cx.notify();
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+
+    /// Toggle task assignment. If assigned, unassign; if unassigned, assign.
+    fn toggle_task_assignment(
+        &mut self,
+        task_id: String,
+        is_assigned: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(invoker) = shared_tool_invoker() else {
+            self.error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let tool = if is_assigned { TASK_UNASSIGN_TOOL } else { TASK_ASSIGN_TOOL };
+        let args = json!({ "task_id": task_id });
+        let task = invoker.invoke_tool(KANBAN_SERVER, tool, args);
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(_output) => {
+                this.update(cx, |this, cx| {
+                    this.fetch_tasks(cx);
+                })
+                .log_err();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.error = Some(format!("Failed to toggle assignment: {error}").into());
+                    cx.notify();
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+
+    /// Show the delete-task confirmation dialog.
+    fn confirm_delete_task(&mut self, task_id: String, cx: &mut Context<Self>) {
+        self.active_action = Some(TaskActionKind::ConfirmDeleteTask(task_id));
+        cx.notify();
+    }
+
+    /// Execute the task deletion.
+    fn execute_delete_task(&mut self, task_id: String, cx: &mut Context<Self>) {
+        let Some(invoker) = shared_tool_invoker() else {
+            self.error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.active_action = None;
+        cx.notify();
+
+        let args = json!({ "task_id": task_id });
+        let task = invoker.invoke_tool(KANBAN_SERVER, TASK_DELETE_TOOL, args);
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(_output) => {
+                this.update(cx, |this, cx| {
+                    this.fetch_tasks(cx);
+                })
+                .log_err();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.error = Some(format!("Failed to delete task: {error}").into());
+                    cx.notify();
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+
+    // ── Board action handlers ──────────────────────────────────────────────
+
+    /// Start the create-board flow.
+    fn start_create_board(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.create_board_editor = Some(cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Board name", window, cx);
+            editor
+        }));
+        self.active_action = Some(TaskActionKind::CreateBoard);
+        cx.notify();
+    }
+
+    /// Submit the create-board form.
+    fn submit_create_board(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = &self.create_board_editor else {
+            return;
+        };
+        let Some(invoker) = shared_tool_invoker() else {
+            self.error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let name = editor.read(cx).text(cx).to_string();
+        if name.trim().is_empty() {
+            return;
+        }
+        self.active_action = None;
+        self.create_board_editor = None;
+        cx.notify();
+
+        let args = json!({ "name": name });
+        let task = invoker.invoke_tool(KANBAN_SERVER, BOARD_CREATE_TOOL, args);
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(_output) => {
+                this.update(cx, |this, cx| {
+                    this.fetch_boards(cx);
+                })
+                .log_err();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.error = Some(format!("Failed to create board: {error}").into());
+                    cx.notify();
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+
+    /// Show the delete-board confirmation dialog.
+    fn confirm_delete_board(&mut self, cx: &mut Context<Self>) {
+        self.active_action = Some(TaskActionKind::ConfirmDeleteBoard);
+        cx.notify();
+    }
+
+    /// Execute the board deletion.
+    fn execute_delete_board(&mut self, cx: &mut Context<Self>) {
+        let Some(board_id) = self.selected_board_id.clone() else {
+            return;
+        };
+        let Some(invoker) = shared_tool_invoker() else {
+            self.error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.active_action = None;
+        cx.notify();
+
+        let args = json!({ "board_id": board_id });
+        let task = invoker.invoke_tool(KANBAN_SERVER, BOARD_DELETE_TOOL, args);
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(_output) => {
+                this.update(cx, |this, cx| {
+                    this.selected_board_id = None;
+                    this.board_name = None;
+                    this.tasks.clear();
+                    this.kanban_widget = None;
+                    this.fetch_boards(cx);
+                })
+                .log_err();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.error = Some(format!("Failed to delete board: {error}").into());
+                    cx.notify();
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
     fn select_board(&mut self, board_id: String, cx: &mut Context<Self>) {
         if self.selected_board_id.as_ref() == Some(&board_id) {
             return;
@@ -668,7 +1026,7 @@ impl KanbanPanel {
     /// Render the empty state (no board selected).
     fn render_empty_state(&self) -> impl IntoElement {
         let message = if self.boards.is_empty() {
-            "No kanban boards found. Create a board via the agent to get started."
+            "No kanban boards found. Click + Board to create one."
         } else {
             "Select a board to view its tasks."
         };
@@ -678,13 +1036,255 @@ impl KanbanPanel {
             .justify_center()
             .child(Label::new(message).color(Color::Muted))
     }
+
+    /// Render the toolbar with action buttons (create task, create board,
+    /// delete board, refresh).
+    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_board = self.selected_board_id.is_some();
+        h_flex()
+            .gap_2()
+            .items_center()
+            .child(
+                Tooltip::new("Create task")
+                    .child(
+                        div()
+                            .id("kanban-create-task-btn")
+                            .cursor_pointer()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .when(has_board, |this| {
+                                this.hover(|this| this.bg(cx.theme().colors().border))
+                            })
+                            .when(!has_board, |this| this.opacity(0.5))
+                            .on_click(cx.listener(move |this, window, _, cx| {
+                                if this.selected_board_id.is_some() {
+                                    this.start_create_task(window, cx);
+                                }
+                            }))
+                            .child(
+                                Icon::new(IconName::Plus)
+                                    .size(IconSize::Small)
+                                    .color(if has_board { Color::Accent } else { Color::Muted }),
+                            ),
+                    ),
+            )
+            .child(
+                Tooltip::new("Create board")
+                    .child(
+                        div()
+                            .id("kanban-create-board-btn")
+                            .cursor_pointer()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .hover(|this| this.bg(cx.theme().colors().border))
+                            .on_click(cx.listener(move |this, window, _, cx| {
+                                this.start_create_board(window, cx);
+                            }))
+                            .child(
+                                Icon::new(IconName::Layout)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    ),
+            )
+            .child(
+                Tooltip::new("Delete board")
+                    .child(
+                        div()
+                            .id("kanban-delete-board-btn")
+                            .cursor_pointer()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .when(has_board, |this| {
+                                this.hover(|this| this.bg(cx.theme().colors().border))
+                            })
+                            .when(!has_board, |this| this.opacity(0.5))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if this.selected_board_id.is_some() {
+                                    this.confirm_delete_board(cx);
+                                }
+                            }))
+                            .child(
+                                Icon::new(IconName::Trash)
+                                    .size(IconSize::Small)
+                                    .color(if has_board { Color::Warning } else { Color::Muted }),
+                            ),
+                    ),
+            )
+            .child(self.render_refresh_button(cx))
+    }
+
+    /// Render the active action form (if any).
+    fn render_action_form(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        match &self.active_action {
+            None => None,
+            Some(TaskActionKind::CreateTask) => {
+                self.create_task_form
+                    .as_ref()
+                    .map(|form| render_create_task_form(form, cx).into_any_element())
+            }
+            Some(TaskActionKind::EditTask(task_id)) => {
+                self.edit_task_form
+                    .as_ref()
+                    .map(|form| render_edit_task_form(form, cx).into_any_element())
+            }
+            Some(TaskActionKind::SpawnTask(_task_id)) => {
+                self.spawn_task_form
+                    .as_ref()
+                    .map(|form| render_spawn_task_form(form, cx).into_any_element())
+            }
+            Some(TaskActionKind::CreateBoard) => {
+                self.create_board_editor
+                    .as_ref()
+                    .map(|editor| render_create_board_form(editor, cx).into_any_element())
+            }
+            Some(TaskActionKind::ConfirmDeleteTask(task_id)) => {
+                let task_id_clone = task_id.clone();
+                let task_id_cancel = task_id.clone();
+                Some(
+                    v_flex()
+                        .gap_2()
+                        .p_3()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .bg(cx.theme().colors().editor_background)
+                        .child(
+                            Label::new(format!("Delete task '{task_id}'?"))
+                                .size(LabelSize::Small)
+                                .color(Color::Warning),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .id("kanban-delete-task-confirm")
+                                        .cursor_pointer()
+                                        .px_3()
+                                        .py_1()
+                                        .rounded_md()
+                                        .bg(cx.theme().colors().border)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.execute_delete_task(task_id_clone.clone(), cx);
+                                        }))
+                                        .child(
+                                            Label::new("Delete")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Warning),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("kanban-delete-task-cancel")
+                                        .cursor_pointer()
+                                        .px_2()
+                                        .py_1()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.active_action = None;
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            Label::new("Cancel")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                ),
+                        )
+                        .into_any_element(),
+                )
+            }
+            Some(TaskActionKind::ConfirmDeleteBoard) => {
+                let board_name = self.board_name.as_ref().map(|s| s.to_string()).unwrap_or_default();
+                Some(
+                    v_flex()
+                        .gap_2()
+                        .p_3()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .bg(cx.theme().colors().editor_background)
+                        .child(
+                            Label::new(format!("Delete board '{board_name}' and all its tasks?"))
+                                .size(LabelSize::Small)
+                                .color(Color::Warning),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .id("kanban-delete-board-confirm")
+                                        .cursor_pointer()
+                                        .px_3()
+                                        .py_1()
+                                        .rounded_md()
+                                        .bg(cx.theme().colors().border)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.execute_delete_board(cx);
+                                        }))
+                                        .child(
+                                            Label::new("Delete Board")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Warning),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("kanban-delete-board-cancel")
+                                        .cursor_pointer()
+                                        .px_2()
+                                        .py_1()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.active_action = None;
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            Label::new("Cancel")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                ),
+                        )
+                        .into_any_element(),
+                )
+            }
+        }
+    }
 }
 
 impl Render for KanbanPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Check if the widget's card-detail panel was opened for a new task.
         // If so, fetch comments for that task on demand.
         self.check_detail_opened(cx);
+
+        // Lazily initialize edit/spawn forms when the action is activated
+        // (Editor::single_line needs a Window, which is only available here).
+        if let Some(TaskActionKind::EditTask(task_id)) = &self.active_action {
+            if self.edit_task_form.is_none() {
+                let task = self.tasks.iter().find(|t| t.task_id == *task_id);
+                if let Some(task) = task {
+                    self.edit_task_form = Some(EditTaskForm::for_task(
+                        &task.task_id,
+                        &task.title,
+                        None,
+                        None,
+                        &[],
+                        window,
+                        cx,
+                    ));
+                }
+            }
+        }
+        if let Some(TaskActionKind::SpawnTask(task_id)) = &self.active_action {
+            if self.spawn_task_form.is_none() {
+                self.spawn_task_form = Some(SpawnTaskForm::for_task(task_id, window, cx));
+            }
+        }
 
         v_flex()
             .size_full()
@@ -700,12 +1300,13 @@ impl Render for KanbanPanel {
                             .gap_2()
                             .justify_between()
                             .child(Headline::new("Kanban Board").size(HeadlineSize::Large))
-                            .child(self.render_refresh_button(cx)),
+                            .child(self.render_toolbar(cx)),
                     )
                     .when_some(self.render_board_selector(cx), |this, selector| {
                         this.child(selector)
                     })
-                    .when_some(self.render_error(), |this, error| this.child(error)),
+                    .when_some(self.render_error(), |this, error| this.child(error))
+                    .when_some(self.render_action_form(cx), |this, form| this.child(form)),
             )
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 if self.fetching && self.kanban_widget.is_none() {

@@ -14,29 +14,29 @@ mds_categories: [composition, domain]
 **Status:** Active (v0.32.2)
 
 Built-in MCP servers shipped with hKask and hosted in-process by zed-kask's `context_server`
-infrastructure. Each server is a thin surface over domain crates. The binary entrypoint
-(`src/main.rs`) is a one-line `#[tokio::main]` wrapper around `<crate>::run()`; the library
-root exposes `pub async fn run()` that calls `hkask_mcp_server::run_server(name, version,
-factory, credentials)`, where `factory` receives a `ServerContext` and constructs the server
-struct.
-
+> infrastructure. Each server is a thin surface over domain crates. The binary entrypoint
+> (`src/main.rs`) is a one-line `#[tokio::main]` wrapper around `<crate>::run()`; the library
+> root exposes `pub async fn run()` that calls `hkask_mcp_server::run_server(name, version,
+> factory, credentials)`, where `factory` receives a `ServerContext` and constructs the server
+> struct.
+>
 > **Hosting note (v0.32.2):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
 > <id>` and `kask serve` CLI surfaces have been **deleted**. MCP servers are loaded by zed's
 > `context_server` host; the `BUILT_IN_MCP_SERVERS` constant in
-> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 12 on-disk servers. Five servers from the original 16 have been deleted: `communication` (Matrix/TTS →
+> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 13 on-disk servers. Five servers from the original 16 have been deleted: `communication` (Matrix/TTS →
 > zed voip), `filesystem` (zed provides fs tools), `memory` (consolidated into the
 > `hkask-memory` crate), `skill` (skill execution is native via D1), and `regulation`
 > (consolidated into the `hkask-regulation` crate); `docproc` and `replica` were folded into
 > `corpus`. The 11th server, `swarm` (Agent Bestiary World integration), was added 2026-08-01;
-> the 12th, `prediction-markets` (Polymarket/Kalshi calibration), was added 2026-08-05. See
+> the 12th, `prediction-markets` (Polymarket/Kalshi calibration), was added 2026-08-05; the
+> 13th, `portfolio` (general-purpose transaction-ledger portfolio store), was added 2026-08-12.
+> See
 > [`docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md)
 > §2.4.
 
 ## Server Catalog
 
-12 on-disk MCP servers, **260 tools** fleet-wide. Tool counts are verified against
-`#[tool(description = ...)]` annotations in each server's `src/` (2026-08-05 audit); where a
-pinning test exists, the count cites the test name.
+13 on-disk MCP servers. Tool counts are verified against `#[tool(description = ...)]` annotations in each server's `src/` (2026-08-05 audit; `portfolio` added 2026-08-12); where a pinning test exists, the count cites the test name. Several per-server counts are stale relative to the current `#[tool]` surface — re-audit pending via `scripts/qa-mcp-servers.sh`.
 
 | Server | Crate | Purpose | Tools | Count source |
 |--------|-------|---------|------:|--------------|
@@ -47,6 +47,7 @@ pinning test exists, the count cites the test name.
 | Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 8 | `#[tool]` grep |
 | Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 18 | `#[tool]` grep |
 | Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation (image, video, audio, gallery) | 42 | `#[tool]` grep |
+| Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 14 | `#[tool]` grep |
 | [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves, residuals | 12 | `#[tool]` grep |
 | Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 17 | `#[tool]` grep |
 | [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 21 | `#[tool]` grep |
@@ -54,7 +55,7 @@ pinning test exists, the count cites the test name.
 | Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 8 | `#[tool]` grep |
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
-> agent, D2). All 12 build clean.
+> agent, D2). All 13 build clean.
 
 ## Common Patterns
 

@@ -11120,11 +11120,13 @@ name = "kanban_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "editor",
  "gpui",
  "gpui_util",
  "hkask-kanban-widget",
  "hkask-tool-invoker",
  "hkask-types",
+ "log",
  "marketplace_ui_common",
  "project",
  "serde",

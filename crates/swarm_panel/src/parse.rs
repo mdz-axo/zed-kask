@@ -266,6 +266,9 @@ pub(crate) const KANBAN_TOOLS: &[&str] = &[
     "kanban_task_comments_since",
     "kanban_task_add_deliverable",
     "kanban_task_reopen",
+    "kanban_task_delete",
+    "kanban_task_unassign",
+    "kanban_task_update",
     // Kata prompt tools.
     "kanban_task_kata_coaching",
     "kanban_task_kata_improvement",

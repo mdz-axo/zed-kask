@@ -843,6 +843,15 @@ impl OpenAiEventMapper {
 
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
+            // zed-kask: D25 — Chat Completions reports output truncation as
+            // finish_reason "length". Map to MaxTokens, mirroring the Responses
+            // API path's "max_tokens" handling, so truncated output isn't
+            // silently treated as a clean finish.
+            Some("length") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                    StopReason::MaxTokens,
+                )));
+            }
             Some(stop_reason) => {
                 log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
@@ -4877,6 +4886,30 @@ mod tests {
                 None, None, None
             ))])),
             Some(None)
+        );
+    }
+
+    #[test]
+    fn stream_maps_length_finish_reason_to_max_tokens() {
+        // zed-kask: D25 — Chat Completions reports output truncation as
+        // finish_reason "length". It must map to StopReason::MaxTokens,
+        // mirroring the Responses API path's "max_tokens" handling, not be
+        // logged as "Unexpected" and collapsed to EndTurn.
+        let events = map_completion_events(vec![ResponseStreamEvent {
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: None,
+                finish_reason: Some("length".into()),
+            }],
+            usage: None,
+        }]);
+
+        assert!(
+            matches!(
+                events.last(),
+                Some(LanguageModelCompletionEvent::Stop(StopReason::MaxTokens))
+            ),
+            "finish_reason \"length\" must map to MaxTokens, got {events:?}"
         );
     }
 }

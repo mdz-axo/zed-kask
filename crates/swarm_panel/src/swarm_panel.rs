@@ -3129,7 +3129,7 @@ mod tests {
         // the const is caught.
         assert_eq!(
             parse::KANBAN_TOOLS.len(),
-            20,
+            23,
             "tool count changed — update KANBAN_TOOLS to match \
              hkask-mcp-kata-kanban #[tool] fns"
         );

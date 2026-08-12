@@ -16,6 +16,32 @@ In this repo, a skill is **not** a `SKILL.md` file. A skill is a PDCA loop execu
 
 Never author `SKILL.md` directly. Build the registry crate first, then derive the companion.
 
+For the current skill catalog (published manifests), see `kask/registry/manifests/`. Installed skill companions live in `.agents/skills/`. Note: `skill-router` is an **unpublished** template crate (`kask/registry/templates/skill-router/`) — it has no published manifest and no installed companion, so it cannot be activated; use `skill-discovery` for catalog matching until it ships.
+
+---
+
+## Divergence & Upstream Seam
+
+`zed-kask` is a minimal-divergence fork of Zed. **`DIVERGENCE.md`** (repo root) is the authoritative map of every upstream edit — the D1–D25 seams. Everything under `kask/` is ours (additive; upstream never touches → near-zero merge conflict). Everything else tracks upstream; the only divergences are the D-seams + the `[workspace.members]` / `[workspace.dependencies]` arrays in the root `Cargo.toml`.
+
+- **Don't "fix" upstream files speculatively.** Push behavior into `kask/` behind a D-seam. If an upstream edit is unavoidable, add a D-seam entry + a pinning test in the same PR.
+- **Every `// zed-kask:` comment** disabling upstream behavior needs a test pinning the disabled behavior.
+- Before touching `crates/` (upstream), consult `DIVERGENCE.md` for the relevant seam and its pinning tests.
+- **Governing invariant (§13.1):** hKask crates NEVER depend on zed-kask crates; zed-kask depends on hKask. The sole bidirectional seam is `kask_bridge` (D8). Enforced by `kask/scripts/check-hkask-no-zed-deps.sh`.
+- Upstream-sync runbook: `DIVERGENCE.md` §"Upstream-sync runbook" (`git fetch upstream && git merge upstream/main` → resolve only D-seam conflicts → `./script/clippy` under `--deny warnings`).
+
+---
+
+## MCP Servers
+
+hKask ships **13 in-process MCP servers** hosted by zed's `context_server`. They are the tool surface over the domain crates.
+
+- **Runtime registry (authoritative, always current):** `BUILT_IN_MCP_SERVERS` in `kask/crates/kask_bridge/src/mcp_servers.rs`.
+- **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — codegraph, companies, condenser, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training.
+- **Catalog + per-tool contracts:** `kask/docs/reference/mcp-servers/README.md` (server catalog) + `kask/docs/qa/per-tool-contracts.md` (per-tool input struct, output shape, LLM I/O boundary).
+- **Capability-match gate:** `McpRuntime::invoke` (token + gas) + per-agent `mcp_tools` allowlist (D3/D8). Tool responses are `{"content": ...}` envelopes — use `unwrap_tool_envelope`, don't re-implement.
+- **§13.1 at the MCP boundary:** MCP servers reach hKask primitives via `kask_bridge` (D8); they never link zed-kask crates directly.
+
 ---
 
 ## Essential Skills (By Activation Pattern)
@@ -31,7 +57,6 @@ Never author `SKILL.md` directly. Build the registry crate first, then derive th
 - `refactor-architecture` — End-to-end architecture refactoring (discover → audit → strangle → verify).
 - `kali-audit` / `supply-chain-sentinel` — Security posture.
 - `lora-training` — PEFT method selection + math-contract gates (pre-flight before training job).
-- `skill-router` — Match tasks to installed skills (fit-scored recommendations).
 - `skill-discovery` — Detect capability gaps, search catalog, evaluate candidates, guide installation.
 
 ### Ensemble / Coaching (Multi-agent interaction)
@@ -98,8 +123,8 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 | LoRA/QLoRA training config audit | `lora-training` | `tdd` (training-loop code) |
 | GPU training pod creation | [`kask/docs/research/archive/gpu-provider-research-2026-07-23.md`](kask/docs/research/archive/gpu-provider-research-2026-07-23.md) | `lora-training` (config audit) |
 | Self-improvement / prompt evolution | `metacognition` | `gpa-evolution` (post-convergence) |
-| Skill matching for a task | `skill-router` | `skill-discovery` (if gaps found) |
-| Capability gap detection | `skill-discovery` | `skill-router` (after new skill installed) |
+| Skill matching for a task | `skill-discovery` | `task-breakdown` (if work needs decomposition first) |
+| Capability gap detection | `skill-discovery` | `skill-maintenance` (install/validate the new skill) |
 | Multi-agent coaching | `kata-coaching` | `improv` (interaction grammar) |
 
 For low-confidence regimes: `metacognition` → `falsifiability` → `improv`. Layered detail lives in the `metacognition` and `pragmatic-semantics` skills.

@@ -24,3 +24,5 @@ serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 marketplace_ui_common.workspace = true
+editor.workspace = true
+log.workspace = true

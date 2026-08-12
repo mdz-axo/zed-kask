@@ -24,6 +24,7 @@ use super::types::KanbanError;
 
 use crate::kanban::{
     Board, ColumnDef, GasEntry, Priority, Task, TaskFilter, TaskSpec, TaskStatus, Verification,
+    VerificationCriterion,
 };
 
 /// Core kanban coordination service.
@@ -824,6 +825,48 @@ impl KanbanService {
         let mut task = self.require_task(task_id)?;
         Self::require_task_owner(&task, actor)?;
         task.assignee = None;
+        task.updated_at = chrono::Utc::now();
+        self.update_task_triple(&task)?;
+        Ok(task)
+    }
+
+    /// Update editable fields on a task. Only the task owner can edit.
+    /// Fields not provided (None) are left unchanged.
+    ///
+    /// The double-Option pattern for `description` and `priority` distinguishes
+    /// "no change" (None) from "clear the field" (Some(None)) from "set a new
+    /// value" (Some(Some(x))).
+    ///
+    /// pre:  task_id is valid; actor is the task owner
+    /// post: provided fields are updated; task.updated_at refreshed
+    #[must_use = "result must be used"]
+    pub fn task_update(
+        &self,
+        task_id: TaskId,
+        actor: WebID,
+        title: Option<String>,
+        description: Option<Option<String>>,
+        criteria: Option<Vec<VerificationCriterion>>,
+        priority: Option<Option<Priority>>,
+        labels: Option<Vec<String>>,
+    ) -> Result<Task, KanbanError> {
+        let mut task = self.require_task(task_id)?;
+        Self::require_task_owner(&task, actor)?;
+        if let Some(new_title) = title {
+            task.title = new_title;
+        }
+        if let Some(description_update) = description {
+            task.description = description_update;
+        }
+        if let Some(new_criteria) = criteria {
+            task.criteria = new_criteria;
+        }
+        if let Some(priority_update) = priority {
+            task.priority = priority_update;
+        }
+        if let Some(new_labels) = labels {
+            task.labels = new_labels;
+        }
         task.updated_at = chrono::Utc::now();
         self.update_task_triple(&task)?;
         Ok(task)

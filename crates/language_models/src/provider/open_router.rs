@@ -894,6 +894,15 @@ impl OpenRouterEventMapper {
                 // Don't emit reasoning_details here - already emitted immediately when captured
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
+            // zed-kask: D25 — OpenRouter (OpenAI Chat Completions format) reports
+            // output truncation as finish_reason "length". Map it to MaxTokens,
+            // not the catch-all EndTurn, so downstream consumers detect the
+            // truncation instead of treating a cut-off response as a clean finish.
+            Some("length") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                    StopReason::MaxTokens,
+                )));
+            }
             Some(stop_reason) => {
                 log::error!("Unexpected OpenRouter stop_reason: {stop_reason:?}",);
                 // Don't emit reasoning_details here - already emitted immediately when captured
@@ -1341,6 +1350,45 @@ mod tests {
         } else {
             panic!("Expected array");
         }
+    }
+
+    #[gpui::test]
+    async fn test_length_finish_reason_maps_to_max_tokens() {
+        // zed-kask: D25 — OpenRouter reports output truncation as
+        // finish_reason "length". It must map to StopReason::MaxTokens, not be
+        // logged as "Unexpected" and collapsed to EndTurn — otherwise a
+        // truncated cascade step silently feeds partial text into JSON parsing
+        // instead of emitting the structured-output tool call.
+        let mut mapper = OpenRouterEventMapper::new();
+        let events = mapper.map_event(ResponseStreamEvent {
+            id: Some("response_123".into()),
+            created: 1234567890,
+            model: "z-ai/glm-5.2".into(),
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: ResponseMessageDelta {
+                    role: None,
+                    content: None,
+                    reasoning: None,
+                    tool_calls: None,
+                    reasoning_details: None,
+                },
+                finish_reason: Some("length".into()),
+            }],
+            usage: None,
+        });
+
+        let stop = events
+            .into_iter()
+            .find_map(|event| match event {
+                Ok(LanguageModelCompletionEvent::Stop(reason)) => Some(reason),
+                _ => None,
+            })
+            .expect("expected a Stop event for finish_reason \"length\"");
+        assert!(
+            matches!(stop, StopReason::MaxTokens),
+            "finish_reason \"length\" must map to MaxTokens, got {stop:?}"
+        );
     }
 
     #[gpui::test]

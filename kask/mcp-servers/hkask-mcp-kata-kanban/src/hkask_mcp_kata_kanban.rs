@@ -302,6 +302,67 @@ impl KanbanServer {
         .await
     }
 
+    #[tool(description = "Update editable fields on a task (title, description, criteria, priority, labels). Only the task owner can edit.")]
+    pub async fn kanban_task_update(
+        &self,
+        Parameters(TaskUpdateRequest {
+            task_id,
+            title,
+            description,
+            criteria,
+            priority,
+            labels,
+        }): Parameters<TaskUpdateRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "kanban_task_update",
+            kanban_type_to_pko("kanban_task_update"),
+            async {
+                let tid = parse_task_id(&task_id)?;
+
+                // The MCP layer uses single-Option for description and priority:
+                // None means "no change," a present value means "set to this."
+                // An empty string for description clears the field; an empty
+                // string for priority clears the field.
+                let description_update =
+                    description.map(|d| if d.is_empty() { None } else { Some(d) });
+                let priority_update = match priority {
+                    None => None,
+                    Some(ref p) if p.is_empty() => Some(None),
+                    Some(p) => {
+                        let parsed = Priority::parse_str(&p).ok_or_else(|| {
+                            McpToolError::invalid_argument(format!("invalid priority: {p}"))
+                        })?;
+                        Some(Some(parsed))
+                    }
+                };
+
+                let criteria_update =
+                    criteria.map(|cs| cs.into_iter().map(VerificationCriterion::new).collect());
+
+                match self.service.task_update(
+                    tid,
+                    self.webid,
+                    title,
+                    description_update,
+                    criteria_update,
+                    priority_update,
+                    labels,
+                ) {
+                    Ok(task) => Ok(serde_json::to_value(TaskUpdateResponse {
+                        task_id: task.id.to_string(),
+                        title: task.title,
+                        ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+                    })
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                    Err(e) => Err(map_kanban_error(e)),
+                }
+            },
+        )
+        .await
+    }
+
     #[tool(description = "List tasks on a kanban board, optionally filtered by status")]
     pub async fn kanban_task_list(
         &self,
@@ -418,6 +479,52 @@ impl KanbanServer {
                         task_id: task.id.to_string(),
                         assignee: task.assignee.map(|a| a.to_string()).unwrap_or_default(),
                         ontology: kanban_type_to_pko("kanban_task_assign").map(|s| s.to_string()),
+                    })
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                    Err(e) => Err(map_kanban_error(e)),
+                }
+            },
+        )
+        .await
+    }
+
+    #[tool(description = "Delete a task and its board index entry. Exposes KanbanService::task_delete as an MCP tool.")]
+    pub async fn kanban_task_delete(
+        &self,
+        Parameters(TaskDeleteRequest { task_id }): Parameters<TaskDeleteRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "kanban_task_delete",
+            kanban_type_to_pko("kanban_task_delete"),
+            async {
+                let tid = parse_task_id(&task_id)?;
+                self.service.task_delete(tid).map_err(map_kanban_error)?;
+                serde_json::to_value(TaskDeleteResponse {
+                    task_id: tid.to_string(),
+                    ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+            },
+        )
+        .await
+    }
+
+    #[tool(description = "Unassign a task — remove the current assignee. Only the task owner can unassign.")]
+    pub async fn kanban_task_unassign(
+        &self,
+        Parameters(TaskUnassignRequest { task_id }): Parameters<TaskUnassignRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "kanban_task_unassign",
+            kanban_type_to_pko("kanban_task_unassign"),
+            async {
+                let tid = parse_task_id(&task_id)?;
+                match self.service.task_unassign(tid, self.webid) {
+                    Ok(task) => Ok(serde_json::to_value(TaskUnassignResponse {
+                        task_id: task.id.to_string(),
+                        ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
