@@ -10,7 +10,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # zed-kask Documentation
 
-> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, MCP servers, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces.
+> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; the 13 MCP servers are launched as child processes over stdio by zed's `context_server` host.
 
 **Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D23 integration plan, composition root, and current crate inventory (D21–D23 added 2026-08-05 through 2026-08-10; repo-root `DIVERGENCE.md` is authoritative for the seam list).
 

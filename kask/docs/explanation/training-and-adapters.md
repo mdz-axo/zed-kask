@@ -10,7 +10,7 @@ mds_categories: [domain, lifecycle]
 
 # Training and Adapters
 
-Fine-tune LoRA adapters for Qwen3.6-27B on RunPod with Unsloth, evaluate them, and manage the adapter lifecycle through the in-process training MCP server. hKask provides standalone RunPod/Unsloth training scripts that are verified on H100 NVL and A100 80GB GPUs. The former `kask adapter` CLI commands have been removed; adapter management is now performed in-process via the training MCP server (one of the 10 builtin in-process MCP servers registered inside zed-kask, D1–D3).
+Fine-tune LoRA adapters for Qwen3.6-27B on RunPod with Unsloth, evaluate them, and manage the adapter lifecycle through the training MCP server (a child process over stdio). hKask provides standalone RunPod/Unsloth training scripts that are verified on H100 NVL and A100 80GB GPUs. The former `kask adapter` CLI commands have been removed; adapter management is now performed via the training MCP server (one of the 13 builtin MCP servers registered inside zed-kask as child processes over stdio, D1–D3).
 
 ---
 

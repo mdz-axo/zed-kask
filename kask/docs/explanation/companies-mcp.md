@@ -28,7 +28,7 @@ The server exposes **42 tools** (`#[tool]` functions under `kask/mcp-servers/hka
 
 ## Prerequisites
 
-The companies server is a builtin in-process MCP server registered inside the zed-kask editor (D1–D3). It is not started via a standalone CLI; zed-kask loads it automatically as part of its MCP server set. To use it:
+The companies server is a builtin MCP server (child process over stdio) registered inside the zed-kask editor (D1–D3). It is not started via a standalone CLI; zed-kask loads it automatically as part of its MCP server set. To use it:
 
 1. Build zed-kask: `cargo build --release` (see the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for build and integration details).
 2. Obtain API keys from Financial Modeling Prep and EOD Historical Data.

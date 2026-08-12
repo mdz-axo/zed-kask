@@ -34,7 +34,7 @@ For the current skill catalog (published manifests), see `kask/registry/manifest
 
 ## MCP Servers
 
-hKask ships **13 in-process MCP servers** hosted by zed's `context_server`. They are the tool surface over the domain crates.
+hKask ships **13 MCP servers** launched by zed's `context_server` as child processes over stdio. They are the tool surface over the domain crates. (The `McpRuntime` that governs tool calls — capability-match gate + gas — runs in-process; the servers themselves are child processes.)
 
 - **Runtime registry (authoritative, always current):** `BUILT_IN_MCP_SERVERS` in `kask/crates/kask_bridge/src/mcp_servers.rs`.
 - **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — codegraph, companies, condenser, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training.

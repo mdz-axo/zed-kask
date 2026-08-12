@@ -28,7 +28,7 @@ Zed-Kask adds three native editor surfaces that upstream Zed does not have. Each
 
 ### MCP servers
 
-**13 built-in MCP servers** (260 tools fleet-wide) are hosted in-process by Zed's `context_server` infrastructure (D3) and exposed as agent tools through `rmcp`:
+**13 built-in MCP servers** (305 tools fleet-wide) are launched as child processes over stdio by Zed's `context_server` host (D3) and exposed as agent tools through `rmcp`:
 
 | Server | Surface |
 | --- | --- |

@@ -13,16 +13,17 @@ mds_categories: [composition, domain]
 **Diataxis type:** Reference
 **Status:** Active (v0.32.2)
 
-Built-in MCP servers shipped with hKask and hosted in-process by zed-kask's `context_server`
-> infrastructure. Each server is a thin surface over domain crates. The binary entrypoint
-> (`src/main.rs`) is a one-line `#[tokio::main]` wrapper around `<crate>::run()`; the library
-> root exposes `pub async fn run()` that calls `hkask_mcp_server::run_server(name, version,
-> factory, credentials)`, where `factory` receives a `ServerContext` and constructs the server
-> struct.
+> Built-in MCP servers shipped with hKask and launched by zed-kask's `context_server`
+> host as child processes over stdio. Each server is a thin surface over domain crates. The binary
+> entrypoint (`src/main.rs`) is a one-line `#[tokio::main]` wrapper around `<crate>::run()`; the
+> library root exposes `pub async fn run()` that calls `hkask_mcp_server::run_server(name,
+> version, factory, credentials)`, where `factory` receives a `ServerContext` and constructs the
+> server struct. (The `McpRuntime` that governs tool calls — capability-match gate + gas — runs
+> in-process; the MCP servers themselves are child processes over stdio.)
 >
 > **Hosting note (v0.32.2):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
-> <id>` and `kask serve` CLI surfaces have been **deleted**. MCP servers are loaded by zed's
-> `context_server` host; the `BUILT_IN_MCP_SERVERS` constant in
+> <id>` and `kask serve` CLI surfaces have been **deleted**. MCP servers are launched by zed's
+> `context_server` host as child processes over stdio; the `BUILT_IN_MCP_SERVERS` constant in
 > `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 13 on-disk servers. Five servers from the original 16 have been deleted: `communication` (Matrix/TTS →
 > zed voip), `filesystem` (zed provides fs tools), `memory` (consolidated into the
 > `hkask-memory` crate), `skill` (skill execution is native via D1), and `regulation`

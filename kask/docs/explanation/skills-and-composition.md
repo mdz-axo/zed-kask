@@ -597,7 +597,7 @@ The `when_to_use` field is prose extracted from SKILL.md, not a structured manif
 
 ## Building MCP Servers
 
-zed-kask hosts 13 MCP servers in-process (codegraph, companies, condenser, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training). Every server follows the same bootstrap pattern defined in `hkask-mcp-server`. In zed-kask, MCP servers register as builtin in-process servers inside the editor (D1–D3): the `context_server` transport hosts them natively, and servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`) — there is no `KaskCore` singleton (the composition root wires individual components directly; see `zed-host-architecture-plan.md` §13.3). The former `kask mcp start <id>` CLI and the old per-crate `BUILTIN_SERVERS` tuple registry have been superseded by in-process registration against the canonical `kask_bridge::BUILT_IN_MCP_SERVERS` list.[^mcp-spec-build][^ousterhout-mcp-build]
+zed-kask hosts 13 MCP servers as child processes over stdio via zed's `context_server` host (codegraph, companies, condenser, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training). Every server follows the same bootstrap pattern defined in `hkask-mcp-server`. In zed-kask, MCP servers register as built-in context servers inside the editor (D1–D3): the `context_server` host launches them as child processes over stdio, and servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`) — there is no `KaskCore` singleton (the composition root wires individual components directly; see `zed-host-architecture-plan.md` §13.3). The former `kask mcp start <id>` CLI and the old per-crate `BUILTIN_SERVERS` tuple registry have been superseded by in-process registration against the canonical `kask_bridge::BUILT_IN_MCP_SERVERS` list.[^mcp-spec-build][^ousterhout-mcp-build]
 
 ### Prerequisites
 
@@ -726,7 +726,7 @@ pub async fn run() -> Result<(), McpError> {
 ```
 
 Two variants are available:
-- **`run_server()`** — standard server with MCP negotiation (hosted in-process by zed-kask's transport)
+- **`run_server()`** — standard server with MCP negotiation (launched as a child process over stdio by zed-kask's `context_server` host)
 - **`run_server_with_preloaded()`** — passes preloaded credentials (used by servers that need custom credentials before MCP handshake)
 
 ### Step 5: Write the Binary Entry Point
@@ -834,7 +834,7 @@ In-process test (production path): launch zed-kask and verify the server appears
 
 ## Related
 
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1 (skill execution), D2 (Curator agent), D3 (in-process MCP transport)
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1 (skill execution), D2 (Curator agent), D3 (MCP tool transport — child processes over stdio)
 - [Regulation Explanation](../diataxis/hkask-regulation/explanation.md) — Regulation spans emitted by skill execution
 - [Magna Carta Reference](../architecture/core/magna-carta.md) — P5.1 registry canonical source rule
 ---
@@ -854,7 +854,7 @@ The following Mermaid diagrams were inlined from the former `docs/diagrams/` dir
 
 The Improvement Kata PDCA cycle in `hkask-mcp-kata-kanban` (folded from `hkask-services-kata-kanban`) executes as a 5-step **singlepass** sequential pipeline within the `KataEngine` that maps to four conceptual PDCA phases. Each step runs an LLM inference via the registered template (e.g., `kata-improvement/improvement-step1-direction`), validates output against the step's `output_schema`, records a `StepExperience`, and emits Regulation spans. The `KataEngine::run_improvement_from()` iterates through steps **exactly once** (`for step in &manifest.steps` — no re-entry loop). The cycle is bounded by `gas.cap` (default 15,000). Metric capture flanks the execution: `metric_before` is captured pre-cycle and `metric_after` post-cycle, yielding an `ImprovementSignal` (Positive/Negative/Stalled/NotMeasured). Regulation algedonic alerts fire if variety deficit exceeds threshold.[^rother-kata][^deming-pdca-kata]
 
-**Convergence iteration lives elsewhere:** The convergence loop (`max_iterations`, threshold, re-entry with updated data) is implemented in `ManifestExecutor::execute_manifest()` in `crates/hkask-templates/src/executor.rs` — the Pattern A Skills Model execution engine. The kata engine is a *step executor* called within that loop; it does not drive convergence itself. In zed-kask, `KataEngine` is constructed and `execute()` is invoked in-process via the kata-kanban MCP server (one of the 11 in-process MCP servers); the deleted `kask kata start` CLI is gone. The kanban service's prompt-generation tools (`kanban_task_kata_improvement`) do not invoke the engine — they render prompt text only.
+**Convergence iteration lives elsewhere:** The convergence loop (`max_iterations`, threshold, re-entry with updated data) is implemented in `ManifestExecutor::execute_manifest()` in `crates/hkask-templates/src/executor.rs` — the Pattern A Skills Model execution engine. The kata engine is a *step executor* called within that loop; it does not drive convergence itself. In zed-kask, `KataEngine` is constructed and `execute()` is invoked via the kata-kanban MCP server (one of the 13 MCP servers, run as a child process over stdio); the deleted `kask kata start` CLI is gone. The kanban service's prompt-generation tools (`kanban_task_kata_improvement`) do not invoke the engine — they render prompt text only.
 
 **Key source:** `mcp-servers/hkask-mcp-kata-kanban/src/kata.rs:333-486` (`execute` — single-pass orchestration), `mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs:20-121` (`run_improvement_from` — single-pass `for` loop, no re-entry), `mcp-servers/hkask-mcp-kata-kanban/src/kata/metrics.rs:6-133` (metric capture + signal).
 
@@ -1023,7 +1023,7 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; c
 
 ## Cross-Reference
 
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D23 integration seams (skill execution, Curator agent, in-process MCP transport)
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D23 integration seams (skill execution, Curator agent, MCP tool transport — child processes over stdio)
 - [`PRINCIPLES.md` § P6 — Space for Per-User Data Directories](../architecture/core/PRINCIPLES.md#p6--space-for-per-user-data-directories)
 - [`kata.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata.rs) — `KataEngine::execute()` dispatch (L333-486)
 - [`kata/improvement.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs) — `run_improvement_from()` single-pass step loop (L20-121)
@@ -1040,9 +1040,9 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; c
 
 # Kata-Kanban Execution Boundary
 
-This reference sequence separates the two Kata paths. The Kanban MCP exposes task-scoped **prompt generation**. Full Kata execution is available in-process through the kata-kanban MCP server, which constructs `KataEngine` directly and calls `execute()`. The MCP prompt tools do not invoke the engine; the distinction is operationally important because prompt generation does not execute the manifest's convergence, budget, or capability declarations.
+This reference sequence separates the two Kata paths. The Kanban MCP exposes task-scoped **prompt generation**. Full Kata execution is available through the kata-kanban MCP server (a child process over stdio), which constructs `KataEngine` directly and calls `execute()`. The MCP prompt tools do not invoke the engine; the distinction is operationally important because prompt generation does not execute the manifest's convergence, budget, or capability declarations.
 
-> **Note:** The deleted `kask kata start` CLI is gone. Kata execution is invoked in-process — the kata-kanban MCP server (one of the 11 in-process MCP servers) constructs `KataEngine` and runs `execute()` within the zed-kask process. The Agent Panel is the user-facing entry point.
+> **Note:** The deleted `kask kata start` CLI is gone. Kata execution is invoked via the kata-kanban MCP server (one of the 13 MCP servers, a child process over stdio) — it constructs `KataEngine` and runs `execute()` in the kata-kanban server process. The Agent Panel is the user-facing entry point.
 
 ```mermaid
 sequenceDiagram

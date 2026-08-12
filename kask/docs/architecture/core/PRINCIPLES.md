@@ -239,7 +239,7 @@ Every interaction with hKask carries a per-user data directory (or Curator) host
 | **Agent panel** (zed Assistant) | Human user (via per-user data directory) + Curator as a native in-process agent (D2) | zed-kask composition root resolves the active user from `KaskSettings` | `{data_dir}/agents/{sanitized_name}/pod.db` (SQLCipher) | OS keychain via `hkask-keystore` |
 | **Kask panel (D10)** | Human user (via per-user data directory) | Same composition-root resolution | Same per-user SQLCipher file | OS keychain via `hkask-keystore` |
 | **Kask admin CLI** (slim — backup/wallet/repair/admin only) | Human user (via per-user data directory) | `kask admin` subcommand resolves the user from settings | Same per-user SQLCipher file | OS keychain via `hkask-keystore` |
-| **In-process MCP** (the 13 MCP servers wired into zed-kask) | The active per-user data directory | Capability tokens minted at composition-root wiring time | Per-user SQLCipher DB | User-attested HKDF keys |
+| **MCP servers** (13, child processes over stdio governed by the in-process `McpRuntime`) | The active per-user data directory | Capability tokens minted at composition-root wiring time | Per-user SQLCipher DB | User-attested HKDF keys |
 
 **Dual-presence pattern:** The agent panel hosts both the user's agent AND the Curator (a native in-process agent, D2) in a single conversation. The user speaks; the Curator observes, surfaces Regulation alerts, provides memory summaries, and can be addressed directly as an agent-panel participant. This is not two separate sessions — it is one conversation with two participants. The user's agent is the sovereign host; the Curator is the system's in-process presence. The old `kask curator chat` REPL command is deleted.
 

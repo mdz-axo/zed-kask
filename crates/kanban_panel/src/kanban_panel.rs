@@ -79,10 +79,8 @@ const TASK_UPDATE_TOOL: &str = "kanban_task_update";
 /// The tool name for spawning a subagent on a task.
 const TASK_SPAWN_TOOL: &str = "kanban_task_spawn";
 /// The tool name for assigning a task.
-#[allow(dead_code)] // Used via cx.listener closure in toggle_task_assignment
 const TASK_ASSIGN_TOOL: &str = "kanban_task_assign";
 /// The tool name for unassigning a task.
-#[allow(dead_code)] // Used via cx.listener closure in toggle_task_assignment
 const TASK_UNASSIGN_TOOL: &str = "kanban_task_unassign";
 
 /// Auto-refresh interval for the task list.
@@ -724,7 +722,6 @@ impl KanbanPanel {
     }
 
     /// Start the edit-task flow for a specific task.
-    #[allow(dead_code)] // WIP: per-task "Edit" trigger not yet wired (Steer-mode)
     fn start_edit_task(&mut self, task_id: String, cx: &mut Context<Self>) {
         // The form is created lazily in `render` where a Window is available.
         self.edit_task_form = None;
@@ -767,7 +764,6 @@ impl KanbanPanel {
     }
 
     /// Start the spawn-task flow for a specific task.
-    #[allow(dead_code)] // WIP: per-task "Spawn subagent" trigger not yet wired (Steer-mode)
     fn start_spawn_task(&mut self, task_id: String, cx: &mut Context<Self>) {
         self.spawn_task_form = None;
         self.active_action = Some(TaskActionKind::SpawnTask(task_id));
@@ -809,7 +805,6 @@ impl KanbanPanel {
     }
 
     /// Toggle task assignment. If assigned, unassign; if unassigned, assign.
-    #[allow(dead_code)] // WIP: per-task assign/unassign trigger not yet wired (Steer-mode)
     fn toggle_task_assignment(
         &mut self,
         task_id: String,
@@ -847,7 +842,6 @@ impl KanbanPanel {
     }
 
     /// Show the delete-task confirmation dialog.
-    #[allow(dead_code)] // WIP: per-task "Delete" trigger not yet wired (Steer-mode)
     fn confirm_delete_task(&mut self, task_id: String, cx: &mut Context<Self>) {
         self.active_action = Some(TaskActionKind::ConfirmDeleteTask(task_id));
         cx.notify();
@@ -1379,6 +1373,96 @@ impl KanbanPanel {
             }
         }
     }
+
+    /// Render per-task action buttons (Edit, Spawn subagent, Assign/Unassign,
+    /// Delete) for the task whose card-detail panel is currently open in the
+    /// widget. Returns `None` when no card detail is open, the task is no
+    /// longer on the board, or an inline action form/dialog is already active
+    /// (the form takes over the action area in that case).
+    fn render_task_actions(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.active_action.is_some() {
+            return None;
+        }
+        let detail_id = self
+            .kanban_widget
+            .as_ref()
+            .and_then(|widget| widget.read(cx).detail_open().map(String::from))?;
+        let task = self.tasks.iter().find(|t| t.task_id == detail_id)?;
+        let task_id = task.task_id.clone();
+        let is_assigned = task.assignee.is_some();
+        let hover_bg = cx.theme().colors().border;
+
+        let edit_id = task_id.clone();
+        let spawn_id = task_id.clone();
+        let assign_id = task_id.clone();
+        let delete_id = task_id;
+
+        Some(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .id("kanban-task-edit")
+                        .cursor_pointer()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .hover(move |this| this.bg(hover_bg))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.start_edit_task(edit_id.clone(), cx);
+                        }))
+                        .child(Label::new("Edit").size(LabelSize::Small)),
+                )
+                .child(
+                    div()
+                        .id("kanban-task-spawn")
+                        .cursor_pointer()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .hover(move |this| this.bg(hover_bg))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.start_spawn_task(spawn_id.clone(), cx);
+                        }))
+                        .child(Label::new("Spawn subagent").size(LabelSize::Small)),
+                )
+                .child(
+                    div()
+                        .id("kanban-task-assign")
+                        .cursor_pointer()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .hover(move |this| this.bg(hover_bg))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.toggle_task_assignment(assign_id.clone(), is_assigned, cx);
+                        }))
+                        .child(
+                            Label::new(if is_assigned { "Unassign" } else { "Assign" })
+                                .size(LabelSize::Small),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("kanban-task-delete")
+                        .cursor_pointer()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .hover(move |this| this.bg(hover_bg))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.confirm_delete_task(delete_id.clone(), cx);
+                        }))
+                        .child(
+                            Label::new("Delete")
+                                .size(LabelSize::Small)
+                                .color(Color::Warning),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
 }
 
 impl Render for KanbanPanel {
@@ -1514,6 +1598,9 @@ impl Render for KanbanPanel {
                         })
                         .when_some(self.render_error(), |this, error| this.child(error))
                         .when_some(self.render_action_form(cx), |this, form| this.child(form))
+                        .when_some(self.render_task_actions(cx), |this, actions| {
+                            this.child(actions)
+                        })
                     }),
             )
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {

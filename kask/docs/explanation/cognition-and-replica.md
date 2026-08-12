@@ -12,7 +12,7 @@ mds_categories: [domain, composition, lifecycle, curation]
 
 This document consolidates three topics that share a single theme: how hKask represents, processes, and forecasts cognitive artifacts inside zed-kask. The scenario forecasting pipeline integrates three research frameworks to build, forecast, and evaluate futures. The ν-event semantics define the atomic unit of observability that feeds the Regulation. The Companies MCP server provides the investment research tooling that operationalizes forecasting and valuation. Together, they form the cognition layer — the mechanisms by which hKask agents perceive, reason about, and predict the world.
 
-All three subsystems run in-process inside zed-kask: the scenarios and companies MCP servers are registered as builtin in-process MCP servers (D1–D3), and ν-events flow through the in-process `RegulationSink`. The standalone `kask` CLI, HTTP API server, and Matrix transport have been removed; the Curator is a native agent inside zed-kask (D2) that evaluates in-process agent events rather than Matrix messages. See the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for the D1–D23 integration seams.
+All three subsystems run inside zed-kask: the scenarios and companies MCP servers are registered as builtin context servers launched as child processes over stdio (D1–D3), and ν-events flow through the in-process `RegulationSink`. The standalone `kask` CLI, HTTP API server, and Matrix transport have been removed; the Curator is a native agent inside zed-kask (D2) that evaluates in-process agent events rather than Matrix messages. See the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for the D1–D23 integration seams.
 
 ---
 

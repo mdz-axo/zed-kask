@@ -483,7 +483,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 ---
 
-*MDS v0.31.5 — five categories. Re-anchored to the 20 surviving hKask crates (19 `hkask-*` + `kask_bridge`) and 13 MCP servers compiled in-process inside zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology; `hkask-goal` deleted (`GoalState` retained in `hkask-types`). The SpecStore/QA surface (§4, §6) is not yet implemented.*
+*MDS v0.31.5 — five categories. Re-anchored to the 20 surviving hKask crates (19 `hkask-*` + `kask_bridge`, compiled in-process inside zed-kask) and 13 MCP servers launched as child processes over stdio by zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology; `hkask-goal` deleted (`GoalState` retained in `hkask-types`). The SpecStore/QA surface (§4, §6) is not yet implemented.*
 
 ---
 
@@ -527,7 +527,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | ~~`hkask-services-context`~~ (folded) | Lifecycle | `ContextService`, contract monitoring — `governance.rs` moved to `hkask-mcp-curator`; guards were dead code |
 | ~~`hkask-services-compose`~~ (folded) | Composition | Template composition — folded into `hkask-mcp-corpus` |
 | `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (InferencePort, ToolPort, MemoryPort, etc.) to MCP servers and zed-kask surfaces (no `KaskCore` singleton — composition root wires components directly) |
-| 13 MCP servers | Composition | The tools — hosted in-process: codegraph, companies, condenser, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training |
+| 13 MCP servers | Composition | The tools — child processes over stdio (D3), governed by the in-process `McpRuntime`: codegraph, companies, condenser, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training |
 
 > **Deleted crates (not mapped):** `hkask-identity` (→ zed account), `hkask-communication` (→ zed voip), `hkask-mcp-cloud-gateway`, `hkask-acp`, `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-services-chat` (→ zed agent panel), `hkask-services-onboarding` (→ zed first-launch), `hkask-services-skill` (→ `hkask-templates`/`ManifestExecutor`), `hkask-services-wallet` (deleted outright — residual wallet primitives removed 2026-08-03), `hkask-mcp-communication`, `hkask-mcp-filesystem`, `hkask-mcp-memory`, `hkask-mcp-skill`, `hkask-mcp-regulation`.
 
