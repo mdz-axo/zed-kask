@@ -21,8 +21,8 @@ use hkask_mcp_companies::types::{
     LedgerExportRequest, LedgerImportRequest, MonteCarloDcfRequest, NoteAddRequest,
     NoteDeleteRequest, NoteListRequest, PortfolioCompareRequest, PortfolioNameRequest,
     PortfolioReturnsRequest, ResearchSearchRequest, ResultFeedbackRequest, ReverseDcfRequest,
-    ScenarioAnalysisRequest, ScreenerRequest, SearchRequest, SensitivityAnalysisRequest,
-    SymbolLimitRequest, SymbolRequest, TransactionNoteRequest,
+    ScenarioAnalysisRequest, ScenarioImpactValuationRequest, ScreenerRequest, SearchRequest,
+    SensitivityAnalysisRequest, SymbolLimitRequest, SymbolRequest, TransactionNoteRequest,
 };
 use hkask_mcp_server::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -83,3 +83,7 @@ schema_clean_test!(research_search_request_schema, ResearchSearchRequest);
 schema_clean_test!(screener_request_schema, ScreenerRequest);
 schema_clean_test!(company_transcript_request_schema, CompanyTranscriptRequest);
 schema_clean_test!(ep_valuation_request_schema, EpValuationRequest);
+schema_clean_test!(
+    scenario_impact_valuation_request_schema,
+    ScenarioImpactValuationRequest
+);

@@ -1,0 +1,96 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    decomposed_tasks: array
+    project_name: string
+    swarm_id: string
+    spawn_config: object
+  output:
+    board_name: string
+    columns: array
+    task_creation_plan: array
+    spawn_plan: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: kanban-board-builder/plan-creation.j2 #}
+{# Functional Role: KnowAct — Map decomposed tasks to MCP tool calls #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: board_name, columns, task_creation_plan, spawn_plan #}
+{# Ontology: PKO — pko:Procedure (board), pko:Step (task) #}
+
+[inference]
+temperature = 0.1
+work_effort = "medium"
+verbosity = "concise"
+max_tokens = 3072
+
+You are a kanban board materialization planner. Map decomposed tasks to concrete MCP tool calls for the kata-kanban server.
+
+## Project
+{{ project_name | default('Untitled Project') }}
+
+## Decomposed Tasks
+{{ decomposed_tasks | tojson }}
+
+{% if swarm_id %}
+## Swarm ID
+{{ swarm_id }}
+{% endif %}
+
+{% if spawn_config %}
+## Spawn Configuration
+{{ spawn_config | tojson }}
+{% endif %}
+
+## Instructions
+
+Plan the board creation by mapping each decomposed task to a `kanban_task_create` call. For each task:
+
+1. **Title** — use the task title directly
+2. **Description** — use the task description, or generate one from the title if missing
+3. **Criteria** — use the task's acceptance criteria (the `criteria` field). If missing, use the task's `definition_of_done` or infer from the description
+4. **Gas budget** — if the task has `estimated_hours`, multiply by 1000 to get a gas budget (1 hour ≈ 1000 gas units). If the task has `story_points`, use story_points × 500 as a fallback. Use 2000 as a minimum default
+5. **Initial status** — all tasks start in `backlog` unless a dependency requires `ready`
+
+For the board:
+- Use the project name as the board name
+- Use the standard 5 columns (Backlog, Ready, In Progress, Review, Done) unless custom columns are specified
+
+For delegation:
+- If `spawn_config` is provided, identify which tasks should be spawned to subagents
+- If `swarm_id` is provided, link spawned tasks to that swarm
+
+## Output Format
+
+Return a JSON object:
+
+```json
+{
+  "board_name": "Project name",
+  "columns": null,
+  "task_creation_plan": [
+    {
+      "title": "Task title",
+      "description": "Task description",
+      "criteria": ["Acceptance criterion 1", "Acceptance criterion 2"],
+      "gas_budget": 3000,
+      "rjoule_budget": null,
+      "initial_status": "backlog"
+    }
+  ],
+  "spawn_plan": [
+    {
+      "task_index": 0,
+      "delegation_level": "standard",
+      "delegated_skills": ["tdd"],
+      "memory_scope": "episodic",
+      "gas_budget": 3000,
+      "swarm_id": "swarm-id-or-null"
+    }
+  ]
+}
+```
+
+`columns` is null for standard 5-column layout, or an array of `{name, status, wip_limit}` for custom columns. `spawn_plan` is empty if no tasks need delegation. Each `task_index` in `spawn_plan` refers to the index in `task_creation_plan`.

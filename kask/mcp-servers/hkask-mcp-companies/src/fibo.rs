@@ -104,6 +104,7 @@ pub fn tool_to_fibo(tool: &str) -> Option<FiboConcept> {
         "ep_valuation" => Some(ECONOMIC_PROFIT),
         "expectations_gap" => Some(INTRINSIC_VALUE_PER_SHARE),
         "scenario_analysis" => Some(SCENARIO_PROBABILITY),
+        "scenario_impact_valuation" => Some(SCENARIO_PROBABILITY),
         // Analysis tools
         "company_screener" => Some(STOCK_SCREENER),
         "moat_check" => Some(COMPETITIVE_ADVANTAGE),

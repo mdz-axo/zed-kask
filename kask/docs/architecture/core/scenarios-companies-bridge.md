@@ -22,6 +22,8 @@ The `scenario_from_companies` tool bridges them: financial projections from the 
 
 ## Bridge Path
 
+### Forward: companies → scenarios (DCF output → trackable events)
+
 ```
 hkask-mcp-companies                    hkask-mcp-scenarios
 ─────────────────                      ───────────────────
@@ -36,6 +38,27 @@ calibrate_forecast                     scenario_from_companies
                                   scenario_calibrate (Fermi + base rate)
                                     ↓
                                   scenario_score (Brier tracking)
+```
+
+### Reverse: scenarios → companies (exogenous events → financial forecast)
+
+```
+hkask-mcp-scenarios                    hkask-mcp-companies
+─────────────────                      ───────────────────
+scenario_quantify                      scenario_impact_valuation
+  ↓                                      ↓
+  Resolved event tree               Parse tree + per-node impact mappings
+  (marginals, CPTs,                   ↓
+   dependency edges)                Enumerate 2^N leaf paths
+  ↓                                      ↓
+  User authors per-node              Apply stacked deltas per path
+  impact mappings (yes_deltas,         ↓
+  no_deltas on DCF assumptions)      Run DCF under each path
+  ↓                                      ↓
+                                     Weight by path probability
+                                       ↓
+                                     Probability-weighted intrinsic value
+                                     + per-node sensitivity
 ```
 [^gamma-adapter]
 
@@ -59,7 +82,7 @@ calibrate_forecast                     scenario_from_companies
 
 2. **Deadline derivation:** Deadlines are computed from the `TimeHorizon` enum: Tactical = +540 days, Strategic = +1460 days, LongTerm = +2920 days.
 
-3. **No reverse bridge:** There is no `companies_from_scenarios` tool. The bridge is one-directional: financial model → trackable forecast. This is by design — the companies server owns the financial domain.[^tetlock-superforecasting]
+3. **Reverse bridge (scenario impact valuation):** The `scenario_impact_valuation` tool on the companies server is the reverse bridge — exogenous scenario events drive the company's financial forecast. The user maps each scenario node's Yes/No outcome to additive deltas on DCF assumptions (revenue growth, gross margin, capex, etc.). The tool enumerates all 2^N leaf paths, computes each path's probability from the CPTs, applies stacked deltas, runs DCF, and weights by path probability. This is the natural composition direction: scenarios are the exogenous drivers, company financials are the endogenous system being impacted. The forward bridge (`scenario_from_companies`) remains for converting DCF output into trackable forecast events.[^tetlock-superforecasting]
 
 ## Cross-links
 

@@ -1,0 +1,44 @@
+# Template crate manifest for kanban-board-builder skill
+# hKask v0.34.0
+
+crate:
+  name: kanban-board-builder
+  version: "0.34.0"
+  description: >
+    Materialize a kanban board from a decomposition plan or direct task
+    specification. Calls kanban_board_create, kanban_task_create for each
+    task with criteria and gas budgets, optionally kanban_task_spawn for
+    subagent delegation, and emits a kanban block for widget rendering.
+    Bridges the kanban-task-decomposition (Plan) and kanban-task-management
+    (Check) skills to the actual MCP tools (Do).
+
+templates:
+  - id: kanban-board-builder/plan-creation
+    name: "Map decomposed tasks to MCP tool calls, resolving gas budgets, criteria, and column assignments"
+    path: plan-creation.j2
+    type: KnowAct
+    description: >
+      Plan the board creation. Accept decomposed tasks (from
+      kanban-task-decomposition or direct specification) and map each to
+      a kanban_task_create call. Resolve gas budgets from effort estimates,
+      criteria from acceptance criteria, and initial column from task status.
+
+  - id: kanban-board-builder/execute-creation
+    name: "Execute the plan: call kanban_board_create and kanban_task_create for each task"
+    path: execute-creation.j2
+    type: KnowAct
+    description: >
+      Execute the materialization. Call kanban_board_create to create the
+      board, then kanban_task_create for each planned task. Record the
+      returned board_id and task_ids. Optionally call kanban_task_spawn
+      for tasks requiring subagent delegation.
+
+  - id: kanban-board-builder/verify-and-render
+    name: "Verify the board state and emit a kanban block for widget rendering"
+    path: verify-and-render.j2
+    type: KnowAct
+    description: >
+      Verify the board by calling kanban_board_list and kanban_task_list.
+      Confirm all tasks are created with correct statuses and criteria.
+      Emit the combined result as a kanban fenced block for KanbanWidget
+      rendering.

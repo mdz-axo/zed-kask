@@ -745,6 +745,12 @@ pub use sensitivity::sensitivity_analysis;
 mod monte_carlo;
 pub use monte_carlo::{McRange, monte_carlo_dcf, validate_sensitivity_range};
 
+// ── Scenario impact valuation — extracted to `financial_model/scenario_impact.rs`
+mod scenario_impact;
+pub use scenario_impact::{
+    ScenarioImpactError, ScenarioNodeImpact, ScenarioTreeInput, scenario_impact_dcf,
+};
+
 #[cfg(test)]
 mod tests {
     use super::monte_carlo::{MC_MAX_SIMULATIONS, MC_MIN_SIMULATIONS};

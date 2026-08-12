@@ -97,6 +97,16 @@ impl PredictionMarketsServer {
 
 // ── MCP Tools ──────────────────────────────────────────────────────────────
 
+#[derive(serde::Deserialize)]
+struct AnnotatedMarketRecord {
+    days_to_expiration: f64,
+    probability: f64,
+    quality: f64,
+    orientation: cmp_portfolio::Orientation,
+    market_index: usize,
+    ticker: String,
+}
+
 #[tool_router(router = prediction_markets_router, vis = "pub")]
 impl PredictionMarketsServer {
     /// Return the current server state snapshot.
@@ -573,6 +583,27 @@ impl PredictionMarketsServer {
         .await
     }
 
+    fn scan_and_record_provider(
+        &self,
+        observations: Vec<(String, calibration::ResolvedObservation)>,
+        recorded: &mut u32,
+        already_known: &mut u32,
+    ) -> Result<(), McpToolError> {
+        for (bucket, observation) in observations {
+            let mut store = self
+                .calibration_store
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if store.contains(&bucket, &observation) {
+                *already_known += 1;
+            } else {
+                store.record(&bucket, observation);
+                *recorded += 1;
+            }
+        }
+        Ok(())
+    }
+
     /// Scan for resolved markets and record their outcomes.
     #[tool(
         description = "Scan Polymarket and Kalshi for newly resolved markets and record definitive outcomes into the calibration store (idempotent — re-scanning is safe). Only terminal prices (>=0.99 / <=0.01) or explicit Kalshi results count; ambiguous 50-50 resolutions are skipped, never fabricated. This is the self-feeding sense arm of the calibration loop."
@@ -596,7 +627,6 @@ impl PredictionMarketsServer {
                 let mut already_known = 0u32;
                 let mut warnings: Vec<String> = Vec::new();
 
-                // Kalshi: settled markets carry an explicit `result`.
                 match provider_kalshi::fetch_markets_by_status(
                     &self.http,
                     req.series.as_deref(),
@@ -606,45 +636,40 @@ impl PredictionMarketsServer {
                 .await
                 {
                     Ok(markets) => {
-                        for market in &markets {
-                            let outcome = match market.result.as_str() {
-                                "yes" => Some(true),
-                                "no" => Some(false),
-                                _ => None,
-                            };
-                            let Some(outcome) = outcome else { continue };
-                            let bucket = types::canonical_bucket(&market.event_ticker);
-                            // Pre-resolution probability is unrecoverable from
-                            // a settled snapshot; record the last traded price
-                            // as the closest honest observation.
-                            let Some(probability) =
-                                provider_kalshi::parse_fp(&market.last_price_dollars)
-                            else {
-                                continue;
-                            };
-                            let observation = calibration::ResolvedObservation {
-                                probability,
-                                outcome,
-                            };
-                            let mut store = self
-                                .calibration_store
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner());
-                            if store.contains(&bucket, &observation) {
-                                already_known += 1;
-                            } else {
-                                store.record(&bucket, observation);
-                                recorded += 1;
-                            }
-                        }
+                        let observations: Vec<(String, calibration::ResolvedObservation)> =
+                            markets
+                                .iter()
+                                .filter_map(|market| {
+                                    let outcome = match market.result.as_str() {
+                                        "yes" => Some(true),
+                                        "no" => Some(false),
+                                        _ => None,
+                                    }?;
+                                    let bucket = types::canonical_bucket(&market.event_ticker);
+                                    let probability =
+                                        provider_kalshi::parse_fp(&market.last_price_dollars)?;
+                                    Some((
+                                        bucket,
+                                        calibration::ResolvedObservation {
+                                            probability,
+                                            outcome,
+                                        },
+                                    ))
+                                })
+                                .collect();
+                        self.scan_and_record_provider(
+                            observations,
+                            &mut recorded,
+                            &mut already_known,
+                        )?;
                     }
                     Err(e) => warnings.push(format!("kalshi scan failed: {e}")),
                 }
 
-                // Polymarket: closed markets; definitive outcome from terminal
-                // prices (the B1 gate — 50-50 "Unknown" resolutions skip).
                 match provider_polymarket::fetch_markets(&self.http, limit, true).await {
                     Ok(markets) => {
+                        let mut observations: Vec<(String, calibration::ResolvedObservation)> =
+                            Vec::new();
                         for market in &markets {
                             if market.uma_resolution_status != "resolved" {
                                 continue;
@@ -661,27 +686,23 @@ impl PredictionMarketsServer {
                                 None
                             };
                             let Some(outcome) = outcome else { continue };
-                            let bucket = types::canonical_bucket(&market.slug);
-                            let observation = calibration::ResolvedObservation {
-                                probability: price,
-                                outcome,
-                            };
-                            let mut store = self
-                                .calibration_store
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner());
-                            if store.contains(&bucket, &observation) {
-                                already_known += 1;
-                            } else {
-                                store.record(&bucket, observation);
-                                recorded += 1;
-                            }
+                            observations.push((
+                                types::canonical_bucket(&market.slug),
+                                calibration::ResolvedObservation {
+                                    probability: price,
+                                    outcome,
+                                },
+                            ));
                         }
+                        self.scan_and_record_provider(
+                            observations,
+                            &mut recorded,
+                            &mut already_known,
+                        )?;
                     }
                     Err(e) => warnings.push(format!("polymarket scan failed: {e}")),
                 }
 
-                // Persist if anything changed.
                 if recorded > 0
                     && let Some(path) = &self.calibration_path
                 {
@@ -1056,6 +1077,228 @@ impl PredictionMarketsServer {
         .await
     }
 
+    fn resolve_economic_context(
+        &self,
+        markets: &[provider_kalshi::KalshiMarket],
+        series: &str,
+        reference: Option<f64>,
+        volatility: Option<f64>,
+        predicted_level: Option<f64>,
+        direction_up: Option<bool>,
+    ) -> base_event::EconomicContext {
+        let default_ctx = markets
+            .first()
+            .and_then(|m| {
+                base_event::classify_base_event_text(&m.title, &m.subtitle, &series, "")
+            })
+            .map(|be| be.default_economic_context())
+            .unwrap_or_else(|| base_event::EconomicContext {
+                reference: 0.0,
+                volatility: None,
+                predicted_level: 0.0,
+                direction_up: false,
+                rationale: "no base-event match — generic stable default".into(),
+            });
+        let reference = reference.unwrap_or(default_ctx.reference);
+        let volatility = volatility.or(default_ctx.volatility);
+        let predicted_level = predicted_level.unwrap_or_else(|| {
+            if let Some(m) = markets.first()
+                && let Some(be) =
+                    base_event::classify_base_event_text(&m.title, &m.subtitle, &series, "")
+                && let Some((strike, _)) = be.extract_strike(&m.title)
+            {
+                strike
+            } else {
+                default_ctx.predicted_level
+            }
+        });
+        let direction_up = match direction_up {
+            Some(up) => up,
+            None => {
+                if let Some(m) = markets.first()
+                    && let Some(be) =
+                        base_event::classify_base_event_text(&m.title, &m.subtitle, &series, "")
+                    && let Some((_, up)) = be.extract_strike(&m.title)
+                {
+                    up
+                } else {
+                    default_ctx.direction_up
+                }
+            }
+        };
+        base_event::EconomicContext {
+            reference,
+            volatility,
+            predicted_level,
+            direction_up,
+            rationale: default_ctx.rationale,
+        }
+    }
+
+    fn build_annotated_market_records(
+        markets: &[provider_kalshi::KalshiMarket],
+        ctx: &base_event::EconomicContext,
+        _observation_date: &str,
+        series: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Vec<serde_json::Value> {
+        let config = cmp_portfolio::CmpConfig::default();
+        let mut records: Vec<serde_json::Value> = Vec::new();
+        for (idx, market) in markets.iter().enumerate() {
+            let Some(probability) = market.yes_midpoint() else {
+                continue;
+            };
+            let Some(deadline) = chrono::DateTime::parse_from_rfc3339(&market.close_time).ok()
+            else {
+                continue;
+            };
+            let days = (deadline.with_timezone(&chrono::Utc) - now).num_seconds() as f64
+                / 86_400.0;
+            if days <= 0.0 {
+                continue;
+            }
+            let Some(base_event) =
+                base_event::classify_base_event_text(&market.title, &market.subtitle, &series, "")
+            else {
+                continue;
+            };
+            let setting = base_event.default_materiality();
+            let level =
+                cmp_portfolio::materiality_level(&setting, ctx.volatility, 30, &config);
+            let orientation = match level {
+                Some(level) => cmp_portfolio::classify_orientation(
+                    ctx.predicted_level,
+                    ctx.reference,
+                    level,
+                    ctx.direction_up,
+                ),
+                None => cmp_portfolio::Orientation::Stable,
+            };
+            records.push(serde_json::json!({
+                "days_to_expiration": days,
+                "probability": probability,
+                "quality": 1.0,
+                "orientation": orientation,
+                "market_index": idx,
+                "ticker": market.ticker.clone(),
+            }));
+        }
+        records
+    }
+
+    async fn persist_cmp_portfolio(
+        &self,
+        records: Vec<serde_json::Value>,
+        series: &str,
+        observation_date: &str,
+        ctx: &base_event::EconomicContext,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<serde_json::Value, McpToolError> {
+        let mut oriented: Vec<cmp_portfolio::OrientedConstituent> = Vec::new();
+        let mut market_ids: Vec<String> = Vec::new();
+        for record in records {
+            let r: AnnotatedMarketRecord = serde_json::from_value(record)
+                .map_err(|e| McpToolError::internal(format!("record deserialization failed: {e}")))?;
+            oriented.push(cmp_portfolio::OrientedConstituent {
+                constituent: cmp_portfolio::Constituent {
+                    days_to_expiration: r.days_to_expiration,
+                    probability: r.probability,
+                    quality: r.quality,
+                },
+                orientation: r.orientation,
+                market_index: r.market_index,
+            });
+            market_ids.push(r.ticker);
+        }
+        if oriented.is_empty() {
+            return Err(McpToolError::not_found(format!(
+                "no eligible markets for series '{}' with the supplied economic context",
+                series
+            )));
+        }
+
+        let config = cmp_portfolio::CmpConfig::default();
+        let index_set = cmp_portfolio::construct_cmp_index_set(&oriented, &config);
+
+        let store = self.portfolio_store.clone();
+        let created_at = now.to_rfc3339();
+        let series_owned = series.to_string();
+        let observation_date_owned = observation_date.to_string();
+        let stored = tokio::task::spawn_blocking(move || {
+            use hkask_mcp_portfolio::{AssetType, PortfolioError, Transaction, TxType};
+            let mut stored_indices: Vec<(String, usize)> = Vec::new();
+            for index in &index_set.indices {
+                let portfolio_name = format!(
+                    "cmp:{series_owned}:{}:{}",
+                    index.bucket.label(),
+                    index.orientation
+                );
+                if let Err(e) = store.create(&portfolio_name, AssetType::PredictionContract) {
+                    match e {
+                        PortfolioError::InvalidArgument(_) => {}
+                        other => return Err(other),
+                    }
+                }
+                for constituent in &index.portfolio.constituents {
+                    let symbol = market_ids
+                        .get(constituent.market_index)
+                        .cloned()
+                        .unwrap_or_else(|| format!("market_{}", constituent.market_index));
+                    let tx = Transaction {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        date: observation_date_owned.clone(),
+                        tx_type: TxType::Buy,
+                        asset_type: AssetType::PredictionContract,
+                        symbol: Some(symbol),
+                        quantity: Some(1.0),
+                        price: Some(constituent.probability),
+                        commission: Some(0.0),
+                        amount: None,
+                        weight: Some(constituent.weight),
+                        currency: "USD".to_string(),
+                        notes: format!(
+                            "CMP portfolio constituent: bucket={} orientation={} weight={:.4} dte={:.1}",
+                            index.bucket.label(),
+                            index.orientation,
+                            constituent.weight,
+                            constituent.days_to_expiration
+                        ),
+                        created_at: created_at.clone(),
+                    };
+                    store.apply(&portfolio_name, &tx)?;
+                }
+                let snap = store.snapshot(&portfolio_name, &observation_date_owned)?;
+                stored_indices.push((portfolio_name, snap.holdings.len()));
+            }
+            Ok::<_, PortfolioError>((stored_indices, index_set.withheld_buckets.len()))
+        })
+        .await
+        .map_err(|e| map_join_error(e, "portfolio store task failed"))?
+        .map_err(map_portfolio_error)?;
+        let (stored_indices, withheld) = stored;
+        serde_json::to_value(serde_json::json!({
+            "status": "stored",
+            "series": series,
+            "observation_date": observation_date,
+            "economic_context": {
+                "reference": ctx.reference,
+                "volatility": ctx.volatility,
+                "predicted_level": ctx.predicted_level,
+                "direction_up": ctx.direction_up,
+                "rationale": ctx.rationale,
+            },
+            "indices_stored": stored_indices.len(),
+            "withheld_buckets": withheld,
+            "indices": stored_indices.iter().map(|(name, holdings)| serde_json::json!({
+                "portfolio": name,
+                "holdings": holdings,
+            })).collect::<Vec<_>>(),
+        }))
+        .map_err(|e| {
+            McpToolError::internal(format!("store response serialization failed: {e}")) // rr0044-ok: serialize-own-struct
+        })
+    }
+
     /// Read the materialized holdings for a stored CMP index portfolio.
     /// Compute the solved-portfolio CMP index set for a registered base event
     /// and persist each (bucket, orientation) index as a transaction-ledger
@@ -1098,214 +1341,23 @@ impl PredictionMarketsServer {
                 let now = chrono::Utc::now();
                 let observation_date =
                     date.clone().unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
-
-                // Resolve economic context: use operator-supplied values when
-                // present, otherwise fall back to the curated default for the
-                // base-event family. This follows the zed-kask pattern — never
-                // a blank field, always a reasonable default.
-                //
-                // We classify the base event from the first fetched market's
-                // text to pick the right default family. If classification
-                // fails (no signature match), we use a generic stable default.
-                let default_ctx = markets
-                    .first()
-                    .and_then(|m| {
-                        base_event::classify_base_event_text(
-                            &m.title, &m.subtitle, &series, "",
-                        )
-                    })
-                    .map(|be| be.default_economic_context())
-                    .unwrap_or_else(|| base_event::EconomicContext {
-                        reference: 0.0,
-                        volatility: None,
-                        predicted_level: 0.0,
-                        direction_up: false,
-                        rationale: "no base-event match — generic stable default".into(),
-                    });
-                let reference = reference.unwrap_or(default_ctx.reference);
-                let volatility = volatility.or(default_ctx.volatility);
-                // When the operator didn't supply a predicted_level, try to
-                // extract a strike from the first market's title. If a strike
-                // is found, use it (directional index); otherwise fall back to
-                // the curated default (predicted_level = reference → Stable).
-                let predicted_level = predicted_level.unwrap_or_else(|| {
-                    if let Some(m) = markets.first()
-                        && let Some(be) = base_event::classify_base_event_text(&m.title, &m.subtitle, &series, "")
-                        && let Some((strike, _)) = be.extract_strike(&m.title)
-                    {
-                        strike
-                    } else {
-                        default_ctx.predicted_level
-                    }
-                });
-                // direction_up: operator override, else extracted from title, else default.
-                let direction_up = match direction_up {
-                    Some(up) => up,
-                    None => {
-                        if let Some(m) = markets.first()
-                            && let Some(be) = base_event::classify_base_event_text(&m.title, &m.subtitle, &series, "")
-                            && let Some((_, up)) = be.extract_strike(&m.title)
-                        {
-                            up
-                        } else {
-                            default_ctx.direction_up
-                        }
-                    }
-                };
-                let context_rationale = default_ctx.rationale.clone();
-
-                // Build OrientedConstituents from fetched markets + operator
-                // economic context. Each market becomes a candidate
-                // constituent; eligibility filters by base event, materiality,
-                // orientation, and maturity window inside construct_cmp_index_set.
-                let config = cmp_portfolio::CmpConfig::default();
-                let mut oriented: Vec<cmp_portfolio::OrientedConstituent> = Vec::new();
-                let mut market_ids: Vec<String> = Vec::new();
-                for (idx, market) in markets.iter().enumerate() {
-                    let Some(probability) = market.yes_midpoint() else {
-                        continue;
-                    };
-                    let Some(deadline) = chrono::DateTime::parse_from_rfc3339(&market.close_time).ok() else {
-                        continue;
-                    };
-                    let days = (deadline.with_timezone(&chrono::Utc) - now).num_seconds() as f64
-                        / 86_400.0;
-                    if days <= 0.0 {
-                        continue;
-                    }
-                    // Base-event classification from the market's text fields
-                    // (no full MarketRecord construction needed —
-                    // classify_base_event_text reads just the haystack).
-                    let base_event = base_event::classify_base_event_text(
-                        &market.title,
-                        &market.subtitle,
-                        &series,
-                        "", // category unknown without the event lookup
-                    );
-                    let Some(base_event) = base_event else {
-                        continue;
-                    };
-                    // Orientation: classify using the operator-supplied
-                    // predicted_level + reference + the materiality level for
-                    // this family at the 30d tenor (a representative target).
-                    let setting = base_event.default_materiality();
-                    let level = cmp_portfolio::materiality_level(
-                        &setting,
-                        volatility,
-                        30,
-                        &config,
-                    );
-                    let orientation = match level {
-                        Some(level) => cmp_portfolio::classify_orientation(
-                            predicted_level,
-                            reference,
-                            level,
-                            direction_up,
-                        ),
-                        None => cmp_portfolio::Orientation::Stable,
-                    };
-                    oriented.push(cmp_portfolio::OrientedConstituent {
-                        constituent: cmp_portfolio::Constituent {
-                            days_to_expiration: days,
-                            probability,
-                            quality: 1.0,
-                        },
-                        orientation,
-                        market_index: idx,
-                    });
-                    market_ids.push(market.ticker.clone());
-                }
-                if oriented.is_empty() {
-                    return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
-                        "no eligible markets for series '{}' with the supplied economic context",
-                        series
-                    )));
-                }
-
-                let index_set = cmp_portfolio::construct_cmp_index_set(&oriented, &config);
-
-                // Persist each solved CmpIndex as a portfolio ledger of
-                // WeightAdjust transactions (one per constituent, weight =
-                // the solved portfolio weight). The portfolio name is
-                // `cmp:{series}:{bucket}:{orientation}`.
-                let store = self.portfolio_store.clone();
-                let created_at = now.to_rfc3339();
-                let response_series = series.clone();
-                let response_date = observation_date.clone();
-                let stored = tokio::task::spawn_blocking(move || {
-                    use hkask_mcp_portfolio::{AssetType, PortfolioError, Transaction, TxType};
-                    let mut stored_indices: Vec<(String, usize)> = Vec::new();
-                    for index in &index_set.indices {
-                        let portfolio_name = format!(
-                            "cmp:{series}:{}:{}",
-                            index.bucket.label(),
-                            index.orientation
-                        );
-                        if let Err(e) = store.create(&portfolio_name, AssetType::PredictionContract) {
-                            match e {
-                                PortfolioError::InvalidArgument(_) => {}
-                                other => return Err(other),
-                            }
-                        }
-                        for constituent in &index.portfolio.constituents {
-                            let symbol = market_ids
-                                .get(constituent.market_index)
-                                .cloned()
-                                .unwrap_or_else(|| format!("market_{}", constituent.market_index));
-                            let tx = Transaction {
-                                id: uuid::Uuid::new_v4().to_string(),
-                                date: observation_date.clone(),
-                                tx_type: TxType::Buy,
-                                asset_type: AssetType::PredictionContract,
-                                symbol: Some(symbol),
-                                quantity: Some(1.0),
-                                price: Some(constituent.probability),
-                                commission: Some(0.0),
-                                amount: None,
-                                weight: Some(constituent.weight),
-                                currency: "USD".to_string(),
-                                notes: format!(
-                                    "CMP portfolio constituent: bucket={} orientation={} weight={:.4} dte={:.1}",
-                                    index.bucket.label(),
-                                    index.orientation,
-                                    constituent.weight,
-                                    constituent.days_to_expiration
-                                ),
-                                created_at: created_at.clone(),
-                            };
-                            store.apply(&portfolio_name, &tx)?;
-                        }
-                        // Materialize the holdings snapshot.
-                        let snap = store.snapshot(&portfolio_name, &observation_date)?;
-                        stored_indices.push((portfolio_name, snap.holdings.len()));
-                    }
-                    Ok::<_, PortfolioError>((stored_indices, index_set.withheld_buckets.len()))
-                })
-                .await
-                .map_err(|e| map_join_error(e, "portfolio store task failed"))?
-                .map_err(map_portfolio_error)?;
-                let (stored_indices, withheld) = stored;
-                serde_json::to_value(serde_json::json!({
-                    "status": "stored",
-                    "series": response_series,
-                    "observation_date": response_date,
-                    "economic_context": {
-                        "reference": reference,
-                        "volatility": volatility,
-                        "predicted_level": predicted_level,
-                        "direction_up": direction_up,
-                        "rationale": context_rationale,
-                    },
-                    "indices_stored": stored_indices.len(),
-                    "withheld_buckets": withheld,
-                    "indices": stored_indices.iter().map(|(name, holdings)| serde_json::json!({
-                        "portfolio": name,
-                        "holdings": holdings,
-                    })).collect::<Vec<_>>(),
-                }))
-                .map_err(|e| {
-                    McpToolError::internal(format!("store response serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                })
+                let ctx = self.resolve_economic_context(
+                    &markets,
+                    &series,
+                    reference,
+                    volatility,
+                    predicted_level,
+                    direction_up,
+                );
+                let records = Self::build_annotated_market_records(
+                    &markets,
+                    &ctx,
+                    &observation_date,
+                    &series,
+                    now,
+                );
+                self.persist_cmp_portfolio(records, &series, &observation_date, &ctx, now)
+                    .await
             },
         )
         .await

@@ -2,14 +2,14 @@
 
 Company-finance MCP server for provider-routed market data, fundamental analysis, valuation, research retrieval, and local portfolio-ledger operations.
 
-## Tools (41)
+## Tools (42)
 
 | Group | Tools |
 |---|---:|
 | Financial data | 8 |
 | Analysis and research | 5 |
 | Portfolio analytics and DCF | 5 |
-| Valuation and forecasting | 8 |
+| Valuation and forecasting | 9 |
 | Economic-profit and expectations analysis | 2 |
 | Portfolio ledger, notes, and files | 13 |
 
@@ -53,6 +53,7 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | `comparable_analysis` | Compare peer valuation multiples with a DCF overlay. |
 | `sensitivity_analysis` | Rank DCF inputs by their effect on intrinsic value. |
 | `monte_carlo_dcf` | Simulate DCF assumptions and return an intrinsic-value distribution. |
+| `scenario_impact_valuation` | Compose a company's DCF from scenario event-tree impact mappings. Reverse bridge from hkask-mcp-scenarios. |
 | `calibrate_forecast` | Calibrate growth and margin estimates into scenario-weighted intrinsic value. |
 | `forecast_get` | Retrieve one durable forecast and its recorded outcomes for the authenticated owner. |
 | `forecast_list` | List an authenticated owner's durable forecasts for a symbol. |

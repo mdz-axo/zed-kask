@@ -593,12 +593,50 @@ impl From<&ComparableAnalysisRequest> for ProjectionAssumptionOverrides {
         }
     }
 }
+projection_overrides_from_request!(
+    ScenarioImpactValuationRequest,
+    stage1_years,
+    stage2_years,
+    revenue_growth,
+    gross_margin,
+    da_to_revenue,
+    capex_to_revenue,
+    nwc_to_revenue,
+    tax_rate,
+    discount_rate,
+    terminal_growth,
+);
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ResearchSearchRequest {
     pub symbol: String,
     /// Research query (e.g., "management guidance 2025", "competition market share")
     pub query: String,
+}
+
+// ── Scenario impact valuation request (reverse bridge) ────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScenarioImpactValuationRequest {
+    pub symbol: String,
+    /// JSON string of the resolved scenario event tree from `scenario_quantify`
+    /// (hkask-mcp-scenarios). Must contain `nodes` (array with `id`,
+    /// `marginal_probability`, `depends_on`) and optionally `topological_order`.
+    pub scenario_tree: String,
+    /// JSON array of per-node impact mappings. Each entry has `node_id`,
+    /// `yes_deltas` (additive DCF assumption deltas when the node resolves
+    /// Yes), and optional `no_deltas` (deltas when No, default zero).
+    pub impact_mappings: String,
+    pub stage1_years: Option<u8>,
+    pub stage2_years: Option<u8>,
+    pub discount_rate: Option<f64>,
+    pub terminal_growth: Option<f64>,
+    pub revenue_growth: Option<f64>,
+    pub gross_margin: Option<f64>,
+    pub da_to_revenue: Option<f64>,
+    pub capex_to_revenue: Option<f64>,
+    pub nwc_to_revenue: Option<f64>,
+    pub tax_rate: Option<f64>,
 }
 
 // ── Company transcript request (earnings + corpus modes) ──────────────

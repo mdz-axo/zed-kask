@@ -193,7 +193,8 @@ status: VERIFIED (v3 — tool count updated to 21: added scenario_propagate, sce
 
 - **Standard pipeline:** `scenario_frame` → `scenario_frame_document` → `scenario_brainstorm` → `scenario_build` → `scenario_quantify` → `scenario_calibrate` → `scenario_synthesize` → `scenario_score` → `scenario_assess`[^tetlock-key-paths]
 - **Research entry:** `scenario_research` → `scenario_build` (skip brainstorming if events are extracted from web text)
-- **Companies bridge:** `scenario_from_companies` → `scenario_quantify` (skip framing/brainstorming — events come from DCF model)
+- **Companies bridge (forward):** `scenario_from_companies` → `scenario_quantify` (skip framing/brainstorming — events come from DCF model)
+- **Companies bridge (reverse):** `scenario_quantify` → user authors per-node impact mappings → `scenario_impact_valuation` on `hkask-mcp-companies` (exogenous scenario events drive the company's DCF via additive assumption deltas, weighted by path probability)
 - **Markets bridge:** `scenario_from_markets` (single market) or `scenario_from_markets_set` (full tree) → `scenario_quantify`; market records come from `hkask-mcp-prediction-markets` (`market_lookup` / `market_match`)
 - **Update loop:** `scenario_propagate` re-propagates a tree after a prior revision; `scenario_update` applies a one-off Bayesian revision
 - **Single-call:** `scenario_full` delegates to `triage_question`, `build_event_tree`, `sensitivity_ranking`, `calibrate_from_fermi`, `outside_view_adjustment`, `synthesize_perspectives`, `assess_project`

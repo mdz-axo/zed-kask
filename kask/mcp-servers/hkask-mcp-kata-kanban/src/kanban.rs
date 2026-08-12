@@ -7,10 +7,8 @@
 //!
 //! - `types` — Core types: Board, Task, TaskSpec, TaskStatus, Priority, SpawnSpec, etc.
 //! - `service_impl` — KanbanService + submodules: comments, decompose, dejam, kata, phases, spawn, verification
-//! - `socratic` — Socratic inquiry cycle for task diagnosis
 
 mod service_impl;
-pub mod socratic;
 pub mod types;
 
 // Common imports for submodule files that use `use super::*`
@@ -23,6 +21,3 @@ pub use types::{
 
 // Re-export the service and errors from service_impl
 pub use service_impl::{KanbanError, KanbanService, UnjamFix, UnjamItem};
-
-// Re-export socratic types
-pub use socratic::{QualityGate, SocraticRole};

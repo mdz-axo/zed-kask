@@ -16,7 +16,7 @@ pub mod types;
 // Re-export the kata-kanban service API at crate root (folded from hkask-services-kata-kanban).
 pub use kanban::{
     Board, ColumnDef, KanbanError, KanbanService, Priority, SpawnSpec, Task, TaskFilter, TaskSpec,
-    TaskStatus, UnjamFix, UnjamItem, Verification, VerificationCriterion, socratic,
+    TaskStatus, UnjamFix, UnjamItem, Verification, VerificationCriterion,
 };
 pub use kata::{
     ImprovementDirection, ImprovementSignal, KataEngine, KataError, KataHistory, KataManifest,
@@ -778,36 +778,13 @@ impl KanbanServer {
             "kanban_task_spawn",
             kanban_type_to_pko("kanban_task_spawn"),
             async {
-                let tid = parse_task_id(&task_id)?;
-                match delegation_level.as_str() {
-                    "minimal" | "standard" | "maximal" => {}
-                    other => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid delegation_level: {other} (expected minimal|standard|maximal)"
-                        )));
-                    }
-                }
-                if let Some(ref ms) = memory_scope {
-                    match ms.as_str() {
-                        "none" | "episodic" | "full" => {}
-                        other => {
-                            return Err(McpToolError::invalid_argument(format!(
-                                "invalid memory_scope: {other} (expected none|episodic|full)"
-                            )));
-                        }
-                    }
-                }
-                // Apply budgets before spawn if specified
-                if let Some(g) = gas_budget {
-                    self.service
-                        .task_add_gas(tid, g, self.webid)
-                        .map_err(map_kanban_error)?;
-                }
-                if let Some(r) = rjoule_budget {
-                    self.service
-                        .task_add_rjoules(tid, r, self.webid)
-                        .map_err(map_kanban_error)?;
-                }
+                let tid = self.validate_and_prepare_spawn(
+                    &task_id,
+                    &delegation_level,
+                    &memory_scope,
+                    &gas_budget,
+                    &rjoule_budget,
+                )?;
                 let skills_for_agent = delegated_skills.clone();
                 let spec = crate::SpawnSpec::new(tid)
                     .with_level(&delegation_level)
@@ -823,18 +800,11 @@ impl KanbanServer {
                     .spawn_task(tid, spec, self.webid)
                     .map_err(map_kanban_error)?;
 
-                // Resolve the task text for delegation (title + description).
                 let task = self
                     .service
                     .task_get(tid)
                     .map_err(map_kanban_error)?
                     .ok_or_else(|| McpToolError::not_found(format!("task {tid} not found")))?;
-                let task_text = match task.description.as_deref() {
-                    Some(desc) if !desc.trim().is_empty() => {
-                        format!("{}: {}", task.title, desc)
-                    }
-                    _ => task.title.clone(),
-                };
 
                 // Resolve the agent: reuse an expert agent whose declared skills
                 // cover the requested set; otherwise build a task-specific agent
@@ -845,165 +815,228 @@ impl KanbanServer {
                     .into_iter()
                     .find(|card| {
                         !skills_for_agent.is_empty()
-                            && skills_for_agent.iter().all(|s| {
-                                card.capabilities.skills.iter().any(|cs| cs == s)
-                            })
+                            && skills_for_agent
+                                .iter()
+                                .all(|s| card.capabilities.skills.iter().any(|cs| cs == s))
                     })
                     .unwrap_or_else(|| build_task_agent_card(tid, &task.title, &skills_for_agent));
 
                 // P1: Try worktree-isolated spawn first. When the zed IPC bridge
                 // is available and a workspace with an AgentPanel is open, this
                 // creates a worktree-backed agent thread (isolated git worktree).
-                // On failure (no IPC socket, no workspace, spawn error), fall
+                // On failure (no IPC socket, no workspace, spawn error), falls
                 // back to the in-memory `LazyLocalSwarmRuntime` path below.
-                let spawn_prompt = format!(
-                    "You are working on kanban task '{}' (id: {}).\n\
-                     Task description: {}\n\
-                     Delegated skills: {}\n\
-                     Execute the task and report results via kanban_task_delegate_result.",
-                    task.title, tid, task_text, skills_for_agent.join(", ")
-                );
-                let spawn_title = format!("Kanban: {}", task.title);
-                match self
-                    .worktree_spawn_port
-                    .create_worktree_thread(&spawn_prompt, &spawn_title, None, None)
-                    .await
+                if let Some(response) = self
+                    .spawn_via_worktree(tid, &task, &skills_for_agent)
+                    .await?
                 {
-                    Ok(message) => {
-                        // Worktree thread created — record the spawn on the task
-                        // and advance to InProgress. The agent in the worktree
-                        // will call `kanban_task_delegate_result` when done.
-                        let result_note = format!(
-                            "Spawned worktree agent for task '{}' ({}). \
-                             The agent runs in an isolated git worktree and will \
-                             report results via kanban_task_delegate_result.\n\
-                             {}",
-                            task.title, tid, message
-                        );
-                        self.service
-                            .task_comment(tid, self.webid, &result_note)
-                            .map_err(map_kanban_error)?;
-                        if let Err(error) = self
-                            .service
-                            .task_move(tid, TaskStatus::InProgress, self.webid)
-                        {
-                            tracing::warn!(
-                                target: "hkask.mcp.kata_kanban",
-                                task_id = %tid,
-                                %error,
-                                "could not advance task to InProgress after worktree spawn"
-                            );
-                        }
-                        return serde_json::to_value(TaskSpawnResponse {
-                            task_id: tid.to_string(),
-                            message: format!(
-                                "Spawned worktree agent for task '{}' ({}). \
-                                 The agent runs in an isolated worktree.",
-                                task.title, tid
-                            ),
-                            ontology: kanban_type_to_pko("kanban_task_spawn")
-                                .map(|s| s.to_string()),
-                        })
+                    return serde_json::to_value(response)
                         .map_err(|e| McpToolError::internal(e.to_string())); // rr0044-ok: serialize-own-struct
-                    }
-                    Err(e) => {
-                        tracing::info!(
-                            target: "hkask.mcp.kata_kanban",
-                            task_id = %tid,
-                            error = %e,
-                            "worktree spawn unavailable — falling back to in-memory LazyLocalSwarmRuntime"
-                        );
-                    }
                 }
 
                 // Fallback: in-memory spawn via LazyLocalSwarmRuntime.
-                let ceiling = match std::env::var("HKASK_ABW_MAX_CREDITS") {
-                    Ok(raw) => match raw.parse::<u32>() {
-                        Ok(value) => value,
-                        Err(_) => {
-                            tracing::warn!(
-                                "HKASK_ABW_MAX_CREDITS='{raw}' is not a valid u32; falling back to 50"
-                            );
-                            50
-                        }
-                    },
-                    Err(_) => 50,
-                };
-                let credits_authorized = gas_budget
-                    .map(|g| (g.min(u32::MAX as u64) as u32).min(ceiling))
-                    .unwrap_or(10)
-                    .min(ceiling);
+                let response = self
+                    .spawn_via_local_runtime(tid, &task, gas_budget, &agent)
+                    .await?;
+                serde_json::to_value(response).map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+            },
+        )
+        .await
+    }
 
-                let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
-                    McpToolError::unavailable(format!(
-                        "local swarm runtime initialization failed: {e}"
-                    ))
-                })?;
-                let result = runtime
-                    .delegate(&agent, &task_text, credits_authorized, ceiling)
-                    .await
-                    .map_err(hkask_mcp_swarm::SwarmError::into_tool_error)?;
-
-                // Record the delegation result on the task (comment + status).
-                // Write the structured `LocalDelegateResult` + verdict to the
-                // task's persisted fields first (the durable coordination
-                // source of truth), then append the human-readable comment.
-                let verdict = result.task_success.clone();
-                if let Err(error) = self.service.task_record_delegation(
-                    tid,
-                    None,
-                    result.clone(),
-                    verdict,
-                    self.webid,
-                ) {
-                    tracing::warn!(
-                        target: "hkask.mcp.kata_kanban",
-                        task_id = %tid,
-                        %error,
-                        "could not record structured delegation result — falling back to comment-only"
-                    );
+    fn validate_and_prepare_spawn(
+        &self,
+        task_id: &str,
+        delegation_level: &str,
+        memory_scope: &Option<String>,
+        gas_budget: &Option<u64>,
+        rjoule_budget: &Option<u64>,
+    ) -> Result<hkask_types::TaskId, McpToolError> {
+        let tid = parse_task_id(task_id)?;
+        match delegation_level {
+            "minimal" | "standard" | "maximal" => {}
+            other => {
+                return Err(McpToolError::invalid_argument(format!(
+                    "invalid delegation_level: {other} (expected minimal|standard|maximal)"
+                )));
+            }
+        }
+        if let Some(ms) = memory_scope {
+            match ms.as_str() {
+                "none" | "episodic" | "full" => {}
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "invalid memory_scope: {other} (expected none|episodic|full)"
+                    )));
                 }
+            }
+        }
+        if let Some(g) = gas_budget {
+            self.service
+                .task_add_gas(tid, *g, self.webid)
+                .map_err(map_kanban_error)?;
+        }
+        if let Some(r) = rjoule_budget {
+            self.service
+                .task_add_rjoules(tid, *r, self.webid)
+                .map_err(map_kanban_error)?;
+        }
+        Ok(tid)
+    }
+
+    async fn spawn_via_worktree(
+        &self,
+        tid: hkask_types::TaskId,
+        task: &Task,
+        skills_for_agent: &[String],
+    ) -> Result<Option<TaskSpawnResponse>, McpToolError> {
+        let task_text = match task.description.as_deref() {
+            Some(desc) if !desc.trim().is_empty() => format!("{}: {}", task.title, desc),
+            _ => task.title.clone(),
+        };
+        let spawn_prompt = format!(
+            "You are working on kanban task '{}' (id: {}).\n\
+             Task description: {}\n\
+             Delegated skills: {}\n\
+             Execute the task and report results via kanban_task_delegate_result.",
+            task.title,
+            tid,
+            task_text,
+            skills_for_agent.join(", ")
+        );
+        let spawn_title = format!("Kanban: {}", task.title);
+        match self
+            .worktree_spawn_port
+            .create_worktree_thread(&spawn_prompt, &spawn_title, None, None)
+            .await
+        {
+            Ok(message) => {
                 let result_note = format!(
-                    "Spawn executed: agent={agent_id}, model={model}, tokens={tokens}, \
-                     cost={cost} credits, balance={balance}, latency={latency_ms}ms\n\
-                     Response:\n{response}",
-                    agent_id = result.agent_id,
-                    model = result.model,
-                    tokens = result.tokens_used,
-                    cost = result.cost,
-                    balance = result.balance,
-                    latency_ms = result.latency_ms,
-                    response = result.response,
+                    "Spawned worktree agent for task '{}' ({}). \
+                     The agent runs in an isolated git worktree and will \
+                     report results via kanban_task_delegate_result.\n\
+                     {}",
+                    task.title, tid, message
                 );
                 self.service
                     .task_comment(tid, self.webid, &result_note)
                     .map_err(map_kanban_error)?;
-                // Advance the task to InProgress (spawn executed the work). A
-                // failed transition (WIP limit, invalid from-state) must not
-                // fail the spawn — the delegation result is already recorded.
-                if let Err(error) =
-                    self.service.task_move(tid, TaskStatus::InProgress, self.webid)
+                if let Err(error) = self
+                    .service
+                    .task_move(tid, TaskStatus::InProgress, self.webid)
                 {
                     tracing::warn!(
                         target: "hkask.mcp.kata_kanban",
                         task_id = %tid,
                         %error,
-                        "could not advance task to InProgress after spawn — delegation result still recorded"
+                        "could not advance task to InProgress after worktree spawn"
                     );
                 }
-
-                serde_json::to_value(TaskSpawnResponse {
+                Ok(Some(TaskSpawnResponse {
                     task_id: tid.to_string(),
                     message: format!(
-                        "Spawned agent '{}' for task '{}' ({} credits, {} tokens). Response recorded.",
-                        result.agent_id, task.title, result.cost, result.tokens_used
+                        "Spawned worktree agent for task '{}' ({}). \
+                         The agent runs in an isolated worktree.",
+                        task.title, tid
                     ),
                     ontology: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+                }))
+            }
+            Err(e) => {
+                tracing::info!(
+                    target: "hkask.mcp.kata_kanban",
+                    task_id = %tid,
+                    error = %e,
+                    "worktree spawn unavailable — falling back to in-memory LazyLocalSwarmRuntime"
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    async fn spawn_via_local_runtime(
+        &self,
+        tid: hkask_types::TaskId,
+        task: &Task,
+        gas_budget: Option<u64>,
+        agent: &LocalAgentCard,
+    ) -> Result<TaskSpawnResponse, McpToolError> {
+        let task_text = match task.description.as_deref() {
+            Some(desc) if !desc.trim().is_empty() => format!("{}: {}", task.title, desc),
+            _ => task.title.clone(),
+        };
+        let ceiling = match std::env::var("HKASK_ABW_MAX_CREDITS") {
+            Ok(raw) => match raw.parse::<u32>() {
+                Ok(value) => value,
+                Err(_) => {
+                    tracing::warn!(
+                        "HKASK_ABW_MAX_CREDITS='{raw}' is not a valid u32; falling back to 50"
+                    );
+                    50
+                }
             },
-        )
-        .await
+            Err(_) => 50,
+        };
+        let credits_authorized = gas_budget
+            .map(|g| (g.min(u32::MAX as u64) as u32).min(ceiling))
+            .unwrap_or(10)
+            .min(ceiling);
+
+        let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
+            McpToolError::unavailable(format!("local swarm runtime initialization failed: {e}"))
+        })?;
+        let result = runtime
+            .delegate(agent, &task_text, credits_authorized, ceiling)
+            .await
+            .map_err(hkask_mcp_swarm::SwarmError::into_tool_error)?;
+
+        let verdict = result.task_success.clone();
+        if let Err(error) =
+            self.service
+                .task_record_delegation(tid, None, result.clone(), verdict, self.webid)
+        {
+            tracing::warn!(
+                target: "hkask.mcp.kata_kanban",
+                task_id = %tid,
+                %error,
+                "could not record structured delegation result — falling back to comment-only"
+            );
+        }
+        let result_note = format!(
+            "Spawn executed: agent={agent_id}, model={model}, tokens={tokens}, \
+             cost={cost} credits, balance={balance}, latency={latency_ms}ms\n\
+             Response:\n{response}",
+            agent_id = result.agent_id,
+            model = result.model,
+            tokens = result.tokens_used,
+            cost = result.cost,
+            balance = result.balance,
+            latency_ms = result.latency_ms,
+            response = result.response,
+        );
+        self.service
+            .task_comment(tid, self.webid, &result_note)
+            .map_err(map_kanban_error)?;
+        if let Err(error) = self
+            .service
+            .task_move(tid, TaskStatus::InProgress, self.webid)
+        {
+            tracing::warn!(
+                target: "hkask.mcp.kata_kanban",
+                task_id = %tid,
+                %error,
+                "could not advance task to InProgress after spawn — delegation result still recorded"
+            );
+        }
+
+        Ok(TaskSpawnResponse {
+            task_id: tid.to_string(),
+            message: format!(
+                "Spawned agent '{}' for task '{}' ({} credits, {} tokens). Response recorded.",
+                result.agent_id, task.title, result.cost, result.tokens_used
+            ),
+            ontology: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
+        })
     }
 
     /// Read the structured delegation result and deterministic verdict for a

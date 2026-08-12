@@ -29,6 +29,7 @@
 //! - `scenario_analysis` — Schwartz 2×2 scenario matrix
 //! - `sensitivity_analysis` — Driver-by-driver intrinsic value sensitivity
 //! - `monte_carlo_dcf` — N-simulation Monte Carlo with histogram
+//! - `scenario_impact_valuation` — Scenario event-tree impact on DCF (reverse bridge)
 //! - `calibrate_forecast` — Fermi decomposition + Bayesian update (Tetlock)
 //! - `forecast_record` — Forecast-vs-actual decomposition (11-line-item gap)
 //!

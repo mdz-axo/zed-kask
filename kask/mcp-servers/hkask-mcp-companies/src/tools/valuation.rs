@@ -20,6 +20,12 @@ fn validate_finite(name: &str, value: f64) -> Result<(), McpToolError> {
     }
 }
 
+/// Classify ScenarioImpactError per variant, not blanket `internal`.
+/// All variants are invalid-argument (malformed input tree/mappings).
+fn map_scenario_impact_error(err: financial_model::ScenarioImpactError) -> McpToolError {
+    McpToolError::invalid_argument(err.to_string())
+}
+
 fn validate_unit_interval(name: &str, value: f64) -> Result<(), McpToolError> {
     validate_finite(name, value)?;
     if (0.0..=1.0).contains(&value) {
@@ -190,70 +196,7 @@ impl CompaniesServer {
             }
 
             // 5. DCF overlay on target
-            let dcf_overlay = {
-                let inc_res = self
-                    .fetch("income_statement", &req.symbol, &[("limit", "5")])
-                    .await;
-                let bal_res = self
-                    .fetch("balance_sheet", &req.symbol, &[("limit", "5")])
-                    .await;
-                let cf_res = self
-                    .fetch("cash_flow_statement", &req.symbol, &[("limit", "5")])
-                    .await;
-                let km_res = self
-                    .fetch("key_metrics", &req.symbol, &[("limit", "5")])
-                    .await;
-
-                match (inc_res, bal_res, cf_res, km_res) {
-                    (Ok(inc), Ok(bal), Ok(cf), Ok(km)) => {
-                        if let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                            extract_historical_arrays(&inc, &bal, &cf, &km, profile_data)
-                        {
-                            let hist = financial_model::HistoricalSnapshot::from_api_json(
-                                income_data,
-                                balance_data,
-                                cf_data,
-                                metrics_data,
-                                profile_data,
-                            );
-
-                            if hist.revenue.len() < 2 {
-                                serde_json::json!({"error": "insufficient historical data"})
-                            } else {
-                                let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
-                                    &hist,
-                                    types::ProjectionAssumptionOverrides::from(&req),
-                                )
-                                .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
-                                let current_price = profile_data
-                                    .get("price")
-                                    .and_then(|v| v.as_f64())
-                                    .unwrap_or(0.0);
-                                let model = financial_model::project_model(
-                                    &hist,
-                                    &assumptions,
-                                    current_price,
-                                );
-                                let margin_of_safety =
-                                    if current_price > 0.0 {
-                                        (model.intrinsic_per_share - current_price)
-                                            / current_price
-                                    } else {
-                                        0.0
-                                    };
-                                serde_json::json!({
-                                    "intrinsic_per_share": model.intrinsic_per_share,
-                                    "current_price": current_price,
-                                    "margin_of_safety": margin_of_safety,
-                                })
-                            }
-                        } else {
-                            serde_json::json!({"error": "insufficient data for DCF"})
-                        }
-                    }
-                    _ => serde_json::json!({"error": "DCF overlay unavailable"}),
-                }
-            };
+            let dcf_overlay = self.build_dcf_overlay(&req, profile_data).await?;
 
             let company_name = profile_data
                 .get("companyName")
@@ -291,6 +234,70 @@ impl CompaniesServer {
             Ok(output)
         })
         .await
+    }
+
+    async fn build_dcf_overlay(
+        &self,
+        req: &types::ComparableAnalysisRequest,
+        profile_data: &serde_json::Value,
+    ) -> Result<serde_json::Value, McpToolError> {
+        let inc_res = self
+            .fetch("income_statement", &req.symbol, &[("limit", "5")])
+            .await;
+        let bal_res = self
+            .fetch("balance_sheet", &req.symbol, &[("limit", "5")])
+            .await;
+        let cf_res = self
+            .fetch("cash_flow_statement", &req.symbol, &[("limit", "5")])
+            .await;
+        let km_res = self
+            .fetch("key_metrics", &req.symbol, &[("limit", "5")])
+            .await;
+
+        match (inc_res, bal_res, cf_res, km_res) {
+            (Ok(inc), Ok(bal), Ok(cf), Ok(km)) => {
+                if let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
+                    extract_historical_arrays(&inc, &bal, &cf, &km, profile_data)
+                {
+                    let hist = financial_model::HistoricalSnapshot::from_api_json(
+                        income_data,
+                        balance_data,
+                        cf_data,
+                        metrics_data,
+                        profile_data,
+                    );
+
+                    if hist.revenue.len() < 2 {
+                        return Ok(serde_json::json!({"error": "insufficient historical data"}));
+                    }
+
+                    let assumptions =
+                        financial_model::ProjectionAssumptions::from_history_with_overrides(
+                            &hist,
+                            types::ProjectionAssumptionOverrides::from(req),
+                        )
+                        .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
+                    let current_price = profile_data
+                        .get("price")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    let model = financial_model::project_model(&hist, &assumptions, current_price);
+                    let margin_of_safety = if current_price > 0.0 {
+                        (model.intrinsic_per_share - current_price) / current_price
+                    } else {
+                        0.0
+                    };
+                    Ok(serde_json::json!({
+                        "intrinsic_per_share": model.intrinsic_per_share,
+                        "current_price": current_price,
+                        "margin_of_safety": margin_of_safety,
+                    }))
+                } else {
+                    Ok(serde_json::json!({"error": "insufficient data for DCF"}))
+                }
+            }
+            _ => Ok(serde_json::json!({"error": "DCF overlay unavailable"})),
+        }
     }
 
     #[tool(
@@ -571,6 +578,132 @@ impl CompaniesServer {
             });
 
             Ok(output)
+        }).await
+    }
+
+    #[tool(
+        description = "Scenario impact valuation. Takes a resolved scenario event tree (from hkask-mcp-scenarios `scenario_quantify`) and per-node impact mappings, then runs DCF under each scenario path. For each scenario node, the user maps how its Yes/No outcome additively changes the company's DCF assumptions (revenue growth, gross margin, capex, etc.). Enumerates all 2^N leaf paths, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity (which scenario nodes drive the most valuation variance), and the intrinsic value distribution (percentiles, prob-undervalued). Max 12 scenario nodes. This is the reverse of `scenario_from_companies`: exogenous scenario events drive the company's financial forecast, not the other way around."
+    )]
+    pub async fn scenario_impact_valuation(
+        &self,
+        Parameters(req): Parameters<types::ScenarioImpactValuationRequest>,
+    ) -> String {
+        execute_tool(self, "scenario_impact_valuation", async {
+            validate_symbol(&req.symbol)?;
+
+            let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
+            let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
+            let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
+            let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
+            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+
+            let (income, balance, cf, metrics, profile) =
+                match (income_result, balance_result, cf_result, metrics_result, profile_result) {
+                    (Ok(inc), Ok(bal), Ok(cf), Ok(m), Ok(p)) => (inc, bal, cf, m, p),
+                    (Err(e), _, _, _, _)
+                    | (_, Err(e), _, _, _)
+                    | (_, _, Err(e), _, _)
+                    | (_, _, _, Err(e), _)
+                    | (_, _, _, _, Err(e)) => {
+                        return Err(e);
+                    }
+                };
+
+            let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
+                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
+            else {
+                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
+            };
+
+            let hist = financial_model::HistoricalSnapshot::from_api_json(
+                income_data, balance_data, cf_data, metrics_data, profile_data,
+            );
+
+            if hist.revenue.len() < 2 {
+                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
+            }
+
+            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+            let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
+                &hist,
+                types::ProjectionAssumptionOverrides::from(&req),
+            )
+            .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
+
+            // Parse the scenario tree JSON from scenario_quantify.
+            let tree: financial_model::ScenarioTreeInput = serde_json::from_str(&req.scenario_tree)
+                .map_err(|e| McpToolError::invalid_argument(format!("invalid scenario_tree JSON: {e}")))?;
+
+            // Parse the per-node impact mappings.
+            let impacts: Vec<financial_model::ScenarioNodeImpact> =
+                serde_json::from_str(&req.impact_mappings)
+                    .map_err(|e| McpToolError::invalid_argument(format!("invalid impact_mappings JSON: {e}")))?;
+
+            let result = financial_model::scenario_impact_dcf(
+                &hist, &assumptions, &tree, &impacts, current_price,
+            )
+            .map_err(map_scenario_impact_error)?;
+
+            let node_sensitivities: Vec<serde_json::Value> = result.node_sensitivities.iter()
+                .map(|s| serde_json::json!({
+                    "node_id": s.node_id,
+                    "intrinsic_if_yes": s.intrinsic_if_yes,
+                    "intrinsic_if_no": s.intrinsic_if_no,
+                    "sensitivity": s.sensitivity,
+                    "marginal_probability": s.marginal_probability,
+                }))
+                .collect();
+
+            let paths: Vec<serde_json::Value> = result.paths.iter()
+                .map(|p| {
+                    let outcomes: Vec<serde_json::Value> = p.outcomes.iter()
+                        .map(|o| serde_json::json!({
+                            "node_id": o.node_id,
+                            "outcome": o.outcome,
+                        }))
+                        .collect();
+                    serde_json::json!({
+                        "probability": p.probability,
+                        "intrinsic_per_share": p.intrinsic_per_share,
+                        "outcomes": outcomes,
+                    })
+                })
+                .collect();
+
+            let output = serde_json::json!({
+                "symbol": req.symbol,
+                "current_price": current_price,
+                "base_intrinsic": result.base_intrinsic,
+                "probability_weighted_intrinsic": result.probability_weighted_intrinsic,
+                "path_count": result.path_count,
+                "distribution": {
+                    "min": result.distribution.min,
+                    "p10": result.distribution.p10,
+                    "p25": result.distribution.p25,
+                    "median": result.distribution.median,
+                    "p75": result.distribution.p75,
+                    "p90": result.distribution.p90,
+                    "max": result.distribution.max,
+                    "prob_undervalued": result.distribution.prob_undervalued,
+                },
+                "node_sensitivities": node_sensitivities,
+                "paths": paths,
+                "bridge_note": "Reverse bridge: exogenous scenario events (from hkask-mcp-scenarios scenario_quantify) drive the company's financial forecast. Each scenario node's Yes/No outcome maps to additive deltas on DCF assumptions. The tool enumerates all 2^N leaf paths, computes path probabilities from the CPTs, applies stacked deltas, runs DCF under each path, and weights by path probability. This is the reverse of scenario_from_companies (which converts DCF output into scenario events).",
+                "pipeline": [
+                    "1. scenario_quantify (hkask-mcp-scenarios) → resolved event tree",
+                    "2. User authors per-node impact mappings (node_id → yes_deltas, no_deltas)",
+                    "3. scenario_impact_valuation (this tool) → probability-weighted DCF",
+                    "4. Compare probability_weighted_intrinsic vs base_intrinsic vs current_price",
+                ],
+                "fibo": {
+                    "scenario_probability": fibo::SCENARIO_PROBABILITY,
+                    "intrinsic_value": fibo::INTRINSIC_VALUE_PER_SHARE,
+                },
+                "framework": "Scenario impact valuation. Exogenous scenario events drive the company's financial forecast via per-node additive deltas on DCF assumptions. Enumerates all 2^N leaf paths through the event tree, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF under each modified assumption set, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity, and intrinsic value distribution.",
+            });
+
+            Ok(fibo::enrich_with_ontology(output, "scenario_impact_valuation"))
         }).await
     }
 
