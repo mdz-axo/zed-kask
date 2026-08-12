@@ -3454,17 +3454,27 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
         let tool = tool.to_string();
 
         self.executor.spawn(async move {
-            // Preserve the retryable/terminal distinction across the seam. A
-            // blanket `e.to_string()` erased it and forced panels to treat a
-            // restarting MCP server as a permanent failure.
+            // Preserve the retry-safety classification across the seam. A blanket
+            // `e.to_string()` erased it and forced panels to treat a restarting
+            // MCP server as a permanent failure. `Interrupted` is kept separate
+            // from both: its outcome is unknown, so a panel must re-read state
+            // rather than retry (which could duplicate a side effect).
             let result = ToolPort::invoke(&*tool_port, &server, &tool, args, webid)
                 .await
                 .map_err(|error| {
                     let message = error.to_string();
-                    if error.is_retryable() {
-                        InvokeError::Unavailable(message)
-                    } else {
-                        InvokeError::Failed(message)
+                    match error {
+                        hkask_capability::ToolPortError::Unavailable(_) => {
+                            InvokeError::Unavailable(message)
+                        }
+                        hkask_capability::ToolPortError::Interrupted(_) => {
+                            InvokeError::Interrupted(message)
+                        }
+                        hkask_capability::ToolPortError::EnergyBudgetExceeded(_)
+                        | hkask_capability::ToolPortError::NotFound(_)
+                        | hkask_capability::ToolPortError::InvocationFailed(_) => {
+                            InvokeError::Failed(message)
+                        }
                     }
                 })?;
             Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()))

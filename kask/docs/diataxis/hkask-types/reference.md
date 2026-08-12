@@ -185,7 +185,8 @@ and the wallet, curation, and loop types) through this single dependency.
 - [hkask-types Explanation](./explanation.md): sequence diagram of how the
   port traits mediate between zed and kask at the composition root.
 - [hkask-capability Reference](../hkask-capability/reference.md): the
-  `ToolPort` trait and the capability-match gate in `McpRuntime::invoke`.
+  `ToolPort` trait, the FIDES taint labels, and what `McpRuntime::invoke`
+  actually does (meter and dispatch — it does not authorize).
 - [`kask/docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md):
   the D1–D23 integration seams that consume these port traits.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):

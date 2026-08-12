@@ -18,7 +18,7 @@ mds_categories: [composition, domain]
 > entrypoint (`src/main.rs`) is a one-line `#[tokio::main]` wrapper around `<crate>::run()`; the
 > library root exposes `pub async fn run()` that calls `hkask_mcp_server::run_server(name,
 > version, factory, credentials)`, where `factory` receives a `ServerContext` and constructs the
-> server struct. (The `McpRuntime` that governs tool calls — capability-match gate + gas — runs
+> server struct. (The `McpRuntime` that dispatches and meters tool calls runs
 > in-process; the MCP servers themselves are child processes over stdio.)
 >
 > **Hosting note (v0.32.2):** hKask runs in-process inside zed-kask. The standalone `kask mcp start

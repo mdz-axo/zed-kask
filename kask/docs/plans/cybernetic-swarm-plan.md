@@ -22,6 +22,19 @@ mds_categories: [composition, trust]
 > **Status:** reference + findings, 2026-08-02 (revision 2). Not yet implemented
 > — the components (§6) are proposals ranked by leverage, with implementation
 > sequencing in §8 governed by the dependency hierarchy (§3).
+>
+> **Superseded terminology note (2026-08-12):** where the D1 Reliability
+> discussion credits "OCAP" as part of the spend membrane, that component no
+> longer exists. The per-call capability gate at `McpRuntime::invoke` was removed
+> because all three production mint sites derived the token's `resource_id` from
+> the same tool name they passed to `invoke` — the check compared a
+> caller-supplied value against itself and denied nothing
+> (`security/regressions/RR-0056.yaml`). The other D1 elements stand: the consent
+> gate, the per-dispatch ceiling, the ledger balance check, and guard scanning.
+> Tool reach is bounded by the swarm card `mcp_tools` allowlist and the inference
+> IPC `tool_allowlist`, and the call ceiling is a runaway-loop breaker that is
+> fail-open on an unseeded agent (`RR-0057.yaml`). Read "OCAP" below as "tool
+> allowlist separation"; the cybernetic argument is unaffected.
 
 ## Design constraints (this revision)
 
@@ -178,7 +191,7 @@ flowchart TD
   D1 -->|gates| D2
   D2 -->|gates| D3
 
-  D1H["hKask: 3-layer consent + ceiling<br/>+ gas + OCAP + guard scanning<br/>(EXCEEDS the paper)"]:::has
+  D1H["hKask: 3-layer consent + ceiling<br/>+ gas + tool allowlists + guard scanning<br/>(EXCEEDS the paper)"]:::has
   D2H["hKask: LocalAgentRegistry reload<br/>+ prior_iteration (1-step memory)<br/>+ thread_condenser; no cross-run<br/>skill promotion"]:::partial
   D3H["hKask: swarm-intelligence adjusts<br/>topology only; manifest templates<br/>are static; self-improvement skill<br/>exists separately, not wired in"]:::gap
 
@@ -189,7 +202,7 @@ flowchart TD
 
 | Desideratum | Primary principles | hKask realization | Status |
 |---|---|---|---|
-| **D1 Reliability** | P1, P2, P5 | 3-layer consent gate + per-dispatch ceiling + gas + OCAP (the spend membrane, `abw-swarm-intelligence.md` §3.6). `swarm_fire` = no-credit roster removal (recoverable); `swarm_delete_agent`/`swarm_delete_swarm` = destructive, gated. Guard scanning = redact-and-continue (graceful, non-fatal). | **Strong** — hKask *exceeds* S1 here; S1's §4.1 "human approval gates" is hKask's consent gate; S1's CLI irreversibility triad {read, recoverable, destructive} maps onto hKask's read/list vs hire/delegate vs delete. |
+| **D1 Reliability** | P1, P2, P5 | 3-layer consent gate + per-dispatch ceiling + gas + tool-allowlist separation (the spend membrane, `abw-swarm-intelligence.md` §3.6; the per-call capability gate this row originally credited was removed — RR-0056). `swarm_fire` = no-credit roster removal (recoverable); `swarm_delete_agent`/`swarm_delete_swarm` = destructive, gated. Guard scanning = redact-and-continue (graceful, non-fatal). | **Strong** — hKask *exceeds* S1 here; S1's §4.1 "human approval gates" is hKask's consent gate; S1's CLI irreversibility triad {read, recoverable, destructive} maps onto hKask's read/list vs hire/delegate vs delete. |
 | **D2 Lifelong Running** | P3, P4, P6 | `LocalAgentRegistry` reloads from disk (episodic cards, `local_registry.rs` L131); the skill's `prior_iteration` = 1-step memory; `thread_condenser` hook exists. No semantic/procedural promotion across swarm runs. | **Partial** — single-iteration memory; no cross-run skill promotion (S1's R-CG3: "promote resolved bug classes to skill library after validation on ≥2 held-out instances"). |
 | **D3 Self-Improvement** | all six | The `swarm-intelligence` skill adjusts *composition* (topology) but not *its own control laws* — the manifest's SENSE/ORIENT/DECIDE templates are static. The `self-improvement` skill exists separately (per the skills catalog) but is not wired into swarm-intelligence. | **Gap** — the swarm does not improve its own improvement procedure (recursive self-improvement, which S1 §4.3 flags as the hardest open problem). |
 
@@ -982,7 +995,7 @@ prompts, that agents in a swarm are experts** — so a swarm is explicitly a
   the agent whose `produces[]` matches the sub-task's transform, the agent-level
   analogue of MoE routing to a specialist sub-network. hKask's is coarser
   (agent-level) but **typed** (`accepts`/`produces`) and **governed**
-  (consent/gas/OCAP) — distinct from OFA-MAS's learned model-level MoE.
+  (consent/gas/tool allowlists) — distinct from OFA-MAS's learned model-level MoE.
 - So the operator's framing is accurate: a hKask swarm **is** a team-of-experts
   / mixture-of-experts system. Making it explicit in the UI aligns the
   operator's mental model with the substrate and with the skill's

@@ -199,12 +199,6 @@ impl From<NotFound> for McpErrorKind {
     }
 }
 
-/// Convert the canonical `CapabilityDenied` struct into `McpErrorKind::PermissionDenied`.
-impl From<CapabilityDenied> for McpErrorKind {
-    fn from(_: CapabilityDenied) -> Self {
-        McpErrorKind::PermissionDenied
-    }
-}
 
 #[cfg(feature = "sql")]
 impl From<rusqlite::Error> for InfrastructureError {
@@ -311,17 +305,6 @@ impl std::fmt::Display for NotFound {
     }
 }
 
-/// Capability denied — shared across 5+ crates.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CapabilityDenied {
-    pub reason: String,
-}
-
-impl std::fmt::Display for CapabilityDenied {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "capability denied: {}", self.reason)
-    }
-}
 
 #[cfg(test)]
 mod tests {

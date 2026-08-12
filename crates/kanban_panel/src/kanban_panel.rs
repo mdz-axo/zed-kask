@@ -93,6 +93,29 @@ enum RefreshTarget {
     Tasks,
 }
 
+/// First retry delay for a state-changing tool call whose request never left.
+/// Doubles per attempt (250ms, 500ms, 1s).
+const MUTATION_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
+
+/// Maximum retries for a state-changing tool call.
+///
+/// Deliberately smaller and faster than the read-path budget: a mutation is
+/// driven by a direct operator gesture (a form submit, a delete confirmation), so
+/// it must resolve or report quickly rather than retrying quietly for half a
+/// minute behind a dismissed form.
+const MAX_MUTATION_RETRIES: u32 = 3;
+
+/// The backoff delay for the next mutation retry, or `None` once the attempt
+/// budget is spent.
+///
+/// Pure so the policy is unit-testable without a `Workspace`.
+fn mutation_retry_delay(attempts_so_far: u32) -> Option<Duration> {
+    if attempts_so_far >= MAX_MUTATION_RETRIES {
+        return None;
+    }
+    Some(MUTATION_RETRY_BASE_DELAY * 2u32.pow(attempts_so_far))
+}
+
 /// Which fetch a refresh tick should issue.
 ///
 /// Kept as a pure function so the recovery behavior is unit-testable without a
@@ -606,6 +629,160 @@ impl KanbanPanel {
         .detach();
     }
 
+    /// Dispatch a state-changing kanban tool, retrying only when the request
+    /// provably never reached the server, then refresh the board.
+    ///
+    /// Every mutation in this panel previously surfaced a single transport
+    /// failure as a terminal error, so a routine MCP server restart looked like
+    /// "Failed to create task" even though nothing had been attempted. This
+    /// centralises the recovery policy instead of repeating it across seven call
+    /// sites.
+    ///
+    /// # Retry safety
+    ///
+    /// Only [`InvokeError::Unavailable`] (and `NotWired`) is retried — those mean
+    /// the request never left. [`InvokeError::Interrupted`] is **never** retried:
+    /// the request reached the server and the connection dropped before the
+    /// response, so the mutation may already have applied. Retrying would risk a
+    /// second task, a second board, a second spawn. In that case the panel
+    /// refreshes and tells the operator the outcome is unknown, which is the only
+    /// honest thing it can do without idempotency keys on the server side.
+    ///
+    /// `label` names the operation in operator-facing messages (e.g. "create
+    /// task"). `refresh` selects which list to re-read on completion — board
+    /// mutations must refresh the board list, not the task list of a board that
+    /// may no longer exist.
+    fn dispatch_mutation(
+        &mut self,
+        tool: &'static str,
+        args: serde_json::Value,
+        label: &'static str,
+        refresh: RefreshTarget,
+        cx: &mut Context<Self>,
+    ) {
+        self.dispatch_mutation_with(tool, args, label, refresh, None, cx);
+    }
+
+    /// [`Self::dispatch_mutation`] plus an optional state fixup applied before
+    /// the refresh.
+    ///
+    /// `before_refresh` exists for mutations that invalidate panel state the
+    /// refresh depends on — deleting the selected board must clear the selection
+    /// before the board list is re-read, or the panel would fetch tasks for a
+    /// board that no longer exists. It runs on success and on an unknown outcome
+    /// (where the mutation may have landed), never on a clean failure.
+    fn dispatch_mutation_with(
+        &mut self,
+        tool: &'static str,
+        args: serde_json::Value,
+        label: &'static str,
+        refresh: RefreshTarget,
+        before_refresh: Option<fn(&mut Self)>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(invoker) = shared_tool_invoker() else {
+            self.error = Some(hkask_tool_invoker::NOT_WIRED_MESSAGE.into());
+            cx.notify();
+            return;
+        };
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let mut attempt: u32 = 0;
+            loop {
+                let outcome = invoker
+                    .invoke_tool(KANBAN_SERVER, tool, args.clone())
+                    .await;
+                match outcome {
+                    Ok(_) => {
+                        this.update(cx, |this, cx| {
+                            this.error = None;
+                            if let Some(fixup) = before_refresh {
+                                fixup(this);
+                            }
+                            match refresh {
+                                RefreshTarget::Tasks => this.fetch_tasks(cx),
+                                RefreshTarget::Boards => this.fetch_boards(cx),
+                            }
+                        })
+                        .log_err();
+                        return;
+                    }
+                    Err(error) if error.is_retryable() => {
+                        let Some(delay) = mutation_retry_delay(attempt) else {
+                            this.update(cx, |this, cx| {
+                                this.error = Some(
+                                    format!(
+                                        "Could not {label}: the kanban server is unreachable. \
+                                         Nothing was changed — try again once it reconnects."
+                                    )
+                                    .into(),
+                                );
+                                cx.notify();
+                            })
+                            .log_err();
+                            return;
+                        };
+                        attempt += 1;
+                        // Surface the wait so the operator sees progress rather
+                        // than a frozen form.
+                        if this
+                            .update(cx, |this, cx| {
+                                this.error = Some(
+                                    format!(
+                                        "Reconnecting to the kanban server to {label}… \
+                                         (attempt {attempt}/{MAX_MUTATION_RETRIES})"
+                                    )
+                                    .into(),
+                                );
+                                cx.notify();
+                            })
+                            .log_err()
+                            .is_none()
+                        {
+                            return;
+                        }
+                        cx.background_executor().timer(delay).await;
+                    }
+                    Err(error) => {
+                        // Either the tool ran and failed, or the outcome is
+                        // unknown. Both are terminal for this dispatch; the
+                        // refresh below lets the operator see the true state.
+                        let outcome_unknown = error.is_outcome_unknown();
+                        this.update(cx, |this, cx| {
+                            this.error = Some(if outcome_unknown {
+                                format!(
+                                    "The connection dropped while trying to {label}. It may or \
+                                     may not have taken effect — check the board below before \
+                                     retrying."
+                                )
+                                .into()
+                            } else {
+                                format!("Failed to {label}: {error}").into()
+                            });
+                            // Re-read state after an unknown outcome: the server
+                            // is the only source of truth about whether the
+                            // mutation landed.
+                            if outcome_unknown {
+                                if let Some(fixup) = before_refresh {
+                                    fixup(this);
+                                }
+                                match refresh {
+                                    RefreshTarget::Tasks => this.fetch_tasks(cx),
+                                    RefreshTarget::Boards => this.fetch_boards(cx),
+                                }
+                            }
+                            cx.notify();
+                        })
+                        .log_err();
+                        return;
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Build a `KanbanBlockBody` from the fetched tasks and create or update
     /// the `KanbanWidget`.
     fn build_or_update_widget(&mut self, cx: &mut Context<Self>) {
@@ -787,33 +964,10 @@ impl KanbanPanel {
         let Some(board_id) = self.selected_board_id.clone() else {
             return;
         };
-        let Some(invoker) = shared_tool_invoker() else {
-            self.error = Some("Tool invoker not wired.".into());
-            cx.notify();
-            return;
-        };
         let args = form.collect_args(&board_id, cx);
         self.active_action = None;
         self.create_task_form = None;
-        cx.notify();
-
-        let task = invoker.invoke_tool(KANBAN_SERVER, TASK_CREATE_TOOL, args);
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(_output) => {
-                this.update(cx, |this, cx| {
-                    this.fetch_tasks(cx);
-                })
-                .log_err();
-            }
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    this.error = Some(format!("Failed to create task: {error}").into());
-                    cx.notify();
-                })
-                .log_err();
-            }
-        })
-        .detach();
+        self.dispatch_mutation(TASK_CREATE_TOOL, args, "create task", RefreshTarget::Tasks, cx);
     }
 
     /// Start the edit-task flow for a specific task.
@@ -829,33 +983,10 @@ impl KanbanPanel {
         let Some(form) = &self.edit_task_form else {
             return;
         };
-        let Some(invoker) = shared_tool_invoker() else {
-            self.error = Some("Tool invoker not wired.".into());
-            cx.notify();
-            return;
-        };
         let args = form.collect_args(cx);
         self.active_action = None;
         self.edit_task_form = None;
-        cx.notify();
-
-        let task = invoker.invoke_tool(KANBAN_SERVER, TASK_UPDATE_TOOL, args);
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(_output) => {
-                this.update(cx, |this, cx| {
-                    this.fetch_tasks(cx);
-                })
-                .log_err();
-            }
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    this.error = Some(format!("Failed to update task: {error}").into());
-                    cx.notify();
-                })
-                .log_err();
-            }
-        })
-        .detach();
+        self.dispatch_mutation(TASK_UPDATE_TOOL, args, "update task", RefreshTarget::Tasks, cx);
     }
 
     /// Start the spawn-task flow for a specific task.
@@ -870,33 +1001,19 @@ impl KanbanPanel {
         let Some(form) = &self.spawn_task_form else {
             return;
         };
-        let Some(invoker) = shared_tool_invoker() else {
-            self.error = Some("Tool invoker not wired.".into());
-            cx.notify();
-            return;
-        };
         let args = form.collect_args(cx);
         self.active_action = None;
         self.spawn_task_form = None;
-        cx.notify();
-
-        let task = invoker.invoke_tool(KANBAN_SERVER, TASK_SPAWN_TOOL, args);
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(_output) => {
-                this.update(cx, |this, cx| {
-                    this.fetch_tasks(cx);
-                })
-                .log_err();
-            }
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    this.error = Some(format!("Failed to spawn subagent: {error}").into());
-                    cx.notify();
-                })
-                .log_err();
-            }
-        })
-        .detach();
+        // A spawn starts a subagent, which burns gas. `dispatch_mutation` only
+        // retries requests that provably never left, so a spawn cannot be
+        // double-started by the retry path.
+        self.dispatch_mutation(
+            TASK_SPAWN_TOOL,
+            args,
+            "spawn subagent",
+            RefreshTarget::Tasks,
+            cx,
+        );
     }
 
     /// Toggle task assignment. If assigned, unassign; if unassigned, assign.
@@ -906,34 +1023,13 @@ impl KanbanPanel {
         is_assigned: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(invoker) = shared_tool_invoker() else {
-            self.error = Some("Tool invoker not wired.".into());
-            cx.notify();
-            return;
-        };
         let tool = if is_assigned {
             TASK_UNASSIGN_TOOL
         } else {
             TASK_ASSIGN_TOOL
         };
         let args = json!({ "task_id": task_id });
-        let task = invoker.invoke_tool(KANBAN_SERVER, tool, args);
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(_output) => {
-                this.update(cx, |this, cx| {
-                    this.fetch_tasks(cx);
-                })
-                .log_err();
-            }
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    this.error = Some(format!("Failed to toggle assignment: {error}").into());
-                    cx.notify();
-                })
-                .log_err();
-            }
-        })
-        .detach();
+        self.dispatch_mutation(tool, args, "toggle assignment", RefreshTarget::Tasks, cx);
     }
 
     /// Show the delete-task confirmation dialog.
@@ -944,32 +1040,9 @@ impl KanbanPanel {
 
     /// Execute the task deletion.
     fn execute_delete_task(&mut self, task_id: String, cx: &mut Context<Self>) {
-        let Some(invoker) = shared_tool_invoker() else {
-            self.error = Some("Tool invoker not wired.".into());
-            cx.notify();
-            return;
-        };
         self.active_action = None;
-        cx.notify();
-
         let args = json!({ "task_id": task_id });
-        let task = invoker.invoke_tool(KANBAN_SERVER, TASK_DELETE_TOOL, args);
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(_output) => {
-                this.update(cx, |this, cx| {
-                    this.fetch_tasks(cx);
-                })
-                .log_err();
-            }
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    this.error = Some(format!("Failed to delete task: {error}").into());
-                    cx.notify();
-                })
-                .log_err();
-            }
-        })
-        .detach();
+        self.dispatch_mutation(TASK_DELETE_TOOL, args, "delete task", RefreshTarget::Tasks, cx);
     }
 
     // ── Board action handlers ──────────────────────────────────────────────
@@ -987,37 +1060,20 @@ impl KanbanPanel {
         let Some(editor) = &self.create_board_editor else {
             return;
         };
-        let Some(invoker) = shared_tool_invoker() else {
-            self.error = Some("Tool invoker not wired.".into());
-            cx.notify();
-            return;
-        };
         let name = editor.read(cx).text(cx);
         if name.trim().is_empty() {
             return;
         }
         self.active_action = None;
         self.create_board_editor = None;
-        cx.notify();
-
         let args = json!({ "name": name });
-        let task = invoker.invoke_tool(KANBAN_SERVER, BOARD_CREATE_TOOL, args);
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(_output) => {
-                this.update(cx, |this, cx| {
-                    this.fetch_boards(cx);
-                })
-                .log_err();
-            }
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    this.error = Some(format!("Failed to create board: {error}").into());
-                    cx.notify();
-                })
-                .log_err();
-            }
-        })
-        .detach();
+        self.dispatch_mutation(
+            BOARD_CREATE_TOOL,
+            args,
+            "create board",
+            RefreshTarget::Boards,
+            cx,
+        );
     }
 
     /// Show the delete-board confirmation dialog.
@@ -1031,36 +1087,28 @@ impl KanbanPanel {
         let Some(board_id) = self.selected_board_id.clone() else {
             return;
         };
-        let Some(invoker) = shared_tool_invoker() else {
-            self.error = Some("Tool invoker not wired.".into());
-            cx.notify();
-            return;
-        };
         self.active_action = None;
-        cx.notify();
-
         let args = json!({ "board_id": board_id });
-        let task = invoker.invoke_tool(KANBAN_SERVER, BOARD_DELETE_TOOL, args);
-        cx.spawn(async move |this, cx| match task.await {
-            Ok(_output) => {
-                this.update(cx, |this, cx| {
-                    this.selected_board_id = None;
-                    this.board_name = None;
-                    this.tasks.clear();
-                    this.kanban_widget = None;
-                    this.fetch_boards(cx);
-                })
-                .log_err();
-            }
-            Err(error) => {
-                this.update(cx, |this, cx| {
-                    this.error = Some(format!("Failed to delete board: {error}").into());
-                    cx.notify();
-                })
-                .log_err();
-            }
-        })
-        .detach();
+        // A deleted board invalidates the selection, so clear it before the
+        // refresh. `clear_board_selection` runs on success and on an unknown
+        // outcome — in the latter case the board may be gone, and re-reading the
+        // board list against a cleared selection is the safe reconciliation.
+        self.dispatch_mutation_with(
+            BOARD_DELETE_TOOL,
+            args,
+            "delete board",
+            RefreshTarget::Boards,
+            Some(Self::clear_board_selection),
+            cx,
+        );
+    }
+
+    /// Drop the selected board and everything derived from it.
+    fn clear_board_selection(&mut self) {
+        self.selected_board_id = None;
+        self.board_name = None;
+        self.tasks.clear();
+        self.kanban_widget = None;
     }
 
     // ── Steer mode ─────────────────────────────────────────────────────────
@@ -1807,7 +1855,87 @@ impl SerializableItem for KanbanPanel {
 
 #[cfg(test)]
 mod tests {
-    use super::{ADVERTISED_KANBAN_TOOLS, RefreshTarget, refresh_target, steer_system_prompt};
+    use super::{
+        ADVERTISED_KANBAN_TOOLS, MAX_MUTATION_RETRIES, RefreshTarget, mutation_retry_delay,
+        refresh_target, steer_system_prompt,
+    };
+    use hkask_tool_invoker::InvokeError;
+    use std::time::Duration;
+
+    // ── Mutation retry policy ─────────────────────────────────────────────
+    //
+    // Every mutation used to surface one transport failure as terminal, so a
+    // routine MCP server restart read as "Failed to create task" even though
+    // nothing had been attempted. `dispatch_mutation` retries — but only where a
+    // retry cannot duplicate a side effect.
+
+    /// Mutation backoff doubles and is bounded.
+    #[test]
+    fn mutation_retry_backs_off_then_gives_up() {
+        assert_eq!(mutation_retry_delay(0), Some(Duration::from_millis(250)));
+        assert_eq!(mutation_retry_delay(1), Some(Duration::from_millis(500)));
+        assert_eq!(mutation_retry_delay(2), Some(Duration::from_millis(1000)));
+        assert_eq!(
+            mutation_retry_delay(MAX_MUTATION_RETRIES),
+            None,
+            "the mutation budget must be finite so a form submit resolves or reports"
+        );
+    }
+
+    /// The mutation budget resolves faster than the read-path budget.
+    ///
+    /// A mutation is a direct operator gesture behind a form that has already
+    /// closed, so it must not retry quietly for as long as a background list
+    /// refresh legitimately can.
+    #[test]
+    fn mutation_retries_resolve_faster_than_read_retries() {
+        let mutation_total: Duration = (0..MAX_MUTATION_RETRIES)
+            .filter_map(mutation_retry_delay)
+            .sum();
+        assert!(
+            mutation_total <= Duration::from_secs(2),
+            "a state-changing gesture must resolve or report within ~2s, got {mutation_total:?}"
+        );
+    }
+
+    /// A mutation whose outcome is unknown must NOT be retried.
+    ///
+    /// This is the duplicate-side-effect guard at the panel layer. `Interrupted`
+    /// means the request reached the server and the connection dropped before the
+    /// response, so the task/board/spawn may already exist. Retrying would create
+    /// a second one; the panel refreshes and asks the operator to look instead.
+    #[test]
+    fn interrupted_mutation_is_not_retried_and_is_flagged_unknown() {
+        let interrupted = InvokeError::Interrupted("connection reset".into());
+        assert!(
+            !interrupted.is_retryable(),
+            "retrying an interrupted mutation could create a duplicate task, board, or spawn"
+        );
+        assert!(
+            interrupted.is_outcome_unknown(),
+            "the panel relies on this to force a refresh and warn the operator"
+        );
+    }
+
+    /// A provably-undelivered mutation is retryable, and is not flagged unknown.
+    #[test]
+    fn undelivered_mutation_is_retryable_and_not_flagged_unknown() {
+        let unavailable = InvokeError::Unavailable("no live connection".into());
+        assert!(unavailable.is_retryable());
+        assert!(
+            !unavailable.is_outcome_unknown(),
+            "a request that never left has a known outcome: nothing happened"
+        );
+    }
+
+    /// Board mutations must refresh the board list, not the task list.
+    ///
+    /// Deleting the selected board and then fetching *tasks* would query a board
+    /// that no longer exists, so the refresh target is part of the contract.
+    #[test]
+    fn board_and_task_refresh_targets_are_distinct() {
+        assert_ne!(RefreshTarget::Boards, RefreshTarget::Tasks);
+    }
 
     /// A refresh tick with no board selected must re-fetch the *board list*.
     ///

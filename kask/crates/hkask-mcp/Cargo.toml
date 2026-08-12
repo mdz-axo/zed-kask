@@ -25,8 +25,22 @@ workspace = true
 
 [dev-dependencies]
 proptest = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "process", "time"] }
 hkask-test-harness = { workspace = true }
+# `reconnect_integration` SIGKILLs the fixture child directly; the repo lint bans
+# the blocking `Command::status` that shelling out to `kill` would need.
+libc = { workspace = true }
+
+# A real child process is the thing under test for connection healing, so the
+# reconnect integration test needs a controllable MCP server binary. Gated to
+# `required-features` so a normal build does not produce it.
+[[bin]]
+name = "mcp-test-fixture"
+path = "src/bin/mcp_test_fixture.rs"
+required-features = ["test-fixture"]
+
+[features]
+test-fixture = []
 
 [[test]]
 name = "tool_input_fuzz"
@@ -39,3 +53,8 @@ path = "tests/invoke_gate.rs"
 [[test]]
 name = "mcp_lifecycle_integration"
 path = "tests/mcp_lifecycle_integration.rs"
+
+[[test]]
+name = "reconnect_integration"
+path = "tests/reconnect_integration.rs"
+required-features = ["test-fixture"]

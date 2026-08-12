@@ -17,7 +17,8 @@ chat stream, mirroring the combined `kanban_board_list` + `kanban_task_list`
 tool responses), not from live MCP fetches. Task moves are interactive (S4/Wave
 1): the move affordance stages a pending move, the user confirms/cancels, and
 the controller dispatches `kanban_task_move` via the governed
-`shared_tool_invoker()` (OCAP/gas-budgeted). See the [Move Controller State
+`shared_tool_invoker()` (metered against the panel persona's call ceiling; not
+capability-gated — RR-0056). See the [Move Controller State
 Diagram](state-kanban-move-controller.md) and the [Task Status State
 Diagram](state-task-status.md).
 

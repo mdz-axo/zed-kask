@@ -172,28 +172,35 @@ same `(kind, name)` already exists, a `-N` suffix is appended (starting at 2).
 Fixed filename (not `{kind}-{name}.json`) so `harness-optimize` can find it
 without scanning. The expedition ID is inside the JSON, not the filename.
 
+The payload below illustrates the **shape**; the finding is a worked example, not
+a live defect report. (The previous example asserted a `CapabilityDenied`
+variant, which no longer exists — the per-call capability gate on the invoke path
+was removed on 2026-08-12; see `security/regressions/RR-0056.yaml`. A charter
+aimed at "governance bypass" on that path should now target the runaway-loop
+breaker and the taint check, not authorization.)
+
 ```json
 {
-  "expedition_id": "charter_hkask_mcp_20260803",
-  "charter_statement": "Explore hkask-mcp invoke path using boundary testing to discover governance bypass threats",
+  "expedition_id": "charter_hkask_mcp_20260812",
+  "charter_statement": "Explore the hkask-mcp invoke path using boundary testing to discover error-classification and retry-safety threats",
   "findings": [
     {
       "id": "F1",
-      "summary": "Wrong-token invoke returns NotFound instead of CapabilityDenied",
-      "location": { "file": "kask/crates/hkask-mcp/src/runtime.rs", "line_approx": 142 },
+      "summary": "A closed transport is reported as InvocationFailed, so is_retryable() is false and the panel never re-fetches",
+      "location": { "file": "kask/crates/hkask-mcp/src/runtime.rs", "function": "call_tool_inner", "line_approx": "<line or range>" },
       "verdict": "BUG",
       "confidence": 0.92,
       "reproducibility": "reproduced",
       "beizer_category": "interface",
       "severity": "HIGH",
-      "evidence": "assert!(matches!(result, Err(ToolPortError::NotFound(_))))",
-      "pattern_signature": "ToolPortError::NotFound where CapabilityDenied expected",
-      "fix_suggestion": "Map NotFound to CapabilityDenied when a token is present but mismatches"
+      "evidence": "assert!(matches!(result, Err(ToolPortError::InvocationFailed(_))))",
+      "pattern_signature": "ToolPortError::InvocationFailed where Unavailable expected",
+      "fix_suggestion": "Classify a transport-closed dispatch as Unavailable so is_retryable() is true and the call is known not to have reached the tool"
     }
   ],
   "lessons_learned": ["async lock held across .await at 3 sites; next charter should target all .await points in lock scope"],
   "pattern_signatures": [
-    { "signature": "ToolPortError::NotFound where CapabilityDenied expected", "beizer_category": "interface", "derived_from": "F1" }
+    { "signature": "ToolPortError::InvocationFailed where Unavailable expected", "beizer_category": "interface", "derived_from": "F1" }
   ]
 }
 ```

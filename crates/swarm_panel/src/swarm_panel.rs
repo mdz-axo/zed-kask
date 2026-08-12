@@ -2836,6 +2836,32 @@ mod tests {
             !InvokeError::Failed("ABW rejected the request".into()).is_retryable(),
             "a tool that ran and failed must not be re-issued"
         );
+        assert!(
+            !InvokeError::Interrupted("connection reset".into()).is_retryable(),
+            "an interrupted call has an unknown outcome; auto-retrying a spend-bearing \
+             tool like swarm_hire could charge credits twice"
+        );
+    }
+
+    /// A spend whose outcome is unknown is distinguishable from a clean failure.
+    ///
+    /// `confirm_hire` branches on this to decide whether to restore the one-click
+    /// consent banner. Restoring it after a possibly-completed `swarm_hire` is the
+    /// double-charge path, so the two cases must not collapse.
+    #[test]
+    fn interrupted_spend_is_distinguishable_from_a_clean_failure() {
+        assert!(
+            InvokeError::Interrupted("connection reset".into()).is_outcome_unknown(),
+            "confirm_hire relies on this to warn instead of offering a one-click retry"
+        );
+        assert!(
+            !InvokeError::Failed("insufficient credits".into()).is_outcome_unknown(),
+            "a refusal that reached ABW has a known outcome: nothing was spent"
+        );
+        assert!(
+            !InvokeError::Unavailable("no live connection".into()).is_outcome_unknown(),
+            "a request that never left has a known outcome: nothing was spent"
+        );
     }
 
     /// `NotWired` renders the shared explanation rather than an empty string, so

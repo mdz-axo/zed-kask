@@ -233,6 +233,33 @@ impl SwarmPanel {
                             }
                         }
                     }
+                    Err(err) if err.is_outcome_unknown() => {
+                        // The hire request reached the server and the connection
+                        // dropped before the response, so credits may already have
+                        // been spent. Presenting this as a plain failure invites a
+                        // retry that would charge twice, so say what is actually
+                        // known and re-read the roster and balance.
+                        //
+                        // The consent banner is deliberately NOT restored here
+                        // (unlike the genuine-failure branch below): a one-click
+                        // "Confirm" against a possibly-completed spend is the
+                        // double-charge path.
+                        log::warn!(
+                            "swarm-panel: hire of '{agent_name}' into {workspace_id} was \
+                             interrupted - outcome unknown: {err}"
+                        );
+                        this.spend.hire_error = Some(
+                            format!(
+                                "The connection dropped while hiring '{agent_name}'. Credits may \
+                                 or may not have been spent — check the roster and your balance \
+                                 below before trying again."
+                            )
+                            .into(),
+                        );
+                        // Re-read roster + wallet balance: the server is the only
+                        // source of truth about whether the spend landed.
+                        this.fetch_all(cx);
+                    }
                     Err(err) => {
                         this.spend.hire_error = Some(format!("Hire failed: {err}").into());
                     }

@@ -30,8 +30,9 @@ composition, agent authoring, and governed spend:
   credits), `hkask-guard` (I/O scanning). No ABW calls, no consent token — the
   ledger balance check is the gate.
 
-Both substrates are governed by the kask MCP runtime (capability-match gating,
-gas/rjoule budgeting, `hkask.mcp.swarm` telemetry targets). The server is the
+Both substrates dispatch through the kask MCP runtime (per-agent call metering,
+gas/rjoule budgeting, `hkask.mcp.swarm` telemetry targets; tool reach itself is
+bounded by the card's `mcp_tools` allowlist, not by the runtime — RR-0056). The server is the
 substrate for the **Agent Swarm panel** (`crates/swarm_panel`), the
 **`swarm-intelligence` skill**, and the **`swarm-steering` skill**.
 
@@ -120,7 +121,7 @@ only changes which substrate the _composition_ cascade uses by default.
 
 | Tool                   | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `swarm_delegate_local` | Run a local agent against a task. The execution path: **scan input** → **tool loop** (declared `mcp_tools` dispatched through the governed `McpRuntime`, each invocation OCAP-gated + gas-budgeted) → **guard scan output** → **ledger debit**. Declared `capabilities.skills` (capped at 3) execute against the task through the zed-side `ManifestExecutor` before the LLM call. Returns a `LocalDelegateResult` (see shape below). |
+| `swarm_delegate_local` | Run a local agent against a task. The execution path: **scan input** → **tool loop** (a tool call outside the card's declared `mcp_tools` allowlist is refused in `agent_executor`; allowed calls dispatch through `McpRuntime`, which meters them against the agent's per-tick call ceiling and emits the span — it does not re-authorize, RR-0056) → **guard scan output** → **ledger debit**. Declared `capabilities.skills` (capped at 3) execute against the task through the zed-side `ManifestExecutor` before the LLM call. Returns a `LocalDelegateResult` (see shape below). |
 | `swarm_fanout_local`   | Parallel multi-agent fan-out: dispatch N agents in one call and aggregate. Runs sequentially to avoid ledger TOCTOU. Capped at `MAX_FANOUT` (10) — the substrate-level primitive the `swarm-intelligence` CHECK step reads.                                                                                                                                                                                                           |
 | `swarm_pipeline_local` | Sequential local pipeline: run N agents in order with `{prev_output}` substitution (each step's task may reference the previous step's response). Capped at 10 steps.                                                                                                                                                                                                                                                                 |
 | `swarm_a2a_send`       | Send an A2A (Agent2Agent) protocol message to a local agent: wraps in A2A types (Message/Task/Artifact) and dispatches in-process. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in `mcp_tools` to communicate with each other.                                                                                                                                                                              |
@@ -392,7 +393,7 @@ correct; removing either breaks its consumers.**[^mcp-spec-swarm-dual]
 
 | Path                                   | Scope                                                                                  | Serves                                       | Governs                                                           |
 | -------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------- |
-| **`McpRuntime`** (app-global)          | One copy of each server, app-global                                                    | The skill cascade (FlowDef) + the kask panel | OCAP token verification, gas/rjoule budgeting, `reg.tool.*` spans |
+| **`McpRuntime`** (app-global)          | One copy of each server, app-global                                                    | The skill cascade (FlowDef) + the kask panel | Per-agent call metering (runaway-loop breaker), `reg.tool.*` / `reg.mcp` spans. **No per-call authorization** — RR-0056 |
 | **`ContextServerStore`** (per-project) | Each project launches its own copies via `ContextServerDescriptorRegistry` descriptors | The agent tool picker                        | Project-scoped, no governance membrane                            |
 
 The `ContextServerDescriptorRegistry` is app-level (global), but the
@@ -458,7 +459,7 @@ design with documented re-entry conditions — see the plan's §14.
 
 [^ocap-swarm-consent]:
     Miller, M. S. (2006). _Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control_ (Doctoral dissertation, Johns Hopkins University). http://www.erights.org/talks/thesis/markm-thesis.pdf
-    Cited for the object-capability principle the single-use consent token enforces — authority only attenuates, never amplifies.
+    Cited for the object-capability principle the single-use consent token enforces — authority only attenuates, never amplifies. The consent grant satisfies this because the panel mints it and the spend tool consumes it against a scope the spending caller did not choose; the per-call tool-capability token that once cited the same source did not, and was removed (RR-0056).
 
 [^owasp-swarm-errors]:
     OWASP. (2025). _OWASP Top 10 for Large Language Model Applications_. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/

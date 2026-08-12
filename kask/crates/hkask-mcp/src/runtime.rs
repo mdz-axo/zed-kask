@@ -416,6 +416,16 @@ impl McpRuntime {
         Some(connection.peer)
     }
 
+    /// Whether a server currently has a live connection.
+    ///
+    /// Liveness-based, matching `get_peer`: a peer whose transport has closed
+    /// reports `false` even before the keeper task reaps it. Exposed so callers
+    /// (health surfaces, tests) can observe connection state without reaching
+    /// into the runtime's internals.
+    pub async fn is_connected(&self, server_id: &str) -> bool {
+        self.get_peer(server_id).await.is_some()
+    }
+
     /// Re-spawn a server whose connection died, subject to
     /// [`RECONNECT_COOLDOWN`].
     ///
@@ -1058,6 +1068,40 @@ mod tests {
                 id: "nope".into(),
             })
             .is_retryable()
+        );
+    }
+
+    /// A request that was delivered before the connection dropped must NOT be
+    /// retryable.
+    ///
+    /// `rmcp` reports both a failed send and a dropped response channel as
+    /// `ServiceError::TransportClosed` (`service.rs:921` vs `:555,566`), so once
+    /// a request reaches a live peer, a transport loss is not proof of
+    /// non-delivery. Auto-retrying would duplicate side effects — two
+    /// `kanban_task_create`s, or a `swarm_hire` charging credits twice.
+    #[test]
+    fn interrupted_is_never_auto_retried() {
+        let interrupted = ToolPortError::Interrupted("connection reset".into());
+        assert!(
+            !interrupted.is_retryable(),
+            "an interrupted call has an unknown outcome; retrying it risks applying \
+             a state-changing effect twice"
+        );
+    }
+
+    /// The two transport classifications are distinct, and the unknown-outcome
+    /// one says so in the message an operator sees.
+    #[test]
+    fn interrupted_and_unavailable_are_distinguishable() {
+        let unavailable = ToolPortError::Unavailable("no live connection".into()).to_string();
+        let interrupted = ToolPortError::Interrupted("connection reset".into()).to_string();
+        assert_ne!(
+            unavailable, interrupted,
+            "an operator must be able to tell 'never ran' from 'outcome unknown'"
+        );
+        assert!(
+            interrupted.contains("unknown"),
+            "the interrupted message must state that the outcome is unknown, got: {interrupted}"
         );
     }
 

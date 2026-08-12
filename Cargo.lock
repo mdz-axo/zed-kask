@@ -9316,6 +9316,7 @@ dependencies = [
  "hkask-regulation",
  "hkask-test-harness",
  "hkask-types",
+ "libc",
  "proptest",
  "rmcp",
  "serde_json",

@@ -18,7 +18,8 @@ controller state via accessors (`pending_move`, `dispatch_in_flight`,
 
 The lifecycle is: `stage_move` (user clicks a move chip) stages a pending move
 and shows a Confirm/Cancel/Evaluate banner. `confirm_move` takes the pending
-move and dispatches it via `shared_tool_invoker()` (OCAP/gas-budgeted),
+move and dispatches it via `shared_tool_invoker()` (metered against the panel
+persona's call ceiling; not capability-gated — RR-0056),
 applying an optimistic local mutation first. `cancel_move` drops the pending
 move without dispatch. `cancel_dispatch` rolls back the optimistic move if the
 dispatch is still in flight. `evaluate_move` composes an evaluation request

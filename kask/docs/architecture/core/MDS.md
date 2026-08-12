@@ -118,7 +118,7 @@ Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve
 |---|----------|----------------------|---------------|-----------------|
 | 1 | **Domain** | Every entity has a named term and a bounded-context map | Domain ontology sketch | → Composition (verbs), → Lifecycle (persistence) |
 | 2 | **Composition** | Every domain verb has a granted composition, registered interface, and composable path | Capability grant table, interface equivalence matrix, registry schema | → Domain (ontology), → Trust (tokens) |
-| 3 | **Trust** | Every capability operation has a threat-model entry and a capability-match-gate mitigation | Threat model, keystore config, capability-match gate | → Composition (capabilities), → Lifecycle (audit) |
+| 3 | **Trust** | Every capability operation has a threat-model entry and a mitigation naming its actual enforcement point | Threat model, keystore config, capability separation boundaries | → Composition (capabilities), → Lifecycle (audit) |
 | 4 | **Lifecycle** | Bootstrap, evolution, deprecation, lifecycle, and persistence are expressible as spec transitions | Bootstrap manifest, evolution rules, deprecation policy, Regulation span registry | → Domain (entities), → Trust (audit) |
 | 5 | **Curation** | Every spec artifact has been evaluated for coherence by a curator with documented rationale | Curation decision log, coherence score | → Domain (grounding), → Lifecycle (health) |
 
@@ -223,9 +223,9 @@ MDS is capability-driven, not constraint-driven:
 | Growth | Add constraints | Compose capabilities |
 | Lifecycle | Governed (gates) | Curated (invitations) |
 | Failure mode | Over-constrained | Under-governed |
-| hKask alignment | — | capability tokens, capability-match gate |
+| hKask alignment | — | capability separation via caller-external tool allowlists |
 
-[^ocap]: Miller, M. (2006). *Robust Composition: Towards a National Research Agenda for Object Capability Security.* HP Labs. — Object capability model: access is granted by possession of a capability token.
+[^ocap]: Miller, M. (2006). *Robust Composition: Towards a National Research Agenda for Object Capability Security.* HP Labs. — Object capability model. hKask adopts the separation principle (authority only attenuates; a caller reaches only what a list it did not write allows) and not the per-call token-possession mechanism — see the [Capability Separation Boundaries](#capability-separation-boundaries) table and RR-0056.
 
 ---
 
@@ -323,14 +323,16 @@ threat_model:
   adversaries:
     - name: malicious_template_author
       vector: template_injection
-      mitigation: `minijinja` Rust sandbox (no filesystem/Python access, unlike Python Jinja2) + capability_gating[^minijinja]
+      mitigation: `minijinja` Rust sandbox (no filesystem/Python access, unlike Python Jinja2) + tool_allowlist_separation + fides_taint_check[^minijinja]
     - name: compromised_dependency
       vector: supply_chain
       mitigation: cargo_deny + pinned_versions
 
-capability_gate:
-  - "Tool invocation requires in-process DelegationToken with matching (resource, resource_id, action)"
-  - "Tokens are minted and consumed in-process — no signature verification, no unforgeability, no expiry"
+capability_separation:
+  - "Tool authority is a list the calling party does not write: the per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (fail-closed on missing/empty), each swarm agent card's `mcp_tools` allowlist, and the per-server MCP env/credential allowlists"
+  - "`McpRuntime::invoke` performs NO per-call authorization — it meters the call against the agent's per-tick runaway ceiling, dispatches, and emits the span. Its `agent: WebID` is an accounting identity, not a credential"
+  - "Information flow is gated separately from authority: the FIDES Source→Sink check on `ToolInfo.taint` in the manifest executor's `invoke_tool`"
+  - "Removed 2026-08-12: the per-call DelegationToken capability match (RR-0056 — it compared a caller-supplied value against itself). Do not re-add a per-call authorization argument to `ToolPort::invoke`"
 
 keystore:
   encryption: AES-256-GCM
@@ -425,7 +427,7 @@ coherence_metric:
 |----------|--------------|
 | Domain | Entity definition + term validation |
 | Composition | Capability composition + interface equivalence verification |
-| Trust | capability-match boundary enforcement + threat model audit |
+| Trust | capability separation boundary enforcement + threat model audit |
 | Lifecycle | Bootstrap + evolution + deprecation + Regulation span emission |
 | Curation | Coherence scoring + decision rationale documentation |
 
@@ -504,12 +506,12 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-templates` | Composition | `ManifestExecutor`, registry, cascade, PDCA — skill execution (D1) |
 | ~~`hkask-pods`~~ (deleted) | Domain | `AgentPod`, Curator, deployment — deleted in 2026-07-25 cleanup; `VoiceDesign` moved to `hkask-types`; Curator agent now lives in zed-kask |
 | ~~`hkask-guard`~~ (deleted) | Trust | Magna Carta floor (P3.1) — guard layer in zed-kask's inference path (D4). Deleted 2026-08-10: the `RoleOverride` scanner's bare `system:` substring match produced false positives that blocked legitimate skill cascade template rendering. Provider-side safety and refusal fallbacks remain. |
-| `hkask-capability` | Trust | capability-match gate, capability tokens |
+| `hkask-capability` | Trust | `ToolPort` dispatch seam + FIDES taint labels. Holds no tokens and no authorization check (RR-0056) |
 | `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses the `keyring` crate directly for all keychain access (D5 — NOT zed's `CredentialsProvider`) |
 | ~~`hkask-wallet`~~ (deleted) | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — deleted in 2026-07-25 cleanup. The residual `hkask-storage::wallet` crypto ledger, `hkask-regulation::WalletManager`/`Well`/`agent_wallet_store`, and `hkask-types::wallet_types` were also deleted 2026-08-03 (dead-in-production, zero callers). Tool-call bounding is now `hkask-regulation::CallCapManager`; per-cascade USD budgeting is `hkask-templates::BudgetTracker`. |
 | `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads keys via the `keyring` crate directly (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) |
-| `hkask-mcp-server` (framework) | Composition | `reg.tool.* + capability-match gating for the 13 MCP servers |
+| `hkask-mcp-server` (framework) | Composition | `reg.tool.*` span emission for the 13 MCP servers (no capability gating — RR-0056) |
 | `hkask-forecast` | Domain | Forecast domain logic |
 | `hkask-condenser` | Curation | Context condensation |
 | ~~`hkask-git-cas`~~ (deleted) | Lifecycle | Content-addressed storage over git — deleted in 2026-07-25 cleanup; `GitCASPort` trait deleted from `hkask-types`; `HMemEntry` moved to `hkask-types` |
@@ -579,14 +581,24 @@ status: VERIFIED
 
 Domain crates **never** depend on zed-kask crates. MCP servers **never** link zed-kask crates directly — they reach the in-process components via `kask_bridge` (D8), preserving the P1 isolation boundary at the MCP seam. zed-kask surfaces reach hKask through in-process transport (D1–D3); the former guard layer (D4) was removed 2026-08-10. Note: `KaskCore` was never implemented as a singleton; the composition root wires individual components directly (see `zed-host-architecture-plan.md` §13.3).
 
-### Capability-Match Gate
+### Capability Separation Boundaries
+
+**`McpRuntime::invoke` is not on this list.** It meters the call and dispatches;
+it performs no per-call authorization. The capability-match gate that this table
+previously named was removed on 2026-08-12 because every production mint site
+derived the token's `resource_id` from the same tool name it passed to `invoke`
+— the check compared a caller-supplied value against itself (RR-0056). A
+capability check is a boundary only when the authority list is written by someone
+other than the caller being checked; the rows below satisfy that.
 
 | Boundary | Enforcement | Principle |
 |----------|-------------|-----------|
-| Tool invocation | `DelegationToken::is_valid_for` or `verify_capability_domain` via `McpRuntime::invoke` (gas gate via `CyberneticsLoop`) | P4 |
-| Inference calls | `governed_inference` membrane with gas budget checks | P4 |
+| Delegated tool dispatch | Per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`), fail-closed on missing/empty, enforced before dispatch | P4 |
+| Per-agent tool reach | Each swarm agent card's declared `mcp_tools` allowlist (`hkask-mcp-swarm/src/agent_executor.rs`) | P4 |
+| Per-server credentials | Per-server MCP env / credential allowlists (`kask_bridge/src/mcp_servers.rs`, RR-0038) | P1 |
+| Information flow | FIDES `Source`→`Sink` check on `ToolInfo.taint` in `hkask-templates`'s `invoke_tool` (RR-0053) — gates flow, not authority | P4 |
 | MCP server isolation | In-process via `kask_bridge` (D8); MCP servers do not link zed-kask crates | P1 |
-| Capability attenuation | Max depth limit, TTL expiry on tokens | P4 |
+| Runaway-loop bounds | Per-tick call ceiling charged in `McpRuntime::invoke` (`EnergyBudgetExceeded`, fail-open on an unseeded agent — RR-0057) and `SYSTEM_MAX_RECURSION` (7) on cascade depth. Breakers and meters, **not** authorization | P4 |
 | Sovereignty keys | Trimmed `hkask-keystore` derives crypto only; at-rest storage via the `keyring` crate directly (D5 — not zed `CredentialsProvider`) | P1 |
 
 ### Bootstrap Sequence

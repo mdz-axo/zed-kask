@@ -53,23 +53,39 @@ pub enum InvokeError {
     /// No invoker is wired yet (pre-login, or MCP servers disabled). Not a
     /// failure of the request — the dispatch path does not exist yet.
     NotWired,
-    /// The server could not be reached: transport closed, restarting, or it
-    /// could not be re-started. The call never ran, so retrying it is safe.
+    /// The server could not be reached and the request provably never left:
+    /// no live connection, or it could not be re-started. Retrying is safe.
     Unavailable(String),
+    /// The request was delivered and the connection dropped before a response
+    /// arrived. **The operation may or may not have taken effect.**
+    ///
+    /// Never retried automatically — doing so could duplicate a side effect
+    /// (two tasks created, a hire charged twice). A panel should refresh its
+    /// view so the operator can see the true state and decide.
+    Interrupted(String),
     /// The call reached the tool and failed there, or was refused before
     /// dispatch (call cap, unknown tool). Retrying repeats the same outcome.
     Failed(String),
 }
 
 impl InvokeError {
-    /// Whether re-issuing the identical call could plausibly succeed.
+    /// Whether re-issuing the identical call is both plausibly useful and free
+    /// of duplicate-side-effect risk.
     ///
     /// [`InvokeError::NotWired`] is retryable because wiring happens
     /// asynchronously at startup: a panel constructed before the deferred
     /// post-login task runs will find an invoker moments later.
+    /// [`InvokeError::Interrupted`] is excluded — its outcome is unknown.
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         matches!(self, InvokeError::NotWired | InvokeError::Unavailable(_))
+    }
+
+    /// Whether the operation's outcome is unknown, so the caller must re-read
+    /// state rather than assume success or failure.
+    #[must_use]
+    pub fn is_outcome_unknown(&self) -> bool {
+        matches!(self, InvokeError::Interrupted(_))
     }
 
     /// The operator-facing message.
@@ -77,7 +93,9 @@ impl InvokeError {
     pub fn message(&self) -> String {
         match self {
             InvokeError::NotWired => NOT_WIRED_MESSAGE.to_string(),
-            InvokeError::Unavailable(detail) | InvokeError::Failed(detail) => detail.clone(),
+            InvokeError::Unavailable(detail)
+            | InvokeError::Interrupted(detail)
+            | InvokeError::Failed(detail) => detail.clone(),
         }
     }
 }

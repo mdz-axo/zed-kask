@@ -20,7 +20,7 @@
     },
     "hkask-capability": {
       "lib_root": "src/hkask_capability.rs",
-      "description": "OCAP delegation token system with Ed25519-signed cryptographic attenuation",
+      "description": "Tool dispatch port (ToolPort, ToolInfo, ToolPortError) and FIDES taint labels (ToolTaint), plus the SYSTEM_MAX_RECURSION cascade bound. Holds no capability tokens and no authorization check: the Ed25519 token ceremony was removed 2026-07-31 and the per-call DelegationToken capability gate on 2026-08-12 (RR-0056)",
       "public_items": 0,
       "covered": 0,
       "uncovered": 0

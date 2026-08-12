@@ -31,7 +31,7 @@ of tool outputs before they re-enter the LLM context.
 | `GuardedInferencePort`            | `kask/crates/hkask-guard/src/guarded_inference.rs:1`            | `InferencePort` decorator: scans input before delegation and output after; wraps the primary port at the composition root (`crates/zed/src/main.rs:1812`) |
 | `GuardedStream`                   | `guarded_inference.rs:46`                                       | streaming output accumulator; scans on stream end and emits a `finish_reason: "redacted"` chunk with sanitized text                                       |
 | `Spotlighter` / `SpotlightMode`   | `kask/crates/hkask-guard/src/spotlight.rs:33` / `:19`           | transforms untrusted tool output (`Delimit` default; `Datamark`; `Encode`) so the LLM treats it as data, not instructions                                 |
-| `ToolTaint`                       | `kask/crates/hkask-types/src/tool_taint.rs:14`                  | FIDES label lattice: `Source` / `Sink` / `Pure` / `Endorser`; `can_flow_to` blocks only `Source → Sink` (`tool_taint.rs:35`)                              |
+| `ToolTaint`                       | `kask/crates/hkask-capability/src/tool_taint.rs:13`                  | FIDES label lattice: `Source` / `Sink` / `Pure` / `Endorser`; `can_flow_to` blocks only `Source → Sink` (`tool_taint.rs:35`)                              |
 | `DefaultPolicy` / `PolicyVerdict` | `kask/crates/hkask-regulation/src/runtime_policy.rs:49` / `:14` | pre-execution gate: Allow / Block / RequireHuman / Log                                                                                                    |
 | `ManifestExecutor` taint fields   | `kask/crates/hkask-templates/src/executor.rs:143–160`           | `spotlighter`, `runtime_policy`, `taint_labels`, `terminal_check` — the executor-side wiring of the pipeline                                              |
 
@@ -153,12 +153,17 @@ invariant below names the exact code that enforces it.
   leakage; detection is span-level (`reg.guard.output`).
 - **Taint labels outside the manifest executor.** The FIDES lattice is
   enforced for cascade tool invocations via `ManifestExecutor`. Other tool
-  invocation paths (e.g. the agent's direct tool loop) rely on the
-  `ContentGuard` boundary and OCAP gating, not on `taint_labels`.
+  invocation paths (e.g. the agent's direct tool loop) do not consult
+  `taint_labels` at all — and they have no capability gate to fall back on
+  either: `McpRuntime::invoke` meters and dispatches, and the per-call
+  capability check this bullet previously cited was removed 2026-08-12 as
+  vacuous (RR-0056). What bounds those paths is the tool allowlist that let the
+  call in (inference IPC `tool_allowlist`, swarm card `mcp_tools`) plus the
+  runaway-loop call ceiling. Treat non-cascade paths as taint-unaware.
 
 ---
 
-[^fides]: Microsoft Research. (2025). _FIDES: Information flow control for LLM agents_ (arXiv:2505.23643). The Source/Sink/Pure/Endorser taint lattice and the Source→Sink endorsement rule implemented in `hkask-types/src/tool_taint.rs`.
+[^fides]: Microsoft Research. (2025). _FIDES: Information flow control for LLM agents_ (arXiv:2505.23643). The Source/Sink/Pure/Endorser taint lattice and the Source→Sink endorsement rule implemented in `hkask-capability/src/tool_taint.rs`.
 
 [^spotlighting]: Microsoft Research. (2024). _Defending LLMs against prompt injection with spotlighting_ (arXiv:2403.14720). The delimit/datamark/encode transforms implemented in `hkask-guard/src/spotlight.rs`.
 
