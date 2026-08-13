@@ -90,7 +90,7 @@ steps:
     renderer: minijinja
     template_ref: kali-audit/select-surface
     gas_cap: 2048
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       target_surface: "{{ target_surface }}"
       target_path: "{{ target_path }}"
@@ -129,7 +129,7 @@ steps:
     renderer: minijinja
     template_ref: kali-audit/report
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       findings: "{{ step_2_result.findings | default([]) }}"
       coverage: "{{ step_2_result.coverage | default({}) }}"
@@ -148,7 +148,7 @@ steps:
     renderer: minijinja
     template_ref: kali-audit/taxonomy-map
     gas_cap: 2048
-    timeout_seconds: 60
+    timeout_seconds: 120
     condition: "step_1_result.selected_surface == 'supply-chain'"
     input_mapping:
       findings: "{{ step_2_result.findings | default([]) }}"
@@ -182,8 +182,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

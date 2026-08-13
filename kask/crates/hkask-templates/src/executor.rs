@@ -183,7 +183,13 @@ impl ManifestExecutor {
             title: self.title.clone(),
         };
 
-        let machine = StepMachine::new(graph, context, budget, convergence);
+        let machine = StepMachine::new(
+            graph,
+            context,
+            budget,
+            convergence,
+            manifest.error_handling.clone(),
+        );
         let outcome = machine.run(infra).await?;
 
         // (K5) return the typed outcome directly — callers extract the final

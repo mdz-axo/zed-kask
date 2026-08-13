@@ -561,7 +561,7 @@ impl InferencePort for LanguageModelInferencePort {
         let messages = vec![ChatMessage::user(prompt.to_string())];
         let request = self.build_request(&messages, parameters, tools);
         let (tx_stream, mut rx_stream) =
-            tokio::sync::mpsc::unbounded_channel::<Result<InferenceStreamChunk, InferenceError>>;
+            tokio::sync::mpsc::unbounded_channel::<Result<InferenceStreamChunk, InferenceError>>();
 
         let stream_tx = self.stream_tx.clone();
         let send_result = stream_tx.send(StreamInferenceRequest {
@@ -1158,7 +1158,9 @@ mod embedding_tests {
         // receiver task — instead we recv from the channel ourselves to
         // inspect the InferenceRequest.
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
-        let port = LanguageModelInferencePort { tx };
+        let (stream_tx, _stream_rx) =
+            tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
+        let port = LanguageModelInferencePort { tx, stream_tx };
 
         // Call generate_with_model with a model override. The receiver task
         // isn't running, so the channel send will succeed (unbounded) and
@@ -1192,7 +1194,9 @@ mod embedding_tests {
     #[tokio::test]
     async fn generate_with_model_propagates_none_override_to_channel() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
-        let port = LanguageModelInferencePort { tx };
+        let (stream_tx, _stream_rx) =
+            tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
+        let port = LanguageModelInferencePort { tx, stream_tx };
 
         let future = port.generate_with_model("test prompt", &LLMParameters::default(), None, None);
         tokio::select! {
@@ -1213,7 +1217,9 @@ mod embedding_tests {
     #[tokio::test]
     async fn generate_with_messages_propagates_override_to_channel() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
-        let port = LanguageModelInferencePort { tx };
+        let (stream_tx, _stream_rx) =
+            tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
+        let port = LanguageModelInferencePort { tx, stream_tx };
 
         let messages = vec![ChatMessage::user("hello".to_string())];
         let future = port.generate_with_messages(

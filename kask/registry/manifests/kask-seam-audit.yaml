@@ -135,7 +135,7 @@ steps:
     renderer: minijinja
     template_ref: kask-seam-audit/seam-map
     gas_cap: 4096
-    timeout_seconds: 120
+    timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
       divergence_doc: "{{ divergence_doc | default('DIVERGENCE.md') }}"
@@ -198,7 +198,7 @@ steps:
     renderer: minijinja
     template_ref: kask-seam-audit/refine-seam-map
     gas_cap: 4096
-    timeout_seconds: 120
+    timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
       seam_map: "{{ step_1_result }}"
@@ -342,7 +342,7 @@ steps:
     renderer: minijinja
     template_ref: kask-seam-audit/refine-findings
     gas_cap: 4096
-    timeout_seconds: 120
+    timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
       security_findings: "{{ step_4_result.findings | default([]) }}"
@@ -383,7 +383,7 @@ steps:
     renderer: minijinja
     template_ref: kask-seam-audit/mcda
     gas_cap: 4096
-    timeout_seconds: 120
+    timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
       annotated_findings: "{{ step_9_result.annotated_findings | default([]) }}"
@@ -493,7 +493,7 @@ steps:
     renderer: minijinja
     template_ref: kask-seam-audit/remediation-repair
     gas_cap: 2048
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       task: "{{ task | default('') }}"
       applied_remediations: "{{ step_11_result.applied_remediations | default([]) }}"
@@ -566,7 +566,7 @@ steps:
     renderer: minijinja
     template_ref: kask-seam-audit/final-report
     gas_cap: 4096
-    timeout_seconds: 120
+    timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
       seam_map: "{{ step_1_result }}"
@@ -582,8 +582,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

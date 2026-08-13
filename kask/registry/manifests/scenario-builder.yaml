@@ -70,7 +70,7 @@ steps:
     renderer: minijinja
     template_ref: scenario-builder/focal-question
     gas_cap: 3000
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       focal_question: "{{ focal_question }}"
       planning_horizon: "{{ planning_horizon | default('5 years') }}"
@@ -82,7 +82,7 @@ steps:
     renderer: minijinja
     template_ref: scenario-builder/key-forces
     gas_cap: 5000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       refined_question: "{{ step_1_result.refined_question | default(focal_question) }}"
       planning_horizon: "{{ planning_horizon | default('5 years') }}"
@@ -95,7 +95,7 @@ steps:
     renderer: minijinja
     template_ref: scenario-builder/driving-forces
     gas_cap: 5000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       refined_question: "{{ step_1_result.refined_question | default(focal_question) }}"
       key_forces: "{{ step_2_result.key_forces | default([]) }}"
@@ -106,7 +106,7 @@ steps:
     renderer: minijinja
     template_ref: scenario-builder/axes-and-narratives
     gas_cap: 8000
-    timeout_seconds: 120
+    timeout_seconds: 180
     input_mapping:
       refined_question: "{{ step_1_result.refined_question | default(focal_question) }}"
       critical_uncertainties: "{{ step_3_result.critical_uncertainties | default([]) }}"
@@ -118,7 +118,7 @@ steps:
     renderer: minijinja
     template_ref: scenario-builder/scenario-quality-gate
     gas_cap: 4000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       refined_question: "{{ step_1_result.refined_question | default(focal_question) }}"
       scenarios: "{{ step_4_result.scenarios | default([]) }}"
@@ -129,7 +129,7 @@ steps:
     renderer: minijinja
     template_ref: scenario-builder/implications-indicators
     gas_cap: 5000
-    timeout_seconds: 60
+    timeout_seconds: 150
     condition: "step_5_result.gate_pass"
     input_mapping:
       refined_question: "{{ step_1_result.refined_question | default(focal_question) }}"
@@ -185,7 +185,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

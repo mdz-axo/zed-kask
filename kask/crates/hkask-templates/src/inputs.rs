@@ -166,6 +166,84 @@ pub fn render_input_param_spec(manifest_inputs: Option<&Value>) -> String {
     parts.join("; ")
 }
 
+/// Extract the set of input keys declared in a `.j2` template's `contract.input`
+/// frontmatter block.
+///
+/// hKask templates use a YAML frontmatter (between the file start and the first
+/// `---` separator) that may declare a `contract:` block with an `input:`
+/// sub-mapping of `name: type` pairs. This parses that block and returns the
+/// declared input key names, or an empty set if the template has no
+/// `contract.input` block.
+///
+/// This is the contract side of the input_mapping ↔ contract.input cross-check
+/// (see `manifest_compliance::input_mapping_matches_template_contract`): the
+/// manifest's `input_mapping` provides keys to the template, and the
+/// template's `contract.input` declares which keys it consumes. Mismatches are
+/// either typos in the mapping (mapping has a key the template doesn't declare)
+/// or stale contracts (template declares a key the mapping doesn't provide —
+/// often intentional for agent-coordinated context, so this is informational).
+///
+/// Mirrors `output_schema::extract_contract_output` but for the `input` block.
+/// Kept here (not in `output_schema`) because it is about *inputs*, and
+/// `output_schema` is `pub(crate)`.
+pub fn extract_contract_input_keys(template_content: &str) -> std::collections::HashSet<String> {
+    let mut keys = std::collections::HashSet::new();
+    // Find the frontmatter: everything before the first `\n---\n` separator.
+    let Some(separator_pos) = template_content.find("\n---\n") else {
+        return keys;
+    };
+    let frontmatter = &template_content[..separator_pos];
+    // Strip Jinja comments ({# ... #}) — they are not valid YAML.
+    let stripped = strip_jinja_comments_inputs(frontmatter);
+    let frontmatter = stripped.trim();
+    let frontmatter = frontmatter
+        .strip_prefix("[inference]")
+        .unwrap_or(frontmatter)
+        .trim();
+    let Ok(parsed) = serde_yaml_neo::from_str::<Value>(frontmatter) else {
+        return keys;
+    };
+    let Some(contract) = parsed.get("contract") else {
+        return keys;
+    };
+    let Some(input) = contract.get("input") else {
+        return keys;
+    };
+    if let Some(obj) = input.as_object() {
+        for k in obj.keys() {
+            keys.insert(k.clone());
+        }
+    }
+    keys
+}
+
+/// Strip Jinja comments (`{# ... #}`) from a string. Mirrors
+/// `output_schema::strip_jinja_comments` (which is `pub(crate)`).
+fn strip_jinja_comments_inputs(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '{' && chars.peek() == Some(&'#') {
+            chars.next(); // consume '#'
+            let mut found_close = false;
+            while let Some(c) = chars.next() {
+                if c == '#' && chars.peek() == Some(&'}') {
+                    chars.next(); // consume '}'
+                    found_close = true;
+                    break;
+                }
+            }
+            if !found_close {
+                result.push('{');
+                result.push('#');
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 /// Map a declared type string to whether a JSON value matches it. Unknown
 /// declared types are treated as "anything matches" (don't fail on a type the
 /// validator doesn't recognize — the manifest may use a custom type tag).

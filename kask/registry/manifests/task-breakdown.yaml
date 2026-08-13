@@ -172,7 +172,7 @@ steps:
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-plan
     gas_cap: 6144
-    timeout_seconds: 90
+    timeout_seconds: 150
     input_mapping:
       # The user's natural-language request (injected by the skill tool as
       # context["task"]) becomes the target condition this skill decomposes.
@@ -192,7 +192,7 @@ steps:
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-decompose
     gas_cap: 8192
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       context_summary: "{{ step_1_result.context_summary | default('') }}"
       dependency_graph: "{{ step_1_result.dependency_graph | default([]) }}"
@@ -257,7 +257,7 @@ steps:
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-evaluate
     gas_cap: 6144
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       tasks: "{{ step_2_result.tasks | default([]) }}"
       dependency_graph: "{{ step_1_result.dependency_graph | default([]) }}"
@@ -278,7 +278,7 @@ steps:
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-quality-gate
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       tasks: "{{ step_2_result.tasks | default([]) }}"
       slices: "{{ step_2_result.slices | default([]) }}"
@@ -321,7 +321,7 @@ steps:
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-write-plan
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 180
     input_mapping:
       context_summary: "{{ step_1_result.context_summary | default('') }}"
       target_condition: "{{ task | default('') }}"

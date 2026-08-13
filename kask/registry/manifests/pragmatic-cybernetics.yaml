@@ -52,7 +52,7 @@ steps:
     renderer: minijinja
     template_ref: pragmatic-cybernetics/cybernetics-analyze-loop
     gas_cap: 5000
-    timeout_seconds: 45
+    timeout_seconds: 150
     input_mapping:
       loop_description: "{{ loop_description }}"
       system_context: "{{ system_context | default('') }}"
@@ -63,7 +63,7 @@ steps:
     renderer: minijinja
     template_ref: pragmatic-cybernetics/cybernetics-variety-check
     gas_cap: 4000
-    timeout_seconds: 45
+    timeout_seconds: 150
     input_mapping:
       loop_analysis: "{{ step_1_result }}"
       system_context: "{{ system_context | default('') }}"
@@ -74,7 +74,7 @@ steps:
     renderer: minijinja
     template_ref: pragmatic-cybernetics/cybernetics-vsm-map
     gas_cap: 4000
-    timeout_seconds: 45
+    timeout_seconds: 150
     input_mapping:
       loop_analysis: "{{ step_1_result }}"
       variety_result: "{{ step_2_result | default({}) }}"
@@ -91,7 +91,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

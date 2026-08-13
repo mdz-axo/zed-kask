@@ -107,7 +107,7 @@ steps:
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-charter
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       target: "{{ target }}"
       quality_criteria: "{{ quality_criteria }}"
@@ -161,7 +161,7 @@ steps:
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-oracle
     gas_cap: 6144
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       charter: "{{ step_1_result }}"
       probe_findings: "{{ step_2_result.probe_findings | default(probe_findings | default('')) }}"
@@ -176,7 +176,7 @@ steps:
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-taxonomize
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       evaluated_findings: "{{ step_3_result.evaluated_findings | default([]) }}"
       charter: "{{ step_1_result }}"
@@ -193,7 +193,7 @@ steps:
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-report
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       charter: "{{ step_1_result }}"
       evaluated_findings: "{{ step_3_result.evaluated_findings | default([]) }}"
@@ -240,7 +240,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

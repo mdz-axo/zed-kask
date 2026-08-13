@@ -170,7 +170,7 @@ steps:
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-target
     gas_cap: 3072
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       current_composite: "{{ step_2_result.composite_score | default(0) }}"
       failing_markers: "{{ step_2_result.failing_markers | default([]) }}"
@@ -190,7 +190,7 @@ steps:
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-predict
     gas_cap: 3072
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       target_condition: "{{ step_3_result.target_condition | default(step_3_result) }}"
       prioritized_markers: "{{ step_3_result.prioritized_markers | default([]) }}"
@@ -214,7 +214,7 @@ steps:
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-experiment
     gas_cap: 6144
-    timeout_seconds: 90
+    timeout_seconds: 150
     input_mapping:
       rationale: "{{ rationale }}"
       forecast_probability: "{{ forecast_probability }}"
@@ -482,7 +482,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

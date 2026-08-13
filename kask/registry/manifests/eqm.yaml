@@ -143,7 +143,7 @@ steps:
     renderer: minijinja
     template_ref: eqm/eqm-aggregate
     gas_cap: 3072
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       per_rationale_scores: "{{ step_2_result.per_rationale_scores | default([]) }}"
       forecaster_groups: "{{ step_1_result.forecaster_groups | default({}) }}"
@@ -160,7 +160,7 @@ steps:
     renderer: minijinja
     template_ref: eqm/eqm-validate
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       forecaster_level_composite: "{{ step_3_result.forecaster_level_composite | default({}) }}"
       realized_outcomes: "{{ realized_outcomes | default([]) }}"
@@ -251,7 +251,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

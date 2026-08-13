@@ -452,11 +452,10 @@ impl StepMachine {
             {
                 Ok(inner) => inner?,
                 Err(_elapsed) => {
-                    return Err(TemplateError::Manifest(format!(
-                        "Tool step {} timed out after {}s",
-                        node.ordinal,
-                        timeout_dur.as_secs()
-                    )));
+                    return Err(TemplateError::Timeout {
+                        step_ordinal: node.ordinal,
+                        elapsed_seconds: timeout_dur.as_secs(),
+                    });
                 }
             };
 
@@ -933,16 +932,14 @@ async fn call_inference_stream(
         Ok(Ok((text, tool_calls, cost_usd, finish_reason))) => (text, tool_calls, cost_usd, finish_reason),
         Ok(Err(e)) => return Err(e),
         Err(_elapsed) => {
-            // Include the step ordinal so operators can identify which
-            // inference step hung — without it the error reads "Step timed
-            // out after 60s" with no way to locate the offending step in a
-            // multi-step cascade. Mirrors the `execute_tool_invoke` error
-            // at line ~454 ("Tool step {} timed out after {}s").
-            return Err(TemplateError::Manifest(format!(
-                "Inference step {} timed out after {}s",
+            // Typed Timeout error (not Manifest(String)) so the retry loop in
+            // `run_pass` can detect it without string-matching, and so callers
+            // report which step hung. The ordinal is threaded through this
+            // helper because it's a free function without access to the node.
+            return Err(TemplateError::Timeout {
                 step_ordinal,
-                timeout.as_secs()
-            )));
+                elapsed_seconds: timeout.as_secs(),
+            });
         }
     };
 

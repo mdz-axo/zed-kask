@@ -84,7 +84,7 @@ steps:
     renderer: minijinja
     template_ref: refactor-architecture/ra-explore
     gas_cap: 7000
-    timeout_seconds: 60
+    timeout_seconds: 180
     input_mapping:
       focus_area: "{{ focus_area }}"
       code_context: "{{ code_context | default({}) }}"
@@ -96,7 +96,7 @@ steps:
     renderer: minijinja
     template_ref: refactor-architecture/ra-candidates
     gas_cap: 6000
-    timeout_seconds: 60
+    timeout_seconds: 180
     input_mapping:
       friction_points: "{{ step_1_result.friction_points | default([]) }}"
       shallow_modules: "{{ step_1_result.shallow_modules | default([]) }}"
@@ -109,7 +109,7 @@ steps:
     renderer: minijinja
     template_ref: refactor-architecture/ra-deepen
     gas_cap: 8000
-    timeout_seconds: 120
+    timeout_seconds: 180
     condition: "{{ (step_2_result.candidates | default([])) | length > 0 }}"
     input_mapping:
       selected_candidate: "{{ step_2_result.selected_candidate | default(step_2_result.candidates[0] | default({})) }}"
@@ -123,7 +123,7 @@ steps:
     renderer: minijinja
     template_ref: refactor-architecture/ra-route
     gas_cap: 4000
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       deepened_design: "{{ step_3_result }}"
 
@@ -135,7 +135,7 @@ steps:
     renderer: minijinja
     template_ref: refactor-architecture/ra-audit
     gas_cap: 7000
-    timeout_seconds: 60
+    timeout_seconds: 180
     condition: "step_4_result.decision == 'proceed_to_refactor'"
     input_mapping:
       focus_area: "{{ focus_area }}"
@@ -150,7 +150,7 @@ steps:
     renderer: minijinja
     template_ref: refactor-architecture/ra-strangle
     gas_cap: 7000
-    timeout_seconds: 60
+    timeout_seconds: 180
     condition: "step_4_result.decision == 'proceed_to_refactor'"
     input_mapping:
       domain: "{{ domain | default(step_5_result.top_recommendation | default('')) }}"
@@ -167,7 +167,7 @@ steps:
     renderer: minijinja
     template_ref: refactor-architecture/ra-verify
     gas_cap: 5000
-    timeout_seconds: 60
+    timeout_seconds: 150
     condition: "step_4_result.decision == 'proceed_to_refactor'"
     input_mapping:
       domain: "{{ domain | default('') }}"
@@ -237,8 +237,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

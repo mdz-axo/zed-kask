@@ -51,7 +51,7 @@ steps:
     renderer: minijinja
     template_ref: supply-chain-sentinel/select-surface
     gas_cap: 2048
-    timeout_seconds: 60
+    timeout_seconds: 120
   - ordinal: 2
     action: select
     description: >
@@ -60,7 +60,7 @@ steps:
     renderer: minijinja
     template_ref: supply-chain-sentinel/probe
     gas_cap: 2048
-    timeout_seconds: 60
+    timeout_seconds: 120
   - ordinal: 3
     action: select
     description: >
@@ -68,7 +68,7 @@ steps:
     renderer: minijinja
     template_ref: supply-chain-sentinel/report
     gas_cap: 2048
-    timeout_seconds: 60
+    timeout_seconds: 120
   - ordinal: 4
     action: loop
     description: >

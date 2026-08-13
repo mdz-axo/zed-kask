@@ -200,7 +200,7 @@ steps:
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-sense
     gas_cap: 4096
-    timeout_seconds: 120
+    timeout_seconds: 150
     input_mapping:
       swarm_id: "{{ swarm_id }}"
       task: "{{ task }}"
@@ -232,7 +232,7 @@ steps:
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-orient
     gas_cap: 4096
-    timeout_seconds: 90
+    timeout_seconds: 150
     input_mapping:
       swarm_state: "{{ step_1_result }}"
       task: "{{ task }}"
@@ -273,7 +273,7 @@ steps:
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-decide
     gas_cap: 6144
-    timeout_seconds: 90
+    timeout_seconds: 150
     input_mapping:
       swarm_state: "{{ step_1_result }}"
       orientation: "{{ step_2_result }}"
@@ -333,7 +333,7 @@ steps:
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-act
     gas_cap: 4096
-    timeout_seconds: 120
+    timeout_seconds: 150
     input_mapping:
       decisions: "{{ step_4_result }}"
       swarm_id: "{{ swarm_id }}"
@@ -362,7 +362,7 @@ steps:
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-check
     gas_cap: 4096
-    timeout_seconds: 120
+    timeout_seconds: 150
     input_mapping:
       pre_act_state: "{{ step_1_result }}"
       act_result: "{{ step_5_result }}"
@@ -458,8 +458,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 2
   on_validation_failure: abort
 

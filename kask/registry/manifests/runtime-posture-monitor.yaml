@@ -83,7 +83,7 @@ steps:
     renderer: minijinja
     template_ref: runtime-posture-monitor/select-signal
     gas_cap: 2048
-    timeout_seconds: 60
+    timeout_seconds: 120
   - ordinal: 2
     action: select
     description: >
@@ -91,7 +91,7 @@ steps:
     renderer: minijinja
     template_ref: runtime-posture-monitor/classify-threat
     gas_cap: 2048
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       signal_sources: "{{ step_1_result.signal_sources | default(signal_sources) | default([]) }}"
       signal: "{{ step_1_result.signal | default(signal) | default({}) }}"
@@ -102,7 +102,7 @@ steps:
     renderer: minijinja
     template_ref: runtime-posture-monitor/emit-regulation
     gas_cap: 2048
-    timeout_seconds: 60
+    timeout_seconds: 120
   - ordinal: 4
     action: loop
     description: >

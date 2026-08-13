@@ -115,7 +115,7 @@ steps:
     renderer: minijinja
     template_ref: idiomatic-rust/idiomatic-rust-inquiry
     gas_cap: 8192
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       design_problem: "{{ design_problem }}"
       existing_code: "{{ existing_code | default('') }}"
@@ -138,7 +138,7 @@ steps:
     renderer: minijinja
     template_ref: idiomatic-rust/idiomatic-rust-design
     gas_cap: 8192
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       design_problem: "{{ design_problem }}"
       existing_code: "{{ existing_code | default('') }}"
@@ -160,7 +160,7 @@ steps:
     renderer: minijinja
     template_ref: idiomatic-rust/idiomatic-rust-challenge
     gas_cap: 8192
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       design_problem: "{{ design_problem }}"
       design_proposal: "{{ step_2_result }}"
@@ -223,8 +223,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

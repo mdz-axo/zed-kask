@@ -71,7 +71,7 @@ steps:
     renderer: minijinja
     template_ref: idiomatic-lisp/idiomatic-lisp-inquiry
     gas_cap: 8000
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       design_problem: "{{ design_problem }}"
       design_constraints: "{{ design_constraints | default({}) }}"
@@ -88,7 +88,7 @@ steps:
     renderer: minijinja
     template_ref: idiomatic-lisp/idiomatic-lisp-design
     gas_cap: 8000
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       design_problem: "{{ design_problem }}"
       assessment: "{{ step_1_result }}"
@@ -107,7 +107,7 @@ steps:
     renderer: minijinja
     template_ref: idiomatic-lisp/idiomatic-lisp-challenge
     gas_cap: 8192
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       design_problem: "{{ design_problem }}"
       design_proposal: "{{ step_2_result }}"
@@ -123,8 +123,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

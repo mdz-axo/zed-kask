@@ -86,7 +86,7 @@ steps:
     renderer: minijinja
     template_ref: skill-router/skill-router-match
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       task_description: "{{ task_description }}"
       task_context: "{{ task_context | default('') }}"
@@ -105,7 +105,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

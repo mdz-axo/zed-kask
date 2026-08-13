@@ -58,7 +58,7 @@ steps:
     renderer: minijinja
     template_ref: mcda/identify-criteria.j2
     gas_cap: 4000
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       decision_question: "{{ decision_question }}"
       alternatives: "{{ alternatives }}"
@@ -70,7 +70,7 @@ steps:
     renderer: minijinja
     template_ref: mcda/weight-and-score.j2
     gas_cap: 5000
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       decision_question: "{{ decision_question }}"
       alternatives: "{{ alternatives }}"
@@ -83,7 +83,7 @@ steps:
     renderer: minijinja
     template_ref: mcda/rank-alternatives.j2
     gas_cap: 4000
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       decision_question: "{{ decision_question }}"
       composite_scores: "{{ step_2_result.composite_scores | default([]) }}"
@@ -96,7 +96,7 @@ steps:
     renderer: minijinja
     template_ref: mcda/sensitivity-analysis.j2
     gas_cap: 4000
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       decision_question: "{{ decision_question }}"
       ranking: "{{ step_3_result.ranking | default([]) }}"
@@ -144,7 +144,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

@@ -60,7 +60,7 @@ steps:
     renderer: minijinja
     template_ref: improv/improv-select
     gas_cap: 4000
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       context: "{{ context | default({}) }}"
       contribution: "{{ contribution | default('') }}"
@@ -84,7 +84,7 @@ steps:
     renderer: minijinja
     template_ref: improv/improv-plussing
     gas_cap: 5000
-    timeout_seconds: 60
+    timeout_seconds: 120
     condition: "step_1_result.mode == 'plussing'"
     input_mapping:
       context: "{{ context | default({}) }}"
@@ -96,7 +96,7 @@ steps:
     renderer: minijinja
     template_ref: improv/improv-yes-and
     gas_cap: 5000
-    timeout_seconds: 60
+    timeout_seconds: 120
     condition: "step_1_result.mode == 'yes-and'"
     input_mapping:
       context: "{{ context | default({}) }}"
@@ -108,7 +108,7 @@ steps:
     renderer: minijinja
     template_ref: improv/improv-yes-but
     gas_cap: 5000
-    timeout_seconds: 60
+    timeout_seconds: 120
     condition: "step_1_result.mode == 'yes-but'"
     input_mapping:
       context: "{{ context | default({}) }}"
@@ -120,7 +120,7 @@ steps:
     renderer: minijinja
     template_ref: improv/improv-freestyling
     gas_cap: 5000
-    timeout_seconds: 60
+    timeout_seconds: 120
     condition: "step_1_result.mode == 'freestyling'"
     input_mapping:
       context: "{{ context | default({}) }}"
@@ -132,7 +132,7 @@ steps:
     renderer: minijinja
     template_ref: improv/improv-riffing
     gas_cap: 5000
-    timeout_seconds: 60
+    timeout_seconds: 120
     condition: "step_1_result.mode == 'riffing'"
     input_mapping:
       context: "{{ context | default({}) }}"
@@ -147,7 +147,7 @@ steps:
     renderer: minijinja
     template_ref: improv/improv-plussing
     gas_cap: 5000
-    timeout_seconds: 60
+    timeout_seconds: 120
     condition: "step_2_result == null and step_3_result == null and step_4_result == null and step_5_result == null and step_6_result == null"
     input_mapping:
       context: "{{ context | default({}) }}"
@@ -164,8 +164,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

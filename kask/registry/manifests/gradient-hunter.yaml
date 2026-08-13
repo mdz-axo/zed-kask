@@ -115,7 +115,7 @@ steps:
     renderer: minijinja
     template_ref: gradient-hunter/gradient-prior
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       target_region: "{{ target_region }}"
       field_type: "{{ field_type }}"
@@ -160,7 +160,7 @@ steps:
     renderer: minijinja
     template_ref: gradient-hunter/gradient-detect
     gas_cap: 6144
-    timeout_seconds: 90
+    timeout_seconds: 150
     input_mapping:
       prior: "{{ step_1_result }}"
       actual_field: "{{ step_2_result }}"
@@ -185,7 +185,7 @@ steps:
     renderer: minijinja
     template_ref: gradient-hunter/gradient-hypothesize
     gas_cap: 6144
-    timeout_seconds: 90
+    timeout_seconds: 150
     input_mapping:
       gradients: "{{ step_3_result.gradients | default([]) }}"
       prior: "{{ step_1_result }}"
@@ -207,7 +207,7 @@ steps:
     renderer: minijinja
     template_ref: gradient-hunter/gradient-report
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       gradients: "{{ step_3_result.gradients | default([]) }}"
       gradient_hypotheses: "{{ step_4_result.gradient_hypotheses | default([]) }}"
@@ -248,7 +248,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

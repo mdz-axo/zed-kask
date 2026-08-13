@@ -73,7 +73,7 @@ steps:
     renderer: minijinja
     template_ref: deep-module/deep-module-assess
     gas_cap: 6000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       module_path: "{{ module_path }}"
       module_source: "{{ module_source }}"
@@ -86,7 +86,7 @@ steps:
     renderer: minijinja
     template_ref: deep-module/deep-module-delete
     gas_cap: 6000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       module_assessment: "{{ step_1_result }}"
       caller_code: "{{ caller_code | default({}) }}"
@@ -105,7 +105,7 @@ steps:
     renderer: minijinja
     template_ref: deep-module/deep-module-design
     gas_cap: 6000
-    timeout_seconds: 60
+    timeout_seconds: 150
     condition: "step_2_result.recommendation == 'EXTRACT' OR step_2_result.recommendation == 'DEEPEN'"
     input_mapping:
       deletion_test_result: "{{ step_2_result }}"
@@ -137,7 +137,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

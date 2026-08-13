@@ -83,7 +83,7 @@ steps:
     renderer: minijinja
     template_ref: diataxis-diagram/diataxis-diagram-classify
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       target: "{{ target }}"
       hint: "{{ hint | default('') }}"
@@ -104,7 +104,7 @@ steps:
     renderer: minijinja
     template_ref: diataxis-diagram/diataxis-diagram-extract
     gas_cap: 6144
-    timeout_seconds: 120
+    timeout_seconds: 180
     input_mapping:
       diagram_type: "{{ step_1_result.diagram_type }}"
       target: "{{ target }}"
@@ -123,7 +123,7 @@ steps:
     renderer: minijinja
     template_ref: diataxis-diagram/diataxis-diagram-generate
     gas_cap: 8192
-    timeout_seconds: 60
+    timeout_seconds: 180
     input_mapping:
       diagram_type: "{{ step_1_result.diagram_type }}"
       entities: "{{ step_2_result.entities | default([]) }}"
@@ -142,7 +142,7 @@ steps:
     renderer: minijinja
     template_ref: diataxis-diagram/diataxis-diagram-evaluate
     gas_cap: 6144
-    timeout_seconds: 60
+    timeout_seconds: 180
     input_mapping:
       diagram_type: "{{ step_1_result.diagram_type }}"
       diataxis_quadrant: "{{ step_1_result.diataxis_quadrant }}"
@@ -232,8 +232,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

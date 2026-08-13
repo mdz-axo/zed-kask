@@ -47,6 +47,10 @@ pub struct StepMachine {
     pub(crate) context: StepContext,
     pub(crate) budget: BudgetTracker,
     pub(crate) convergence: ConvergenceTracker,
+    /// Per-step error handling policy (on_timeout, max_retries,
+    /// retry_backoff_seconds). Read by `run_pass` to decide whether a
+    /// `TemplateError::Timeout` is retried or propagated.
+    pub(crate) error_handling: crate::bundle::config::ErrorHandlingConfig,
     /// Program counter — which step we're executing.
     pub(crate) pc: StepId,
     /// Iteration counter — how many times we've re-entered the cascade.
@@ -74,12 +78,14 @@ impl StepMachine {
         context: StepContext,
         budget: BudgetTracker,
         convergence: ConvergenceTracker,
+        error_handling: crate::bundle::config::ErrorHandlingConfig,
     ) -> Self {
         Self {
             graph,
             context,
             budget,
             convergence,
+            error_handling,
             pc: ENTRY,
             iteration: 0,
             last_result_step: None,
@@ -269,8 +275,14 @@ impl StepMachine {
                 }
             }
 
-            // Dispatch the step's action.
-            let effect = self.dispatch_action(&node, infra).await?;
+            // Dispatch the step's action, with retry on timeout if the
+            // manifest's `error_handling` policy opts in. Only timeouts are
+            // retried — other errors (validation, not-found, render) propagate
+            // immediately because retrying a deterministic failure is wasteful.
+            // The retry uses the same timeout (the manifest's per-step
+            // `timeout_seconds`); a longer timeout on retry would require a
+            // separate field, which the schema doesn't have today.
+            let effect = self.dispatch_with_retry(&node, infra).await?;
 
             // Determine control flow: merge the effect with the node's static flow.
             // Done BEFORE apply_effect because apply_effect takes effect by value.

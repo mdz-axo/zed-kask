@@ -58,7 +58,7 @@ steps:
     renderer: minijinja
     template_ref: harness-optimize/harness-optimize-identify
     gas_cap: 8000
-    timeout_seconds: 120
+    timeout_seconds: 180
     input_mapping:
       trace_dir_n: "{{ trace_dir_n }}"
       trace_dir_n_minus_1: "{{ trace_dir_n_minus_1 }}"
@@ -101,8 +101,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

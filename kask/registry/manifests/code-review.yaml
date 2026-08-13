@@ -162,7 +162,7 @@ steps:
     renderer: minijinja
     template_ref: code-review/code-review-scope
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       change_spec: "{{ change_spec }}"
       diff_base: "{{ diff_base }}"
@@ -209,7 +209,7 @@ steps:
     renderer: minijinja
     template_ref: code-review/code-review-adjudicate
     gas_cap: 6144
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       raw_findings: "{{ step_2_result.raw_findings | default([]) }}"
       change_spec: "{{ change_spec }}"
@@ -229,7 +229,7 @@ steps:
     renderer: minijinja
     template_ref: code-review/code-review-report
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       adjudicated_findings: "{{ step_3_result.adjudicated_findings | default([]) }}"
       change_model: "{{ step_1_result.change_model | default({}) }}"
@@ -257,7 +257,7 @@ steps:
     renderer: minijinja
     template_ref: code-review/code-review-implement
     gas_cap: 6144
-    timeout_seconds: 120
+    timeout_seconds: 180
     condition: "fix_mode == 'blockers' OR fix_mode == 'should_fix' OR fix_mode == 'all'"
     input_mapping:
       adjudicated_findings: "{{ step_3_result.adjudicated_findings | default([]) }}"
@@ -300,8 +300,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

@@ -84,7 +84,7 @@ steps:
     renderer: minijinja
     template_ref: upstream-rebase/assess
     gas_cap: 8000
-    timeout_seconds: 120
+    timeout_seconds: 150
     input_mapping:
       target_file: "{{ target_file }}"
       upstream_ref: "{{ upstream_ref }}"
@@ -101,7 +101,7 @@ steps:
     renderer: minijinja
     template_ref: upstream-rebase/map
     gas_cap: 8000
-    timeout_seconds: 120
+    timeout_seconds: 180
     input_mapping:
       target_file: "{{ target_file }}"
       step_1_result: "{{ step_1_result }}"
@@ -255,7 +255,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

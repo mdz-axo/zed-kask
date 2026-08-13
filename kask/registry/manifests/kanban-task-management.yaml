@@ -114,7 +114,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/triage
     gas_cap: 500
-    timeout_seconds: 10
+    timeout_seconds: 120
     input_mapping:
       project_description: "{{ project_description | default('') }}"
       task_to_delegate: "{{ task_to_delegate | default({}) }}"
@@ -130,7 +130,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/gather-context
     gas_cap: 3000
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       project_description: "{{ project_description | default('') }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
@@ -144,7 +144,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/decompose-tasks
     gas_cap: 10000
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       project_description: "{{ project_description | default('') }}"
       target_task_hours: "{{ step_2_result.target_task_hours | default(5) }}"
@@ -160,7 +160,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/review-tasks
     gas_cap: 4000
-    timeout_seconds: 30
+    timeout_seconds: 150
     input_mapping:
       tasks: "{{ step_3_result.tasks | default([]) }}"
       project_name: "{{ step_2_result.project_name | default('Untitled Project') }}"
@@ -175,7 +175,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/populate-board
     gas_cap: 2000
-    timeout_seconds: 20
+    timeout_seconds: 120
     input_mapping:
       project_name: "{{ step_2_result.project_name | default('Untitled Project') }}"
       accepted_tasks: "{{ step_4_result.accepted | default([]) }}"
@@ -192,7 +192,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/configure-spawn
     gas_cap: 3000
-    timeout_seconds: 30
+    timeout_seconds: 150
     input_mapping:
       task: "{{ task_to_delegate | default({}) }}"
       available_skills: "{{ available_skills | default([]) }}"
@@ -209,7 +209,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/execute-task
     gas_cap: 5000
-    timeout_seconds: 120
+    timeout_seconds: 150
     input_mapping:
       task: "{{ task_to_delegate | default({}) }}"
       spawn_configuration: "{{ step_6_result | default({}) }}"
@@ -226,7 +226,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/monitor-board
     gas_cap: 4000
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       board_name: "{{ board_name | default('') }}"
       tasks: "{{ tasks | default([]) }}"
@@ -241,7 +241,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/coordinate-agents
     gas_cap: 5000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       board_name: "{{ board_name | default('') }}"
       active_tasks: "{{ tasks | default([]) }}"
@@ -256,7 +256,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/track-deliverables
     gas_cap: 4000
-    timeout_seconds: 45
+    timeout_seconds: 150
     input_mapping:
       task: "{{ tasks | first | default({}) }}"
       deliverables: "{{ tasks | first | default({}) | get('deliverables', []) }}"
@@ -271,7 +271,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/move-tasks
     gas_cap: 2000
-    timeout_seconds: 20
+    timeout_seconds: 120
     input_mapping:
       tasks: "{{ tasks | default([]) }}"
       columns: "{{ step_8_result.board_summary | default({}) | get('columns', []) }}"
@@ -286,7 +286,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/verify-completion
     gas_cap: 6000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       task_title: "{{ tasks | first | default({}) | get('title', '') }}"
       criteria: "{{ tasks | first | default({}) | get('criteria', []) }}"
@@ -303,7 +303,7 @@ steps:
     renderer: minijinja
     template_ref: kanban-task-management/escalate
     gas_cap: 3000
-    timeout_seconds: 30
+    timeout_seconds: 150
     input_mapping:
       board_name: "{{ board_name | default('') }}"
       escalation_candidates: "{{ step_9_result.escalation_candidates | default([]) }}"

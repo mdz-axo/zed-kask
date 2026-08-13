@@ -98,7 +98,7 @@ steps:
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-grasp
     gas_cap: 6000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       problem: "{{ problem }}"
       domain: "{{ domain | default('') }}"
@@ -119,7 +119,7 @@ steps:
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-target
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       problem: "{{ problem }}"
       current_condition: "{{ step_1_result }}"
@@ -135,7 +135,7 @@ steps:
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-predict
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       problem: "{{ problem }}"
       current_condition: "{{ step_1_result }}"
@@ -155,7 +155,7 @@ steps:
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-engine
     gas_cap: 9000
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       problem: "{{ problem }}"
       domain: "{{ domain | default('') }}"
@@ -176,7 +176,7 @@ steps:
     renderer: minijinja
     template_ref: skill-router/skill-router-match
     gas_cap: 2000
-    timeout_seconds: 30
+    timeout_seconds: 150
     input_mapping:
       task_description: "{{ step_4_result.skill_match_queries[0].query | default('') }}"
       task_context: "{{ step_4_result.skill_match_queries | map(attribute='reason') | join('; ') | default('') }}"
@@ -238,7 +238,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

@@ -78,7 +78,7 @@ steps:
     renderer: minijinja
     template_ref: kata-improvement/beginner-selector
     gas_cap: 2500
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       learner_profile: "{{ learner_profile | default({}) }}"
       practice_goal: "{{ practice_goal | default('foundational scientific thinking') }}"
@@ -92,7 +92,7 @@ steps:
     renderer: minijinja
     template_ref: kata-improvement/beginner-five-questions
     gas_cap: 3000
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       learner_profile: "{{ learner_profile | default({}) }}"
       selector_result: "{{ step_1_result }}"
@@ -106,7 +106,7 @@ steps:
     renderer: minijinja
     template_ref: kata-improvement/beginner-pdca-cycle
     gas_cap: 3000
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       learner_profile: "{{ learner_profile | default({}) }}"
       selector_result: "{{ step_1_result }}"
@@ -120,7 +120,7 @@ steps:
     renderer: minijinja
     template_ref: kata-improvement/beginner-observation-drill
     gas_cap: 3000
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       learner_profile: "{{ learner_profile | default({}) }}"
       selector_result: "{{ step_1_result }}"
@@ -152,7 +152,7 @@ steps:
     renderer: minijinja
     template_ref: kata-improvement/improvement-step1-direction.j2
     gas_cap: 3000
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
 
@@ -163,7 +163,7 @@ steps:
     renderer: minijinja
     template_ref: kata-improvement/improvement-step2-current.j2
     gas_cap: 3500
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
       current_metrics: "{{ current_metrics | default({}) }}"
@@ -176,7 +176,7 @@ steps:
     renderer: minijinja
     template_ref: kata-improvement/improvement-step3-target.j2
     gas_cap: 3500
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
       current_condition: "{{ step_8_result }}"
@@ -188,7 +188,7 @@ steps:
     renderer: minijinja
     template_ref: kata-improvement/improvement-step4-experiment.j2
     gas_cap: 4000
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
       current_condition: "{{ step_8_result }}"
@@ -240,8 +240,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

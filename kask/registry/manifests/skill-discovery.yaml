@@ -57,7 +57,7 @@ steps:
     renderer: minijinja
     template_ref: skill-discovery/skill-discovery-detect-gap
     gas_cap: 6000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       task_patterns: "{{ task_patterns | default([]) }}"
       skill_catalog: "{{ skill_catalog | default([]) }}"
@@ -68,7 +68,7 @@ steps:
     renderer: minijinja
     template_ref: skill-discovery/skill-discovery-search
     gas_cap: 6000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       gap_description: "{{ step_1_result.gap_list[0].description | default('') }}"
       skill_catalog: "{{ skill_catalog | default([]) }}"
@@ -80,7 +80,7 @@ steps:
     renderer: minijinja
     template_ref: skill-discovery/skill-discovery-evaluate
     gas_cap: 6000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       candidate_skill_content: "{{ candidate_skill_content | default('') }}"
 
@@ -136,8 +136,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

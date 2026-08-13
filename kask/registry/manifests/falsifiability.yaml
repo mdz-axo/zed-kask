@@ -72,7 +72,7 @@ steps:
     renderer: minijinja
     template_ref: falsifiability/falsifiability-admit
     gas_cap: 3072
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       target: "{{ target }}"
       domain: "{{ domain | default('') }}"
@@ -88,7 +88,7 @@ steps:
     renderer: minijinja
     template_ref: falsifiability/falsifiability-hypothesize
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       admitted_target: "{{ step_1_result.refined_target | default(target, true) }}"
       domain: "{{ domain | default('') }}"
@@ -204,7 +204,7 @@ steps:
     renderer: minijinja
     template_ref: falsifiability/falsifiability-counterfactual
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       hypotheses: "{{ step_2_result.hypotheses | default([]) }}"
       admitted_target: "{{ step_1_result.refined_target | default(target, true) }}"
@@ -220,7 +220,7 @@ steps:
     renderer: minijinja
     template_ref: falsifiability/falsifiability-discriminate
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       hypotheses: "{{ step_2_result.hypotheses | default([]) }}"
       counterfactuals: "{{ step_4_result.counterfactuals | default([]) }}"
@@ -237,7 +237,7 @@ steps:
     renderer: minijinja
     template_ref: falsifiability/falsifiability-eliminate
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       hypotheses: "{{ step_2_result.hypotheses | default([]) }}"
       discriminating_tests: "{{ step_5_result.discriminating_tests | default([]) }}"
@@ -266,7 +266,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

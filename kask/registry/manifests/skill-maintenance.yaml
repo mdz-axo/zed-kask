@@ -89,7 +89,7 @@ steps:
     renderer: minijinja
     template_ref: skill-maintenance/skill-maintenance-audit
     gas_cap: 6000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       skill_name: "{{ skill_name | default('') }}"
       workspace_context: "{{ workspace_context | default({}) }}"
@@ -101,7 +101,7 @@ steps:
     renderer: minijinja
     template_ref: skill-maintenance/skill-maintenance-coverage
     gas_cap: 6000
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       skill_catalog: "{{ skill_catalog | default([]) }}"
       task_patterns: "{{ task_patterns | default([]) }}"
@@ -173,7 +173,7 @@ steps:
     renderer: minijinja
     template_ref: skill-maintenance/logic-critique-template
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       target_path: "{{ target_path }}"
       target_content: "{{ target_content }}"
@@ -189,7 +189,7 @@ steps:
     renderer: minijinja
     template_ref: skill-maintenance/logic-critique-critique
     gas_cap: 2048
-    timeout_seconds: 30
+    timeout_seconds: 150
     input_mapping:
       goal: "{{ step_5_result.goal }}"
       prior_critique: "{{ step_6_result }}"
@@ -203,7 +203,7 @@ steps:
     renderer: minijinja
     template_ref: skill-maintenance/logic-compose-proposal
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       target_path: "{{ target_path }}"
       original_content: "{{ target_content }}"
@@ -269,8 +269,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

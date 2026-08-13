@@ -72,7 +72,7 @@ steps:
     renderer: minijinja
     template_ref: lean-prover/lean-prover-anchor
     gas_cap: 7000
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       proposition: "{{ proposition }}"
       proof_context: "{{ proof_context | default({}) }}"
@@ -88,7 +88,7 @@ steps:
     renderer: minijinja
     template_ref: lean-prover/lean-prover-construct
     gas_cap: 8000
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       proposition: "{{ proposition }}"
       anchor: "{{ step_1_result }}"
@@ -106,7 +106,7 @@ steps:
     renderer: minijinja
     template_ref: lean-prover/lean-prover-refute
     gas_cap: 8000
-    timeout_seconds: 90
+    timeout_seconds: 180
     input_mapping:
       proposition: "{{ proposition }}"
       proof_attempt: "{{ step_2_result }}"
@@ -123,7 +123,7 @@ steps:
     renderer: minijinja
     template_ref: lean-prover/lean-prover-erase
     gas_cap: 7000
-    timeout_seconds: 90
+    timeout_seconds: 150
     input_mapping:
       proposition: "{{ proposition }}"
       proof_attempt: "{{ step_2_result }}"
@@ -141,8 +141,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

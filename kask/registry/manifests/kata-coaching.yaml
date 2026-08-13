@@ -52,7 +52,7 @@ steps:
     renderer: minijinja
     template_ref: kata-coaching/coaching-q1-target.j2
     gas_cap: 2500
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
       target_condition: "{{ target_condition | default('') }}"
@@ -63,7 +63,7 @@ steps:
     renderer: minijinja
     template_ref: kata-coaching/coaching-q2-actual.j2
     gas_cap: 2500
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
       current_condition: "{{ current_condition | default('') }}"
@@ -75,7 +75,7 @@ steps:
     renderer: minijinja
     template_ref: kata-coaching/coaching-q3-obstacles.j2
     gas_cap: 3000
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
       target_condition: "{{ target_condition | default(step_1_result.target_condition | default('')) }}"
@@ -87,7 +87,7 @@ steps:
     renderer: minijinja
     template_ref: kata-coaching/coaching-q4-experiment.j2
     gas_cap: 3000
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
       focus_obstacle: "{{ step_3_result.focus_obstacle | default('') }}"
@@ -98,7 +98,7 @@ steps:
     renderer: minijinja
     template_ref: kata-coaching/coaching-q5-learn.j2
     gas_cap: 2500
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
       next_experiment: "{{ step_4_result.next_experiment | default('') }}"
@@ -134,8 +134,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

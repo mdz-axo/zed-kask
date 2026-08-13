@@ -63,7 +63,7 @@ steps:
     renderer: minijinja
     template_ref: pragmatic-semantics/semantics-provenance-trace
     gas_cap: 4000
-    timeout_seconds: 45
+    timeout_seconds: 150
     input_mapping:
       classification_result: "{{ step_1_result }}"
       statement: "{{ statement }}"
@@ -75,7 +75,7 @@ steps:
     renderer: minijinja
     template_ref: pragmatic-semantics/semantics-conflict-resolve
     gas_cap: 4000
-    timeout_seconds: 45
+    timeout_seconds: 150
     condition: "step_2_result.conflicts_detected | default(false) == true"
     # When condition is false, step_3_result is undefined. Downstream steps
     # must use `step_3_result | default({})` to handle the skipped case.
@@ -94,7 +94,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

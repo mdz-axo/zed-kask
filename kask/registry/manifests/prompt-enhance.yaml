@@ -102,7 +102,7 @@ steps:
     renderer: minijinja
     template_ref: prompt-enhance/enhance-classify.j2
     gas_cap: 6000
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       prompt: "{{ prompt }}"
       effort: "{{ effort | default('medium') }}"
@@ -192,7 +192,7 @@ steps:
     renderer: minijinja
     template_ref: prompt-enhance/enhance-verify.j2
     gas_cap: 6000
-    timeout_seconds: 90
+    timeout_seconds: 120
     input_mapping:
       enhanced_prompt: "{{ step_2_result.enhanced_prompt }}"
       original_prompt: "{{ prompt }}"
@@ -215,7 +215,7 @@ steps:
     renderer: minijinja
     template_ref: prompt-enhance/enhance-output.j2
     gas_cap: 4000
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       enhanced_prompt: "{{ step_2_result.enhanced_prompt }}"
       original_prompt: "{{ prompt }}"
@@ -235,7 +235,7 @@ steps:
 error_handling:
   on_gas_exceeded: abort
   on_timeout: abort
-  max_retries: 1
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

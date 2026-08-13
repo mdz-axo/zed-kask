@@ -118,7 +118,7 @@ steps:
     renderer: minijinja
     template_ref: superforecasting/stage_0_triage
     gas_cap: 2500
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       domain: "{{ domain | default(null) }}"
@@ -130,7 +130,7 @@ steps:
     renderer: minijinja
     template_ref: superforecasting/stage_1_fermi_decompose
     gas_cap: 4000
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       triage_output: "{{ step_1_result }}"
@@ -155,7 +155,7 @@ steps:
     renderer: minijinja
     template_ref: superforecasting/stage_2_outside_view
     gas_cap: 4000
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       sub_questions: "{{ step_2_result.sub_questions | default([]) }}"
@@ -191,7 +191,7 @@ steps:
     renderer: minijinja
     template_ref: falsifiability/falsifiability-hypothesize
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       admitted_target: "{{ forecasting_question }}"
       domain: "{{ domain | default('forecasting') }}"
@@ -207,7 +207,7 @@ steps:
     renderer: minijinja
     template_ref: falsifiability/falsifiability-counterfactual
     gas_cap: 4096
-    timeout_seconds: 60
+    timeout_seconds: 150
     input_mapping:
       hypotheses: "{{ step_6_result.hypotheses | default([]) }}"
       admitted_target: "{{ forecasting_question }}"
@@ -229,7 +229,7 @@ steps:
     renderer: minijinja
     template_ref: superforecasting/stage_3_probability_estimate
     gas_cap: 4500
-    timeout_seconds: 75
+    timeout_seconds: 150
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       hypotheses: "{{ step_6_result.hypotheses | default([]) }}"
@@ -267,7 +267,7 @@ steps:
     renderer: minijinja
     template_ref: superforecasting/stage_4_evidence_update
     gas_cap: 4000
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       prior_probability: "{{ step_9_result.tree_combined_probability | default(step_8_result.hypothesis_probabilities.combined_probability | default(step_5_result.calibrated | default(0.5))) }}"
@@ -299,7 +299,7 @@ steps:
     renderer: minijinja
     template_ref: superforecasting/stage_5_synthesis
     gas_cap: 4500
-    timeout_seconds: 75
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       updated_probability: "{{ step_11_result.posterior | default(0.5) }}"
@@ -312,7 +312,7 @@ steps:
     renderer: minijinja
     template_ref: superforecasting/stage_6_calibration
     gas_cap: 3500
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       synthesized_probability: "{{ step_12_result.synthesized_probability | default(step_11_result.posterior | default(0.5)) }}"
@@ -325,7 +325,7 @@ steps:
     renderer: minijinja
     template_ref: superforecasting/stage_7_record
     gas_cap: 3000
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       final_probability: "{{ step_13_result.final_probability | default(step_12_result.synthesized_probability | default(0.5)) }}"
@@ -340,7 +340,7 @@ steps:
     renderer: minijinja
     template_ref: superforecasting/forecast-quality-gate
     gas_cap: 3000
-    timeout_seconds: 45
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       calibration_result: "{{ step_13_result }}"
@@ -408,7 +408,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

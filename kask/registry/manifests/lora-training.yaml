@@ -228,7 +228,7 @@ steps:
     renderer: minijinja
     template_ref: lora-training/preflight-dataset
     gas_cap: 2048
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       dataset_path: "{{ dataset_path | default('undetermined') }}"
       trainer_preference: "{{ trainer_preference | default('undetermined') }}"
@@ -247,7 +247,7 @@ steps:
     renderer: minijinja
     template_ref: lora-training/select-method
     gas_cap: 6144
-    timeout_seconds: 90
+    timeout_seconds: 150
     input_mapping:
       training_config_path: "{{ training_config_path }}"
       dataset_path: "{{ dataset_path | default('undetermined') }}"
@@ -279,7 +279,7 @@ steps:
     renderer: minijinja
     template_ref: lora-training/audit-config
     gas_cap: 8192
-    timeout_seconds: 120
+    timeout_seconds: 180
     input_mapping:
       config_paths: "{{ [training_config_path] }}"
       selected_method: "{{ step_1_result.recommendation | default({}) }}"
@@ -296,7 +296,7 @@ steps:
     renderer: minijinja
     template_ref: lora-training/report
     gas_cap: 6144
-    timeout_seconds: 90
+    timeout_seconds: 150
     input_mapping:
       findings: "{{ step_2_result.findings | default([]) }}"
       gate_results: "{{ step_2_result.gate_results | default({}) }}"
@@ -338,7 +338,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort
