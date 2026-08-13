@@ -14,7 +14,9 @@
 
 #![forbid(unsafe_code)]
 
-use hkask_regulation::sensor_provider::{MutationScoreSensor, Sensor, TestCoverageSensor};
+use hkask_regulation::sensor_provider::{
+    MetricsLocateError, MutationScoreSensor, Sensor, TestCoverageSensor,
+};
 use hkask_regulation::types::loops::{Signal, SignalMetric};
 use hkask_test_harness::{Oracle, OracleVerdict, arb_json_value, oracle_invariant};
 use proptest::prelude::*;
@@ -180,7 +182,7 @@ proptest! {
 }
 
 proptest! {
-    /// `latest_metrics_path` is private, but its absence contract is observable
+    /// `latest_run_metrics` is private, but its absence contract is observable
     /// through `sense`: a trace directory with no run subdirectories (and thus
     /// no `metrics.json`) must yield `None`, never a panic, never a fabricated
     /// signal. This pins the "absent field → None, not default" invariant at the
@@ -241,4 +243,111 @@ proptest! {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+// ── Error-classification contract (F1/F2 fix) ─────────────────────────────
+//
+// The sensors used to collapse every I/O and parse error to `None` via
+// `.ok()?`, making a DB outage or permission error indistinguishable from
+// "coverage meets set-point" — the regulation loop saw no deviation and never
+// acted (the `.rules` `unwrap_or(0)` / `.ok()?` trap on sense inputs). These
+// tests pin the new contract: I/O failures still return `None` (the `Sensor`
+// trait signature is unchanged) but the underlying `latest_run_metrics` now
+// returns `Err`, and the sensor `warn!`s with a classified error. The
+// `latest_run_metrics` unit tests below verify the `Err` directly; the
+// sensor-level tests verify the observable `None` + the warn target.
+//
+// See `findings.md` F1/F2 and `canonical-patterns.md` P1.
+
+/// `latest_run_metrics` returns `Err(TraceDirInaccessible)` when the trace
+/// directory cannot be read (missing, permission denied, not a directory).
+/// This is the broken-sensor case — previously collapsed to `Ok(None)`.
+#[test]
+fn latest_run_metrics_returns_err_on_unreadable_dir() {
+    // A path that exists as a *file*, not a directory — `read_dir` rejects it.
+    let file_path = std::env::temp_dir().join(format!(
+        "hkask-sensor-err-file-{}",
+        DIR_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&file_path, b"not a directory").expect("write file");
+
+    let result = hkask_regulation::sensor_provider::latest_run_metrics(&file_path);
+    assert!(
+        matches!(result, Err(MetricsLocateError::TraceDirInaccessible { .. })),
+        "expected TraceDirInaccessible for a non-directory path, got {result:?}"
+    );
+
+    let _ = std::fs::remove_file(&file_path);
+}
+
+/// `latest_run_metrics` returns `Ok(None)` for an existing but empty trace
+/// directory — the legitimate "no run has produced metrics yet" case. This is
+/// NOT an error; collapsing it to `Err` would make a fresh install look like a
+/// broken sensor.
+#[test]
+fn latest_run_metrics_returns_ok_none_for_empty_dir() {
+    let dir = fresh_trace_dir("empty-ok");
+    std::fs::create_dir_all(&dir).expect("create trace dir");
+
+    let result = hkask_regulation::sensor_provider::latest_run_metrics(&dir);
+    assert!(
+        matches!(result, Ok(None)),
+        "expected Ok(None) for an empty trace dir, got {result:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `latest_run_metrics` returns `Ok(Some(path))` when a run directory contains
+/// a `metrics.json`, picking the newest by modification time.
+#[test]
+fn latest_run_metrics_returns_some_for_run_with_metrics() {
+    let dir = fresh_trace_dir("with-run");
+    std::fs::create_dir_all(dir.join("run-1")).expect("create run dir");
+    std::fs::write(dir.join("run-1").join("metrics.json"), b"{}").expect("write metrics");
+
+    let result = hkask_regulation::sensor_provider::latest_run_metrics(&dir);
+    assert!(
+        matches!(result, Ok(Some(_))),
+        "expected Ok(Some(_)) for a run with metrics.json, got {result:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A sensor whose trace directory is unreadable (points at a file, not a
+/// directory) must return `None` — the `Sensor::sense` signature is unchanged —
+/// but the underlying locator now classifies the failure. This test pins the
+/// observable contract: the sensor does not panic and does not fabricate a
+/// signal. The `warn!` is verified by the `latest_run_metrics` unit test above
+/// (the `Err` is the warn's input).
+#[test]
+fn sense_returns_none_when_trace_dir_is_unreadable() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build runtime");
+
+    let file_path = std::env::temp_dir().join(format!(
+        "hkask-sensor-sense-err-{}",
+        DIR_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&file_path, b"not a directory").expect("write file");
+
+    let coverage = TestCoverageSensor::new(file_path.clone(), 80.0);
+    let mutation = MutationScoreSensor::new(file_path.clone(), 0.8);
+
+    let cov_signal = block_sense(&runtime, &coverage);
+    let mut_signal = block_sense(&runtime, &mutation);
+
+    assert!(
+        cov_signal.is_none(),
+        "coverage sensor fabricated a signal from an unreadable trace dir"
+    );
+    assert!(
+        mut_signal.is_none(),
+        "mutation sensor fabricated a signal from an unreadable trace dir"
+    );
+
+    let _ = std::fs::remove_file(&file_path);
 }

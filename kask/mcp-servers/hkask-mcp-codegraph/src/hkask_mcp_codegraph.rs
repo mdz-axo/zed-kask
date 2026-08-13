@@ -10,7 +10,7 @@ use crate::codegraph::indexer::pipeline::IndexPipeline;
 use crate::codegraph::types::Direction;
 use crate::codegraph::{ContextBudget, graph};
 use hkask_mcp_server::run_server;
-use hkask_mcp_server::server::{CapabilityTier, McpToolError, execute_tool, map_io_error};
+use hkask_mcp_server::server::{CapabilityTier, McpToolError, execute_tool_semantic, map_io_error};
 use hkask_types::InferencePort;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use schemars::JsonSchema;
@@ -102,6 +102,31 @@ impl CodeGraphServer {
         self.indexed_once
             .store(true, std::sync::atomic::Ordering::Release);
         Ok(())
+    }
+
+    /// Map a tool name to its SUMO / Dublin Core ontology concept URI. The
+    /// concept tags the `reg.tool` span (via `execute_tool_semantic`) for
+    /// type-aware feedback routing. Codegraph is a code-structure tool, so
+    /// SUMO — the upper ontology for entities/relations/processes — is the
+    /// natural anchor for most tools; `codegraph_stats` returns a dataset and
+    /// anchors on Dublin Core.
+    ///
+    /// SUMO reference: <https://github.com/ontologyportal/sumo>
+    fn ontology_anchor(tool: &str) -> Option<&'static str> {
+        use hkask_bridge_ontology::{dc_bibo, sumo};
+        match tool {
+            // Read tools — entity / relation / text structure
+            "codegraph_query" | "codegraph_structure" => Some(sumo::ENTITY),
+            "codegraph_traverse" | "codegraph_impact" => Some(sumo::RELATION),
+            "codegraph_context" => Some(sumo::TEXT),
+            // Analysis tools — processes over the graph
+            "codegraph_analysis" | "codegraph_reindex" => Some(sumo::PROCESS),
+            // Embeddings — vector representations of symbols
+            "codegraph_index_embeddings" => Some(sumo::REPRESENTATION),
+            // Stats — a computed dataset
+            "codegraph_stats" => Some(dc_bibo::DATASET),
+            _ => Some(sumo::ENTITY),
+        }
     }
 }
 
@@ -208,6 +233,67 @@ mod tool_surface_tests {
         let n = CodeGraphServer::tool_router().list_all().len();
         assert_eq!(n, 9, "codegraph registered tool surface changed; got {n}");
     }
+
+    // Coverage: every registered tool must have a non-None ontology anchor.
+    // Catches the silent-drop failure mode where a new tool is added to the
+    // router without a corresponding arm in ontology_anchor. The count pin
+    // above catches addition; this test catches anchoring.
+    #[test]
+    fn ontology_anchor_covers_all_registered_tools() {
+        let router = CodeGraphServer::tool_router();
+        for tool in router.list_all() {
+            assert!(
+                CodeGraphServer::ontology_anchor(&tool.name).is_some(),
+                "ontology_anchor returned None for registered tool '{}'; \
+                 add an explicit arm or adjust the fallback",
+                tool.name
+            );
+        }
+    }
+
+    // Regression: the ontology anchor must not collapse to a single constant.
+    // Read tools anchor on SUMO entities/relations; analysis tools anchor on
+    // SUMO processes; stats anchors on Dublin Core. A future stub regression
+    // would make these equal.
+    #[test]
+    fn ontology_anchor_distinguishes_tool_families() {
+        use hkask_bridge_ontology::{dc_bibo, sumo};
+        let query = CodeGraphServer::ontology_anchor("codegraph_query");
+        let traverse = CodeGraphServer::ontology_anchor("codegraph_traverse");
+        let analysis = CodeGraphServer::ontology_anchor("codegraph_analysis");
+        let stats = CodeGraphServer::ontology_anchor("codegraph_stats");
+        // Read vs analysis: ENTITY vs PROCESS — distinct SUMO categories.
+        assert_ne!(
+            query, analysis,
+            "codegraph_query (entity) and codegraph_analysis (process) must anchor on distinct SUMO categories"
+        );
+        // SUMO vs Dublin Core: stats is a dataset, not an entity.
+        assert_ne!(
+            query, stats,
+            "codegraph_query (SUMO) and codegraph_stats (Dublin Core) must anchor on distinct ontologies"
+        );
+        // Specific concept pins.
+        assert_eq!(
+            query,
+            Some(sumo::ENTITY),
+            "codegraph_query must anchor on SUMO Entity"
+        );
+        assert_eq!(
+            traverse,
+            Some(sumo::RELATION),
+            "codegraph_traverse must anchor on SUMO Relation"
+        );
+        assert_eq!(
+            analysis,
+            Some(sumo::PROCESS),
+            "codegraph_analysis must anchor on SUMO Process"
+        );
+        assert_eq!(
+            stats,
+            Some(dc_bibo::DATASET),
+            "codegraph_stats must anchor on Dublin Core Dataset"
+        );
+    }
 }
 
 #[tool_router(server_handler)]
@@ -216,123 +302,154 @@ impl CodeGraphServer {
         description = "Search the codebase for symbols, or look up a specific symbol by name (set 'name' field)"
     )]
     pub async fn codegraph_query(&self, Parameters(req): Parameters<QueryRequest>) -> String {
-        execute_tool(self, "codegraph_query", async {
-            self.ensure_indexed()?;
-            let pipeline = self.pipeline_guard()?;
-            // If a name is provided, look it up directly in the database rather
-            // than filtering the (limit-capped) FTS5 result set — the exact
-            // match may exist outside the first `limit` hits, in which case the
-            // old filter path returned a spurious "symbol not found".
-            if let Some(ref name) = req.name {
-                return match pipeline.store().find_symbol_by_name(name).map_err(db_err)? {
-                    Some(id) => match pipeline.store().get_symbol(id).map_err(db_err)? {
-                        Some(symbol) => Ok(serde_json::json!(&symbol)),
+        execute_tool_semantic(
+            self,
+            "codegraph_query",
+            Self::ontology_anchor("codegraph_query"),
+            async {
+                self.ensure_indexed()?;
+                let pipeline = self.pipeline_guard()?;
+                // If a name is provided, look it up directly in the database rather
+                // than filtering the (limit-capped) FTS5 result set — the exact
+                // match may exist outside the first `limit` hits, in which case the
+                // old filter path returned a spurious "symbol not found".
+                if let Some(ref name) = req.name {
+                    return match pipeline.store().find_symbol_by_name(name).map_err(db_err)? {
+                        Some(id) => match pipeline.store().get_symbol(id).map_err(db_err)? {
+                            Some(symbol) => Ok(serde_json::json!(&symbol)),
+                            None => Ok(serde_json::json!({
+                                "error": format!("symbol not found: {name}")
+                            })),
+                        },
                         None => Ok(serde_json::json!({
                             "error": format!("symbol not found: {name}")
                         })),
-                    },
-                    None => Ok(serde_json::json!({
-                        "error": format!("symbol not found: {name}")
-                    })),
-                };
-            }
-            let results =
-                graph::search::search(pipeline.store().conn(), &req.query, req.limit as usize)
-                    .map_err(db_err)?;
-            Ok(serde_json::json!(results))
-        })
+                    };
+                }
+                let results =
+                    graph::search::search(pipeline.store().conn(), &req.query, req.limit as usize)
+                        .map_err(db_err)?;
+                Ok(serde_json::json!(results))
+            },
+        )
         .await
     }
 
     #[tool(description = "Traverse the code graph: forward (dependencies) or reverse (callers)")]
     pub async fn codegraph_traverse(&self, Parameters(req): Parameters<TraverseRequest>) -> String {
-        execute_tool(self, "codegraph_traverse", async {
-            self.ensure_indexed()?;
-            let pipeline = self.pipeline_guard()?;
-            let id = traversal::find_symbol_id(pipeline.store(), &req.symbol).map_err(db_err)?;
-            match id {
-                Some(id) => {
-                    let nodes = traversal::traverse(
-                        pipeline.store().conn(),
-                        id,
-                        req.direction,
-                        req.max_depth as usize,
-                    )
-                    .map_err(db_err)?;
-                    Ok(serde_json::json!(nodes))
+        execute_tool_semantic(
+            self,
+            "codegraph_traverse",
+            Self::ontology_anchor("codegraph_traverse"),
+            async {
+                self.ensure_indexed()?;
+                let pipeline = self.pipeline_guard()?;
+                let id =
+                    traversal::find_symbol_id(pipeline.store(), &req.symbol).map_err(db_err)?;
+                match id {
+                    Some(id) => {
+                        let nodes = traversal::traverse(
+                            pipeline.store().conn(),
+                            id,
+                            req.direction,
+                            req.max_depth as usize,
+                        )
+                        .map_err(db_err)?;
+                        Ok(serde_json::json!(nodes))
+                    }
+                    None => Ok(
+                        serde_json::json!({"error": format!("symbol not found: {}", req.symbol)}),
+                    ),
                 }
-                None => {
-                    Ok(serde_json::json!({"error": format!("symbol not found: {}", req.symbol)}))
-                }
-            }
-        })
+            },
+        )
         .await
     }
 
     #[tool(description = "Analyze blast radius for a symbol")]
     pub async fn codegraph_impact(&self, Parameters(req): Parameters<ImpactRequest>) -> String {
-        execute_tool(self, "codegraph_impact", async {
-            self.ensure_indexed()?;
-            let pipeline = self.pipeline_guard()?;
-            let id = traversal::find_symbol_id(pipeline.store(), &req.symbol).map_err(db_err)?;
-            match id {
-                Some(id) => {
-                    let results = traversal::impact_analysis(
-                        pipeline.store().conn(),
-                        id,
-                        req.max_depth as usize,
-                    )
-                    .map_err(db_err)?;
-                    Ok(serde_json::json!({
-                        "symbol": req.symbol,
-                        "total_affected": results.len(),
-                        "affected": results,
-                    }))
+        execute_tool_semantic(
+            self,
+            "codegraph_impact",
+            Self::ontology_anchor("codegraph_impact"),
+            async {
+                self.ensure_indexed()?;
+                let pipeline = self.pipeline_guard()?;
+                let id =
+                    traversal::find_symbol_id(pipeline.store(), &req.symbol).map_err(db_err)?;
+                match id {
+                    Some(id) => {
+                        let results = traversal::impact_analysis(
+                            pipeline.store().conn(),
+                            id,
+                            req.max_depth as usize,
+                        )
+                        .map_err(db_err)?;
+                        Ok(serde_json::json!({
+                            "symbol": req.symbol,
+                            "total_affected": results.len(),
+                            "affected": results,
+                        }))
+                    }
+                    None => Ok(
+                        serde_json::json!({"error": format!("symbol not found: {}", req.symbol)}),
+                    ),
                 }
-                None => {
-                    Ok(serde_json::json!({"error": format!("symbol not found: {}", req.symbol)}))
-                }
-            }
-        })
+            },
+        )
         .await
     }
 
     #[tool(description = "Run analysis: 'dead_code' or 'complexity'")]
     pub async fn codegraph_analysis(&self, Parameters(req): Parameters<AnalysisRequest>) -> String {
-        execute_tool(self, "codegraph_analysis", async {
-            self.ensure_indexed()?;
-            let pipeline = self.pipeline_guard()?;
-            match req.kind {
-                AnalysisKind::DeadCode => {
-                    let findings =
-                        analysis::find_dead_code(pipeline.store().conn()).map_err(db_err)?;
-                    Ok(serde_json::json!(findings))
+        execute_tool_semantic(
+            self,
+            "codegraph_analysis",
+            Self::ontology_anchor("codegraph_analysis"),
+            async {
+                self.ensure_indexed()?;
+                let pipeline = self.pipeline_guard()?;
+                match req.kind {
+                    AnalysisKind::DeadCode => {
+                        let findings =
+                            analysis::find_dead_code(pipeline.store().conn()).map_err(db_err)?;
+                        Ok(serde_json::json!(findings))
+                    }
+                    AnalysisKind::Complexity => {
+                        let findings =
+                            analysis::find_high_complexity(pipeline.store().conn(), 10, 5)
+                                .map_err(db_err)?;
+                        Ok(serde_json::json!(findings))
+                    }
                 }
-                AnalysisKind::Complexity => {
-                    let findings = analysis::find_high_complexity(pipeline.store().conn(), 10, 5)
-                        .map_err(db_err)?;
-                    Ok(serde_json::json!(findings))
-                }
-            }
-        })
+            },
+        )
         .await
     }
 
     #[tool(description = "Assemble token-budgeted context for LLM prompts")]
     pub async fn codegraph_context(&self, Parameters(req): Parameters<ContextRequest>) -> String {
-        execute_tool(self, "codegraph_context", async {
-            self.ensure_indexed()?;
-            let pipeline = self.pipeline_guard()?;
-            let assembled =
-                crate::codegraph::assemble_context(pipeline.store().conn(), &req.query, req.budget)
-                    .map_err(db_err)?;
-            Ok(serde_json::json!({
-                "context_id": assembled.context_id.to_string(),
-                "text": assembled.text,
-                "symbols": assembled.symbols,
-                "estimated_tokens": assembled.estimated_tokens,
-            }))
-        })
+        execute_tool_semantic(
+            self,
+            "codegraph_context",
+            Self::ontology_anchor("codegraph_context"),
+            async {
+                self.ensure_indexed()?;
+                let pipeline = self.pipeline_guard()?;
+                let assembled = crate::codegraph::assemble_context(
+                    pipeline.store().conn(),
+                    &req.query,
+                    req.budget,
+                )
+                .map_err(db_err)?;
+                Ok(serde_json::json!({
+                    "context_id": assembled.context_id.to_string(),
+                    "text": assembled.text,
+                    "symbols": assembled.symbols,
+                    "estimated_tokens": assembled.estimated_tokens,
+                }))
+            },
+        )
         .await
     }
 
@@ -341,92 +458,102 @@ impl CodeGraphServer {
         &self,
         Parameters(req): Parameters<StructureRequest>,
     ) -> String {
-        execute_tool(self, "codegraph_structure", async {
-            self.ensure_indexed()?;
-            let pipeline = self.pipeline_guard()?;
-            let conn = pipeline.store().conn();
-            let limit = req.limit as i64;
-            let mut stmt = conn
-                .prepare(
-                    "SELECT name, kind, f.path, signature, visibility, pagerank
+        execute_tool_semantic(
+            self,
+            "codegraph_structure",
+            Self::ontology_anchor("codegraph_structure"),
+            async {
+                self.ensure_indexed()?;
+                let pipeline = self.pipeline_guard()?;
+                let conn = pipeline.store().conn();
+                let limit = req.limit as i64;
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT name, kind, f.path, signature, visibility, pagerank
                  FROM symbols s JOIN code_files f ON s.file_id = f.id
                  ORDER BY pagerank DESC LIMIT ?1",
-                )
-                .map_err(db_err)?;
-            let rows: Vec<serde_json::Value> = stmt
-                .query_map(rusqlite::params![limit], |row| {
-                    Ok(serde_json::json!({
-                        "name": row.get::<_, String>(0)?,
-                        "kind": row.get::<_, String>(1)?,
-                        "file": row.get::<_, String>(2)?,
-                        "signature": row.get::<_, String>(3)?,
-                        "visibility": row.get::<_, String>(4)?,
-                        "pagerank": row.get::<_, f64>(5)?,
-                    }))
-                })
-                .map_err(db_err)?
-                .filter_map(|r| r.ok())
-                .collect();
-            Ok(serde_json::json!(rows))
-        })
+                    )
+                    .map_err(db_err)?;
+                let rows: Vec<serde_json::Value> = stmt
+                    .query_map(rusqlite::params![limit], |row| {
+                        Ok(serde_json::json!({
+                            "name": row.get::<_, String>(0)?,
+                            "kind": row.get::<_, String>(1)?,
+                            "file": row.get::<_, String>(2)?,
+                            "signature": row.get::<_, String>(3)?,
+                            "visibility": row.get::<_, String>(4)?,
+                            "pagerank": row.get::<_, f64>(5)?,
+                        }))
+                    })
+                    .map_err(db_err)?
+                    .filter_map(|r| r.ok())
+                    .collect();
+                Ok(serde_json::json!(rows))
+            },
+        )
         .await
     }
 
     #[tool(description = "Get index statistics")]
     pub async fn codegraph_stats(&self, Parameters(req): Parameters<StatsRequest>) -> String {
-        execute_tool(self, "codegraph_stats", async {
-            // Intentionally does NOT call ensure_indexed() — stats is a lightweight
-            // query that should return immediately. On a fresh server with no prior
-            // tool call, stats returns zeros. Call codegraph_reindex or any other
-            // tool first to populate the index.
-            let pipeline = self.pipeline_guard()?;
-            let stats = pipeline.stats().map_err(db_err)?;
-            let mut output = serde_json::json!({
-                "files": stats.files, "symbols": stats.symbols, "edges": stats.edges,
-            });
-            if req.include_health && stats.symbols > 0 {
-                let ratio = stats.edges as f64 / stats.symbols as f64;
-                output["connectivity_ratio"] = serde_json::json!(ratio);
-                output["health"] = serde_json::json!(if ratio < 0.1 {
-                    "poor"
-                } else if ratio < 0.5 {
-                    "fair"
-                } else {
-                    "good"
+        execute_tool_semantic(
+            self,
+            "codegraph_stats",
+            Self::ontology_anchor("codegraph_stats"),
+            async {
+                // Intentionally does NOT call ensure_indexed() — stats is a lightweight
+                // query that should return immediately. On a fresh server with no prior
+                // tool call, stats returns zeros. Call codegraph_reindex or any other
+                // tool first to populate the index.
+                let pipeline = self.pipeline_guard()?;
+                let stats = pipeline.stats().map_err(db_err)?;
+                let mut output = serde_json::json!({
+                    "files": stats.files, "symbols": stats.symbols, "edges": stats.edges,
                 });
-            }
-            // Include language/file-type breakdown if requested (X4: merged from codegraph_project_meta)
-            if req.include_meta {
-                let conn = pipeline.store().conn();
-                let mut stmt = conn
-                    .prepare(
-                        "SELECT COUNT(*),
+                if req.include_health && stats.symbols > 0 {
+                    let ratio = stats.edges as f64 / stats.symbols as f64;
+                    output["connectivity_ratio"] = serde_json::json!(ratio);
+                    output["health"] = serde_json::json!(if ratio < 0.1 {
+                        "poor"
+                    } else if ratio < 0.5 {
+                        "fair"
+                    } else {
+                        "good"
+                    });
+                }
+                // Include language/file-type breakdown if requested (X4: merged from codegraph_project_meta)
+                if req.include_meta {
+                    let conn = pipeline.store().conn();
+                    let mut stmt = conn
+                        .prepare(
+                            "SELECT COUNT(*),
                         SUM(CASE WHEN path LIKE '%.rs' THEN 1 ELSE 0 END),
                         SUM(CASE WHEN path LIKE '%.toml' THEN 1 ELSE 0 END),
                         SUM(CASE WHEN path LIKE '%.md' THEN 1 ELSE 0 END)
                  FROM code_files",
-                    )
-                    .map_err(db_err)?;
-                if let Ok(meta) = stmt.query_row([], |row| {
-                    Ok(serde_json::json!({
-                        "total": row.get::<_, i64>(0)?,
-                        "rust": row.get::<_, i64>(1)?,
-                        "toml": row.get::<_, i64>(2)?,
-                        "md": row.get::<_, i64>(3)?,
-                        "primary_language": "Rust",
-                    }))
-                }) {
-                    output["meta"] = meta;
+                        )
+                        .map_err(db_err)?;
+                    if let Ok(meta) = stmt.query_row([], |row| {
+                        Ok(serde_json::json!({
+                            "total": row.get::<_, i64>(0)?,
+                            "rust": row.get::<_, i64>(1)?,
+                            "toml": row.get::<_, i64>(2)?,
+                            "md": row.get::<_, i64>(3)?,
+                            "primary_language": "Rust",
+                        }))
+                    }) {
+                        output["meta"] = meta;
+                    }
                 }
-            }
-            Ok(output)
-        })
+                Ok(output)
+            },
+        )
         .await
     }
 
     #[tool(description = "Force full re-index of the workspace")]
     pub async fn codegraph_reindex(&self) -> String {
-        execute_tool(self, "codegraph_reindex", async {
+        execute_tool_semantic(self, "codegraph_reindex", Self::ontology_anchor("codegraph_reindex"), async {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             // Acquire a mutable lock so we can call finalize() (which needs &mut self).
             let mut pipeline = self.pipeline_guard()?;
@@ -467,102 +594,119 @@ impl CodeGraphServer {
         &self,
         Parameters(req): Parameters<EmbedIndexRequest>,
     ) -> String {
-        execute_tool(self, "codegraph_index_embeddings", async {
-            self.ensure_indexed()?;
+        execute_tool_semantic(
+            self,
+            "codegraph_index_embeddings",
+            Self::ontology_anchor("codegraph_index_embeddings"),
+            async {
+                self.ensure_indexed()?;
 
-            // Resolve the embedding model and dimension.
-            let model = req
-                .model
-                .unwrap_or_else(hkask_inference::model_constants::embedding_model);
-            let dim: usize = crate::codegraph::graph::schema::resolve_embedding_dim();
+                // Resolve the embedding model and dimension.
+                let model = req
+                    .model
+                    .unwrap_or_else(hkask_inference::model_constants::embedding_model);
+                let dim: usize = crate::codegraph::graph::schema::resolve_embedding_dim();
 
-            // Collect all symbols for embedding — drop the lock before any
-            // async API calls. GraphStore is not Send (RefCell<LruCache>),
-            // so we cannot hold the MutexGuard across .await points.
-            let symbols: Vec<(i64, String, String)> = {
-                let pipeline = self.pipeline_guard()?;
-                let store = pipeline.store();
-                store.all_symbols_for_embedding().map_err(db_err)?
-            };
+                // Collect all symbols for embedding — drop the lock before any
+                // async API calls. GraphStore is not Send (RefCell<LruCache>),
+                // so we cannot hold the MutexGuard across .await points.
+                let symbols: Vec<(i64, String, String)> = {
+                    let pipeline = self.pipeline_guard()?;
+                    let store = pipeline.store();
+                    store.all_symbols_for_embedding().map_err(db_err)?
+                };
 
-            if symbols.is_empty() {
-                return Ok(serde_json::json!({
-                    "symbols_embedded": 0,
-                    "model": model,
-                    "dim": dim,
-                    "errors": [],
-                    "note": "no symbols indexed — run codegraph_reindex first"
-                }));
-            }
+                if symbols.is_empty() {
+                    return Ok(serde_json::json!({
+                        "symbols_embedded": 0,
+                        "model": model,
+                        "dim": dim,
+                        "errors": [],
+                        "note": "no symbols indexed — run codegraph_reindex first"
+                    }));
+                }
 
-            let batch_size = req.batch_size.max(1) as usize;
-            let mut embeddings_to_insert: Vec<(i64, Vec<f32>)> = Vec::new();
-            let mut errors: Vec<String> = Vec::new();
+                let batch_size = req.batch_size.max(1) as usize;
+                let mut embeddings_to_insert: Vec<(i64, Vec<f32>)> = Vec::new();
+                let mut errors: Vec<String> = Vec::new();
 
-            for chunk in symbols.chunks(batch_size) {
-                let texts: Vec<String> = chunk.iter().map(|(_, _, t)| t.clone()).collect();
+                for chunk in symbols.chunks(batch_size) {
+                    let texts: Vec<String> = chunk.iter().map(|(_, _, t)| t.clone()).collect();
 
-                match self.inference_port.embed(&model, &texts).await {
-                    Ok(vectors) => {
-                        for (i, embedding) in vectors.iter().enumerate() {
-                            if i >= chunk.len() {
-                                break;
+                    match self.inference_port.embed(&model, &texts).await {
+                        Ok(vectors) => {
+                            for (i, embedding) in vectors.iter().enumerate() {
+                                if i >= chunk.len() {
+                                    break;
+                                }
+                                if embedding.len() == dim {
+                                    embeddings_to_insert.push((chunk[i].0, embedding.clone()));
+                                } else {
+                                    errors.push(format!(
+                                        "dimension mismatch: expected {}, got {}",
+                                        dim,
+                                        embedding.len()
+                                    ));
+                                }
                             }
-                            if embedding.len() == dim {
-                                embeddings_to_insert.push((chunk[i].0, embedding.clone()));
-                            } else {
-                                errors.push(format!(
-                                    "dimension mismatch: expected {}, got {}",
-                                    dim,
-                                    embedding.len()
-                                ));
+                        }
+                        Err(e) => {
+                            errors.push(format!("embedding API error: {}", e));
+                        }
+                    }
+                }
+
+                // Re-acquire the lock to insert embeddings into the database.
+                let symbols_embedded = {
+                    let pipeline = self.pipeline_guard()?;
+                    let store = pipeline.store();
+                    let mut count = 0usize;
+                    for (symbol_id, embedding) in &embeddings_to_insert {
+                        match store.upsert_embedding(*symbol_id, embedding) {
+                            Ok(()) => count += 1,
+                            Err(e) => {
+                                errors.push(format!("symbol {} insert failed: {}", symbol_id, e))
                             }
                         }
                     }
-                    Err(e) => {
-                        errors.push(format!("embedding API error: {}", e));
-                    }
-                }
-            }
+                    count
+                };
 
-            // Re-acquire the lock to insert embeddings into the database.
-            let symbols_embedded = {
-                let pipeline = self.pipeline_guard()?;
-                let store = pipeline.store();
-                let mut count = 0usize;
-                for (symbol_id, embedding) in &embeddings_to_insert {
-                    match store.upsert_embedding(*symbol_id, embedding) {
-                        Ok(()) => count += 1,
-                        Err(e) => errors.push(format!("symbol {} insert failed: {}", symbol_id, e)),
-                    }
-                }
-                count
-            };
+                tracing::info!(
+                    target: "hkask.mcp.codegraph",
+                    symbols_embedded,
+                    total_symbols = symbols.len(),
+                    model = %model,
+                    dim,
+                    error_count = errors.len(),
+                    "Embedding indexing complete"
+                );
 
-            tracing::info!(
-                target: "hkask.mcp.codegraph",
-                symbols_embedded,
-                total_symbols = symbols.len(),
-                model = %model,
-                dim,
-                error_count = errors.len(),
-                "Embedding indexing complete"
-            );
-
-            Ok(serde_json::json!({
-                "symbols_embedded": symbols_embedded,
-                "total_symbols": symbols.len(),
-                "model": model,
-                "dim": dim,
-                "errors": errors,
-            }))
-        })
+                Ok(serde_json::json!({
+                    "symbols_embedded": symbols_embedded,
+                    "total_symbols": symbols.len(),
+                    "model": model,
+                    "dim": dim,
+                    "errors": errors,
+                }))
+            },
+        )
         .await
     }
 }
 
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
-    let db_path = std::env::var("HKASK_CODEGRAPH_DB").ok();
+    // D28 — Standardized Artifact Storage. Default DB path is
+    // `{kask_data_dir}/mcp/codegraph/codegraph.db`, resolved via
+    // `resolve_under_data_dir`. Override via `HKASK_CODEGRAPH_DB`.
+    let db_path = std::env::var("HKASK_CODEGRAPH_DB")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            hkask_types::agent_paths::resolve_under_data_dir(
+                &hkask_types::agent_paths::mcp_server_db("codegraph", "codegraph"),
+            )
+        });
     // Resolve the inference port once — routes embeddings through zed's
     // LanguageModelEmbeddingPort via the IPC bridge.
     let inference_port = hkask_inference::resolve_inference_port().await;
@@ -572,22 +716,11 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         |ctx| {
             let webid = ctx.webid;
             let store =
-                match &db_path {
-                    Some(path) => {
-                        crate::codegraph::graph::store::GraphStore::open(path).map_err(|e| {
-                            hkask_mcp_server::McpError::UnexpectedResponse {
-                                context: "codegraph graph store open".into(),
-                                detail: e.to_string(),
-                            }
-                        })?
-                    }
-                    None => crate::codegraph::graph::store::GraphStore::open_in_memory().map_err(
-                        |e| hkask_mcp_server::McpError::UnexpectedResponse {
-                            context: "codegraph graph store open_in_memory".into(),
-                            detail: e.to_string(),
-                        },
-                    )?,
-                };
+                crate::codegraph::graph::store::GraphStore::open(&db_path.to_string_lossy())
+                    .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
+                        context: "codegraph graph store open".into(),
+                        detail: e.to_string(),
+                    })?;
             let pipeline = IndexPipeline::new(store);
             Ok(CodeGraphServer::new(
                 webid,

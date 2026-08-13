@@ -1618,23 +1618,31 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         Err(_) => DEFAULT_CACHE_TTL_SECS,
     };
 
-    // Calibration journal: HKASK_PREDICTION_MARKETS_DATA points at the data
-    // dir; the journal lives at <dir>/calibration.jsonl. A load failure is
-    // never silent — the loop must distinguish "no data" from "failed to
-    // read data" (the unwrap_or(0) sense-input trap).
-    let data_dir = std::env::var("HKASK_PREDICTION_MARKETS_DATA").ok();
-    let calibration_path = data_dir.as_ref().map(|d| format!("{d}/calibration.jsonl"));
-    let store = match &calibration_path {
-        Some(path) => match calibration::CalibrationStore::load(std::path::Path::new(path)) {
-            Ok(store) => store,
-            Err(e) => {
-                tracing::warn!(
-                    "calibration journal at {path} failed to load ({e});                          starting with an empty store — calibration signals                          will read stale until new observations accrue"
-                );
-                calibration::CalibrationStore::new()
-            }
-        },
-        None => calibration::CalibrationStore::new(),
+    // D28 — Standardized Artifact Storage. Calibration journal lives at
+    // `{kask_data_dir}/mcp/prediction-markets/calibration.jsonl`. Override
+    // via `HKASK_PREDICTION_MARKETS_DATA` (points at the data dir; the
+    // journal lives at <dir>/calibration.jsonl). A load failure is never
+    // silent — the loop must distinguish "no data" from "failed to read
+    // data" (the unwrap_or(0) sense-input trap).
+    let data_dir = std::env::var("HKASK_PREDICTION_MARKETS_DATA")
+        .ok()
+        .unwrap_or_else(|| {
+            hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+                hkask_types::agent_paths::MCP_DIR,
+            ))
+            .join("prediction-markets")
+            .to_string_lossy()
+            .to_string()
+        });
+    let calibration_path = format!("{data_dir}/calibration.jsonl");
+    let store = match calibration::CalibrationStore::load(std::path::Path::new(&calibration_path)) {
+        Ok(store) => store,
+        Err(e) => {
+            tracing::warn!(
+                "calibration journal at {calibration_path} failed to load ({e});                          starting with an empty store — calibration signals                          will read stale until new observations accrue"
+            );
+            calibration::CalibrationStore::new()
+        }
     };
 
     let base_events = std::env::var("HKASK_PREDICTION_MARKETS_BASE_EVENTS")
@@ -1659,7 +1667,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 cache_ttl_secs,
                 std::sync::Arc::new(std::sync::Mutex::new(store)),
                 cache::TtlCache::new(cache_ttl_secs),
-                calibration_path.clone(),
+                Some(calibration_path.clone()),
                 base_events.clone(),
                 std::sync::Mutex::new(HashSet::new()),
                 portfolio_store,

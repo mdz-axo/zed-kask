@@ -400,7 +400,7 @@ pub(crate) fn kask_page() -> SettingsPage {
             json_path: Some("kask.data_dir"),
             description: Some(
                 "Configure the kask data directory — the root for all kask \
-                 databases, agent state, and file-based stores. Every MCP server \
+                 artifacts (agents/, mcp/, skills/, threads/). Every MCP server \
                  receives this path as HKASK_DATA_DIR. When empty, the runtime \
                  resolves a platform default (~/.local/share/hkask on Linux)."
                     .into(),

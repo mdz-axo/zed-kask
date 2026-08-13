@@ -9331,6 +9331,7 @@ name = "hkask-mcp-codegraph"
 version = "0.34.0"
 dependencies = [
  "blake3",
+ "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-test-harness",
@@ -9358,7 +9359,6 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "chrono",
- "dirs",
  "hkask-bridge-ontology",
  "hkask-forecast",
  "hkask-mcp-portfolio",
@@ -9386,6 +9386,7 @@ name = "hkask-mcp-condenser"
 version = "0.34.0"
 dependencies = [
  "anyhow",
+ "hkask-bridge-ontology",
  "hkask-condenser",
  "hkask-inference",
  "hkask-mcp-server",
@@ -9525,7 +9526,6 @@ name = "hkask-mcp-portfolio"
 version = "0.34.0"
 dependencies = [
  "chrono",
- "dirs",
  "hkask-bridge-ontology",
  "hkask-mcp-server",
  "hkask-types",

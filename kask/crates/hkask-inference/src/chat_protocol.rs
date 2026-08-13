@@ -403,15 +403,31 @@ pub fn parse_sse_stream(
     model_id: &str,
 ) -> Vec<Result<InferenceStreamChunk, InferenceError>> {
     let mut chunks: Vec<Result<InferenceStreamChunk, InferenceError>> = Vec::new();
+    // Track parse failures so a stream where *every* non-trivial line is
+    // unparseable (provider changed schema, returned an HTML error page, etc.)
+    // is not silently masked as a clean empty-then-stop. The per-line `continue`
+    // is correct for SSE (malformed lines are expected), but a 100% failure rate
+    // means the consumer would see a synthesized "stop" chunk with no signal that
+    // the stream was entirely unparseable (F10 — loop not closed).
+    let mut lines_seen: usize = 0;
+    let mut parse_failures: usize = 0;
+    let mut first_offending_line: Option<&str> = None;
     for line in body.lines() {
         let line = line.trim();
         if line.is_empty() || line == "data: [DONE]" {
             continue;
         }
+        lines_seen += 1;
         let json_str = line.strip_prefix("data: ").unwrap_or(line);
         let chunk: StreamChunk = match serde_json::from_str(json_str) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(_) => {
+                parse_failures += 1;
+                if first_offending_line.is_none() {
+                    first_offending_line = Some(line);
+                }
+                continue;
+            }
         };
         let choice = match chunk.choices.first() {
             Some(c) => c,
@@ -454,6 +470,20 @@ pub fn parse_sse_stream(
     }
 
     if chunks.is_empty() {
+        // If every non-trivial line failed to parse, the stream was entirely
+        // unparseable — warn so an operator can distinguish "provider returned
+        // an empty stream" from "provider changed schema / returned an error page."
+        // The synthesized stop chunk below is still emitted (the consumer contract
+        // expects at least one chunk), but the warn closes the observability loop.
+        if lines_seen > 0 && parse_failures == lines_seen {
+            tracing::warn!(
+                target: "hkask.inference.sse",
+                model = %model_id,
+                lines_seen,
+                first_offending_line = first_offending_line.unwrap_or(""),
+                "SSE stream: every non-trivial line failed to parse — provider may have changed schema or returned an error page"
+            );
+        }
         chunks.push(Ok(InferenceStreamChunk {
             text_delta: String::new(),
             reasoning_delta: String::new(),
@@ -924,5 +954,50 @@ data: [DONE]
         let resp: ChatResponse = serde_json::from_str(raw).expect("deserialize");
         let result = chat_response_to_result(resp).expect("result");
         assert_eq!(result.cost_usd, None);
+    }
+
+    // F10 — a stream where every non-trivial line fails to parse (provider
+    // changed schema, returned an HTML error page, etc.) must still produce a
+    // synthesized stop chunk (the consumer contract expects at least one), but
+    // the parse-failure tracking must be observable so the warn fires. This test
+    // pins the behavioral contract: the synthesized chunk is emitted, and the
+    // function does not panic. The warn itself is verified by the parse-failure
+    // counter logic (if `lines_seen > 0 && parse_failures == lines_seen`, the
+    // warn fires — this test exercises that path with a fully-unparseable body).
+    #[test]
+    fn parse_sse_stream_synthesizes_stop_when_all_lines_unparseable() {
+        // An HTML error page — every line fails to parse as SSE JSON.
+        let body = "<html><body>503 Service Unavailable</body></html>";
+        let chunks = parse_sse_stream(body, "test-model");
+        // Must produce exactly one synthesized stop chunk (consumer contract).
+        assert_eq!(
+            chunks.len(),
+            1,
+            "must synthesize one stop chunk for an unparseable stream"
+        );
+        let chunk = chunks[0].as_ref().expect("synthesized chunk is Ok");
+        assert_eq!(chunk.model, "test-model");
+        assert_eq!(chunk.finish_reason.as_deref(), Some("stop"));
+        assert!(
+            chunk.text_delta.is_empty(),
+            "synthesized chunk has empty text"
+        );
+    }
+
+    // F10 — a stream with a mix of parseable and unparseable lines must not
+    // warn (partial failure is normal for SSE). Only a 100% failure rate fires
+    // the warn. This test pins that a single good chunk suppresses the warn.
+    #[test]
+    fn parse_sse_stream_does_not_synthesize_when_some_lines_parse() {
+        let body = "data: not-json\ndata: {\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n";
+        let chunks = parse_sse_stream(body, "m");
+        // One good chunk → no synthesized stop (chunks is non-empty).
+        assert_eq!(
+            chunks.len(),
+            1,
+            "must produce the one good chunk, not synthesize"
+        );
+        let chunk = chunks[0].as_ref().expect("chunk is Ok");
+        assert_eq!(chunk.text_delta, "hi");
     }
 }

@@ -1487,14 +1487,17 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         env!("CARGO_PKG_VERSION"),
         |ctx: ServerContext| {
             (|| -> anyhow::Result<KanbanServer> {
-                // Use the standard per-agent kanban DB path when not explicitly set.
+                // D28 — Standardized Artifact Storage. Default DB path is
+                // `{kask_data_dir}/mcp/kata-kanban/kanban.db`, resolved via
+                // `resolve_under_data_dir`. Override via `HKASK_KANBAN_DB`.
                 // `HKASK_KANBAN_DB` is a non-secret config path — read via
                 // `std::env::var` (matching every other DB-path env var:
                 // `HKASK_CURATOR_DB`, `HKASK_DB_PATH`, `HKASK_RSS_DB`, etc.)
                 // and injected via `config_env`, not `credentials`.
                 let kanban_db_path = std::env::var("HKASK_KANBAN_DB")
                     .unwrap_or_else(|_| {
-                        let relative_path = hkask_types::agent_paths::agent_kanban_db("curator");
+                        let relative_path =
+                            hkask_types::agent_paths::mcp_server_db("kata-kanban", "kanban");
                         let default_path =
                             hkask_types::agent_paths::resolve_under_data_dir(&relative_path);
                         if let Some(Err(error)) = default_path.parent().map(std::fs::create_dir_all)

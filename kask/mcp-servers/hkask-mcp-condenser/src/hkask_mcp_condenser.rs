@@ -34,7 +34,7 @@ use hkask_condenser::inference::SUMMARY_SYSTEM_PROMPT;
 use hkask_condenser::saliency;
 use hkask_condenser::types::*;
 
-use hkask_mcp_server::server::{CapabilityTier, McpToolError, execute_tool};
+use hkask_mcp_server::server::{CapabilityTier, McpToolError, execute_tool_semantic};
 use hkask_memory::{MemoryStore, MemoryStoreError};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{Database, EmbeddingStore, HMem, HMemError};
@@ -169,6 +169,23 @@ impl CondenserServer {
             );
         }
     }
+
+    /// Map a tool name to its PKO / Dublin Core ontology concept URI. The
+    /// concept tags the `reg.tool` span (via `execute_tool_semantic`) for
+    /// type-aware feedback routing. Condensation is a knowledge-production
+    /// process, so the condenser tools anchor on PKO (procedure axis); the
+    /// liveness ping anchors on Dublin Core (state axis).
+    fn ontology_anchor(tool: &str) -> Option<&'static str> {
+        use hkask_bridge_ontology::{dc_bibo, pko};
+        match tool {
+            // Liveness / status — state axis
+            "condenser_ping" => Some(dc_bibo::DATASET),
+            // Condensation tools — process axis
+            "condenser_persist" => Some(pko::PROCEDURE_EXECUTION),
+            "condenser_thread_summary" | "condenser_score_saliency" => Some(pko::PROCEDURE),
+            _ => Some(pko::PROCEDURE),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -183,6 +200,56 @@ mod tool_surface_tests {
     fn tool_surface_is_exactly_4_registered_tools() {
         let n = CondenserServer::tool_router().list_all().len();
         assert_eq!(n, 4, "condenser registered tool surface changed; got {n}");
+    }
+
+    // Coverage: every registered tool must have a non-None ontology anchor.
+    // Catches the silent-drop failure mode where a new tool is added to the
+    // router without a corresponding arm in ontology_anchor. The count pin
+    // above catches addition; this test catches anchoring.
+    #[test]
+    fn ontology_anchor_covers_all_registered_tools() {
+        let router = CondenserServer::tool_router();
+        for tool in router.list_all() {
+            assert!(
+                CondenserServer::ontology_anchor(&tool.name).is_some(),
+                "ontology_anchor returned None for registered tool '{}'; \
+                 add an explicit arm or adjust the fallback",
+                tool.name
+            );
+        }
+    }
+
+    // Regression: the ontology anchor must not collapse to a single constant.
+    // The liveness ping anchors on Dublin Core (state axis); the condensation
+    // tools anchor on PKO (process axis). A future stub regression would make
+    // these equal.
+    #[test]
+    fn ontology_anchor_distinguishes_tool_families() {
+        use hkask_bridge_ontology::{dc_bibo, pko};
+        let ping = CondenserServer::ontology_anchor("condenser_ping");
+        let persist = CondenserServer::ontology_anchor("condenser_persist");
+        let summary = CondenserServer::ontology_anchor("condenser_thread_summary");
+        // State axis vs process axis — distinct ontologies.
+        assert_ne!(
+            ping, persist,
+            "condenser_ping (Dublin Core) and condenser_persist (PKO) must anchor on distinct ontologies"
+        );
+        // Specific concept pins.
+        assert_eq!(
+            ping,
+            Some(dc_bibo::DATASET),
+            "condenser_ping must anchor on Dublin Core Dataset"
+        );
+        assert_eq!(
+            persist,
+            Some(pko::PROCEDURE_EXECUTION),
+            "condenser_persist must anchor on PKO ProcedureExecution"
+        );
+        assert_eq!(
+            summary,
+            Some(pko::PROCEDURE),
+            "condenser_thread_summary must anchor on PKO Procedure"
+        );
     }
 }
 

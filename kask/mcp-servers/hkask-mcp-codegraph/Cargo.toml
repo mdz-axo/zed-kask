@@ -18,6 +18,9 @@ tracing = { workspace = true }
 
 rusqlite = { workspace = true, features = ["bundled"] }
 
+# Ontology vocabulary bridge — concept URIs for the reg.tool span ontology tag.
+hkask-bridge-ontology.workspace = true
+
 # Codegraph engine dependencies
 sqlite-vec.workspace = true
 thiserror = { workspace = true }

@@ -25,7 +25,6 @@ schemars.workspace = true
 chrono.workspace = true
 rusqlite.workspace = true
 uuid.workspace = true
-dirs.workspace = true
 thiserror.workspace = true
 
 [lints]

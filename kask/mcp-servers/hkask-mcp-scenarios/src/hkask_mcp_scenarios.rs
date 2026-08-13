@@ -1933,12 +1933,22 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         "hkask-mcp-scenarios",
         SERVER_VERSION,
         |ctx| {
+            // D28 — Standardized Artifact Storage. Default data dir is
+            // `{kask_data_dir}/mcp/scenarios/`. Override via
+            // `HKASK_SCENARIOS_DATA`.
+            let scenarios_data_dir = std::env::var("HKASK_SCENARIOS_DATA")
+                .ok()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| {
+                    hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+                        hkask_types::agent_paths::MCP_DIR,
+                    ))
+                    .join("scenarios")
+                });
             Ok(ScenariosServer::new(
                 ctx.webid,
                 std::sync::Arc::new(std::sync::Mutex::new(superforecast::ForecastStore::new(
-                    std::env::var("HKASK_SCENARIOS_DATA")
-                        .ok()
-                        .map(std::path::PathBuf::from),
+                    Some(scenarios_data_dir),
                 ))),
                 std::sync::Mutex::new(None),
                 std::sync::Mutex::new(HashSet::new()),

@@ -67,12 +67,16 @@ const MAX_DECODED_ATTACHMENT_BYTES: usize = 6 * 1024 * 1024;
 /// Resolve the SQLite DB path for an owner, mirroring the portfolio crate's
 /// `PortfolioStore::new` path resolution. The companies module opens its
 /// own connection to the same DB for notes/files/forecasts tables.
+///
+/// D28 — Standardized Artifact Storage. Path is
+/// `{kask_data_dir}/mcp/portfolio/{owner}/master.db`.
 fn resolve_db_path(owner: &WebID) -> Result<PathBuf, PortfolioError> {
-    let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    path.push("hkask");
-    path.push("portfolios");
+    let mut path = hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+        hkask_types::agent_paths::MCP_DIR,
+    ))
+    .join("portfolio");
     path.push(sanitize_name(&owner.to_string()));
-    // A read-only config dir, a full disk, or a permissions error must surface
+    // A read-only data dir, a full disk, or a permissions error must surface
     // as an error the server can report, not abort the process at startup.
     // Mirrors `PortfolioStore::new`, which already propagates.
     std::fs::create_dir_all(&path).map_err(|e| {

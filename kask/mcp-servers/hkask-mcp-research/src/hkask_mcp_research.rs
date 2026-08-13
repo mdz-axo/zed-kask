@@ -1335,12 +1335,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 .unwrap_or(DEFAULT_CACHE_MAX_ENTRIES);
 
             let rss_db = {
-                // Resolve the RSS database path from the process env, then
-                // fall back to a default path under the data directory — the
-                // same pattern as HKASK_KANBAN_DB in the kata-kanban server.
+                // D28 — Standardized Artifact Storage. Default DB path is
+                // `{kask_data_dir}/mcp/research/rss.db`, resolved via
+                // `resolve_under_data_dir`. Override via `HKASK_RSS_DB`.
                 let rss_db_path = std::env::var("HKASK_RSS_DB").ok().unwrap_or_else(|| {
                     let default_path = hkask_types::agent_paths::resolve_under_data_dir(
-                        std::path::Path::new("rss.db"),
+                        &hkask_types::agent_paths::mcp_server_db("research", "rss"),
                     );
                     if let Some(parent) = default_path.parent() {
                         if let Err(error) = std::fs::create_dir_all(parent) {

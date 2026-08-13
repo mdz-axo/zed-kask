@@ -40,21 +40,29 @@ pub const DEFAULT_DB_PATH: &str = "hkask.db";
 /// Resolve the hKask data directory.
 ///
 /// Order of precedence:
-/// 1. `HKASK_DATA_DIR` environment variable
+/// 1. `HKASK_DATA_DIR` environment variable (honored only when absolute or
+///    `.`-prefixed — a relative value is treated as misconfig and falls
+///    through, so agent DBs don't silently land in an arbitrary CWD)
 /// 2. `$XDG_DATA_HOME/hkask`
 /// 3. `$HOME/.local/share/hkask`
-/// 4. Current working directory (fallback)
+/// 4. Current working directory (fallback, with a `warn!`)
 ///
 /// All relative database paths in `ServiceConfig` are resolved against
 /// this directory, ensuring agent databases stay in a predictable location
-/// regardless of where `kask` is invoked from.
+/// regardless of where `kask` is invoked from. This is the single regulator for
+/// the data-dir rule — `resolve_under_data_dir` delegates here so the two
+/// helpers cannot diverge (F4: they previously did, splitting agent DBs across
+/// two trees on a relative `HKASK_DATA_DIR`).
 #[must_use]
 pub fn resolve_data_dir() -> std::path::PathBuf {
     if let Ok(dir) = std::env::var("HKASK_DATA_DIR") {
-        let p = std::path::PathBuf::from(&dir);
-        if p.is_absolute() || p.starts_with(".") {
-            return p;
+        let path = std::path::PathBuf::from(&dir);
+        if path.is_absolute() || path.starts_with(".") {
+            return path;
         }
+        // A relative `HKASK_DATA_DIR` is almost certainly a misconfig — agent
+        // DBs would land in whatever CWD the process happened to start from.
+        // Fall through to XDG/HOME rather than honoring it.
     }
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         return std::path::PathBuf::from(xdg).join("hkask");
@@ -65,37 +73,25 @@ pub fn resolve_data_dir() -> std::path::PathBuf {
             .join("share")
             .join("hkask");
     }
+    tracing::warn!(
+        target: "hkask.paths",
+        "No data directory resolved (HKASK_DATA_DIR, XDG_DATA_HOME, HOME all unset) — \
+         falling back to CWD. Agent databases may be created in \
+         an unpredictable location across restarts. Set HKASK_DATA_DIR or HOME."
+    );
     std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 /// Resolve a relative agent path against the hKask data directory.
 ///
-/// Checks `HKASK_DATA_DIR` env var, falls back to CWD. This ensures
-/// agent databases end up in a predictable location regardless of where
-/// the MCP server process is spawned from.
+/// Delegates to `resolve_data_dir()` so the `HKASK_DATA_DIR` / XDG / HOME
+/// fallback chain has exactly one regulator. Previously this duplicated the
+/// chain but honored a relative `HKASK_DATA_DIR` unconditionally while
+/// `resolve_data_dir` rejected it — the divergence could split agent DBs across
+/// two trees (F4). Now both helpers apply the same rule.
 #[must_use]
 pub fn resolve_under_data_dir(relative: &std::path::Path) -> std::path::PathBuf {
-    if let Ok(dir) = std::env::var("HKASK_DATA_DIR") {
-        return std::path::PathBuf::from(dir).join(relative);
-    }
-    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-        return std::path::PathBuf::from(xdg).join("hkask").join(relative);
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return std::path::PathBuf::from(home)
-            .join(".local")
-            .join("share")
-            .join("hkask")
-            .join(relative);
-    }
-    tracing::warn!(
-        target: "hkask.paths",
-        relative = %relative.display(),
-        "No data directory resolved (HKASK_DATA_DIR, XDG_DATA_HOME, HOME all unset) — \
-         falling back to CWD-relative path. Agent databases may be created in \
-         an unpredictable location across restarts. Set HKASK_DATA_DIR or HOME."
-    );
-    relative.to_path_buf()
+    resolve_data_dir().join(relative)
 }
 
 /// Get the directory for a specific agent.

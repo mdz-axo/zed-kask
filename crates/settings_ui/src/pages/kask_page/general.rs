@@ -62,12 +62,15 @@ pub(crate) fn render_general_page(
                 .child(SettingsSectionHeader::new("General"))
                 .child(
                     Label::new(
-                        "The kask data directory is the root for all kask databases, \
-                         agent state, and file-based stores. Every MCP server receives \
-                         this path as HKASK_DATA_DIR so they resolve databases \
-                         consistently. When empty, the runtime resolves a platform \
-                         default (HKASK_DATA_DIR env var, XDG_DATA_HOME/hkask, or \
-                         ~/.local/share/hkask).",
+                        "The kask data directory is the root for all kask \
+                         artifacts. It contains four class subdirectories: \
+                         agents/ (per-agent files), mcp/ (MCP server \
+                         databases), skills/ (user skills), and threads/ \
+                         (archived chat threads). Every MCP server receives \
+                         this path as HKASK_DATA_DIR so they resolve \
+                         databases consistently. When empty, the runtime \
+                         resolves a platform default (HKASK_DATA_DIR env \
+                         var, XDG_DATA_HOME/hkask, or ~/.local/share/hkask).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
