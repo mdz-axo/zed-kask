@@ -170,6 +170,13 @@ def audit_issue_3(manifests):
 
 
 def audit_issue_4(manifests):
+    """Issue 4: manifests with on_timeout: retry.
+
+    NOTE: As of the Issue 4 Option B follow-up, retry IS implemented
+    (StepMachine::dispatch_with_retry). on_timeout: retry is now the desired
+    default — it is no longer dead config. This audit entry is retained for
+    historical visibility but the count is now informational, not a defect.
+    """
     findings = []
     for name, (path, data) in manifests.items():
         eh = data.get("error_handling", {}) or {}
@@ -248,7 +255,7 @@ def main():
 
     print()
     print("=" * 70)
-    print("ISSUE 4: on_timeout: retry (dead config)")
+    print("ISSUE 4: on_timeout: retry (now ENFORCED — dispatch_with_retry)")
     print("=" * 70)
     i4 = audit_issue_4(manifests)
     print(f"Count: {len(i4)} skills\n")

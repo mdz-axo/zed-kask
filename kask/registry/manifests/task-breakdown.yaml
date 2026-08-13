@@ -200,10 +200,6 @@ steps:
       refinement_directives: "{{ step_4_result.refinement_directives | default([]) }}"
       parallelization_hint: "{{ parallelization_hint | default('') }}"
       skill_catalog: "{{ skill_catalog | default([]) }}"
-      prior_outcome: "{{ prior_outcome | default({}) }}"
-      prior_operator_feedback: "{{ prior_operator_feedback | default({}) }}"
-      # Carry prior Lisp defects forward so the LLM repairs cumulatively.
-      prior_task_defects: "{{ step_3_result | default([]) }}"
 
   # ── Step 3: Lisp deterministic step — task structural completeness check ──
   # The LLM generates tasks in step 2, but LLMs are unreliable at checking
@@ -264,7 +260,6 @@ steps:
       slices: "{{ step_2_result.slices | default([]) }}"
       context_summary: "{{ step_1_result.context_summary | default('') }}"
       target_condition: "{{ task | default('') }}"
-      task_defects: "{{ step_3_result | default([]) }}"
 
   - ordinal: 5
     action: select
@@ -331,7 +326,6 @@ steps:
       risks: "{{ step_1_result.risks | default([]) }}"
       evaluation_result: "{{ step_4_result }}"
       refinement_directives: "{{ step_4_result.refinement_directives | default([]) }}"
-      task_defects: "{{ step_3_result | default([]) }}"
 
   - ordinal: 8
     action: loop

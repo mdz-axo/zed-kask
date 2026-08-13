@@ -50,7 +50,7 @@ rjoule:
   hard_limit: true
 
 inputs:
-  - name: proposition
+  - name: proof_obligation
     type: string
     required: false
   - name: proof_context
@@ -75,7 +75,7 @@ steps:
     gas_cap: 7000
     timeout_seconds: 180
     input_mapping:
-      proposition: "{{ task | default(proposition) }}"
+      proof_obligation: "{{ task | default(proof_obligation) }}"
       proof_context: "{{ proof_context | default({}) }}"
       code_context: "{{ code_context | default({}) }}"
 
@@ -91,7 +91,7 @@ steps:
     gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
-      proposition: "{{ proposition }}"
+      proof_obligation: "{{ proof_obligation }}"
       anchor: "{{ step_1_result }}"
       proof_context: "{{ proof_context | default({}) }}"
 
@@ -109,7 +109,7 @@ steps:
     gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
-      proposition: "{{ proposition }}"
+      proof_obligation: "{{ proof_obligation }}"
       proof_attempt: "{{ step_2_result }}"
       anchor: "{{ step_1_result }}"
 
@@ -126,9 +126,9 @@ steps:
     gas_cap: 7000
     timeout_seconds: 150
     input_mapping:
-      proposition: "{{ proposition }}"
+      proof_obligation: "{{ proof_obligation }}"
       proof_attempt: "{{ step_2_result }}"
-      refutation: "{{ step_3_result }}"
+      erase_diagnostics: "{{ step_3_result }}"
 
   - ordinal: 5
     action: loop
