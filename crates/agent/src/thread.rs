@@ -4160,6 +4160,7 @@ impl Thread {
                     cancellation_rx,
                     cx,
                     input_for_tracking,
+                    None,
                 ));
             } else {
                 // [DIAG-T0002] Non-streaming path: tool does not support input
@@ -4186,27 +4187,21 @@ impl Thread {
         }
 
         // Tool retry cap — hard enforcement of the agent-loop retry limit.
-        // After 3 identical failures, warn the agent to switch tools. After 5,
-        // hard-refuse. Prevents the zero-gain retry death spiral where the agent
-        // retries the same failing call with trivially different parameter
-        // orderings (Ashby variety-deficit: the response set must include
-        // {switch_tool, report, stop}, not just {retry}).
+        // After 3 failures, warn the agent to switch tools (with Bayesian probability).
+        // After 5, hard-refuse. Two trackers: per-input (identical retries) and
+        // per-tool consecutive (trivially different inputs, same tool). Prevents
+        // the zero-gain retry death spiral (Ashby variety-deficit).
         let tool_name_str = tool_use.name.as_ref();
-        match self
+        let retry_warning: Option<String> = match self
             .tool_retry_tracker
             .borrow()
             .check(tool_name_str, &input)
         {
-            crate::tool_retry_tracker::RetryVerdict::Refuse { attempt } => {
-                let content = format!(
-                    "Tool '{tool_name_str}' has failed {attempt} times with the same input. \
-                     Hard cap reached — this tool is refused for this input. \
-                     Switch to a different tool (grep, terminal, find_path, spawn_agent) \
-                     or report the blocker to the user. Do not retry with trivially \
-                     different parameters — that is a zero-gain loop."
-                );
+            crate::tool_retry_tracker::RetryVerdict::Refuse { attempt, reason } => {
+                let content =
+                    crate::tool_retry_tracker::format_refusal(tool_name_str, attempt, reason);
                 log::warn!(
-                    "Tool retry cap reached for '{tool_name_str}' (attempt {attempt}) — refusing"
+                    "Tool retry cap reached for '{tool_name_str}' (attempt {attempt}, {reason:?}) — refusing"
                 );
                 return Some(Task::ready((
                     owning_message_ix,
@@ -4219,14 +4214,25 @@ impl Thread {
                     },
                 )));
             }
-            crate::tool_retry_tracker::RetryVerdict::AllowWithWarning { attempt, cap } => {
-                log::warn!(
-                    "Tool '{tool_name_str}' has failed {attempt}/{cap} times with the same input — \
-                     consider switching tools before the hard cap is reached"
+            crate::tool_retry_tracker::RetryVerdict::AllowWithWarning {
+                attempt,
+                consecutive,
+                probability,
+            } => {
+                let warning = crate::tool_retry_tracker::format_warning(
+                    tool_name_str,
+                    attempt,
+                    consecutive,
+                    probability,
                 );
+                log::warn!(
+                    "Tool '{tool_name_str}' retry warning (attempt {attempt}, consecutive {consecutive}, P(success)={:.0}%)",
+                    probability * 100.0
+                );
+                Some(warning)
             }
-            crate::tool_retry_tracker::RetryVerdict::Allow => {}
-        }
+            crate::tool_retry_tracker::RetryVerdict::Allow => None,
+        };
 
         log::debug!("Running tool {}", tool_use.name);
         // [DIAG-T0003] Non-streaming complete path: is_input_complete=true,
@@ -4250,6 +4256,7 @@ impl Thread {
             cancellation_rx,
             cx,
             input,
+            retry_warning,
         ))
     }
 
@@ -4264,6 +4271,7 @@ impl Thread {
         cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
         input_for_tracking: serde_json::Value,
+        retry_warning: Option<String>,
     ) -> Task<(usize, LanguageModelToolResult)> {
         // A workspace can become restricted after a thread has already started.
         // Tools that aren't allowed in restricted workspaces must never run in
@@ -4395,6 +4403,18 @@ impl Thread {
                 output.llm_output
             };
 
+            // Inject the retry warning (if any) into the tool result so the
+            // agent sees it in the model context, not just in the logs. The
+            // warning carries the Bayesian probability of success and a
+            // directive to switch tools.
+            let content = if let Some(warning) = retry_warning {
+                let mut content = content;
+                content.push(LanguageModelToolResultContent::Text(Arc::from(warning)));
+                content
+            } else {
+                content
+            };
+
             (
                 owning_message_ix,
                 LanguageModelToolResult {
@@ -4476,6 +4496,7 @@ impl Thread {
             cancellation_rx,
             cx,
             serde_json::Value::Null,
+            None,
         ))
     }
 

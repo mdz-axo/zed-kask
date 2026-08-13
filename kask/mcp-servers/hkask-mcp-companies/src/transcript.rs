@@ -277,7 +277,7 @@ fn parse_fmp_body(
 //
 // Design: company-corpus-design.md §B3. The pipeline is:
 //   corpus_chunk(text, entity_ref_prefix) → corpus_tag_chunks → corpus_embed
-//   → corpus_extract_triples → centroids → corpus_query
+//   → corpus_extract_assertions → centroids → corpus_query
 // The tools already exist on the corpus server. The only transcript-specific
 // logic is the entity-ref convention: `{company}:{kind}:{date}` so chunks,
 // tags, h_mems, and centroids all reference the same provenance.

@@ -26,11 +26,11 @@ impl CorpusServer {
                 return Err(McpToolError::invalid_argument("label must not be empty"));
             }
 
-            // Resolve cache directory
-            let cache_dir = dirs::config_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("hkask")
-                .join("docproc-cache");
+            // D28 — Standardized Artifact Storage. Cache directory lives at
+            // `mcp/corpus/cache/`.
+            let cache_dir = hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+                "mcp/corpus/cache",
+            ));
 
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
                 return Err(map_corpus_io_error(

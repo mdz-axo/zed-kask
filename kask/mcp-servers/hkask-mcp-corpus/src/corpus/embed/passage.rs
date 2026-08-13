@@ -1,6 +1,6 @@
 //! TaggedPassage — fully tagged passage with entity tags, method signals, and salience.
 
-use crate::runtime::TripleExtraction;
+use crate::runtime::PassageExtraction;
 use hkask_memory::salience::{EntityTags, MethodSignals};
 
 /// A fully tagged passage: text + entity tags + method signals + salience.
@@ -31,14 +31,14 @@ pub struct TaggedPassage {
     /// Section type tag for this passage (from classifier or work declaration).
     pub(crate) section_type: String,
     /// Classifier-extracted semantic h_mems (topic, concepts, entities, relationships, quality).
-    pub(crate) semantic_triples: TripleExtraction,
+    pub(crate) semantic_extraction: PassageExtraction,
 }
 
 impl TaggedPassage {
     /// Count how many metadata h_mems this passage would consume if stored.
     /// Excludes the `text` h_mem — text is stored for all passages regardless
     /// of budget, since it's required for exemplar retrieval in compose.
-    pub(crate) fn metadata_triple_count(&self) -> usize {
+    pub(crate) fn metadata_assertion_count(&self) -> usize {
         // 6 structural + entity tags + method tags + 1 salience + 10 signals
         // + 4 orthogonal tags (dimension, doc_type, mds_categories, section_type)
         // + semantic h_mems: 1 topic + concepts + entities + relationships + 1 dimension + quality_flags
@@ -53,17 +53,17 @@ impl TaggedPassage {
             + 1 // document_type
             + self.mds_categories.len() // one per mds_category
             + 1 // section_type
-            + if !self.semantic_triples.topic.is_empty() { 1 } else { 0 }
-            + self.semantic_triples.concepts.len()
-            + self.semantic_triples.entities.len()
-            + self.semantic_triples.relationships.len()
-            + if !self.semantic_triples.primary_dimension.is_empty() { 1 } else { 0 }
-            + self.semantic_triples.quality_flags.len()
-            + self.semantic_triples.extra.len()
+            + if !self.semantic_extraction.topic.is_empty() { 1 } else { 0 }
+            + self.semantic_extraction.concepts.len()
+            + self.semantic_extraction.entities.len()
+            + self.semantic_extraction.relationships.len()
+            + if !self.semantic_extraction.primary_dimension.is_empty() { 1 } else { 0 }
+            + self.semantic_extraction.quality_flags.len()
+            + self.semantic_extraction.extra.len()
     }
 
     /// Total h_mem count including text (for reporting only).
-    pub(crate) fn triple_count(&self) -> usize {
-        1 + self.metadata_triple_count()
+    pub(crate) fn assertion_count(&self) -> usize {
+        1 + self.metadata_assertion_count()
     }
 }

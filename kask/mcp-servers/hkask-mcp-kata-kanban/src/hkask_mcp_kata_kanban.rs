@@ -1556,12 +1556,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     .ok()
                     .filter(|s| !s.trim().is_empty())
                     .unwrap_or_else(|| {
-                        dirs::data_dir()
-                            .unwrap_or_else(|| std::path::Path::new(".").to_path_buf())
-                            .join("hkask")
-                            .join("swarm_ledger.db")
-                            .to_string_lossy()
-                            .to_string()
+                        // D28 — Standardized Artifact Storage. Default
+                        // ledger path is `mcp/swarm/ledger.db`.
+                        hkask_types::agent_paths::resolve_under_data_dir(
+                            &hkask_types::agent_paths::mcp_server_db("swarm", "ledger"),
+                        )
+                        .to_string_lossy()
+                        .to_string()
                     });
                 let skills_dir = std::env::var("HKASK_SKILLS_DIR")
                     .ok()

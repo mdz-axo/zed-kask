@@ -2,7 +2,7 @@
 //!
 //! These tools are the "gather" stage of the unified corpus flow:
 //!
-//!   gather → process (chunk/tag/embed/triples) → output (QA training | persona)
+//!   gather → process (chunk/tag/embed/assertions) → output (QA training | persona)
 //!
 //! `corpus_discover` finds an author's body of work across multiple sources
 //! and generates a corpus.yaml. `corpus_cache_work` caches extracted text

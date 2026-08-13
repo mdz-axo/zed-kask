@@ -39,7 +39,7 @@ pub struct ClassifyResult {
 /// Produced by the h_mem-extractor classifier.
 /// Model configured via `HKASK_CLASSIFIER_MODEL` → `registry/classify/hmem-extractor.yaml`.
 #[derive(Debug, Clone, Default)]
-pub struct TripleExtraction {
+pub struct PassageExtraction {
     /// One-sentence summary of what the passage is about.
     pub topic: String,
     /// Key concepts mentioned in the passage.
@@ -458,24 +458,24 @@ pub async fn classify_batch(
 /// to the model specified in registry/classify/{name}.yaml.
 ///
 /// Returns results in the same order as the input texts.
-/// Failed extractions default to empty TripleExtraction.
+/// Failed extractions default to empty PassageExtraction.
 /// Graceful degradation: no model resolved → all empty extractions.
 ///
 /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
 /// pre:  texts must be non-empty; config must have valid timeout and concurrency
-/// post: returns `Vec<TripleExtraction>` in input order; failed extractions fall back to empty; all empty if no model resolved
+/// post: returns `Vec<PassageExtraction>` in input order; failed extractions fall back to empty; all empty if no model resolved
 #[must_use = "result must be used"]
-pub async fn extract_triples_batch(
+pub async fn extract_passages_batch(
     texts: &[String],
     config: &ClassifierConfig,
     inference_port: Arc<dyn InferencePort>,
-) -> Result<Vec<TripleExtraction>, ServiceError> {
+) -> Result<Vec<PassageExtraction>, ServiceError> {
     // P9: Regulation span
-    tracing::info!(target: "hkask.classify", operation = "extract_triples_batch", item_count = texts.len(), "REG");
+    tracing::info!(target: "hkask.classify", operation = "extract_passages_batch", item_count = texts.len(), "REG");
 
     if config.model.is_empty() {
         tracing::info!("No model resolved for h_mem extraction — returning empty extractions");
-        return Ok(texts.iter().map(|_| TripleExtraction::default()).collect());
+        return Ok(texts.iter().map(|_| PassageExtraction::default()).collect());
     }
 
     let config = Arc::new(config.clone());
@@ -490,12 +490,12 @@ pub async fn extract_triples_batch(
 
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire().await;
-            let result = extract_triples_one(inference_port.as_ref(), &cfg, &text).await;
+            let result = extract_passage_one(inference_port.as_ref(), &cfg, &text).await;
             (i, result)
         }));
     }
 
-    let mut results: Vec<Option<TripleExtraction>> = vec![None; texts.len()];
+    let mut results: Vec<Option<PassageExtraction>> = vec![None; texts.len()];
     for handle in handles {
         match handle.await {
             Ok((i, Ok(result))) => {
@@ -503,7 +503,7 @@ pub async fn extract_triples_batch(
             }
             Ok((i, Err(e))) => {
                 tracing::warn!(index = i, error = %e, "HMem extraction failed, using empty");
-                results[i] = Some(TripleExtraction::default());
+                results[i] = Some(PassageExtraction::default());
             }
             Err(e) => {
                 tracing::warn!(error = %e, "HMem extraction task panicked");
@@ -515,11 +515,11 @@ pub async fn extract_triples_batch(
 }
 
 /// Extract h_mems from a single passage.
-async fn extract_triples_one(
+async fn extract_passage_one(
     inference_port: &dyn InferencePort,
     config: &ClassifierConfig,
     text: &str,
-) -> Result<TripleExtraction, ServiceError> {
+) -> Result<PassageExtraction, ServiceError> {
     let parameters = LLMParameters {
         temperature: config.temperature as f32,
         max_tokens: config.max_tokens,
@@ -546,11 +546,11 @@ async fn extract_triples_one(
     let content = result.text.as_str();
 
     // Parse the structured JSON from the response
-    parse_triple_extraction(content)
+    parse_passage_extraction(content)
 }
 
-/// Parse a TripleExtraction from classifier JSON response.
-pub fn parse_triple_extraction(content: &str) -> Result<TripleExtraction, ServiceError> {
+/// Parse a PassageExtraction from classifier JSON response.
+pub fn parse_passage_extraction(content: &str) -> Result<PassageExtraction, ServiceError> {
     // Brace-balanced extraction (RR-0028): the old first-brace to last-brace
     // slice approach silently merged an injected JSON block in the model's
     // reasoning preamble with its real answer. `extract_json_from_response`
@@ -570,7 +570,7 @@ pub fn parse_triple_extraction(content: &str) -> Result<TripleExtraction, Servic
         }
     })?;
 
-    Ok(TripleExtraction {
+    Ok(PassageExtraction {
         topic: parsed["topic"].as_str().unwrap_or("").to_string(),
         concepts: parsed["concepts"]
             .as_array()
@@ -646,7 +646,7 @@ mod tests {
 
     /// `from_def` must propagate the def's `disable_thinking` into the runtime
     /// config — the field is only effective if it reaches `classify_one` /
-    /// `extract_triples_one`, which read it off `ClassifierConfig`.
+    /// `extract_passage_one`, which read it off `ClassifierConfig`.
     #[test]
     fn from_def_propagates_disable_thinking_true() {
         let cfg = ClassifierConfig::from_def(&ClassifierDef::default());

@@ -3,19 +3,19 @@
 //! This module is the router host for the `semantic_router` tool group.
 //! Helpers live in submodules:
 //! - `qa` — QA response parsing, batch writer, model resolution
-//! - `triples` — RDF predicate → 5W1H dimension mapping
+//! - `assertions` — RDF predicate → 5W1H dimension mapping
 //! - `ontology_io` — tagged-chunks JSONL readers
 //!
 //! The `#[tool_router]` macro requires all `#[tool]` methods to be on a single
 //! `impl CorpusServer` block, so the tool methods stay here in `mod.rs`.
 
+mod assertions;
 mod ontology_io;
 mod qa;
-mod triples;
 
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
 use crate::helpers::map_corpus_io_error;
-use crate::services::triples::{TriplesRequest, TriplesService};
+use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
     Arc, CorpusServer, LLMParameters, McpToolError, Mutex, Parameters, default_embedding_model,
     default_owner, embedding_dim, execute_tool, extract_json_from_response, json, read_jsonl,
@@ -32,7 +32,7 @@ use std::io::Write;
 pub(crate) use ontology_io::read_ontology_namespaces;
 pub(crate) use ontology_io::read_ontology_tags;
 pub(crate) use qa::configured_qa_model;
-pub(crate) use triples::{predicate_to_dimension, triple_confidence};
+pub(crate) use assertions::{assertion_confidence, predicate_to_dimension};
 
 #[tool_router(router = semantic_router, vis = "pub")]
 impl CorpusServer {
@@ -362,26 +362,26 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Extract RDF h_mems (subject, predicate, object) from text using the inference engine. Uses the canonical classifier model (HKASK_CLASSIFIER_MODEL, default Qwen3-235B-A22B-Instruct on DeepInfra) with 3-attempt retry. Reads chunks from chunks_jsonl, processes them concurrently, and stores triples as h_mems in the memory DB with entity=entity_ref from each chunk. When tagged_jsonl is provided, ontology tags from the tagging step are injected to guide predicate selection (GOLEM for narrative, schema.org for expository). Returns a summary (total_chunks, succeeded, failed, h_mems_stored)."
+        description = "Extract assertions (subject, predicate, object) from corpus chunks using the inference engine. Uses the canonical classifier model (HKASK_CLASSIFIER_MODEL, default Qwen3-235B-A22B-Instruct on DeepInfra) with 3-attempt retry. Reads chunks from chunks_jsonl, processes them concurrently, and stores each assertion as a chunk-anchored h_mem (entity=entity_ref, attribute=predicate, value={subject, object}) in the memory DB. When tagged_jsonl is provided, ontology tags from the tagging step are injected to guide predicate selection (GOLEM for narrative, schema.org for expository). Returns a summary (total_chunks, succeeded, failed, h_mems_stored)."
     )]
-    pub async fn corpus_extract_triples(
+    pub async fn corpus_extract_assertions(
         &self,
-        Parameters(ExtractTriplesRequest {
+        Parameters(ExtractAssertionsRequest {
             chunks_jsonl,
             tagged_jsonl,
             db_path,
             passphrase,
-            max_triples,
+            max_assertions,
             owner,
             concurrency,
-        }): Parameters<ExtractTriplesRequest>,
+        }): Parameters<ExtractAssertionsRequest>,
     ) -> String {
-        execute_tool(self, "corpus_extract_triples", async {
-            TriplesService::new(Arc::clone(&self.inference_router))
-                .extract(TriplesRequest {
+        execute_tool(self, "corpus_extract_assertions", async {
+            AssertionsService::new(Arc::clone(&self.inference_router))
+                .extract(AssertionsRequest {
                     chunks_jsonl,
                     tagged_jsonl,
-                    max_triples,
+                    max_assertions,
                     db_path,
                     passphrase,
                     owner,
@@ -598,7 +598,7 @@ fn default_batch_concurrency() -> usize {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ExtractTriplesRequest {
+pub struct ExtractAssertionsRequest {
     /// Path to chunks JSONL for batch processing. Reads (entity_ref, text) per line.
     pub chunks_jsonl: String,
     /// Path to tagged chunks JSONL (from corpus_tag_chunks). When provided,
@@ -612,21 +612,21 @@ pub struct ExtractTriplesRequest {
     #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
     /// Maximum h_mems to extract per chunk (default 15).
-    #[serde(default = "default_max_triples")]
-    pub max_triples: usize,
+    #[serde(default = "default_max_assertions")]
+    pub max_assertions: usize,
     /// Owner persona for stored h_mems (e.g. "john-brooks").
     #[serde(default = "default_owner")]
     pub owner: String,
     /// Max concurrent LLM calls for batch processing (default 64).
-    #[serde(default = "default_triples_concurrency")]
+    #[serde(default = "default_assertions_concurrency")]
     pub concurrency: usize,
 }
 
-fn default_max_triples() -> usize {
+fn default_max_assertions() -> usize {
     15
 }
 
-fn default_triples_concurrency() -> usize {
+fn default_assertions_concurrency() -> usize {
     64
 }
 

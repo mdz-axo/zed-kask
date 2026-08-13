@@ -199,4 +199,4 @@ budget:
 
 # ── Classifier ──────────────────────────────────────────────────────────────────
 # Literary triple extractor for themes, characters, setting, tone.
-triple_classifier: triple-extractor-literary
+assertion_classifier: triple-extractor-literary

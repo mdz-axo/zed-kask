@@ -11,7 +11,7 @@ use crate::{McpToolError, normalize_concept, read_jsonl_lenient};
 ///
 /// Returns a map of `entity_ref` → formatted ontology context string
 /// (e.g. `"golem: metaphor, character development | fibo: ROIC"`).
-/// Used by `extract_triples_batch` to inject pre-classified ontology tags
+/// Used by `extract_passages_batch` to inject pre-classified ontology tags
 /// into the extraction prompt so the LLM uses the right predicates.
 pub(crate) fn read_ontology_tags(
     path: &str,
@@ -64,8 +64,8 @@ pub(crate) fn read_ontology_tags_annotated(
 /// Read ontology namespace keys per chunk from a tagged chunks JSONL file.
 ///
 /// Returns a map of `entity_ref` → set of normalized namespace keys
-/// (e.g. `{"fibo", "golem"}`). Used by `extract_triples_batch` to cross-check
-/// that a triple's predicate namespace was actually tagged for the chunk
+/// (e.g. `{"fibo", "golem"}`). Used by `extract_passages_batch` to cross-check
+/// that a assertion's predicate namespace was actually tagged for the chunk
 /// before bypassing the text-containment hallucination guard (M4 fix).
 ///
 /// Namespace keys are normalized via `normalize_concept` (lowercase + trim +

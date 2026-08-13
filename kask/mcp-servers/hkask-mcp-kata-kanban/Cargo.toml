@@ -29,7 +29,6 @@ tracing.workspace = true
 anyhow.workspace = true
 minijinja.workspace = true
 schemars.workspace = true
-dirs = { workspace = true }
 
 [lib]
 name = "hkask_mcp_kata_kanban"

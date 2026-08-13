@@ -9,11 +9,11 @@
 //! request/result types + `#[must_use]` on the service method.
 //!
 //! - `convert`         — `ConvertService` (document conversion + directory chunking)
-//! - `triples`         — `TriplesService` (extract RDF h_mems from chunks)
+//! - `assertions`         — `AssertionsService` (extract RDF h_mems from chunks)
 //! - `consolidation`   — `ConsolidationService` (cluster + LLM-synthesize + re-embed)
 //! - `prompt_builder`  — `PromptBuilderService` (KNN + concept graph + knowledge graph + QA prompts)
 
 pub mod consolidation;
 pub mod convert;
 pub mod prompt_builder;
-pub mod triples;
+pub mod assertions;

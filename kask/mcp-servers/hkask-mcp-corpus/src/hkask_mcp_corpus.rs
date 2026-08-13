@@ -5,12 +5,12 @@
 //! Combines the former `hkask-mcp-docproc` and `hkask-mcp-replica` servers into
 //! a single server organized by corpus flow stage:
 //!
-//!   gather → process (chunk/tag/embed/triples) → output (QA training | persona)
+//!   gather → process (chunk/tag/embed/assertions) → output (QA training | persona)
 //!
 //! Tools (24):
 //! - Gather:     corpus_discover, corpus_cache_work
 //! - Process:    corpus_convert, corpus_ocr, corpus_chunk, corpus_tag_chunks,
-//!   corpus_embed, corpus_extract_triples, corpus_dedup_chunks,
+//!   corpus_embed, corpus_extract_assertions, corpus_dedup_chunks,
 //!   corpus_consolidate_chunks
 //! - QA output:  corpus_build_prompts, corpus_generate_qa, corpus_generate_qa_batch,
 //!   corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa
@@ -751,14 +751,14 @@ mod tests {
 
     #[test]
     fn cache_path_construction() {
-        let cache_dir = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("hkask")
-            .join("docproc-cache");
+        // D28 — cache dir is now `mcp/corpus/cache/` under the data root.
+        let cache_dir = hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+            "mcp/corpus/cache",
+        ));
         let safe_label = "test_doc";
         let cache_path = cache_dir.join(format!("{}.md", safe_label));
         assert!(cache_path.ends_with("test_doc.md"));
-        assert!(cache_path.to_string_lossy().contains("docproc-cache"));
+        assert!(cache_path.to_string_lossy().contains("mcp/corpus/cache"));
     }
 
     #[test]

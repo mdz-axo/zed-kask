@@ -147,35 +147,16 @@ pub fn agent_memory_db(name: &str) -> PathBuf {
     agent_dir(name).join("memory.db")
 }
 
-/// Kanban database — tasks, unjam items, board state for the agent.
-pub fn agent_kanban_db(name: &str) -> PathBuf {
-    agent_dir(name).join("kanban.db")
-}
-
-/// Training database — LoRA adapter training jobs (model, dataset, status).
-pub fn agent_training_db(name: &str) -> PathBuf {
-    agent_dir(name).join("training.db")
-}
-
-// ── Directory paths ──────────────────────────────────────────────────────────
-
-/// Adapters directory — LoRA adapter weight files.
-pub fn agent_adapters_dir(name: &str) -> PathBuf {
-    agent_dir(name).join("adapters")
-}
-
 // ── Initialization ───────────────────────────────────────────────────────────
 
 /// All subdirectories created by `ensure_agent_dirs` during agent provisioning.
 ///
-/// Only `adapters` has a live accessor (`agent_adapters_dir`, used by
-/// `hkask-mcp-training`). The remaining dirs are scaffolding — created on
-/// disk as part of the agent directory structure but not yet read/written
-/// by any code. They are retained so future features (gallery, documents,
-/// library, sessions, portfolios, artifacts) have a pre-created home without
-/// needing a migration. Removing a name from this list is safe (the dir is
-/// simply not created); adding one requires updating `ensure_agent_dirs`'s
-/// test.
+/// All entries are scaffolding — created on disk as part of the agent
+/// directory structure but not read/written by any production code (D28
+/// migrated `adapters` to `mcp/training/adapters/`). They are retained so
+/// future features have a pre-created home without needing a migration.
+/// Removing a name from this list is safe (the dir is simply not created);
+/// adding one requires updating `ensure_agent_dirs`'s test.
 pub const AGENT_SUBDIRS: &[&str] = &[
     "gallery",
     "documents",

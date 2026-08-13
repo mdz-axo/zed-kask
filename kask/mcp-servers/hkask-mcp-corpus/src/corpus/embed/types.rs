@@ -26,7 +26,7 @@ pub enum EmbedPhase {
     Parsing,
     Tagging,
     Embedding,
-    Triples,
+    Assertions,
     Centroid,
     Done,
 }
@@ -66,7 +66,7 @@ impl EmbedProgress {
             EmbedPhase::Parsing => "Parsing",
             EmbedPhase::Tagging => "Tagging",
             EmbedPhase::Embedding => "Embedding",
-            EmbedPhase::Triples => "Triples",
+            EmbedPhase::Assertions => "Assertions",
             EmbedPhase::Centroid => "Centroid",
             EmbedPhase::Done => "Done",
         };
@@ -145,15 +145,15 @@ pub struct CorpusConfig {
     /// HMem extractor classifier config name (references registry/classify/{name}.yaml).
     /// Defaults to "h_mem-extractor". Set to empty string to disable.
     /// Model selection, Few-Shot strategy, and fallback are documented in the YAML config.
-    #[serde(default = "default_triple_classifier")]
-    pub triple_classifier: String,
+    #[serde(default = "default_assertion_classifier")]
+    pub assertion_classifier: String,
 }
 
 fn default_corpus_type() -> String {
     "literary".to_string()
 }
 
-fn default_triple_classifier() -> String {
+fn default_assertion_classifier() -> String {
     "h_mem-extractor".to_string()
 }
 
@@ -342,8 +342,8 @@ pub struct EmbedResult {
     pub budget: usize,
     /// Number of passages that earned h_mem storage.
     pub tagged_passages: usize,
-    /// Triples actually stored.
-    pub triples_stored: usize,
+    /// Assertions actually stored.
+    pub assertions_stored: usize,
     /// Passages that got embeddings only (below budget cutoff).
     pub embedding_only: usize,
     /// Per-dimension centroid results (empty if single-centroid path).

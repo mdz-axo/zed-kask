@@ -2,7 +2,7 @@
 //!
 //! Eliminates the duplicated semaphore-gated-concurrency + retry-with-backoff +
 //! degraded-outcome-classification skeleton that was hand-rolled across
-//! `corpus_generate_qa_batch`, `corpus_extract_triples`, `embed_batch_from_jsonl`,
+//! `corpus_generate_qa_batch`, `corpus_extract_assertions`, `embed_batch_from_jsonl`,
 //! and `corpus_tag_chunks`.
 
 use std::future::Future;

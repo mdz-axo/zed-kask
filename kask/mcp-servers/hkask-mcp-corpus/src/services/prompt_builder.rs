@@ -312,7 +312,7 @@ impl PromptBuilderService {
                             || h_mem.attribute == "corpus_provenance"
                             || h_mem.attribute == "ontology_tags"
                         {
-                            continue; // skip non-triple h_mems
+                            continue; // skip non-assertion h_mems
                         }
                         let dim = h_mem
                             .ontology

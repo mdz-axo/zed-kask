@@ -132,7 +132,7 @@ pub fn default_corpus_config(author_slug: &str) -> CorpusConfig {
         tag_sets: vec![],
         tag_weights: Default::default(),
         classifier: String::new(),
-        triple_classifier: String::new(),
+        assertion_classifier: String::new(),
     }
 }
 

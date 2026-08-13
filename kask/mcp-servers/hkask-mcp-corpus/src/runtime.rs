@@ -3,6 +3,6 @@
 mod classify_impl;
 
 pub use classify_impl::{
-    ClassifierConfig, TripleExtraction, classify_batch, extract_triples_batch,
-    load_classifier_config, parse_triple_extraction,
+    ClassifierConfig, PassageExtraction, classify_batch, extract_passages_batch,
+    load_classifier_config, parse_passage_extraction,
 };

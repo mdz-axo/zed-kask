@@ -17,7 +17,7 @@ use serde_json::json;
 /// go under the `corpus` namespace so they stay queryable without becoming
 /// Dublin Core subjects, which are reserved for the passage's actual topics.
 fn passage_ontology(passage: &TaggedPassage, author: &str) -> HMemOntology {
-    let mut dc_subject: Vec<String> = passage.semantic_triples.concepts.clone();
+    let mut dc_subject: Vec<String> = passage.semantic_extraction.concepts.clone();
     for concept in &passage.tags.concepts {
         if !dc_subject.contains(concept) {
             dc_subject.push(concept.clone());
@@ -138,7 +138,7 @@ pub(crate) fn store_passage_h_mems(
     }
 
     // Classifier-extracted semantic h_mems
-    let st = &passage.semantic_triples;
+    let st = &passage.semantic_extraction;
     if !st.topic.is_empty() {
         store(er, "extracted_topic", json!(st.topic))?;
     }

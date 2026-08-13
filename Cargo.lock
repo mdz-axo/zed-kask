@@ -9412,7 +9412,6 @@ dependencies = [
  "base64 0.22.1",
  "calamine",
  "chrono",
- "dirs",
  "docx-rs",
  "dotenvy",
  "hkask-bridge-ontology",
@@ -9470,7 +9469,6 @@ version = "0.34.0"
 dependencies = [
  "anyhow",
  "chrono",
- "dirs",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-mcp-swarm",

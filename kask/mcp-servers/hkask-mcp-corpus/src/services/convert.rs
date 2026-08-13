@@ -7,7 +7,7 @@
 //! on `CorpusServer` — also live here so the service is self-contained and the OCR
 //! logic is not duplicated between the service and the server.
 //!
-//! Follows the `TriplesService` / `ConsolidationService` pattern: a service struct
+//! Follows the `AssertionsService` / `ConsolidationService` pattern: a service struct
 //! holding the shared inference router (plus OCR pipeline + index state), async
 //! methods returning `Result<Value, McpToolError>`, `#[must_use]` on the public
 //! methods, and thin `#[tool]` wrappers in `tools/document.rs` that construct the

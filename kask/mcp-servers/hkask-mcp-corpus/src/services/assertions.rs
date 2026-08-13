@@ -1,6 +1,6 @@
 //! Triple extraction service — concurrent h_mem extraction from corpus chunks.
 //!
-//! Extracted from `CorpusServer::extract_triples_batch` in `tools/semantic/mod.rs`.
+//! Extracted from `CorpusServer::extract_passages_batch` in `tools/semantic/mod.rs`.
 //! Opens the DB once, shares it across concurrent tasks, and stores triples as
 //! h_mems with ontology-aware confidence capping.
 
@@ -17,15 +17,15 @@ use serde_json::json;
 use crate::batch::{MAX_RETRIES, retry_with_backoff};
 use crate::helpers::read_jsonl;
 use crate::tools::semantic::{
-    predicate_to_dimension, read_ontology_namespaces, read_ontology_tags, triple_confidence,
+    predicate_to_dimension, read_ontology_namespaces, read_ontology_tags, assertion_confidence,
 };
 use crate::{embedding_dim, extract_json_from_response, owner_webid, render_docproc_template};
 
-/// Input for [`TriplesService::extract`].
-pub struct TriplesRequest {
+/// Input for [`AssertionsService::extract`].
+pub struct AssertionsRequest {
     pub chunks_jsonl: String,
     pub tagged_jsonl: Option<String>,
-    pub max_triples: usize,
+    pub max_assertions: usize,
     pub db_path: String,
     pub passphrase: String,
     pub owner: String,
@@ -37,11 +37,11 @@ pub struct TriplesRequest {
 /// Holds the shared inference router. Each call to [`extract`] opens the
 /// memory DB, loads ontology context, and processes chunks concurrently with
 /// 3-attempt retry and confidence capping.
-pub struct TriplesService {
+pub struct AssertionsService {
     inference_router: Arc<dyn InferencePort>,
 }
 
-impl TriplesService {
+impl AssertionsService {
     pub fn new(inference_router: Arc<dyn InferencePort>) -> Self {
         Self { inference_router }
     }
@@ -58,12 +58,12 @@ impl TriplesService {
     #[must_use = "result must be used"]
     pub async fn extract(
         &self,
-        request: TriplesRequest,
+        request: AssertionsRequest,
     ) -> Result<serde_json::Value, McpToolError> {
-        let TriplesRequest {
+        let AssertionsRequest {
             chunks_jsonl: chunks_path,
             tagged_jsonl,
-            max_triples,
+            max_assertions,
             db_path,
             passphrase,
             owner,
@@ -114,7 +114,7 @@ impl TriplesService {
         let ontology_map = Arc::new(ontology_map);
 
         // Read ontology namespace sets per chunk (M4 fix). Used to cross-check
-        // that a triple's predicate namespace was actually tagged for the
+        // that a assertion's predicate namespace was actually tagged for the
         // chunk before bypassing the text-containment hallucination guard.
         // Without this, any `golem:`/`eso:`/`fibo:`/`pko:` predicate bypasses
         // the guard regardless of whether the chunk was tagged with that
@@ -167,7 +167,7 @@ impl TriplesService {
                 let chunk_namespaces = namespace_map.get(&entity_ref).cloned().unwrap_or_default();
                 let mut vars: std::collections::HashMap<&str, String> =
                     std::collections::HashMap::new();
-                vars.insert("limit", max_triples.to_string());
+                vars.insert("limit", max_assertions.to_string());
                 vars.insert("namespace", ns.clone());
                 vars.insert("text", chunk_text.clone());
                 vars.insert("ontology_context", ontology_context.clone());
@@ -183,9 +183,9 @@ impl TriplesService {
 Use GOLEM predicates (golem:hasCharacter, golem:hasEvent, golem:hasTheme, golem:illustrates, etc.) for narrative passages and standard RDF predicates (schema:author, rdf:type, etc.) for expository passages.")
                     };
                     format!(
-                        "Extract up to {max_triples} factual RDF triples from the following text.
+                        "Extract up to {max_assertions} factual RDF triples from the following text.
 
-First, classify the passage as narrative (story, characters, literary devices) or expository (concepts, analysis, arguments). Then extract triples using the appropriate predicates:
+First, classify the passage as narrative (story, characters, literary devices) or expository (concepts, analysis, arguments). Then extract assertions using the appropriate predicates:
   - Expository: schema:author, schema:mentions, rdf:type, fibo:returnOnCapital, etc.
   - Narrative: golem:hasCharacter, golem:hasEvent, golem:hasTheme, golem:illustrates, golem:metaphorFor, etc.
 
@@ -244,7 +244,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                     }
                 };
 
-                // Store triples as h_mems — preserve subject in value for knowledge graph
+                // Store assertions as h_mems — preserve subject in value for knowledge graph
                 let mut stored = 0usize;
                 if let Some(arr) = h_mems.get("h_mems").and_then(|v| v.as_array()) {
                     for triple in arr {
@@ -261,7 +261,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                         let dimension = predicate_to_dimension(predicate);
                         let pred_ns = predicate.split(':').next().unwrap_or("").to_lowercase();
 
-                        let confidence = triple_confidence(
+                        let confidence = assertion_confidence(
                             subject,
                             predicate,
                             &object,
@@ -350,7 +350,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                 tracing::warn!(
                     target: "hkask.mcp.docproc.triples",
                     error = %join_err,
-                    "triple extraction batch task join failed"
+                    "assertion extraction batch task join failed"
                 );
             }
         }

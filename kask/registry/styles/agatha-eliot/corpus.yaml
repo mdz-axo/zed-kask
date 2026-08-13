@@ -275,4 +275,4 @@ budget:
   triple_budget_per_100: 3750
 
 # ── Classifier ────────────────────────────────────────────────────────────────
-triple_classifier: triple-extractor-literary
+assertion_classifier: triple-extractor-literary

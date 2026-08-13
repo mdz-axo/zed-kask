@@ -4,7 +4,7 @@
 //! tool groups and produce style replicas, prose composition, and persona
 //! comparisons. They are the "style output" branch of the unified corpus flow:
 //!
-//!   gather → process (chunk/tag/embed/triples) → output (QA training | persona)
+//!   gather → process (chunk/tag/embed/assertions) → output (QA training | persona)
 //!
 //! All persona tools delegate to `crate::compose` for prose generation
 //! and `hkask_storage::EmbeddingStore` for centroid retrieval.
@@ -78,7 +78,7 @@ struct BuildResult {
     passage_count: usize,
     budget: usize,
     tagged_passages: usize,
-    triples_stored: usize,
+    assertions_stored: usize,
     embedding_only: usize,
 }
 
@@ -255,13 +255,13 @@ impl CorpusServer {
     /// This tool is the **persona output branch** of the corpus flow. It uses
     /// `EmbedService::embed_corpus` which performs its own chunking (word-count
     /// based via `WordCountChunker`), tagging (rule-based entity matching),
-    /// embedding (plain, no INSTRUCTOR annotation), and triple extraction
+    /// embedding (plain, no INSTRUCTOR annotation), and assertion extraction
     /// (via `crate::runtime`).
     ///
-    /// The `docproc_*` tools (chunk, tag_chunks, embed, extract_triples) are the
+    /// The `docproc_*` tools (chunk, tag_chunks, embed, extract_assertions) are the
     /// **QA training output branch** — they use token-count chunking, LLM-based
     /// ontology tagging, INSTRUCTOR-method ontology-anchored embedding, and
-    /// hallucination-guarded triple extraction. Both branches chunk text
+    /// hallucination-guarded assertion extraction. Both branches chunk text
     /// (the persona branch via `WordCountChunker`, the QA branch via
     /// `crate::text::chunk_text` directly).
     ///
@@ -325,7 +325,7 @@ impl CorpusServer {
                 passage_count: result.passage_count,
                 budget: result.budget,
                 tagged_passages: result.tagged_passages,
-                triples_stored: result.triples_stored,
+                assertions_stored: result.assertions_stored,
                 embedding_only: result.embedding_only,
             })
             .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: serialize-own-struct
@@ -819,13 +819,13 @@ impl CorpusServer {
                         hkask_storage::HMemStore::from_driver(driver).map_err(|e| {
                             hkask_mcp_server::server::map_infra_error(&e, "HMemStore::from_driver")
                         })?;
-                    let mut triple_deleted = 0usize;
-                    let mut triple_delete_failed = 0usize;
+                    let mut assertion_deleted = 0usize;
+                    let mut assertion_delete_failed = 0usize;
                     for entity_ref in &refs {
                         if let Ok(h_mems) = h_mem_store.query_by_entity(entity_ref) {
                             for t in &h_mems {
                                 match h_mem_store.close_by_id(&t.id) {
-                                    Ok(()) => triple_deleted += 1,
+                                    Ok(()) => assertion_deleted += 1,
                                     Err(e) => {
                                         tracing::warn!(
                                             target: "hkask.mcp.replica",
@@ -833,22 +833,22 @@ impl CorpusServer {
                                             error = %e,
                                             "failed to close h_mem"
                                         );
-                                        triple_delete_failed += 1;
+                                        assertion_delete_failed += 1;
                                     }
                                 }
                             }
                         }
                     }
-                    let message = if emb_delete_failed == 0 && triple_delete_failed == 0 {
+                    let message = if emb_delete_failed == 0 && assertion_delete_failed == 0 {
                         format!(
                             "Removed {} embeddings and {} h_mems for author '{}'",
-                            emb_deleted, triple_deleted, author
+                            emb_deleted, assertion_deleted, author
                         )
                     } else {
                         format!(
                             "Removed {}/{} embeddings ({} failed) and {}/{} h_mems ({} failed) for author '{}'",
                             emb_deleted, emb_total, emb_delete_failed,
-                            triple_deleted, triple_deleted + triple_delete_failed, triple_delete_failed,
+                            assertion_deleted, assertion_deleted + assertion_delete_failed, assertion_delete_failed,
                             author
                         )
                     };

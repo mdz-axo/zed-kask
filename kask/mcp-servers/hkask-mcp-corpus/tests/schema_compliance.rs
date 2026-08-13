@@ -133,8 +133,8 @@ schema_clean_test!(
     hkask_mcp_corpus::tools::semantic::GenerateQaBatchRequest
 );
 schema_clean_test!(
-    extract_triples_request_schema,
-    hkask_mcp_corpus::tools::semantic::ExtractTriplesRequest
+    extract_assertions_request_schema,
+    hkask_mcp_corpus::tools::semantic::ExtractAssertionsRequest
 );
 schema_clean_test!(
     embed_request_schema,

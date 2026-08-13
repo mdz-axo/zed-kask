@@ -7,7 +7,7 @@ use super::types::{
     ProgressFn,
 };
 use crate::corpus::embed::Entity;
-use crate::runtime::TripleExtraction;
+use crate::runtime::PassageExtraction;
 use hkask_memory::MemoryStore;
 use hkask_memory::salience::{self, EntityTags};
 use hkask_services_core::{DomainKind, ErrorKind, HkaskSettings, ServiceError};
@@ -189,8 +189,8 @@ async fn classify_and_extract(
     tracing::info!(?classified_counts, "Section type classification complete");
 
     // ── Extract semantic h_mems ──
-    if !config.triple_classifier.is_empty() {
-        let def = crate::runtime::load_classifier_config(&config.triple_classifier, registry_dir)?;
+    if !config.assertion_classifier.is_empty() {
+        let def = crate::runtime::load_classifier_config(&config.assertion_classifier, registry_dir)?;
         let classifier_config = crate::runtime::ClassifierConfig::from_def(&def);
 
         let settings = HkaskSettings::load();
@@ -206,7 +206,7 @@ async fn classify_and_extract(
             "Single-model h_mem extraction"
         );
 
-        let a_extractions = crate::runtime::extract_triples_batch(
+        let a_extractions = crate::runtime::extract_passages_batch(
             &texts,
             &model_config,
             Arc::clone(inference_port),
@@ -214,7 +214,7 @@ async fn classify_and_extract(
         .await?;
 
         for (passage, ext) in all_passages.iter_mut().zip(a_extractions.iter()) {
-            passage.semantic_triples = ext.clone();
+            passage.semantic_extraction = ext.clone();
         }
     } else {
         tracing::info!("HMem classifier disabled — skipping semantic extraction");
@@ -609,7 +609,7 @@ impl EmbedService {
                     document_type: work.document_type.clone().unwrap_or_default(),
                     mds_categories: work.mds_categories.clone(),
                     section_type: String::new(), // filled by classifier below
-                    semantic_triples: TripleExtraction::default(), // filled by h_mem classifier
+                    semantic_extraction: PassageExtraction::default(), // filled by h_mem classifier
                 });
             }
 
@@ -638,7 +638,7 @@ impl EmbedService {
                 document_type: String::new(),
                 mds_categories: Vec::new(),
                 section_type: rule.section_type.clone().unwrap_or_default(),
-                semantic_triples: TripleExtraction::default(), // rules get empty extraction
+                semantic_extraction: PassageExtraction::default(), // rules get empty extraction
             });
         }
 
@@ -699,26 +699,26 @@ impl EmbedService {
         let mut indexed: Vec<(usize, f32, usize)> = all_passages
             .iter()
             .enumerate()
-            .map(|(i, p)| (i, p.salience, p.metadata_triple_count()))
+            .map(|(i, p)| (i, p.salience, p.metadata_assertion_count()))
             .collect();
         indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        let mut triple_eligible: HashSet<usize> = HashSet::new();
-        let mut triples_allocated = 0usize;
+        let mut assertion_eligible: HashSet<usize> = HashSet::new();
+        let mut assertions_allocated = 0usize;
 
-        for (idx, _salience, triple_cost) in &indexed {
+        for (idx, _salience, assertion_cost) in &indexed {
             if all_passages[*idx].is_rule {
-                triple_eligible.insert(*idx);
-                triples_allocated += *triple_cost;
+                assertion_eligible.insert(*idx);
+                assertions_allocated += *assertion_cost;
                 continue;
             }
-            if triples_allocated + triple_cost <= budget {
-                triple_eligible.insert(*idx);
-                triples_allocated += triple_cost;
+            if assertions_allocated + assertion_cost <= budget {
+                assertion_eligible.insert(*idx);
+                assertions_allocated += assertion_cost;
             }
         }
 
-        let tagged_count = triple_eligible.len();
+        let tagged_count = assertion_eligible.len();
         let embedding_only = total_passages.saturating_sub(tagged_count);
 
         tracing::info!(
@@ -726,7 +726,7 @@ impl EmbedService {
             budget = budget,
             tagged = tagged_count,
             embedding_only = embedding_only,
-            triples_allocated = triples_allocated,
+            assertions_allocated = assertions_allocated,
             "Budget gate applied"
         );
 
@@ -792,33 +792,33 @@ impl EmbedService {
         // ── Phase 5: Store h_mems for budget-selected passages ────────
         {
             let mut p = shared.lock().unwrap_or_else(|e| e.into_inner());
-            p.phase = EmbedPhase::Triples;
+            p.phase = EmbedPhase::Assertions;
             p.completed_passages = 0;
             p.total_passages = tagged_count;
         }
 
-        let mut triples_stored = 0usize;
-        let mut triple_progress = 0usize;
+        let mut assertions_stored = 0usize;
+        let mut assertion_progress = 0usize;
 
         for (i, passage) in all_passages.iter().enumerate() {
-            if !triple_eligible.contains(&i) {
+            if !assertion_eligible.contains(&i) {
                 continue;
             }
 
             store_passage_h_mems(&store, passage, &author, curator_webid)?;
-            triples_stored += passage.triple_count();
-            triple_progress += 1;
+            assertions_stored += passage.assertion_count();
+            assertion_progress += 1;
 
             {
                 let mut p = shared.lock().unwrap_or_else(|e| e.into_inner());
-                p.completed_passages = triple_progress;
+                p.completed_passages = assertion_progress;
             }
         }
 
         tracing::info!(
-            triples_stored = triples_stored,
+            assertions_stored = assertions_stored,
             tagged_passages = tagged_count,
-            "Triples stored"
+            "Assertions stored"
         );
 
         // ── Phase 6: Compute centroid(s) ────────────────────────────
@@ -853,7 +853,7 @@ impl EmbedService {
             validation,
             budget,
             tagged_passages: tagged_count,
-            triples_stored,
+            assertions_stored,
             embedding_only,
             dimension_centroids: dim_results,
         })

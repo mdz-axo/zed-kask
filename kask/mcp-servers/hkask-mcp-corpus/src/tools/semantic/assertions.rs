@@ -1,6 +1,6 @@
 //! Triple extraction helper — RDF predicate → 5W1H dimension mapping.
 //!
-//! Used by `corpus_extract_triples` in `mod.rs`.
+//! Used by `corpus_extract_assertions` in `mod.rs`.
 
 use hkask_bridge_ontology::eso;
 use hkask_bridge_ontology::fibo;
@@ -9,7 +9,7 @@ use hkask_bridge_ontology::golem;
 /// Map an RDF predicate to a 5W1H dimension.
 ///
 /// Migrated from the CLI binary's `predicate_to_dimension` function.
-/// Used by `corpus_extract_triples` to assign a Dimension to each stored h_mem.
+/// Used by `corpus_extract_assertions` to assign a Dimension to each stored h_mem.
 pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension {
     use hkask_types::Dimension::*;
     let p = predicate.to_lowercase();
@@ -84,7 +84,7 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
 ///   hallucinated triples at full LLM-reported confidence (the M4 fix).
 /// - All other triples: subject and object strings must appear in the chunk
 ///   text, or confidence is capped at 0.5 (not 0.3 — too aggressive).
-pub(crate) fn triple_confidence(
+pub(crate) fn assertion_confidence(
     subject: &str,
     predicate: &str,
     object: &serde_json::Value,
@@ -129,7 +129,7 @@ mod tests {
     /// launder hallucinated triples through `golem:` prefixes.
     #[test]
     fn abstract_namespace_without_chunk_tag_is_capped() {
-        let confidence = triple_confidence(
+        let confidence = assertion_confidence(
             "doc:hero",
             "golem:hasCharacter",
             &serde_json::json!("hero"),
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn abstract_namespace_with_chunk_tag_passes_through() {
-        let confidence = triple_confidence(
+        let confidence = assertion_confidence(
             "doc:hero",
             "golem:hasCharacter",
             &serde_json::json!("hero"),
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn concrete_triple_missing_from_text_is_capped() {
-        let confidence = triple_confidence(
+        let confidence = assertion_confidence(
             "doc:zebra",
             "schema:author",
             &serde_json::json!("zebra"),
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn concrete_triple_present_in_text_keeps_confidence() {
-        let confidence = triple_confidence(
+        let confidence = assertion_confidence(
             "doc:zebra",
             "schema:author",
             &serde_json::json!("zebra"),
