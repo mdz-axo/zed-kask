@@ -1966,10 +1966,7 @@ mod tool_surface_tests {
     #[test]
     fn tool_surface_is_exactly_21_registered_tools() {
         let n = ScenariosServer::combined_router().list_all().len();
-        assert_eq!(
-            n, 21,
-            "scenarios registered tool surface changed; got {n}"
-        );
+        assert_eq!(n, 21, "scenarios registered tool surface changed; got {n}");
     }
 }
 

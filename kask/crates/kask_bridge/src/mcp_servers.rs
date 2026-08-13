@@ -1256,7 +1256,9 @@ mod tests {
     fn swarm_credentials_include_memory_passphrase() {
         let s = server_by_id("swarm");
         assert!(
-            s.credentials.unwrap().contains(&"HKASK_SWARM_MEMORY_PASSPHRASE"),
+            s.credentials
+                .unwrap()
+                .contains(&"HKASK_SWARM_MEMORY_PASSPHRASE"),
             "HKASK_SWARM_MEMORY_PASSPHRASE is read by the swarm server but is not \
              allowlisted — the SQLCipher memory DB would fall back to the \
              compiled-in default passphrase with no way for an operator to \

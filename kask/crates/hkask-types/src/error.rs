@@ -199,7 +199,6 @@ impl From<NotFound> for McpErrorKind {
     }
 }
 
-
 #[cfg(feature = "sql")]
 impl From<rusqlite::Error> for InfrastructureError {
     fn from(e: rusqlite::Error) -> Self {
@@ -304,7 +303,6 @@ impl std::fmt::Display for NotFound {
         write!(f, "{} not found: {}", self.entity_type, self.id)
     }
 }
-
 
 #[cfg(test)]
 mod tests {

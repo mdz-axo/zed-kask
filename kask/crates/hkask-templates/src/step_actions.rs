@@ -445,18 +445,19 @@ impl StepMachine {
         // Invoke the tool with a timeout. Without this, a hung MCP tool call
         // blocks the cascade forever — the tokio task has no external watchdog.
         let timeout_dur = effective_timeout(node.timeout_seconds);
-        let result = match tokio::time::timeout(timeout_dur, invoke_tool(&infra.tools, &mcp_ref, input))
-            .await
-        {
-            Ok(inner) => inner?,
-            Err(_elapsed) => {
-                return Err(TemplateError::Manifest(format!(
-                    "Tool step {} timed out after {}s",
-                    node.ordinal,
-                    timeout_dur.as_secs()
-                )));
-            }
-        };
+        let result =
+            match tokio::time::timeout(timeout_dur, invoke_tool(&infra.tools, &mcp_ref, input))
+                .await
+            {
+                Ok(inner) => inner?,
+                Err(_elapsed) => {
+                    return Err(TemplateError::Manifest(format!(
+                        "Tool step {} timed out after {}s",
+                        node.ordinal,
+                        timeout_dur.as_secs()
+                    )));
+                }
+            };
 
         Ok(Effect::Stored {
             step_id: node.id,

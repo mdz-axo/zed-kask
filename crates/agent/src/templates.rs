@@ -211,7 +211,12 @@ mod tests {
             is_windows: false,
         };
         let rendered = template.render(&Templates::new()).unwrap();
-        for directive in ["sankey-beta", "xychart-beta", "architecture-beta", "radar-beta"] {
+        for directive in [
+            "sankey-beta",
+            "xychart-beta",
+            "architecture-beta",
+            "radar-beta",
+        ] {
             assert!(
                 rendered.contains(directive),
                 "prompt must advertise the `{directive}` directive merman requires"

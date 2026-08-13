@@ -773,8 +773,7 @@ mod tests {
         // also clear the confidence gate, so it names something a tool actually
         // does ("search" / "file contents") rather than being merely long.
         assert!(
-            probe("can you search the file contents for the parser regular expression")
-                .is_some(),
+            probe("can you search the file contents for the parser regular expression").is_some(),
             "an ordinary multi-clause request with a clear tool match must route"
         );
 
@@ -1043,7 +1042,10 @@ mod tests {
         let router = LazyToolRouter::new();
         let candidates = vec![
             candidate("generate_image", "Generate an image from a text prompt"),
-            candidate("market_forecast", "Produce a calibrated probability forecast"),
+            candidate(
+                "market_forecast",
+                "Produce a calibrated probability forecast",
+            ),
             candidate("curator_status", "Report system health and energy budgets"),
         ];
         let select = |msg: &str| {

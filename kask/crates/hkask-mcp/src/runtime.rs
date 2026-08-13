@@ -884,11 +884,7 @@ impl McpRuntime {
 
     /// The error for a server with no live connection and no working reconnect,
     /// distinguishing an unknown tool from an unavailable server.
-    async fn unavailable_error(
-        &self,
-        server: &str,
-        tool: &str,
-    ) -> hkask_capability::ToolPortError {
+    async fn unavailable_error(&self, server: &str, tool: &str) -> hkask_capability::ToolPortError {
         if !self.tool_exists(tool).await {
             return hkask_capability::ToolPortError::NotFound(hkask_types::NotFound {
                 entity_type: "tool".to_string(),
@@ -1364,9 +1360,8 @@ mod env_isolation_tests {
         let env = child_env(&parent, &[]).await;
 
         for (key, value) in &parent {
-            let looks_secret = key.contains("API_KEY")
-                || key.contains("PASSWORD")
-                || key.contains("PASSPHRASE");
+            let looks_secret =
+                key.contains("API_KEY") || key.contains("PASSWORD") || key.contains("PASSPHRASE");
             if looks_secret {
                 assert!(
                     !env.contains(value),

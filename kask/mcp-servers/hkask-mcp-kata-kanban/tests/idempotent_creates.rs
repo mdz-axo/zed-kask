@@ -32,8 +32,10 @@ use std::sync::Arc;
 /// Build a server whose replay-protection store shares the kanban driver, as
 /// production does. Returns the server plus the shared driver so a test can
 /// simulate a second process over the same database.
-fn make_server_with_shared_driver() -> (KanbanServer, Arc<dyn hkask_storage::database::driver::DatabaseDriver>)
-{
+fn make_server_with_shared_driver() -> (
+    KanbanServer,
+    Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+) {
     let driver = SqliteDriver::in_memory_driver();
     let idempotency_driver = driver.clone();
     let store = HMemStore::from_driver(driver.clone()).expect("hmem store init");

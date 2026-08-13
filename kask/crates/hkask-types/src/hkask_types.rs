@@ -43,9 +43,7 @@ pub mod sql_impls;
 pub use crypto::{Ed25519PublicKey, Ed25519Signature};
 pub use curator::{CurationThresholdConfig, CuratorDirective, CuratorHandle, EscalationSeverity};
 pub use document::{Block, DocStructure, Page};
-pub use error::{
-    DatabaseErrorKind, DbError, InfrastructureError, McpErrorKind, NotFound,
-};
+pub use error::{DatabaseErrorKind, DbError, InfrastructureError, McpErrorKind, NotFound};
 pub use event::{RegulationRecord, RegulationSink};
 
 pub use id::{

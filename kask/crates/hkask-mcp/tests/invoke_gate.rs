@@ -108,7 +108,11 @@ async fn exhausted_ceiling_trips_the_runaway_breaker() {
 async fn metering_allows_agent_with_headroom() {
     let cybernetics = cybernetics();
     let agent = test_agent_webid();
-    cybernetics.read().await.register_call_cap(agent, 1000).await;
+    cybernetics
+        .read()
+        .await
+        .register_call_cap(agent, 1000)
+        .await;
 
     let runtime = McpRuntime::new().with_governance(cybernetics, Arc::new(NoopEventSink));
     register_test_tool(&runtime, "test-server", "test_tool").await;

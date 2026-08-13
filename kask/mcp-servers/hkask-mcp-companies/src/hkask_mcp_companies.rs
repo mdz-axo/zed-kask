@@ -282,10 +282,7 @@ mod tool_surface_tests {
     #[test]
     fn tool_surface_is_exactly_44_registered_tools() {
         let n = CompaniesServer::combined_router().list_all().len();
-        assert_eq!(
-            n, 44,
-            "companies registered tool surface changed; got {n}"
-        );
+        assert_eq!(n, 44, "companies registered tool surface changed; got {n}");
     }
 }
 

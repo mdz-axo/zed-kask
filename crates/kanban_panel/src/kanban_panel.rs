@@ -758,9 +758,7 @@ impl KanbanPanel {
         cx.spawn(async move |this, cx| {
             let mut attempt: u32 = 0;
             loop {
-                let outcome = invoker
-                    .invoke_tool(KANBAN_SERVER, tool, args.clone())
-                    .await;
+                let outcome = invoker.invoke_tool(KANBAN_SERVER, tool, args.clone()).await;
                 match outcome {
                     Ok(_) => {
                         this.update(cx, |this, cx| {
@@ -779,7 +777,9 @@ impl KanbanPanel {
                     // An interrupted call on a replay-safe tool is retryable: the
                     // shared idempotency key means the server absorbs the replay
                     // and returns the original result rather than repeating work.
-                    Err(error) if error.is_retryable() || (replay_safe && error.is_outcome_unknown()) => {
+                    Err(error)
+                        if error.is_retryable() || (replay_safe && error.is_outcome_unknown()) =>
+                    {
                         let Some(delay) = mutation_retry_delay(attempt) else {
                             this.update(cx, |this, cx| {
                                 this.error = Some(
@@ -1038,7 +1038,13 @@ impl KanbanPanel {
         let args = form.collect_args(&board_id, cx);
         self.active_action = None;
         self.create_task_form = None;
-        self.dispatch_mutation(TASK_CREATE_TOOL, args, "create task", RefreshTarget::Tasks, cx);
+        self.dispatch_mutation(
+            TASK_CREATE_TOOL,
+            args,
+            "create task",
+            RefreshTarget::Tasks,
+            cx,
+        );
     }
 
     /// Start the edit-task flow for a specific task.
@@ -1057,7 +1063,13 @@ impl KanbanPanel {
         let args = form.collect_args(cx);
         self.active_action = None;
         self.edit_task_form = None;
-        self.dispatch_mutation(TASK_UPDATE_TOOL, args, "update task", RefreshTarget::Tasks, cx);
+        self.dispatch_mutation(
+            TASK_UPDATE_TOOL,
+            args,
+            "update task",
+            RefreshTarget::Tasks,
+            cx,
+        );
     }
 
     /// Start the spawn-task flow for a specific task.
@@ -1113,7 +1125,13 @@ impl KanbanPanel {
     fn execute_delete_task(&mut self, task_id: String, cx: &mut Context<Self>) {
         self.active_action = None;
         let args = json!({ "task_id": task_id });
-        self.dispatch_mutation(TASK_DELETE_TOOL, args, "delete task", RefreshTarget::Tasks, cx);
+        self.dispatch_mutation(
+            TASK_DELETE_TOOL,
+            args,
+            "delete task",
+            RefreshTarget::Tasks,
+            cx,
+        );
     }
 
     // ── Board action handlers ──────────────────────────────────────────────
@@ -2040,8 +2058,9 @@ mod tests {
         // expression so the test fails if either half of the condition drifts,
         // rather than asserting each half in isolation (where
         // `A && B` / `!A || B` shapes can be trivially true).
-        let should_retry =
-            |error: &InvokeError, tool: &str| error.is_retryable() || (is_idempotent_tool(tool) && error.is_outcome_unknown());
+        let should_retry = |error: &InvokeError, tool: &str| {
+            error.is_retryable() || (is_idempotent_tool(tool) && error.is_outcome_unknown())
+        };
 
         let interrupted = InvokeError::Interrupted("connection reset".into());
         assert!(

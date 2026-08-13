@@ -558,10 +558,7 @@ mod tool_surface_tests {
     #[test]
     fn tool_surface_is_exactly_14_registered_tools() {
         let n = PortfolioServer::portfolio_router().list_all().len();
-        assert_eq!(
-            n, 14,
-            "portfolio registered tool surface changed; got {n}"
-        );
+        assert_eq!(n, 14, "portfolio registered tool surface changed; got {n}");
     }
 }
 

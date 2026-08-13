@@ -296,10 +296,7 @@ mod tool_surface_tests {
     #[test]
     fn tool_surface_is_exactly_9_registered_tools() {
         let n = CuratorServer::tool_router().list_all().len();
-        assert_eq!(
-            n, 9,
-            "curator registered tool surface changed; got {n}"
-        );
+        assert_eq!(n, 9, "curator registered tool surface changed; got {n}");
     }
 }
 

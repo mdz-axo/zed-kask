@@ -28,9 +28,7 @@
 //! in `SetPoints` + regulation actions via `InferenceRegulation`.
 
 use crate::dampener::{Dampener, StagnationDetector};
-use crate::energy::{
-    AgentCallCapStatus, CallCap, CallCapError, CallCapManager, CallMeterOutcome,
-};
+use crate::energy::{AgentCallCapStatus, CallCap, CallCapError, CallCapManager, CallMeterOutcome};
 
 use crate::runtime::{RegulationCycleEntry, RegulationLedger};
 use crate::sensor_provider::{EnergyBudgetSensor, SensorBus, ToolReliabilitySensor, VarietySensor};

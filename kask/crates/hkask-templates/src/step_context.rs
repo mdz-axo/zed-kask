@@ -143,13 +143,7 @@ impl StepContext {
     /// The value is also reachable as `step_{ordinal}_result` via the typed
     /// `results` map (same `step_id`), so `extract_final_step_result`'s
     /// max-ordinal selection still works.
-    pub fn store_named(
-        &mut self,
-        step_id: StepId,
-        ordinal: u32,
-        suffix: &str,
-        value: Value,
-    ) {
+    pub fn store_named(&mut self, step_id: StepId, ordinal: u32, suffix: &str, value: Value) {
         let key = format!("step_{ordinal}_{suffix}");
         let arc = Arc::new(value);
         self.named.insert(key, arc.clone());
@@ -168,7 +162,6 @@ impl StepContext {
     pub fn result(&self, step_id: StepId) -> Option<&StepResult> {
         self.results.get(&step_id)
     }
-
 
     /// The last step result that stored a value (highest StepId with a result).
     /// O(1) — the machine tracks `last_result_step`, no string-key scan.
@@ -408,7 +401,6 @@ mod tests {
             &Value::String("hello".into())
         );
     }
-
 
     #[test]
     fn snapshot_prev_resolves_via_prev_lookup_no_legacy_writes() {

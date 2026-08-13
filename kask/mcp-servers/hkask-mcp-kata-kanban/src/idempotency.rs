@@ -173,9 +173,8 @@ impl IdempotencyStore {
             Inner::Sqlite(driver) => {
                 // Lazy expiry sweep, as in `consent.rs`: correctness rests on the
                 // TTL filter in the lookup below, not on this running.
-                let cutoff = (chrono::Utc::now()
-                    - chrono::Duration::seconds(IDEMPOTENCY_TTL_SECS))
-                .to_rfc3339();
+                let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(IDEMPOTENCY_TTL_SECS))
+                    .to_rfc3339();
                 if let Err(error) = driver.execute(
                     "DELETE FROM idempotency_keys WHERE created_at < ?1",
                     &[DbValue::Text(cutoff.clone())],
@@ -238,9 +237,10 @@ impl IdempotencyStore {
     pub fn record(&self, tool: &str, key: &str, response: &str) {
         match &self.inner {
             Inner::Memory(map) => {
-                map.lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert((tool.to_string(), key.to_string()), Some(response.to_string()));
+                map.lock().unwrap_or_else(|e| e.into_inner()).insert(
+                    (tool.to_string(), key.to_string()),
+                    Some(response.to_string()),
+                );
             }
             Inner::Sqlite(driver) => {
                 if let Err(error) = driver.execute(
@@ -394,7 +394,10 @@ mod tests {
     #[test]
     fn release_allows_a_clean_retry() {
         for store in [sqlite_store(), IdempotencyStore::default()] {
-            assert_eq!(store.reserve("kanban_task_create", "k2").unwrap(), Reservation::Fresh);
+            assert_eq!(
+                store.reserve("kanban_task_create", "k2").unwrap(),
+                Reservation::Fresh
+            );
             store.release("kanban_task_create", "k2");
             assert_eq!(
                 store.reserve("kanban_task_create", "k2").unwrap(),

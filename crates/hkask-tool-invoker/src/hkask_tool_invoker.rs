@@ -102,8 +102,7 @@ impl InvokeError {
 
 /// The message shown when no invoker is wired. Shared so every panel explains
 /// the same condition the same way.
-pub const NOT_WIRED_MESSAGE: &str =
-    "The kask MCP servers are not connected yet. If this persists, ensure they are enabled \
+pub const NOT_WIRED_MESSAGE: &str = "The kask MCP servers are not connected yet. If this persists, ensure they are enabled \
      (kask.mcp.load_default).";
 
 impl std::fmt::Display for InvokeError {

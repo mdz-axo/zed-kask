@@ -307,10 +307,11 @@ mod tests {
     #[test]
     fn retrieve_accessors_return_zeroizing() {
         fn assert_zeroizing(
-            _: impl Fn(&crate::keychain::Keychain, &str) -> Result<
-                zeroize::Zeroizing<String>,
-                crate::keychain::KeychainError,
-            >,
+            _: impl Fn(
+                &crate::keychain::Keychain,
+                &str,
+            )
+                -> Result<zeroize::Zeroizing<String>, crate::keychain::KeychainError>,
         ) {
         }
         // Compiles only while `retrieve_by_key` yields `Zeroizing<String>`.

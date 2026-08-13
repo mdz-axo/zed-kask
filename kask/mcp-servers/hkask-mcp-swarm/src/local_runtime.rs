@@ -13,8 +13,6 @@ use crate::error::{LocalSwarmError, SwarmError};
 use crate::local_registry::LocalAgentCard;
 use crate::sanitize::strip_leading_mentions;
 
-
-
 /// The local swarm runtime — ledger + inference.
 ///
 /// Constructed lazily on first tool call (the `run_server` factory closure
@@ -646,7 +644,9 @@ mod tests {
     }
 
     fn balance(ledger: &Ledger) -> i64 {
-        ledger.balance("operator", Some("credits")).expect("balance")
+        ledger
+            .balance("operator", Some("credits"))
+            .expect("balance")
     }
 
     /// The headline change: local spend posts against an unfunded ledger instead

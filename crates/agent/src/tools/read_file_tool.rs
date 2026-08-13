@@ -41,16 +41,14 @@ fn is_skill_catalog_file(path: &Path) -> bool {
     // A skills directory is one whose parent is `.agents` (project) or `agents`
     // (global / marketplace). Walk ancestors so nested layouts
     // (`.../skills/_marketplace/<name>/SKILL.md`) match too.
-    path.ancestors()
-        .skip(1)
-        .any(|anc| {
-            anc.file_name().and_then(|n| n.to_str()) == Some("skills")
-                && anc
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .map(|n| n == ".agents" || n == "agents")
-                    .unwrap_or(false)
-        })
+    path.ancestors().skip(1).any(|anc| {
+        anc.file_name().and_then(|n| n.to_str()) == Some("skills")
+            && anc
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n == ".agents" || n == "agents")
+                .unwrap_or(false)
+    })
 }
 
 /// Refuse a `SKILL.md` read, returning the redirect the model should act on.
@@ -659,10 +657,14 @@ mod test {
             "/home/u/proj/.agents/skills/hypothesis-framer/templates/foo.j2"
         )));
         // A user file named SKILL.md not under a skills dir is NOT flagged.
-        assert!(!is_skill_catalog_file(Path::new("/home/u/proj/docs/SKILL.md")));
+        assert!(!is_skill_catalog_file(Path::new(
+            "/home/u/proj/docs/SKILL.md"
+        )));
         // A `skills/` dir whose parent is neither `.agents` nor `agents` is NOT
         // flagged (avoids false positives on unrelated `skills/` trees).
-        assert!(!is_skill_catalog_file(Path::new("/home/u/repos/skills/foo/SKILL.md")));
+        assert!(!is_skill_catalog_file(Path::new(
+            "/home/u/repos/skills/foo/SKILL.md"
+        )));
     }
 
     #[test]

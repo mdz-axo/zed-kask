@@ -208,10 +208,7 @@ mod tool_surface_tests {
     #[test]
     fn tool_surface_is_exactly_9_registered_tools() {
         let n = CodeGraphServer::tool_router().list_all().len();
-        assert_eq!(
-            n, 9,
-            "codegraph registered tool surface changed; got {n}"
-        );
+        assert_eq!(n, 9, "codegraph registered tool surface changed; got {n}");
     }
 }
 

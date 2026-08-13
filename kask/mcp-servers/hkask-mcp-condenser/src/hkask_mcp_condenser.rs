@@ -182,10 +182,7 @@ mod tool_surface_tests {
     #[test]
     fn tool_surface_is_exactly_4_registered_tools() {
         let n = CondenserServer::tool_router().list_all().len();
-        assert_eq!(
-            n, 4,
-            "condenser registered tool surface changed; got {n}"
-        );
+        assert_eq!(n, 4, "condenser registered tool surface changed; got {n}");
     }
 }
 

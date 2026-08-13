@@ -609,10 +609,7 @@ mod tool_surface_tests {
     #[test]
     fn tool_surface_is_exactly_27_registered_tools() {
         let n = CorpusServer::combined_router().list_all().len();
-        assert_eq!(
-            n, 27,
-            "corpus registered tool surface changed; got {n}"
-        );
+        assert_eq!(n, 27, "corpus registered tool surface changed; got {n}");
     }
 }
 

@@ -249,48 +249,49 @@ impl KanbanServer {
                 "kanban_board_create",
                 idempotency_key.as_deref(),
                 async {
-                let column_defs = match columns {
-                    Some(inputs) => inputs
-                        .into_iter()
-                        .enumerate()
-                        .map(
-                            |(i, input)| match crate::TaskStatus::parse_str(&input.status) {
-                                Some(s) => {
-                                    let mut col = crate::ColumnDef::new(input.name, s, i as u32);
-                                    if let Some(wip) = input.wip_limit {
-                                        col = col.with_wip_limit(wip);
+                    let column_defs = match columns {
+                        Some(inputs) => inputs
+                            .into_iter()
+                            .enumerate()
+                            .map(
+                                |(i, input)| match crate::TaskStatus::parse_str(&input.status) {
+                                    Some(s) => {
+                                        let mut col =
+                                            crate::ColumnDef::new(input.name, s, i as u32);
+                                        if let Some(wip) = input.wip_limit {
+                                            col = col.with_wip_limit(wip);
+                                        }
+                                        Ok(col)
                                     }
-                                    Ok(col)
-                                }
-                                None => Err(format!("invalid status: {}", input.status)),
-                            },
-                        )
-                        .collect::<Result<Vec<_>, _>>(),
-                    None => Ok(crate::KanbanService::standard_columns()),
-                };
-                let cols = match column_defs {
-                    Ok(c) => c,
-                    Err(e) => return Err(McpToolError::invalid_argument(e)),
-                };
-                match self.service.board_create(self.webid, &name, &cols) {
-                    Ok(board) => Ok(serde_json::to_value(BoardCreateResponse {
-                        board_id: board.id.to_string(),
-                        name: board.name,
-                        columns: board
-                            .columns
-                            .iter()
-                            .map(|c| ColumnInfo {
-                                id: c.id.to_string(),
-                                name: c.name.clone(),
-                                status: c.status.to_string(),
-                                wip_limit: c.wip_limit,
-                            })
-                            .collect(),
-                        ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
+                                    None => Err(format!("invalid status: {}", input.status)),
+                                },
+                            )
+                            .collect::<Result<Vec<_>, _>>(),
+                        None => Ok(crate::KanbanService::standard_columns()),
+                    };
+                    let cols = match column_defs {
+                        Ok(c) => c,
+                        Err(e) => return Err(McpToolError::invalid_argument(e)),
+                    };
+                    match self.service.board_create(self.webid, &name, &cols) {
+                        Ok(board) => Ok(serde_json::to_value(BoardCreateResponse {
+                            board_id: board.id.to_string(),
+                            name: board.name,
+                            columns: board
+                                .columns
+                                .iter()
+                                .map(|c| ColumnInfo {
+                                    id: c.id.to_string(),
+                                    name: c.name.clone(),
+                                    status: c.status.to_string(),
+                                    wip_limit: c.wip_limit,
+                                })
+                                .collect(),
+                            ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
+                        })
+                        .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                        Err(e) => Err(map_kanban_error(e)),
+                    }
                 },
             ),
         )
@@ -404,33 +405,34 @@ impl KanbanServer {
                 "kanban_task_create",
                 idempotency_key.as_deref(),
                 async {
-                let bid = parse_board_id(&board_id)?;
-                let mut spec = TaskSpec::new(title);
-                if let Some(d) = description {
-                    spec = spec.with_description(d);
-                }
-                if let Some(cs) = criteria {
-                    spec = spec
-                        .with_criteria(cs.into_iter().map(VerificationCriterion::new).collect());
-                }
-                if let Some(gas) = gas_budget {
-                    spec = spec.with_gas_budget(gas);
-                }
-                if let Some(rj) = rjoule_budget {
-                    spec.rjoule_budget = Some(rj);
-                }
+                    let bid = parse_board_id(&board_id)?;
+                    let mut spec = TaskSpec::new(title);
+                    if let Some(d) = description {
+                        spec = spec.with_description(d);
+                    }
+                    if let Some(cs) = criteria {
+                        spec = spec.with_criteria(
+                            cs.into_iter().map(VerificationCriterion::new).collect(),
+                        );
+                    }
+                    if let Some(gas) = gas_budget {
+                        spec = spec.with_gas_budget(gas);
+                    }
+                    if let Some(rj) = rjoule_budget {
+                        spec.rjoule_budget = Some(rj);
+                    }
 
-                match self.service.task_create(bid, spec, self.webid) {
-                    Ok(task) => Ok(serde_json::to_value(TaskCreateResponse {
-                        task_id: task.id.to_string(),
-                        board_id: task.board_id.to_string(),
-                        title: task.title,
-                        status: task.status.to_string(),
-                        ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
+                    match self.service.task_create(bid, spec, self.webid) {
+                        Ok(task) => Ok(serde_json::to_value(TaskCreateResponse {
+                            task_id: task.id.to_string(),
+                            board_id: task.board_id.to_string(),
+                            title: task.title,
+                            status: task.status.to_string(),
+                            ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+                        })
+                        .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
+                        Err(e) => Err(map_kanban_error(e)),
+                    }
                 },
             ),
         )
@@ -1042,67 +1044,70 @@ impl KanbanServer {
                 "kanban_task_spawn",
                 idempotency_key.as_deref(),
                 async {
-                let tid = self.validate_and_prepare_spawn(
-                    &task_id,
-                    &delegation_level,
-                    &memory_scope,
-                    &gas_budget,
-                    &rjoule_budget,
-                )?;
-                let skills_for_agent = delegated_skills.clone();
-                let spec = crate::SpawnSpec::new(tid)
-                    .with_level(&delegation_level)
-                    .with_skills(delegated_skills)
-                    .with_swarm(swarm_id.clone());
-                let spec = if let Some(ref ms) = memory_scope {
-                    spec.with_memory(ms)
-                } else {
-                    spec
-                };
-                // Record the spawn configuration on the task (config comment).
-                self.service
-                    .spawn_task(tid, spec, self.webid)
-                    .map_err(map_kanban_error)?;
+                    let tid = self.validate_and_prepare_spawn(
+                        &task_id,
+                        &delegation_level,
+                        &memory_scope,
+                        &gas_budget,
+                        &rjoule_budget,
+                    )?;
+                    let skills_for_agent = delegated_skills.clone();
+                    let spec = crate::SpawnSpec::new(tid)
+                        .with_level(&delegation_level)
+                        .with_skills(delegated_skills)
+                        .with_swarm(swarm_id.clone());
+                    let spec = if let Some(ref ms) = memory_scope {
+                        spec.with_memory(ms)
+                    } else {
+                        spec
+                    };
+                    // Record the spawn configuration on the task (config comment).
+                    self.service
+                        .spawn_task(tid, spec, self.webid)
+                        .map_err(map_kanban_error)?;
 
-                let task = self
-                    .service
-                    .task_get(tid)
-                    .map_err(map_kanban_error)?
-                    .ok_or_else(|| McpToolError::not_found(format!("task {tid} not found")))?;
+                    let task = self
+                        .service
+                        .task_get(tid)
+                        .map_err(map_kanban_error)?
+                        .ok_or_else(|| McpToolError::not_found(format!("task {tid} not found")))?;
 
-                // Resolve the agent: reuse an expert agent whose declared skills
-                // cover the requested set; otherwise build a task-specific agent
-                // card in-memory ("create agents w/ skills for tasks").
-                let agent = self
-                    .local_registry
-                    .list()
-                    .into_iter()
-                    .find(|card| {
-                        !skills_for_agent.is_empty()
-                            && skills_for_agent
-                                .iter()
-                                .all(|s| card.capabilities.skills.iter().any(|cs| cs == s))
-                    })
-                    .unwrap_or_else(|| build_task_agent_card(tid, &task.title, &skills_for_agent));
+                    // Resolve the agent: reuse an expert agent whose declared skills
+                    // cover the requested set; otherwise build a task-specific agent
+                    // card in-memory ("create agents w/ skills for tasks").
+                    let agent = self
+                        .local_registry
+                        .list()
+                        .into_iter()
+                        .find(|card| {
+                            !skills_for_agent.is_empty()
+                                && skills_for_agent
+                                    .iter()
+                                    .all(|s| card.capabilities.skills.iter().any(|cs| cs == s))
+                        })
+                        .unwrap_or_else(|| {
+                            build_task_agent_card(tid, &task.title, &skills_for_agent)
+                        });
 
-                // P1: Try worktree-isolated spawn first. When the zed IPC bridge
-                // is available and a workspace with an AgentPanel is open, this
-                // creates a worktree-backed agent thread (isolated git worktree).
-                // On failure (no IPC socket, no workspace, spawn error), falls
-                // back to the in-memory `LazyLocalSwarmRuntime` path below.
-                if let Some(response) = self
-                    .spawn_via_worktree(tid, &task, &skills_for_agent)
-                    .await?
-                {
-                    return serde_json::to_value(response)
-                        .map_err(|e| McpToolError::internal(e.to_string())); // rr0044-ok: serialize-own-struct
-                }
+                    // P1: Try worktree-isolated spawn first. When the zed IPC bridge
+                    // is available and a workspace with an AgentPanel is open, this
+                    // creates a worktree-backed agent thread (isolated git worktree).
+                    // On failure (no IPC socket, no workspace, spawn error), falls
+                    // back to the in-memory `LazyLocalSwarmRuntime` path below.
+                    if let Some(response) = self
+                        .spawn_via_worktree(tid, &task, &skills_for_agent)
+                        .await?
+                    {
+                        return serde_json::to_value(response)
+                            .map_err(|e| McpToolError::internal(e.to_string())); // rr0044-ok: serialize-own-struct
+                    }
 
-                // Fallback: in-memory spawn via LazyLocalSwarmRuntime.
-                let response = self
-                    .spawn_via_local_runtime(tid, &task, gas_budget, &agent)
-                    .await?;
-                serde_json::to_value(response).map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+                    // Fallback: in-memory spawn via LazyLocalSwarmRuntime.
+                    let response = self
+                        .spawn_via_local_runtime(tid, &task, gas_budget, &agent)
+                        .await?;
+                    serde_json::to_value(response)
+                        .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
                 },
             ),
         )
