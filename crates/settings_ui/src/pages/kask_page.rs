@@ -138,7 +138,7 @@ pub(crate) fn has_credential(
     env_var: &str,
 ) -> bool {
     // Env-var check is synchronous and instant. Use `!v.is_empty()` (not
-    // `.is_ok()`) to match `mcp_env_with_credentials`'s predicate — an empty
+    // `.is_ok()`) to match `build_mcp_server_env`'s predicate — an empty
     // env var (`FOO=`) is not a meaningful value and would cause the runtime
     // to skip keychain injection, so the UI should not show it as "configured".
     if std::env::var(env_var)

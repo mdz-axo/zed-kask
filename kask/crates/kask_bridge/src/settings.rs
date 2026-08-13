@@ -705,9 +705,15 @@ impl KaskSettings {
     /// Build the environment variable map for MCP server child processes.
     ///
     /// Translates all kask settings into the env vars that MCP servers read
-    /// at startup. Called by the composition root before `start_server_with_env`.
-    /// Only non-empty/non-default values are included — MCP servers have their
-    /// own fallback defaults for unset env vars.
+    /// at startup. Only non-empty/non-default values are included — MCP
+    /// servers have their own fallback defaults for unset env vars.
+    ///
+    /// This is the **config** half of the env map. The full env for a server
+    /// child process — config + keychain credentials + the inference socket —
+    /// is assembled by [`build_mcp_server_env`](crate::build_mcp_server_env)
+    /// in `mcp_servers`, the single canonical path. It composes this crate's
+    /// `mcp_env()` with the per-server credential/config allowlists. There
+    /// is no other env-construction path; do not re-introduce one.
     pub fn mcp_env(&self) -> std::collections::HashMap<String, String> {
         let mut env = std::collections::HashMap::new();
 
@@ -795,12 +801,14 @@ impl KaskSettings {
                 self.companies.fermi_defaults.clone(),
             );
         }
-        if !self.companies.transactions_dir.is_empty() {
-            env.insert(
-                "HKASK_TRANSACTIONS_DIR".to_string(),
-                self.companies.transactions_dir.clone(),
-            );
-        }
+        // `HKASK_TRANSACTIONS_DIR` is intentionally NOT emitted: no MCP server
+        // crate reads it (verified across `hkask-mcp-companies` and
+        // `hkask-mcp-portfolio`), and it is in no server's `config_env`
+        // allowlist. The `companies.transactions_dir` settings field and its
+        // settings-UI input remain for forward compatibility, but emitting it
+        // here only adds noise to the env map that the per-server filter then
+        // drops. Re-add the emission (and an allowlist entry) when a server
+        // crate gains a read site.
 
         // ── Corpus ──
         if self.corpus.embedding_dim != corpus_default.embedding_dim {
@@ -904,7 +912,7 @@ impl KaskSettings {
         }
 
         // ── Swarm (ABW + Local) ──
-        // The API key is a credential (injected by `mcp_env_with_credentials`
+        // The API key is a credential (injected by `build_mcp_server_env`
         // from the keychain), not config — only non-secret fields are here.
         let swarm_default = KaskSwarmSettings::default();
         if self.swarm.mode != swarm_default.mode {
@@ -980,7 +988,7 @@ impl KaskSettings {
         }
 
         // ── Curator email (non-secret) ──
-        // The SMTP password is injected separately by `mcp_env_with_credentials`
+        // The SMTP password is injected separately by `build_mcp_server_env`
         // from the keychain entry `kask://credentials/hkask_smtp_password`.
         if !self.curator.email.mxroute_server.is_empty() {
             env.insert(
@@ -1029,52 +1037,6 @@ impl KaskSettings {
             );
         }
 
-        env
-    }
-
-    /// Build the environment variable map for MCP server child processes,
-    /// including API keys resolved from zed's `CredentialsProvider` keychain.
-    ///
-    /// This bridges the two keychain namespaces: the kask settings UI writes
-    /// keys via zed's `CredentialsProvider` (under `kask://credentials/<key>`),
-    /// while MCP servers read env vars / hKask's `Keychain` (service "hkask").
-    /// This function reads from zed's keychain and injects the values as env
-    /// vars so MCP servers find them via `std::env::var`.
-    ///
-    /// `credential_urls` is a list of `(env_var_name, keychain_url)` pairs to read.
-    /// The composition root builds this from the enabled data services and
-    /// inference providers via `credential_urls_for_mcp`.
-    pub async fn mcp_env_with_credentials(
-        &self,
-        credential_urls: &[(String, String)],
-        credentials_provider: &dyn credentials_provider::CredentialsProvider,
-        cx: &gpui::AsyncApp,
-    ) -> std::collections::HashMap<String, String> {
-        let mut env = self.mcp_env();
-        for (env_var, url) in credential_urls {
-            // The operator's shell takes precedence — but only when it carries
-            // a meaningful (non-empty) value. An empty env var (e.g. `FOO=` in
-            // the parent shell) is not a meaningful override: it would leave
-            // the child process with no key while suppressing the keychain
-            // injection, silently breaking inference with an "API key not
-            // configured" error that the operator cannot trace back to this
-            // skip. This was the polarity inversion in the credential-injection
-            // feedback loop: the very condition that should trigger injection
-            // (key missing from the child) suppressed it.
-            if std::env::var(env_var)
-                .map(|v| !v.is_empty())
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            if let Ok(Some((_username, password))) =
-                credentials_provider.read_credentials(url, cx).await
-                && let Ok(value) = String::from_utf8(password)
-                && !value.is_empty()
-            {
-                env.insert(env_var.clone(), value);
-            }
-        }
         env
     }
 }
@@ -1795,7 +1757,7 @@ mod tests {
     // Swarm settings: `Default` is the single source of truth — default
     // settings emit no swarm env vars; a non-default credit ceiling emits
     // `HKASK_ABW_MAX_CREDITS`; the API key is never in `mcp_env()` (it is a
-    // keychain credential, injected by `mcp_env_with_credentials`).
+    // keychain credential, injected by `build_mcp_server_env`).
     #[test]
     fn swarm_settings_default_emits_no_env() {
         let settings = KaskSettings::default();
@@ -1887,14 +1849,14 @@ mod tests {
         let _ = KaskInferenceProvidersSettings::from_env();
     }
 
-    // Regression test for the `mcp_env_with_credentials` polarity inversion.
-    // The skip check `std::env::var(env_var).is_ok()` treated an empty env
-    // var (`FOO=`) as "present" and suppressed keychain injection, leaving
-    // the child process with no key. The fix skips only non-empty parent
-    // env vars. This test pins the `From<Content>` resolution path that
-    // feeds `credential_urls_for_mcp`: when a toggle is explicitly `false`,
-    // no credential URL is produced for that provider, so the polarity bug
-    // cannot suppress a key that should never be injected in the first
+    // Regression test for the polarity inversion in the credential-injection
+    // path (now `build_mcp_server_env`). The skip check `std::env::var(env_var).is_ok()`
+    // treated an empty env var (`FOO=`) as "present" and suppressed keychain
+    // injection, leaving the child process with no key. The fix skips only
+    // non-empty parent env vars. This test pins the `From<Content>` resolution
+    // path that feeds `credential_urls_for_mcp`: when a toggle is explicitly
+    // `false`, no credential URL is produced for that provider, so the polarity
+    // bug cannot suppress a key that should never be injected in the first
     // place. The toggle→credential-URL gate is the upstream guard.
     #[test]
     fn credential_urls_for_mcp_omits_disabled_inference_providers() {
@@ -1918,7 +1880,7 @@ mod tests {
     // When an inference provider is explicitly enabled, its credential URL
     // must appear in the MCP credential list. This is the cascade root: the
     // UI toggle writes `inference_providers.<provider>_enabled = true` →
-    // `credential_urls_for_mcp` includes the URL → `mcp_env_with_credentials`
+    // `credential_urls_for_mcp` includes the URL → `build_mcp_server_env`
     // injects the keychain value as an env var → MCP server `resolve_api_key`
     // Tier 1 finds it. If any link breaks, inference fails with "API key not
     // configured".

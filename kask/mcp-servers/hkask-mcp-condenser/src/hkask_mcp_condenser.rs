@@ -360,7 +360,9 @@ impl CondenserServer {
                 serde_json::json!({"model": effective_model.to_string(), "summary_length": summary_len}),
             );
 
-            Ok(serde_json::to_value(&output).expect("ThreadSummaryOutput serialization is infallible"))
+            Ok(serde_json::to_value(&output).map_err(|e| {
+                McpToolError::internal(format!("ThreadSummaryOutput serialization failed: {e}"))
+            })?)
         }).await
     }
 
@@ -376,13 +378,7 @@ impl CondenserServer {
                 Some("memory") => {
                     // Query memory stores word-by-word, then score via domain crate.
                     let words = saliency::extract_query_words(&req.text);
-                    let total_results = if let Some(ref store) = self.store {
-                        words
-                            .iter()
-                            .filter_map(|w| store.query_deduped(w).ok())
-                            .map(|m| m.len())
-                            .sum::<usize>()
-                    } else {
+                    let Some(ref store) = self.store else {
                         // No memory store — neutral score, not an error.
                         return Ok(serde_json::json!({
                             "score": 0.5,
@@ -390,6 +386,18 @@ impl CondenserServer {
                             "method": "no_store",
                         }));
                     };
+                    // Propagate infra errors — a SQLCipher outage must NOT
+                    // score as "nothing is salient" (the `unwrap_or(0)` / `.ok()`
+                    // trap: a DB outage returns 0, the loop reads it as "no
+                    // deviation"). Sum successful query counts; surface the
+                    // first infra failure as a tool error.
+                    let mut total_results = 0usize;
+                    for word in &words {
+                        match store.query_deduped(word) {
+                            Ok(h_mems) => total_results += h_mems.len(),
+                            Err(e) => return Err(map_memory_error(e)),
+                        }
+                    }
                     (
                         saliency::score_memory_results(total_results),
                         "semantic_search",

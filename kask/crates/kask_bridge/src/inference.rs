@@ -80,8 +80,13 @@ impl StreamAccumulator {
         }
     }
 
-    /// Process a `LanguageModelCompletionEvent` that isn't `Text` or `Thinking`
-    /// (those are handled by the caller). Returns `Err` on stream errors.
+    /// Process any `LanguageModelCompletionEvent`. In the streaming path, the
+    /// caller filters `Text`/`Thinking` (forwarding them immediately) and passes
+    /// only metadata events here; in the non-streaming path, all events are
+    /// passed. The `Text`/`Thinking` arms accumulate into `self.text`/
+    /// `self.reasoning` for `into_result()` (non-streaming) and are dead in the
+    /// streaming path (`into_final_chunk()` doesn't read them). Returns `Err`
+    /// on stream errors.
     fn process_event(
         &mut self,
         event: Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
@@ -567,6 +572,12 @@ impl InferencePort for LanguageModelInferencePort {
         let (tx_stream, rx_stream) =
             tokio::sync::mpsc::unbounded_channel::<Result<InferenceStreamChunk, InferenceError>>();
 
+        // TODO: thread `model_override` through `generate_stream` when a caller
+        // needs it. Currently hardcoded to `None` because the cascade's
+        // `call_inference_stream` calls `generate_stream` (no override). If a
+        // future caller invokes `generate_stream_with_model` on this port, the
+        // default trait impl handles the override by falling back to
+        // non-streaming `generate_with_model` — which loses the live trace.
         let stream_tx = self.stream_tx.clone();
         let send_result = stream_tx.send(StreamInferenceRequest {
             request,

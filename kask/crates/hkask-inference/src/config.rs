@@ -245,8 +245,8 @@ impl InferenceConfig {
 ///
 /// In zed-kask, inference API keys are injected into MCP server child
 /// processes as environment variables by the parent zed process (via
-/// `kask_bridge::KaskSettings::mcp_env_with_credentials`, which reads from
-/// zed's `CredentialsProvider` keychain under `kask://credentials/<key>`).
+/// `kask_bridge::build_mcp_server_env`, which reads from zed's
+/// `CredentialsProvider` keychain under `kask://credentials/<key>`).
 /// Standalone MCP servers set the same env vars in their shell.
 ///
 /// This function reads **only** the environment variable. It does **not**

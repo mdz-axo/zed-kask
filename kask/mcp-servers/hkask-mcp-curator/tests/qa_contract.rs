@@ -171,7 +171,18 @@ fn make_server_with_archive_events(count: usize) -> CuratorServer {
 /// replay (`query_algedonic` filters on `ALGEDONIC_SPAN_CATEGORIES`, which
 /// does not include `curation`).
 fn persist_regulation_event(store: &RegulationArchive, operation: &str) {
-    let ns = SpanNamespace::try_from(RegulationSpan::Gas).expect("canonical span");
+    persist_regulation_event_with_span(store, RegulationSpan::Gas, operation);
+}
+
+/// Persist a synthetic Regulation event with a specific span category.
+/// Used by the `reg_query` namespace-filter test to create mixed-namespace
+/// events (e.g. `reg.gas` + `reg.pod`) that are both algedonic-visible.
+fn persist_regulation_event_with_span(
+    store: &RegulationArchive,
+    span: RegulationSpan,
+    operation: &str,
+) {
+    let ns = SpanNamespace::try_from(span).expect("canonical span");
     let record = RegulationRecord::new(
         WebID::from_persona(b"curator"),
         Span::new(ns, operation),
@@ -819,5 +830,65 @@ mod reg_query {
         let v = parse(&out);
         assert_eq!(v.get("replayed_count").and_then(|t| t.as_u64()), Some(3));
         assert_eq!(v.get("filtered_count").and_then(|c| c.as_u64()), Some(3));
+    }
+
+    /// Pins the namespace-filter-with-limit interaction: the SQL limit in
+    /// `replay_weighted` runs BEFORE the namespace filter, so a namespace
+    /// filter yields a subset of the already-capped set — never more than
+    /// the SQL limit, and possibly fewer than `limit` matching events even
+    /// when more exist in the window. This is the scenario the redundant
+    /// in-memory `.take(limit)` (now removed) used to hide.
+    #[tokio::test]
+    async fn namespace_filter_yields_subset_of_sql_capped_set() {
+        // 4 `reg.gas` events + 2 `reg.pod` events (both algedonic-visible).
+        let escalation_queue = Arc::new(
+            EscalationQueue::from_driver(SqliteDriver::in_memory_driver())
+                .expect("escalation queue"),
+        );
+        let pool = SqliteDriver::in_memory_pool().expect("pool");
+        let regulation_store = Arc::new(
+            RegulationArchive::from_driver(Arc::new(SqliteDriver::new(pool)))
+                .expect("regulation archive init"),
+        );
+        for i in 0..4 {
+            persist_regulation_event(&regulation_store, &format!("gas_{i}"));
+        }
+        for i in 0..2 {
+            persist_regulation_event_with_span(
+                &regulation_store,
+                RegulationSpan::AgentPod,
+                &format!("pod_{i}"),
+            );
+        }
+        let server = CuratorServer::new(
+            WebID::new(),
+            Arc::new(CuratorDb::for_tests(CuratorStores {
+                escalation_queue: Some(escalation_queue),
+                regulation_store: Some(regulation_store),
+                ..CuratorStores::empty()
+            })),
+        );
+
+        // Filter to `reg.pod` with a limit of 100. The SQL returns all 6
+        // events (limit 100 > 6), the namespace filter keeps 2.
+        let req = params::<RegQueryRequest>(
+            serde_json::json!({"namespace": "reg.pod", "window_seconds": 86400, "limit": 100}),
+        );
+        let out = server.reg_query(req).await;
+        let v = parse(&out);
+        assert_eq!(v.get("replayed_count").and_then(|t| t.as_u64()), Some(6));
+        assert_eq!(v.get("filtered_count").and_then(|c| c.as_u64()), Some(2));
+
+        // Now limit to 3. The SQL returns 3 events (the first 3 inserted —
+        // all `reg.gas`), the namespace filter `reg.pod` keeps 0. This pins
+        // that the limit is pre-filter: a low limit can starve the namespace
+        // filter entirely, and no in-memory `take` can add events back.
+        let req = params::<RegQueryRequest>(
+            serde_json::json!({"namespace": "reg.pod", "window_seconds": 86400, "limit": 3}),
+        );
+        let out = server.reg_query(req).await;
+        let v = parse(&out);
+        assert_eq!(v.get("replayed_count").and_then(|t| t.as_u64()), Some(3));
+        assert_eq!(v.get("filtered_count").and_then(|c| c.as_u64()), Some(0));
     }
 }

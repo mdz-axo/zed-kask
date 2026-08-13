@@ -4528,7 +4528,14 @@ impl AcpThread {
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
                     let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
-                    if headless {
+                    // The sandboxed command has stdin redirected to /dev/null and
+                    // runs in a new session (setsid) with no controlling terminal.
+                    // An interactive shell (-i) tries to set the tty process group,
+                    // fails with "Cannot set tty process group (No such process)",
+                    // and exits with code 2 — making every sandboxed terminal
+                    // command appear to fail. Always run non-interactively when
+                    // sandboxed, and when headless (no PTY at all).
+                    if headless || sandbox_wrap.is_some() {
                         builder = builder.non_interactive();
                     }
                     let (task_command, task_args) = builder

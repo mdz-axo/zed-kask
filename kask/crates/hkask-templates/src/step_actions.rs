@@ -860,7 +860,7 @@ fn effective_timeout(timeout_seconds: u32) -> std::time::Duration {
 /// the LLM's raw output (often JSON from structured-output steps) and
 /// pollutes the thinking trace with non-thinking content.
 ///
-/// `cost_usd` is extracted from the final streaming chunk (carried by the
+/// `cost_usd` is accumulated from streaming chunks (carried by the
 /// provider's `UsageUpdate` event) and returned so the budget tracker can
 /// charge rJoules.
 async fn call_inference_stream(
@@ -922,7 +922,7 @@ async fn call_inference_stream(
                         // as separate events — tracking only the "final" chunk
                         // would lose cost_usd when Stop arrives after UsageUpdate.
                         if !chunk.tool_calls.is_empty() {
-                            accumulated_tool_calls = chunk.tool_calls;
+                            accumulated_tool_calls.extend(chunk.tool_calls);
                         }
                         if chunk.cost_usd.is_some() {
                             accumulated_cost_usd = chunk.cost_usd;

@@ -717,7 +717,12 @@ impl CuratorServer {
                         true
                     }
                 })
-                .take(req.limit.unwrap_or(100))
+                // No `.take(limit)` here — `replay_weighted` already applied
+                // the SQL `limit` before the namespace filter, so an in-memory
+                // `take` can only reduce the already-capped set (dead code)
+                // and misleads readers into thinking the limit is enforced
+                // post-filter. If post-filter limiting is needed, move the
+                // limit into the SQL query (after the namespace filter).
                 .map(|we| {
                     json!({
                         "timestamp": we.event.timestamp.to_rfc3339(),

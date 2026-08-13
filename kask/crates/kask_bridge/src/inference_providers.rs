@@ -81,7 +81,7 @@ impl InferenceProviderDescriptor {
 ///
 /// `Secret` credentials (API keys, tokens, passphrases, passwords) are mirrored
 /// from `.env` into the OS keychain by `mirror_env_keys_to_keychain` and
-/// injected into MCP server child processes via `mcp_env_with_credentials`
+/// injected into MCP server child processes via `build_mcp_server_env`
 /// (which reads the keychain). They appear in MCP server `credentials`
 /// allowlists.
 ///
@@ -385,7 +385,7 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
     // entry exists — they have no enable/disable control. `Config` entries are
     // skipped (non-secret, routed via `mcp_env()`). The per-MCP-server
     // `credentials` allowlist is the final filter, so listing a key here does
-    // not reach a server that doesn't declare it. `mcp_env_with_credentials`
+    // not reach a server that doesn't declare it. `build_mcp_server_env`
     // also skips env vars already set in the process environment.
     for desc in DATA_SERVICES {
         if !desc.is_secret() {
@@ -423,7 +423,7 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
 
     // Note: HKASK_SMTP_PASSWORD is in DATA_SERVICES as a Secret (unconditional
     // injection). The consumer (curator server) gates on smtp_username being
-    // non-empty, and `mcp_env_with_credentials` skips injection when the
+    // non-empty, and `build_mcp_server_env` skips injection when the
     // keychain entry is absent — so emitting the URL unconditionally is
     // harmless when email is not configured.
 
@@ -641,7 +641,7 @@ impl MirrorTarget {
 ///
 /// The main process reads inference keys from `std::env::var` (populated by
 /// the `.env` load at startup or by the shell). MCP servers, however, receive
-/// their credentials via `mcp_env_with_credentials`, which reads from the
+/// their credentials via `build_mcp_server_env`, which reads from the
 /// keychain (`kask://credentials/<key>`) — not from the parent process env.
 /// Without this mirror, an operator who sets a provider key (e.g.
 /// `DEEPINFRA_API_KEY`) only in `.env` gets a working main process but
@@ -657,7 +657,7 @@ impl MirrorTarget {
 /// It always writes (overwrites any existing keychain entry with the env
 /// value). The env var takes precedence on the next restart because the
 /// main process reads `std::env::var` first; the keychain write ensures MCP
-/// servers (which read the keychain via `mcp_env_with_credentials`) see the
+/// servers (which read the keychain via `build_mcp_server_env`) see the
 /// key even when the env var is later removed from `.env`. When the env var
 /// is absent, no mirror happens, so a key the operator set via the settings
 /// UI is preserved — matching the main-process precedence rule in
@@ -760,7 +760,7 @@ pub fn mirror_env_keys_to_keychain(
 /// not keychain-backed. Without this mirror, operators who set
 /// `RUNPOD_API_KEY` / `HF_TOKEN` / `HKASK_EODHD_API_KEY` etc. only in `.env`
 /// get a working main process (the env var is read directly), but MCP server
-/// child processes that read from the keychain via `mcp_env_with_credentials`
+/// child processes that read from the keychain via `build_mcp_server_env`
 /// silently fail with "API key not configured" — the same failure mode the
 /// mirror exists to prevent for inference providers.
 fn collect_env_keys_for_mirror() -> Vec<MirrorTarget> {
@@ -1121,13 +1121,13 @@ mod tests {
     /// `credentials` allowlist must be in `DATA_SERVICES` or
     /// `INFERENCE_PROVIDERS`. Without this, an operator who sets the key only
     /// in `.env` gets a working main process (env var read directly) but the
-    /// MCP server silently fails to receive it via `mcp_env_with_credentials`
+    /// MCP server silently fails to receive it via `build_mcp_server_env`
     /// (which reads the keychain, populated by the mirror) — the exact failure
     /// mode `mirror_env_keys_to_keychain` exists to prevent. This test makes
     /// the gap a test-time error rather than a silent runtime failure.
     ///
     /// Per `.rules` "Advertised invariants need enforcement points": the
-    /// `mcp_env_with_credentials` doc advertises that it injects credentials
+    /// `build_mcp_server_env` doc advertises that it injects credentials
     /// from the keychain; this test enforces that every credential an MCP
     /// server can declare is reachable via that path.
     #[test]

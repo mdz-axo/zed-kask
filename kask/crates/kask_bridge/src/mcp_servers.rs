@@ -7,6 +7,19 @@
 //!
 //! The server IDs here match the keys used in `KaskMcpSettingsContent::overrides`
 //! and the `context_servers` entries registered with zed's `ContextServerStore`.
+//!
+//! # Env-construction invariant
+//!
+//! There is one env-construction path for a kask MCP server child process:
+//! [`build_mcp_server_env`]. It composes two filters — [`filter_config_env_for_server`]
+//! for non-secret config and [`filter_credentials_for_server`] for keychain secrets.
+//! The two filters apply to **disjoint key sets** (config vars live in
+//! `BuiltinMcpServer::config_env`, credentials live in `BuiltinMcpServer::credentials`)
+//! and are never composed in sequence on the same map. Config is filtered first, then
+//! credentials are resolved and merged into the already-filtered map. Reversing this
+//! order — or running the config filter over a map that already contains credentials —
+//! drops every credential (the config allowlist does not list credential keys). This
+//! is the regression the previous two-path design had; do not reintroduce it.
 
 /// A built-in kask MCP server descriptor.
 #[derive(Debug, Clone, Copy)]
@@ -83,7 +96,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_SERPAPI_API_KEY",
         ]),
         config_env: Some(&[
-            // HKASK_TRANSACTIONS_DIR was removed: no read site in the crate.
+            // HKASK_TRANSACTIONS_DIR is not emitted by `mcp_env()` and not
+            // allowlisted: no MCP server crate reads it (verified across
+            // hkask-mcp-companies and hkask-mcp-portfolio). The settings field
+            // remains for forward compatibility; re-add emission + an entry
+            // here when a server crate gains a read site.
             "HKASK_CHRONIC_STALENESS_DAYS",
             "HKASK_FERMI_DEFAULTS",
         ]),
@@ -496,10 +513,10 @@ pub async fn build_mcp_server_env(
     let mut env = filter_config_env_for_server(server_id, &settings.mcp_env());
 
     // 2. Credentials: resolve URLs, filter per-server, read from keychain.
-    //    Shell overrides win (preserves the polarity `mcp_env_with_credentials`
-    //    established: an empty env var in the parent shell is not a meaningful
-    //    override and would silently break inference with an untraceable
-    //    "API key not configured" error).
+    //    Shell overrides win (preserves the polarity the previous
+    //    `mcp_env_with_credentials` established: an empty env var in the
+    //    parent shell is not a meaningful override and would silently break
+    //    inference with an untraceable "API key not configured" error).
     let cred_urls =
         filter_credentials_for_server(server_id, &crate::credential_urls_for_mcp(settings));
     for (env_var, url) in cred_urls {

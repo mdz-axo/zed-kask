@@ -9,7 +9,7 @@
 //! ## Connection healing
 //!
 //! A child process can die without anyone asking it to (crash, OOM, a parent
-//! restart that races an in-flight call). Three mechanisms keep the runtime from
+//! restart that races an in-flight call). Four mechanisms keep the runtime from
 //! serving a dead connection forever:
 //!
 //! 1. **Reap on death** — the keeper task that owns each `RunningService` removes
@@ -21,6 +21,10 @@
 //!    launch spec, so `call_tool_inner` can re-spawn a dead server once (subject
 //!    to [`RECONNECT_COOLDOWN`]) and retry the call rather than failing until the
 //!    next settings change.
+//! 4. **Health supervisor** — a per-server background task that periodically
+//!    checks transport liveness and proactively removes dead connections before
+//!    the next tool call discovers them. After [`MAX_CONSECUTIVE_HEALTH_FAILURES`]
+//!    consecutive failures it logs an operator-actionable error and stops.
 //!
 //! Without these, `start_server_with_env`'s presence-based idempotency check
 //! (`connections.contains_key`) would short-circuit every recovery attempt and
@@ -574,6 +578,12 @@ impl McpRuntime {
         // a live connection. If so, drop the new connection (its `RunningService`
         // and child process are cleaned up by rmcp's DropGuard) rather than
         // overwriting the existing one and orphaning its keeper task.
+        //
+        // The keeper task for this (loser) connection was already spawned above
+        // and holds the `RunningService` alive. We must cancel it so the child
+        // process is killed and the keeper exits — otherwise the loser's process
+        // and keeper task leak (nobody holds the cancellation token for this
+        // generation, since the insert below is skipped).
         {
             let mut connections = self.connections.write().await;
             if let Some(existing) = connections.get(server_id)
@@ -584,12 +594,11 @@ impl McpRuntime {
                     server_id = %server_id,
                     "Concurrent start_server_with_env race — discarding duplicate connection"
                 );
-                // `peer` and the `RunningService` it came from are dropped here.
-                // The keeper task for this generation was never spawned (it is
-                // spawned below for the winning connection), so there is no
-                // orphaned keeper to worry about — the `running` variable was
-                // consumed by `running.peer().clone()` above, and the original
-                // `RunningService` is dropped when this function returns.
+                // Cancel the keeper task for the loser connection. The keeper's
+                // `bg_cancel.cancelled()` arm fires, it exits without reaping
+                // (returns `false`), and the `RunningService` is dropped, killing
+                // the child process via rmcp's DropGuard.
+                cancel.cancel();
                 return Ok(());
             }
             connections.insert(server_id.to_string(), Connection { peer, generation });

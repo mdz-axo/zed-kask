@@ -1550,7 +1550,7 @@ fn main() {
                 // vars so `send_email()` (called from `tokio::spawn` inside
                 // `CuratorAlertEmailSink::send_alert_email`) can read them.
                 // The SMTP password is read from the keychain by
-                // `mcp_env_with_credentials` for MCP server child processes;
+                // `build_mcp_server_env` for MCP server child processes;
                 // for the main-process alert sink we set `HKASK_SMTP_PASSWORD`
                 // from the keychain here too.
                 //
@@ -1659,7 +1659,7 @@ fn main() {
                 // get a working main process (the env var is read by `EnvVar::new` in the
                 // OpenAI-compatible provider state, and by the in-process media router),
                 // but MCP server child processes
-                // (media, corpus) receive their credentials via `mcp_env_with_credentials`,
+                // (media, corpus) receive their credentials via `build_mcp_server_env`,
                 // which reads from the keychain — not the parent process env. Without
                 // this mirror, MCP servers silently fail with "API key not configured"
                 // even though the main process works.
@@ -2884,6 +2884,11 @@ impl project::context_server_store::registry::ContextServerDescriptor for KaskMc
                 cx,
             )
             .await;
+            // `build_mcp_server_env` returns `std::collections::HashMap` (matches
+            // the filter helpers and `start_server_with_env`); `ContextServerCommand`
+            // expects zed's `collections::HashMap` (FxBuildHasher). Convert here
+            // so the canonical builder keeps one return type for both consumers.
+            let env_map: collections::HashMap<String, String> = env_map.into_iter().collect();
 
             Ok(context_server::ContextServerCommand {
                 path: resolve_mcp_binary(&server_id, &binary).into(),

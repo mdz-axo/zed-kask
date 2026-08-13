@@ -11,8 +11,8 @@
 //! Inference keys (`DEEPINFRA_API_KEY`, `OPENROUTER_API_KEY`, etc.) are
 //! **never** read from this keystore. They are injected into MCP server
 //! child processes as environment variables by the parent zed process
-//! (via `kask_bridge::KaskSettings::mcp_env_with_credentials`, which reads
-//! from zed's `CredentialsProvider` keychain under `kask://credentials/<key>`).
+//! (via `kask_bridge::build_mcp_server_env`, which reads from zed's
+//! `CredentialsProvider` keychain under `kask://credentials/<key>`).
 //! The MCP servers' `InferenceConfig::from_env()` reads only the env var.
 //! This closes the two-namespace split that previously caused silent "API
 //! key not configured" errors when the `hkask` keychain fallback read a
