@@ -93,7 +93,7 @@ fn consent_store_err(e: hkask_storage::database::types::DbError) -> SwarmError {
 impl ConsentStore {
     /// Open (or create) the shared SQLite consent store at `path`. Both the
     /// governed and the per-project swarm server processes resolve the same
-    /// path (default `~/.hkask/swarm_consent.db`), making consent tokens
+    /// path (default `mcp/swarm/consent.db`), making consent tokens
     /// consumable across processes — the panel's hire flow and the Steer
     /// curator's spend flow compose.
     pub(crate) fn open_sqlite(path: &str) -> Result<Self, LocalSwarmError> {

@@ -1,7 +1,7 @@
-//! Triple extraction service — concurrent h_mem extraction from corpus chunks.
+//! Assertion extraction service — concurrent h_mem extraction from corpus chunks.
 //!
 //! Extracted from `CorpusServer::extract_passages_batch` in `tools/semantic/mod.rs`.
-//! Opens the DB once, shares it across concurrent tasks, and stores triples as
+//! Opens the DB once, shares it across concurrent tasks, and stores assertions as
 //! h_mems with ontology-aware confidence capping.
 
 use std::sync::Arc;
@@ -49,7 +49,7 @@ impl AssertionsService {
     /// Batch extract h_mems from chunks JSONL with concurrent LLM calls.
     ///
     /// Opens the DB once and shares it across all concurrent tasks via `Arc<MemoryStore>`.
-    /// Each chunk gets a 3-attempt retry with backoff. Triples are stored as h_mems
+    /// Each chunk gets a 3-attempt retry with backoff. Assertions are stored as h_mems
     /// with `entity = chunk.entity_ref`.
     ///
     /// When `tagged_jsonl` is provided, ontology tags from the tagging step are
@@ -87,7 +87,7 @@ impl AssertionsService {
                 .to_string();
             if entity_ref.is_empty() || chunk_text.is_empty() {
                 tracing::warn!(
-                    target: "hkask.mcp.docproc.triples",
+                    target: "hkask.mcp.docproc.assertions",
                     line = i + 1,
                     "Skipping chunk with empty entity_ref or text"
                 );
@@ -215,7 +215,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
 
                 let response = match retry_with_backoff(
                     MAX_RETRIES,
-                    "hkask.mcp.docproc.triples",
+                    "hkask.mcp.docproc.assertions",
                     &entity_ref,
                     || router.generate_with_model(&prompt, &params, Some(&classifier), None),
                 )
@@ -235,7 +235,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                     Ok(v) => v,
                     Err(_) => {
                         tracing::warn!(
-                            target: "hkask.mcp.docproc.triples",
+                            target: "hkask.mcp.docproc.assertions",
                             entity = %entity_ref,
                             "LLM response was not valid JSON"
                         );
@@ -247,14 +247,14 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                 // Store assertions as h_mems — preserve subject in value for knowledge graph
                 let mut stored = 0usize;
                 if let Some(arr) = h_mems.get("h_mems").and_then(|v| v.as_array()) {
-                    for triple in arr {
-                        let subject = triple.get("subject").and_then(|v| v.as_str()).unwrap_or("");
-                        let predicate = triple
+                    for assertion in arr {
+                        let subject = assertion.get("subject").and_then(|v| v.as_str()).unwrap_or("");
+                        let predicate = assertion
                             .get("predicate")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown");
-                        let object = triple.get("object").cloned().unwrap_or(json!(null));
-                        let raw_confidence = triple
+                        let object = assertion.get("object").cloned().unwrap_or(json!(null));
+                        let raw_confidence = assertion
                             .get("confidence")
                             .and_then(|v| v.as_f64())
                             .unwrap_or(0.8);
@@ -289,7 +289,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                                 "Triple subject/object not found in chunk text — confidence capped at 0.5".to_string()
                             };
                             tracing::warn!(
-                                target: "hkask.mcp.docproc.triples",
+                                target: "hkask.mcp.docproc.assertions",
                                 entity = %entity_ref,
                                 subject = %subject,
                                 predicate = %predicate,
@@ -329,7 +329,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             Ok(()) => stored += 1,
                             Err(e) => {
                                 tracing::warn!(
-                                    target: "hkask.mcp.docproc.triples",
+                                    target: "hkask.mcp.docproc.assertions",
                                     entity = %entity_ref,
                                     error = %e,
                                     "Failed to store triple h_mem"
@@ -348,7 +348,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
         for handle in handles {
             if let Err(join_err) = handle.await {
                 tracing::warn!(
-                    target: "hkask.mcp.docproc.triples",
+                    target: "hkask.mcp.docproc.assertions",
                     error = %join_err,
                     "assertion extraction batch task join failed"
                 );

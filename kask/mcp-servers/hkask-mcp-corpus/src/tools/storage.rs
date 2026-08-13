@@ -11,7 +11,7 @@ use serde::Deserialize;
 #[tool_router(router = storage_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
-        description = "Cache processed document text for reference. Stores content keyed by label in the docproc cache directory (~/.config/hkask/docproc-cache/)."
+        description = "Cache processed document text for reference. Stores content keyed by label in the corpus cache directory (mcp/corpus/cache/)."
     )]
     pub async fn corpus_cache(
         &self,

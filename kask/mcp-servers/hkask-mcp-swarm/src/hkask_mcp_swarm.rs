@@ -145,7 +145,7 @@ impl rmcp::ServerHandler for SwarmServer {}
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Resolve the shared consent store path. `HKASK_SWARM_CONSENT_STORE`
-/// overrides; the default is `~/.hkask/swarm_consent.db`. Both swarm server
+/// overrides; the default is `mcp/swarm/consent.db`. Both swarm server
 /// processes (governed `McpRuntime` and per-project `ContextServerStore`)
 /// compute the same path, which is what makes consent tokens consumable
 /// across processes.
@@ -206,7 +206,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             // This is always constructed — even in Abw mode, the operator can
             // call `swarm_fund_local` / `swarm_delegate_local` to mix local
             // execution. The ledger path defaults to
-            // `~/.hkask/swarm_ledger.db` (operator-configurable via
+            // `mcp/swarm/ledger.db` (operator-configurable via
             // `HKASK_SWARM_LEDGER_PATH`).
             //
             // The runtime is constructed lazily on first tool call (the
@@ -297,7 +297,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             }
 
             // Build the consent store. Default: the shared SQLite store
-            // (~/.hkask/swarm_consent.db, operator-overridable via
+            // (mcp/swarm/consent.db, operator-overridable via
             // `HKASK_SWARM_CONSENT_STORE`) so a token minted by the panel's
             // governed server process is consumable by the Steer curator's
             // per-project server process (both resolve the same path). On open

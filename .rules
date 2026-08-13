@@ -47,7 +47,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 # Agent loop traps
 
-* **Tool retry death spiral.** If a tool call fails 3 times with the same error message and the same input, STOP. Do not retry with trivially different parameter orderings, whitespace, or argument formatting — that is a zero-gain loop (the orient step is not getting new information). After 3 identical failures: (1) count the attempts, (2) step back and reframe — is this a transport failure, not a parameter problem? (3) switch to a different tool (`grep` with `regex: "."` to read file content, `terminal` with `sed`/`head`, `spawn_agent`, `find_path`) or report the blocker to the user and move to other work. Hard cap: 5 retries on the same tool+input, then you MUST switch tools or stop. This is a variety-deficit fix (Ashby): the regulator's response set must include `{switch_tool, report, stop}`, not just `{retry}`.
+* **Tool retry death spiral (hard-enforced).** The `ToolRetryTracker` in `crates/agent/src/tool_retry_tracker.rs` tracks two dimensions: `(tool_name, input_hash) → failure_count` (identical retries) and `tool_name → consecutive_failure_count` (trivially different inputs, same tool). After 3 failures, the tool result carries a warning with the Bayesian probability of success (`1/(N+2)`) and a directive to switch tools. After 5 failures, the tool hard-refuses — `handle_tool_use_event` returns an error result without calling `tool.run()`. A successful call resets both trackers. This covers all tools uniformly (built-in + MCP) because they all dispatch through `handle_tool_use_event` → `run_tool`. The tracker lives on `Thread` (per-thread, not per-session).
 
 # zed-kask integration traps
 
