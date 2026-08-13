@@ -1022,7 +1022,17 @@ impl MediaServer {
     /// Tries: DeepInfra → OpenRouter.
     /// Returns (model_name, label) or None if no vision provider is configured.
     async fn resolve_vision_model(&self) -> Option<(&'static str, &'static str)> {
-        let models = self.vision_port.list_vision_models().await;
+        let models = match self.vision_port.list_vision_models().await {
+            Ok(models) => models,
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.media",
+                    error = %e,
+                    "list_vision_models failed — inference port unavailable, returning None"
+                );
+                return None;
+            }
+        };
 
         for model in &models {
             // Check the provider prefix in the model name (case-insensitive —

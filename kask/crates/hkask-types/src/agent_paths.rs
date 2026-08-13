@@ -133,9 +133,13 @@ pub fn threads_db_path() -> PathBuf {
 
 // ── Database paths ───────────────────────────────────────────────────────────
 
-/// Pod database — HMemStore, EmbeddingStore, Regulation events.
-pub fn agent_pod_db(name: &str) -> PathBuf {
-    agent_dir(name).join("pod.db")
+/// Agent sovereign database — HMemStore, EmbeddingStore, Regulation events.
+///
+/// Renamed from `agent_pod_db` (the "pod" concept was deprecated; the name
+/// is anachronistic). The on-disk filename is `{agent_name}.db` (e.g.
+/// `agents/curator/curator.db`), not `pod.db`.
+pub fn agent_db(name: &str) -> PathBuf {
+    agent_dir(name).join(format!("{name}.db"))
 }
 
 /// Memory database — episodic + semantic tool storage.
@@ -256,8 +260,8 @@ mod tests {
     #[test]
     fn db_paths() {
         assert_eq!(
-            agent_pod_db("alice"),
-            PathBuf::from("agents").join("alice").join("pod.db")
+            agent_db("alice"),
+            PathBuf::from("agents").join("alice").join("alice.db")
         );
         assert_eq!(
             agent_memory_db("alice"),

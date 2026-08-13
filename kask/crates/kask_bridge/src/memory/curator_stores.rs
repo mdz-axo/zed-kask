@@ -19,7 +19,7 @@ use super::open_regulation_archive;
 /// `agents/curator/pod.db` under the hKask data dir.
 pub fn curator_db_path() -> String {
     std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
-        let p = hkask_types::agent_paths::agent_pod_db("curator");
+        let p = hkask_types::agent_paths::agent_db("curator");
         let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
         if let Some(parent) = resolved.parent() {
             std::fs::create_dir_all(parent).ok();

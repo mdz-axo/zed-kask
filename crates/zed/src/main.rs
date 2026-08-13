@@ -1437,7 +1437,7 @@ fn main() {
                                 // etc.), which resolve their identity from it in
                                 // `transport.rs`.
                                 let curator_db = hkask_types::agent_paths::resolve_under_data_dir(
-                                    &hkask_types::agent_paths::agent_pod_db("curator"),
+                                    &hkask_types::agent_paths::agent_db("curator"),
                                 );
                                 let curator_webid = hkask_types::WebID::from_persona(b"curator");
                                 // SAFETY: Set during the deferred task (post-login,

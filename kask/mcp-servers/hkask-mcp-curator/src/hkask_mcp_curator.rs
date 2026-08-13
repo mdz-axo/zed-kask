@@ -119,7 +119,7 @@ pub struct CuratorDb {
 impl CuratorDb {
     fn from_context(ctx: &hkask_mcp_server::server::ServerContext) -> Self {
         let db_path = std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
-            let p = hkask_types::agent_paths::agent_pod_db("curator");
+            let p = hkask_types::agent_paths::agent_db("curator");
             let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
             if let Some(parent) = resolved.parent()
                 && let Err(e) = std::fs::create_dir_all(parent)

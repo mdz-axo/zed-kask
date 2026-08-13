@@ -45,6 +45,10 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Single-crate rules go in that crate's `.rules`, not the repo root.
 * Don't edit `.rules` inline during feature work — propose additions in PR descriptions.
 
+# Agent loop traps
+
+* **Tool retry death spiral.** If a tool call fails 3 times with the same error message and the same input, STOP. Do not retry with trivially different parameter orderings, whitespace, or argument formatting — that is a zero-gain loop (the orient step is not getting new information). After 3 identical failures: (1) count the attempts, (2) step back and reframe — is this a transport failure, not a parameter problem? (3) switch to a different tool (`grep` with `regex: "."` to read file content, `terminal` with `sed`/`head`, `spawn_agent`, `find_path`) or report the blocker to the user and move to other work. Hard cap: 5 retries on the same tool+input, then you MUST switch tools or stop. This is a variety-deficit fix (Ashby): the regulator's response set must include `{switch_tool, report, stop}`, not just `{retry}`.
+
 # zed-kask integration traps
 
 ## Divergence surface

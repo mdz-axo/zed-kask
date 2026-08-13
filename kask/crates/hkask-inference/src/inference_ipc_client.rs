@@ -1009,4 +1009,26 @@ mod tests {
         let line = read_response_line(&mut receiver).await.expect("read");
         assert_eq!(line, None);
     }
+
+    // F9 — `list_models` must return `Err` (not an empty `Vec`) when the IPC
+    // connection is dead. Previously the error was swallowed and `Vec::new()`
+    // was returned, making a broken IPC indistinguishable from "no models
+    // configured" — a variety-deficit where the regulator can act on "broken"
+    // but callers couldn't tell. The fix propagates the error as `Err`.
+    #[tokio::test]
+    async fn list_models_returns_err_when_ipc_is_dead() {
+        // Create a socket pair and immediately drop the server end so the
+        // client's stream is a dead connection.
+        let (sender, receiver) = UnixStream::pair().expect("socket pair");
+        drop(sender);
+        let client = InferenceIpcClient {
+            stream: Arc::new(Mutex::new(Some(receiver))),
+            next_id: AtomicU64::new(1),
+        };
+        let result = client.list_models().await;
+        assert!(
+            result.is_err(),
+            "list_models must return Err on a dead IPC connection, not Ok(Vec::new())"
+        );
+    }
 }

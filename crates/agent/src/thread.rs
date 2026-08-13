@@ -1389,6 +1389,11 @@ pub struct Thread {
     /// already-granted permissions skip the approval prompt.
     /// Never persisted — lives and dies with this thread.
     sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+    /// Tool retry tracker — hard-enforces the agent-loop retry cap. After 3
+    /// identical failures, warns the agent to switch tools. After 5, hard-refuses.
+    /// Prevents the zero-gain retry death spiral (Ashby variety-deficit).
+    /// Never persisted — lives and dies with this thread.
+    tool_retry_tracker: Rc<RefCell<crate::tool_retry_tracker::ToolRetryTracker>>,
     /// Cached rendered system prompt and its input digest. The system prompt is
     /// re-rendered on every `build_request_messages_until` call, but its inputs
     /// (available_tools, model_name, date, user_agents_md, sandboxing, project
@@ -1601,6 +1606,9 @@ impl Thread {
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            tool_retry_tracker: Rc::new(RefCell::new(
+                crate::tool_retry_tracker::ToolRetryTracker::default(),
+            )),
             cached_system_prompt: None,
             cached_filtered_context: None,
             static_context: None,
@@ -2003,6 +2011,9 @@ impl Thread {
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
                 &db_thread.sandbox_grants,
             ))),
+            tool_retry_tracker: Rc::new(RefCell::new(
+                crate::tool_retry_tracker::ToolRetryTracker::default(),
+            )),
             cached_system_prompt: None,
             cached_filtered_context: None,
             static_context: None,
@@ -4147,6 +4158,7 @@ impl Thread {
                     event_stream,
                     cancellation_rx,
                     cx,
+                    input,
                 ));
             } else {
                 // [DIAG-T0002] Non-streaming path: tool does not support input
@@ -4172,6 +4184,49 @@ impl Thread {
             return None;
         }
 
+        // Tool retry cap — hard enforcement of the agent-loop retry limit.
+        // After 3 identical failures, warn the agent to switch tools. After 5,
+        // hard-refuse. Prevents the zero-gain retry death spiral where the agent
+        // retries the same failing call with trivially different parameter
+        // orderings (Ashby variety-deficit: the response set must include
+        // {switch_tool, report, stop}, not just {retry}).
+        let tool_name_str = tool_use.name.as_ref();
+        match self
+            .tool_retry_tracker
+            .borrow()
+            .check(tool_name_str, &input)
+        {
+            crate::tool_retry_tracker::RetryVerdict::Refuse { attempt } => {
+                let content = format!(
+                    "Tool '{tool_name_str}' has failed {attempt} times with the same input. \
+                     Hard cap reached — this tool is refused for this input. \
+                     Switch to a different tool (grep, terminal, find_path, spawn_agent) \
+                     or report the blocker to the user. Do not retry with trivially \
+                     different parameters — that is a zero-gain loop."
+                );
+                log::warn!(
+                    "Tool retry cap reached for '{tool_name_str}' (attempt {attempt}) — refusing"
+                );
+                return Some(Task::ready((
+                    owning_message_ix,
+                    LanguageModelToolResult {
+                        content: vec![LanguageModelToolResultContent::Text(Arc::from(content))],
+                        tool_use_id: tool_use.id,
+                        tool_name: tool_use.name,
+                        is_error: true,
+                        output: None,
+                    },
+                )));
+            }
+            crate::tool_retry_tracker::RetryVerdict::AllowWithWarning { attempt, cap } => {
+                log::warn!(
+                    "Tool '{tool_name_str}' has failed {attempt}/{cap} times with the same input — \
+                     consider switching tools before the hard cap is reached"
+                );
+            }
+            crate::tool_retry_tracker::RetryVerdict::Allow => {}
+        }
+
         log::debug!("Running tool {}", tool_use.name);
         // [DIAG-T0003] Non-streaming complete path: is_input_complete=true,
         // tool does not support streaming (or no prior partial was sent).
@@ -4183,7 +4238,7 @@ impl Thread {
             "[DIAG-T0003] tool {} entered non-streaming complete path (is_input_complete=true)",
             tool_use.name
         );
-        let tool_input = ToolInput::ready(input);
+        let tool_input = ToolInput::ready(input.clone());
         Some(self.run_tool(
             tool,
             tool_input,
@@ -4193,6 +4248,7 @@ impl Thread {
             event_stream,
             cancellation_rx,
             cx,
+            input,
         ))
     }
 
@@ -4206,6 +4262,7 @@ impl Thread {
         event_stream: &ThreadEventStream,
         cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
+        input_for_tracking: serde_json::Value,
     ) -> Task<(usize, LanguageModelToolResult)> {
         // A workspace can become restricted after a thread has already started.
         // Tools that aren't allowed in restricted workspaces must never run in
@@ -4247,9 +4304,15 @@ impl Thread {
         );
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_input, tool_event_stream, cx);
+        let retry_tracker = self.tool_retry_tracker.clone();
+        let tool_name_for_tracking = tool_name.clone();
         cx.foreground_executor().spawn(async move {
             let (is_error, output) = match tool_result.await {
                 Ok(mut output) => {
+                    // Record success — resets the failure counter for this key.
+                    retry_tracker
+                        .borrow()
+                        .record_success(&tool_name_for_tracking, &input_for_tracking);
                     let contains_image = output
                         .llm_output
                         .iter()
@@ -4288,7 +4351,15 @@ impl Thread {
                         (false, output)
                     }
                 }
-                Err(output) => (true, output),
+                Err(output) => {
+                    // Record failure — increments the failure counter for this key.
+                    // After 3, the next call will carry a warning. After 5, the
+                    // next call will be hard-refused before tool.run() is called.
+                    retry_tracker
+                        .borrow()
+                        .record_failure(&tool_name_for_tracking, &input_for_tracking);
+                    (true, output)
+                }
             };
 
             // D8: Compress tool result text before storing in message history.
@@ -4403,6 +4474,7 @@ impl Thread {
             event_stream,
             cancellation_rx,
             cx,
+            serde_json::Value::Null,
         ))
     }
 

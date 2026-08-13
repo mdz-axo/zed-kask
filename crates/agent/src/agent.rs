@@ -11,6 +11,7 @@ mod tests;
 mod thread;
 mod thread_store;
 mod tool_permissions;
+pub mod tool_retry_tracker;
 pub mod tool_router;
 mod tools;
 
