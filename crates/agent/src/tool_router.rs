@@ -112,19 +112,48 @@ where
         open_file_paths,
         candidates,
     };
+    let mcp_tool_count = tool_map
+        .keys()
+        .filter(|name| !built_in_names.contains(name.as_ref()))
+        .count();
     let selected = router.select_tools(&context);
-    if let Some(selected) = selected {
-        // Retain MCP tools that the router selected.
-        for name in selected {
-            if tool_map.contains_key(&name) {
-                retained.insert(name);
+
+    // An empty selection is not a selection — it is the scorer failing to find
+    // signal. `LazyToolRouter` scores by keyword overlap against tool
+    // descriptions, and a substantive-but-vague message ("take a look at how the
+    // parser handles nested quotes") produces many keywords that match no
+    // description, driving every tool to the score floor. Before the activation
+    // threshold was lowered such messages did not activate the router at all and
+    // so kept every tool; afterwards they activate and would strip the entire MCP
+    // surface. Treat an empty result as no-confidence and fail open: paying for
+    // tool schemas is cheap next to silently removing the one tool the request
+    // needed.
+    let no_confidence = selected
+        .as_ref()
+        .is_some_and(|selected| selected.len() < NO_CONFIDENCE_FLOOR && mcp_tool_count > 0);
+
+    match selected {
+        Some(selected) if !no_confidence => {
+            // Retain MCP tools that the router selected.
+            for name in selected {
+                if tool_map.contains_key(&name) {
+                    retained.insert(name);
+                }
             }
         }
-    } else {
-        // Router returned None (fail-open) — retain all MCP tools.
-        for name in tool_map.keys() {
-            if !built_in_names.contains(name.as_ref()) {
-                retained.insert((*name).clone());
+        _ => {
+            // Router returned None, or produced a no-confidence selection —
+            // fail open and retain all MCP tools.
+            if no_confidence {
+                log::debug!(
+                    "tool router: no-confidence selection (0 of {mcp_tool_count} MCP tools \
+                     scored above threshold) — failing open"
+                );
+            }
+            for name in tool_map.keys() {
+                if !built_in_names.contains(name.as_ref()) {
+                    retained.insert((*name).clone());
+                }
             }
         }
     }
@@ -132,16 +161,35 @@ where
     retained
 }
 
+/// Minimum number of MCP tools a router selection must contain to be trusted.
+///
+/// Set to 1 — i.e. only a completely empty selection fails open. A higher floor
+/// was considered and rejected on evidence: measuring a representative 20-tool
+/// MCP surface showed that precise requests legitimately select **one or two**
+/// tools ("generate an image and add it to the gallery" → `generate_image` +
+/// `gallery_search`; "what is the calibrated probability this market resolves
+/// yes" → `market_forecast` alone), and those are the selections worth keeping —
+/// they are where the token saving comes from. A floor of 3 would have discarded
+/// exactly the cases the router gets right while fixing only the empty ones.
+/// Empty-vs-nonempty is the signal that separates scorer failure from precision;
+/// selection size is not.
+const NO_CONFIDENCE_FLOOR: usize = 1;
+
 /// Lazy keyword-overlap tool router. Only activates when the request is
 /// complex or explicitly tool-directed. For simple messages, returns `None`
 /// (fail-open).
 ///
-/// When activated, scores each tool by keyword overlap between the context
+/// When activated, scores each MCP tool by keyword overlap between the context
 /// and the tool's description. Tools scoring ≥ the threshold are included.
-/// Always-on tools (spawn_agent, skill, etc.) bypass scoring.
+///
+/// There is deliberately no always-on list. One existed — `spawn_agent`,
+/// `skill`, `create_thread`, `list_agents_and_models` — and was dead: those four
+/// are built-in tools, `apply_router_bypassing_built_ins` builds candidates from
+/// MCP tools only, so they were never scored and the bypass never fired. They
+/// are protected by the built-in bypass itself, which is unconditional. A field
+/// advertising a guarantee it does not implement is worse than no field, so it
+/// was removed rather than wired.
 pub struct LazyToolRouter {
-    /// Tools that are always included when the router activates.
-    always_on: HashSet<&'static str>,
     /// Score threshold for inclusion.
     threshold: f64,
     /// Minimum word count for a message to be considered "complex."
@@ -154,7 +202,7 @@ impl LazyToolRouter {
     /// the fallback for callers that construct the router without settings
     /// (tests, and any pre-settings construction). Two defaults that disagree is
     /// the drift class that silently changed routing behaviour before; pinned by
-    /// `default_thresholds_match_kask_settings_default`.
+    /// `default_thresholds_are_the_documented_values`.
     pub fn new() -> Self {
         Self::new_with_thresholds(0.30, 9)
     }
@@ -165,14 +213,6 @@ impl LazyToolRouter {
     /// operator-tunable instead of hardcoded.
     pub fn new_with_thresholds(threshold: f64, complex_word_threshold: usize) -> Self {
         Self {
-            always_on: [
-                "spawn_agent",
-                "skill",
-                "create_thread",
-                "list_agents_and_models",
-            ]
-            .into_iter()
-            .collect(),
             threshold,
             complex_word_threshold,
         }
@@ -299,10 +339,7 @@ impl LazyToolRouter {
         context_keywords: &HashSet<String>,
         has_code_file: bool,
     ) -> f64 {
-        // Always-on tools bypass scoring.
-        if self.always_on.contains(candidate.name.as_ref()) {
-            return 1.0;
-        }
+
 
         let description_lower = candidate.description.to_lowercase();
         let description_words: HashSet<&str> = description_lower.split_whitespace().collect();
@@ -596,7 +633,6 @@ mod tests {
             .select_tools(&context)
             .expect("router should activate");
         assert!(selected.contains(&"grep".into()));
-        assert!(selected.contains(&"spawn_agent".into()));
         assert!(
             !selected.contains(&"fetch".into()),
             "fetch should be filtered — no URL context"
@@ -629,7 +665,6 @@ mod tests {
         assert!(selected.contains(&"grep".into()));
         assert!(selected.contains(&"read_file".into()));
         assert!(selected.contains(&"edit_file".into()));
-        assert!(selected.contains(&"spawn_agent".into()));
         assert!(
             !selected.contains(&"fetch".into()),
             "fetch should be filtered — no URL in a refactoring task"
@@ -654,7 +689,6 @@ mod tests {
             .expect("router should activate");
         assert!(selected.contains(&"read_file".into()));
         assert!(selected.contains(&"grep".into()));
-        assert!(selected.contains(&"spawn_agent".into()));
         assert!(!selected.contains(&"fetch".into()));
     }
 
@@ -729,24 +763,93 @@ mod tests {
         );
     }
 
+    /// Built-in tools such as `spawn_agent` are protected by the built-in bypass
+    /// in `apply_router_bypassing_built_ins`, **not** by any list inside the
+    /// scorer. This asserts the real contract: they are retained even when the
+    /// router activates and scores nothing, because they are never candidates.
+    ///
+    /// This replaces a test that fed `spawn_agent` in as a candidate and asserted
+    /// the (now removed) `always_on` bypass. Production never does that —
+    /// candidates are MCP-only — so the old test pinned unreachable behaviour.
     #[test]
-    fn test_lazy_router_always_includes_spawn_agent_when_active() {
-        let context = ToolSelectionContext {
-            user_message: Some("use grep to find the function".to_string()),
-            open_file_paths: vec![],
-            candidates: vec![
-                candidate("spawn_agent", "Spawn a sub-agent for a task"),
-                candidate("grep", "Search file contents using a regular expression"),
-                candidate("fetch", "Fetches a URL"),
-            ],
-        };
+    fn built_in_tools_survive_an_active_router_via_the_bypass() {
+        let names: Vec<SharedString> = vec![
+            "spawn_agent".into(),
+            "skill".into(),
+            "grep".into(),
+            "some_mcp_tool".into(),
+        ];
+        let descriptions: Vec<SharedString> = vec![
+            "Spawn a sub-agent for a task".into(),
+            "Run a skill manifest cascade".into(),
+            "Search file contents using a regular expression".into(),
+            "An unrelated MCP capability about widgets".into(),
+        ];
+        let tools: Vec<(&SharedString, &SharedString)> =
+            names.iter().zip(descriptions.iter()).collect();
+        let built_in: std::collections::HashSet<&str> =
+            ["spawn_agent", "skill", "grep"].into_iter().collect();
+
+        let retained = apply_router_bypassing_built_ins(
+            &LazyToolRouter::new(),
+            tools,
+            Some("use grep to find the function that parses the configuration file please"),
+            vec![],
+            &built_in,
+        );
+
+        for built_in_name in ["spawn_agent", "skill", "grep"] {
+            assert!(
+                retained.contains(&SharedString::from(built_in_name)),
+                "built-in {built_in_name} must be retained regardless of scoring"
+            );
+        }
+    }
+
+    /// The router must never hand back an empty MCP set. Keyword scoring can
+    /// find no match at all on a substantive-but-vague request, and at the
+    /// 9-word activation threshold such requests now reach the scorer. Stripping
+    /// every MCP tool in that case is worse than paying for the schemas.
+    #[test]
+    fn empty_selection_fails_open_instead_of_stripping_all_mcp_tools() {
+        let names: Vec<SharedString> = vec!["widget_alpha".into(), "widget_beta".into()];
+        let descriptions: Vec<SharedString> = vec![
+            "Manage orbital telemetry calibration records".into(),
+            "Reconcile ledger entries against custodial statements".into(),
+        ];
+        let tools: Vec<(&SharedString, &SharedString)> =
+            names.iter().zip(descriptions.iter()).collect();
+        let built_in: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+        // Long enough to activate, with no keyword overlap against either tool.
+        let message = "i have been mulling over how the nested quote handling ought to \
+                       behave in this parser and wanted your read";
         let router = LazyToolRouter::new();
-        let selected = router
-            .select_tools(&context)
-            .expect("router should activate");
-        assert!(selected.contains(&"spawn_agent".into()));
-        assert!(selected.contains(&"grep".into()));
-        assert!(!selected.contains(&"fetch".into()));
+        let selection = router.select_tools(&ToolSelectionContext {
+            user_message: Some(message.to_string()),
+            open_file_paths: vec![],
+            candidates: names
+                .iter()
+                .zip(descriptions.iter())
+                .map(|(n, d)| ToolCandidate {
+                    name: n.clone(),
+                    description: d.clone(),
+                })
+                .collect(),
+        });
+        assert_eq!(
+            selection.as_ref().map(|s| s.len()),
+            Some(0),
+            "precondition: this message must activate the router and match nothing"
+        );
+
+        let retained =
+            apply_router_bypassing_built_ins(&router, tools, Some(message), vec![], &built_in);
+        assert_eq!(
+            retained.len(),
+            2,
+            "a no-confidence (empty) selection must fail open and retain all MCP tools"
+        );
     }
 
     #[test]

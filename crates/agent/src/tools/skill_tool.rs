@@ -99,22 +99,24 @@ pub fn manifest_execution_failed_body(skill_name: &str, error: &dyn std::fmt::Di
 pub struct SkillToolInput {
     /// The name of the skill to retrieve
     pub name: String,
-    /// The user's task for the skill to act on. This is the natural-language
-    /// request that triggered the skill activation — it is injected into the
-    /// manifest cascade context as `task` so templates can reference `{{ task }}`
-    /// instead of running blind. When the model invokes the skill tool, this
-    /// field carries the user's intent; when a slash command activates the
-    /// skill, the trailing text after the command is used. Defaults to empty
-    /// for backward compatibility with callers that only pass `name`.
+    /// The user's full request, passed to the skill as `task`. Include the
+    /// target, question, scope, and constraints — the skill runs against this
+    /// text, so a bare summary makes it run blind.
+    //
+    // Rationale (not model-facing): injected into the cascade context as `task`
+    // so templates can reference `{{ task }}`. Slash-command activation uses the
+    // trailing text after the command. Defaults to empty for callers that pass
+    // only `name`.
     #[serde(default)]
     pub task: String,
-    /// Extra context entries merged into the manifest cascade context. Skills
-    /// that branch on operator configuration read these — e.g.
-    /// `swarm-intelligence`'s templates branch on `mode` ("abw"|"local") and
-    /// require `swarm_id`. Without a channel for these, the cascade renders
-    /// empty `{{ mode }}` and always takes the default branch.
-    /// `task` is injected after this map, so a `context["task"]` entry never
-    /// clobbers the user's actual request.
+    /// Optional key/value context for skills that branch on configuration — e.g.
+    /// `swarm-intelligence` needs `mode` ("abw" or "local") and `swarm_id`.
+    /// Omit unless a skill documents a field it requires.
+    //
+    // Rationale (not model-facing): without this channel the cascade renders an
+    // empty `{{ mode }}` and always takes the default branch. `task` is injected
+    // after this map, so a `context["task"]` entry cannot clobber the real
+    // request.
     #[serde(default)]
     pub context: std::collections::HashMap<String, serde_json::Value>,
 }
