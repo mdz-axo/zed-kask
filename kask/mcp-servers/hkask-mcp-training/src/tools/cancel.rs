@@ -1,7 +1,7 @@
 use crate::TrainingServer;
 use crate::tools::error_mapping::map_host_provider_error;
 use crate::types::TrainCancelRequest;
-use hkask_mcp_server::server::execute_tool;
+use hkask_mcp_server::server::execute_tool_semantic;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use serde_json::json;
@@ -13,12 +13,17 @@ impl TrainingServer {
         &self,
         Parameters(TrainCancelRequest { job_id }): Parameters<TrainCancelRequest>,
     ) -> String {
-        execute_tool(self, "training_cancel", async {
-            match self.host.cancel(&job_id).await {
-                Ok(()) => Ok(json!({ "job_id": job_id, "status": "cancelled" })),
-                Err(e) => Err(map_host_provider_error(e)),
-            }
-        })
+        execute_tool_semantic(
+            self,
+            "training_cancel",
+            Self::ontology_anchor("training_cancel"),
+            async {
+                match self.host.cancel(&job_id).await {
+                    Ok(()) => Ok(json!({ "job_id": job_id, "status": "cancelled" })),
+                    Err(e) => Err(map_host_provider_error(e)),
+                }
+            },
+        )
         .await
     }
 }

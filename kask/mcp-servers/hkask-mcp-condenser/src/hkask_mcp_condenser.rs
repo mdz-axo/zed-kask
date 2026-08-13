@@ -257,31 +257,36 @@ mod tool_surface_tests {
 impl CondenserServer {
     #[tool(description = "Liveness and profile info")]
     pub async fn condenser_ping(&self) -> String {
-        execute_tool(self, "condenser_ping", async {
-            let engine = self
-                .engine
-                .lock()
-                .map_err(|_| McpToolError::internal("engine lock poisoned"))?; // rr0044-ok: lock-poisoned
-            let mode = if self.capability_tier.embedded {
-                "embedded"
-            } else {
-                "standalone"
-            };
-            Ok(serde_json::json!({
-                "status": "ok",
-                "version": SERVER_VERSION,
-                "mode": mode,
-                "capabilities": {
-                    "persistence": self.has_persistence(),
-                    "semantic_memory": self.store.is_some(),
-                    "inference": true,
-                    "keystore": self.capability_tier.keystore_available,
-                    "reg": self.capability_tier.reg_available(),
-                },
-                "profile": engine.profile().to_string(),
-                "default_model": self.default_model,
-            }))
-        })
+        execute_tool_semantic(
+            self,
+            "condenser_ping",
+            Self::ontology_anchor("condenser_ping"),
+            async {
+                let engine = self
+                    .engine
+                    .lock()
+                    .map_err(|_| McpToolError::internal("engine lock poisoned"))?; // rr0044-ok: lock-poisoned
+                let mode = if self.capability_tier.embedded {
+                    "embedded"
+                } else {
+                    "standalone"
+                };
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "version": SERVER_VERSION,
+                    "mode": mode,
+                    "capabilities": {
+                        "persistence": self.has_persistence(),
+                        "semantic_memory": self.store.is_some(),
+                        "inference": true,
+                        "keystore": self.capability_tier.keystore_available,
+                        "reg": self.capability_tier.reg_available(),
+                    },
+                    "profile": engine.profile().to_string(),
+                    "default_model": self.default_model,
+                }))
+            },
+        )
         .await
     }
 
@@ -294,45 +299,50 @@ impl CondenserServer {
             confidence,
         }): Parameters<PersistRequest>,
     ) -> String {
-        execute_tool(self, "condenser_persist", async {
-            let Some(store) = &self.store else {
-                return Err(McpToolError::permission_denied(
-                    "Persistence not available — set HKASK_DB_PATH and HKASK_DB_PASSPHRASE",
+        execute_tool_semantic(
+            self,
+            "condenser_persist",
+            Self::ontology_anchor("condenser_persist"),
+            async {
+                let Some(store) = &self.store else {
+                    return Err(McpToolError::permission_denied(
+                        "Persistence not available — set HKASK_DB_PATH and HKASK_DB_PASSPHRASE",
+                    ));
+                };
+
+                if compressed_output.is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "compressed_output must not be empty",
+                    ));
+                }
+
+                let entity = format!("condenser:{tool_name}");
+                let h_mem = HMem::new(
+                    &entity,
+                    "content",
+                    serde_json::Value::String(compressed_output),
+                    self.webid,
+                )
+                .with_perspective(self.webid)
+                .with_visibility(Visibility::Private)
+                .with_confidence(confidence.unwrap_or(1.0))
+                .with_ontology(HMemOntology::episodic(
+                    "condense",
+                    "persist",
+                    format!("tool:{tool_name}"),
                 ));
-            };
 
-            if compressed_output.is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "compressed_output must not be empty",
-                ));
-            }
-
-            let entity = format!("condenser:{tool_name}");
-            let h_mem = HMem::new(
-                &entity,
-                "content",
-                serde_json::Value::String(compressed_output),
-                self.webid,
-            )
-            .with_perspective(self.webid)
-            .with_visibility(Visibility::Private)
-            .with_confidence(confidence.unwrap_or(1.0))
-            .with_ontology(HMemOntology::episodic(
-                "condense",
-                "persist",
-                format!("tool:{tool_name}"),
-            ));
-
-            match store.store(h_mem) {
-                Ok(()) => Ok(serde_json::json!({
-                    "persisted": true,
-                    "entity": entity,
-                    "attribute": "content",
-                    "perspective": self.webid.to_string(),
-                })),
-                Err(e) => Err(map_memory_error(e)),
-            }
-        })
+                match store.store(h_mem) {
+                    Ok(()) => Ok(serde_json::json!({
+                        "persisted": true,
+                        "entity": entity,
+                        "attribute": "content",
+                        "perspective": self.webid.to_string(),
+                    })),
+                    Err(e) => Err(map_memory_error(e)),
+                }
+            },
+        )
         .await
     }
 
@@ -348,7 +358,7 @@ impl CondenserServer {
             model,
         }): Parameters<ThreadSummaryRequest>,
     ) -> String {
-        execute_tool(self, "condenser_thread_summary", async {
+        execute_tool_semantic(self, "condenser_thread_summary", Self::ontology_anchor("condenser_thread_summary"), async {
             let effective_model = model.as_deref().unwrap_or(&self.default_model);
 
             let msg_count = messages.len();
@@ -427,9 +437,9 @@ impl CondenserServer {
                 serde_json::json!({"model": effective_model.to_string(), "summary_length": summary_len}),
             );
 
-            Ok(serde_json::to_value(&output).map_err(|e| {
+            serde_json::to_value(&output).map_err(|e| {
                 McpToolError::internal(format!("ThreadSummaryOutput serialization failed: {e}"))
-            })?)
+            })
         }).await
     }
 
@@ -440,56 +450,61 @@ impl CondenserServer {
         &self,
         Parameters(req): Parameters<SaliencyRequest>,
     ) -> String {
-        execute_tool(self, "condenser_score_saliency", async {
-            let (score, method) = match req.against.as_deref() {
-                Some("memory") => {
-                    // Query memory stores word-by-word, then score via domain crate.
-                    let words = saliency::extract_query_words(&req.text);
-                    let Some(ref store) = self.store else {
-                        // No memory store — neutral score, not an error.
-                        return Ok(serde_json::json!({
-                            "score": 0.5,
-                            "against": "memory",
-                            "method": "no_store",
-                        }));
-                    };
-                    // Propagate infra errors — a SQLCipher outage must NOT
-                    // score as "nothing is salient" (the `unwrap_or(0)` / `.ok()`
-                    // trap: a DB outage returns 0, the loop reads it as "no
-                    // deviation"). Sum successful query counts; surface the
-                    // first infra failure as a tool error.
-                    let mut total_results = 0usize;
-                    for word in &words {
-                        match store.query_deduped(word) {
-                            Ok(h_mems) => total_results += h_mems.len(),
-                            Err(e) => return Err(map_memory_error(e)),
+        execute_tool_semantic(
+            self,
+            "condenser_score_saliency",
+            Self::ontology_anchor("condenser_score_saliency"),
+            async {
+                let (score, method) = match req.against.as_deref() {
+                    Some("memory") => {
+                        // Query memory stores word-by-word, then score via domain crate.
+                        let words = saliency::extract_query_words(&req.text);
+                        let Some(ref store) = self.store else {
+                            // No memory store — neutral score, not an error.
+                            return Ok(serde_json::json!({
+                                "score": 0.5,
+                                "against": "memory",
+                                "method": "no_store",
+                            }));
+                        };
+                        // Propagate infra errors — a SQLCipher outage must NOT
+                        // score as "nothing is salient" (the `unwrap_or(0)` / `.ok()`
+                        // trap: a DB outage returns 0, the loop reads it as "no
+                        // deviation"). Sum successful query counts; surface the
+                        // first infra failure as a tool error.
+                        let mut total_results = 0usize;
+                        for word in &words {
+                            match store.query_deduped(word) {
+                                Ok(h_mems) => total_results += h_mems.len(),
+                                Err(e) => return Err(map_memory_error(e)),
+                            }
                         }
+                        (
+                            saliency::score_memory_results(total_results),
+                            "semantic_search",
+                        )
                     }
-                    (
-                        saliency::score_memory_results(total_results),
-                        "semantic_search",
-                    )
-                }
-                _ => {
-                    // Score against persona keywords — per-request override if provided,
-                    // otherwise use the server's configured keyword set.
-                    let keywords: Vec<&str> = if let Some(ref custom) = req.persona_keywords {
-                        custom.iter().map(|s| s.as_str()).collect()
-                    } else {
-                        self.persona_keywords.iter().map(|s| s.as_str()).collect()
-                    };
-                    (
-                        saliency::score_against_persona(&req.text, &keywords),
-                        "word_frequency",
-                    )
-                }
-            };
-            Ok(serde_json::json!({
-                "score": score,
-                "against": req.against.as_deref().unwrap_or("persona"),
-                "method": method,
-            }))
-        })
+                    _ => {
+                        // Score against persona keywords — per-request override if provided,
+                        // otherwise use the server's configured keyword set.
+                        let keywords: Vec<&str> = if let Some(ref custom) = req.persona_keywords {
+                            custom.iter().map(|s| s.as_str()).collect()
+                        } else {
+                            self.persona_keywords.iter().map(|s| s.as_str()).collect()
+                        };
+                        (
+                            saliency::score_against_persona(&req.text, &keywords),
+                            "word_frequency",
+                        )
+                    }
+                };
+                Ok(serde_json::json!({
+                    "score": score,
+                    "against": req.against.as_deref().unwrap_or("persona"),
+                    "method": method,
+                }))
+            },
+        )
         .await
     }
 }

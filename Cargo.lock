@@ -9683,6 +9683,7 @@ dependencies = [
  "chrono",
  "dirs",
  "hf-hub",
+ "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-memory",

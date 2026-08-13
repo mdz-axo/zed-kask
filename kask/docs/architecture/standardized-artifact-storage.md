@@ -8,7 +8,11 @@
 > path-primitive module. `resolve_data_dir()` and `resolve_under_data_dir()`
 > are the only sanctioned resolvers.
 >
-> **D-seam:** D28 (archived-threads relocation). See `DIVERGENCE.md`.
+> **D-seam:** D28 (archived-threads + skills relocation). See `DIVERGENCE.md`
+> D28 and D1.
+>
+> **Related:** [`zed-host-architecture-plan.md`](zed-host-architecture-plan.md)
+> §13 (the kask/ vs upstream-Zed invariant).
 
 ## 1. Root
 

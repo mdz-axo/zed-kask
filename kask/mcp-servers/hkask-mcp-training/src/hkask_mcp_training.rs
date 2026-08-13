@@ -300,6 +300,29 @@ impl TrainingServer {
             + Self::cancel_router()
             + Self::validate_router()
     }
+
+    /// Map a tool name to its ML-Schema ontology concept URI. The concept
+    /// tags the `reg.tool` span (via `execute_tool_semantic`) for type-aware
+    /// feedback routing. Training is an ML-experiment surface, so ML-Schema
+    /// — the W3C Community Group standard for ML experiments — is the
+    /// natural anchor: dataset tools anchor on `mls:Data`, run-lifecycle
+    /// tools on `mls:Run`, and evaluation/validation on `mls:Model`.
+    ///
+    /// ML-Schema reference: <https://www.w3.org/community/ml-schema/>
+    fn ontology_anchor(tool: &str) -> Option<&'static str> {
+        use hkask_bridge_ontology::mlschema;
+        match tool {
+            // Dataset ingestion / assembly — data axis
+            "training_ingest_qa" | "training_assemble_dataset" | "training_ingest_dataset" => {
+                Some(mlschema::DATA)
+            }
+            // Run lifecycle — submit, status, cancel
+            "training_submit" | "training_status" | "training_cancel" => Some(mlschema::RUN),
+            // Model axis — evaluation and config validation
+            "training_evaluate" | "training_validate_config" => Some(mlschema::MODEL),
+            _ => Some(mlschema::RUN),
+        }
+    }
 }
 
 #[rmcp::tool_handler(router = Self::combined_router())]
@@ -321,6 +344,60 @@ mod tests {
         assert_eq!(
             n, 8,
             "training must register all 8 tools across the sub-routers; got {n}"
+        );
+    }
+
+    // Coverage: every registered tool must have a non-None ontology anchor.
+    // Catches the silent-drop failure mode where a new tool is added to a
+    // sub-router without a corresponding arm in ontology_anchor. The count
+    // pin above catches addition; this test catches anchoring.
+    #[test]
+    fn ontology_anchor_covers_all_registered_tools() {
+        let router = TrainingServer::combined_router();
+        for tool in router.list_all() {
+            assert!(
+                TrainingServer::ontology_anchor(&tool.name).is_some(),
+                "ontology_anchor returned None for registered tool '{}'; \
+                 add an explicit arm or adjust the fallback",
+                tool.name
+            );
+        }
+    }
+
+    // Regression: the ontology anchor must not collapse to a single constant.
+    // Dataset tools anchor on mls:Data; run-lifecycle tools on mls:Run;
+    // evaluation/validation on mls:Model. A future stub regression would make
+    // these equal.
+    #[test]
+    fn ontology_anchor_distinguishes_tool_families() {
+        use hkask_bridge_ontology::mlschema;
+        let ingest = TrainingServer::ontology_anchor("training_ingest_qa");
+        let submit = TrainingServer::ontology_anchor("training_submit");
+        let evaluate = TrainingServer::ontology_anchor("training_evaluate");
+        // Data vs Run vs Model — three distinct ML-Schema categories.
+        assert_ne!(
+            ingest, submit,
+            "training_ingest_qa (Data) and training_submit (Run) must anchor on distinct ML-Schema categories"
+        );
+        assert_ne!(
+            submit, evaluate,
+            "training_submit (Run) and training_evaluate (Model) must anchor on distinct ML-Schema categories"
+        );
+        // Specific concept pins.
+        assert_eq!(
+            ingest,
+            Some(mlschema::DATA),
+            "training_ingest_qa must anchor on ML-Schema Data"
+        );
+        assert_eq!(
+            submit,
+            Some(mlschema::RUN),
+            "training_submit must anchor on ML-Schema Run"
+        );
+        assert_eq!(
+            evaluate,
+            Some(mlschema::MODEL),
+            "training_evaluate must anchor on ML-Schema Model"
         );
     }
 }

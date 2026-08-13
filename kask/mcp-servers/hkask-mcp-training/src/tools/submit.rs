@@ -7,7 +7,7 @@ use crate::tools::error_mapping::{
     map_training_artifact_error,
 };
 use crate::types::TrainSubmitRequest;
-use hkask_mcp_server::server::{McpToolError, execute_tool, map_io_error};
+use hkask_mcp_server::server::{McpToolError, execute_tool_semantic, map_io_error};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use serde_json::json;
@@ -37,7 +37,7 @@ impl TrainingServer {
             merged_output_path,
         }): Parameters<TrainSubmitRequest>,
     ) -> String {
-        execute_tool(self, "training_submit", async {
+        execute_tool_semantic(self, "training_submit", Self::ontology_anchor("training_submit"), async {
             // Contain the caller-supplied dataset path before any read: an
             // absolute path like /etc/passwd or a traversal must not reach the
             // pipeline reads (CWE-200).

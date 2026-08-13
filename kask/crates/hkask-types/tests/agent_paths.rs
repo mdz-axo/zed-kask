@@ -17,7 +17,10 @@
 
 #![allow(unsafe_code)]
 
-use hkask_types::agent_paths::{resolve_data_dir, resolve_under_data_dir};
+use hkask_types::agent_paths::{
+    AGENTS_DIR, MCP_DIR, SKILLS_DIR, THREADS_DIR, mcp_server_db, resolve_data_dir,
+    resolve_under_data_dir, skills_dir, threads_db_path,
+};
 
 /// Serializes env-var-mutating tests so a `set_var` in one doesn't race a
 /// `remove_var` in another.
@@ -109,4 +112,52 @@ fn resolve_under_data_dir_honors_dot_prefixed_hkask_data_dir() {
         std::path::PathBuf::from("./data").join("agents/alice/pod.db"),
         "resolve_under_data_dir must delegate (.-prefixed path preserved)"
     );
+}
+
+/// D28 — End-to-end validation: all four artifact classes resolve under a
+/// single `{data_dir}/` root, with human-readable top-level dir names.
+/// An operator `ls {data_dir}/` sees the four class names.
+#[test]
+fn storage_layout_all_classes_resolve_under_one_root() {
+    let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let abs = tmp.path().to_path_buf();
+    unsafe {
+        std::env::set_var("HKASK_DATA_DIR", &abs);
+    }
+
+    // All four class dirs are distinct, non-empty, human-readable strings.
+    let class_dirs = [AGENTS_DIR, MCP_DIR, SKILLS_DIR, THREADS_DIR];
+    for i in 0..class_dirs.len() {
+        assert!(!class_dirs[i].is_empty(), "class dir must not be empty");
+        for j in (i + 1)..class_dirs.len() {
+            assert_ne!(class_dirs[i], class_dirs[j], "class dirs must be distinct");
+        }
+    }
+
+    // Each class's path helper resolves under the same root.
+    let agents_path = resolve_under_data_dir(std::path::Path::new("agents/alice/pod.db"));
+    let mcp_path = resolve_under_data_dir(&mcp_server_db("codegraph", "codegraph"));
+    let skills_path = resolve_under_data_dir(&skills_dir());
+    let threads_path = resolve_under_data_dir(&threads_db_path());
+
+    assert_eq!(agents_path, abs.join("agents").join("alice").join("pod.db"));
+    assert_eq!(
+        mcp_path,
+        abs.join("mcp").join("codegraph").join("codegraph.db")
+    );
+    assert_eq!(skills_path, abs.join("skills"));
+    assert_eq!(threads_path, abs.join("threads").join("threads.db"));
+
+    // All paths share the same root.
+    for path in [&agents_path, &mcp_path, &skills_path, &threads_path] {
+        assert!(
+            path.starts_with(&abs),
+            "all class paths must resolve under the same data root"
+        );
+    }
+
+    unsafe {
+        std::env::remove_var("HKASK_DATA_DIR");
+    }
 }

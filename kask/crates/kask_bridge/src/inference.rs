@@ -98,9 +98,7 @@ impl StreamAccumulator {
             Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => {
                 self.reasoning.push_str(&text);
             }
-            Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
-                if tool_use.is_input_complete =>
-            {
+            Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) if tool_use.is_input_complete => {
                 let args = match &tool_use.input {
                     LanguageModelToolUseInput::Json(json) => json.clone(),
                     LanguageModelToolUseInput::Text(text) => {
@@ -572,12 +570,6 @@ impl InferencePort for LanguageModelInferencePort {
         let (tx_stream, rx_stream) =
             tokio::sync::mpsc::unbounded_channel::<Result<InferenceStreamChunk, InferenceError>>();
 
-        // TODO: thread `model_override` through `generate_stream` when a caller
-        // needs it. Currently hardcoded to `None` because the cascade's
-        // `call_inference_stream` calls `generate_stream` (no override). If a
-        // future caller invokes `generate_stream_with_model` on this port, the
-        // default trait impl handles the override by falling back to
-        // non-streaming `generate_with_model` — which loses the live trace.
         let stream_tx = self.stream_tx.clone();
         let send_result = stream_tx.send(StreamInferenceRequest {
             request,
@@ -596,6 +588,59 @@ impl InferencePort for LanguageModelInferencePort {
         // Convert the tokio mpsc receiver into a futures_util::Stream by
         // polling it asynchronously. This avoids adding a tokio-stream
         // dependency.
+        Box::pin(futures_util::stream::unfold(
+            rx_stream,
+            |mut rx| async move {
+                match rx.recv().await {
+                    Some(chunk) => Some((chunk, rx)),
+                    None => None,
+                }
+            },
+        ))
+    }
+
+    /// Stream with optional model override.
+    ///
+    /// Overrides the default trait impl so a `model_override` threads through
+    /// the streaming channel (`StreamInferenceRequest.model_override`) instead
+    /// of falling back to non-streaming `generate_with_model` — the default impl
+    /// collects the full response before emitting any chunk, losing the live
+    /// thinking trace the cascade relies on. When `model_override` is `None`,
+    /// this delegates to `generate_stream` (the common path).
+    fn generate_stream_with_model(
+        &self,
+        prompt: &str,
+        parameters: &LLMParameters,
+        model_override: Option<&str>,
+        tools: Option<&[ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn futures_util::Stream<Item = Result<InferenceStreamChunk, InferenceError>>
+                + Send
+                + '_,
+        >,
+    > {
+        let Some(model_override) = model_override else {
+            return self.generate_stream(prompt, parameters, tools);
+        };
+        let messages = vec![ChatMessage::user(prompt.to_string())];
+        let request = self.build_request(&messages, parameters, tools);
+        let model_override = model_override.to_string();
+        let (tx_stream, rx_stream) =
+            tokio::sync::mpsc::unbounded_channel::<Result<InferenceStreamChunk, InferenceError>>();
+        let stream_tx = self.stream_tx.clone();
+        let send_result = stream_tx.send(StreamInferenceRequest {
+            request,
+            model_override: Some(model_override),
+            reply: tx_stream,
+        });
+        if send_result.is_err() {
+            return Box::pin(futures_util::stream::once(async {
+                Err(InferenceError::Connection(
+                    "inference stream channel closed".to_string(),
+                ))
+            }));
+        }
         Box::pin(futures_util::stream::unfold(
             rx_stream,
             |mut rx| async move {
@@ -1255,6 +1300,76 @@ mod embedding_tests {
             }
             _ = future => {
                 panic!("future should not complete — receiver task isn't running");
+            }
+        }
+    }
+
+    // ── generate_stream_with_model override propagation ──
+    //
+    // The default trait impl of `generate_stream_with_model` falls back to
+    // non-streaming `generate_with_model` when `model_override` is `Some`,
+    // collecting the full response before emitting any chunk — losing the live
+    // thinking trace the cascade relies on. `LanguageModelInferencePort`
+    // overrides it to thread the override through `StreamInferenceRequest`
+    // (the streaming channel), preserving the live trace. These tests pin that
+    // wiring so a future refactor can't silently revert to the default impl.
+
+    #[tokio::test]
+    async fn generate_stream_with_model_propagates_override_to_stream_channel() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
+        let (stream_tx, mut stream_rx) =
+            tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
+        let port = LanguageModelInferencePort { tx, stream_tx };
+
+        // Call generate_stream_with_model with a model override. The receiver
+        // task isn't running, so the channel send succeeds (unbounded) and the
+        // stream future parks on rx_stream.recv() — but we only need to inspect
+        // the StreamInferenceRequest, not the stream output.
+        let mut stream = port.generate_stream_with_model(
+            "test prompt",
+            &LLMParameters::default(),
+            Some("openrouter/z-ai/glm-5.2"),
+            None,
+        );
+        tokio::select! {
+            biased;
+            req = stream_rx.recv() => {
+                let req = req.expect("should have received a StreamInferenceRequest");
+                assert_eq!(
+                    req.model_override.as_deref(),
+                    Some("openrouter/z-ai/glm-5.2"),
+                    "generate_stream_with_model must propagate model_override to the stream channel (not fall back to non-streaming)"
+                );
+            }
+            _ = stream.next() => {
+                panic!("stream should not produce a chunk — receiver task isn't running");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_stream_with_model_none_override_delegates_to_generate_stream() {
+        // When model_override is None, generate_stream_with_model must delegate
+        // to generate_stream — which sends a StreamInferenceRequest with
+        // model_override: None. Verify the request arrives on the stream channel.
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
+        let (stream_tx, mut stream_rx) =
+            tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
+        let port = LanguageModelInferencePort { tx, stream_tx };
+
+        let mut stream =
+            port.generate_stream_with_model("test prompt", &LLMParameters::default(), None, None);
+        tokio::select! {
+            biased;
+            req = stream_rx.recv() => {
+                let req = req.expect("should have received a StreamInferenceRequest");
+                assert_eq!(
+                    req.model_override, None,
+                    "generate_stream_with_model with None override must delegate to generate_stream (None on stream channel)"
+                );
+            }
+            _ = stream.next() => {
+                panic!("stream should not produce a chunk — receiver task isn't running");
             }
         }
     }

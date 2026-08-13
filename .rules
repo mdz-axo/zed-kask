@@ -79,7 +79,6 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Tool responses are `{"content": <value>}` envelopes — use `unwrap_tool_envelope`, don't re-implement.
 * Error classification must be per-variant, not blanket `McpToolError::internal`.
 * Tool inputs accepting arbitrary JSON must use `AnyJsonValue`, not `serde_json::Value` (schemars renders `Value` as bare `true`, which breaks strict-schema providers).
-* `input_mapping` bindings must call `propagate_taint_for_binding` before `context.insert`.
 * Live-mutation probe suites must run with `--test-threads=1` and keep probes self-contained.
 
 ## Dead code patterns
