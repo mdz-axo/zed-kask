@@ -50,12 +50,16 @@ impl SwarmServer {
     /// declares `capabilities.skills`, each declared skill (capped at 3) is
     /// executed against the task through the zed-side `ManifestExecutor`
     /// before the LLM call and its output is injected as
-    /// context. The ledger is debited per token across all tool-loop rounds
-    /// (1 credit / 1000 tokens, capped at `credits_authorized`). No consent
-    /// token — the balance check is the gate (§15.1.2 — rejected consent
-    /// tokens on local tools).
+    /// context. Spend is recorded per token across all tool-loop rounds
+    /// (1 credit / 1000 tokens, capped at `credits_authorized`).
+    ///
+    /// **No funding gate and no consent token.** Local agents run on the
+    /// operator's own substrate, so there is nothing to authorize — an unfunded
+    /// ledger does not block this call and the balance may go negative
+    /// (accumulated local spend). `credits_authorized` still caps the *recorded*
+    /// cost, and the per-dispatch ceiling still bounds a single runaway dispatch.
     #[tool(
-        description = "Delegate a task to a local agent (from agents/local/curated/). Executes via hkask-inference (Ollama/cloud), debits the local ledger per token. Agents may declare capabilities.mcp_tools (qualified server/tool names) — those tools are dispatched through the zed IPC bridge's governed McpRuntime (allowlisted to the declared set). Agents may also declare capabilities.skills — each is executed against the task through the zed-side ManifestExecutor before the LLM call (capped at 3). No ABW calls. No consent token — the balance check is the gate. Returns the response, model, token usage, cost, remaining balance, tool_calls summary, and executed_skills summary."
+        description = "Delegate a task to a local agent (from agents/local/curated/). Executes via hkask-inference (Ollama/cloud) and records spend in the local ledger per token. Agents may declare capabilities.mcp_tools (qualified server/tool names) — those tools are dispatched through the zed IPC bridge's governed McpRuntime (allowlisted to the declared set). Agents may also declare capabilities.skills — each is executed against the task through the zed-side ManifestExecutor before the LLM call (capped at 3). No ABW calls. NO funding gate and no consent token — an unfunded ledger does not block this call; the ledger records spend rather than authorizing it. Returns the response, model, token usage, cost, resulting balance (may be negative), tool_calls summary, and executed_skills summary."
     )]
     pub(crate) async fn swarm_delegate_local(
         &self,
@@ -134,6 +138,10 @@ impl SwarmServer {
             let mut results = Vec::new();
             let mut failed = 0usize;
             let mut total_cost = 0i64;
+            // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
+            // capped costs, so it inherits their understatement. Reporting both
+            // keeps the aggregate reconciliation surface honest.
+            let mut total_cost_uncapped = 0i64;
             let mut total_tokens = 0i64;
             let mut total_latency_ms = 0u64;
             for entry in &req.delegations {
@@ -153,6 +161,7 @@ impl SwarmServer {
                 {
                     Ok(r) => {
                         total_cost += r.cost;
+                        total_cost_uncapped += r.cost_uncapped;
                         total_tokens += r.tokens_used;
                         total_latency_ms = total_latency_ms.saturating_add(r.latency_ms);
                         results.push(serde_json::json!({
@@ -162,6 +171,7 @@ impl SwarmServer {
                             "model": r.model,
                             "tokens_used": r.tokens_used,
                             "cost": r.cost,
+                            "cost_uncapped": r.cost_uncapped,
                             "latency_ms": r.latency_ms,
                             "tool_calls": r.tool_calls,
                             "executed_skills": r.executed_skills,
@@ -190,6 +200,7 @@ impl SwarmServer {
             Ok(serde_json::json!({
                 "results": results,
                 "total_cost": total_cost,
+                "total_cost_uncapped": total_cost_uncapped,
                 "total_tokens": total_tokens,
                 "total_latency_ms": total_latency_ms,
                 "balance": balance,
@@ -233,6 +244,10 @@ impl SwarmServer {
             let mut results = Vec::new();
             let mut prev_output = String::new();
             let mut total_cost = 0i64;
+            // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
+            // capped costs, so it inherits their understatement. Reporting both
+            // keeps the aggregate reconciliation surface honest.
+            let mut total_cost_uncapped = 0i64;
             let mut total_tokens = 0i64;
             for (i, step) in req.steps.iter().enumerate() {
                 // Substitute {prev_output} with the previous step's response.
@@ -261,6 +276,7 @@ impl SwarmServer {
                     Ok(r) => {
                         prev_output = r.response.clone();
                         total_cost += r.cost;
+                        total_cost_uncapped += r.cost_uncapped;
                         total_tokens += r.tokens_used;
                         results.push(serde_json::json!({
                             "step": i,
@@ -270,6 +286,7 @@ impl SwarmServer {
                             "model": r.model,
                             "tokens_used": r.tokens_used,
                             "cost": r.cost,
+                            "cost_uncapped": r.cost_uncapped,
                             "latency_ms": r.latency_ms,
                         }));
                     }
@@ -289,6 +306,7 @@ impl SwarmServer {
                 "steps_completed": results.len(),
                 "results": results,
                 "total_cost": total_cost,
+                "total_cost_uncapped": total_cost_uncapped,
                 "total_tokens": total_tokens,
                 "final_output": prev_output,
                 "balance": balance,
@@ -1238,6 +1256,10 @@ impl SwarmServer {
             let mut results = Vec::new();
             let mut failed = 0usize;
             let mut total_cost = 0i64;
+            // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
+            // capped costs, so it inherits their understatement. Reporting both
+            // keeps the aggregate reconciliation surface honest.
+            let mut total_cost_uncapped = 0i64;
             let mut total_tokens = 0i64;
             for entry in &req.delegations {
                 let agent = self.local_registry.get(&entry.agent_name);
@@ -1256,6 +1278,7 @@ impl SwarmServer {
                 {
                     Ok(mut r) => {
                         total_cost += r.cost;
+                        total_cost_uncapped += r.cost_uncapped;
                         total_tokens += r.tokens_used;
                         // Stamp the deterministic verdict when an evaluator is provided.
                         if let Some(ev) = &entry.evaluator {
@@ -1305,6 +1328,7 @@ impl SwarmServer {
             Ok(serde_json::json!({
                 "results": results,
                 "total_cost": total_cost,
+                "total_cost_uncapped": total_cost_uncapped,
                 "total_tokens": total_tokens,
                 "balance": balance,
                 "failed": failed,

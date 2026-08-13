@@ -184,22 +184,43 @@ agents cannot fix it.
 Propose no moves. Set proposed_moves = [] and note that the swarm is
 on-target.
 
-### If swarm_state.per_agent_metrics contains a depleted agent (energy = 0)
+### If swarm_state.per_agent_metrics contains a low-energy agent
 
-An agent with `energy = 0` has exhausted its ledger allocation — delegating to
-it again will fail the balance gate. This is the Onto4MAT Agent-level `energy`
-property (Step 5b of SENSE), distinct from C4 (latency) and C5 (fault): it is
-proactive (before failure) rather than reactive (after failure).
+`energy` is the ledger balance after that agent's last delegation (Onto4MAT
+Agent-level property, Step 5b of SENSE). **What it means depends on the mode —
+and only in `abw` is it a capacity constraint.**
+
+{% if mode == "local" %}
+**Local mode: `energy` is a COST signal, not a capacity limit.** Local agents run
+on the operator's own substrate, so delegation has no funding gate: a zero or
+negative `energy` means "this much local spend has accumulated", NOT "depleted".
+
+- Do **NOT** route around a local agent on `energy` alone.
+- Do **NOT** propose funding the local ledger as a remedy — it is not blocking
+  anything, and `swarm_fund_local` is optional bookkeeping.
+- Do **NOT** treat a negative `energy` as a fault to repair.
+- You MAY use `energy` to prioritise between otherwise-equivalent agents when
+  accumulated cost is a consideration worth surfacing in `delegate_notes`.
+{% else %}
+**ABW mode: `energy = 0` IS a hard constraint.** Cloud credits buy someone
+else's compute, so a depleted wallet fails the spend gate. This is proactive
+(before failure) rather than reactive (after failure), and is distinct from C4
+(latency) and C5 (fault).
 
 For each depleted agent:
 - If the agent covers a required transform, propose a `delegate` move to a
   *different* agent that also covers that transform (route around the depleted
-  one). If no alternative exists, the operator must fund the ledger via
-  `swarm_fund_local` — note this in `delegate_notes`.
-- If the agent is structurally redundant, propose a `remove` move (local:
-  `swarm_remove_local`; abw: `swarm_fire`).
-- Do NOT propose a `delegate` move to the depleted agent itself — the ledger
-  debit will fail.
+  one). If no alternative exists, the operator must fund the ABW wallet — note
+  this in `delegate_notes`.
+- If the agent is structurally redundant, propose a `remove` move
+  (`swarm_fire`).
+- Do NOT propose a `delegate` move to the depleted agent itself — the spend
+  gate will refuse it.
+{% endif %}
+
+**`energy = null` means "not measured" in either mode** (no prior delegation, or
+the balance read failed). Never treat `null` as zero — an unmeasured balance is
+not a depleted one.
 
 ### If orientation.latency_outliers is non-empty (Cybernetic Swarm Plan C4, regulated)
 

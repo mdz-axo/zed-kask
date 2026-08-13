@@ -197,8 +197,8 @@ invariants:
     source: "ABW plan §0 (verified swarm semantics)"
 
   - id: consent_gate_blocks
-    rule: "no swarm_hire or swarm_delegate call without a valid consent_token from swarm_request_consent (abw); local mode has no consent token — the ledger balance + per-dispatch ceiling is the gate"
-    enforcement: "ACT aborts the move if the token is missing or scope-mismatched (abw); `swarm_delegate_local` returns PaymentRequired on insufficient balance (local)"
+    rule: "no swarm_hire or swarm_delegate call without a valid consent_token from swarm_request_consent (abw); local mode has NO consent token and NO funding gate — the per-dispatch ceiling is the only local bound, and an unfunded or negative ledger does not block a local delegation"
+    enforcement: "ACT aborts the move if the token is missing or scope-mismatched (abw); local delegation is unblocked by design — the ledger records spend rather than authorizing it (local_runtime.rs delegate: no balance check)"
     source: "ABW plan §3.6; .rules advertised-invariants trap; consent.rs:184"
 
   - id: curator_opt_in_default

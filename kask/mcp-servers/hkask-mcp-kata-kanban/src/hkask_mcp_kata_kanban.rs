@@ -1267,15 +1267,31 @@ impl KanbanServer {
                 "could not record structured delegation result — falling back to comment-only"
             );
         }
+        // Render an unmeasured balance as "unknown", not as a number. The comment
+        // is the operator's reconciliation record, so a fabricated figure here
+        // would be indistinguishable from a real reading.
+        let balance_note = match result.balance {
+            Some(balance) => balance.to_string(),
+            None => "unknown (ledger read failed)".to_string(),
+        };
+        // Surface the cap's understatement where it is visible: when the
+        // delegation overran its authorized budget, the recorded cost is lower
+        // than what was actually consumed.
+        let cost_note = if result.cost_uncapped > result.cost {
+            format!(
+                "{} credits recorded ({} actual - capped at the authorized budget)",
+                result.cost, result.cost_uncapped
+            )
+        } else {
+            format!("{} credits", result.cost)
+        };
         let result_note = format!(
             "Spawn executed: agent={agent_id}, model={model}, tokens={tokens}, \
-             cost={cost} credits, balance={balance}, latency={latency_ms}ms\n\
+             cost={cost_note}, balance={balance_note}, latency={latency_ms}ms\n\
              Response:\n{response}",
             agent_id = result.agent_id,
             model = result.model,
             tokens = result.tokens_used,
-            cost = result.cost,
-            balance = result.balance,
             latency_ms = result.latency_ms,
             response = result.response,
         );

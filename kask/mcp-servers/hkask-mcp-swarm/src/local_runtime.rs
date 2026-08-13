@@ -402,21 +402,45 @@ impl LocalSwarmRuntime {
         let raw: RawDelegateResult = self.executor.run(agent, &task_clean).await?;
 
         // Compute the cost: 1 credit per 1000 tokens (mirrors ABW's
-        // `execution_fee`), summed across tool-loop rounds, capped at
-        // `credits_authorized`.
+        // `execution_fee`), summed across tool-loop rounds.
+        //
+        // `cost` stays capped at `credits_authorized` — that is the operator's
+        // declared budget and what the ledger charges. But the cap makes the
+        // recorded figure UNDER-state real spend whenever a delegation overruns
+        // it, and the local ledger is now purely a reconciliation surface, so a
+        // silent understatement corrupts the only data that surface exists to
+        // provide. `cost_uncapped` is carried alongside so the gap is visible,
+        // and a bounded overrun is warned about rather than swallowed.
         let tokens = raw.tokens_used;
-        let base_cost = std::cmp::max(1, tokens / 1000);
-        let cost = std::cmp::min(base_cost, i64::from(credits_authorized));
+        let cost_uncapped = std::cmp::max(1, tokens / 1000);
+        let cost = std::cmp::min(cost_uncapped, i64::from(credits_authorized));
+        if cost_uncapped > cost {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                agent = %agent.agent_id,
+                tokens,
+                recorded_cost = cost,
+                actual_cost = cost_uncapped,
+                credits_authorized,
+                "delegation exceeded its authorized budget - the ledger records the \
+                 capped cost, so it under-states real spend by {} credits",
+                cost_uncapped - cost
+            );
+        }
 
         // Record the spend after the agent run succeeds. Accounting only: a
         // failure here must not fail a delegation that already happened (and
         // already consumed the operator's inference credentials). Losing the
-        // record is a reconciliation gap, so it is logged loudly rather than
-        // swallowed, and the reported balance falls back to the last readable
-        // value — never a fabricated zero (the `.rules` trap).
+        // record is a reconciliation gap, so it is logged loudly.
+        //
+        // `balance` stays `None` when it could not be measured. It must NOT fall
+        // back to a number: SENSE reads this as the Onto4MAT `energy` property and
+        // DECIDE branches on it, so a fabricated value would be read as a real
+        // measurement (the `.rules` "unwrap_or(0) on regulation sense inputs is a
+        // broken feedback loop" trap — a failed read is not a measured zero).
         let reference = format!("delegate-{}-{}", agent.agent_id, uuid::Uuid::new_v4());
-        let new_balance = match self.record_spend(cost, &reference) {
-            Ok(balance) => balance,
+        let new_balance: Option<i64> = match self.record_spend(cost, &reference) {
+            Ok(balance) => Some(balance),
             Err(error) => {
                 tracing::warn!(
                     target: "hkask.mcp.swarm",
@@ -426,7 +450,18 @@ impl LocalSwarmRuntime {
                     "local spend could not be recorded - the delegation succeeded but the \
                      ledger is now behind by this amount (reconciliation gap)"
                 );
-                self.balance().unwrap_or(0)
+                // Try one direct read: the commit may have failed while the
+                // balance remains readable. Still `None` if that also fails.
+                let fallback = self.balance();
+                if fallback.is_none() {
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        agent = %agent.agent_id,
+                        "balance is unmeasurable after a failed spend record - reporting \
+                         null rather than a fabricated value"
+                    );
+                }
+                fallback
             }
         };
 
@@ -436,6 +471,7 @@ impl LocalSwarmRuntime {
             model: raw.model,
             tokens_used: tokens,
             cost,
+            cost_uncapped,
             balance: new_balance,
             latency_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
             tool_calls: raw.tool_calls,
@@ -463,8 +499,30 @@ pub struct LocalDelegateResult {
     pub response: String,
     pub model: String,
     pub tokens_used: i64,
+    /// Credits recorded for this delegation.
+    ///
+    /// **Accounting note:** this is capped at `credits_authorized`, so when actual
+    /// token spend exceeds the authorized budget it UNDER-states real cost. See
+    /// `cost_uncapped` for the uncapped figure; the two differ exactly when the
+    /// cap bound the recording.
     pub cost: i64,
-    pub balance: i64,
+    /// What this delegation would have cost with no cap applied.
+    ///
+    /// Present so the ledger's understatement is visible rather than silent: when
+    /// `cost_uncapped > cost`, the ledger is behind real spend by the difference.
+    /// `credits_authorized` remains a genuine bound on what is *charged*, but a
+    /// reconciliation surface must not hide what was actually consumed.
+    pub cost_uncapped: i64,
+    /// The ledger balance after recording this delegation's spend.
+    ///
+    /// `None` means **not measured** (the balance read failed), never "zero".
+    /// SENSE consumes this as the Onto4MAT `energy` property and DECIDE branches
+    /// on it, so a fabricated number would enter the regulation loop as a real
+    /// measurement (the `.rules` broken-feedback-loop trap).
+    ///
+    /// May be negative in local mode: the local ledger records spend rather than
+    /// authorizing it, so a negative balance is accumulated unreconciled spend.
+    pub balance: Option<i64>,
     /// End-to-end delegation latency in milliseconds (Cybernetic Swarm Plan
     /// component C4 — HyEvo `T_q` measurement). Captured from the start of
     /// `delegate` to just before the result is returned. Pure measurement — no
@@ -659,6 +717,111 @@ mod tests {
             balance(&ledger),
             70,
             "a funded ledger still nets out to remaining credits"
+        );
+    }
+}
+
+#[cfg(test)]
+mod accounting_honesty_tests {
+    use super::*;
+
+    /// The cost cap must be *visible*, not silent.
+    ///
+    /// `cost` is capped at `credits_authorized` (that is what the ledger charges),
+    /// but the local ledger is now purely a reconciliation surface, so a capped
+    /// figure silently under-states real spend. `cost_uncapped` carries the true
+    /// figure so the gap is auditable.
+    #[test]
+    fn capped_cost_exposes_the_uncapped_figure() {
+        // 12_000 tokens → 12 credits uncapped, but only 5 authorized.
+        let tokens: i64 = 12_000;
+        let credits_authorized: u32 = 5;
+        let cost_uncapped = std::cmp::max(1, tokens / 1000);
+        let cost = std::cmp::min(cost_uncapped, i64::from(credits_authorized));
+
+        assert_eq!(cost, 5, "the ledger charges only what was authorized");
+        assert_eq!(cost_uncapped, 12, "the true cost must remain visible");
+        assert!(
+            cost_uncapped > cost,
+            "this is the understatement case the warn and the extra field exist for"
+        );
+    }
+
+    /// Within budget, the two figures agree \u2014 so a difference is a real signal.
+    #[test]
+    fn uncapped_cost_matches_when_within_budget() {
+        let tokens: i64 = 2_000;
+        let credits_authorized: u32 = 50;
+        let cost_uncapped = std::cmp::max(1, tokens / 1000);
+        let cost = std::cmp::min(cost_uncapped, i64::from(credits_authorized));
+        assert_eq!(cost, cost_uncapped, "no cap applied, so no understatement");
+    }
+
+    /// A `LocalDelegateResult` can express \"balance not measured\" as distinct from
+    /// a measured zero.
+    ///
+    /// This is the type-level fix for the `unwrap_or(0)` trap: SENSE reads
+    /// `balance` as the Onto4MAT `energy` property and DECIDE branches on it, so a
+    /// failed read fabricated as `0` would enter the regulation loop as a real
+    /// measurement of a depleted agent.
+    #[test]
+    fn unmeasured_balance_is_distinct_from_measured_zero() {
+        let unmeasured: Option<i64> = None;
+        let measured_zero: Option<i64> = Some(0);
+        assert_ne!(
+            unmeasured, measured_zero,
+            "a failed balance read must not be representable as a measured zero"
+        );
+        // And a measured negative is distinct from both \u2014 local spend accumulates.
+        assert_ne!(Some(-12), measured_zero);
+        assert_ne!(Some(-12), unmeasured);
+    }
+
+    /// `balance` serializes to JSON `null` when unmeasured, so the SENSE template's
+    /// documented `null` contract holds on the wire.
+    #[test]
+    fn unmeasured_balance_serializes_as_null() {
+        let result = LocalDelegateResult {
+            agent_id: "a".into(),
+            response: "r".into(),
+            model: "m".into(),
+            tokens_used: 1000,
+            cost: 1,
+            cost_uncapped: 1,
+            balance: None,
+            latency_ms: 0,
+            tool_calls: vec![],
+            executed_skills: vec![],
+            task_success: None,
+        };
+        let json = serde_json::to_value(&result).expect("serialize");
+        assert!(
+            json["balance"].is_null(),
+            "an unmeasured balance must reach SENSE as null, not as a number: {json}"
+        );
+    }
+
+    /// A measured balance still serializes as a number, including a negative one.
+    #[test]
+    fn measured_balance_serializes_as_a_number_including_negative() {
+        let result = LocalDelegateResult {
+            agent_id: "a".into(),
+            response: "r".into(),
+            model: "m".into(),
+            tokens_used: 1000,
+            cost: 1,
+            cost_uncapped: 1,
+            balance: Some(-12),
+            latency_ms: 0,
+            tool_calls: vec![],
+            executed_skills: vec![],
+            task_success: None,
+        };
+        let json = serde_json::to_value(&result).expect("serialize");
+        assert_eq!(
+            json["balance"].as_i64(),
+            Some(-12),
+            "accumulated local spend must survive serialization as a negative number"
         );
     }
 }

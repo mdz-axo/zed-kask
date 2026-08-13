@@ -107,7 +107,10 @@ For each Proceed decision, emit the corresponding hkask-mcp-swarm local call:
   credits_authorized }`. The agent must exist in the local registry
   (`agents/local/curated/<id>/agent_card.json`). No `workspace_id` — the
   workspace is the session (§15.1.9 rejected workspace_id on local tools).
-  No consent token — the balance check is the gate.
+  No consent token and no funding gate — local agents run on the operator's own
+  substrate, so an unfunded (or negative) ledger does NOT block a local
+  delegation. Do not treat a low local balance as a reason to skip a move.
+  The per-dispatch ceiling is the only local bound.
   In steering mode, batch all delegate calls into a single
   `swarm_execute_plan_local` call instead (see Step 5) — the tool runs
   each delegation, evaluates results, and returns the collected array.

@@ -116,8 +116,14 @@ should be pre-populated):
   The `status` field is the durable task state (Backlog → Ready →
   InProgress → Review → Done); `delegate_result` carries the structured
   `LocalDelegateResult` from the last `kanban_task_spawn` (agent_id,
-  response, model, tokens_used, cost, balance, latency_ms, tool_calls,
-  executed_skills); `deterministic_verdict` carries the deterministic
+  response, model, tokens_used, cost, cost_uncapped, balance, latency_ms,
+  tool_calls, executed_skills). `cost` is what the ledger recorded (capped at
+  the authorized budget); `cost_uncapped` is what the delegation actually
+  consumed — when `cost_uncapped > cost` the ledger under-states real spend by
+  the difference, so use `cost_uncapped` for true cost analysis and treat the
+  gap as a budget-overrun signal. `balance` is `null` when the ledger read
+  failed: that means **not measured**, never zero.
+  `deterministic_verdict` carries the deterministic
   `TaskSuccessVerdict` (pass, score, detail, provenance) when the executor
   stamped one.
 - For each task with a `delegate_result`, use the `delegate_result.agent_id`,

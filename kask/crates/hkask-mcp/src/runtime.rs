@@ -479,9 +479,20 @@ impl McpRuntime {
     /// Whether a server currently has a live connection.
     ///
     /// Liveness-based, matching `get_peer`: a peer whose transport has closed
-    /// reports `false` even before the keeper task reaps it. Exposed so callers
-    /// (health surfaces, tests) can observe connection state without reaching
-    /// into the runtime's internals.
+    /// reports `false` even before the keeper task reaps it.
+    ///
+    /// **Feature-gated to `test-fixture` deliberately.** Reap-on-death is only
+    /// observable by reading connection state directly — every production path
+    /// (`invoke`) *heals* on a missing peer, so it cannot distinguish "reaped"
+    /// from "never reaped but reconnected". `tests/reconnect_integration.rs`
+    /// needs that distinction to pin the reap independently.
+    ///
+    /// Not exposed unconditionally because nothing in production consumes it, and
+    /// an always-present "for health checks" accessor with no health surface is
+    /// the dead-advertised-invariant pattern this crate already deleted once
+    /// (`list_servers`/`connection_count`/`connections`, audit rows 38). Wire a
+    /// real health consumer before promoting this.
+    #[cfg(feature = "test-fixture")]
     pub async fn is_connected(&self, server_id: &str) -> bool {
         self.get_peer(server_id).await.is_some()
     }
