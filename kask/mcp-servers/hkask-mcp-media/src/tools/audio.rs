@@ -14,7 +14,7 @@ impl MediaServer {
             character_description,
         }): Parameters<VoiceDesignRequest>,
     ) -> String {
-        execute_tool(self, "voice_design", async {
+        execute_tool_semantic(self, "voice_design", Self::ontology_anchor("voice_design"), async {
             if character_description.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
                     "character_description must not be empty",
@@ -62,7 +62,7 @@ impl MediaServer {
         &self,
         Parameters(GenerateSpeechRequest { text, voice_design }): Parameters<GenerateSpeechRequest>,
     ) -> String {
-        execute_tool(self, "generate_speech", async {
+        execute_tool_semantic(self, "generate_speech", Self::ontology_anchor("generate_speech"), async {
             if text.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("text must not be empty"));
             }
@@ -111,7 +111,7 @@ impl MediaServer {
             language,
         }): Parameters<TranscribeRequest>,
     ) -> String {
-        execute_tool(self, "transcribe", async {
+        execute_tool_semantic(self, "transcribe", Self::ontology_anchor("transcribe"), async {
             validate_tool_url_with_dns(&audio_url).await?;
 
             let media_params = hkask_types::MediaGenerateParams {
@@ -138,7 +138,7 @@ impl MediaServer {
             language,
         }): Parameters<TranscribeRequest>,
     ) -> String {
-        execute_tool(self, "transcribe_bundle", async {
+        execute_tool_semantic(self, "transcribe_bundle", Self::ontology_anchor("transcribe_bundle"), async {
             validate_tool_url_with_dns(&audio_url).await?;
 
             let media_params = hkask_types::MediaGenerateParams {
@@ -226,7 +226,7 @@ impl MediaServer {
             output_path,
         }): Parameters<AudioCaptureRequest>,
     ) -> String {
-        execute_tool(self, "audio_capture", async {
+        execute_tool_semantic(self, "audio_capture", Self::ontology_anchor("audio_capture"), async {
             if duration_secs <= 0.0 || duration_secs > 3600.0 {
                 return Err(McpToolError::invalid_argument(
                     "duration_secs must be between 0.1 and 3600 (1 hour).",
@@ -273,7 +273,7 @@ impl MediaServer {
             language,
         }): Parameters<RecordAndTranscribeRequest>,
     ) -> String {
-        execute_tool(self, "record_and_transcribe", async {
+        execute_tool_semantic(self, "record_and_transcribe", Self::ontology_anchor("record_and_transcribe"), async {
             if duration_secs <= 0.0 || duration_secs > 3600.0 {
                 return Err(McpToolError::invalid_argument(
                     "duration_secs must be between 0.1 and 3600 (1 hour).",

@@ -15,7 +15,7 @@ impl MediaServer {
             style,
         }): Parameters<GenerateImageRequest>,
     ) -> String {
-        execute_tool(self, "generate_image", async {
+        execute_tool_semantic(self, "generate_image", Self::ontology_anchor("generate_image"), async {
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }
@@ -66,7 +66,7 @@ impl MediaServer {
             style,
         }): Parameters<TransformImageRequest>,
     ) -> String {
-        execute_tool(self, "transform_image", async {
+        execute_tool_semantic(self, "transform_image", Self::ontology_anchor("transform_image"), async {
             validate_tool_url_with_dns(&image_url).await?;
             if let Some(s) = strength
                 && !(0.0..=1.0).contains(&s)
@@ -109,7 +109,7 @@ impl MediaServer {
         &self,
         Parameters(UpscaleImageRequest { image_url, scale }): Parameters<UpscaleImageRequest>,
     ) -> String {
-        execute_tool(self, "upscale_image", async {
+        execute_tool_semantic(self, "upscale_image", Self::ontology_anchor("upscale_image"), async {
             validate_tool_url_with_dns(&image_url).await?;
             let media_params = hkask_types::MediaGenerateParams {
                 image_url: Some(image_url.clone()),
@@ -145,7 +145,7 @@ impl MediaServer {
             style,
         }): Parameters<GenerateVideoRequest>,
     ) -> String {
-        execute_tool(self, "generate_video", async {
+        execute_tool_semantic(self, "generate_video", Self::ontology_anchor("generate_video"), async {
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }
@@ -186,7 +186,7 @@ impl MediaServer {
         &self,
         Parameters(ExpandPromptRequest { prompt, style }): Parameters<ExpandPromptRequest>,
     ) -> String {
-        execute_tool(self, "expand_prompt", async {
+        execute_tool_semantic(self, "expand_prompt", Self::ontology_anchor("expand_prompt"), async {
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }

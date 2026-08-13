@@ -272,7 +272,7 @@ impl CorpusServer {
             //   In dev (CWD = repo root), the relative path
             //   `kask/registry/company-sources/{symbol}.yaml` works directly.
             //   In production, the manifests are seeded to
-            //   `data_dir()/agents/registry/company-sources/{symbol}.yaml`
+            //   `{kask_data_dir}/skills/registry/company-sources/{symbol}.yaml`
             //   by `seed_registry_to_disk`.
             let (manifest_text, _manifest_source) = match params.manifest_path.clone() {
                 Some(explicit_path) => {

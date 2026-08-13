@@ -1085,7 +1085,7 @@ impl SwarmServer {
             // for composition guidance) and returns the LLM's JSON output as
             // text. The skill exec port routes through the zed IPC bridge to the
             // `BridgeManifestExecutor`, which loads the manifest + template from
-            // `data_dir()/agents/registry/` — edits to the on-disk template take
+            // `{kask_data_dir}/skills/registry/` — edits to the on-disk template take
             // effect without recompiling.
             let runtime = self
                 .local_runtime
