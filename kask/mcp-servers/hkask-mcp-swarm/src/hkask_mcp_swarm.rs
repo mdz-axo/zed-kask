@@ -154,12 +154,13 @@ fn resolve_consent_store_path() -> String {
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| {
-            dirs::data_dir()
-                .unwrap_or_else(|| std::path::Path::new(".").to_path_buf())
-                .join("hkask")
-                .join("swarm_consent.db")
-                .to_string_lossy()
-                .to_string()
+            // D28 — Standardized Artifact Storage. Consent store lives at
+            // `mcp/swarm/consent.db`.
+            hkask_types::agent_paths::resolve_under_data_dir(
+                &hkask_types::agent_paths::mcp_server_db("swarm", "consent"),
+            )
+            .to_string_lossy()
+            .to_string()
         })
 }
 
@@ -217,12 +218,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 .ok()
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| {
-                    dirs::data_dir()
-                        .unwrap_or_else(|| std::path::Path::new(".").to_path_buf())
-                        .join("hkask")
-                        .join("swarm_ledger.db")
-                        .to_string_lossy()
-                        .to_string()
+                    // D28 — Standardized Artifact Storage. Default ledger
+                    // path is `{kask_data_dir}/mcp/swarm/ledger.db`.
+                    hkask_types::agent_paths::resolve_under_data_dir(
+                        &hkask_types::agent_paths::mcp_server_db("swarm", "ledger"),
+                    )
+                    .to_string_lossy()
+                    .to_string()
                 });
             let local_runtime = std::sync::Arc::new(LazyLocalSwarmRuntime::lazy(
                 ledger_path,

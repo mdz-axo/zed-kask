@@ -1,5 +1,5 @@
 //! Curator sovereign-store infrastructure — extracted from `memory.rs`
-//! (deep-module split: the curator's `pod.db` open path, self-healing store
+//! (deep-module split: the curator's `curator.db` open path, self-healing store
 //! handle, and consolidation builder are a one-way dependency of the memory
 //! port and independent of the user-store orchestration that remains in
 //! `memory.rs`).
@@ -14,9 +14,9 @@ use std::sync::{Arc, RwLock};
 
 use super::open_regulation_archive;
 
-/// Resolve the curator's sovereign `pod.db` path (same resolution as
+/// Resolve the curator's sovereign `curator.db` path (same resolution as
 /// `open_curator_store`): `HKASK_CURATOR_DB` if set, else
-/// `agents/curator/pod.db` under the hKask data dir.
+/// `agents/curator/curator.db` under the hKask data dir.
 pub fn curator_db_path() -> String {
     std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
         let p = hkask_types::agent_paths::agent_db("curator");
@@ -28,12 +28,12 @@ pub fn curator_db_path() -> String {
     })
 }
 /// Open a `RegulationArchive` (durable regulation-span store) on the curator's
-/// sovereign `pod.db` — the same DB the curator MCP server's `reg_query` and
+/// sovereign `curator.db` — the same DB the curator MCP server's `reg_query` and
 /// `curator_algedonic_log` tools read. Returns `None` on any failure; the
 /// caller degrades to `NoopEventSink` with a warn.
 ///
 /// Used by `main.rs` to wire the `McpRuntime` and `CyberneticsLoop` event sinks
-/// to durable storage on the curator's pod.db.
+/// to durable storage on the curator's curator.db.
 pub fn open_curator_regulation_archive(
     passphrase: &str,
 ) -> Option<Arc<hkask_storage::RegulationArchive>> {

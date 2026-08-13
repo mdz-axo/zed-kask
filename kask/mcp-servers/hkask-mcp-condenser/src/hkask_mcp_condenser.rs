@@ -530,20 +530,24 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         |ctx: hkask_mcp_server::ServerContext| {
             (|| -> anyhow::Result<CondenserServer> {
                 let store = {
-                    let db_path = std::env::var("HKASK_DB_PATH").ok();
-                    match db_path {
-                        Some(path) => {
-                            let passphrase = ctx
-                                .credentials
-                                .get("HKASK_DB_PASSPHRASE")
-                                .cloned()
-                                .or_else(|| std::env::var("HKASK_DB_PASSPHRASE").ok())
-                                .ok_or_else(|| {
-                                    anyhow::anyhow!(
-                                        "HKASK_DB_PATH set but HKASK_DB_PASSPHRASE missing"
-                                    )
-                                })?;
-                            let db = Database::open(&path, &passphrase).map_err(|e| {
+                    // D28 — Standardized Artifact Storage. Default DB path
+                    // is `mcp/condenser/condenser.db`. Override via
+                    // `HKASK_DB_PATH`. Requires `HKASK_DB_PASSPHRASE`.
+                    let db_path = std::env::var("HKASK_DB_PATH")
+                        .ok()
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| {
+                            hkask_types::agent_paths::resolve_under_data_dir(
+                                &hkask_types::agent_paths::mcp_server_db("condenser", "condenser"),
+                            )
+                        });
+                    let db_path_str = db_path.to_string_lossy().to_string();
+                    match ctx.credentials.get("HKASK_DB_PASSPHRASE").cloned().or_else(|| std::env::var("HKASK_DB_PASSPHRASE").ok()) {
+                        Some(passphrase) => {
+                            if let Some(parent) = db_path.parent() {
+                                std::fs::create_dir_all(parent).ok();
+                            }
+                            let db = Database::open(&db_path_str, &passphrase).map_err(|e| {
                                 anyhow::anyhow!("Failed to open condenser database: {}", e)
                             })?;
                             let pool =

@@ -380,6 +380,26 @@ pub struct VideoCaptionRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct VideoExtractFramesRequest {
+    /// URL of the video to extract frames from.
+    pub video_url: String,
+    /// Interval between frames in seconds (default 2.0).
+    #[serde(default = "default_frame_interval")]
+    pub interval_sec: f32,
+    /// Maximum number of frames to extract (default 10).
+    #[serde(default = "default_max_frames")]
+    pub max_frames: u32,
+}
+
+fn default_frame_interval() -> f32 {
+    2.0
+}
+
+fn default_max_frames() -> u32 {
+    10
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct VideoMemeRequest {
     /// Gallery image index to use as the meme base.
     pub image_index: usize,

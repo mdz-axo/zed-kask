@@ -769,6 +769,85 @@ impl MediaServer {
     }
 
     #[tool(
+        description = "Extract keyframes from a video as gallery assets. Each frame becomes a searchable gallery image with its own lineage. Returns the gallery indices of the imported frames."
+    )]
+    pub async fn video_extract_frames(
+        &self,
+        Parameters(VideoExtractFramesRequest {
+            video_url,
+            interval_sec,
+            max_frames,
+        }): Parameters<VideoExtractFramesRequest>,
+    ) -> String {
+        execute_tool(self, "video_extract_frames", async {
+            validate_tool_url_with_dns(&video_url).await?;
+            self.require_ffmpeg()?;
+
+            let frames = self
+                .ffmpeg
+                .extract_keyframes(&video_url, interval_sec, max_frames)
+                .await
+                .map_err(map_media_error)?;
+
+            if frames.is_empty() {
+                return Err(McpToolError::internal("No keyframes extracted from video."));
+            }
+
+            // Promote each temp frame into a gallery asset so it gets an
+            // image ID, lineage, and is retrievable via gallery_search. This
+            // is the gallery-asset promotion that distinguishes this tool from
+            // a raw ffmpeg call.
+            let mut imported = Vec::new();
+            let mut errors = Vec::new();
+            for frame in &frames {
+                match self.import_reference_image(frame) {
+                    Ok((image_id, _image_url)) => {
+                        let ga = self.access_gallery().map_err(map_media_error)?;
+                        let index = self
+                            .resolve_image_url_by_id(&ga, &image_id)
+                            .map(|(idx, _)| idx)
+                            .map_err(map_media_error)?;
+                        imported.push(serde_json::json!({
+                            "image_index": index,
+                            "image_id": image_id,
+                        }));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.media",
+                            frame = %frame.display(),
+                            error = %e,
+                            "Failed to import extracted frame into gallery"
+                        );
+                        errors.push(format!("{}", frame.display()));
+                    }
+                }
+            }
+
+            // Clean up temp files regardless of import success.
+            for frame in &frames {
+                let _ = std::fs::remove_file(frame);
+            }
+
+            if imported.is_empty() {
+                return Err(McpToolError::internal(format!(
+                    "Extracted {} frames but failed to import any into the gallery",
+                    frames.len()
+                )));
+            }
+
+            Ok(serde_json::json!({
+                "status": "complete",
+                "frames_extracted": frames.len(),
+                "frames_imported": imported.len(),
+                "frames": imported,
+                "errors": errors,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
         description = "Create a meme video from a gallery image with text overlay and camera motion. Composes text rendering + AI motion generation. Perfect for 'WHEN YOU SEE IT' style memes."
     )]
     pub async fn video_meme(

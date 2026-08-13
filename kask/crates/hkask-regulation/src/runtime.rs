@@ -15,7 +15,7 @@
 //! - Effector: algedonic alerts are forwarded to the `MetacognitionLoop`
 //!   via the alert channel; durable span persistence goes through the
 //!   `RegulationSink` wired at the composition root (`RegulationArchive`
-//!   on the curator's pod.db in zed-kask).
+//!   on the curator's curator.db in zed-kask).
 
 use crate::algedonic::{
     AlgedonicManager, DEFAULT_EXPECTED_VARIETY, RuntimeAlert, reg_health_check,

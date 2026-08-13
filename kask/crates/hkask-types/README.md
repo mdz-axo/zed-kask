@@ -31,7 +31,7 @@ capability types live in their owning domain crates.
 | `document`                   | `DocStructure`, `Page`, `Block`                                                                                                                                                                                             |
 | `crypto` / `secret`          | `Ed25519PublicKey`, `Ed25519Signature`, `SecretRef`, `ZeroizingSecret`                                                                                                                                                      |
 | `inference_ipc`              | Unix-socket IPC envelope: `InferenceRequest`, `InferenceResponse`, `InferenceMethod`, `InferenceOutcome`, `INFERENCE_SOCKET_ENV`                                                                                            |
-| `agent_paths`                | Per-agent filesystem path helpers + data-dir resolution (`resolve_data_dir`, `resolve_under_data_dir`, `agent_dir`, `agent_pod_db`, …) and `DEFAULT_DB_PATH`                                                                |
+| `agent_paths`                | Per-agent filesystem path helpers + data-dir resolution (`resolve_data_dir`, `resolve_under_data_dir`, `agent_dir`, `agent_db`, …) and `DEFAULT_DB_PATH`                                                                |
 | `server_config`              | `ServerConfig`, `ServerRegistration`, `ServerConfigError`                                                                                                                                                                   |
 
 | `time` | `now_rfc3339` |

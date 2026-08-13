@@ -90,3 +90,98 @@ fn input_hash(input: &serde_json::Value) -> u64 {
     }
     hasher.finish()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allows_first_few_failures() {
+        let tracker = ToolRetryTracker::default();
+        let input = serde_json::json!({"path": "foo.rs"});
+        for _ in 0..WARN_THRESHOLD {
+            assert!(matches!(
+                tracker.check("read_file", &input),
+                RetryVerdict::Allow
+            ));
+            tracker.record_failure("read_file", &input);
+        }
+    }
+
+    #[test]
+    fn warns_after_threshold() {
+        let tracker = ToolRetryTracker::default();
+        let input = serde_json::json!({"path": "foo.rs"});
+        for _ in 0..WARN_THRESHOLD {
+            tracker.record_failure("read_file", &input);
+        }
+        // Next check should warn (at threshold, not yet at cap)
+        assert!(matches!(
+            tracker.check("read_file", &input),
+            RetryVerdict::AllowWithWarning { .. }
+        ));
+    }
+
+    #[test]
+    fn refuses_after_hard_cap() {
+        let tracker = ToolRetryTracker::default();
+        let input = serde_json::json!({"path": "foo.rs"});
+        for _ in 0..HARD_CAP {
+            tracker.record_failure("read_file", &input);
+        }
+        assert!(matches!(
+            tracker.check("read_file", &input),
+            RetryVerdict::Refuse { .. }
+        ));
+    }
+
+    #[test]
+    fn success_resets_counter() {
+        let tracker = ToolRetryTracker::default();
+        let input = serde_json::json!({"path": "foo.rs"});
+        for _ in 0..WARN_THRESHOLD {
+            tracker.record_failure("read_file", &input);
+        }
+        tracker.record_success("read_file", &input);
+        // After success, the counter is reset — next check should Allow.
+        assert!(matches!(
+            tracker.check("read_file", &input),
+            RetryVerdict::Allow
+        ));
+    }
+
+    #[test]
+    fn different_inputs_tracked_separately() {
+        let tracker = ToolRetryTracker::default();
+        let input_a = serde_json::json!({"path": "a.rs"});
+        let input_b = serde_json::json!({"path": "b.rs"});
+        for _ in 0..HARD_CAP {
+            tracker.record_failure("read_file", &input_a);
+        }
+        // input_a is refused, but input_b (different input) is still allowed.
+        assert!(matches!(
+            tracker.check("read_file", &input_a),
+            RetryVerdict::Refuse { .. }
+        ));
+        assert!(matches!(
+            tracker.check("read_file", &input_b),
+            RetryVerdict::Allow
+        ));
+    }
+
+    #[test]
+    fn different_tools_tracked_separately() {
+        let tracker = ToolRetryTracker::default();
+        let input = serde_json::json!({"query": "foo"});
+        for _ in 0..HARD_CAP {
+            tracker.record_failure("read_file", &input);
+        }
+        // read_file is refused, but grep (different tool) with the same input
+        // is still allowed — the tracker keys on (tool_name, input_hash).
+        assert!(matches!(
+            tracker.check("read_file", &input),
+            RetryVerdict::Refuse { .. }
+        ));
+        assert!(matches!(tracker.check("grep", &input), RetryVerdict::Allow));
+    }
+}

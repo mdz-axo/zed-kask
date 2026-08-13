@@ -57,7 +57,7 @@
 //!
 //! # Environment Variables
 //!
-//! - `HKASK_TRAINING_DB` — Path to per-agent training database for job/adapter/QA storage (defaults to `agents/curator/training.db`)
+//! - `HKASK_TRAINING_DB` — Path to training database for job/adapter/QA storage (defaults to `mcp/training/training.db`)
 //! - `HKASK_DB_PASSPHRASE` — Passphrase for the database (resolved via credentials or keystore)
 //! - `HKASK_TRAINING_CACHE_DIR` — Dataset cache directory
 //! - `RUNPOD_API_KEY` — Runpod API key
@@ -427,9 +427,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
     let cache_dir = PathBuf::from(
         std::env::var("HKASK_TRAINING_CACHE_DIR").unwrap_or_else(|_| {
-            hkask_types::agent_paths::agent_adapters_dir("curator")
-                .to_string_lossy()
-                .to_string()
+            // D28 — Standardized Artifact Storage. Adapter weights live
+            // under `mcp/training/adapters/`.
+            hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+                "mcp/training/adapters",
+            ))
+            .to_string_lossy()
+            .to_string()
         }),
     );
     let pipeline = DatasetPipeline::new(cache_dir);
@@ -446,10 +450,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             (|| -> anyhow::Result<TrainingServer> {
                 let db_path = std::env::var("HKASK_TRAINING_DB")
                     .unwrap_or_else(|_| {
-                        let relative = hkask_types::agent_paths::agent_training_db("curator");
-                        hkask_types::agent_paths::resolve_under_data_dir(&relative)
-                            .to_string_lossy()
-                            .to_string()
+                        // D28 — Standardized Artifact Storage. Training DB
+                        // lives at `mcp/training/training.db`.
+                        hkask_types::agent_paths::resolve_under_data_dir(
+                            &hkask_types::agent_paths::mcp_server_db("training", "training"),
+                        )
+                        .to_string_lossy()
+                        .to_string()
                     });
 
                 // Resolve passphrase: credentials → keystore resolve_credential chain

@@ -136,12 +136,15 @@ fn storage_layout_all_classes_resolve_under_one_root() {
     }
 
     // Each class's path helper resolves under the same root.
-    let agents_path = resolve_under_data_dir(std::path::Path::new("agents/alice/pod.db"));
+    let agents_path = resolve_under_data_dir(std::path::Path::new("agents/alice/alice.db"));
     let mcp_path = resolve_under_data_dir(&mcp_server_db("codegraph", "codegraph"));
     let skills_path = resolve_under_data_dir(&skills_dir());
     let threads_path = resolve_under_data_dir(&threads_db_path());
 
-    assert_eq!(agents_path, abs.join("agents").join("alice").join("pod.db"));
+    assert_eq!(
+        agents_path,
+        abs.join("agents").join("alice").join("alice.db")
+    );
     assert_eq!(
         mcp_path,
         abs.join("mcp").join("codegraph").join("codegraph.db")
@@ -156,6 +159,60 @@ fn storage_layout_all_classes_resolve_under_one_root() {
             "all class paths must resolve under the same data root"
         );
     }
+
+    unsafe {
+        std::env::remove_var("HKASK_DATA_DIR");
+    }
+}
+
+/// D28 — per-server DB path tests. Each MCP server's default DB path must
+/// follow the `mcp/{server_id}/{purpose}.db` pattern. This test pins the
+/// pattern for every migrated server so a rename or path drift is caught.
+#[test]
+fn mcp_server_db_paths_follow_standardized_layout() {
+    let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let abs = tmp.path().to_path_buf();
+    unsafe {
+        std::env::set_var("HKASK_DATA_DIR", &abs);
+    }
+
+    // Each tuple: (server_id, purpose, expected_filename)
+    let servers: &[(&str, &str, &str)] = &[
+        ("codegraph", "codegraph", "codegraph.db"),
+        ("kata-kanban", "kanban", "kanban.db"),
+        ("research", "rss", "rss.db"),
+        ("media", "gallery", "gallery.db"),
+        ("swarm", "ledger", "ledger.db"),
+        ("swarm", "consent", "consent.db"),
+        ("training", "training", "training.db"),
+        ("condenser", "condenser", "condenser.db"),
+        ("prediction-markets", "calibration", "calibration.db"),
+    ];
+
+    for (server_id, purpose, filename) in servers {
+        let relative = mcp_server_db(server_id, purpose);
+        let resolved = resolve_under_data_dir(&relative);
+        assert_eq!(
+            relative,
+            std::path::PathBuf::from("mcp")
+                .join(server_id)
+                .join(filename),
+            "mcp_server_db(\"{server_id}\", \"{purpose}\") must produce mcp/{server_id}/{filename}"
+        );
+        assert_eq!(
+            resolved,
+            abs.join("mcp").join(server_id).join(filename),
+            "resolved path for {server_id}/{purpose} must be under the data root"
+        );
+    }
+
+    // Portfolio/companies use a per-owner subdir, not a single DB file.
+    let portfolio_relative = mcp_server_db("portfolio", "master");
+    assert_eq!(
+        portfolio_relative,
+        std::path::PathBuf::from("mcp").join("portfolio").join("master.db"),
+    );
 
     unsafe {
         std::env::remove_var("HKASK_DATA_DIR");

@@ -4142,6 +4142,7 @@ impl Thread {
                 }
 
                 let (mut sender, tool_input) = ToolInputSender::channel();
+                let input_for_tracking = input.clone();
                 sender.send_partial(input);
                 running_turn
                     .streaming_tool_inputs
@@ -4158,7 +4159,7 @@ impl Thread {
                     event_stream,
                     cancellation_rx,
                     cx,
-                    input,
+                    input_for_tracking,
                 ));
             } else {
                 // [DIAG-T0002] Non-streaming path: tool does not support input

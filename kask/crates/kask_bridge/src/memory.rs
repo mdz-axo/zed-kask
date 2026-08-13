@@ -27,7 +27,7 @@ use chrono::Utc;
 use crate::inference::LanguageModelEmbeddingPort;
 
 // ── Curator store infrastructure — extracted to `memory/curator_stores.rs` ─
-// Deep-module split (bridge-audit BD-04): the curator's sovereign `pod.db`
+// Deep-module split (bridge-audit BD-04): the curator's sovereign `curator.db`
 // infrastructure (path resolution, store open, self-healing handle, consolidation
 // builder, regulation archive opener) is a one-way dependency of the memory
 // port and independent of the user-store orchestration that remains here.
@@ -54,8 +54,8 @@ pub use alert_escalation::{BridgeAlertEscalationSink, open_curator_escalation_qu
 /// 1. An episodic h_mem (Private, perspective = user WebID) — the user's
 ///    first-person experience record, in the user's own `memory.db`.
 /// 2. A semantic h_mem (Shared) — a curator-accessible copy written to the
-///    **curator's** sovereign `pod.db`, not the user's memory DB. The curator
-///    MCP server reads from the same `pod.db`, so `curator_memory_recall` and
+///    **curator's** sovereign `curator.db`, not the user's memory DB. The curator
+///    MCP server reads from the same `curator.db`, so `curator_memory_recall` and
 ///    `curator_semantic_search` see turns the agent has observed.
 /// 3. An embedding of the user prompt — for future semantic retrieval and
 ///    context injection, stored in the user's `memory.db`.
@@ -64,7 +64,7 @@ pub use alert_escalation::{BridgeAlertEscalationSink, open_curator_escalation_qu
 /// are not available, the port is simply not wired (the hook stays `None`).
 pub struct RealMemoryPort {
     store: Arc<MemoryStore>,
-    /// The curator's sovereign store (`agents/curator/pod.db`) behind a
+    /// The curator's sovereign store (`agents/curator/curator.db`) behind a
     /// self-healing handle: when the curator DB cannot be opened at startup
     /// (locked by a previous MCP server instance, transient I/O), the store
     /// is `None` and every access re-attempts the open. A successful
@@ -194,7 +194,7 @@ impl RealMemoryPort {
         let storage_budget = resolve_storage_budget();
         let memory_life_days = resolve_memory_life_days();
         // Wire the `reg.memory.encode` span sink: every `store()` persists a
-        // span to the user's `pod.db` regulation archive. Without this the
+        // span to the user's `curator.db` regulation archive. Without this the
         // span emitter in `MemoryStore::store` is dead code (the `.rules`
         // "Advertised invariants need enforcement points" trap). `None`
         // degrades to no span persistence with a warn — the store still works.
@@ -580,8 +580,8 @@ fn resolve_memory_life_days() -> f64 {
 }
 
 /// Open a `RegulationArchive` on an arbitrary SQLCipher DB. Used by both the
-/// user store (`RealMemoryPort::new`, on the user's `pod.db`) and the curator
-/// store (`open_curator_store`, on the curator's `pod.db`) to wire
+/// user store (`RealMemoryPort::new`, on the user's `curator.db`) and the curator
+/// store (`open_curator_store`, on the curator's `curator.db`) to wire
 /// `reg.memory.encode` span persistence via `MemoryStore::with_ledger`.
 ///
 /// Returns `None` on any failure with a `tracing::warn!` naming the DB and the
@@ -734,7 +734,7 @@ impl MemoryPort for RealMemoryPort {
             // ── 2. Curator-side writes — branch on whose turn it is ──────
             if is_curator_turn {
                 // Curator-perspective episodic h_mem (Private,
-                // `curator_webid`) in `agents/curator/pod.db` — the curator's
+                // `curator_webid`) in `agents/curator/curator.db` — the curator's
                 // own first-person record of the same conversation, mirroring
                 // the user's record above. Together they give each party a
                 // first-person memory of the shared conversation from their
@@ -975,7 +975,7 @@ impl RealMemoryPort {
     /// Recall memory snippets from the **curator's** sovereign stores.
     ///
     /// This mirrors `recall_context` but reads from the curator's `MemoryStore`
-    /// (`agents/curator/pod.db`) using the
+    /// (`agents/curator/curator.db`) using the
     /// curator's WebID for perspective-scoped episodic queries. Used by the
     /// curator context injector (`BridgeContextInjector::new_curator`) so the
     /// Curator recalls its own memory — a parallel of the user agent's
@@ -1460,7 +1460,7 @@ mod tests {
 
         // Curator store — a separate in-memory driver so the curator copy
         // lands in a different DB, mirroring production where the curator
-        // has its own `pod.db`.
+        // has its own `curator.db`.
         let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
             SqliteDriver::in_memory_driver();
         let curator_h_mem_store =

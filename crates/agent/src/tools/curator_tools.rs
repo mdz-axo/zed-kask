@@ -79,7 +79,7 @@ pub struct CuratorStatusOutput {
     /// it a "counter" misled operators into reading it as variety tracked.
     pub variety_deficit: Option<Vec<(String, u64)>>,
     /// `true` when the curator's own memory stores (episodic/semantic in
-    /// `agents/curator/pod.db`) are down or partially down — the curator is
+    /// `agents/curator/curator.db`) are down or partially down — the curator is
     /// running without durable memory until the self-healing re-open
     /// succeeds. `None` when the memory probe isn't wired (pre-login or
     /// upstream Zed).

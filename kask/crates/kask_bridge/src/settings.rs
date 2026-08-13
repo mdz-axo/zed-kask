@@ -801,14 +801,19 @@ impl KaskSettings {
                 self.companies.fermi_defaults.clone(),
             );
         }
-        // `HKASK_TRANSACTIONS_DIR` is intentionally NOT emitted: no MCP server
-        // crate reads it (verified across `hkask-mcp-companies` and
-        // `hkask-mcp-portfolio`), and it is in no server's `config_env`
-        // allowlist. The `companies.transactions_dir` settings field and its
-        // settings-UI input remain for forward compatibility, but emitting it
-        // here only adds noise to the env map that the per-server filter then
-        // drops. Re-add the emission (and an allowlist entry) when a server
-        // crate gains a read site.
+        // D28 — Standardized Artifact Storage. Emit HKASK_TRANSACTIONS_DIR
+        // so the portfolio server can auto-load transaction files. Default
+        // is `mcp/portfolio/transactions/` under the kask data root.
+        let transactions_dir = if !self.companies.transactions_dir.is_empty() {
+            self.companies.transactions_dir.clone()
+        } else {
+            hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+                "mcp/portfolio/transactions",
+            ))
+            .to_string_lossy()
+            .to_string()
+        };
+        env.insert("HKASK_TRANSACTIONS_DIR".to_string(), transactions_dir);
 
         // ── Corpus ──
         if self.corpus.embedding_dim != corpus_default.embedding_dim {

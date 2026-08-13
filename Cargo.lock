@@ -9648,7 +9648,6 @@ version = "0.34.0"
 dependencies = [
  "a2a-lf",
  "chrono",
- "dirs",
  "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-ledger",

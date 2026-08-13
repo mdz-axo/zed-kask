@@ -79,7 +79,7 @@ pub struct CyberneticsLoop {
     /// When present, algedonic alerts are persisted to RegulationArchive for restart durability.
     event_sink: Option<Arc<dyn RegulationSink>>,
     /// When present, algedonic alerts are persisted to the reviewable escalation
-    /// queue (the `EscalationQueue` on the curator's pod.db). This is the
+    /// queue (the `EscalationQueue` on the curator's curator.db). This is the
     /// primary durable path for alert review — every escalated alert is written
     /// here unconditionally, so the Curator/user can review pending alerts via
     /// the `curator_escalations` MCP tool and resolve/dismiss them. The

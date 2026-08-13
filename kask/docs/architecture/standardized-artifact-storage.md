@@ -40,10 +40,55 @@ consistently regardless of launch context.
 |---|---|---|---|---|
 | MCP servers | `{data_dir}` | `mcp/{server_id}/` | `server_id` matches `BUILT_IN_MCP_SERVERS[].id` (`kask/crates/kask_bridge/src/mcp_servers.rs:53`); files named `{purpose}.db` | `resolve_under_data_dir(Path::new("mcp/{server_id}/{purpose}.db"))` |
 | User skills | `{data_dir}` | `skills/{skill_name}/` (marketplace skills nest as `skills/_marketplace/{source_user}/{skill_name}/`) | `skill_name` sanitized via `sanitize_name()` (`agent_paths.rs:157-187`); files: `manifest.yaml`, `*.j2`, `SKILL.md` | `resolve_under_data_dir(Path::new("skills/{skill_name}/"))` |
-| User agent files | `{data_dir}` | `agents/{agent_name}/` | `agent_name` via `sanitize_name()`; subdirs from `AGENT_SUBDIRS` (`agent_paths.rs:124-132`) | `agent_dir(name)` (existing, `agent_paths.rs:79-81`) |
+| User agent files | `{data_dir}` | `agents/{agent_name}/` | `agent_name` via `sanitize_name()`; DB file is `{agent_name}.db` (e.g., `agents/curator/curator.db`); subdirs from `AGENT_SUBDIRS` (`agent_paths.rs:124-132`) | `agent_dir(name)` + `agent_db(name)` (existing, `agent_paths.rs:79-81`, `agent_paths.rs:141-143`) |
 | Archived chat threads | `{data_dir}` | `threads/` | files: `threads.db` (SQLite) | `resolve_under_data_dir(Path::new("threads/threads.db"))` |
 
-## 3. Naming convention
+## 3. Ownership principle
+
+An artifact lives under the class subdir of the entity that owns it.
+Ownership is determined by: **which agent or MCP server produces and
+consumes this artifact?**
+
+- If the artifact is owned by an **agent** (user-scoped, identity-bound),
+  it lives under `agents/{agent_name}/`.
+- If the artifact is owned by an **MCP server** (server-scoped, not
+  identity-bound), it lives under `mcp/{server_id}/`.
+- If the artifact is owned by the **user** (not server-scoped, not
+  agent-scoped — e.g., skills, chat threads), it lives under the flat
+  class dir (`skills/`, `threads/`).
+
+Within the owner's subtree, the naming rule is:
+- `{purpose}.db` for SQLite databases
+- `{purpose}.json` for JSON artifacts
+- `{purpose}/` for directories of binary artifacts (e.g., `adapters/`,
+  `cache/`, `transactions/`, `sources/`)
+
+The `{purpose}` name must be human-readable and identify what the artifact
+is for, not its format.
+
+### Binary artifacts
+
+Binary artifacts (LoRA adapter weights, ingested corpus documents, cached
+web content) are owned by the MCP server that produces them. They live
+under `mcp/{server_id}/{purpose}/`:
+
+| Binary artifact | Owner | Path |
+|---|---|---|
+| LoRA adapter weights | training server | `mcp/training/adapters/` |
+| Corpus ingested documents | corpus server | `mcp/corpus/sources/` |
+| Corpus cache files | corpus server | `mcp/corpus/cache/` |
+| Portfolio transaction files | portfolio server | `mcp/portfolio/transactions/` |
+
+### Agent DBs that MCP servers read
+
+Some agent DBs are read by MCP servers (e.g., the curator's `curator.db`
+is read by the curator MCP server). These are **agent artifacts** (owned
+by the agent), not MCP-server artifacts. They stay under
+`agents/{agent_name}/`. The MCP server reads them via an env-var override
+(e.g., `HKASK_CURATOR_DB`) injected by `mcp_env()`, not by resolving
+under `mcp/{server_id}/`.
+
+## 4. Naming convention
 
 - **Folders:** human-readable, kebab-case, sanitized via `sanitize_name()`
   (`agent_paths.rs:157-187`). An operator `ls {data_dir}/` sees the four
@@ -54,7 +99,7 @@ consistently regardless of launch context.
 - **No opaque IDs at the browse level:** server IDs, tool names, skill names,
   and agent names are all human-readable strings, not UUIDs.
 
-## 4. Shared-vs-parallel decision per class
+## 5. Shared-vs-parallel decision per class
 
 | Class | Decision | Rationale |
 |---|---|---|
@@ -63,7 +108,7 @@ consistently regardless of launch context.
 | User agent files | Shared (flat `agents/{agent_name}/`) | Agents are user-scoped, not server-scoped (`agent_paths.rs:79-81`). |
 | Archived chat threads | Shared (flat `threads/`) | Threads are user chat history, not server-scoped. |
 
-## 5. Archived threads path
+## 6. Archived threads path
 
 **Upstream path (replaced):** `paths::data_dir().join("threads").join("threads.db")`
 → `~/.local/share/zed-kask/threads/threads.db`
@@ -78,7 +123,7 @@ The `None` arm in `ThreadsDatabase::new` is a defensive fallback for the
 pre-wiring window only. No content transformation — the on-disk SQLite
 format is unchanged; only the path relocates.
 
-## 6. D-seam discipline
+## 7. D-seam discipline
 
 Every new or moved path in this layout is pinned by a test asserting the
 location is used (per `.rules` zed-kask integration traps). The archived-

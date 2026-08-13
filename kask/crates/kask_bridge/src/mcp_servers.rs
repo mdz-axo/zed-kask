@@ -75,7 +75,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-portfolio",
         description: "Portfolio — general-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views",
         credentials: Some(&[]),
-        config_env: Some(&[]),
+        config_env: Some(&["HKASK_TRANSACTIONS_DIR"]),
     },
     BuiltinMcpServer {
         id: "companies",

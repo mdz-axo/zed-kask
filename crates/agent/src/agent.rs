@@ -3041,7 +3041,7 @@ static CONTEXT_INJECTOR: std::sync::OnceLock<Option<Arc<dyn ContextInjector>>> =
 ///
 /// Set by the zed-kask composition root alongside `set_context_injector`.
 /// When set, Curator threads get their prompts enriched with memories
-/// recalled from the curator's sovereign DB (`agents/curator/pod.db`),
+/// recalled from the curator's sovereign DB (`agents/curator/curator.db`),
 /// mirroring the user agent's recall loop. When `None`, Curator threads
 /// fall back to the user injector (if any) — graceful degradation that
 /// gives the curator user-scoped recall instead of curator-scoped recall.

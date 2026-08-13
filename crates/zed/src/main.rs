@@ -669,7 +669,7 @@ fn main() {
         // `CallCap` bounds governed tool calls per regulation tick.
         //
         // The event sink starts as `NoopEventSink` — the durable
-        // `RegulationArchive` (on the curator's pod.db, the same DB the
+        // `RegulationArchive` (on the curator's curator.db, the same DB the
         // curator MCP server's `reg_query`/`curator_algedonic_log` tools
         // read) requires the DB passphrase, which only resolves after the
         // Zed user logs in. The deferred task upgrades both sinks
@@ -1305,7 +1305,7 @@ fn main() {
                         embedding_port_for_ipc = Some(embedding_port.clone());
 
                         // Upgrade the regulation event sinks to the durable
-                        // `RegulationArchive` on the curator's pod.db — the same
+                        // `RegulationArchive` on the curator's curator.db — the same
                         // DB the curator MCP server's `reg_query` and
                         // `curator_algedonic_log` tools read. Before this,
                         // both sinks are `NoopEventSink` (spans dropped).
@@ -1317,18 +1317,18 @@ fn main() {
                                     let mut loop_guard = cybernetics_loop_for_panel_deferred.write().await;
                                     loop_guard.set_event_sink(sink);
                                 }
-                                log::info!("hKask regulation archive wired — regulation spans now persist to curator pod.db");
+                                log::info!("hKask regulation archive wired — regulation spans now persist to curator curator.db");
                             }
                             None => {
                                 log::warn!(
                                     "hKask regulation archive unavailable — regulation spans will be dropped. \
-                                     Remediation: ensure the curator pod.db can be opened (HKASK_CURATOR_DB, DB passphrase)."
+                                     Remediation: ensure the curator curator.db can be opened (HKASK_CURATOR_DB, DB passphrase)."
                                 );
                             }
                         }
 
                         // Open the reviewable escalation queue on the same
-                        // curator pod.db — the same DB the curator MCP
+                        // curator curator.db — the same DB the curator MCP
                         // server's `curator_escalations` /
                         // `curator_escalation_resolve` /
                         // `curator_escalation_dismiss` tools read. This is
@@ -1344,12 +1344,12 @@ fn main() {
                                     std::sync::Arc::new(kask_bridge::BridgeAlertEscalationSink::new(queue));
                                 let mut loop_guard = cybernetics_loop_for_panel_deferred.write().await;
                                 loop_guard.set_alert_escalation_sink(Some(sink));
-                                log::info!("hKask escalation queue wired — algedonic alerts now persist to the reviewable backlog on curator pod.db");
+                                log::info!("hKask escalation queue wired — algedonic alerts now persist to the reviewable backlog on curator curator.db");
                             }
                             None => {
                                 log::warn!(
                                     "hKask escalation queue unavailable — algedonic alerts will not persist to the reviewable backlog. \
-                                     Remediation: ensure the curator pod.db can be opened (HKASK_CURATOR_DB, DB passphrase)."
+                                     Remediation: ensure the curator curator.db can be opened (HKASK_CURATOR_DB, DB passphrase)."
                                 );
                             }
                         }
@@ -1420,7 +1420,7 @@ fn main() {
                                 );
 
                                 // Set env vars for the curator MCP server so it
-                                // reads from the same `agents/curator/pod.db` the
+                                // reads from the same `agents/curator/curator.db` the
                                 // agent writes curator copies to. These are read
                                 // by `open_curator_stores` in the curator MCP
                                 // server and by `open_curator_semantic` in
@@ -1497,7 +1497,7 @@ fn main() {
                                 // D11 curator mirror: wire the curator context
                                 // injector so the Curator recalls its own
                                 // sovereign memory (episodic + semantic from
-                                // `agents/curator/pod.db`). Without this, the
+                                // `agents/curator/curator.db`). Without this, the
                                 // Curator has no automatic recall — it must
                                 // call `curator_memory_recall` /
                                 // `curator_semantic_search` as tools, which is
