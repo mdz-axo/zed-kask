@@ -2,7 +2,7 @@
 title: "hKask Capability — Class Diagram"
 audience: [architects, developers]
 last_updated: 2026-08-12
-version: "2.0.0"
+version: "2.1.0"
 status: "Active"
 domain: "Trust"
 mds_categories: [trust]
@@ -10,10 +10,11 @@ mds_categories: [trust]
 
 # hKask Capability — Class Diagram
 
-Type system after the 2026-08-12 removal of the per-call capability gate
-(RR-0056). The crate now holds the dispatch port and the FIDES taint lattice
-only — no tokens, no authorization check. `McpRuntime::invoke` meters the call
-and dispatches it; the only pre-dispatch refusal is the runaway-loop breaker.
+Type system after the two 2026-08-12 removals: the per-call capability gate
+(RR-0056) and the FIDES taint lattice (RR-0053). The crate now holds the dispatch
+port only — no tokens, no authorization check, no information-flow labels.
+`McpRuntime::invoke` meters the call and dispatches it; the only pre-dispatch
+refusal is the runaway-loop breaker.
 
 ```mermaid
 classDiagram
@@ -29,7 +30,6 @@ classDiagram
         +description: String
         +input_schema: Value
         +server_id: String
-        +taint: ToolTaint
     }
 
     class ToolPortError {
@@ -39,15 +39,6 @@ classDiagram
         +Unavailable(String)
         +InvocationFailed(String)
         +is_retryable() bool
-    }
-
-    class ToolTaint {
-        <<enumeration>>
-        Source
-        Sink
-        Pure
-        Endorser
-        +can_flow_to(target) bool
     }
 
     class McpRuntime {
@@ -72,13 +63,12 @@ classDiagram
 
     ToolPort ..> ToolInfo : returns
     ToolPort ..> ToolPortError : returns
-    ToolInfo --> ToolTaint
     McpRuntime ..|> ToolPort : implements
     McpRuntime ..> CallCapManager : charges via CyberneticsLoop
     CallCapManager ..> CallMeterOutcome : returns
 ```
 
-## What was removed (2026-08-12, RR-0056 / RR-0057)
+## What was removed (2026-08-12, RR-0053 / RR-0056 / RR-0057)
 
 - The per-call capability gate in `McpRuntime::invoke`. All three production mint
   sites derived the token's `resource_id` from the same tool name they passed to
@@ -93,6 +83,12 @@ classDiagram
 - The fail-closed branch on an *absent* call ceiling — the meter now auto-registers
   an unseeded agent at `DEFAULT_RUNAWAY_CALL_CEILING` and logs the wiring gap
   (RR-0057)
+- The FIDES taint lattice: `ToolTaint`, `can_flow_to`, `can_flow_to_matrix`, the
+  whole `src/tool_taint.rs` file, and the `ToolInfo.taint` field — deleted with the
+  `DefaultPolicy` gate in `hkask-templates` that consumed them (RR-0053). The gate
+  was inert: `McpRuntime::get_tool_info` hardcoded `Pure` at the only `ToolInfo`
+  construction site, so `Source`→`Sink` could never fire. The orphaned `serde`
+  dependency went with it.
 
 ## What remains
 
@@ -101,15 +97,20 @@ classDiagram
   accounting identity, not a credential.
 - `ToolPortError` — `EnergyBudgetExceeded` / `NotFound` / `Unavailable` /
   `InvocationFailed`, plus `is_retryable` (true only for `Unavailable`)
-- `ToolInfo` — tool metadata carrying the FIDES taint label
-- `ToolTaint` — the FIDES lattice; `can_flow_to` blocks `Source`→`Sink` and
-  nothing else
+- `ToolInfo` — tool metadata: `name`, `description`, `input_schema`, `server_id`
+- `ToolFuture` — the `Pin<Box<dyn Future + Send>>` alias that keeps `ToolPort`
+  dyn-compatible
 - `SYSTEM_MAX_RECURSION` — cascade depth limit (matryoshka), used by the manifest
   executor and the registry bootstrap; a recursion breaker, not an authority limit
 
 Authority itself lives outside this crate: the per-request `tool_allowlist` on
 the inference IPC dispatch, each swarm card's `mcp_tools` allowlist, and the
 per-server MCP env/credential allowlists.
+
+Information flow is not gated anywhere. Defense **Layer 5 is absent by decision**,
+in the same register as Layer 3 (instruction hierarchy, RR-0010) — see
+[Guard and Taint Pipeline](../architecture/guard-taint-pipeline.md) and
+`kask/security/regressions/RR-0053.yaml`.
 
 ## Related
 
@@ -120,6 +121,6 @@ per-server MCP env/credential allowlists.
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-001
 verified_date: 2026-08-12
-verified_against: kask/crates/hkask-capability/src/tool_port.rs; kask/crates/hkask-capability/src/tool_taint.rs; kask/crates/hkask-capability/src/token_types.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs
+verified_against: kask/crates/hkask-capability/src/tool_port.rs; kask/crates/hkask-capability/src/token_types.rs; kask/crates/hkask-capability/src/hkask_capability.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs
 status: VERIFIED
 -->

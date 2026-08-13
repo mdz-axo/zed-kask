@@ -1397,12 +1397,17 @@ summary:
   kata.convergence_check (histories always empty via unwrap_or_default) and
   hard-errored swarm.converge_accumulate (get_f64 on a string). Switched
   execute_compute to resolve_mapping_value (the convention used by
-  select/populate/loop/render/flowdef) + propagate_taint_for_binding, so {{ }}
+  select/populate/loop/render/flowdef) + ~~propagate_taint_for_binding~~, so {{ }}
   with defaults renders correctly in compute input_mappings. Backward-compatible
   (literals and $ref pass through unchanged); fixes the compute wiring for all
-  skills. The .rules "input_mapping bindings must propagate taint" trap (RR-0026/
+  skills. ~~The .rules "input_mapping bindings must propagate taint" trap (RR-0026/
   RR-0027) applied — compute was the remaining resolve_mapping_value call site
-  without taint propagation.
+  without taint propagation.~~
+  > **Superseded 2026-08-12:** the struck-through taint half is void. All FIDES
+  > taint machinery was deleted (RR-0053) after being found inert; RR-0026 and
+  > RR-0027 are now `obsolete`, and no binding site propagates taint. The
+  > resolve_mapping_value switch itself stands — it is the live single resolver
+  > (`input_mapping.rs`) and the reason this fix mattered.
 - ACT wiring: swarm-act.j2 gained dispatch branches for reconfigure_agent
   (swarm_reconfigure_local_agent, C6), create (swarm_create_local_agent), and
   fanout (swarm_fanout_local) in local mode, closing the gap where DECIDE could

@@ -20,7 +20,7 @@
     },
     "hkask-capability": {
       "lib_root": "src/hkask_capability.rs",
-      "description": "Tool dispatch port (ToolPort, ToolInfo, ToolPortError) and FIDES taint labels (ToolTaint), plus the SYSTEM_MAX_RECURSION cascade bound. Holds no capability tokens and no authorization check: the Ed25519 token ceremony was removed 2026-07-31 and the per-call DelegationToken capability gate on 2026-08-12 (RR-0056)",
+      "description": "Tool dispatch port (ToolPort, ToolInfo, ToolFuture, ToolPortError) plus the SYSTEM_MAX_RECURSION cascade bound. Holds no capability tokens, no authorization check, and no information-flow labels: the Ed25519 token ceremony was removed 2026-07-31, the per-call DelegationToken capability gate on 2026-08-12 (RR-0056), and the FIDES taint lattice (ToolTaint, can_flow_to, ToolInfo.taint, src/tool_taint.rs) on 2026-08-12 (RR-0053) because every tool was hardcoded Pure so the Source->Sink block could not fire",
       "public_items": 0,
       "covered": 0,
       "uncovered": 0
@@ -111,7 +111,7 @@
     },
     "hkask-regulation": {
       "lib_root": "src/hkask_regulation.rs",
-      "description": "Cybernetic Nervous System for hKask",
+      "description": "Cybernetic Nervous System for hKask. The runtime_policy module (DefaultPolicy, PolicyVerdict, PolicyConfig) was deleted 2026-08-12 (RR-0053) along with the hkask-capability dependency it needed for taint labels; defense Layer 5 (information flow control) is absent by decision, as Layer 3 is under RR-0010",
       "public_items": 0,
       "covered": 0,
       "uncovered": 0

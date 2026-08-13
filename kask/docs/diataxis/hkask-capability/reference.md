@@ -2,7 +2,7 @@
 title: "hkask-capability — Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-08-12
-version: "0.2.0"
+version: "0.3.0"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [domain, trust]
@@ -10,11 +10,11 @@ mds_categories: [domain, trust]
 
 # hkask-capability — Reference
 
-`hkask-capability` defines the tool dispatch port and the FIDES taint labels:
-the `ToolPort` trait, its `ToolInfo` metadata and `ToolPortError` taxonomy, the
-`ToolTaint` information-flow lattice, and the `SYSTEM_MAX_RECURSION` structural
-bound. It contains **no capability tokens and no authorization check**. Tool
-authority is enforced outside this crate, at the allowlist boundaries listed
+`hkask-capability` defines the tool dispatch port: the `ToolPort` trait, its
+`ToolInfo` metadata, `ToolFuture` alias and `ToolPortError` taxonomy, plus the
+`SYSTEM_MAX_RECURSION` structural bound. That is the entire surface. It contains
+**no capability tokens, no authorization check, and no information-flow labels**.
+Tool authority is enforced outside this crate, at the allowlist boundaries listed
 under [Where authority is enforced](#where-authority-is-enforced).
 
 ## Source citations
@@ -25,12 +25,11 @@ under [Where authority is enforced](#where-authority-is-enforced).
 | `ToolPortError` enum         | `kask/crates/hkask-capability/src/tool_port.rs`     |
 | `ToolFuture` type alias      | `kask/crates/hkask-capability/src/tool_port.rs`     |
 | `ToolInfo` struct            | `kask/crates/hkask-capability/src/tool_port.rs`     |
-| `ToolTaint` enum             | `kask/crates/hkask-capability/src/tool_taint.rs`    |
 | `SYSTEM_MAX_RECURSION` const | `kask/crates/hkask-capability/src/token_types.rs`   |
 | `ToolPort` implementor       | `kask/crates/hkask-mcp/src/runtime.rs` (`McpRuntime`) |
 
-The crate's `src/` directory holds exactly four files: `hkask_capability.rs`
-(lib root), `token_types.rs`, `tool_port.rs`, and `tool_taint.rs`.
+The crate's `src/` directory holds exactly three files: `hkask_capability.rs`
+(lib root), `token_types.rs`, and `tool_port.rs`.
 
 ## What was removed, and why
 
@@ -53,6 +52,16 @@ token's place.
 
 **2026-08-12 — the fail-closed call cap (RR-0057).** The meter no longer refuses
 an agent that has no registered ceiling; see [Call metering](#call-metering).
+
+**2026-08-12 — the FIDES taint labels (RR-0053).** `ToolTaint` (`Source` / `Sink`
+/ `Pure` / `Endorser`), `can_flow_to`, `can_flow_to_matrix`, the whole
+`src/tool_taint.rs` file, and the `ToolInfo.taint` field were deleted, along with
+the `DefaultPolicy` gate in `hkask-templates` that consumed them. The gate was
+inert: `McpRuntime::get_tool_info` hardcoded `ToolTaint::Pure` at the only site
+that built a `ToolInfo`, and the executor's untrusted-input flag read cascade
+markers the write path had stopped emitting, so `Source`→`Sink` could never fire.
+The now-orphaned `serde` dependency was removed from `Cargo.toml`. See
+[Information flow](#information-flow-absent-by-decision).
 
 Earlier collapses removed the surrounding token ceremony: the 2026-07-31 pass
 deleted `signature`/`public_key`, `verify()`/`verify_cryptographic()`,
@@ -79,7 +88,6 @@ classDiagram
         +description: String
         +input_schema: Value
         +server_id: String
-        +taint: ToolTaint
     }
     class ToolPortError {
         <<enumeration>>
@@ -88,14 +96,6 @@ classDiagram
         Unavailable(String)
         InvocationFailed(String)
         +is_retryable() bool
-    }
-    class ToolTaint {
-        <<enumeration>>
-        Source
-        Sink
-        Pure
-        Endorser
-        +can_flow_to(target) bool
     }
     class McpRuntime {
         -servers: HashMap
@@ -106,14 +106,13 @@ classDiagram
 
     ToolPort ..> ToolInfo : returns
     ToolPort ..> ToolPortError : returns
-    ToolInfo --> ToolTaint
     McpRuntime ..|> ToolPort : implements
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-CAP-002
 verified_date: 2026-08-12
-verified_against: kask/crates/hkask-capability/src/tool_port.rs; kask/crates/hkask-capability/src/tool_taint.rs; kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl hkask_capability::ToolPort)
+verified_against: kask/crates/hkask-capability/src/tool_port.rs; kask/crates/hkask-capability/src/token_types.rs; kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl hkask_capability::ToolPort)
 status: VERIFIED
 -->
 
@@ -185,24 +184,31 @@ caller being checked. Three boundaries satisfy that:
 | Per-agent declared `mcp_tools` allowlist                        | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs`        | Restricts which tools a swarm agent may call |
 | Per-server MCP env / credential allowlists                      | `kask/crates/kask_bridge/src/mcp_servers.rs`                    | Scopes credentials per server (RR-0038)      |
 
-A fourth live gate acts on information flow rather than authority: the FIDES
-`Source`→`Sink` runtime policy check in `hkask-templates`'s `invoke_tool`, which
-reads `ToolInfo.taint` and can return `Block` / `RequireHuman` / `Log`
-(RR-0053).
+There is no fourth gate. A FIDES `Source`→`Sink` information-flow check used to be
+listed here; it was deleted on 2026-08-12 — see
+[Information flow](#information-flow-absent-by-decision).
 
-## Taint model
+## Information flow: absent by decision
 
-`ToolTaint` labels every tool by its data-flow character: `Source` (returns
-untrusted external data), `Sink` (state-changing), `Pure` (no side effects, no
-external data), `Endorser` (trusted extraction from untrusted input). The
-default assigned by `McpRuntime::get_tool_info` is `Pure`.
+Nothing in this crate or on the invoke path inspects information flow. Defense
+**Layer 5 (information flow control) is absent by decision**, recorded in the same
+register as Layer 3 (instruction hierarchy, RR-0010): de-advertised rather than
+deployed.
 
-`can_flow_to` encodes the whole policy as one prohibition: `Source → Sink` is
-blocked; all fifteen other pairs are allowed. Untrusted data must pass through
-an `Endorser` before reaching a state-changing tool. The full 4×4 matrix is
-pinned by `can_flow_to_matrix` in `tool_taint.rs`.
+The FIDES lattice[^fides-cap] that once lived in `src/tool_taint.rs` labelled each
+tool `Source` / `Sink` / `Pure` / `Endorser` and blocked `Source → Sink`. It was
+deleted rather than repaired because the gate consuming it could not decide
+anything: `McpRuntime::get_tool_info` hardcoded `Pure` at the only `ToolInfo`
+construction site, so the `Sink` arm never matched. An inert gate is worse than no
+gate — it invites reliance on a protection that does not exist.
 
-Source: Microsoft Research FIDES (arXiv:2505.23643).[^fides-cap]
+Governing entry: `kask/security/regressions/RR-0053.yaml`, rewritten as an absence
+check that forbids re-adding the machinery in inert form and states the bar a real
+IFC gate must clear (labels derived from real per-tool metadata; an untrusted-input
+signal read from the same field the write path sets, with a drift test; and a test
+proving a `Source` input to a `Sink` tool is actually blocked on a reachable path).
+RR-0012, RR-0013, RR-0026, RR-0027, RR-0033 and RR-0034 are `obsolete`. Full
+rationale: [`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md).
 
 ## Structural bound
 
@@ -225,10 +231,10 @@ recommended operating point.
   removed and separation kept.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
   P4 (Clear Boundaries).
-- `kask/security/regressions/RR-0056.yaml`, `RR-0057.yaml`.
+- `kask/security/regressions/RR-0053.yaml`, `RR-0056.yaml`, `RR-0057.yaml`.
 
 ---
 
-[^fides-cap]: Microsoft Research. (2025). _FIDES: Information flow control for LLM agents_ (arXiv:2505.23643). The Source/Sink/Pure/Endorser lattice and the Source→Sink endorsement rule implemented in `tool_taint.rs`.
+[^fides-cap]: Microsoft Research. (2025). _FIDES: Information flow control for LLM agents_ (arXiv:2505.23643). The Source/Sink/Pure/Endorser lattice and the Source→Sink endorsement rule. Retained as the academic source for a design this crate no longer implements — the lattice was deleted on 2026-08-12 (RR-0053). Citing it is not a claim that information flow control is deployed.
 
 [^miller-ocap]: Miller, M. S. (2006). _Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control._ Johns Hopkins University. <https://www.erights.org/talks/thesis/markm-thesis.pdf>. The Object Capability model, retained here as the source of the principle that survived: authority must be *separated* by a list the caller cannot choose. The in-process token *matching* that once cited this reference was removed as vacuous — see [What was removed, and why](#what-was-removed-and-why).

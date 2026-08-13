@@ -60,5 +60,5 @@ Every artifact cites concrete file:line references in the current tree.
 
 - [`kask/docs/README.md`](../README.md): the kask docs portal.
 - [`kask/docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md): D1–D23 integration seams (D21 = conversation-injector, D22 = block-reachability pins, D23 = worktree spawn wiring).
-- [`kask/docs/architecture/guard-taint-pipeline.md`](../architecture/guard-taint-pipeline.md): the FIDES taint + ContentGuard pipeline (hkask-guard ↔ hkask-templates).
+- [`kask/docs/architecture/guard-taint-pipeline.md`](../architecture/guard-taint-pipeline.md): the removed FIDES taint + ContentGuard pipeline — why both halves were deleted (`hkask-guard` 2026-08-10, the taint gate 2026-08-12/RR-0053) and the bar a replacement must clear.
 - [`kask/docs/DIAGRAMS_INDEX.md`](../DIAGRAMS_INDEX.md): cross-cutting diagram registry.

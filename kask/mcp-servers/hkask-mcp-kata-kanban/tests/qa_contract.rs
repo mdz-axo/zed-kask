@@ -993,13 +993,19 @@ mod task_spawn {
 
     #[tokio::test]
     async fn happy() {
-        // The spawn now delegates to the local swarm runtime. In the unit-test
-        // environment the ledger is unfunded (no swarm_fund_local) and no
-        // inference socket is configured, so the delegate gate fires
-        // `permission_denied` (balance 0 < credits_authorized). This proves the
-        // spawn reaches the real delegation path, not the old static comment.
-        // The full happy path (funded ledger + live inference) is an
-        // integration test, not a unit test.
+        // The spawn delegates to the local swarm runtime. In the unit-test
+        // environment there is no inference socket, so the delegation fails at
+        // the inference call with `unavailable` — which proves the spawn reaches
+        // the real delegation path, not a static comment. The full happy path
+        // (live inference) is an integration test, not a unit test.
+        //
+        // This previously asserted `permission_denied`, because an unfunded local
+        // ledger refused the delegation before it ever attempted inference. That
+        // funding gate was removed: local agents run on the operator's own
+        // substrate, so there is nothing for the server to withhold (see
+        // `LocalSwarmRuntime::delegate`). An unfunded ledger must no longer
+        // change the outcome here — `spawn_is_not_blocked_by_an_unfunded_ledger`
+        // in `tests/idempotent_creates.rs` pins that directly.
         let server = make_server();
         let bid = make_board(&server, "B").await;
         let tid = make_task(&server, &bid, "T").await;
@@ -1016,7 +1022,14 @@ mod task_spawn {
         let out = server
             .kanban_task_spawn(rmcp::handler::server::wrapper::Parameters(req))
             .await;
-        assert_error_kind(&out, "permission_denied");
+        // Reaches inference and fails there (no IPC socket in a unit test).
+        assert_error_kind(&out, "unavailable");
+        // Guard the regression directly: a funding refusal here would mean the
+        // local gate came back.
+        assert!(
+            !out.contains("insufficient local credits") && !out.contains("swarm_fund_local"),
+            "local spawn must not be gated on ledger funds; got: {out}"
+        );
     }
 
     #[tokio::test]

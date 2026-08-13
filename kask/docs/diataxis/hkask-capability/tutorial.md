@@ -2,7 +2,7 @@
 title: "hkask-capability — Tutorial: Your First Tool Dispatch"
 audience: [developers]
 last_updated: 2026-08-12
-version: "0.5.0"
+version: "0.6.0"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [lifecycle]
@@ -11,28 +11,34 @@ mds_categories: [lifecycle]
 # hkask-capability — Tutorial: Your First Tool Dispatch
 
 This tutorial walks through dispatching a tool through the `ToolPort` seam,
-tripping the runaway-loop breaker, and reading a tool's FIDES taint label. You
-will learn what `invoke` actually does — it meters and dispatches, it does
-**not** authorize — and where authority is enforced instead.
+tripping the runaway-loop breaker, and reading a tool's metadata. You will learn
+what `invoke` actually does — it meters and dispatches, it does **not** authorize
+— and where authority is enforced instead.
 
 > **If you remember the token tutorial:** this document used to teach minting a
 > `DelegationToken` and passing it to `invoke`. That gate was deleted on
 > 2026-08-12 (RR-0056) because it could not deny anything; `DelegationToken`,
 > `DelegationResource`, `DelegationAction`, and `ToolPortError::CapabilityDenied`
 > no longer exist. See the [Explanation](./explanation.md) for why.
+>
+> **If you remember the taint step:** step 3 used to teach reading a tool's FIDES
+> `ToolTaint` label off `ToolInfo`. The taint lattice was deleted on 2026-08-12
+> (RR-0053) — `ToolTaint`, `can_flow_to`, and `ToolInfo.taint` no longer exist,
+> and nothing on the invoke path inspects information flow. Step 3 now covers
+> what `ToolInfo` actually carries.
 
 ## Learning path
 
 ```mermaid
 flowchart TD
     A[Step 1: Dispatch through ToolPort] --> B[Step 2: Trip the runaway breaker]
-    B --> C[Step 3: Read a tool's taint label]
+    B --> C[Step 3: Read a tool's metadata]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-CAP-003
 verified_date: 2026-08-12
-verified_against: kask/crates/hkask-capability/src/tool_port.rs (ToolPort, ToolPortError, ToolInfo); kask/crates/hkask-capability/src/tool_taint.rs (ToolTaint::can_flow_to); kask/crates/hkask-mcp/tests/invoke_gate.rs
+verified_against: kask/crates/hkask-capability/src/tool_port.rs (ToolPort, ToolPortError, ToolInfo); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime::get_tool_info); kask/crates/hkask-mcp/tests/invoke_gate.rs
 status: VERIFIED
 -->
 
@@ -104,24 +110,37 @@ Both behaviors are pinned in `kask/crates/hkask-mcp/tests/invoke_gate.rs` by
 `unregistered_agent_is_auto_registered_not_denied` and
 `exhausted_ceiling_trips_the_runaway_breaker`.
 
-## Step 3: Read a tool's taint label
+## Step 3: Read a tool's metadata
 
-`get_tool_info` returns a `ToolInfo` carrying the tool's FIDES taint label. The
-lattice rule is a single prohibition: `Source` output must not reach a `Sink`
-input without passing through an `Endorser`.
+`get_tool_info` returns a `ToolInfo` — four descriptive fields and nothing that
+decides anything:
 
 ```rust
-use hkask_capability::tool_taint::ToolTaint;
+use hkask_capability::ToolPort;
 
-// Source → Sink is the one blocked flow; every other pair is allowed.
-assert!(!ToolTaint::Source.can_flow_to(&ToolTaint::Sink));
-assert!(ToolTaint::Source.can_flow_to(&ToolTaint::Endorser));
+let info = runtime.get_tool_info("test_tool").await.expect("registered above");
+assert_eq!(info.name, "test_tool");
+assert_eq!(info.server_id, "test-server");
+// Also: info.description, info.input_schema.
 ```
 
-This label is the input to a check that *is* live: the manifest executor's
-runtime policy in `hkask-templates`'s `invoke_tool` blocks a cascade step whose
-inputs reference `Source`-tainted context. To exercise it without a real server,
-use `hkask_test_harness::NoopToolPort::new().with_taint("some_tool", ToolTaint::Sink)`.
+`server_id` is what callers need in practice: it is how the manifest executor's
+`invoke_tool` resolves which server to dispatch to. `get_tool_info` takes no
+identity, because tool schemas are public per the MCP protocol design —
+`tools/list` is an unauthenticated handshake.
+
+> **There is no information-flow check to exercise here.** `ToolInfo` used to
+> carry a FIDES `ToolTaint` label feeding a `Source`→`Sink` gate in the manifest
+> executor. Both were deleted on 2026-08-12 (RR-0053): every tool was labelled
+> `Pure` at this exact construction site, so the gate could not fire. Defense
+> **Layer 5 (information flow control) is absent by decision**, in the same
+> register as Layer 3 (instruction hierarchy, RR-0010). Treat every tool path as
+> taint-unaware. Rationale:
+> [`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md).
+
+To stub a tool without a real server, register it on
+`hkask_test_harness::NoopToolPort` via `with_tool` — `discover_tools` and
+`get_tool_info` then report only what you registered.
 
 ## Where authority actually lives
 

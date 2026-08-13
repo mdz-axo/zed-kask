@@ -24,8 +24,8 @@ templates against the inference port. Template types are `Prompt` (WordAct),
 | `ManifestExecutor::new`       | `kask/crates/hkask-templates/src/executor.rs:85`           |
 | `execute_manifest`            | `kask/crates/hkask-templates/src/executor.rs:161`          |
 | `extract_final_step_result`   | `kask/crates/hkask-templates/src/executor.rs:200`          |
-| `StepResult.taint` / `StepContext::taint_of` | `kask/crates/hkask-templates/src/step_context.rs:40` / `:135` (replaces the removed `propagate_taint_for_binding`) |
-| `check_untrusted_input`       | `kask/crates/hkask-templates/src/step_actions.rs:705`      |
+| `StepResult` struct           | `kask/crates/hkask-templates/src/step_context.rs` (no `taint` field — see [Removed](#removed-the-fides-taint-pipeline)) |
+| `check_untrusted_input`       | _removed_ (2026-08-12, RR-0053)                            |
 | `spotlight_tool_output`       | _removed_ (D4 — `hkask-guard` deleted 2026-08-10)           |
 | `BundleManifest` struct       | `kask/crates/hkask-templates/src/bundle/manifest.rs:91`    |
 | `BundleManifestStep`          | `kask/crates/hkask-templates/src/bundle/manifest.rs:35`    |
@@ -83,8 +83,8 @@ classDiagram
     }
     class ManifestExecutor {
         +new(inference, tools, default_params)
-        +with_runtime_policy(policy)
         +with_terminal_check(check)
+        +with_progress(progress)
         +execute_manifest(manifest, ctx)
     }
     class ConvergenceTracker {
@@ -142,50 +142,47 @@ The `SqliteRegistry` (`registry_sqlite.rs:65`) implements the
 template metadata in SQLite. An in-memory `Registry` adapter also exists (see
 `hkask_templates.rs:39`).
 
-## ManifestExecutor — constructor and defense wiring
+## ManifestExecutor — constructor and wiring
 
-`ManifestExecutor::new(inference, tools, default_params)`
-(`executor.rs:170`) takes exactly three arguments: the `InferencePort`, the
-`ToolPort`, and default `LLMParameters`. (The former `secret` parameter was
-removed.) The struct (`executor.rs:128`) additionally carries three
-defense-layer fields, all defaulted in `new` and settable via builders:
+`ManifestExecutor::new(inference, tools, default_params)` (`executor.rs`) takes
+exactly three arguments: the `InferencePort`, the `ToolPort`, and default
+`LLMParameters`. (The former `secret` parameter was removed.) The struct carries
+no defense-layer fields. Its remaining fields are all defaulted in `new` and
+overridable via builders:
 
-| Field                                                                      | Layer                                                                                   | Set via                                                      | Default |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------- |
-| `spotlighter: Spotlighter` (`executor.rs:143`)                             | Spotlighting of untrusted tool outputs (arXiv:2403.14720)                               | always `SpotlightMode::Delimit` in `new` (`executor.rs:183`) | Delimit |
-| `runtime_policy: Option<Arc<DefaultPolicy>>` (`executor.rs:147`)           | Pre-execution policy check (Layer 6)                                                    | `with_runtime_policy` (`executor.rs:217`)                    | None    |
-| `taint_labels: Arc<Mutex<HashMap<String, ToolTaint>>>` (`executor.rs:151`) | FIDES taint tracking for context entries (Layer 5, arXiv:2505.23643)                    | internal                                                     | empty   |
-| `terminal_check: Option<Arc<dyn Fn() -> bool>>` (`executor.rs:160`)        | Profile enforcement for the built-in `terminal` tool (F6 proposer/evaluator separation) | `with_terminal_check` (`executor.rs:198`)                    | None    |
+| Field                                                        | Role                                                                                    | Set via                | Default |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------- | ---------------------- | ------- |
+| `terminal_check: Option<Arc<dyn Fn() -> bool + Send + Sync>>` | Profile enforcement for the built-in `terminal` tool (F6 proposer/evaluator separation) | `with_terminal_check`  | None    |
+| `progress: Option<Arc<dyn Fn(&str) + Send + Sync>>`          | Real-time cascade feedback (thinking traces)                                            | `with_progress`        | None    |
+| `title: Option<Arc<dyn Fn(&str) + Send + Sync>>`             | Step-label updates                                                                      | `with_title`           | None    |
+| `template_renderer: TemplateRenderer`                        | Jinja2 rendering rooted at the registry template base path                              | `with_template_base_path` | default base path |
 
-At every tool invocation, `invoke_tool` runs the runtime policy first
-(`executor.rs:402`): `PolicyVerdict::Block` and `RequireHuman` abort the step,
-`Log` emits a `reg.guard.runtime_policy` span, `Allow` proceeds. The result
-is spotlight-transformed (`spotlight_tool_output`, `executor.rs:1904`) and
-returned together with the tool's `ToolTaint` label, which is stored in
-`taint_labels` under `step_{ordinal}_result`.
+`invoke_tool` (`step_actions.rs`) now does exactly two things: resolve the tool's
+server via `ToolPort::get_tool_info`, then dispatch through `ToolPort::invoke`
+with an accounting `WebID`. No pre-dispatch check runs in the executor.
 
-### FIDES taint propagation (not yet enforced)
+### Removed: the FIDES taint pipeline
 
-The Source→Sink information-flow gate is structurally present but operationally
-inert (see [`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md)
-and `kask/research/seam-audit/security-review.md` findings KS-01/KS-02):
+The Source→Sink information-flow gate this executor used to host was **deleted on
+2026-08-12**, not repaired. Both of its inputs were constants — every MCP tool was
+labelled `ToolTaint::Pure` at its only construction site, and the untrusted-input
+flag read legacy `__taint__{key}` context markers that the write side had stopped
+emitting — so its one prohibition could never fire.
 
-- `StepResult.taint: ToolTaint` (`step_context.rs:40`) — taint is now a field on
-  each step result, written by `StepContext::store_result`/`store_named` and
-  read via `StepContext::taint_of` (`step_context.rs:135`). The legacy
-  `propagate_taint_for_binding` function (`executor.rs:282`) was **removed**
-  when `executor.rs` was refactored into `step_actions.rs`/`step_context.rs`/
-  `step_machine.rs`; binding-path propagation to the gate is not currently wired.
-- `check_untrusted_input(value)` (`step_actions.rs:705`) — the gate side:
-  recursively scans a bound tool-input JSON for `{"$ref": "step_N_result..."}`
-  patterns **and** inline-Jinja `{{ step_N_result }}` strings, returning true
-  when any referenced entry is labeled `Source`. It reads taint from legacy
-  `__taint__{key}` map markers that the write side no longer emits, so
-  `has_untrusted_input` is always `false` — the gate never fires (pending
-  KS-01). Compounding this, `McpRuntime::get_tool_info` hardcodes
-  `ToolTaint::Pure` for every MCP tool (`hkask-mcp/src/runtime.rs:370`), so the
-  `Sink` arm of `DefaultPolicy::check` (`hkask-regulation/src/runtime_policy.rs:71`)
-  never matches (pending KS-02).
+Gone from this crate: the `runtime_policy` field and its `with_runtime_policy`
+builder, `runtime_policy_is_wired`, the `taint_labels` map, `check_untrusted_input`,
+`collect_referenced_keys`, `StepResult.taint`, `StepContext::taint_of`, the
+`taint_of_key` method on the `ContextLookup` trait, and the taint parameters on
+`StepContext::store_result` / `store_named`. The `hkask-regulation` dependency this
+crate carried solely for `DefaultPolicy` was dropped from `Cargo.toml`. A
+removal-rationale comment sits above `invoke_tool` in `step_actions.rs`.
+
+Defense **Layer 5 (information flow control) is absent by decision**, recorded the
+same way Layer 3 (instruction hierarchy) is under RR-0010. The governing entry is
+`kask/security/regressions/RR-0053.yaml`, rewritten as an absence check forbidding
+re-introduction of an inert gate; RR-0012, RR-0013, RR-0026, RR-0027, RR-0033 and
+RR-0034 are now `obsolete`. Full rationale and the bar a replacement must clear:
+[`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md).
 
 ## Cascade actions
 
@@ -258,7 +255,7 @@ unchanged; clean strings borrow (`Cow::Borrowed`), dirty strings own
 - [hkask-types Reference](../hkask-types/reference.md): the
   `SkillRegistryIndex` and `RegistryIndex` traits this crate implements.
 - [`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md): the
-  FIDES taint pipeline this executor participates in.
+  removed FIDES taint pipeline this executor used to host, and why it was deleted.
 - [`kask/docs/explanation/skills-and-composition.md`](../../explanation/skills-and-composition.md):
   cross-cutting skill anatomy and composition.
 

@@ -92,10 +92,21 @@ crate is a thin fixtures-and-generators library.
 
 > **Since inventoried (2026-08-12):** the crate has grown past this snapshot —
 > it now also carries oracle constructors, trace writing, and security-oriented
-> proptest strategies (including `arb_taint_context` for FIDES taint tests), and
-> `NoopToolPort` gained a `with_taint` builder so a stub tool can report a
-> `ToolTaint` label. Treat the table above as the design-time baseline, not the
+> proptest strategies (including ~~`arb_taint_context` for FIDES taint tests~~), and
+> ~~`NoopToolPort` gained a `with_taint` builder so a stub tool can report a
+> `ToolTaint` label~~. Treat the table above as the design-time baseline, not the
 > current surface; read the crate's lib root for the live list.
+>
+> **Superseded later the same day (2026-08-12):** the struck-through taint items
+> are gone. The FIDES taint / runtime-policy machinery was deleted (RR-0053) after
+> being found operationally inert — every tool was hardcoded `ToolTaint::Pure`, so
+> the `Source`→`Sink` block could not fire — and `ToolTaint` no longer exists to
+> label or generate. `NoopToolPort` retains `with_tool` (register a tool name) but
+> no taint builder. Defense Layer 5 is now absent by decision, as Layer 3 is under
+> RR-0010; see
+> [`guard-taint-pipeline.md`](../architecture/guard-taint-pipeline.md). Any
+> harness work this plan proposes against taint labels is void; a replacement
+> would first have to meet RR-0053's bar for a real IFC gate.
 
 **Consumers:** `hkask-mcp` (2 test files), `hkask-templates` (3 test files), plus
 2 Jinja templates in `kask/registry/templates/proptest/` that emit `use

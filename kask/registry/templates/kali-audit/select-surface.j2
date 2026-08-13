@@ -68,11 +68,32 @@ in future research, it becomes a new layer — the skill structure does not chan
 
 | Layer | Name | Source |
 |-------|------|--------|
-| 1 | Capability gating (OCAP) | OWASP LLM06:2025, OCAP literature |
-| 2 | Information flow control (taint labels) | Microsoft Research arXiv:2505.23643 (FIDES) |
-| 3 | Runtime monitoring (Regulation, action distribution) | AgentGuard arXiv:2509.23864, NIST AI RMF |
-| 4 | Provider-side safety (model refusal, safety training) | OWASP LLM01:2025 |
-| 5 | Deception detection (decoy tools) | MITRE Engage, Cobalt Honey-AI |
+| 1 | Capability separation (allowlists) | OWASP LLM06:2025, OCAP literature |
+| 2 | Runtime monitoring (Regulation, action distribution) | AgentGuard arXiv:2509.23864, NIST AI RMF |
+| 3 | Provider-side safety (model refusal, safety training) | OWASP LLM01:2025 |
+| 4 | Deception detection (decoy tools) | MITRE Engage, Cobalt Honey-AI |
+
+**De-advertised layers — do NOT report these as present or missing.** Two layers
+were removed from this catalog because the mechanisms they checked for were
+deleted as inert. Probing for them produces false findings in both directions:
+
+- *Information flow control (FIDES taint labels)* — the `ToolTaint` /
+  `DefaultPolicy` machinery was deleted 2026-08-12 (RR-0053). Both inputs to the
+  gate were constants, so it could never deny. Layer 5 in the 8-layer audit-log
+  numbering is **absent by decision**. Do not grep for `ToolTaint`,
+  `check_untrusted_input`, `StepResult.taint`, or `propagate_taint_for_binding`.
+- *Per-call capability gating via a token* — the `DelegationToken` check was
+  deleted 2026-08-12 (RR-0056) because every mint site derived the token's
+  `resource_id` from the tool name it then invoked, comparing a value against
+  itself. Do not grep for `DelegationToken` or `is_valid_for`.
+
+This mirrors the RR-0010 precedent: when a layer is not deployed, de-advertise it
+rather than leaving the skill to hunt for it.
+
+Layer 1 is now **capability separation**, not per-call gating: authority lives in
+allowlists whose contents the caller does not choose — the inference IPC
+per-request `tool_allowlist` (fail-closed), each swarm card's `mcp_tools`, and the
+per-server MCP env/credential allowlists (RR-0038, RR-0060, RR-0061).
 
 ## Output Requirements
 
@@ -86,20 +107,13 @@ Respond with a JSON object:
   "defense_layers": [
     {
       "ordinal": 1,
-      "name": "Capability gating (OCAP)",
+      "name": "Capability separation (allowlists)",
       "source": "OWASP LLM06:2025, OCAP literature",
-      "check": "Are MCP tool invocations gated by capability token verification?",
-      "present_if": "DelegationToken is_valid_for check present in the dispatch path"
+      "check": "Is tool authority bounded by an allowlist the caller does not control, and are child-process credentials scoped per server?",
+      "present_if": "per-request tool_allowlist enforced fail-closed in the inference IPC dispatch (kask_bridge) AND per-server credential/config allowlists applied with env_clear on spawn (hkask-mcp runtime)"
     },
     {
       "ordinal": 2,
-      "name": "Information flow control (taint labels)",
-      "source": "Microsoft Research arXiv:2505.23643 (FIDES)",
-      "check": "Are taint labels (Source/Sink/Pure/Endorser) propagated on MCP tool outputs?",
-      "present_if": "StepResult.taint field populated on store (step_context.rs) AND check_untrusted_input gate wired to read it (step_actions.rs); the legacy propagate_taint_for_binding was removed — do not grep for it"
-    },
-    {
-      "ordinal": 3,
       "name": "Runtime monitoring (Regulation, action distribution)",
       "source": "AgentGuard arXiv:2509.23864, NIST AI RMF",
       "check": "Are reg.* spans emitted for tool invocations and action distribution?",

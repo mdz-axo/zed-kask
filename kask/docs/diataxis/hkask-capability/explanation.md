@@ -2,7 +2,7 @@
 title: "hkask-capability — Explanation"
 audience: [developers, architects, agents]
 last_updated: 2026-08-12
-version: "0.5.0"
+version: "0.6.0"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [trust, curation]
@@ -72,7 +72,7 @@ That is what the deleted gate lacked.
 
 ## What the invoke path still does
 
-Two mechanisms remain on the dispatch path, and neither authorizes:
+One mechanism remains on the dispatch path, and it does not authorize:
 
 **The runaway-loop breaker.** One call is charged against the agent's per-tick
 ceiling. Only an exhausted ceiling refuses (`EnergyBudgetExceeded`), and the cap
@@ -86,12 +86,33 @@ dispatch used `kask-panel` and the cascade used `manifest-executor`, so every
 delegated tool call was refused for a wiring omission that had nothing to do with
 authority.
 
-**The FIDES taint labels.** `ToolInfo.taint` feeds the runtime policy check in
-the manifest executor's `invoke_tool`, which blocks a `Sink` tool whose inputs
-reference `Source`-tainted context (RR-0053). This *is* a live gate — on
-information flow, not on authority — and it works precisely because the label
-comes from the tool's registration rather than from the caller's own claim about
-itself.
+## The taint gate failed the same way, and was deleted too
+
+A second removal on 2026-08-12 (RR-0053) took the FIDES taint machinery:
+`ToolTaint`, `can_flow_to`, the `ToolInfo.taint` field, and the `DefaultPolicy`
+check in the manifest executor's `invoke_tool` that consumed them. It is worth
+recording next to the capability gate, because the shape is the same one again — a
+check that runs and cannot decide:
+
+- The policy's one prohibition was `Source` → `Sink`.
+- `McpRuntime::get_tool_info` hardcoded `ToolTaint::Pure` at the only site that
+  constructed a `ToolInfo`, so no tool was ever `Sink`.
+- The executor's untrusted-input flag read legacy `__taint__{key}` context markers
+  that the write path had stopped emitting, so it was always `false`.
+
+Both inputs were constants, so the block could never fire — and, as with the
+capability gate, a passing wiring test concealed it. **A wiring test proves a call
+happens, not that the call can ever decide anything.** That is the shared lesson
+across RR-0053 (this), RR-0056 (the capability gate), and RR-0057 (the fail-closed
+meter).
+
+The operator chose deletion over repair, so defense **Layer 5 (information flow
+control) is absent by decision** — the same disposition Layer 3 (instruction
+hierarchy) has under RR-0010. That is the honest state and the safer one: an inert
+gate invites reliance on a protection that does not exist, and every downstream doc
+re-credits it. RR-0053 is now an absence check, and it states what a real IFC gate
+would have to prove. Rationale in full:
+[`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md).
 
 ## The invoke pipeline
 

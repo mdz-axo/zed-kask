@@ -12,6 +12,17 @@ mds_categories: [composition, lifecycle]
 
 **Status:** Draft — not yet decided. This ADR records the decision context and options so the split is not undertaken lightly or reversed silently. No code moves until a consumer-dependency audit (graph-audit semantic mode) confirms the chosen option is cycle-free.
 
+> **Annotation (2026-08-12) — one inventoried bucket no longer exists.** Every
+> mention of `tool_taint` below (the Context inventory, Option A's domain list, and
+> the audit's cycle-free move) is void: the FIDES `ToolTaint` lattice was **deleted**
+> along with the inert `Source`→`Sink` gate that consumed it — both of the gate's
+> inputs were constants, so it could not deny
+> (`security/regressions/RR-0053.yaml`; rationale in
+> [`guard-taint-pipeline.md`](./guard-taint-pipeline.md)). There is no `tool_taint`
+> module in `hkask-types` and no `tool_taint.rs` in `hkask-capability`, so that
+> bucket is gone rather than pending a move. The dated item counts below are left
+> as recorded and are now one bucket high; the rest of the analysis is unaffected.
+
 ## Context
 
 `hkask-types` is the dependency root of the hKask crate tree — depended on by every `hkask-*` crate, `kask_bridge`, and all 13 MCP servers (24+ consumers). It currently exposes **~197 public items** across 34 files.
@@ -69,7 +80,7 @@ The consumer-dependency audit is complete (graph-audit semantic mode, manual gre
 - `loops`, `regulation`, `curator`, `goal` -> `hkask-regulation`
 - `wallet_types` -> `hkask-storage` (zero new edges: all three consumers already depend on storage)
 - `template_type`, `skill` -> `hkask-templates` (sole consumer each)
-- `tool_taint` -> `hkask-capability` (capability-closure = {types})
+- ~~`tool_taint` -> `hkask-capability` (capability-closure = {types})~~ — void: `tool_taint` was deleted 2026-08-12 (RR-0053), not moved
 - `inference_ipc` -> `hkask-inference` (kask_bridge already deps inference)
 - `keychain_keys` -> `hkask-keystore` (kask_bridge already deps keystore)
 

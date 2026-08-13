@@ -323,7 +323,7 @@ threat_model:
   adversaries:
     - name: malicious_template_author
       vector: template_injection
-      mitigation: `minijinja` Rust sandbox (no filesystem/Python access, unlike Python Jinja2) + tool_allowlist_separation + fides_taint_check[^minijinja]
+      mitigation: `minijinja` Rust sandbox (no filesystem/Python access, unlike Python Jinja2) + tool_allowlist_separation[^minijinja]  # NOT information flow control: the FIDES taint check was deleted 2026-08-12 (RR-0053)
     - name: compromised_dependency
       vector: supply_chain
       mitigation: cargo_deny + pinned_versions
@@ -331,8 +331,9 @@ threat_model:
 capability_separation:
   - "Tool authority is a list the calling party does not write: the per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (fail-closed on missing/empty), each swarm agent card's `mcp_tools` allowlist, and the per-server MCP env/credential allowlists"
   - "`McpRuntime::invoke` performs NO per-call authorization — it meters the call against the agent's per-tick runaway ceiling, dispatches, and emits the span. Its `agent: WebID` is an accounting identity, not a credential"
-  - "Information flow is gated separately from authority: the FIDES Source→Sink check on `ToolInfo.taint` in the manifest executor's `invoke_tool`"
+  - "Information flow is NOT gated. Defense Layer 5 is absent by decision (RR-0053), as Layer 3 is (RR-0010) — treat every tool path as taint-unaware"
   - "Removed 2026-08-12: the per-call DelegationToken capability match (RR-0056 — it compared a caller-supplied value against itself). Do not re-add a per-call authorization argument to `ToolPort::invoke`"
+  - "Removed 2026-08-12: the FIDES Source→Sink taint check on `ToolInfo.taint` (RR-0053 — both inputs were constants, so it could not deny). RR-0053 is now an absence check; do not re-add the machinery without live inputs and a test proving a real block"
 
 keystore:
   encryption: AES-256-GCM
@@ -506,7 +507,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-templates` | Composition | `ManifestExecutor`, registry, cascade, PDCA — skill execution (D1) |
 | ~~`hkask-pods`~~ (deleted) | Domain | `AgentPod`, Curator, deployment — deleted in 2026-07-25 cleanup; `VoiceDesign` moved to `hkask-types`; Curator agent now lives in zed-kask |
 | ~~`hkask-guard`~~ (deleted) | Trust | Magna Carta floor (P3.1) — guard layer in zed-kask's inference path (D4). Deleted 2026-08-10: the `RoleOverride` scanner's bare `system:` substring match produced false positives that blocked legitimate skill cascade template rendering. Provider-side safety and refusal fallbacks remain. |
-| `hkask-capability` | Trust | `ToolPort` dispatch seam + FIDES taint labels. Holds no tokens and no authorization check (RR-0056) |
+| `hkask-capability` | Trust | `ToolPort` dispatch seam (`ToolPort`, `ToolInfo`, `ToolFuture`, `ToolPortError`, `SYSTEM_MAX_RECURSION`). Holds no tokens, no authorization check (RR-0056), and no taint labels (RR-0053) |
 | `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses the `keyring` crate directly for all keychain access (D5 — NOT zed's `CredentialsProvider`) |
 | ~~`hkask-wallet`~~ (deleted) | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — deleted in 2026-07-25 cleanup. The residual `hkask-storage::wallet` crypto ledger, `hkask-regulation::WalletManager`/`Well`/`agent_wallet_store`, and `hkask-types::wallet_types` were also deleted 2026-08-03 (dead-in-production, zero callers). Tool-call bounding is now `hkask-regulation::CallCapManager`; per-cascade USD budgeting is `hkask-templates::BudgetTracker`. |
 | `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
@@ -596,7 +597,7 @@ other than the caller being checked; the rows below satisfy that.
 | Delegated tool dispatch | Per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (`kask_bridge/src/inference_ipc_server.rs`), fail-closed on missing/empty, enforced before dispatch | P4 |
 | Per-agent tool reach | Each swarm agent card's declared `mcp_tools` allowlist (`hkask-mcp-swarm/src/agent_executor.rs`) | P4 |
 | Per-server credentials | Per-server MCP env / credential allowlists (`kask_bridge/src/mcp_servers.rs`, RR-0038) | P1 |
-| Information flow | FIDES `Source`→`Sink` check on `ToolInfo.taint` in `hkask-templates`'s `invoke_tool` (RR-0053) — gates flow, not authority | P4 |
+| Information flow | **None — absent by decision.** The FIDES `Source`→`Sink` check this row named was deleted 2026-08-12: both its inputs were constants, so it could not deny (RR-0053, now an absence check). Defense Layer 5 is absent in the same register as Layer 3 (RR-0010). Treat every tool path as taint-unaware | P4 |
 | MCP server isolation | In-process via `kask_bridge` (D8); MCP servers do not link zed-kask crates | P1 |
 | Runaway-loop bounds | Per-tick call ceiling charged in `McpRuntime::invoke` (`EnergyBudgetExceeded`, fail-open on an unseeded agent — RR-0057) and `SYSTEM_MAX_RECURSION` (7) on cascade depth. Breakers and meters, **not** authorization | P4 |
 | Sovereignty keys | Trimmed `hkask-keystore` derives crypto only; at-rest storage via the `keyring` crate directly (D5 — not zed `CredentialsProvider`) | P1 |

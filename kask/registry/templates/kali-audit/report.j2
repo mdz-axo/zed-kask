@@ -93,9 +93,9 @@ Respond with a JSON object:
     "defense_layer_gaps": [
       {
         "layer": 2,
-        "name": "Information flow control (taint labels)",
-        "recommendation": "Propagate taint labels on MCP tool outputs before entering LLM context",
-        "source": "Microsoft Research arXiv:2505.23643 (FIDES)"
+        "name": "Runtime monitoring (Regulation, action distribution)",
+        "recommendation": "Emit reg.* spans on every governed tool invocation so action distribution is observable",
+        "source": "AgentGuard arXiv:2509.23864, NIST AI RMF"
       }
     ],
     "coverage_gaps": ["CWE-787 not checked — needs runtime fuzzing"]

@@ -43,8 +43,6 @@ observable events.
 | `RuntimeAlert`                              | `kask/crates/hkask-regulation/src/algedonic.rs:37`        |
 | `AlertSeverity` enum                        | `kask/crates/hkask-regulation/src/algedonic.rs:26`        |
 | `AlertEmailSink` trait                      | `kask/crates/hkask-regulation/src/algedonic.rs:54`        |
-| `PolicyVerdict` enum                        | `kask/crates/hkask-regulation/src/runtime_policy.rs:14`   |
-| `DefaultPolicy`                             | `kask/crates/hkask-regulation/src/runtime_policy.rs:49`   |
 | `ToolStats`                                 | `kask/crates/hkask-regulation/src/tool_stats.rs:73`       |
 | `CostDistribution`                          | `kask/crates/hkask-regulation/src/tool_stats.rs:50`       |
 | `ToolReliabilityAlert`                      | `kask/crates/hkask-regulation/src/tool_stats.rs:61`       |
@@ -105,13 +103,7 @@ classDiagram
         Warning
         Critical
     }
-    class PolicyVerdict {
-        <<enumeration>>
-        Allow
-        Block
-        RequireHuman
-        Log
-    }
+
     class RegulationSink {
         <<interface>>
         +persist(event) Result
@@ -136,7 +128,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-REG-001
 verified_date: 2026-08-05
-verified_against: kask/crates/hkask-regulation/src/runtime.rs; kask/crates/hkask-regulation/src/metacognition.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs; kask/crates/hkask-regulation/src/regulation_policy.rs; kask/crates/hkask-regulation/src/energy.rs; kask/crates/hkask-regulation/src/algedonic.rs; kask/crates/hkask-regulation/src/runtime_policy.rs; kask/crates/hkask-regulation/src/tool_stats.rs; kask/crates/hkask-types/src/curator.rs
+verified_against: kask/crates/hkask-regulation/src/runtime.rs; kask/crates/hkask-regulation/src/metacognition.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs; kask/crates/hkask-regulation/src/regulation_policy.rs; kask/crates/hkask-regulation/src/energy.rs; kask/crates/hkask-regulation/src/algedonic.rs; kask/crates/hkask-regulation/src/tool_stats.rs; kask/crates/hkask-types/src/curator.rs
 status: VERIFIED
 -->
 
@@ -184,19 +176,30 @@ user logs in (`main.rs:663`, `main.rs:1166`). `McpRuntime::set_event_sink`
 (`kask/crates/hkask-mcp/src/runtime.rs:196`) performs the same upgrade for
 the governed MCP dispatch path.
 
-The `DefaultPolicy` (`runtime_policy.rs:49`) decides whether to allow,
-block, require human confirmation, or log an action. The `PolicyVerdict`
-enum (`runtime_policy.rs:14`) has four variants: `Allow`, `Block(String)`,
-`RequireHuman(String)`, and `Log(String)`. `DefaultPolicy` implements four rules: human-in-loop tools require
-confirmation, untrusted data flowing to `Sink`-tainted tools is blocked,
-sessions exceeding `max_actions_per_session` are blocked, and `Source`-tainted
-tools are logged.
-
 The `ToolStats` (`tool_stats.rs:73`) tracks per-tool cost distributions and
 reliability via a Beta posterior over success/failure outcomes. The
 `CostDistribution` (`tool_stats.rs:50`) holds the p90 reserve point and
 observation count. The `ToolReliabilityAlert` (`tool_stats.rs:61`) fires when
 a tool's success probability falls below `reliability_threshold`.
+
+## Removed: the per-tool-invocation runtime policy
+
+A `runtime_policy` module (`DefaultPolicy`, `PolicyVerdict`, `PolicyConfig`) once
+sat in this crate and decided whether an individual tool call was allowed,
+blocked, escalated to a human, or logged. The whole module was **deleted on
+2026-08-12**: its `Source`→`Sink` prohibition read two constants — every tool was
+labelled `Pure` at its only construction site, and the untrusted-input flag read
+cascade-context markers the write path had stopped emitting — so it could not deny
+anything. The FIDES taint labels it consumed were deleted with it, and the
+`hkask-capability` dependency this crate carried solely for them was dropped from
+`Cargo.toml`.
+
+Defense **Layer 5 (information flow control) is therefore absent by decision**,
+in the same register as Layer 3 (instruction hierarchy, RR-0010). The governing
+entry is `kask/security/regressions/RR-0053.yaml`, rewritten as an absence check
+that forbids re-introducing an inert gate; it also states the bar a real one must
+clear. Rationale:
+[`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md).
 
 ## Cybernetics and metacognition loops
 
@@ -349,8 +352,9 @@ root seeds a cap for every agent that makes governed tool calls (e.g. the
   homeostatic loop.
 - [hkask-types Reference](../hkask-types/reference.md): the
   `RegulationSink` trait this crate consumes, and the `EscalationSeverity` type from `hkask-types`.
-- [guard-taint-pipeline](../../architecture/guard-taint-pipeline.md): the
-  FIDES taint policy `DefaultPolicy` enforces at the tool boundary.
+- [guard-taint-pipeline](../../architecture/guard-taint-pipeline.md): the removed
+  FIDES taint pipeline, why it was deleted rather than repaired, and the bar a
+  replacement must clear.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
   P9 (feedback loops) and P12 (authenticated host mandate).
 

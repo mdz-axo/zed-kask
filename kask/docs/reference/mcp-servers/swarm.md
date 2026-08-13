@@ -437,8 +437,14 @@ The server's defense-in-depth coverage (from the kali audit):[^owasp-swarm-secur
 - **Ledger balance gate** — no consent token; a delegation refuses if `balance < cost`. The balance is the single gate, and a failed balance read is a stale signal, not a fabricated zero.
 - **`mcp_tools` allowlist** — a local agent's declared `mcp_tools` are the only tools dispatched through the governed `McpRuntime` during the tool loop. Undeclared tools are not reachable, even if the agent requests them.
 
-Out-of-scope layers (5: taint labels, 8: deception detection) are deferred by
-design with documented re-entry conditions — see the plan's §14.
+Out-of-scope layers: **Layer 5 (information flow control) is absent by decision**
+platform-wide — the FIDES taint machinery was deleted 2026-08-12 because both
+inputs to its `Source`→`Sink` block were constants, so it could not deny
+(`security/regressions/RR-0053.yaml`, now an absence check stating the bar a real
+IFC gate must clear). This is a recorded architectural choice, in the same register
+as Layer 3 (RR-0010) — not a deferral this server can close. Layer 8 (deception
+detection) remains deferred by design with documented re-entry conditions — see the
+plan's §14.
 
 ## Cross-links
 

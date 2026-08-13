@@ -64,8 +64,8 @@ With `has_untrusted_input` pinned false and no tool ever `Sink`, the one rule th
 lattice encoded — block `Source` → `Sink` — **could not fire on any input**. The
 supporting wiring test passed the whole time, because a wiring test proves a call
 happens, not that the call can ever decide anything. That is the same failure
-class as the vacuous per-call capability gate (RR-0056) and the fail-closed call
-meter (RR-0057): three surfaces, one lesson.
+class as the vacuous per-call capability gate (RR-0056) and the call meter that
+refused on a wiring omission (RR-0057): three surfaces, one lesson.
 
 Repair was possible but was not chosen. The operator's reasoning: an inert gate is
 worse than no gate, because it invites reliance on a protection that does not

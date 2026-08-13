@@ -385,7 +385,7 @@ Natural-language criteria map to FMP screener parameters (market cap, price, vol
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `tool '...' is not in the delegated tool allowlist` | The dispatching caller did not declare this companies tool in its per-request `tool_allowlist` (or declared none — the check fails closed) | Declare the qualified `server/tool` in the request's allowlist, or call the tool from an agent whose card lists it under `mcp_tools`; see [Tool dispatch and taint](../diataxis/hkask-capability/explanation.md) |
+| `tool '...' is not in the delegated tool allowlist` | The dispatching caller did not declare this companies tool in its per-request `tool_allowlist` (or declared none — the check fails closed) | Declare the qualified `server/tool` in the request's allowlist, or call the tool from an agent whose card lists it under `mcp_tools`; see [Tool dispatch](../diataxis/hkask-capability/explanation.md) |
 | `Call cap exceeded: runaway-loop breaker...` | The calling agent exhausted its per-tick call ceiling — usually a non-terminating tool loop, not a permissions problem | Wait for the next regulation tick, then investigate the loop; the ceiling is a breaker, not a quota to raise casually |
 | `invalid_argument: symbol must be ...` | Symbol exceeds 32 chars or contains invalid characters | Use a valid exchange symbol; international symbols are supported (e.g. `VOD.L`) |
 | Provider returns stale data | Provider flagged chronically stale (>90 days) | Call `result_feedback` with a low score to update the `LearningState`; the flaky override reroutes future calls |
@@ -397,7 +397,7 @@ Natural-language criteria map to FMP screener parameters (market cap, price, vol
 - [Companies MCP Server Reference](../reference/mcp-servers/companies.md) — full tool catalog, configuration, and behavioral boundaries
 - [Tool Routing and Dispatch Flow](../reference/mcp-servers/companies.md) — DIAG-RF-004 dispatch diagram (inline)
 - [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D23 integration seams
-- [Tool dispatch and taint](../diataxis/hkask-capability/explanation.md) — where tool authority is enforced, and what `McpRuntime::invoke` actually does
+- [Tool dispatch](../diataxis/hkask-capability/explanation.md) — where tool authority is enforced, and what `McpRuntime::invoke` actually does
 - [Superforecasting: Layered Model](forecasting-and-scenarios.md) — three-layer forecasting architecture
 - [Earnings Transcript Analysis Design](earnings-transcript-analysis-design.md) — FMP-sourced transcript analysis design exploration
 

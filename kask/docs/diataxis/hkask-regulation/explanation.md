@@ -31,7 +31,6 @@ snapshots that the `MetacognitionLoop` senses.
 | `EscalationAlert`                            | `kask/crates/hkask-regulation/src/metacognition.rs:103`    |
 | `EscalationTrigger` enum                     | `kask/crates/hkask-regulation/src/metacognition.rs:113`    |
 | `ProposedAction` struct                      | `kask/crates/hkask-regulation/src/regulation_policy.rs:27` |
-| `PolicyVerdict` enum                         | `kask/crates/hkask-regulation/src/runtime_policy.rs:14`    |
 | `RuntimeAlert`                               | `kask/crates/hkask-regulation/src/algedonic.rs:37`         |
 | `AlertSeverity` enum                         | `kask/crates/hkask-regulation/src/algedonic.rs:26`         |
 
@@ -58,7 +57,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-REG-002
 verified_date: 2026-08-06
-verified_against: kask/crates/hkask-regulation/src/runtime.rs:343,405; kask/crates/hkask-regulation/src/cybernetics_loop.rs:75; kask/crates/hkask-regulation/src/metacognition.rs:103,113,212,223; kask/crates/hkask-regulation/src/regulation_policy.rs:27; kask/crates/hkask-regulation/src/runtime_policy.rs:14
+verified_against: kask/crates/hkask-regulation/src/runtime.rs:343,405; kask/crates/hkask-regulation/src/cybernetics_loop.rs:75; kask/crates/hkask-regulation/src/metacognition.rs:103,113,212,223; kask/crates/hkask-regulation/src/regulation_policy.rs:27
 status: VERIFIED
 -->
 
@@ -81,12 +80,22 @@ conflate detection (what changed) with response (what to do). Keeping them
 separate allows the metacognition loop to evaluate whether the responses
 are actually improving the system, which is the Good Regulator requirement.
 
-`DefaultPolicy` (`runtime_policy.rs:49`) is a _separate_ gate from
-the compute phase: its `check` method decides whether a _tool invocation_ is allowed, blocked,
-requires human confirmation, or is logged — based on `ToolTaint`, untrusted
-input, and session action count. It does not consume `ProposedAction`; the
-`PolicyVerdict` enum (`runtime_policy.rs:14`) has variants `Allow`,
-`Block(String)`, `RequireHuman(String)`, and `Log(String)`.
+This crate no longer holds a second, per-tool-invocation gate. A `runtime_policy`
+module once sat alongside the compute phase, deciding whether an individual _tool
+call_ was allowed, blocked, escalated to a human, or logged. It was deleted on
+2026-08-12 together with the FIDES taint labels it consumed, because both of its
+inputs were constants: no tool was ever labelled anything but `Pure`, and the
+untrusted-input flag read context markers the write path had stopped emitting, so
+its one prohibition could never fire. `RegulatoryAction` from the compute phase is
+now the only decision output this crate produces.
+
+Defense **Layer 5 (information flow control) is absent by decision**, recorded the
+same way Layer 3 (instruction hierarchy) is under RR-0010: de-advertised rather
+than deployed. The governing entry is
+`kask/security/regressions/RR-0053.yaml`, rewritten as an absence check that
+forbids re-introducing an inert gate and states the bar a real one must clear.
+See [`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md) for
+the full rationale.
 
 ## The escalation path
 
