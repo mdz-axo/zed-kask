@@ -69,6 +69,13 @@ Reconciliation notes:
 - **Orphaned template crates were removed (2026-08-12).** Deleting the 41 infrastructure manifests orphaned 23 template crates, since each was reachable only from a now-deleted manifest: `chat-template`, `composition`, `curator`, `git`, `gml`, `inference`, `knowact`, `memory`, `process`, `prompt-defense`, `prompt-templates`, `rag`, `rca`, `reasoning`, `registry`, `regulation`, `replica`, `shared`, `skill-translator`, `ttbs`, `voice`, `web`, `wordact` (536K). Verified per-crate: zero `template_ref` from the 63 surviving manifests, zero non-`build.rs` Rust references, zero cross-crate Jinja `include`/`from`. `build.rs` embeds `registry/templates/` **by directory glob**, so anything left here ships inside the binary whether or not it is reachable — a glob is not a consumer.
 - **Name mismatch is the trap when auditing this tree.** A crate's directory name is not its reference name: `logo-builder/`'s manifest holds no templates of its own and catalogs `media/*` via `path: ../media/…`, so `logo-builder` looks orphaned by name while both crates are live. Always resolve the actual `template_ref` values.
 - **`heal/` was kept** despite having no runtime consumer: security regression `RR-0037` (`status: enforced`) greps `registry/templates/heal` for `RunCommand|SetEnv` via `check-kali-regressions.sh`. The gate fails on a *match*, so an absent directory passes silently — deleting the crate would retire the regression by accident rather than by decision. Retire `RR-0037` first if `heal/` should go.
+- **Re-audited 2026-08-12 after the removal: zero orphans remain.** All 66 surviving crates resolve to a consumer. 62 are named by a `template_ref`, a Jinja `include`/`from`, or a `path: ../<crate>/` entry in a sibling bundle manifest. The other four are live by other means and are the ones a future audit is most likely to mis-flag:
+  - `docproc` — referenced from Rust (`hkask-mcp-corpus`: `ocr/llm_ocr.rs`, `services/consolidation.rs`).
+  - `training` — referenced from Rust (`hkask-mcp-training/providers/trl_harness.rs`) and pinned by `RR-0062`.
+  - `heal` — pinned by `RR-0037` (see above).
+  - `logo-builder` — **the name-mismatch trap.** It contains no `.j2` or `.yaml` templates at all; its `manifest.yaml` registers four `media/*` entries via `path: ../media/…`. Because `build.rs` keys `MANIFEST_YAMLS` on the *directory name*, deleting the directory would silently drop those four registry entries. It is a fully live skill (`.agents/skills/logo-builder/SKILL.md` + `kask/registry/manifests/logo-builder.yaml`).
+
+  A name-based orphan check would flag all four. Resolve actual `template_ref`/`path:` values and grep Rust and `kask/security/regressions/` before concluding anything here is dead.
 
 ---
 
