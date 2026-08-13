@@ -314,7 +314,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             let exa_api_key = ctx.credentials.get("HKASK_EXA_API_KEY").cloned();
             let tavily_api_key = ctx.credentials.get("HKASK_TAVILY_API_KEY").cloned();
             let brave_api_key = ctx.credentials.get("HKASK_BRAVE_API_KEY").cloned();
-            let serpapi_key = ctx.credentials.get("HKASK_SERPAPI_KEY").cloned();
+            // `HKASK_SERPAPI_API_KEY` — the canonical spelling used by kask/.env,
+            // the credential registry (inference_providers.rs) and the research
+            // server. This read used the shorter `HKASK_SERPAPI_KEY`, which
+            // appeared in no allowlist and no credential registry, so the key
+            // could never arrive and corpus-mode transcript search was
+            // permanently unavailable (RR-0061).
+            let serpapi_key = ctx.credentials.get("HKASK_SERPAPI_API_KEY").cloned();
             Ok(CompaniesServer::new(
                 ctx.webid,
                 reqwest::Client::new(),
@@ -357,6 +363,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_BRAVE_API_KEY",
                 "Brave Search API key for fundamental research search",
+            ),
+            hkask_mcp_server::CredentialRequirement::optional(
+                "HKASK_SERPAPI_API_KEY",
+                "SerpAPI key for corpus-mode transcript search",
             ),
         ],
     )

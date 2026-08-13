@@ -10,11 +10,13 @@ discovered_by: kali-audit
 discovered_at: 2026-08-12
 severity: medium
 detection:
-  kind: grep
-  # The VULNERABLE idiom: hex-encoding a secret key into a plain String. The fix
-  # wraps it (Zeroizing::new(hex::encode(...))), which this pattern no longer
-  # matches.
-  pattern: 'hex::encode\(signing_key\.to_bytes\(\)\)'
+  kind: cargo-test
+  # Behavioral + type pin. `retrieve_accessors_return_zeroizing` binds
+  # `retrieve_by_key`'s return type as `Zeroizing<String>`, so reverting it to a
+  # bare String is a COMPILE error, not a silent regression.
+  # Mutation-verified 2026-08-12: reverting the signature fails the build with
+  # E0308 mismatched types.
+  pattern: "retrieve_accessors_return_zeroizing"
   include: "crates/hkask-keystore/src/signing.rs"
 mitigation: |
   The publisher signing key (used for kask skill marketplace manifest signing)
@@ -75,5 +77,38 @@ mitigation: |
   passphrase/token comparison is introduced.
 source: "https://anssi-fr.github.io/rust-guide/ — ANSSI Secure Rust Guidelines (secret lifetime); https://cwe.mitre.org/data/definitions/226.html"
 ci_gate: scripts/check-kali-regressions.sh
-status: pending
-note: "Open finding as of 2026-08-12 — no fix attempted in the discovering audit. Scope caveat: whether the bare-String weakness propagates depends on the 4 external callers of Keychain::retrieve* (hkask-mcp-server credentials.rs, hkask-services-core config.rs, hkask-mcp-corpus persona/mod.rs, kask_bridge identity.rs), which were not audited."
+status: enforced
+note: |
+  Fixed 2026-08-12.
+
+  - `store_signing_key`: `key_hex` is now `Zeroizing<String>` and the
+    intermediate `to_bytes()` array is explicitly zeroized.
+  - `load_signing_key`: rewritten — `key_hex` and the decoded `Vec` are
+    `Zeroizing`, the 32-byte array is zeroized after `from_bytes` copies it, and
+    each failure branch now logs a classification (`keychain unavailable` /
+    `not valid hex` / `wrong length`) instead of collapsing to a silent `None`.
+    `NotFound` stays quiet — that is the legitimate "no key configured" case.
+  - `generate_signing_keypair`: the random scratch buffer is zeroized after the
+    key is constructed.
+  - `Keychain::retrieve` / `retrieve_by_key`: now return `Zeroizing<String>`,
+    matching the hygiene of the sibling `resolve()`. Only two callers existed
+    (`hkask-mcp-server` credentials.rs and context.rs); both updated.
+  - `resolve_db_passphrase_string`: validates with `std::str::from_utf8` on a
+    borrowed slice instead of `String::from_utf8(bytes.to_vec())`, so the error
+    path no longer produces a `FromUtf8Error` that OWNS the passphrase bytes.
+  - `aes-gcm` now builds with its `zeroize` feature (root Cargo.toml), so the
+    GHASH subkey in the long-lived `EncryptionService` is wiped on drop. Verified
+    with `cargo tree -p hkask-keystore -i aes-gcm -e features`.
+
+  Tests added: `retrieve_accessors_return_zeroizing` (type pin, mutation-verified),
+  `generated_key_survives_scratch_buffer_zeroize` (catches a misplaced zeroize that
+  would silently yield the all-zero scalar — it asserts two generated keys differ
+  and that signing still round-trips), `load_signing_key_absent_publisher_is_none`.
+
+  SCOPE LIMIT, deliberately not papered over: `resolve_credential` in
+  `hkask-mcp-server/src/server/credentials.rs` still returns a plain `String`,
+  because the MCP `ServerContext` credential map is not zeroizing. The wipe
+  guarantee therefore ends at that boundary — the keychain READ no longer leaves a
+  copy behind, but the value the server holds afterwards is unprotected. Making
+  `ServerContext.credentials` zeroizing is a larger refactor across all 13 MCP
+  servers and was not attempted here.

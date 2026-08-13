@@ -69,7 +69,7 @@ impl CompaniesServer {
                     }
                     let Some(serpapi_key) = &self.serpapi_key else {
                         return Err(McpToolError::failed_precondition(
-                            "corpus mode requires HKASK_SERPAPI_KEY to be set",
+                            "corpus mode requires HKASK_SERPAPI_API_KEY to be set",
                         ));
                     };
 

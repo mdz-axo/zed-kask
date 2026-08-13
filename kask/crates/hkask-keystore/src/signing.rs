@@ -14,6 +14,7 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use hkask_types::{Ed25519PublicKey, Ed25519Signature};
 use rand::RngCore;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Maximum accepted lifetime of a signed manifest, in days.
 ///
@@ -25,15 +26,17 @@ pub const KEY_MAX_AGE_DAYS: u64 = 120;
 
 /// Generate a new Ed25519 signing keypair.
 ///
-/// Returns a `SigningKey`. The secret is zeroized on drop by
-/// `ed25519_dalek`'s `ZeroizeOnDrop` impl (enabled via the `zeroize` feature)
-/// — no extra `Zeroizing` wrapper is needed. Use `derive_public_key` to get
-/// the corresponding public key.
+/// Returns a `SigningKey`, whose secret is zeroized on drop by `ed25519_dalek`'s
+/// `ZeroizeOnDrop` impl (enabled via the `zeroize` feature). The scratch buffer
+/// the key is built from is wiped explicitly — `from_bytes` copies out of it, so
+/// without this the raw scalar would outlive the call on the stack.
 #[must_use]
 pub fn generate_signing_keypair() -> SigningKey {
     let mut secret_bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut secret_bytes);
-    SigningKey::from_bytes(&secret_bytes)
+    let signing_key = SigningKey::from_bytes(&secret_bytes);
+    secret_bytes.zeroize();
+    signing_key
 }
 
 /// Derive the public key from a signing key.
@@ -89,27 +92,69 @@ pub fn store_signing_key(
     signing_key: &SigningKey,
 ) -> Result<(), crate::keychain::KeychainError> {
     let keychain = crate::keychain::Keychain::default();
-    let key_hex = hex::encode(signing_key.to_bytes());
+    // The hex encoding IS the private scalar in printable form. Wrapping it in
+    // `Zeroizing` wipes the heap allocation on drop; a bare `String` here left the
+    // raw key in freed memory (RR-0063). Same for the intermediate byte array.
+    let mut key_bytes = signing_key.to_bytes();
+    let key_hex = Zeroizing::new(hex::encode(key_bytes));
+    key_bytes.zeroize();
     keychain.store_by_key(&format!("signing-keys/{publisher}"), &key_hex)
 }
 
 /// Load a publisher's Ed25519 signing key from the OS keychain.
 ///
-/// Returns `None` if no key is stored for this publisher.
+/// Returns `None` when no key is stored for this publisher. Every other failure
+/// mode (keychain unavailable, corrupt hex, wrong key length) also returns `None`
+/// but logs a `warn` naming the classification first — collapsing them silently
+/// made "this publisher has no key" indistinguishable from "the keychain is
+/// broken" or "the stored key is corrupt" (RR-0063).
+///
+/// All intermediate buffers holding the secret scalar are zeroized.
 pub fn load_signing_key(publisher: &str) -> Option<SigningKey> {
     let keychain = crate::keychain::Keychain::default();
-    match keychain.retrieve_by_key(&format!("signing-keys/{publisher}")) {
-        Ok(key_hex) => {
-            let bytes = hex::decode(&key_hex).ok()?;
-            if bytes.len() != 32 {
-                return None;
+    let key_hex = match keychain.retrieve_by_key(&format!("signing-keys/{publisher}")) {
+        Ok(key_hex) => Zeroizing::new(key_hex),
+        Err(error) => {
+            // `NotFound` is the expected "no key configured" case; anything else
+            // is an operational failure the caller cannot see from `None`.
+            if !matches!(error, crate::keychain::KeychainError::NotFound(_)) {
+                tracing::warn!(
+                    target: "reg.keystore",
+                    publisher = %publisher,
+                    error = %error,
+                    "signing key load failed - keychain unavailable, not absent"
+                );
             }
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&bytes);
-            Some(SigningKey::from_bytes(&arr))
+            return None;
         }
-        Err(_) => None,
-    }
+    };
+
+    let mut bytes = match hex::decode(&*key_hex) {
+        Ok(bytes) => Zeroizing::new(bytes),
+        Err(error) => {
+            tracing::warn!(
+                target: "reg.keystore",
+                publisher = %publisher,
+                error = %error,
+                "stored signing key is not valid hex - the keychain entry is corrupt"
+            );
+            return None;
+        }
+    };
+
+    let Ok(mut key_bytes) = <[u8; 32]>::try_from(bytes.as_slice()) else {
+        tracing::warn!(
+            target: "reg.keystore",
+            publisher = %publisher,
+            length = bytes.len(),
+            "stored signing key has the wrong length - expected 32 bytes"
+        );
+        bytes.zeroize();
+        return None;
+    };
+    let signing_key = SigningKey::from_bytes(&key_bytes);
+    key_bytes.zeroize();
+    Some(signing_key)
 }
 
 /// Delete a publisher's Ed25519 signing key from the OS keychain.
@@ -213,5 +258,74 @@ mod tests {
         let parsed: Ed25519Signature = hex_str.parse().unwrap();
         assert_eq!(signature, parsed);
         assert!(verify(message, &parsed, &public_key));
+    }
+
+    // ── RR-0063: secret-lifetime invariants ──────────────────────────────────
+    //
+    // These are type/behaviour pins, not memory-forensics tests. Rust gives no
+    // portable way to assert a freed allocation was overwritten, so what is
+    // testable is: (1) the accessors hand back a wiping wrapper rather than a
+    // bare String, and (2) key material still round-trips correctly after the
+    // zeroize calls were added (a misplaced `zeroize()` before `from_bytes`
+    // would silently produce an all-zero key, which round-tripping catches).
+
+    /// A zeroized scratch buffer must not corrupt the generated key: sign and
+    /// verify across a full generate -> sign -> verify cycle. If
+    /// `generate_signing_keypair` wiped `secret_bytes` before `from_bytes` copied
+    /// out of it, every key would be the all-zero scalar and every signature
+    /// would still verify against ITS OWN public key — so also assert two
+    /// independently generated keys differ.
+    #[test]
+    fn generated_key_survives_scratch_buffer_zeroize() {
+        let first = generate_signing_keypair();
+        let second = generate_signing_keypair();
+
+        assert_ne!(
+            derive_public_key(&first).0,
+            derive_public_key(&second).0,
+            "two generated keys must differ — identical keys would mean the \
+             scratch buffer was zeroized before SigningKey::from_bytes copied it"
+        );
+        assert_ne!(
+            first.to_bytes(),
+            [0u8; 32],
+            "a generated key must not be the all-zero scalar"
+        );
+
+        let message = b"rr0063 round trip";
+        let signature = sign(message, &first);
+        assert!(
+            verify(message, &signature, &derive_public_key(&first)),
+            "signing must still work after the scratch buffer is wiped"
+        );
+    }
+
+    /// The keychain accessors must return a wiping wrapper. This is the pin that
+    /// fails if someone reverts `Zeroizing<String>` back to a bare `String`:
+    /// `.to_string()` on the result would still compile, but binding it as
+    /// `Zeroizing<String>` would not.
+    #[test]
+    fn retrieve_accessors_return_zeroizing() {
+        fn assert_zeroizing(
+            _: impl Fn(&crate::keychain::Keychain, &str) -> Result<
+                zeroize::Zeroizing<String>,
+                crate::keychain::KeychainError,
+            >,
+        ) {
+        }
+        // Compiles only while `retrieve_by_key` yields `Zeroizing<String>`.
+        assert_zeroizing(|keychain, key| keychain.retrieve_by_key(key));
+    }
+
+    /// `load_signing_key` must return `None` (not panic) for a publisher with no
+    /// stored key, and must log rather than silently swallow real failures. The
+    /// absent case is the one reachable without touching the OS keychain.
+    #[test]
+    fn load_signing_key_absent_publisher_is_none() {
+        let missing = format!("rr0063-absent-publisher-{}", std::process::id());
+        assert!(
+            load_signing_key(&missing).is_none(),
+            "an unknown publisher must yield None, not a panic or a bogus key"
+        );
     }
 }

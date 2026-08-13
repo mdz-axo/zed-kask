@@ -69,13 +69,18 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-companies",
         description: "Companies — company research and filings",
         credentials: Some(&[
-            // Each entry must have a read site in the crate (allowlist
-            // alignment). HKASK_SERPAPI_API_KEY was removed: no read site.
+            // Each entry must have a read site in the crate (allowlist alignment).
             "HKASK_EODHD_API_KEY",
             "HKASK_FMP_API_KEY",
             "HKASK_EXA_API_KEY",
             "HKASK_TAVILY_API_KEY",
             "HKASK_BRAVE_API_KEY",
+            // Read for corpus-mode transcript search. A prior comment here said
+            // "removed: no read site" — true only of this spelling; the server was
+            // reading the non-canonical `HKASK_SERPAPI_KEY`, which no allowlist or
+            // registry carried, so the key never arrived. Normalized on the
+            // kask/.env spelling (RR-0061).
+            "HKASK_SERPAPI_API_KEY",
         ]),
         config_env: Some(&[
             // HKASK_TRANSACTIONS_DIR was removed: no read site in the crate.
@@ -588,8 +593,10 @@ mod tests {
     #[test]
     fn companies_allowlist_matches_actual_reads() {
         let s = server_by_id("companies");
-        // Read sites: ctx.credentials.get in `run()` for the 5 providers;
-        // std::env::var("HKASK_CHRONIC_STALENESS_DAYS") and
+        // Read sites: ctx.credentials.get in `run()` for the 6 providers (SerpAPI
+        // added when the read was normalized from the non-canonical
+        // `HKASK_SERPAPI_KEY` to the kask/.env spelling `HKASK_SERPAPI_API_KEY` —
+        // RR-0061); std::env::var("HKASK_CHRONIC_STALENESS_DAYS") and
         // FermiDefaults::from_env() reading HKASK_FERMI_DEFAULTS.
         assert_eq!(
             s.credentials.unwrap().to_vec(),
@@ -599,6 +606,7 @@ mod tests {
                 "HKASK_EXA_API_KEY",
                 "HKASK_TAVILY_API_KEY",
                 "HKASK_BRAVE_API_KEY",
+                "HKASK_SERPAPI_API_KEY",
             ],
             "companies credentials allowlist drifted — every entry must have a \
              read site in hkask-mcp-companies (over-grant leaks a secret to the \

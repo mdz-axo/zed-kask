@@ -919,7 +919,10 @@ hkask-mcp-corpus = { path = "kask/mcp-servers/hkask-mcp-corpus" }
 hkask-mcp-swarm = { path = "kask/mcp-servers/hkask-mcp-swarm" }
 ed25519-dalek = "2"
 keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
-aes-gcm = "0.10"
+# `zeroize` feature: without it the GHASH subkey inside a long-lived `Aes256Gcm`
+# is not wiped on drop (upstream gates `ghash_key.zeroize()` behind it), leaving
+# derived key material in freed memory. See RR-0063.
+aes-gcm = { version = "0.10", features = ["zeroize"] }
 argon2 = "0.5"
 hmac = "0.12"
 shellexpand = "3.1"

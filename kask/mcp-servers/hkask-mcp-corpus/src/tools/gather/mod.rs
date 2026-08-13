@@ -437,7 +437,7 @@ impl CorpusServer {
                             title: "YouTube discovery skipped".to_string(),
                             url: String::new(),
                             channel: String::new(),
-                            reason: "HKASK_SERPAPI_KEY not provided".to_string(),
+                            reason: "HKASK_SERPAPI_API_KEY not provided".to_string(),
                         });
                     }
                 }

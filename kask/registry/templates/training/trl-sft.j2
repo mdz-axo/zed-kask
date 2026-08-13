@@ -11,6 +11,12 @@
 # Lesson 12). Version mismatches between training and inference cause garbage
 # output (Lesson 6 precedent: PiSSA portability).
 #
+#
+# STRING LITERALS: every interpolated value that lands in Python string position
+# uses `| tojson`, which emits a fully quoted and escaped literal. Bare
+# `"{% raw %}{{ x }}{% endraw %}"` let a value containing a double quote break out of the string and
+# into code position in a generated, executed script (RR-0062). JSON string
+# syntax is a subset of Python's, so `tojson` is both safe and correct here.
 # LoRA initialization is rendered from the typed TrainingParams boundary.
 # EVA is the canonical data-driven initializer. PiSSA is not used because its
 # mutated-base save contract is not portable across verified environments.
@@ -34,7 +40,7 @@ from peft import LoraConfig
 import torch
 
 # ── Base model ──────────────────────────────────────────────────────────────
-base_model = "{{ base_model }}"
+base_model = {{ base_model | tojson }}
 
 # ── PEFT / LoRA configuration ───────────────────────────────────────────────
 # Rendered from the typed LoraParams boundary — same fields as axolotl YAML.
@@ -44,11 +50,11 @@ peft_config = LoraConfig(
     lora_dropout={{ lora_dropout | default(0) }},
     target_modules=[
 {% for module in lora_target_modules %}
-        "{{ module }}",
+        {{ module | tojson }},
 {% endfor %}
     ],
 {% if peft_init_lora_weights %}
-    init_lora_weights="{{ peft_init_lora_weights }}",
+    init_lora_weights={{ peft_init_lora_weights | tojson }},
 {% endif %}
 {% if use_rslora == "true" %}
     use_rslora=True,
@@ -62,9 +68,9 @@ peft_config = LoraConfig(
 # TRL SFTTrainer accepts conversational ChatML datasets directly — same format
 # as axolotl's `chat_template` dataset type. No preprocessing needed.
 {% if data_files %}
-dataset = load_dataset("{{ dataset_path }}", data_files="{{ data_files }}", split="train")
+dataset = load_dataset({{ dataset_path | tojson }}, data_files={{ data_files | tojson }}, split="train")
 {% else %}
-dataset = load_dataset("{{ dataset_path }}", split="train")
+dataset = load_dataset({{ dataset_path | tojson }}, split="train")
 {% endif %}
 
 # ── SFT configuration ──────────────────────────────────────────────────────
@@ -72,7 +78,7 @@ dataset = load_dataset("{{ dataset_path }}", split="train")
 # canonical config (see corpus/lora/axolotl-lora.yaml) where TRL has a direct
 # equivalent.
 config = SFTConfig(
-    output_dir="{{ output_dir }}",
+    output_dir={{ output_dir | tojson }},
     num_train_epochs={{ num_epochs | default(2) }},
     per_device_train_batch_size={{ micro_batch_size | default(1) }},
     eval_batch_size=1,
@@ -81,7 +87,7 @@ config = SFTConfig(
     bf16=True,
     gradient_checkpointing=True,
 {% if lr_scheduler %}
-    lr_scheduler_type="{{ lr_scheduler }}",
+    lr_scheduler_type={{ lr_scheduler | tojson }},
 {% endif %}
 {% if warmup_steps %}
     warmup_steps={{ warmup_steps }},
@@ -93,7 +99,7 @@ config = SFTConfig(
     max_grad_norm={{ max_grad_norm }},
 {% endif %}
 {% if optim %}
-    optim="{{ optim }}",
+    optim={{ optim | tojson }},
 {% endif %}
 {% if sequence_len %}
     max_length={{ sequence_len }},
@@ -129,7 +135,7 @@ trainer.train()
 # ── Save adapter ───────────────────────────────────────────────────────────
 # TRL + PEFT saves adapter_model.safetensors + adapter_config.json to output_dir.
 # The RunPod host's completion_marker checks for adapter_model.safetensors.
-trainer.save_model("{{ output_dir }}")
+trainer.save_model({{ output_dir | tojson }})
 
 # ── Completion manifest ────────────────────────────────────────────────────
 # Written by the pod entrypoint (bash heredoc, no Python) after this script

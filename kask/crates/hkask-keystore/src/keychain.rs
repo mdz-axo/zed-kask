@@ -78,16 +78,21 @@ impl Keychain {
 
     /// Retrieve a secret from the OS keychain by WebID.
     ///
+    /// Returns `Zeroizing<String>` so the secret is wiped when the caller drops
+    /// it. A bare `String` here left retrieved secrets in freed heap memory while
+    /// the sibling `resolve()` correctly zeroized — two accessor families with
+    /// different hygiene invited callers onto the unprotected one (RR-0063).
+    ///
     /// expect: "My keys are generated, stored, and rotated under my sovereignty"
     /// pre:  webid is a valid WebID
     /// post: returns Ok(secret) if stored, Err(NotFound) if not
-    pub fn retrieve(&self, webid: &WebID) -> Result<String, KeychainError> {
+    pub fn retrieve(&self, webid: &WebID) -> Result<Zeroizing<String>, KeychainError> {
         let entry = Entry::new(&self.service_name, &webid.as_uuid().to_string())
             .map_err(|e| KeychainError::Platform(e.to_string()))?;
 
         let result = entry.get_password().map_err(KeychainError::from)?;
         info!(target: "reg.keystore", operation = "retrieve", "REG");
-        Ok(result)
+        Ok(Zeroizing::new(result))
     }
 
     /// Delete a secret from the OS keychain by WebID.
@@ -127,16 +132,18 @@ impl Keychain {
 
     /// Retrieve a secret from the OS keychain by arbitrary key name.
     ///
+    /// Returns `Zeroizing<String>` — see [`Self::retrieve`] (RR-0063).
+    ///
     /// expect: "My keys are generated, stored, and rotated under my sovereignty"
     /// pre:  key is non-empty
     /// post: returns Ok(secret) if stored, Err(NotFound) if not
-    pub fn retrieve_by_key(&self, key: &str) -> Result<String, KeychainError> {
+    pub fn retrieve_by_key(&self, key: &str) -> Result<Zeroizing<String>, KeychainError> {
         let entry = Entry::new(&self.service_name, key)
             .map_err(|e| KeychainError::Platform(e.to_string()))?;
 
         let result = entry.get_password().map_err(KeychainError::from)?;
         info!(target: "reg.keystore", operation = "retrieve_by_key", "REG");
-        Ok(result)
+        Ok(Zeroizing::new(result))
     }
 
     /// Delete a secret from the OS keychain by arbitrary key name.
@@ -181,9 +188,14 @@ pub fn resolve_db_passphrase() -> Result<Zeroizing<Vec<u8>>, KeychainError> {
 /// produces the same SQLCipher key across CLI, pods, synchronization, and MCP.
 pub fn resolve_db_passphrase_string() -> Result<Zeroizing<String>, KeychainError> {
     let bytes = resolve_db_passphrase()?;
-    let passphrase = String::from_utf8(bytes.to_vec())
+    // Validate in place and copy only on success. `String::from_utf8(bytes.to_vec())`
+    // moved the passphrase into a plain `Vec` that escaped `Zeroizing`; on the error
+    // path the resulting `FromUtf8Error` then OWNED those bytes and dropped them
+    // unwiped (RR-0063). `from_utf8` on a borrowed slice cannot take ownership, so
+    // the failure path leaves nothing behind.
+    let passphrase = std::str::from_utf8(&bytes)
         .map_err(|e| KeychainError::Platform(format!("DB passphrase is not valid UTF-8: {e}")))?;
-    Ok(Zeroizing::new(passphrase))
+    Ok(Zeroizing::new(passphrase.to_string()))
 }
 
 /// Resolve a SecretRef to actual secret bytes.

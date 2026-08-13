@@ -11,12 +11,24 @@ discovered_at: 2026-08-12
 severity: medium
 detection:
   kind: grep
-  # The VULNERABLE idiom, not the presence of a type: a heal template pasting a
-  # raw error string straight into instruction context. Scoped narrowly because a
-  # tree-wide "bare {{ }}" grep would match ~1652 legitimate sites and be useless
-  # as a gate. Broaden only with a real allowlist of reviewed sites.
-  pattern: '\{\{ *(error|error_message|raw_prompt|file_content|template_content) *\}\}'
-  include: "--include=*.j2 registry/templates/heal registry/templates/curator registry/templates/registry/selectors"
+  # The VULNERABLE idiom, in the two places actually fixed: a bare value in Python
+  # string position inside a GENERATED, EXECUTED script (training/), and a raw
+  # error string in instruction context in the heal templates. Scoped narrowly on
+  # purpose — a tree-wide "bare {{ }}" grep would match ~1650 legitimate prose
+  # interpolations and be useless as a gate. Broaden only alongside a reviewed
+  # allowlist.
+  #
+  # `"{{ x }}"` (quoted, no filter) is the code-injection sink; `{{ x | tojson }}`
+  # emits its own quotes and is what the fix uses.
+  #
+  # Scoped to registry/templates/training ONLY. The heal templates were initially included
+  # too, but they legitimately quote values inside English prose ("The operation
+  # \"{{ operation }}\" failed because..."), which is not a code sink — including
+  # them made the gate fire on 5 innocent sentences. Python/script-generating
+  # templates are the code-execution surface; prose is covered by the narrative in
+  # the note below, not by this pattern.
+  pattern: '"\{\{ *[a-z_][a-z0-9_]* *\}\}"'
+  include: "--include=*.j2 registry/templates/training"
 mitigation: |
   There is no autoescape on any prompt template. The production Environment never
   calls set_auto_escape_callback (kask/crates/hkask-templates/src/template_renderer.rs:337-338,
@@ -79,5 +91,42 @@ mitigation: |
   (RR-0002); all 9 {% raw %} blocks balanced and documentation-only.
 source: "https://arxiv.org/html/2403.14720v1 — Microsoft Research Spotlighting (data/instruction separation); OWASP LLM01:2025"
 ci_gate: scripts/check-kali-regressions.sh
-status: pending
-note: "Open finding as of 2026-08-12. Exploitability is Undetermined (U3 in the audit log): injectable prompt text is established, tool execution is not — that depends on the agent's tool gate, a layer this pass did not audit."
+status: enforced
+note: |
+  Partially fixed 2026-08-12 — the two sharpest sites, not all 1652 bare
+  interpolations.
+
+  1. TRAINING TEMPLATES (the code-execution sink, and the only one where
+     "injection" means arbitrary code rather than prompt text): 20 sites across
+     `training/trl-sft.j2` and `training/trl-preference.j2` converted from
+     `"{{ x }}"` to `{{ x | tojson }}`. These render Python that is then EXECUTED,
+     so a value containing a double quote previously escaped the string literal
+     into code position. `tojson` emits a fully quoted+escaped literal, and JSON
+     string syntax is a subset of Python's, so it is both safe and correct.
+     Verified: `json.dumps` on a breakout payload keeps it inside one literal.
+     Pinned by the 5 `trl_harness_renders_*_script` tests (136 pass).
+
+  2. `heal/self-heal.j2`: removed the `shell.exec` capability advertisement and
+     the "Run `ls -la` with shell.exec" instruction; added the same "never emit
+     shell commands" guardrail its siblings carry (`command_not_found.j2:43` etc.);
+     wrapped `{{ error_message }}` / `{{ operation }}` in `| tojson` and labelled
+     the block as DATA that may contain instruction-shaped text. This template sat
+     in the RR-0037-gated directory while diverging from the constrained vocabulary
+     the gate assumes, and RR-0037's `RunCommand|SetEnv` pattern reported green
+     regardless.
+
+  STILL OPEN, deliberately: there is no autoescape on prompt templates
+  (`template_renderer.rs` never calls `set_auto_escape_callback`, and the synthetic
+  template name "step" has no extension, so minijinja returns `AutoEscape::None`).
+  ~1650 bare interpolations remain, including free-text payloads:
+  `docproc/extract-hmems.j2` `{{ text }}`, `listening/apply-template.j2`
+  `{{ chunk }}`, `diataxis-diagram/present-diagram.j2` `{{ file_content }}`,
+  `registry/selectors/selector.j2` `{{ raw_prompt }}`, `web/search-quick.j2`
+  `{{ description }}`, `curator/template-healer.j2` `{{ template_content }}`.
+  Those are PROMPT-injection surface, not code-injection surface, and their
+  exploitability remains Undetermined (U3 in the audit log): injectable prompt text
+  is established; tool execution is not, since that depends on the agent's tool
+  gate. Do NOT "fix" these with a content scanner — that is what D4 removed after
+  the RoleOverride `system:` pattern blocked legitimate rendering. Structural
+  escaping (tojson / nonce delimiters) cannot false-positive; substring matching
+  can.
