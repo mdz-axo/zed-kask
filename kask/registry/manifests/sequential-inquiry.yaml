@@ -27,6 +27,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "gap_or_cauchy_or_calibration"
@@ -59,7 +60,7 @@ rjoule:
 inputs:
   - name: problem
     type: string
-    required: true
+    required: false
   - name: domain
     type: string
     required: false
@@ -100,7 +101,7 @@ steps:
     gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
-      problem: "{{ problem }}"
+      problem: "{{ task | default(problem) }}"
       domain: "{{ domain | default('') }}"
       constraints: "{{ constraints | default([]) }}"
       prev_grasp: "{{ prev_step_1_result | default({}) }}"
@@ -238,7 +239,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

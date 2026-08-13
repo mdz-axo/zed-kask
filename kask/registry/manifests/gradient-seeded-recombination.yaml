@@ -44,6 +44,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -68,7 +69,7 @@ rjoule:
 inputs:
   - name: ontology_registry
     type: array
-    required: true
+    required: false
     description: >
       The set of ontology namespaces to inventory. Each entry carries the
       namespace id (fibo, eso, golem, mlschema, omc, sumo, pko, dc_bibo, or
@@ -133,7 +134,7 @@ steps:
     gas_cap: 4096
     timeout_seconds: 120
     input_mapping:
-      ontology_registry: "{{ ontology_registry }}"
+      ontology_registry: "{{ task | default(ontology_registry) }}"
       ontology_sources: "{{ ontology_sources | default([]) }}"
       bioportal_apikey: "{{ bioportal_apikey | default('') }}"
 
@@ -256,7 +257,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

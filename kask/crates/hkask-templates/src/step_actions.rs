@@ -556,8 +556,13 @@ impl StepMachine {
         let parent_named_keys: Vec<String> = self.context.named_map().keys().cloned().collect();
 
         // Run the sub-cascade.
-        let mut sub_machine =
-            StepMachine::new(sub_graph, self.context.clone(), sub_budget, sub_convergence);
+        let mut sub_machine = StepMachine::new(
+            sub_graph,
+            self.context.clone(),
+            sub_budget,
+            sub_convergence,
+            sub_manifest.error_handling.clone(),
+        );
         sub_machine.depth = self.depth + 1;
 
         let sub_outcome = Box::pin(sub_machine.run(infra.clone())).await?;
@@ -709,6 +714,7 @@ impl StepMachine {
                     context_template.clone(),
                     sub_budget,
                     sub_convergence,
+                    sub_manifest.error_handling.clone(),
                 );
                 let outcome = sub_machine.run(infra).await?;
                 Ok::<(usize, CascadeOutcome), TemplateError>((branch_id, outcome))

@@ -54,6 +54,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -78,7 +79,7 @@ rjoule:
 inputs:
   - name: target_system
     type: object
-    required: true
+    required: false
     description: >
       The system whose capabilities are being reasoned about. Includes
       model identifier, agent configuration, tool set, or other scoping
@@ -130,7 +131,7 @@ steps:
     gas_cap: 6144
     timeout_seconds: 150
     input_mapping:
-      target_system: "{{ target_system }}"
+      target_system: "{{ task | default(target_system) }}"
       capability_definition: "{{ capability_definition }}"
       registry_seed: "{{ registry_seed | default({}) }}"
       prior_iteration: "{{ prior_iteration | default({}) }}"
@@ -263,7 +264,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

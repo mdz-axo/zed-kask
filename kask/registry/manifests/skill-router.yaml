@@ -27,6 +27,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   # One-shot routing: the match is a single pass over a fixed catalog, so the
@@ -54,7 +55,7 @@ rjoule:
 inputs:
   - name: task_description
     type: string
-    required: true
+    required: false
   - name: task_context
     type: string
     required: false
@@ -88,7 +89,7 @@ steps:
     gas_cap: 4096
     timeout_seconds: 150
     input_mapping:
-      task_description: "{{ task_description }}"
+      task_description: "{{ task | default(task_description) }}"
       task_context: "{{ task_context | default('') }}"
       skill_catalog: "{{ skill_catalog | default([]) }}"
       max_recommendations: "{{ max_recommendations | default(3) }}"
@@ -105,7 +106,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

@@ -75,7 +75,7 @@ rjoule:
 inputs:
   - name: change_spec
     type: string
-    required: true
+    required: false
     description: >
       The stated spec / intent the change implements. The review judges the
       change against this. Referenced by scope (intent vs change) and
@@ -164,7 +164,7 @@ steps:
     gas_cap: 4096
     timeout_seconds: 150
     input_mapping:
-      change_spec: "{{ change_spec }}"
+      change_spec: "{{ task | default(change_spec) }}"
       diff_base: "{{ diff_base }}"
       focus: "{{ focus | default([]) }}"
       prior_review: "{{ prior_review | default({}) }}"
@@ -300,8 +300,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

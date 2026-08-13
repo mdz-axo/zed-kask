@@ -17,6 +17,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: ""
@@ -40,7 +41,7 @@ rjoule:
 inputs:
   - name: name
     type: string
-    required: true
+    required: false
     description: "Business or brand name"
   - name: industry
     type: string

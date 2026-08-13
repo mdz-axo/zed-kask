@@ -19,6 +19,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -43,7 +44,7 @@ rjoule:
 inputs:
   - name: forecasting_question
     type: string
-    required: true
+    required: false
   - name: domain
     type: string
     required: false
@@ -120,7 +121,7 @@ steps:
     gas_cap: 2500
     timeout_seconds: 120
     input_mapping:
-      forecasting_question: "{{ forecasting_question }}"
+      forecasting_question: "{{ task | default(forecasting_question) }}"
       domain: "{{ domain | default(null) }}"
       time_horizon: "{{ time_horizon | default(null) }}"
 
@@ -408,7 +409,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

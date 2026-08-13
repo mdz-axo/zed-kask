@@ -49,6 +49,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -73,7 +74,7 @@ rjoule:
 inputs:
   - name: target_region
     type: object
-    required: true
+    required: false
     description: >
       The region to hunt gradients in. Includes crate path, file paths,
       span namespaces, hook names, or other scoping identifiers.
@@ -117,7 +118,7 @@ steps:
     gas_cap: 4096
     timeout_seconds: 150
     input_mapping:
-      target_region: "{{ target_region }}"
+      target_region: "{{ task | default(target_region) }}"
       field_type: "{{ field_type }}"
       prior_iteration: "{{ prior_iteration | default({}) }}"
 
@@ -248,7 +249,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

@@ -56,6 +56,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -80,7 +81,7 @@ rjoule:
 inputs:
   - name: seed_concepts
     type: array
-    required: true
+    required: false
     description: >
       Seed concepts to recast. Each entry carries the concept (with its
       axiom graph), the source ontology A (with its signature), and the
@@ -119,6 +120,7 @@ steps:
     gas_cap: 4096
     timeout_seconds: 120
     input_mapping:
+      seed_concepts: "{{ task | default(seed_concepts) }}"
       # Use the loop-carried seed_index to advance through the seed set.
       # The loop step binds seed_index as a top-level context key (not
       # _loop.seed_index — the executor binds loop mappings as top-level
@@ -281,7 +283,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

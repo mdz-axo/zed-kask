@@ -1,4 +1,4 @@
-use hkask_templates::load_manifest_from_yaml;
+use hkask_templates::{extract_contract_input_keys, load_manifest_from_yaml};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -139,4 +139,152 @@ fn all_manifests_are_executor_compliant() {
         errors.len(),
         errors.join("\n")
     );
+}
+
+/// Issue 5: cross-check each `action: select` step's `input_mapping` keys
+/// against the referenced template's `contract.input` keys.
+///
+/// Two mismatch directions, both reported as WARNINGS (not errors) because
+/// many are intentional:
+///
+/// - **mapping-has-not-contract** (potential typos): the manifest's
+///   `input_mapping` provides a key the template's `contract.input` does not
+///   declare. Often a typo or a stale mapping referencing a renamed input.
+///   Actionable: fix the mapping or add the key to the contract.
+/// - **contract-has-not-mapping** (template expects, mapping doesn't provide):
+///   the template declares a `contract.input` key the manifest's
+///   `input_mapping` does not provide. Frequently by-design — the template
+///   documents inputs it consumes that the *agent* provides between steps
+///   (e.g. `existing_code`, `repl_results`, `lean_diagnostics`), not via
+///   `input_mapping`. Informational, not actionable in general.
+///
+/// This test does NOT fail on mismatches (it would break on the many
+/// intentional agent-coordinated-context cases). It emits a diagnostic
+/// summary so mismatches are visible in CI output and can be triaged. A
+/// future tightening can promote mapping-has-not-contract to an error once
+/// the intentional cases are annotated.
+#[test]
+fn input_mapping_matches_template_contract() {
+    let manifests_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("registry/manifests");
+    let templates_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("registry/templates");
+    if !manifests_dir.exists() || !templates_dir.exists() {
+        eprintln!(
+            "registry not found (manifests={} templates={}) — skipping test",
+            manifests_dir.display(),
+            templates_dir.display()
+        );
+        return;
+    }
+
+    let mut mapping_extra: Vec<(String, u32, String, Vec<String>)> = Vec::new();
+    let mut contract_missing: Vec<(String, u32, String, Vec<String>)> = Vec::new();
+    let mut checked = 0u32;
+    let mut skipped_no_template = 0u32;
+    let mut skipped_no_contract = 0u32;
+
+    for entry in walkdir::WalkDir::new(&manifests_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if !path.extension().is_some_and(|e| e == "yaml") {
+            continue;
+        }
+        let yaml = std::fs::read_to_string(path).expect("manifest readable");
+        if !yaml.contains("\nmanifest:") && !yaml.starts_with("manifest:") {
+            continue;
+        }
+        let manifest = match load_manifest_from_yaml(&yaml) {
+            Ok(m) => m,
+            Err(_) => continue, // load failures caught by the load test
+        };
+        let fname = path
+            .file_name()
+            .expect("filename")
+            .to_string_lossy()
+            .to_string();
+
+        for step in &manifest.steps {
+            if step.action != "select" {
+                continue;
+            }
+            let Some(template_ref) = &step.template_ref else {
+                skipped_no_template += 1;
+                continue;
+            };
+            let template_path = templates_dir.join(format!("{template_ref}.j2"));
+            let Some(template_content) = std::fs::read_to_string(&template_path).ok() else {
+                eprintln!(
+                    "WARN: {fname} step {} references missing template {}",
+                    step.ordinal,
+                    template_path.display()
+                );
+                skipped_no_template += 1;
+                continue;
+            };
+            let contract_keys = extract_contract_input_keys(&template_content);
+            if contract_keys.is_empty() {
+                skipped_no_contract += 1;
+                continue;
+            }
+            checked += 1;
+
+            let mapping_keys: HashSet<String> = step
+                .input_mapping
+                .as_ref()
+                .and_then(|v| v.as_object())
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default();
+
+            let extra: Vec<String> = mapping_keys
+                .difference(&contract_keys)
+                .cloned()
+                .collect();
+            if !extra.is_empty() {
+                mapping_extra.push((fname.clone(), step.ordinal, template_ref.clone(), extra));
+            }
+
+            let missing: Vec<String> = contract_keys
+                .difference(&mapping_keys)
+                .cloned()
+                .collect();
+            if !missing.is_empty() {
+                contract_missing.push((fname.clone(), step.ordinal, template_ref.clone(), missing));
+            }
+        }
+    }
+
+    eprintln!(
+        "input_mapping/contract cross-check: {checked} steps checked, \
+         {} skipped (no template), {} skipped (no contract.input), \
+         {} mapping-extra, {} contract-missing",
+        skipped_no_template,
+        skipped_no_contract,
+        mapping_extra.len(),
+        contract_missing.len()
+    );
+    eprintln!("--- mapping-has-not-contract (potential typos / stale mappings) ---");
+    for (f, ord, tref, keys) in &mapping_extra {
+        eprintln!("  {f} step {ord} ({tref}): {keys:?}");
+    }
+    eprintln!("--- contract-has-not-mapping (template expects; often agent-coordinated) ---");
+    for (f, ord, tref, keys) in &contract_missing {
+        eprintln!("  {f} step {ord} ({tref}): {keys:?}");
+    }
+
+    // This test is a diagnostic: it does not fail. Mismatches are surfaced in
+    // CI output for triage. Promoting mapping-has-not-contract to a hard
+    // failure requires first annotating the intentional cases.
+    //
+    // To tighten: uncomment the assert below once the mapping-extra list is
+    // clean (or intentional cases are annotated in the contract).
+    // assert!(
+    //     mapping_extra.is_empty(),
+    //     "{} mapping-extra mismatches (potential typos)",
+    //     mapping_extra.len()
+    // );
 }

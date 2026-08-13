@@ -28,6 +28,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -53,7 +54,7 @@ inputs:
   - name: target
     type: string
     description: "The target to diagram — a crate path, file path, module name, or description"
-    required: true
+    required: false
   - name: hint
     type: string
     description: "Optional hint: preferred diagram type, audience, or context"
@@ -85,7 +86,7 @@ steps:
     gas_cap: 4096
     timeout_seconds: 150
     input_mapping:
-      target: "{{ target }}"
+      target: "{{ task | default(target) }}"
       hint: "{{ hint | default('') }}"
 
   - ordinal: 2
@@ -232,8 +233,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

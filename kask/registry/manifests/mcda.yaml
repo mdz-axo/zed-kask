@@ -13,6 +13,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -37,7 +38,7 @@ rjoule:
 inputs:
   - name: decision_question
     type: string
-    required: true
+    required: false
   - name: alternatives
     type: array
     required: true
@@ -60,7 +61,7 @@ steps:
     gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
-      decision_question: "{{ decision_question }}"
+      decision_question: "{{ task | default(decision_question) }}"
       alternatives: "{{ alternatives }}"
       criteria_hints: "{{ criteria_hints | default([]) }}"
 
@@ -144,7 +145,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

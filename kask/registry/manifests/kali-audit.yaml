@@ -31,6 +31,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -55,7 +56,7 @@ rjoule:
 inputs:
   - name: target_surface
     type: string
-    required: true
+    required: false
     description: >
       The surface to audit: `code`, `template`, `supply-chain`, `mcp`, `config`,
       `llm-io`, or `auto` (discover from filesystem).
@@ -92,7 +93,7 @@ steps:
     gas_cap: 2048
     timeout_seconds: 120
     input_mapping:
-      target_surface: "{{ target_surface }}"
+      target_surface: "{{ task | default(target_surface) }}"
       target_path: "{{ target_path }}"
       regression_library: "{{ regression_library | default([]) }}"
 
@@ -182,8 +183,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

@@ -15,6 +15,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: ""
@@ -37,7 +38,7 @@ rjoule:
 inputs:
   - name: statement
     type: string
-    required: true
+    required: false
   - name: system_context
     type: string
     required: false
@@ -54,7 +55,7 @@ steps:
     gas_cap: 5000
     timeout_seconds: 45
     input_mapping:
-      statement: "{{ statement }}"
+      statement: "{{ task | default(statement) }}"
       system_context: "{{ system_context | default('') }}"
 
   - ordinal: 2
@@ -94,7 +95,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

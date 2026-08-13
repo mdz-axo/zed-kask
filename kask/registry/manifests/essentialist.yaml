@@ -13,6 +13,7 @@ manifest:
   version: "0.34.0"  # synced with hKask release; SKILL.md lacks version field — should be added for traceability
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -37,7 +38,7 @@ rjoule:
 inputs:
   - name: artifact
     type: object
-    required: true
+    required: false
   - name: code_context
     type: object
     required: false
@@ -57,7 +58,7 @@ steps:
     gas_cap: 9000
     timeout_seconds: 180
     input_mapping:
-      artifact: "{{ artifact }}"
+      artifact: "{{ task | default(artifact) }}"
       code_context: "{{ code_context | default({}) }}"
       mode: "{{ mode | default('advisory') }}"
       max_rounds: "{{ convergence.max_iterations | default(3) }}"
@@ -79,7 +80,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

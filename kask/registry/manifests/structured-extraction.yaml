@@ -13,6 +13,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -37,7 +38,7 @@ rjoule:
 inputs:
   - name: source_text
     type: string
-    required: true
+    required: false
   - name: target_schema
     type: object
     required: true
@@ -57,7 +58,7 @@ steps:
     gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
-      source_text: "{{ source_text }}"
+      source_text: "{{ task | default(source_text) }}"
       target_schema: "{{ target_schema }}"
       extraction_hints: "{{ extraction_hints | default([]) }}"
 
@@ -126,7 +127,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

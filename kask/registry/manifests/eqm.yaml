@@ -37,6 +37,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -61,7 +62,7 @@ rjoule:
 inputs:
   - name: rationales
     type: array
-    required: true
+    required: false
     description: >
       Array of {rationale, forecast_probability, question, forecaster_id?}
       objects. Each element maps to one market_score_rationale call.
@@ -108,7 +109,7 @@ steps:
     gas_cap: 2048
     timeout_seconds: 30
     input_mapping:
-      rationales: "{{ rationales }}"
+      rationales: "{{ task | default(rationales) }}"
       eqm_subset: "{{ eqm_subset | default('predictive_12') }}"
       domain: "{{ domain | default(null) }}"
 
@@ -251,7 +252,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

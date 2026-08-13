@@ -36,7 +36,10 @@ pub use executor::ManifestExecutor;
 pub use executor::extract_final_step_result;
 pub use step_machine::CascadeOutcome;
 
-pub use inputs::{InputValidationError, render_input_param_spec, validate_inputs};
+pub use inputs::{
+    InputValidationError, extract_contract_input_keys, render_input_param_spec,
+    validate_inputs,
+};
 pub use manifest_loader::{
     ManifestLoadError, load_manifest_from_file, load_manifest_from_yaml, resolve_manifest,
 };

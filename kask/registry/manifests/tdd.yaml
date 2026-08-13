@@ -13,6 +13,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -37,7 +38,7 @@ rjoule:
 inputs:
   - name: task_description
     type: string
-    required: true
+    required: false
   - name: crate_scope
     type: string
     required: true
@@ -68,7 +69,7 @@ steps:
     gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
-      task_description: "{{ task_description }}"
+      task_description: "{{ task | default(task_description) }}"
       crate_scope: "{{ crate_scope }}"
       code_context: "{{ code_context | default({}) }}"
       spec_context: "{{ spec_context | default('') }}"
@@ -209,7 +210,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

@@ -17,6 +17,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -41,7 +42,7 @@ rjoule:
 inputs:
   - name: broad_topic
     type: string
-    required: true
+    required: false
   - name: domain
     type: string
     required: true
@@ -71,7 +72,7 @@ steps:
     gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
-      broad_topic: "{{ broad_topic }}"
+      broad_topic: "{{ task | default(broad_topic) }}"
       domain: "{{ domain }}"
       research_context: "{{ research_context | default('') }}"
       question_hint: "{{ question_hint | default('') }}"
@@ -185,7 +186,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

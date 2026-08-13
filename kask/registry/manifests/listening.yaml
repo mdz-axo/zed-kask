@@ -25,6 +25,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   # Single-pass: the design (§(c) pragmatic-cybernetics) says "the loop
@@ -50,7 +51,7 @@ rjoule:
 inputs:
   - name: transcript
     type: string
-    required: true
+    required: false
   - name: prior_transcripts
     type: array
     required: false
@@ -112,7 +113,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

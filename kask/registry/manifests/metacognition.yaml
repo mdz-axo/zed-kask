@@ -33,6 +33,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   # ── Kata convergence model ──
@@ -71,7 +72,7 @@ rjoule:
 inputs:
   - name: goal
     type: string
-    required: true
+    required: false
     description: >
       The high-level goal the userpod wants to decompose and assess.
   - name: session_history
@@ -166,7 +167,7 @@ steps:
     # capabilities-reasoner (90-300s) for comparable inference load.
     timeout_seconds: 120
     input_mapping:
-      goal: "{{ goal }}"
+      goal: "{{ task | default(goal) }}"
       session_history: "{{ session_history | default('') }}"
       current_state: "{{ current_state | default({}) }}"
       prior_outcomes: "{{ prior_outcomes | default([]) }}"
@@ -337,12 +338,12 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  # on_timeout: abort — the executor does not yet implement retry
-  # (ErrorHandlingConfig.on_timeout/max_retries are parsed but not read by
-  # the step machine; see hkask_templates::bundle::config::ErrorHandlingConfig).
-  # Setting "retry" here would be a no-op that misleads authors. When retry is
-  # wired, this can return to "retry" with max_retries: 1.
-  on_timeout: abort
-  max_retries: 0
+  # on_timeout: retry is now enforced — StepMachine::dispatch_with_retry
+  # retries a TemplateError::Timeout up to max_retries times with
+  # retry_backoff_seconds between attempts. A thinking-mode model that
+  # streams long reasoning chains may time out on a cold cache and succeed
+  # on retry once the cache warms.
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

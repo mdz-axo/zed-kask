@@ -13,6 +13,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -52,7 +53,7 @@ inputs:
     required: false
   - name: userpod_host
     type: string
-    required: true
+    required: false
   - name: threats
     type: array
     required: false

@@ -40,6 +40,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: ""
@@ -63,7 +64,7 @@ inputs:
   - name: prompt
     type: string
     description: "The natural-language prompt describing the flow to visualize."
-    required: true
+    required: false
   - name: source_ref
     type: string
     description: >
@@ -96,7 +97,7 @@ steps:
     gas_cap: 4096
     timeout_seconds: 60
     input_mapping:
-      prompt: "{{ prompt }}"
+      prompt: "{{ task | default(prompt) }}"
       hint: "{{ hint | default('') }}"
       task: "{{ task | default('') }}"
 
@@ -252,8 +253,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

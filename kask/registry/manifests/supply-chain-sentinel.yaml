@@ -14,6 +14,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -38,7 +39,7 @@ rjoule:
 inputs:
   - name: manifest_path
     type: string
-    required: true
+    required: false
 
 ledger:
   span_namespace: reg.skill.supply-chain-sentinel

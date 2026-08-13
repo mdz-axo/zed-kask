@@ -22,6 +22,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -46,7 +47,7 @@ rjoule:
 inputs:
   - name: mode
     type: string
-    required: true
+    required: false
     description: >
       Analysis mode: code, semantic, or dual.
       code: query/traverse/analyze the codebase graph via MCP tools.
@@ -122,6 +123,7 @@ steps:
     gas_cap: 4096
     timeout_seconds: 120
     input_mapping:
+      mode: "{{ task | default(mode) }}"
       target: "{{ target }}"
       goal: "{{ goal }}"
       project_stats: "{{ project_stats | default({}) }}"
@@ -433,8 +435,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

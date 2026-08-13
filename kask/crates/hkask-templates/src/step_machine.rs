@@ -359,6 +359,63 @@ impl StepMachine {
         }
     }
 
+    /// Dispatch a step's action, retrying on `TemplateError::Timeout` if the
+    /// manifest's `error_handling` policy opts in (`on_timeout == "retry"` and
+    /// `max_retries > 0`). Non-timeout errors propagate immediately — retrying
+    /// a validation or not-found error is wasteful. The retry uses the same
+    /// per-step timeout; a longer retry timeout would need a separate schema
+    /// field. Backoff is `retry_backoff_seconds` (default 1s).
+    ///
+    /// This is the enforcement point for `ErrorHandlingConfig.on_timeout` /
+    /// `max_retries` / `retry_backoff_seconds` — previously parsed but never
+    /// read (an advertised invariant with no enforcement point).
+    async fn dispatch_with_retry(
+        &mut self,
+        node: &crate::step_graph::StepNode,
+        infra: &Infra,
+    ) -> Result<crate::step_actions::Effect> {
+        let max_retries = if self.error_handling.on_timeout == "retry" {
+            self.error_handling.max_retries
+        } else {
+            0
+        };
+
+        let mut attempt: u32 = 0;
+        loop {
+            match self.dispatch_action(node, infra).await {
+                Ok(effect) => return Ok(effect),
+                Err(crate::ports::TemplateError::Timeout {
+                    step_ordinal,
+                    elapsed_seconds,
+                }) if attempt < max_retries => {
+                    attempt += 1;
+                    tracing::warn!(
+                        target: "reg.skill.cascade.timeout_retry",
+                        step = step_ordinal,
+                        attempt,
+                        max_retries,
+                        elapsed_seconds,
+                        backoff_seconds = self.error_handling.retry_backoff_seconds,
+                        "Step {} timed out after {}s — retrying (attempt {}/{}) after {}s backoff",
+                        step_ordinal,
+                        elapsed_seconds,
+                        attempt,
+                        max_retries,
+                        self.error_handling.retry_backoff_seconds,
+                    );
+                    if self.error_handling.retry_backoff_seconds > 0 {
+                        tokio::time::sleep(std::time::Duration::from_secs(
+                            self.error_handling.retry_backoff_seconds as u64,
+                        ))
+                        .await;
+                    }
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     /// Apply an effect to the context and budget.
     fn apply_effect(
         &mut self,

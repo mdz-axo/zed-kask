@@ -13,6 +13,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -37,7 +38,7 @@ rjoule:
 inputs:
   - name: module_path
     type: string
-    required: true
+    required: false
   - name: module_source
     type: string
     required: true
@@ -75,7 +76,7 @@ steps:
     gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
-      module_path: "{{ module_path }}"
+      module_path: "{{ task | default(module_path) }}"
       module_source: "{{ module_source }}"
       caller_paths: "{{ caller_paths | default([]) }}"
       codebase_context: "{{ codebase_context | default({}) }}"
@@ -137,7 +138,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort

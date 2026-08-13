@@ -27,6 +27,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -51,7 +52,7 @@ rjoule:
 inputs:
   - name: proposition
     type: string
-    required: true
+    required: false
   - name: proof_context
     type: object
     required: false
@@ -74,7 +75,7 @@ steps:
     gas_cap: 7000
     timeout_seconds: 180
     input_mapping:
-      proposition: "{{ proposition }}"
+      proposition: "{{ task | default(proposition) }}"
       proof_context: "{{ proof_context | default({}) }}"
       code_context: "{{ code_context | default({}) }}"
 
@@ -141,8 +142,8 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort
 

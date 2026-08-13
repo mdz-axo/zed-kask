@@ -23,6 +23,7 @@ manifest:
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -47,7 +48,7 @@ rjoule:
 inputs:
   - name: target_system
     type: string
-    required: true
+    required: false
     description: Description of the system to map (software platform, business capability, technology stack, etc.).
   - name: component_inventory
     type: string
@@ -73,7 +74,7 @@ steps:
     gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
-      target_system: "{{ target_system }}"
+      target_system: "{{ task | default(target_system) }}"
       component_inventory: "{{ component_inventory | default('') }}"
 
   - ordinal: 2
@@ -198,7 +199,7 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: abort
-  max_retries: 0
+  on_timeout: retry
+  max_retries: 1
   retry_backoff_seconds: 2
   on_validation_failure: abort
