@@ -1628,20 +1628,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 inference_port.clone(),
             ))
         },
-        vec![
-            CredentialRequirement::optional(
-                "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
-                "Cache TTL in seconds for market-data responses (default 60)",
-            ),
-            CredentialRequirement::optional(
-                "HKASK_PREDICTION_MARKETS_DATA",
-                "Data directory for the calibration journal (in-memory if absent)",
-            ),
-            CredentialRequirement::optional(
-                "HKASK_FRED_API_KEY",
-                "FRED API key for live reference-level fetches (curated static defaults used when absent)",
-            ),
-        ],
+        vec![CredentialRequirement::optional(
+            "HKASK_FRED_API_KEY",
+            "FRED API key for live reference-level fetches (curated static defaults used when absent)",
+        )],
     )
     .await
 }

@@ -572,6 +572,16 @@ expect the override to be honored — silently dropping it (the pre-fix
 behavior) caused the condenser to use the default model instead of the
 requested one. Tests in `inference.rs` pin the propagation.
 
+**`generate_stream` does not honor `model_override`.** The `generate_stream`
+trait override on `LanguageModelInferencePort` hardcodes `model_override:
+None` in the `StreamInferenceRequest`. The cascade's `call_inference_stream`
+calls `generate_stream` (no override), so this is not triggered today. If a
+future caller invokes `generate_stream_with_model` on this port, the
+default trait impl handles the override by falling back to non-streaming
+`generate_with_model` — which collects the full response before emitting
+any chunk, losing the live thinking trace. Thread `model_override` through
+`generate_stream` when a caller needs streaming + override together.
+
 ## `LanguageModelProvider` registry subscriptions must filter self-events
 
 A `LanguageModelProvider` that subscribes to `LanguageModelRegistry` events

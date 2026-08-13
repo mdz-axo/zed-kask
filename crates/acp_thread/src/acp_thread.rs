@@ -4528,6 +4528,7 @@ impl AcpThread {
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
                     let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
+                    // zed-kask: D27 — sandboxed commands run non-interactively.
                     // The sandboxed command has stdin redirected to /dev/null and
                     // runs in a new session (setsid) with no controlling terminal.
                     // An interactive shell (-i) tries to set the tty process group,
@@ -10259,6 +10260,44 @@ mod tests {
             50,
             "D14: TASK_UPDATE_MS must be 50ms (20fps), not upstream's 16ms (60fps). \
              See DIVERGENCE.md D14."
+        );
+    }
+
+    /// D27: sandboxed terminal commands must run non-interactively. The sandbox
+    /// creates a new session (setsid) with no controlling terminal and stdin
+    /// redirected to /dev/null. An interactive shell (-i) tries to set the tty
+    /// process group, fails with "Cannot set tty process group (No such
+    /// process)", and exits with code 2 — making every sandboxed terminal
+    /// command appear to fail even when the command itself succeeds. This test
+    /// pins the ShellBuilder contract: non_interactive() omits the -i flag that
+    /// interactive mode would pass.
+    #[test]
+    fn test_sandboxed_terminal_runs_non_interactively() {
+        let shell = Shell::Program("/bin/sh".to_string());
+
+        // Interactive (upstream default for non-headless GUI): -i flag present.
+        let (program, args) =
+            ShellBuilder::new(&shell, false)
+                .redirect_stdin_to_dev_null()
+                .build(Some("echo hello".to_string()), &[]);
+        assert_eq!(program, "/bin/sh");
+        assert!(
+            args.contains(&"-i".to_string()),
+            "interactive shell must pass -i (upstream default for non-headless GUI)"
+        );
+
+        // Non-interactive (zed-kask sandboxed path): no -i flag.
+        let (program, args) =
+            ShellBuilder::new(&shell, false)
+                .non_interactive()
+                .redirect_stdin_to_dev_null()
+                .build(Some("echo hello".to_string()), &[]);
+        assert_eq!(program, "/bin/sh");
+        assert!(
+            !args.contains(&"-i".to_string()),
+            "D27: sandboxed terminal must not pass -i — the sandbox has no \
+             controlling terminal, so -i causes \"Cannot set tty process group\" \
+             and exit code 2. See DIVERGENCE.md D27."
         );
     }
 }

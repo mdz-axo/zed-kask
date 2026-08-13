@@ -118,25 +118,21 @@ pub struct CuratorDb {
 
 impl CuratorDb {
     fn from_context(ctx: &hkask_mcp_server::server::ServerContext) -> Self {
-        let db_path = ctx
-            .credentials
-            .get("HKASK_CURATOR_DB")
-            .cloned()
-            .unwrap_or_else(|| {
-                let p = hkask_types::agent_paths::agent_pod_db("curator");
-                let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
-                if let Some(parent) = resolved.parent()
-                    && let Err(e) = std::fs::create_dir_all(parent)
-                {
-                    tracing::warn!(
-                        target: "hkask.mcp.curator",
-                        error = %e,
-                        path = ?parent,
-                        "Failed to create curator data directory — DB open will likely fail"
-                    );
-                }
-                resolved.to_string_lossy().to_string()
-            });
+        let db_path = std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
+            let p = hkask_types::agent_paths::agent_pod_db("curator");
+            let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
+            if let Some(parent) = resolved.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                tracing::warn!(
+                    target: "hkask.mcp.curator",
+                    error = %e,
+                    path = ?parent,
+                    "Failed to create curator data directory — DB open will likely fail"
+                );
+            }
+            resolved.to_string_lossy().to_string()
+        });
         let passphrase = ctx.credentials.get("HKASK_DB_PASSPHRASE").cloned();
         let heal_enabled = passphrase.is_some();
         let stores = open_curator_stores(Some(db_path.as_str()), passphrase.as_deref());
@@ -736,10 +732,13 @@ impl CuratorServer {
                 .collect();
 
             let namespace_info = req.namespace.as_deref().unwrap_or("all");
-            RegulationSpan::Tool {
-                subsystem: hkask_types::regulation::ToolSubsystem::Curator,
-            }
-            .emit("reg_query");
+            // Telemetry breadcrumb, not a persisted event (emit is tracing::info!).
+            // Use the Curation span (not Tool) so this read-only observability
+            // query is not mislabeled as a curator tool invocation in the
+            // Regulation log — `reg.curation` / `reg_query_observed` reads as
+            // “the curator observed a Regulation query”, not “the curator tool
+            // was invoked”.
+            RegulationSpan::Curation.emit("reg_query_observed");
 
             Ok(json!({
                 "namespace": namespace_info,
@@ -777,16 +776,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             let db = Arc::new(CuratorDb::from_context(&ctx));
             Ok(CuratorServer::new(ctx.webid, db))
         },
-        vec![
-            hkask_mcp_server::CredentialRequirement::optional(
-                "HKASK_CURATOR_DB",
-                "Path to the Curator's SQLCipher database",
-            ),
-            hkask_mcp_server::CredentialRequirement::optional(
-                "HKASK_DB_PASSPHRASE",
-                "SQLCipher encryption passphrase",
-            ),
-        ],
+        vec![hkask_mcp_server::CredentialRequirement::optional(
+            "HKASK_DB_PASSPHRASE",
+            "SQLCipher encryption passphrase",
+        )],
     )
     .await
 }

@@ -1550,16 +1550,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 build_media_budget(),
             ))
         },
-        vec![
-            hkask_mcp_server::CredentialRequirement::optional(
-                "DEEPINFRA_API_KEY",
-                "DeepInfra API key for vision LLMs and media generation",
-            ),
-            hkask_mcp_server::CredentialRequirement::optional(
-                "FALAI_API_KEY",
-                "fal.ai API key for image/video generation",
-            ),
-        ],
+        vec![hkask_mcp_server::CredentialRequirement::optional(
+            "DEEPINFRA_API_KEY",
+            "DeepInfra API key for vision LLMs and media generation",
+        )],
     )
     .await
 }

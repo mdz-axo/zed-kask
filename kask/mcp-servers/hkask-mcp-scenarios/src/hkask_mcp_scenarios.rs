@@ -34,7 +34,7 @@
 
 use std::collections::HashSet;
 
-use hkask_mcp_server::server::{CredentialRequirement, McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use serde::Deserialize;
 
@@ -2011,10 +2011,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 std::sync::Mutex::new(HashSet::new()),
             ))
         },
-        vec![CredentialRequirement::optional(
-            "HKASK_SCENARIOS_DATA",
-            "Path to the scenarios data directory (in-memory if absent)",
-        )],
+        vec![],
     )
     .await
 }

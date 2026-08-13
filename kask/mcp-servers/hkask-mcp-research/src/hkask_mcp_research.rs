@@ -1293,10 +1293,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         "hkask-mcp-research",
         SERVER_VERSION,
         |ctx: ServerContext| {
-            let parse_env_u64 =
-                |k: &str| ctx.credentials.get(k).and_then(|s| s.parse::<u64>().ok());
+            let parse_env_u64 = |k: &str| std::env::var(k).ok().and_then(|s| s.parse::<u64>().ok());
             let parse_env_usize =
-                |k: &str| ctx.credentials.get(k).and_then(|s| s.parse::<usize>().ok());
+                |k: &str| std::env::var(k).ok().and_then(|s| s.parse::<usize>().ok());
 
             let pool = build_provider_pool(&ctx.credentials).map_err(|e| {
                 hkask_mcp_server::McpError::UnexpectedResponse {
@@ -1313,37 +1312,31 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 .unwrap_or(DEFAULT_CACHE_MAX_ENTRIES);
 
             let rss_db = {
-                // Resolve the RSS database path. Try credentials first (from
-                // .env, keychain, or process env via resolve_credential), then
+                // Resolve the RSS database path from the process env, then
                 // fall back to a default path under the data directory — the
                 // same pattern as HKASK_KANBAN_DB in the kata-kanban server.
-                let rss_db_path = ctx
-                    .credentials
-                    .get("HKASK_RSS_DB")
-                    .cloned()
-                    .or_else(|| std::env::var("HKASK_RSS_DB").ok())
-                    .unwrap_or_else(|| {
-                        let default_path = hkask_types::agent_paths::resolve_under_data_dir(
-                            std::path::Path::new("rss.db"),
-                        );
-                        if let Some(parent) = default_path.parent() {
-                            if let Err(error) = std::fs::create_dir_all(parent) {
-                                tracing::warn!(
-                                    target: "hkask.research.init",
-                                    path = %default_path.display(),
-                                    %error,
-                                    "Failed to create default RSS DB directory \
-                                     — the subsequent DB open will surface the failure"
-                                );
-                            }
+                let rss_db_path = std::env::var("HKASK_RSS_DB").ok().unwrap_or_else(|| {
+                    let default_path = hkask_types::agent_paths::resolve_under_data_dir(
+                        std::path::Path::new("rss.db"),
+                    );
+                    if let Some(parent) = default_path.parent() {
+                        if let Err(error) = std::fs::create_dir_all(parent) {
+                            tracing::warn!(
+                                target: "hkask.research.init",
+                                path = %default_path.display(),
+                                %error,
+                                "Failed to create default RSS DB directory \
+                                 — the subsequent DB open will surface the failure"
+                            );
                         }
-                        tracing::info!(
-                            target: "hkask.research.init",
-                            path = %default_path.display(),
-                            "Using default RSS database path (HKASK_RSS_DB not set)"
-                        );
-                        default_path.to_string_lossy().to_string()
-                    });
+                    }
+                    tracing::info!(
+                        target: "hkask.research.init",
+                        path = %default_path.display(),
+                        "Using default RSS database path (HKASK_RSS_DB not set)"
+                    );
+                    default_path.to_string_lossy().to_string()
+                });
 
                 let passphrase = ctx
                     .credentials
@@ -1419,12 +1412,6 @@ pub fn credential_requirements() -> Vec<CredentialRequirement> {
         opt("HKASK_SERPAPI_API_KEY", "SerpAPI key"),
         opt("HKASK_EXA_API_KEY", "Exa API key"),
         opt("HKASK_BROWSERBASE_API_KEY", "Browserbase API key"),
-        opt("HKASK_WEB_CACHE_TTL_SECS", "Cache TTL seconds"),
-        opt("HKASK_WEB_CACHE_MAX_ENTRIES", "Max cache entries"),
-        opt(
-            "HKASK_RSS_DB",
-            "Path to the RSS reader SQLite database (RSS tools unavailable if absent)",
-        ),
         opt(
             "HKASK_DB_PASSPHRASE",
             "Passphrase for SQLCipher encryption (required if HKASK_RSS_DB is set)",

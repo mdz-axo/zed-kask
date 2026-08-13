@@ -170,7 +170,18 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "curator",
         binary: "hkask-mcp-curator",
         description: "Curator — regulation cascade and algedonic signals",
-        credentials: Some(&["HKASK_SMTP_PASSWORD"]),
+        credentials: Some(&[
+            // SMTP password — read by the curator email sink for algedonic alerts.
+            "HKASK_SMTP_PASSWORD",
+            // SQLCipher passphrase for the curator's sovereign `pod.db`.
+            // Without this, `open_curator_stores` cannot decrypt the DB under
+            // governed launch and every store-backed tool returns
+            // `permission_denied` (escalations, regulation archive, memory).
+            // The curator's `run()` reads it via `ctx.credentials.get` with no
+            // `std::env::var` fallback, so the registry allowlist is the only
+            // delivery path under governed launch.
+            "HKASK_DB_PASSPHRASE",
+        ]),
         config_env: Some(&[
             "HKASK_MXROUTE_SERVER",
             "HKASK_SMTP_USERNAME",
@@ -1247,12 +1258,20 @@ mod tests {
     #[test]
     fn curator_allowlist_matches_actual_reads() {
         let s = server_by_id("curator");
-        // Only secret read: ctx.credentials.get("HKASK_SMTP_PASSWORD").
-        assert_eq!(
-            s.credentials.unwrap().to_vec(),
-            vec!["HKASK_SMTP_PASSWORD"],
-            "curator credentials allowlist drifted — this server holds the SMTP \
-             password and must not accumulate unrelated secrets"
+        // Secret reads: ctx.credentials.get("HKASK_SMTP_PASSWORD") (email sink)
+        // and ctx.credentials.get("HKASK_DB_PASSPHRASE") (SQLCipher pod.db).
+        // The passphrase has no std::env::var fallback in the curator's `run()`,
+        // so the allowlist is the only delivery path under governed launch.
+        let creds = s.credentials.unwrap();
+        assert!(
+            creds.contains(&"HKASK_SMTP_PASSWORD"),
+            "curator must receive HKASK_SMTP_PASSWORD for algedonic email alerts"
+        );
+        assert!(
+            creds.contains(&"HKASK_DB_PASSPHRASE"),
+            "curator must receive HKASK_DB_PASSPHRASE to open its SQLCipher pod.db \
+             under governed launch — the run() reads it from ctx.credentials \
+             with no std::env::var fallback"
         );
         assert!(
             !s.config_env.unwrap().is_empty(),

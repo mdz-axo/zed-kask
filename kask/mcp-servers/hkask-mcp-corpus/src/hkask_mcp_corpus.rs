@@ -625,41 +625,28 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         "hkask-mcp-corpus",
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::ServerContext| {
-            let ocr_model = ctx
-                .credentials
-                .get("HKASK_OCR_MODEL")
-                .cloned();
+            let ocr_model = std::env::var("HKASK_OCR_MODEL").ok();
 
             let ocr_thresholds = ThresholdConfig::from_env();
 
-                        let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&inference_port)));
-                                    let pipeline_executor = Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&llm_ocr)));
+            let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(
+                &inference_port,
+            )));
+            let pipeline_executor =
+                Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&llm_ocr)));
 
-                        Ok(CorpusServer::new(
-                            ctx.webid,
-                            ocr_model,
-                            inference_port,
-                            ocr_thresholds,
-                            Mutex::new(Vec::new()),
-                            Mutex::new(Vec::new()),
-                            llm_ocr,
-                            pipeline_executor,
-                        ))
+            Ok(CorpusServer::new(
+                ctx.webid,
+                ocr_model,
+                inference_port,
+                ocr_thresholds,
+                Mutex::new(Vec::new()),
+                Mutex::new(Vec::new()),
+                llm_ocr,
+                pipeline_executor,
+            ))
         },
-        vec![
-            hkask_mcp_server::CredentialRequirement::optional(
-                "HKASK_OCR_MODEL",
-                "Vision model for OCR (must exist in inference catalog). Required for OCR functionality.",
-            ),
-            hkask_mcp_server::CredentialRequirement::optional(
-                "HKASK_EMBEDDING_MODEL",
-                "Embedding model for corpus vectorization (default: Qwen/Qwen3-Embedding-0.6B)",
-            ),
-            hkask_mcp_server::CredentialRequirement::optional(
-                "HKASK_DEFAULT_MODEL",
-                "Default generation model for all inference (also used for prose composition). Set via HKASK_DEFAULT_MODEL env var.",
-            ),
-        ],
+        vec![],
     )
     .await
 }

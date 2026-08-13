@@ -448,11 +448,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         |ctx: hkask_mcp_server::ServerContext| {
             (|| -> anyhow::Result<CondenserServer> {
                 let store = {
-                    let db_path = ctx
-                        .credentials
-                        .get("HKASK_DB_PATH")
-                        .cloned()
-                        .or_else(|| std::env::var("HKASK_DB_PATH").ok());
+                    let db_path = std::env::var("HKASK_DB_PATH").ok();
                     match db_path {
                         Some(path) => {
                             let passphrase = ctx
@@ -491,11 +487,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     }
                 };
 
-                let default_model = ctx
-                    .credentials
-                    .get("HKASK_DEFAULT_MODEL")
-                    .cloned()
-                    .or_else(|| std::env::var("HKASK_DEFAULT_MODEL").ok())
+                let default_model = std::env::var("HKASK_DEFAULT_MODEL")
+                    .ok()
                     .unwrap_or_else(|| {
                         hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL.to_string()
                     });
@@ -528,16 +521,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 detail: e.to_string(),
             })
         },
-        vec![
-            hkask_mcp_server::CredentialRequirement::optional(
-                "HKASK_DB_PATH",
-                "Path to the condenser memory SQLite database (defaults to in-memory when unset)",
-            ),
-            hkask_mcp_server::CredentialRequirement::optional(
-                "HKASK_DB_PASSPHRASE",
-                "SQLCipher encryption passphrase for the condenser database (required when HKASK_DB_PATH is set)",
-            ),
-        ],
+        vec![hkask_mcp_server::CredentialRequirement::optional(
+            "HKASK_DB_PASSPHRASE",
+            "SQLCipher encryption passphrase for the condenser database (required when HKASK_DB_PATH is set)",
+        )],
     )
     .await
 }
