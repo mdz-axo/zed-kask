@@ -2,7 +2,7 @@
 use crate::helpers::{map_corpus_io_error, map_memory_store_error};
 use crate::{
     CorpusServer, IndexedPassage, LLMParameters, McpToolError, MemoryStore, Parameters,
-    cosine_similarity, embedding_dim, execute_tool, json, render_docproc_template, tool,
+    cosine_similarity, embedding_dim, execute_tool_semantic, json, render_docproc_template, tool,
     tool_router,
 };
 use schemars::JsonSchema;
@@ -17,7 +17,7 @@ impl CorpusServer {
         &self,
         Parameters(CacheRequest { content, label }): Parameters<CacheRequest>,
     ) -> String {
-        execute_tool(self, "corpus_cache", async {
+        execute_tool_semantic(self, "corpus_cache", Self::ontology_anchor("corpus_cache"), async {
             if content.is_empty() {
                 return Err(McpToolError::invalid_argument("content must not be empty"));
             }
@@ -98,7 +98,7 @@ impl CorpusServer {
             generate_answer,
         }): Parameters<QueryRequest>,
     ) -> String {
-        execute_tool(self, "corpus_query", async {
+        execute_tool_semantic(self, "corpus_query", Self::ontology_anchor("corpus_query"), async {
             if query.is_empty() {
                 return Err(McpToolError::invalid_argument(
                     "query must not be empty",
@@ -236,7 +236,7 @@ impl CorpusServer {
         &self,
         Parameters(ClearIndexRequest { index_id: _ }): Parameters<ClearIndexRequest>,
     ) -> String {
-        execute_tool(self, "corpus_clear_index", async {
+        execute_tool_semantic(self, "corpus_clear_index", Self::ontology_anchor("corpus_clear_index"), async {
             let mut index = match self.index.lock() {
                 Ok(i) => i,
                 Err(poisoned) => {
@@ -259,7 +259,7 @@ impl CorpusServer {
         description = "Purge QA embeddings and h_mems by entity-ref prefix. Deletes embeddings matching the prefix, then deletes h_mems with matching entity or attribute. Useful for clearing old training data before re-ingesting."
     )]
     pub async fn corpus_purge_qa(&self, Parameters(req): Parameters<PurgeQaRequest>) -> String {
-        execute_tool(self, "corpus_purge_qa", async {
+        execute_tool_semantic(self, "corpus_purge_qa", Self::ontology_anchor("corpus_purge_qa"), async {
             let dim = embedding_dim();
             let store = MemoryStore::open(&req.db_path, &req.passphrase, dim).map_err(|e| {
                 McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))

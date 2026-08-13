@@ -8,7 +8,7 @@
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
 use crate::helpers::map_corpus_io_error;
 use crate::{
-    Arc, CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool,
+    Arc, CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool_semantic,
     extract_json_from_response, json, normalize_concept, read_jsonl_lenient,
     render_docproc_template, tool, tool_router,
 };
@@ -193,7 +193,7 @@ impl CorpusServer {
         description = "Tag chunks with multi-dimensional ontology annotations: 5W1H interrogatory dimensions, Dublin Core metadata, PKO process concepts, FIBO/GOLEM domain concepts, and expertise level. Uses LLM-based extraction via Jinja2 template. Computes graph-centrality salience. Every chunk gets at least one 5W1H dimension — no zero-salience chunks."
     )]
     pub async fn corpus_tag_chunks(&self, Parameters(req): Parameters<TagChunksRequest>) -> String {
-        execute_tool(self, "corpus_tag_chunks", async {
+        execute_tool_semantic(self, "corpus_tag_chunks", Self::ontology_anchor("corpus_tag_chunks"), async {
             let chunks = read_input_chunks(&req.chunks_jsonl)?;
             if chunks.is_empty() {
                 return Err(McpToolError::invalid_argument("chunks_jsonl is empty"));

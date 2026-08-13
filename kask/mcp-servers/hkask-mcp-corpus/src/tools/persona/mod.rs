@@ -13,7 +13,7 @@ use crate::corpus::EmbedService;
 use crate::helpers::{map_database_error, map_embedding_error, map_service_error};
 use crate::{
     CorpusServer, McpToolError, Parameters, cosine_distance, default_embedding_model,
-    embedding_dim, execute_tool, json, tool, tool_router,
+    embedding_dim, execute_tool_semantic, json, tool, tool_router,
 };
 use hkask_services_core::HkaskSettings;
 use hkask_storage::database::sqlite::SqliteDriver;
@@ -274,7 +274,7 @@ impl CorpusServer {
         &self,
         Parameters(params): Parameters<BuildRequest>,
     ) -> String {
-        execute_tool(self, "corpus_build_persona", async {
+        execute_tool_semantic(self, "corpus_build_persona", Self::ontology_anchor("corpus_build_persona"), async {
             // The config_path is LLM-reachable (params.config_path), so
             // contain it under the project root before reading or passing
             // it to EmbedService (CWE-22/200). contain_for_read canonicalizes
@@ -338,7 +338,7 @@ impl CorpusServer {
 
     #[tool(description = "Generate prose in an author's style.")]
     pub async fn corpus_compose(&self, Parameters(params): Parameters<ComposeRequest>) -> String {
-        execute_tool(self, "corpus_compose", async {
+        execute_tool_semantic(self, "corpus_compose", Self::ontology_anchor("corpus_compose"), async {
             let model = embedding_model();
             let gen_model = generation_model();
             let inf_cfg = inference_config();
@@ -393,7 +393,7 @@ impl CorpusServer {
         description = "Rewrite a passage or code snippet in an author's style, optimized for a specific quality dimension (gentle/schriver/hopper/lovelace/composite). Delegates to corpus_compose with dimension-specific guidance."
     )]
     pub async fn corpus_rewrite(&self, Parameters(params): Parameters<RewriteRequest>) -> String {
-        execute_tool(self, "corpus_rewrite", async {
+        execute_tool_semantic(self, "corpus_rewrite", Self::ontology_anchor("corpus_rewrite"), async {
             let dimension_guidance = match params.dimension.to_lowercase().as_str() {
                 "gentle" => {
                     "Rewrite this text to maximize agent-correctness. Docs ARE code — ensure every statement is actionable and unambiguous. Remove any stale references or outdated information."
@@ -484,7 +484,7 @@ impl CorpusServer {
         let persona = params.persona.clone();
         let document_content = params.document_content.clone();
 
-        execute_tool(self, "corpus_compare", async {
+        execute_tool_semantic(self, "corpus_compare", Self::ontology_anchor("corpus_compare"), async {
             let db = Database::open(&params.db_path, &params.passphrase)
                 .map_err(|e| map_database_error(e, "Open memory DB"))?;
             let pool = db
@@ -648,7 +648,7 @@ impl CorpusServer {
 
     #[tool(description = "Generate prose blending two authors' styles.")]
     pub async fn corpus_mashup(&self, Parameters(params): Parameters<MashupRequest>) -> String {
-        execute_tool(self, "corpus_mashup", async {
+        execute_tool_semantic(self, "corpus_mashup", Self::ontology_anchor("corpus_mashup"), async {
             let blend = params.blend.clamp(0.0, 1.0);
             let centroid_a_ref = format!("style:{}:centroid", params.author_a);
             let centroid_b_ref = format!("style:{}:centroid", params.author_b);
@@ -748,7 +748,7 @@ impl CorpusServer {
 
     #[tool(description = "Manage the registry of built author replicas.")]
     pub async fn corpus_registry(&self, Parameters(params): Parameters<RegistryRequest>) -> String {
-        execute_tool(self, "corpus_registry", async {
+        execute_tool_semantic(self, "corpus_registry", Self::ontology_anchor("corpus_registry"), async {
             let db = Database::open(&params.db_path, &params.passphrase)
                 .map_err(|e| map_database_error(e, "Open memory DB"))?;
             let pool = db
@@ -868,7 +868,7 @@ impl CorpusServer {
 
     #[tool(description = "Explain what style centroids are and how the metadata layer works.")]
     pub async fn corpus_explain(&self) -> String {
-        execute_tool(self, "corpus_explain", async {
+        execute_tool_semantic(self, "corpus_explain", Self::ontology_anchor("corpus_explain"), async {
             Ok(json!({
             "what_is_a_centroid": format!("A style centroid is the average of all embedded passage vectors for an author. Each passage (50-200 words) is converted to a {}-dimensional vector via {}. The centroid is the 'average passage' — prose that matches the author's style will have a low cosine distance to it.", embedding_dim(), default_embedding_model()),
             "metadata_layer": {

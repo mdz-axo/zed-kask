@@ -57,7 +57,8 @@ pub(crate) use hkask_types::json_extract::extract_json_from_response;
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use crate::ocr::ThresholdConfig;
-use hkask_mcp_server::server::{McpToolError, execute_tool};
+use hkask_bridge_ontology::{dc_bibo, eso, golem, pko};
+use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use hkask_memory::MemoryStore;
 use hkask_services_core::settings::HkaskSettings;
 use hkask_types::InferencePort;
@@ -628,6 +629,42 @@ impl CorpusServer {
             + Self::persona_router()
             + Self::gather_router()
     }
+
+    /// Map a tool name to its ontology concept URI. The concept tags the
+    /// `reg.tool.*` span (via `execute_tool_semantic`) for type-aware feedback
+    /// routing. Four families, per the corpus pipeline:
+    ///
+    /// - Document processing (convert, OCR, chunk, tag, embed) → Dublin Core
+    ///   `TEXT` / PKO `FUNCTION` / `ACTION` / `STEP_VERIFICATION`.
+    /// - Knowledge extraction (extract_assertions, QA) → ESO `HAS_EVIDENCE`.
+    /// - Persona/narrative (build_persona, compose, rewrite, compare, mashup)
+    ///   → GOLEM `CREATIVE_WORK`.
+    /// - Storage/query/gather → Dublin Core `DATASET` / PKO `ACTION`.
+    fn ontology_anchor(tool: &str) -> Option<&'static str> {
+        match tool {
+            // Document processing → text artifacts.
+            "corpus_convert" | "corpus_ocr" => Some(dc_bibo::TEXT),
+            // Document processing → PKO functions/actions.
+            "corpus_chunk" | "corpus_embed" => Some(pko::FUNCTION),
+            "corpus_tag_chunks" => Some(pko::ACTION),
+            "corpus_is_complex" => Some(pko::STEP_VERIFICATION),
+            // Knowledge extraction → epistemic evidence.
+            "corpus_extract_assertions"
+            | "corpus_generate_qa"
+            | "corpus_generate_qa_batch"
+            | "corpus_ingest_qa" => Some(eso::HAS_EVIDENCE),
+            // Persona/narrative → creative works.
+            "corpus_build_persona"
+            | "corpus_compose"
+            | "corpus_rewrite"
+            | "corpus_compare"
+            | "corpus_mashup" => Some(golem::CREATIVE_WORK),
+            // Gather → discovery actions.
+            "corpus_discover" | "corpus_discover_company" => Some(pko::ACTION),
+            // Storage/query/registry → dataset operations.
+            _ => Some(dc_bibo::DATASET),
+        }
+    }
 }
 
 #[rmcp::tool_handler(router = Self::combined_router())]
@@ -645,6 +682,79 @@ mod tool_surface_tests {
     fn tool_surface_is_exactly_27_registered_tools() {
         let n = CorpusServer::combined_router().list_all().len();
         assert_eq!(n, 27, "corpus registered tool surface changed; got {n}");
+    }
+
+    // Coverage: every registered tool must have a non-None ontology anchor.
+    #[test]
+    fn ontology_anchor_covers_all_registered_tools() {
+        let router = CorpusServer::combined_router();
+        for tool in router.list_all() {
+            assert!(
+                CorpusServer::ontology_anchor(&tool.name).is_some(),
+                "ontology_anchor returned None for registered tool '{}'; \
+                 add an explicit arm in CorpusServer::ontology_anchor",
+                tool.name
+            );
+        }
+    }
+
+    // Regression: distinct tool families must anchor on distinct concepts.
+    #[test]
+    fn ontology_anchor_distinguishes_tool_families() {
+        let convert = CorpusServer::ontology_anchor("corpus_convert");
+        let extract = CorpusServer::ontology_anchor("corpus_extract_assertions");
+        let persona = CorpusServer::ontology_anchor("corpus_build_persona");
+        let query = CorpusServer::ontology_anchor("corpus_query");
+        let chunk = CorpusServer::ontology_anchor("corpus_chunk");
+        let discover = CorpusServer::ontology_anchor("corpus_discover");
+        let complex = CorpusServer::ontology_anchor("corpus_is_complex");
+        // Seven distinct concepts across seven tool families.
+        let concepts = [convert, extract, persona, query, chunk, discover, complex];
+        for (i, a) in concepts.iter().enumerate() {
+            for (j, b) in concepts.iter().enumerate() {
+                if i != j {
+                    assert_ne!(
+                        a, b,
+                        "tool families {i} and {j} must anchor on distinct concepts"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            convert,
+            Some(dc_bibo::TEXT),
+            "corpus_convert must anchor on Dublin Core Text"
+        );
+        assert_eq!(
+            extract,
+            Some(eso::HAS_EVIDENCE),
+            "corpus_extract_assertions must anchor on ESO hasEvidence"
+        );
+        assert_eq!(
+            persona,
+            Some(golem::CREATIVE_WORK),
+            "corpus_build_persona must anchor on GOLEM CreativeWork"
+        );
+        assert_eq!(
+            query,
+            Some(dc_bibo::DATASET),
+            "corpus_query must anchor on Dublin Core Dataset"
+        );
+        assert_eq!(
+            chunk,
+            Some(pko::FUNCTION),
+            "corpus_chunk must anchor on PKO Function"
+        );
+        assert_eq!(
+            discover,
+            Some(pko::ACTION),
+            "corpus_discover must anchor on PKO Action"
+        );
+        assert_eq!(
+            complex,
+            Some(pko::STEP_VERIFICATION),
+            "corpus_is_complex must anchor on PKO StepVerification"
+        );
     }
 }
 

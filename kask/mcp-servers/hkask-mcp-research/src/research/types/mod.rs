@@ -84,6 +84,53 @@ pub struct BrowseRequest {
     pub timeout_secs: Option<u64>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvaluateEvidenceRequest {
+    /// The research question to evaluate evidence against.
+    pub question: String,
+    /// Artifacts to evaluate (URLs + optional content/metadata from web_search/web_extract).
+    pub artifacts: Vec<EvaluateArtifact>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvaluateArtifact {
+    pub url: String,
+    /// Title of the source (from SearchResultOutput.title).
+    pub title: Option<String>,
+    /// Publication date (from SearchResultOutput.published).
+    pub published: Option<String>,
+    /// Source domain (from SearchResultOutput.source).
+    pub source: Option<String>,
+    /// Extracted content (from web_extract).
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CiteSourcesRequest {
+    /// Sources to cite (URLs + metadata from web_search/web_extract results).
+    pub sources: Vec<CiteSource>,
+    /// Citation style.
+    pub style: CiteStyle,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CiteSource {
+    pub url: String,
+    pub title: Option<String>,
+    pub published: Option<String>,
+    pub source: Option<String>,
+    pub authors: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CiteStyle {
+    Apa,
+    Bibtex,
+    Chicago,
+    Json,
+}
+
 // ── Result types ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

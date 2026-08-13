@@ -35,8 +35,9 @@ pub use rss_types::{
 pub use types::RateLimiter;
 pub use types::{
     AnswerBox, BrowseOutput, BrowseRequest, BrowseResult, COMPOUND_PROVIDER_TIMEOUT_SECS,
-    CompoundSearchResult, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS,
-    DEFAULT_REQUEST_TIMEOUT_SECS, ExtractOptions, ExtractOutput, ExtractRequest, ExtractedContent,
+    CiteSource, CiteSourcesRequest, CiteStyle, CompoundSearchResult, DEFAULT_CACHE_MAX_ENTRIES,
+    DEFAULT_CACHE_TTL_SECS, DEFAULT_REQUEST_TIMEOUT_SECS, EvaluateArtifact,
+    EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest, ExtractedContent,
     FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput, MAX_CACHE_MAX_ENTRIES,
     MAX_CACHE_TTL_SECS, MAX_CACHE_VALUE_BYTES, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
     MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, ProviderFailureRecord,

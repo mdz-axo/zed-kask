@@ -19,7 +19,7 @@ use crate::services::prompt_builder::{
 use crate::tools::semantic::default_corpus_passphrase;
 use crate::{
     Arc, CorpusServer, McpToolError, MemoryStore, Parameters, default_owner, embedding_dim,
-    execute_tool, json, normalize_in_place, owner_webid, tool, tool_router,
+    execute_tool_semantic, json, normalize_in_place, owner_webid, tool, tool_router,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -47,7 +47,7 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<DedupChunksRequest>,
     ) -> String {
-        execute_tool(self, "corpus_dedup_chunks", async {
+        execute_tool_semantic(self, "corpus_dedup_chunks", Self::ontology_anchor("corpus_dedup_chunks"), async {
             let chunks = read_tagged_chunks(&req.tagged_jsonl)?;
             if chunks.is_empty() {
                 return Err(McpToolError::invalid_argument("tagged_jsonl is empty"));
@@ -138,7 +138,7 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<ConsolidateChunksRequest>,
     ) -> String {
-        execute_tool(self, "corpus_consolidate_chunks", async {
+        execute_tool_semantic(self, "corpus_consolidate_chunks", Self::ontology_anchor("corpus_consolidate_chunks"), async {
             ConsolidationService::new(Arc::clone(&self.inference_router))
                 .consolidate(ChunkConsolidationRequest {
                     tagged_jsonl: req.tagged_jsonl,
@@ -165,7 +165,7 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<BuildPromptsRequest>,
     ) -> String {
-        execute_tool(self, "corpus_build_prompts", async {
+        execute_tool_semantic(self, "corpus_build_prompts", Self::ontology_anchor("corpus_build_prompts"), async {
             PromptBuilderService::new()
                 .build_prompts(ServiceBuildPromptsRequest {
                     tagged_jsonl: req.tagged_jsonl,
@@ -191,7 +191,7 @@ impl CorpusServer {
         description = "Ingest generated QA pairs: parse, quality-filter, exact-match dedup (case-insensitive on instruction), write training JSONL, store QA h_mems with 5W1H dimension + Dublin Core / PKO metadata. Semantic dedup (SemDeDup K-means) was removed — see the inline rationale."
     )]
     pub async fn corpus_ingest_qa(&self, Parameters(req): Parameters<IngestQaRequest>) -> String {
-        execute_tool(self, "corpus_ingest_qa", async {
+        execute_tool_semantic(self, "corpus_ingest_qa", Self::ontology_anchor("corpus_ingest_qa"), async {
             let content = std::fs::read_to_string(&req.generated_jsonl).map_err(|e| {
                 McpToolError::invalid_argument(format!("Cannot read generated_jsonl '{}': {e}", req.generated_jsonl))
             })?;
@@ -517,7 +517,7 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<PrepareTrainingDatasetRequest>,
     ) -> String {
-        execute_tool(self, "corpus_prepare_training_dataset", async {
+        execute_tool_semantic(self, "corpus_prepare_training_dataset", Self::ontology_anchor("corpus_prepare_training_dataset"), async {
             // Note: this site intentionally does NOT use `read_jsonl`/`read_jsonl_lenient`.
             // It collects per-line parse errors (with line numbers) into the tool
             // response (`parse_errors`), which is part of the external API. The

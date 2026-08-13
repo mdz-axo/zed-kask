@@ -9,7 +9,7 @@
 //! content to disk for reuse by the embedding pipeline.
 
 use crate::helpers::map_corpus_io_error;
-use crate::{CorpusServer, McpToolError, Parameters, execute_tool, tool, tool_router};
+use crate::{CorpusServer, McpToolError, Parameters, execute_tool_semantic, tool, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -79,7 +79,7 @@ impl CorpusServer {
         description = "Discover an academic author's body of work and generate a corpus.yaml for corpus_build_persona. Delegates to the replica-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes."
     )]
     pub async fn corpus_discover(&self, Parameters(params): Parameters<DiscoverRequest>) -> String {
-        execute_tool(self, "corpus_discover", async {
+        execute_tool_semantic(self, "corpus_discover", Self::ontology_anchor("corpus_discover"), async {
             let author_name = params.author_name.clone();
 
             let mode = match params.mode.as_str() {
@@ -180,7 +180,7 @@ impl CorpusServer {
         &self,
         Parameters(params): Parameters<CacheWorkRequest>,
     ) -> String {
-        execute_tool(self, "corpus_cache_work", async {
+        execute_tool_semantic(self, "corpus_cache_work", Self::ontology_anchor("corpus_cache_work"), async {
             if params.slug.is_empty()
                 || !params
                     .slug
@@ -231,7 +231,7 @@ impl CorpusServer {
         &self,
         Parameters(params): Parameters<DiscoverCompanyRequest>,
     ) -> String {
-        execute_tool(self, "corpus_discover_company", async {
+        execute_tool_semantic(self, "corpus_discover_company", Self::ontology_anchor("corpus_discover_company"), async {
             // Validate the mode parameter.
             let mode = match params.mode.as_str() {
                 "agentic" | "curated" => params.mode.clone(),

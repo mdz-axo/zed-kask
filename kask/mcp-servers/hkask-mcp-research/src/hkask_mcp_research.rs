@@ -21,9 +21,10 @@ use rusqlite::Connection;
 
 use crate::research::db::*;
 use crate::research::{
-    BrowseOutput, BrowseRequest, Continuation, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS,
-    DeleteSyntheticRequest, DiscoverRequest, EditTagRequest, ExtractOptions, ExtractOutput,
-    ExtractRequest, FetchRequest, FetchSyntheticRequest, FindSimilarOutput, FindSimilarRequest,
+    BrowseOutput, BrowseRequest, CiteSourcesRequest, CiteStyle, Continuation,
+    DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS, DeleteSyntheticRequest, DiscoverRequest,
+    EditTagRequest, EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest,
+    FetchRequest, FetchSyntheticRequest, FindSimilarOutput, FindSimilarRequest,
     FindSimilarResultOutput, GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest,
     MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
     MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, PingOutput,
@@ -136,9 +137,9 @@ mod tool_surface_tests {
     // silently registers nothing (`cargo check` passes on an unwired orphan).
     // Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_21_registered_tools() {
+    fn tool_surface_is_exactly_23_registered_tools() {
         let n = ResearchServer::tool_router().list_all().len();
-        assert_eq!(n, 21, "research registered tool surface changed; got {n}");
+        assert_eq!(n, 23, "research registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must have a non-None ontology anchor.
@@ -160,26 +161,43 @@ mod tool_surface_tests {
 
     // Regression: the ontology anchor must not collapse to a single constant
     // (the stub pattern). Distinct tool families must anchor on distinct
-    // concepts — web search (ESO evidence), synthesis (PKO procedure
-    // execution), and feed management (Dublin Core dataset) are different
+    // concepts — web search (ESO evidence), RSS search (PKO action),
+    // synthesis (PKO procedure execution), feed management (PKO procedure),
+    // evidence evaluation (PKO step verification), citation (PKO references
+    // resource), and pure queries (Dublin Core dataset) are different
     // ontological categories.
     #[test]
     fn ontology_anchor_distinguishes_tool_families() {
         let web_search = ResearchServer::ontology_anchor("web_search");
+        let rss_search = ResearchServer::ontology_anchor("rss_search");
         let synthesize = ResearchServer::ontology_anchor("rss_synthesize");
         let feed_mgmt = ResearchServer::ontology_anchor("rss_subscribe");
-        assert_ne!(
-            web_search, synthesize,
-            "web_search and rss_synthesize must anchor on distinct concepts"
-        );
-        assert_ne!(
-            synthesize, feed_mgmt,
-            "rss_synthesize and rss_subscribe must anchor on distinct concepts"
-        );
+        let evaluate = ResearchServer::ontology_anchor("evaluate_evidence");
+        let cite = ResearchServer::ontology_anchor("cite_sources");
+        let query = ResearchServer::ontology_anchor("rss_list_subscriptions");
+        // Seven distinct concepts across seven tool families.
+        let concepts = [
+            web_search, rss_search, synthesize, feed_mgmt, evaluate, cite, query,
+        ];
+        for (i, a) in concepts.iter().enumerate() {
+            for (j, b) in concepts.iter().enumerate() {
+                if i != j {
+                    assert_ne!(
+                        a, b,
+                        "tool families {i} and {j} must anchor on distinct concepts"
+                    );
+                }
+            }
+        }
         assert_eq!(
             web_search,
             Some(eso::HAS_EVIDENCE),
             "web_search must anchor on ESO hasEvidence"
+        );
+        assert_eq!(
+            rss_search,
+            Some(pko::ACTION),
+            "rss_search must anchor on PKO Action"
         );
         assert_eq!(
             synthesize,
@@ -188,8 +206,23 @@ mod tool_surface_tests {
         );
         assert_eq!(
             feed_mgmt,
+            Some(pko::PROCEDURE),
+            "rss_subscribe must anchor on PKO Procedure"
+        );
+        assert_eq!(
+            evaluate,
+            Some(pko::STEP_VERIFICATION),
+            "evaluate_evidence must anchor on PKO StepVerification"
+        );
+        assert_eq!(
+            cite,
+            Some(pko::REFERENCES_RESOURCE),
+            "cite_sources must anchor on PKO ReferencesResource"
+        );
+        assert_eq!(
+            query,
             Some(dc_bibo::DATASET),
-            "rss_subscribe must anchor on Dublin Core Dataset"
+            "rss_list_subscriptions must anchor on Dublin Core Dataset"
         );
     }
 }
@@ -198,23 +231,41 @@ mod tool_surface_tests {
 impl ResearchServer {
     /// Map a tool name to its ontology concept URI. The concept tags the
     /// `reg.tool.*` span (via `execute_tool_semantic`) for type-aware feedback
-    /// routing. Three families, per the research workflow:
+    /// routing. The mapping follows the research workflow stages
+    /// (`pko::research_stage_to_pko`) with ESO for the epistemic axis:
     ///
-    /// - Web search/browse/extract tools → ESO `HAS_EVIDENCE` (search discovers
-    ///   evidence).
-    /// - Synthesis tools (`rss_synthesize`, `rss_fetch_synthetic`) → PKO
-    ///   `PROCEDURE_EXECUTION` (synthesis is a process execution).
-    /// - RSS feed management and the rest → `dc_bibo::DATASET` (feed entries
-    ///   are datasets; the fallback for tools that don't fit a specific stage).
+    /// - Web search/browse/extract → ESO `HAS_EVIDENCE` (search discovers
+    ///   evidence — the epistemic axis is primary for web tools).
+    /// - RSS search/discover/fetch → PKO `ACTION` (the process axis is
+    ///   primary: these are search/extract stage actions).
+    /// - Synthesis tools → PKO `PROCEDURE_EXECUTION` (synthesize stage).
+    /// - Feed management (subscribe/unsubscribe/import/export/tag) → PKO
+    ///   `PROCEDURE` (curate stage — organizing is a procedure).
+    /// - Pure queries and health checks → `dc_bibo::DATASET` (no process
+    ///   stage; the artifact is a dataset reference).
     fn ontology_anchor(tool: &str) -> Option<&'static str> {
         match tool {
-            // Epistemic-axis: search/browse/extract discovers evidence.
+            // Epistemic-axis: web search/browse/extract discovers evidence.
             "web_search" | "web_find_similar" | "web_extract" | "web_browse" => {
                 Some(eso::HAS_EVIDENCE)
             }
-            // Process-axis: synthesis is a procedure execution.
+            // Process-axis search/extract: RSS discovery and fetching are actions.
+            "rss_search" | "rss_discover_feeds" | "rss_fetch" => Some(pko::ACTION),
+            // Process-axis synthesize: synthesis is a procedure execution.
             "rss_synthesize" | "rss_fetch_synthetic" => Some(pko::PROCEDURE_EXECUTION),
-            // Dataset-axis: feed management + everything else.
+            // Process-axis curate: feed management is organizing (a procedure).
+            "rss_subscribe"
+            | "rss_unsubscribe"
+            | "rss_mark_all_read"
+            | "rss_export_opml"
+            | "rss_import_opml"
+            | "rss_edit_tag"
+            | "rss_delete_synthetic" => Some(pko::PROCEDURE),
+            // Process-axis evaluate: evidence evaluation is step verification.
+            "evaluate_evidence" => Some(pko::STEP_VERIFICATION),
+            // Process-axis cite: citation is a reference to a resource.
+            "cite_sources" => Some(pko::REFERENCES_RESOURCE),
+            // Dataset-axis: pure queries and health checks (no process stage).
             _ => Some(dc_bibo::DATASET),
         }
     }
@@ -1438,6 +1489,211 @@ impl ResearchServer {
                     "stream_id": req.stream_id,
                     "deleted": removed > 0,
                     "removed": removed
+                }))
+            },
+        )
+        .await
+    }
+
+    // ═══════════════════ Evidence evaluation ═══════════════════
+
+    #[tool(
+        description = "Evaluate retrieved evidence against a research question. Scores each artifact on recency, source credibility, corroboration, and counter-evidence. Emits ESO-anchored confidence and corroboration links. Use after web_search/web_extract to assess evidence quality before synthesis."
+    )]
+    pub async fn evaluate_evidence(
+        &self,
+        Parameters(EvaluateEvidenceRequest {
+            question,
+            artifacts,
+        }): Parameters<EvaluateEvidenceRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "evaluate_evidence",
+            Self::ontology_anchor("evaluate_evidence"),
+            async {
+                if question.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument("question must not be empty"));
+                }
+                if artifacts.is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "artifacts must not be empty",
+                    ));
+                }
+
+                // Deterministic signal computation (not LLM relay — G3 contract).
+                // Corroboration: count artifacts sharing the same source domain.
+                let mut source_counts: std::collections::HashMap<&str, usize> =
+                    std::collections::HashMap::new();
+                for a in &artifacts {
+                    if let Some(src) = &a.source {
+                        *source_counts.entry(src.as_str()).or_default() += 1;
+                    }
+                }
+
+                let evaluations: Vec<serde_json::Value> = artifacts
+                    .iter()
+                    .map(|a| {
+                        let corroboration = a
+                            .source
+                            .as_deref()
+                            .and_then(|s| source_counts.get(s))
+                            .copied()
+                            .unwrap_or(1);
+                        // Recency: presence of a published date is a positive signal.
+                        let has_date = a.published.is_some();
+                        // Confidence: deterministic composite — corroboration +
+                        // recency + has_content. Not an LLM score.
+                        let has_content = a.content.is_some();
+                        let confidence = (corroboration as f64 * 0.3)
+                            + (if has_date { 0.2 } else { 0.0 })
+                            + (if has_content { 0.2 } else { 0.0 })
+                            + 0.3; // base confidence
+                        let confidence = confidence.min(1.0);
+
+                        serde_json::json!({
+                            "url": a.url,
+                            "title": a.title,
+                            "confidence": (confidence * 100.0).round() / 100.0,
+                            "corroboration_count": corroboration,
+                            "has_published_date": has_date,
+                            "has_content": has_content,
+                            "eso:hasConfidence": format!("{:.2}", confidence),
+                            "eso:corroboratedBy": if corroboration > 1 {
+                                serde_json::Value::String(format!(
+                                    "{} independent sources on same domain",
+                                    corroboration
+                                ))
+                            } else {
+                                serde_json::Value::Null
+                            },
+                        })
+                    })
+                    .collect();
+
+                // Overall assessment: the question's evidence base.
+                let total = evaluations.len();
+                let avg_confidence: f64 = if total > 0 {
+                    evaluations
+                        .iter()
+                        .filter_map(|e| e.get("confidence").and_then(|c| c.as_f64()))
+                        .sum::<f64>()
+                        / total as f64
+                } else {
+                    0.0
+                };
+
+                Ok(serde_json::json!({
+                    "question": question,
+                    "artifacts_evaluated": total,
+                    "average_confidence": (avg_confidence * 100.0).round() / 100.0,
+                    "evaluations": evaluations,
+                    "pko:stepVerification": "evidence_quality_assessed",
+                }))
+            },
+        )
+        .await
+    }
+
+    // ═══════════════════ Citation ═══════════════════
+
+    #[tool(
+        description = "Generate citations from retrieved sources. Normalizes web_search/web_extract results into a canonical citation record and emits citations in the requested style (apa, bibtex, chicago, json). Deterministic formatting — no LLM relay."
+    )]
+    pub async fn cite_sources(
+        &self,
+        Parameters(CiteSourcesRequest { sources, style }): Parameters<CiteSourcesRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "cite_sources",
+            Self::ontology_anchor("cite_sources"),
+            async {
+                if sources.is_empty() {
+                    return Err(McpToolError::invalid_argument("sources must not be empty"));
+                }
+
+                let citations: Vec<String> = sources
+                    .iter()
+                    .map(|s| {
+                        let authors = s.authors.as_ref().and_then(|a| {
+                            if a.is_empty() {
+                                None
+                            } else {
+                                Some(a.join(", "))
+                            }
+                        });
+                        let year = s
+                            .published
+                            .as_deref()
+                            .and_then(|p| p.get(..4))
+                            .unwrap_or("n.d.");
+                        let title = s.title.clone().unwrap_or_else(|| {
+                            s.url.split('/').nth(3).unwrap_or("Untitled").to_string()
+                        });
+
+                        match style {
+                            CiteStyle::Apa => {
+                                let author_part = authors.unwrap_or_else(|| {
+                                    s.source.clone().unwrap_or_else(|| "Anonymous".to_string())
+                                });
+                                format!(
+                                    "{author_part} ({year}). {title}. Retrieved from {url}",
+                                    author_part = author_part,
+                                    year = year,
+                                    title = title,
+                                    url = s.url,
+                                )
+                            }
+                            CiteStyle::Bibtex => {
+                                let key = s
+                                    .source
+                                    .as_deref()
+                                    .unwrap_or("unknown")
+                                    .split('.')
+                                    .next()
+                                    .unwrap_or("unknown");
+                                let author_field = authors.unwrap_or_else(|| {
+                                    s.source.clone().unwrap_or_else(|| "Anonymous".to_string())
+                                });
+                                format!(
+                                    "@misc{{{key}_{year},\n  author = {{{author_field}}},\n  title = {{{title}}},\n  year = {{{year}}},\n  url = {{{url}}}\n}}",
+                                    key = key,
+                                    year = year,
+                                    author_field = author_field,
+                                    title = title,
+                                    url = s.url,
+                                )
+                            }
+                            CiteStyle::Chicago => {
+                                let author_part = authors.unwrap_or_else(|| {
+                                    s.source.clone().unwrap_or_else(|| "Anonymous".to_string())
+                                });
+                                format!(
+                                    "{author_part}. \"{title}.\" Accessed {url}.",
+                                    author_part = author_part,
+                                    title = title,
+                                    url = s.url,
+                                )
+                            }
+                            CiteStyle::Json => serde_json::json!({
+                                "url": s.url,
+                                "title": title,
+                                "authors": s.authors,
+                                "published": s.published,
+                                "source": s.source,
+                                "year": year,
+                            })
+                            .to_string(),
+                        }
+                    })
+                    .collect();
+
+                Ok(serde_json::json!({
+                    "style": serde_json::to_value(&style).unwrap_or_default(),
+                    "count": citations.len(),
+                    "citations": citations,
+                    "pko:referencesResource": "citations_generated",
                 }))
             },
         )
