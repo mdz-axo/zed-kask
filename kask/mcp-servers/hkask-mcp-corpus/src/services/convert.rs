@@ -111,13 +111,25 @@ impl<'a> ConvertService<'a> {
             self.ocr_model.clone().ok_or(OcrError::NoModel)?
         };
 
-        let vision_models = self.inference_router.list_vision_models().await;
+        let vision_models = self
+            .inference_router
+            .list_vision_models()
+            .await
+            .map_err(|e| {
+                OcrError::InferenceFailed(format!(
+                    "list_vision_models failed — inference port unavailable: {e}"
+                ))
+            })?;
         let is_vision = vision_models
             .iter()
             .any(|m| m.model == model || m.prefixed_name == model);
 
         if !is_vision {
-            let all_models = self.inference_router.list_models().await;
+            let all_models = self.inference_router.list_models().await.map_err(|e| {
+                OcrError::InferenceFailed(format!(
+                    "list_models failed — inference port unavailable: {e}"
+                ))
+            })?;
             let exists = all_models
                 .iter()
                 .any(|m| m.model == model || m.prefixed_name == model);

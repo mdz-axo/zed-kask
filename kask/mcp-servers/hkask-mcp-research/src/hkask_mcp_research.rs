@@ -10,8 +10,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
+use hkask_bridge_ontology::{dc_bibo, eso, pko};
 use hkask_mcp_server::server::{
-    CredentialRequirement, McpToolError, ServerContext, execute_tool, map_join_error,
+    CredentialRequirement, McpToolError, ServerContext, execute_tool_semantic, map_join_error,
     resolve_credential, validate_tool_url_with_dns,
 };
 use reqwest::Client;
@@ -139,15 +140,90 @@ mod tool_surface_tests {
         let n = ResearchServer::tool_router().list_all().len();
         assert_eq!(n, 21, "research registered tool surface changed; got {n}");
     }
+
+    // Coverage: every registered tool must have a non-None ontology anchor.
+    // Catches the silent-drop failure mode where a new tool is added to the
+    // router without a corresponding arm in `ontology_anchor`. The count pin
+    // above catches addition; this test catches anchoring.
+    #[test]
+    fn ontology_anchor_covers_all_registered_tools() {
+        let router = ResearchServer::tool_router();
+        for tool in router.list_all() {
+            assert!(
+                ResearchServer::ontology_anchor(&tool.name).is_some(),
+                "ontology_anchor returned None for registered tool '{}'; \
+                 add an explicit arm in ResearchServer::ontology_anchor",
+                tool.name
+            );
+        }
+    }
+
+    // Regression: the ontology anchor must not collapse to a single constant
+    // (the stub pattern). Distinct tool families must anchor on distinct
+    // concepts — web search (ESO evidence), synthesis (PKO procedure
+    // execution), and feed management (Dublin Core dataset) are different
+    // ontological categories.
+    #[test]
+    fn ontology_anchor_distinguishes_tool_families() {
+        let web_search = ResearchServer::ontology_anchor("web_search");
+        let synthesize = ResearchServer::ontology_anchor("rss_synthesize");
+        let feed_mgmt = ResearchServer::ontology_anchor("rss_subscribe");
+        assert_ne!(
+            web_search, synthesize,
+            "web_search and rss_synthesize must anchor on distinct concepts"
+        );
+        assert_ne!(
+            synthesize, feed_mgmt,
+            "rss_synthesize and rss_subscribe must anchor on distinct concepts"
+        );
+        assert_eq!(
+            web_search,
+            Some(eso::HAS_EVIDENCE),
+            "web_search must anchor on ESO hasEvidence"
+        );
+        assert_eq!(
+            synthesize,
+            Some(pko::PROCEDURE_EXECUTION),
+            "rss_synthesize must anchor on PKO ProcedureExecution"
+        );
+        assert_eq!(
+            feed_mgmt,
+            Some(dc_bibo::DATASET),
+            "rss_subscribe must anchor on Dublin Core Dataset"
+        );
+    }
 }
 
 #[tool_router(server_handler)]
 impl ResearchServer {
+    /// Map a tool name to its ontology concept URI. The concept tags the
+    /// `reg.tool.*` span (via `execute_tool_semantic`) for type-aware feedback
+    /// routing. Three families, per the research workflow:
+    ///
+    /// - Web search/browse/extract tools → ESO `HAS_EVIDENCE` (search discovers
+    ///   evidence).
+    /// - Synthesis tools (`rss_synthesize`, `rss_fetch_synthetic`) → PKO
+    ///   `PROCEDURE_EXECUTION` (synthesis is a process execution).
+    /// - RSS feed management and the rest → `dc_bibo::DATASET` (feed entries
+    ///   are datasets; the fallback for tools that don't fit a specific stage).
+    fn ontology_anchor(tool: &str) -> Option<&'static str> {
+        match tool {
+            // Epistemic-axis: search/browse/extract discovers evidence.
+            "web_search" | "web_find_similar" | "web_extract" | "web_browse" => {
+                Some(eso::HAS_EVIDENCE)
+            }
+            // Process-axis: synthesis is a procedure execution.
+            "rss_synthesize" | "rss_fetch_synthetic" => Some(pko::PROCEDURE_EXECUTION),
+            // Dataset-axis: feed management + everything else.
+            _ => Some(dc_bibo::DATASET),
+        }
+    }
+
     // ═══════════════════ Web tools ═══════════════════
 
     #[tool(description = "Liveness and provider health check")]
     pub async fn web_ping(&self) -> String {
-        execute_tool(self, "web_ping", async {
+        execute_tool_semantic(self, "web_ping", Self::ontology_anchor("web_ping"), async {
             if let Err(e) = self.rate_limiter.check("web_ping") {
                 tracing::warn!(
                     target: "hkask.web",
@@ -173,101 +249,106 @@ impl ResearchServer {
         description = "Search the web with RRF fusion across providers. Strategy selects providers: quick (single keyword), web (all), news (news-capable), deep (all + 2x results + content extraction on top results)"
     )]
     pub async fn web_search(&self, Parameters(req): Parameters<SearchRequest>) -> String {
-        execute_tool(self, "web_search", async {
-            self.rate_limiter.check("web_search")?;
+        execute_tool_semantic(
+            self,
+            "web_search",
+            Self::ontology_anchor("web_search"),
+            async {
+                self.rate_limiter.check("web_search")?;
 
-            if req.query.is_empty() {
-                return Err(McpToolError::invalid_argument("query must not be empty"));
-            }
-            if req.query.len() > MAX_QUERY_LENGTH {
-                return Err(McpToolError::invalid_argument(format!(
-                    "query exceeds maximum length of {} characters",
-                    MAX_QUERY_LENGTH
-                )));
-            }
+                if req.query.is_empty() {
+                    return Err(McpToolError::invalid_argument("query must not be empty"));
+                }
+                if req.query.len() > MAX_QUERY_LENGTH {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "query exceeds maximum length of {} characters",
+                        MAX_QUERY_LENGTH
+                    )));
+                }
 
-            let strat = match req.strategy.as_deref() {
-                Some(s) => s.parse::<SearchStrategy>().map_err(McpToolError::from)?,
-                None => SearchStrategy::Quick,
-            };
+                let strat = match req.strategy.as_deref() {
+                    Some(s) => s.parse::<SearchStrategy>().map_err(McpToolError::from)?,
+                    None => SearchStrategy::Quick,
+                };
 
-            let num_results = req.num_results.unwrap_or(10).min(50);
+                let num_results = req.num_results.unwrap_or(10).min(50);
 
-            let freshness = match req.freshness.as_deref() {
-                Some(f) => Some(
-                    f.parse::<crate::research::types::Freshness>()
-                        .map_err(McpToolError::from)?,
-                ),
-                None => None,
-            };
+                let freshness = match req.freshness.as_deref() {
+                    Some(f) => Some(
+                        f.parse::<crate::research::types::Freshness>()
+                            .map_err(McpToolError::from)?,
+                    ),
+                    None => None,
+                };
 
-            let fingerprint = self.pool.provider_fingerprint();
-            let ckey = cache_key(
-                &strat.to_string(),
-                &req.query,
-                &serde_json::json!({
-                    "num_results": num_results,
-                    "freshness": freshness,
-                    "include_domains": req.include_domains,
-                    "exclude_domains": req.exclude_domains,
-                }),
-                &fingerprint,
-            );
+                let fingerprint = self.pool.provider_fingerprint();
+                let ckey = cache_key(
+                    &strat.to_string(),
+                    &req.query,
+                    &serde_json::json!({
+                        "num_results": num_results,
+                        "freshness": freshness,
+                        "include_domains": req.include_domains,
+                        "exclude_domains": req.exclude_domains,
+                    }),
+                    &fingerprint,
+                );
 
-            if let Some(cached) = self.cache.get(&ckey).await {
-                return Ok(cached);
-            }
+                if let Some(cached) = self.cache.get(&ckey).await {
+                    return Ok(cached);
+                }
 
-            let search_query = SearchQuery {
-                query: req.query.clone(),
-                num_results,
-                include_domains: req.include_domains.unwrap_or_default(),
-                exclude_domains: req.exclude_domains.unwrap_or_default(),
-                freshness,
-            };
+                let search_query = SearchQuery {
+                    query: req.query.clone(),
+                    num_results,
+                    include_domains: req.include_domains.unwrap_or_default(),
+                    exclude_domains: req.exclude_domains.unwrap_or_default(),
+                    freshness,
+                };
 
-            let mut compound = self
-                .pool
-                .search(&search_query, strat)
-                .await
-                .map_err(McpToolError::from)?;
+                let mut compound = self
+                    .pool
+                    .search(&search_query, strat)
+                    .await
+                    .map_err(McpToolError::from)?;
 
-            compound.results.truncate(num_results as usize);
+                compound.results.truncate(num_results as usize);
 
-            let search_output = SearchOutput {
-                query: compound.query.clone(),
-                strategy: compound.strategy.clone(),
-                results: compound
-                    .results
-                    .iter()
-                    .map(SearchResultOutput::from)
-                    .collect(),
-                answer_box: compound.answer_box.clone(),
-                related_questions: compound.related_questions.clone(),
-                count: compound.results.len(),
-                providers_failed: compound.providers_failed.clone(),
-            };
+                let search_output = SearchOutput {
+                    query: compound.query.clone(),
+                    strategy: compound.strategy.clone(),
+                    results: compound
+                        .results
+                        .iter()
+                        .map(SearchResultOutput::from)
+                        .collect(),
+                    answer_box: compound.answer_box.clone(),
+                    related_questions: compound.related_questions.clone(),
+                    count: compound.results.len(),
+                    providers_failed: compound.providers_failed.clone(),
+                };
 
-            let metadata = SearchMetadata::from(&compound);
-            tracing::info!(
-                target: "hkask.web",
-                strategy = %metadata.strategy,
-                providers_queried = ?metadata.providers_queried,
-                providers_succeeded = ?metadata.providers_succeeded,
-                providers_failed = ?metadata.providers_failed,
-                total_before_dedup = metadata.total_before_dedup,
-                duplicates_removed = metadata.duplicates_removed,
-                top_rrf_scores = ?metadata.top_rrf_scores,
-                "Regulation web_search metadata"
-            );
+                let metadata = SearchMetadata::from(&compound);
+                tracing::info!(
+                    target: "hkask.web",
+                    strategy = %metadata.strategy,
+                    providers_queried = ?metadata.providers_queried,
+                    providers_succeeded = ?metadata.providers_succeeded,
+                    providers_failed = ?metadata.providers_failed,
+                    total_before_dedup = metadata.total_before_dedup,
+                    duplicates_removed = metadata.duplicates_removed,
+                    top_rrf_scores = ?metadata.top_rrf_scores,
+                    "Regulation web_search metadata"
+                );
 
-            let output = serde_json::to_value(&search_output)
-                .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
+                let output = serde_json::to_value(&search_output)
+                    .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
 
-            self.cache.insert(ckey, output.clone()).await;
+                self.cache.insert(ckey, output.clone()).await;
 
-            Ok(output)
-        })
+                Ok(output)
+            },
+        )
         .await
     }
 
@@ -276,50 +357,56 @@ impl ResearchServer {
         &self,
         Parameters(FindSimilarRequest { url, num_results }): Parameters<FindSimilarRequest>,
     ) -> String {
-        execute_tool(self, "web_find_similar", async {
-            self.rate_limiter.check("web_find_similar")?;
+        execute_tool_semantic(
+            self,
+            "web_find_similar",
+            Self::ontology_anchor("web_find_similar"),
+            async {
+                self.rate_limiter.check("web_find_similar")?;
 
-            validate_tool_url_with_dns(&url).await?;
+                validate_tool_url_with_dns(&url).await?;
 
-            let num = num_results.unwrap_or(5).min(20);
+                let num = num_results.unwrap_or(5).min(20);
 
-            // Not cached: web_find_similar skips the response cache (unlike
-            // web_search and web_extract). A find-similar result is sensitive
-            // to the source URL's evolving neighbourhood and stale quickly.
-            tracing::debug!(target: "hkask.web", "web_find_similar cache miss (not cached)");
+                // Not cached: web_find_similar skips the response cache (unlike
+                // web_search and web_extract). A find-similar result is sensitive
+                // to the source URL's evolving neighbourhood and stale quickly.
+                tracing::debug!(target: "hkask.web", "web_find_similar cache miss (not cached)");
 
-            self.pool
-                .find_similar(&url, num)
-                .await
-                .map(|output| {
-                    let results: Vec<FindSimilarResultOutput> = output
-                        .results
-                        .into_iter()
-                        .map(|r| {
-                            let key = r.url.to_lowercase();
-                            FindSimilarResultOutput {
-                                title: r.title,
-                                url: r.url,
-                                description: r.description,
-                                source: r.source,
-                                published: r.published,
-                                semantic_score: output.semantic_scores.get(&key).copied(),
-                                content_preview: output.content_previews.get(&key).cloned(),
-                            }
-                        })
-                        .collect();
+                self.pool
+                    .find_similar(&url, num)
+                    .await
+                    .map(|output| {
+                        let results: Vec<FindSimilarResultOutput> = output
+                            .results
+                            .into_iter()
+                            .map(|r| {
+                                let key = r.url.to_lowercase();
+                                FindSimilarResultOutput {
+                                    title: r.title,
+                                    url: r.url,
+                                    description: r.description,
+                                    source: r.source,
+                                    published: r.published,
+                                    semantic_score: output.semantic_scores.get(&key).copied(),
+                                    content_preview: output.content_previews.get(&key).cloned(),
+                                }
+                            })
+                            .collect();
 
-                    let fs_output = FindSimilarOutput {
-                        source_url: url,
-                        count: results.len(),
-                        results,
-                    };
+                        let fs_output = FindSimilarOutput {
+                            source_url: url,
+                            count: results.len(),
+                            results,
+                        };
 
-                    serde_json::to_value(&fs_output)
-                        .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }))
-                })
-                .map_err(McpToolError::from)
-        })
+                        serde_json::to_value(&fs_output).unwrap_or_else(
+                            |_| serde_json::json!({ "error": "serialization failed" }),
+                        )
+                    })
+                    .map_err(McpToolError::from)
+            },
+        )
         .await
     }
 
@@ -335,88 +422,94 @@ impl ResearchServer {
             wait_for_ms,
         }): Parameters<ExtractRequest>,
     ) -> String {
-        execute_tool(self, "web_extract", async {
-            self.rate_limiter.check("web_extract")?;
+        execute_tool_semantic(
+            self,
+            "web_extract",
+            Self::ontology_anchor("web_extract"),
+            async {
+                self.rate_limiter.check("web_extract")?;
 
-            if url.len() > MAX_URL_LENGTH {
-                return Err(McpToolError::invalid_argument(format!(
-                    "url exceeds maximum length of {} characters",
-                    MAX_URL_LENGTH
-                )));
-            }
-            if let Some(ref prompt) = json_prompt
-                && prompt.len() > MAX_JSON_PROMPT_LENGTH
-            {
-                return Err(McpToolError::invalid_argument(format!(
-                    "json_prompt exceeds maximum length of {} characters",
-                    MAX_JSON_PROMPT_LENGTH
-                )));
-            }
-            if let Some(ref schema) = json_schema
-                && let Ok(bytes) = serde_json::to_string(schema)
-                && bytes.len() > MAX_JSON_SCHEMA_BYTES
-            {
-                return Err(McpToolError::invalid_argument(format!(
-                    "json_schema exceeds maximum size of {} bytes",
-                    MAX_JSON_SCHEMA_BYTES
-                )));
-            }
+                if url.len() > MAX_URL_LENGTH {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "url exceeds maximum length of {} characters",
+                        MAX_URL_LENGTH
+                    )));
+                }
+                if let Some(ref prompt) = json_prompt
+                    && prompt.len() > MAX_JSON_PROMPT_LENGTH
+                {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "json_prompt exceeds maximum length of {} characters",
+                        MAX_JSON_PROMPT_LENGTH
+                    )));
+                }
+                if let Some(ref schema) = json_schema
+                    && let Ok(bytes) = serde_json::to_string(schema)
+                    && bytes.len() > MAX_JSON_SCHEMA_BYTES
+                {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "json_schema exceeds maximum size of {} bytes",
+                        MAX_JSON_SCHEMA_BYTES
+                    )));
+                }
 
-            validate_tool_url_with_dns(&url).await?;
+                validate_tool_url_with_dns(&url).await?;
 
-            let fmt = format.unwrap_or_else(|| "markdown".to_string());
-            let main_content_only = main_content_only.unwrap_or(true);
-            let wait_for_ms_val = wait_for_ms.unwrap_or(0);
-            // Compute the cache key before moving json_schema into opts.
-            let json_schema_str = json_schema
-                .as_ref()
-                .and_then(|v| serde_json::to_string(v).ok());
-            let json_schema_inner = json_schema.map(hkask_mcp_server::AnyJsonValue::into_inner);
+                let fmt = format.unwrap_or_else(|| "markdown".to_string());
+                let main_content_only = main_content_only.unwrap_or(true);
+                let wait_for_ms_val = wait_for_ms.unwrap_or(0);
+                // Compute the cache key before moving json_schema into opts.
+                let json_schema_str = json_schema
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok());
+                let json_schema_inner = json_schema.map(hkask_mcp_server::AnyJsonValue::into_inner);
 
-            let fingerprint = self.pool.provider_fingerprint();
-            let cache_params = serde_json::json!({
-                "format": fmt,
-                "main_content_only": main_content_only,
-                "json_prompt": json_prompt,
-                "json_schema": json_schema_str,
-                "wait_for_ms": wait_for_ms_val,
-            });
-            let ckey = cache_key("extract", &url, &cache_params, &fingerprint);
+                let fingerprint = self.pool.provider_fingerprint();
+                let cache_params = serde_json::json!({
+                    "format": fmt,
+                    "main_content_only": main_content_only,
+                    "json_prompt": json_prompt,
+                    "json_schema": json_schema_str,
+                    "wait_for_ms": wait_for_ms_val,
+                });
+                let ckey = cache_key("extract", &url, &cache_params, &fingerprint);
 
-            let opts = ExtractOptions {
-                format: fmt,
-                json_prompt,
-                json_schema: json_schema_inner,
-                main_content_only,
-                wait_for_ms: wait_for_ms_val,
-            };
+                let opts = ExtractOptions {
+                    format: fmt,
+                    json_prompt,
+                    json_schema: json_schema_inner,
+                    main_content_only,
+                    wait_for_ms: wait_for_ms_val,
+                };
 
-            if let Some(cached) = self.cache.get(&ckey).await {
-                return Ok(cached);
-            }
+                if let Some(cached) = self.cache.get(&ckey).await {
+                    return Ok(cached);
+                }
 
-            let json_result = self
-                .pool
-                .extract(&url, &opts)
-                .await
-                .map(|result| {
-                    let output = ExtractOutput {
-                        url: result.url,
-                        format: result.format,
-                        content: result.content,
-                        metadata: result.metadata,
-                    };
-                    serde_json::to_value(&output)
-                        .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }))
-                })
-                .map_err(McpToolError::from);
+                let json_result = self
+                    .pool
+                    .extract(&url, &opts)
+                    .await
+                    .map(|result| {
+                        let output = ExtractOutput {
+                            url: result.url,
+                            format: result.format,
+                            content: result.content,
+                            metadata: result.metadata,
+                        };
+                        serde_json::to_value(&output).unwrap_or_else(
+                            |_| serde_json::json!({ "error": "serialization failed" }),
+                        )
+                    })
+                    .map_err(McpToolError::from);
 
-            if let Ok(ref json) = json_result {
-                self.cache.insert(ckey, json.clone()).await;
-            }
+                if let Ok(ref json) = json_result {
+                    self.cache.insert(ckey, json.clone()).await;
+                }
 
-            json_result
-        })
+                json_result
+            },
+        )
         .await
     }
 
@@ -429,50 +522,56 @@ impl ResearchServer {
             timeout_secs,
         }): Parameters<BrowseRequest>,
     ) -> String {
-        execute_tool(self, "web_browse", async {
-            self.rate_limiter.check("web_browse")?;
+        execute_tool_semantic(
+            self,
+            "web_browse",
+            Self::ontology_anchor("web_browse"),
+            async {
+                self.rate_limiter.check("web_browse")?;
 
-            // Not cached: web_browse skips the response cache (unlike
-            // web_search and web_extract). Browsed content is interactive and
-            // session-specific; a cached snapshot would mislead on re-browse.
-            tracing::debug!(target: "hkask.web", "web_browse cache miss (not cached)");
+                // Not cached: web_browse skips the response cache (unlike
+                // web_search and web_extract). Browsed content is interactive and
+                // session-specific; a cached snapshot would mislead on re-browse.
+                tracing::debug!(target: "hkask.web", "web_browse cache miss (not cached)");
 
-            if url.len() > MAX_URL_LENGTH {
-                return Err(McpToolError::invalid_argument(format!(
-                    "url exceeds maximum length of {} characters",
-                    MAX_URL_LENGTH
-                )));
-            }
-            if let Some(ref instr) = instruction
-                && instr.len() > MAX_INSTRUCTION_LENGTH
-            {
-                return Err(McpToolError::invalid_argument(format!(
-                    "instruction exceeds maximum length of {} characters",
-                    MAX_INSTRUCTION_LENGTH
-                )));
-            }
+                if url.len() > MAX_URL_LENGTH {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "url exceeds maximum length of {} characters",
+                        MAX_URL_LENGTH
+                    )));
+                }
+                if let Some(ref instr) = instruction
+                    && instr.len() > MAX_INSTRUCTION_LENGTH
+                {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "instruction exceeds maximum length of {} characters",
+                        MAX_INSTRUCTION_LENGTH
+                    )));
+                }
 
-            validate_tool_url_with_dns(&url).await?;
+                validate_tool_url_with_dns(&url).await?;
 
-            let instr = instruction.unwrap_or_else(|| "Extract page content".to_string());
-            let timeout =
-                Duration::from_secs(timeout_secs.unwrap_or(30)).min(Duration::from_secs(120));
+                let instr = instruction.unwrap_or_else(|| "Extract page content".to_string());
+                let timeout =
+                    Duration::from_secs(timeout_secs.unwrap_or(30)).min(Duration::from_secs(120));
 
-            self.pool
-                .browse(&url, &instr, timeout)
-                .await
-                .map(|result| {
-                    let output = BrowseOutput {
-                        url: result.url,
-                        content: result.content,
-                        instruction: result.instruction,
-                        actions_taken: result.actions_taken,
-                    };
-                    serde_json::to_value(&output)
-                        .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }))
-                })
-                .map_err(McpToolError::from)
-        })
+                self.pool
+                    .browse(&url, &instr, timeout)
+                    .await
+                    .map(|result| {
+                        let output = BrowseOutput {
+                            url: result.url,
+                            content: result.content,
+                            instruction: result.instruction,
+                            actions_taken: result.actions_taken,
+                        };
+                        serde_json::to_value(&output).unwrap_or_else(
+                            |_| serde_json::json!({ "error": "serialization failed" }),
+                        )
+                    })
+                    .map_err(McpToolError::from)
+            },
+        )
         .await
     }
 
@@ -483,7 +582,7 @@ impl ResearchServer {
         &self,
         Parameters(SubscribeRequest { url, label, folder }): Parameters<SubscribeRequest>,
     ) -> String {
-        execute_tool(self, "rss_subscribe", async {
+        execute_tool_semantic(self, "rss_subscribe", Self::ontology_anchor("rss_subscribe"), async {
             self.rate_limiter.check("rss_subscribe")?;
             let db = require_rss_db!(self);
 
@@ -533,7 +632,7 @@ impl ResearchServer {
         &self,
         Parameters(UnsubscribeRequest { stream_id }): Parameters<UnsubscribeRequest>,
     ) -> String {
-        execute_tool(self, "rss_unsubscribe", async {
+        execute_tool_semantic(self, "rss_unsubscribe", Self::ontology_anchor("rss_unsubscribe"), async {
             let db = require_rss_db!(self);
 
             let sid = stream_id.clone();
@@ -554,7 +653,7 @@ impl ResearchServer {
         &self,
         Parameters(ListSubscriptionsRequest { folder }): Parameters<ListSubscriptionsRequest>,
     ) -> String {
-        execute_tool(self, "rss_list_subscriptions", async {
+        execute_tool_semantic(self, "rss_list_subscriptions", Self::ontology_anchor("rss_list_subscriptions"), async {
             let db = require_rss_db!(self);
             let result = spawn_db(db, move |conn| list_subscriptions(conn, folder.as_deref())).await;
             handle_db_result!(
@@ -569,7 +668,7 @@ impl ResearchServer {
         &self,
         Parameters(FetchRequest { stream_id }): Parameters<FetchRequest>,
     ) -> String {
-        execute_tool(self, "rss_fetch", async {
+        execute_tool_semantic(self, "rss_fetch", Self::ontology_anchor("rss_fetch"), async {
             self.rate_limiter.check("rss_fetch")?;
             let db = require_rss_db!(self);
             let sid = stream_id.clone();
@@ -660,7 +759,7 @@ impl ResearchServer {
             continuation_token,
         }): Parameters<GetEntriesRequest>,
     ) -> String {
-        execute_tool(self, "rss_get_entries", async {
+        execute_tool_semantic(self, "rss_get_entries", Self::ontology_anchor("rss_get_entries"), async {
             let db = require_rss_db!(self);
             let limit = (count.unwrap_or(DEFAULT_PAGE_SIZE as u32) as usize).min(MAX_PAGE_SIZE);
             let offset = continuation_token
@@ -708,15 +807,20 @@ impl ResearchServer {
         &self,
         Parameters(MarkReadRequest { stream_id }): Parameters<MarkReadRequest>,
     ) -> String {
-        execute_tool(self, "rss_mark_all_read", async {
-            let db = require_rss_db!(self);
-            let sid = stream_id.clone();
-            let result = spawn_db(db, move |conn| mark_stream_read(conn, &sid)).await;
-            handle_db_result!(
-                result,
-                |marked| serde_json::json!({"stream_id": stream_id, "marked_read": marked})
-            )
-        })
+        execute_tool_semantic(
+            self,
+            "rss_mark_all_read",
+            Self::ontology_anchor("rss_mark_all_read"),
+            async {
+                let db = require_rss_db!(self);
+                let sid = stream_id.clone();
+                let result = spawn_db(db, move |conn| mark_stream_read(conn, &sid)).await;
+                handle_db_result!(
+                    result,
+                    |marked| serde_json::json!({"stream_id": stream_id, "marked_read": marked})
+                )
+            },
+        )
         .await
     }
 
@@ -725,15 +829,20 @@ impl ResearchServer {
         &self,
         Parameters(UnreadCountRequest { stream_id }): Parameters<UnreadCountRequest>,
     ) -> String {
-        execute_tool(self, "rss_get_unread_count", async {
-            let db = require_rss_db!(self);
-            let sid = stream_id.clone();
-            let result = spawn_db(db, move |conn| count_entries(conn, &sid, true)).await;
-            handle_db_result!(
-                result,
-                |count| serde_json::json!({"stream_id": stream_id, "unread_count": count})
-            )
-        })
+        execute_tool_semantic(
+            self,
+            "rss_get_unread_count",
+            Self::ontology_anchor("rss_get_unread_count"),
+            async {
+                let db = require_rss_db!(self);
+                let sid = stream_id.clone();
+                let result = spawn_db(db, move |conn| count_entries(conn, &sid, true)).await;
+                handle_db_result!(
+                    result,
+                    |count| serde_json::json!({"stream_id": stream_id, "unread_count": count})
+                )
+            },
+        )
         .await
     }
 
@@ -744,7 +853,7 @@ impl ResearchServer {
             crate::research::rss_types::SearchRequest,
         >,
     ) -> String {
-        execute_tool(self, "rss_search", async {
+        execute_tool_semantic(self, "rss_search", Self::ontology_anchor("rss_search"), async {
             let db = require_rss_db!(self);
             let limit = (limit.unwrap_or(10) as usize).min(MAX_PAGE_SIZE);
             let q = query.clone();
@@ -758,11 +867,16 @@ impl ResearchServer {
 
     #[tool(description = "Export subscriptions as OPML 2.0")]
     pub async fn rss_export_opml(&self) -> String {
-        execute_tool(self, "rss_export_opml", async {
-            let db = require_rss_db!(self);
-            let result = spawn_db(db, export_opml).await;
-            handle_db_result!(result, |opml| serde_json::json!({"opml": opml}))
-        })
+        execute_tool_semantic(
+            self,
+            "rss_export_opml",
+            Self::ontology_anchor("rss_export_opml"),
+            async {
+                let db = require_rss_db!(self);
+                let result = spawn_db(db, export_opml).await;
+                handle_db_result!(result, |opml| serde_json::json!({"opml": opml}))
+            },
+        )
         .await
     }
 
@@ -771,11 +885,16 @@ impl ResearchServer {
         &self,
         Parameters(ImportOpmlRequest { opml_content }): Parameters<ImportOpmlRequest>,
     ) -> String {
-        execute_tool(self, "rss_import_opml", async {
-            let db = require_rss_db!(self);
-            let result = spawn_db(db, move |conn| import_opml(conn, &opml_content)).await;
-            handle_db_result!(result, |v| v)
-        })
+        execute_tool_semantic(
+            self,
+            "rss_import_opml",
+            Self::ontology_anchor("rss_import_opml"),
+            async {
+                let db = require_rss_db!(self);
+                let result = spawn_db(db, move |conn| import_opml(conn, &opml_content)).await;
+                handle_db_result!(result, |v| v)
+            },
+        )
         .await
     }
 
@@ -784,26 +903,36 @@ impl ResearchServer {
         &self,
         Parameters(DiscoverRequest { url }): Parameters<DiscoverRequest>,
     ) -> String {
-        execute_tool(self, "rss_discover_feeds", async {
-            self.rate_limiter.check("rss_discover_feeds")?;
-            validate_tool_url_with_dns(&url).await?;
-            match discover_feeds(&self.rss_client, &url).await {
-                Ok(feeds) => {
-                    Ok(serde_json::json!({"url": url, "feeds": feeds, "count": feeds.len()}))
+        execute_tool_semantic(
+            self,
+            "rss_discover_feeds",
+            Self::ontology_anchor("rss_discover_feeds"),
+            async {
+                self.rate_limiter.check("rss_discover_feeds")?;
+                validate_tool_url_with_dns(&url).await?;
+                match discover_feeds(&self.rss_client, &url).await {
+                    Ok(feeds) => {
+                        Ok(serde_json::json!({"url": url, "feeds": feeds, "count": feeds.len()}))
+                    }
+                    Err(e) => Err(McpToolError::unavailable(e.to_string())),
                 }
-                Err(e) => Err(McpToolError::unavailable(e.to_string())),
-            }
-        })
+            },
+        )
         .await
     }
 
     #[tool(description = "Edit tags on entries: mark read/unread, star/unstar, add/remove labels")]
     pub async fn rss_edit_tag(&self, Parameters(req): Parameters<EditTagRequest>) -> String {
-        execute_tool(self, "rss_edit_tag", async {
-            let db = require_rss_db!(self);
-            let result = spawn_db(db, move |conn| edit_tags(conn, &req)).await;
-            handle_db_result!(result, |v| v)
-        })
+        execute_tool_semantic(
+            self,
+            "rss_edit_tag",
+            Self::ontology_anchor("rss_edit_tag"),
+            async {
+                let db = require_rss_db!(self);
+                let result = spawn_db(db, move |conn| edit_tags(conn, &req)).await;
+                handle_db_result!(result, |v| v)
+            },
+        )
         .await
     }
 
@@ -813,7 +942,7 @@ impl ResearchServer {
         description = "Create a synthetic feed from a non-feed website or JSON API. Extracts items using the specified extractor kind (css, json_path, diff_hash) and stores them as feed entries. Optionally subscribes to the created feed."
     )]
     pub async fn rss_synthesize(&self, Parameters(req): Parameters<SynthesizeRequest>) -> String {
-        execute_tool(self, "rss_synthesize", async {
+        execute_tool_semantic(self, "rss_synthesize", Self::ontology_anchor("rss_synthesize"), async {
             self.rate_limiter.check("rss_synthesize")?;
             let db = require_rss_db!(self);
 
@@ -1037,28 +1166,33 @@ impl ResearchServer {
         &self,
         Parameters(req): Parameters<FetchSyntheticRequest>,
     ) -> String {
-        execute_tool(self, "rss_fetch_synthetic", async {
-            self.rate_limiter.check("rss_fetch_synthetic")?;
-            let db = require_rss_db!(self);
+        execute_tool_semantic(
+            self,
+            "rss_fetch_synthetic",
+            Self::ontology_anchor("rss_fetch_synthetic"),
+            async {
+                self.rate_limiter.check("rss_fetch_synthetic")?;
+                let db = require_rss_db!(self);
 
-            // Resolve the feed URL from the stream_id.
-            let sid = req.stream_id.clone();
-            let lookup = spawn_db(db, move |conn| resolve_feed_with_headers(conn, &sid)).await;
-            let (feed_url, _etag, _lm) = match lookup {
-                Ok(Ok(v)) => v,
-                Ok(Err(e)) => return Err(McpToolError::not_found(e.to_string())),
-                Err(e) => return Err(map_join_error(e, "rss fetch task failed")),
-            };
+                // Resolve the feed URL from the stream_id.
+                let sid = req.stream_id.clone();
+                let lookup = spawn_db(db, move |conn| resolve_feed_with_headers(conn, &sid)).await;
+                let (feed_url, _etag, _lm) = match lookup {
+                    Ok(Ok(v)) => v,
+                    Ok(Err(e)) => return Err(McpToolError::not_found(e.to_string())),
+                    Err(e) => return Err(map_join_error(e, "rss fetch task failed")),
+                };
 
-            // Check if this is a synthetic feed.
-            if !feed_url.starts_with("synthetic://") {
-                return Err(McpToolError::invalid_argument(
-                    "not a synthetic feed; use rss_fetch instead",
-                ));
-            }
+                // Check if this is a synthetic feed.
+                if !feed_url.starts_with("synthetic://") {
+                    return Err(McpToolError::invalid_argument(
+                        "not a synthetic feed; use rss_fetch instead",
+                    ));
+                }
 
-            self.fetch_synthetic_inner(&req.stream_id, feed_url).await
-        })
+                self.fetch_synthetic_inner(&req.stream_id, feed_url).await
+            },
+        )
         .await
     }
 
@@ -1235,14 +1369,19 @@ impl ResearchServer {
 
     #[tool(description = "List all synthetic feeds with their specs and last-extraction stats")]
     pub async fn rss_list_synthetic(&self) -> String {
-        execute_tool(self, "rss_list_synthetic", async {
-            let db = require_rss_db!(self);
-            let result = spawn_db(db, move |conn| list_synthetic_feeds(conn)).await;
-            handle_db_result!(result, |feeds: Vec<serde_json::Value>| serde_json::json!({
-                "count": feeds.len(),
-                "synthetic_feeds": feeds
-            }))
-        })
+        execute_tool_semantic(
+            self,
+            "rss_list_synthetic",
+            Self::ontology_anchor("rss_list_synthetic"),
+            async {
+                let db = require_rss_db!(self);
+                let result = spawn_db(db, move |conn| list_synthetic_feeds(conn)).await;
+                handle_db_result!(result, |feeds: Vec<serde_json::Value>| serde_json::json!({
+                    "count": feeds.len(),
+                    "synthetic_feeds": feeds
+                }))
+            },
+        )
         .await
     }
 
@@ -1253,50 +1392,55 @@ impl ResearchServer {
         &self,
         Parameters(req): Parameters<DeleteSyntheticRequest>,
     ) -> String {
-        execute_tool(self, "rss_delete_synthetic", async {
-            let db = require_rss_db!(self);
+        execute_tool_semantic(
+            self,
+            "rss_delete_synthetic",
+            Self::ontology_anchor("rss_delete_synthetic"),
+            async {
+                let db = require_rss_db!(self);
 
-            // Resolve feed_url from stream_id.
-            let sid = req.stream_id.clone();
-            let feed_url_result = spawn_db(db.clone(), move |conn| {
-                // resolve_feed_url returns Option<String>, wrap in Ok for the
-                // spawn_db Result<Result<_, anyhow>, JoinError> shape.
-                Ok::<Option<String>, anyhow::Error>(resolve_feed_url(conn, &sid))
-            })
-            .await;
+                // Resolve feed_url from stream_id.
+                let sid = req.stream_id.clone();
+                let feed_url_result = spawn_db(db.clone(), move |conn| {
+                    // resolve_feed_url returns Option<String>, wrap in Ok for the
+                    // spawn_db Result<Result<_, anyhow>, JoinError> shape.
+                    Ok::<Option<String>, anyhow::Error>(resolve_feed_url(conn, &sid))
+                })
+                .await;
 
-            let feed_url = match feed_url_result {
-                Ok(Ok(Some(url))) => url,
-                Ok(Ok(None)) => {
-                    return Err(McpToolError::not_found("stream_id not found"));
+                let feed_url = match feed_url_result {
+                    Ok(Ok(Some(url))) => url,
+                    Ok(Ok(None)) => {
+                        return Err(McpToolError::not_found("stream_id not found"));
+                    }
+                    Ok(Err(e)) => return Err(map_db_error(e)),
+                    Err(e) => return Err(map_join_error(e, "db lookup failed")),
+                };
+
+                if !feed_url.starts_with("synthetic://") {
+                    return Err(McpToolError::invalid_argument(
+                        "not a synthetic feed; use rss_unsubscribe instead",
+                    ));
                 }
-                Ok(Err(e)) => return Err(map_db_error(e)),
-                Err(e) => return Err(map_join_error(e, "db lookup failed")),
-            };
 
-            if !feed_url.starts_with("synthetic://") {
-                return Err(McpToolError::invalid_argument(
-                    "not a synthetic feed; use rss_unsubscribe instead",
-                ));
-            }
+                let feed_id: i64 = feed_url
+                    .strip_prefix("synthetic://")
+                    .ok_or_else(|| {
+                        McpToolError::internal(
+                            "feed_url missing synthetic:// prefix despite starts_with check",
+                        )
+                    })?
+                    .parse()
+                    .map_err(|e| McpToolError::invalid_argument(format!("invalid feed_id: {e}")))?;
 
-            let feed_id: i64 = feed_url
-                .strip_prefix("synthetic://")
-                .ok_or_else(|| {
-                    McpToolError::internal(
-                        "feed_url missing synthetic:// prefix despite starts_with check",
-                    )
-                })?
-                .parse()
-                .map_err(|e| McpToolError::invalid_argument(format!("invalid feed_id: {e}")))?;
-
-            let result = spawn_db(db, move |conn| delete_synthetic_feed(conn, feed_id)).await;
-            handle_db_result!(result, |removed| serde_json::json!({
-                "stream_id": req.stream_id,
-                "deleted": removed > 0,
-                "removed": removed
-            }))
-        })
+                let result = spawn_db(db, move |conn| delete_synthetic_feed(conn, feed_id)).await;
+                handle_db_result!(result, |removed| serde_json::json!({
+                    "stream_id": req.stream_id,
+                    "deleted": removed > 0,
+                    "removed": removed
+                }))
+            },
+        )
         .await
     }
 }

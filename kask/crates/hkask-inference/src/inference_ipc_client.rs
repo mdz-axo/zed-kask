@@ -877,27 +877,33 @@ impl InferencePort for InferenceIpcClient {
     fn list_models<'a>(
         &'a self,
     ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Vec<hkask_types::ModelEntry>> + Send + 'a>,
+        Box<
+            dyn std::future::Future<Output = Result<Vec<hkask_types::ModelEntry>, InferenceError>>
+                + Send
+                + 'a,
+        >,
     > {
         let this = self;
         Box::pin(async move {
-            match this.call_list_models().await {
-                Ok(entries) => entries
-                    .into_iter()
-                    .map(|e| {
-                        let name = e.name.clone();
-                        hkask_types::ModelEntry {
-                            prefixed_name: name.clone(),
-                            model: name.split('/').nth(1).unwrap_or(&name).to_string(),
-                            supports_vision: e.supports_vision,
-                        }
-                    })
-                    .collect(),
-                Err(e) => {
-                    tracing::warn!(target: "hkask.inference", error = %e, "IPC list_models failed — returning empty");
-                    Vec::new()
-                }
-            }
+            let entries = this.call_list_models().await.map_err(|e| {
+                tracing::warn!(
+                    target: "hkask.inference",
+                    error = %e,
+                    "IPC list_models failed — returning Err (not empty vec)"
+                );
+                InferenceError::Connection(format!("list_models IPC failed: {e}"))
+            })?;
+            Ok(entries
+                .into_iter()
+                .map(|e| {
+                    let name = e.name.clone();
+                    hkask_types::ModelEntry {
+                        prefixed_name: name.clone(),
+                        model: name.split('/').nth(1).unwrap_or(&name).to_string(),
+                        supports_vision: e.supports_vision,
+                    }
+                })
+                .collect())
         })
     }
 

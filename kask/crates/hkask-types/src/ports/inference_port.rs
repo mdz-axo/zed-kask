@@ -358,25 +358,32 @@ pub trait InferencePort: Send + Sync {
     /// enumerate models from zed's `LanguageModelRegistry` via the IPC bridge.
     /// `MediaRouter` returns empty (media-only; model listing is not available
     /// when running standalone without the IPC bridge).
+    ///
+    /// Returns `Err` when the underlying provider is unreachable (IPC bridge
+    /// down, registry query failed) so callers can distinguish "no models
+    /// configured" from "the bridge is broken." Previously this collapsed both
+    /// to an empty vec, making a broken IPC indistinguishable from an empty
+    /// registry (F9 — variety-deficit: the regulator can act on "broken" but
+    /// callers couldn't tell).
     #[must_use]
-    fn list_models<'a>(&'a self) -> Pin<Box<dyn Future<Output = Vec<ModelEntry>> + Send + 'a>> {
-        Box::pin(async { Vec::new() })
+    fn list_models<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelEntry>, InferenceError>> + Send + 'a>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 
     /// List only vision-capable models.
     ///
     /// Default: delegates to `list_models()` and filters by the vision flag.
-    /// Returns empty when `list_models()` returns empty.
+    /// Returns empty when `list_models()` returns empty. Propagates errors
+    /// from `list_models()` so a broken IPC is not masked as "no vision models."
     #[must_use]
     fn list_vision_models<'a>(
         &'a self,
-    ) -> Pin<Box<dyn Future<Output = Vec<ModelEntry>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelEntry>, InferenceError>> + Send + 'a>> {
         Box::pin(async {
-            self.list_models()
-                .await
-                .into_iter()
-                .filter(|m| m.supports_vision)
-                .collect()
+            let models = self.list_models().await?;
+            Ok(models.into_iter().filter(|m| m.supports_vision).collect())
         })
     }
 
@@ -511,12 +518,14 @@ impl InferencePort for Arc<dyn InferencePort> {
     {
         self.as_ref().embed(model, texts)
     }
-    fn list_models<'a>(&'a self) -> Pin<Box<dyn Future<Output = Vec<ModelEntry>> + Send + 'a>> {
+    fn list_models<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelEntry>, InferenceError>> + Send + 'a>> {
         self.as_ref().list_models()
     }
     fn list_vision_models<'a>(
         &'a self,
-    ) -> Pin<Box<dyn Future<Output = Vec<ModelEntry>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelEntry>, InferenceError>> + Send + 'a>> {
         self.as_ref().list_vision_models()
     }
     fn media_generate<'a>(&'a self, op: &str, params: &MediaGenerateParams) -> MediaFuture<'a> {

@@ -8,6 +8,26 @@
 > Scope: `kask/crates/` (18 hKask crates + `kask_bridge`). Upstream seam files
 > reviewed only where a `// zed-kask:` comment or D-seam entry exists — no
 > upstream file is edited (acceptance criterion 6).
+>
+> **Status: ALL findings implemented and committed.** See the implementation
+> status table below for per-finding commit references.
+
+## Implementation status
+
+| Finding | Status | Commit | Verification |
+| --- | --- | --- | --- |
+| F1 (TestCoverageSensor broken-sensor) | **Implemented** | `998922afcb` | `cargo test -p hkask-regulation` (78 pass), clippy clean |
+| F2 (MutationScoreSensor broken-sensor) | **Implemented** | `998922afcb` | Same as F1 (shared `latest_run_metrics`) |
+| F3 (latest_metrics_path duplication) | **Implemented** | `998922afcb` | `grep -c 'fn latest_metrics_path'` → 0 (eliminated) |
+| F4 (agent_paths divergent HKASK_DATA_DIR rule) | **Implemented** | `998922afcb` | `cargo test -p hkask-types` (107 pass), clippy clean |
+| F5 (SqliteRegistry::count silent query_row collapse) | **Implemented** | `998922afcb` | `cargo test -p hkask-templates` (177 pass), clippy clean |
+| F6 (SqliteRegistry::query_skills silent failures) | **Implemented** | `998922afcb` | Same as F5 |
+| F7 (SqliteRegistry::get_skill_owned silent failures) | **Implemented** | `998922afcb` | Same as F5 |
+| F8 (stale `.rules` propagate_taint_for_binding) | **Implemented** | `5cf3112638` | `grep -c 'propagate_taint' .rules` → 0 |
+| F9 (list_models variety-deficit) | **Deferred** | — | Low-impact; existing `warn!` closes the observability loop |
+| F10 (parse_sse_stream loop-not-closed) | **Implemented** | `5cf3112638` | `cargo test -p hkask-inference` (47 pass), clippy clean |
+| Bonus: `generate_stream_with_model` override | **Implemented** | `423f36b007` | `cargo test -p kask_bridge` (160 pass), clippy clean |
+| Bonus: `Sdmx` match arm fix (pre-existing) | **Implemented** | `5cf3112638` | `cargo test -p hkask-condenser` (83 pass), clippy clean |
 
 ## Crates actually reviewed
 

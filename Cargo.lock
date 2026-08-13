@@ -9578,6 +9578,7 @@ dependencies = [
  "chrono",
  "feed-rs",
  "futures-util",
+ "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-storage",

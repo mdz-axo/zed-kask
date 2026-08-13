@@ -4,6 +4,10 @@
 > has ≥2 production callers (grep-verified), and carries a falsifiable deletion
 > test. Patterns that failed the gate are listed under "Rejected" for
 > transparency.
+>
+> **Status: ALL 3 patterns implemented and committed** in `998922afcb`.
+> The rejected patterns (R1, R2) remain correctly rejected — no speculative
+> abstractions were added.
 
 ## P1 — `latest_run_metrics(trace_dir) -> Result<Option<PathBuf>, MetricsLocateError>`
 

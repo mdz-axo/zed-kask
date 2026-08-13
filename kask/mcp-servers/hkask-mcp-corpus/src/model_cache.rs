@@ -115,6 +115,14 @@ impl ModelCache {
         let models: Vec<ModelInfo> = port
             .list_models()
             .await
+            .map_err(|e| ServiceError::Domain {
+                domain: hkask_services_core::DomainKind::Wallet,
+                kind: hkask_services_core::ErrorKind::ServiceUnavailable,
+                source: None,
+                message: format!(
+                    "Inference port list_models failed — the zed IPC bridge may be down: {e}"
+                ),
+            })?
             .into_iter()
             .map(ModelInfo::from)
             .collect();

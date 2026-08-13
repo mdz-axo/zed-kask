@@ -307,8 +307,10 @@ impl InferencePort for MediaRouter {
         })
     }
 
-    fn list_models<'a>(&'a self) -> Pin<Box<dyn Future<Output = Vec<ModelEntry>> + Send + 'a>> {
-        Box::pin(async { Vec::new() })
+    fn list_models<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelEntry>, InferenceError>> + Send + 'a>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 
     fn media_generate<'a>(&'a self, op: &str, params: &MediaGenerateParams) -> MediaFuture<'a> {
