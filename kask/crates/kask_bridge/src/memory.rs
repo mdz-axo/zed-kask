@@ -1396,6 +1396,47 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
     }
 }
 
+/// Test-only constructor for an in-memory `RealMemoryPort` with no
+/// consolidation. Shared across test modules in this crate so
+/// `context_injector.rs` tests can construct a `BridgeContextInjector`
+/// without duplicating the heavy `RealMemoryPort` setup. Mirrors the
+/// private `in_memory_port` helper in `tests` below.
+#[cfg(test)]
+pub(crate) fn in_memory_port_for_tests() -> RealMemoryPort {
+    use hkask_storage::database::sqlite::SqliteDriver;
+    let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
+    let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
+    let embedding_store =
+        EmbeddingStore::from_driver(driver, 1024).expect("embedding store init");
+    let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
+    let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
+        SqliteDriver::in_memory_driver();
+    let curator_h_mem_store =
+        HMemStore::from_driver(Arc::clone(&curator_driver)).expect("curator hmem store init");
+    let curator_embedding_store =
+        EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init");
+    let curator_store_inner = Arc::new(MemoryStore::new(
+        curator_h_mem_store,
+        curator_embedding_store,
+    ));
+    let embedding_port = LanguageModelEmbeddingPort::for_tests();
+    RealMemoryPort {
+        store,
+        curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
+        embedding_port,
+        embedding_model: "test-model".to_string(),
+        user_webid: WebID::new(),
+        curator_webid: WebID::from_persona(b"curator"),
+        consolidation: None,
+        curator_consolidation: RwLock::new(None),
+        consolidation_cadence_secs: 0,
+        confidence_floor: 0.3,
+        last_consolidation: Mutex::new(None),
+        tokio_handle: tokio::runtime::Handle::current(),
+        ingest_semaphore: tokio::sync::Semaphore::new(1),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

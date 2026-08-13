@@ -20,7 +20,12 @@ temperature = 0.2
 work_effort = "medium"
 verbosity = "detailed"
 max_tokens = 2000
-thinking_budget = "medium"
+# "off" not "medium": the parser (step_actions.rs) only recognizes
+# "full"/"on" and "off"/"none". "medium" is unrecognized and silently falls
+# back to thinking-ON (same as "full"), making this step slower than
+# intended. Step 2 declares a target state — deterministic, no long
+# reasoning chain needed.
+thinking_budget = "off"
 
 You are performing Step 2 of the Toyota Improvement Kata: **Establish the Target Condition**.
 

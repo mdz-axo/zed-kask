@@ -7,6 +7,7 @@ contract:
     dependency_graph: array
     evaluation_result: object
     context_summary: string
+    target_condition: string
   output:
     gate_scores: object
     gate_weighted_total: number
@@ -20,6 +21,7 @@ visibility: Public
 {# self-assessment bias. Distinct from the producer-coupled evaluate step: this #}
 {# gate is a deterministic rubric, not a generator. Mirrors superforecasting's #}
 {# forecast-quality-gate separation of concerns. #}
+{# v0.35.0: adds target_condition_coverage criterion (7 criteria total). #}
 {# Produces: gate_scores, gate_weighted_total, gate_pass, gate_findings #}
 
 [inference]
@@ -60,20 +62,31 @@ project-specific conventions independently of the producer's evaluation.
 {{ context_summary }}
 {% endif %}
 
+{% if target_condition %}
+## Target Condition (v0.35.0 — coverage anchor)
+
+The target condition is the goal, end state, or outcome the plan must achieve. Use
+it to score the `target_condition_coverage` criterion independently: do the tasks
+collectively achieve this target? Does every task trace to this target?
+
+{{ target_condition }}
+{% endif %}
+
 ## Producer's Self-Assessment (for bias detection only — do not copy)
 
 ```json
 {{ evaluation_result | tojson }}
 ```
 
-## Six Weighted Criteria
+## Seven Weighted Criteria
 
 | Criterion | Weight | 0 (perfect) | 1 (severely deficient) |
 |-----------|--------|-------------|------------------------|
-| task_sizing | 0.25 | All XS-M; none L+; none touches >5 files (advisory) | XL present or L un-decomposed |
-| vertical_slice_integrity | 0.20 | Every task a vertical feature path | Horizontal layers present |
-| ac_specificity | 0.20 | Every AC specific and testable | Vague ACs; "implement the feature"; >3 bullets |
-| dependency_ordering | 0.15 | Foundations first; deps satisfied | A task precedes a task it depends on |
+| target_condition_coverage | 0.20 | Every task traces to the target; collectively they achieve it | Orphan tasks; gaps in coverage; redundancy |
+| task_sizing | 0.20 | All XS-M; none L+; none touches >5 files (advisory) | XL present or L un-decomposed |
+| vertical_slice_integrity | 0.15 | Every task a vertical feature path | Horizontal layers present |
+| ac_specificity | 0.15 | Every AC a testable condition ("what must be true") | Vague ACs; "implement the feature"; >3 bullets |
+| dependency_ordering | 0.10 | Foundations first; deps satisfied | A task precedes a task it depends on |
 | checkpoint_presence | 0.10 | Checkpoints between every major phase | No checkpoints |
 | red_flag_absence | 0.10 | No red flags | One or more red flags present |
 
@@ -88,6 +101,7 @@ project-specific conventions independently of the producer's evaluation.
 - Dependency order not considered.
 - A task title contains "and".
 - A task touches >5 files without stated justification.
+- A task does not trace to the target condition (orphan task).
 
 ## Output Requirements
 
@@ -96,6 +110,7 @@ Respond with a JSON object:
 ```json
 {
   "gate_scores": {
+    "target_condition_coverage": 0.0,
     "task_sizing": 0.0,
     "vertical_slice_integrity": 0.0,
     "ac_specificity": 0.0,
@@ -107,7 +122,7 @@ Respond with a JSON object:
   "gate_pass": true,
   "gate_findings": [
     {
-      "criterion": "task_sizing",
+      "criterion": "target_condition_coverage",
       "severity": "high|medium|low",
       "finding": "what is wrong",
       "bias_delta": 0.0

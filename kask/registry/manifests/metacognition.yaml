@@ -160,7 +160,11 @@ steps:
     renderer: minijinja
     template_ref: metacognition/meta-grasp-current
     gas_cap: 6000
-    timeout_seconds: 60
+    # thinking_budget = "full" + max_tokens 3000 on a cloud thinking-mode model
+    # (GLM-5.2 via OpenRouter) routinely exceeds 60s. 120s matches the default
+    # (DEFAULT_STEP_TIMEOUT_SECONDS) and aligns with task-breakdown (90s) and
+    # capabilities-reasoner (90-300s) for comparable inference load.
+    timeout_seconds: 120
     input_mapping:
       goal: "{{ goal }}"
       session_history: "{{ session_history | default('') }}"
@@ -188,7 +192,8 @@ steps:
     renderer: minijinja
     template_ref: metacognition/meta-establish-target
     gas_cap: 4096
-    timeout_seconds: 60
+    # thinking_budget = "medium" but still a cloud round-trip; 90s gives margin.
+    timeout_seconds: 90
     input_mapping:
       goal: "{{ goal }}"
       current_condition: "{{ step_1_result }}"
@@ -210,7 +215,8 @@ steps:
     renderer: minijinja
     template_ref: metacognition/meta-predict
     gas_cap: 4096
-    timeout_seconds: 60
+    # thinking_budget = "medium"; 90s for cloud latency margin.
+    timeout_seconds: 90
     input_mapping:
       goal: "{{ goal }}"
       current_condition: "{{ step_1_result }}"
@@ -235,7 +241,11 @@ steps:
     renderer: minijinja
     template_ref: metacognition/meta-experiment
     gas_cap: 6144
-    timeout_seconds: 60
+    # thinking_budget = "full" + max_tokens 3000 — heaviest inference step.
+    # 150s matches capabilities-reasoner's heavy step (300s would be safer
+    # but the Kata cycle runs this 4-step loop up to 10 times; 150s balances
+    # per-step margin against total cascade wall time.
+    timeout_seconds: 150
     input_mapping:
       goal: "{{ goal }}"
       current_condition: "{{ step_1_result }}"
@@ -327,7 +337,12 @@ steps:
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
-  max_retries: 1
+  # on_timeout: abort — the executor does not yet implement retry
+  # (ErrorHandlingConfig.on_timeout/max_retries are parsed but not read by
+  # the step machine; see hkask_templates::bundle::config::ErrorHandlingConfig).
+  # Setting "retry" here would be a no-op that misleads authors. When retry is
+  # wired, this can return to "retry" with max_retries: 1.
+  on_timeout: abort
+  max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: abort

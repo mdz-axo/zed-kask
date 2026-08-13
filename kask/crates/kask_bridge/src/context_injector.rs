@@ -289,6 +289,7 @@ impl ContextInjector for BridgeContextInjector {
         let static_limit = (self.recall_limit * 2) as usize;
         let static_min_confidence = (self.recall_min_confidence + 0.1).min(1.0);
         let curator = self.curator;
+        let auto_inject = self.auto_inject;
         let header = if curator {
             "Session curator memory context:"
         } else {
@@ -297,6 +298,15 @@ impl ContextInjector for BridgeContextInjector {
         let log_label = if curator { "curator" } else { "user" };
 
         Box::pin(async move {
+            // Tool warnings always land — they are not gated on `auto_inject`.
+            // Memory recall below is gated; when off or when recall produces
+            // nothing, we still return `Some(TOOL_WARNING_PROMPT)`.
+            let mut context = String::from(TOOL_WARNING_PROMPT);
+
+            if !auto_inject {
+                return Some(context);
+            }
+
             let snippets = if curator {
                 memory_port
                     .recall_thread_curator(&thread_id, static_limit)
@@ -322,10 +332,12 @@ impl ContextInjector for BridgeContextInjector {
                 .collect();
 
             if filtered.is_empty() {
-                return None;
+                return Some(context);
             }
 
-            let context_text = format_recall_context(header, &filtered);
+            let recall_text = format_recall_context(header, &filtered);
+            context.push_str("\n\n");
+            context.push_str(&recall_text);
 
             tracing::info!(
                 target: "reg.memory",
@@ -333,7 +345,7 @@ impl ContextInjector for BridgeContextInjector {
                 "Injecting {log_label} static memory context into system prompt"
             );
 
-            Some(context_text)
+            Some(context)
         })
     }
 }
@@ -457,5 +469,46 @@ mod tests {
         assert!(BridgeContextInjector::should_recall(
             "long enough prompt with words"
         ));
+    }
+
+    #[tokio::test]
+    async fn inject_static_context_always_returns_tool_warnings() {
+        // D26 pin: `inject_static_context` must always return `Some`
+        // containing `TOOL_WARNING_PROMPT`, even when `auto_inject` is false
+        // (recall disabled). The warnings are not gated on memory recall.
+        let memory_port = std::sync::Arc::new(
+            crate::memory::in_memory_port_for_tests(),
+        );
+        let injector = BridgeContextInjector::new(
+            memory_port,
+            10,
+            0.5,
+            false, // auto_inject = false
+        );
+        let result = injector.inject_static_context("thread-1").await;
+        assert!(result.is_some(), "inject_static_context must return Some even when auto_inject is false");
+        let context = result.unwrap();
+        assert!(
+            context.contains(TOOL_WARNING_PROMPT),
+            "returned context must contain TOOL_WARNING_PROMPT"
+        );
+    }
+
+    #[test]
+    fn tool_warning_prompt_contains_key_warnings() {
+        // D26 pin: the warning text must mention each tool and the
+        // anti-loop rule. If a warning is dropped from the const, this
+        // test fails — preventing silent regression of the guidance.
+        assert!(TOOL_WARNING_PROMPT.contains("read_file"), "must warn about read_file");
+        assert!(TOOL_WARNING_PROMPT.contains("edit_file"), "must warn about edit_file");
+        assert!(TOOL_WARNING_PROMPT.contains("terminal"), "must warn about terminal");
+        assert!(
+            TOOL_WARNING_PROMPT.contains("tool input was not fully received"),
+            "must warn about the observed read_file glitch"
+        );
+        assert!(
+            TOOL_WARNING_PROMPT.contains("3×"),
+            "must contain the 3-strikes anti-loop rule"
+        );
     }
 }

@@ -2,7 +2,7 @@
 template_type: KnowAct
 contract:
   input:
-    spec_or_intent: string
+    target_condition: string
     crate_scope: string
     code_context: object
     prior_outcome: object
@@ -16,9 +16,10 @@ energy_cap: 6144
 visibility: Public
 ---
 {# Template: task-breakdown/task-breakdown-plan.j2 #}
-{# Functional Role: KnowAct — Plan mode: read-only context, dependency graph, risks #}
+{# Functional Role: KnowAct — Grasp the current condition relative to the target condition #}
 {# Implementation: Jinja2 prompt #}
 {# Produces: context_summary, dependency_graph, risks, open_questions #}
+{# v0.35.0: anchored on target_condition (mapped from {{ task }}), not spec_or_intent #}
 
 [inference]
 temperature = 0.2
@@ -29,20 +30,25 @@ thinking_budget = "full"
 
 You are a planning agent in READ-ONLY mode. Do NOT write or propose code. The output of this step is a plan-stage context document, not implementation. Good task breakdown is the difference between an agent that completes work reliably and one that produces a tangled mess.
 
-## Empty-Spec Validation (v0.31.0)
+## Empty-Target Validation
 
-Before producing any output, validate the spec:
-- If `spec_or_intent` is empty, whitespace-only, or shorter than 10 characters,
-  emit `context_summary: "ERROR: empty or trivial spec — cannot decompose"`,
-  `dependency_graph: []`, `risks: [{risk: "empty spec", impact: "high", mitigation: "provide a meaningful spec or feature description"}]`,
-  and `open_questions: ["What feature or work should be decomposed?"]`.
+Before producing any output, validate the target condition:
+- If `target_condition` is empty, whitespace-only, or shorter than 10 characters,
+  emit `context_summary: "ERROR: empty or trivial target condition — cannot decompose"`,
+  `dependency_graph: []`, `risks: [{risk: "empty target condition", impact: "high", mitigation: "provide a meaningful goal, end state, or outcome to work toward"}]`,
+  and `open_questions: ["What target condition should be decomposed?"]`.
   Do NOT produce a dependency graph or attempt decomposition.
   This prevents silent convergence on an empty plan (an empty plan has zero
   violations and would converge at 0.0 under the old logic).
 
-## Spec / Intent
+## Target Condition
 
-{{ spec_or_intent }}
+The target condition is the goal, end state, or outcome to work toward. This is
+what the plan must achieve. Every task in the decomposition must trace back to
+this target — if a task does not contribute to reaching this condition, it does
+not belong in the plan.
+
+{{ target_condition }}
 
 {% if crate_scope %}
 ## Crate Scope
@@ -82,7 +88,7 @@ Use this evidence to improve the plan:
 - **plan_followed**: whether the plan was followed as written or abandoned. If
   abandoned, note why and adjust the planning approach.
 Do NOT fabricate outcome patterns — prior outcomes are evidence for this
-project's planning context, not proof for the current spec.
+project's planning context, not proof for the current target condition.
 {% endif %}
 {% if prior_operator_feedback and prior_operator_feedback | length > 0 %}
 ## Prior Operator Feedback (v0.31.0 — intrinsic evaluative feedback, e_t)
@@ -109,13 +115,16 @@ ordering). If the operator's preference conflicts with a principle, note the
 conflict rather than complying.
 {% endif %}
 
-## Plan-Mode Rules
+## Grasp the Current Condition
 
-Before writing any code, operate in read-only mode:
-1. Read the spec and relevant codebase sections.
-2. Identify existing patterns and conventions.
-3. Map dependencies between components (build the dependency graph).
-4. Note risks and unknowns.
+Before decomposing the target condition, grasp what exists NOW — the current
+condition relative to the target. This is the Improvement Kata "go and see" step:
+measure, don't assume. Identify:
+1. What already exists that contributes to the target condition (existing modules,
+   patterns, conventions, partial implementations).
+2. What is missing — the gap between the current condition and the target condition.
+3. Dependencies between components (build the dependency graph).
+4. Risks and unknowns that could block progress toward the target.
 5. **Do NOT write code during planning.** The output is a plan, not implementation.
 
 ## Dependency Graph
@@ -137,7 +146,7 @@ Respond with a JSON object:
 
 ```json
 {
-  "context_summary": "One paragraph: what we're building and the key constraints",
+  "context_summary": "One paragraph: the target condition and what exists now toward it",
   "dependency_graph": [
     {
       "node": "component or layer name",

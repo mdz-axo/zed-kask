@@ -321,13 +321,34 @@ impl Default for RjouleConfig {
 }
 
 /// Error handling configuration. Loaded from manifest YAML.
+///
+/// **Most fields are accepted but not yet enforced.** The step machine
+/// (`step_machine.rs`) and executor (`executor.rs`) do not read this struct —
+/// a step that times out or exhausts gas aborts the cascade immediately with
+/// no retry, regardless of `on_timeout`/`max_retries`/`retry_backoff_seconds`.
+/// The fields are retained so manifests already seeded to disk keep parsing
+/// under `deny_unknown_fields`, and so a future retry/escalation policy has a
+/// stable schema to wire against. Do not rely on `on_timeout: retry` actually
+/// retrying today — it is a no-op. The only field with a reader is
+/// `on_capability_denied` (also ignored — see its doc).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ErrorHandlingConfig {
+    /// **Accepted but ignored.** No code reads this field. A step that exceeds
+    /// its `gas_cap` aborts the cascade immediately.
     pub on_gas_exceeded: String,
+    /// **Accepted but ignored.** No code reads this field. A step that times
+    /// out (`tokio::time::timeout` in `step_actions.rs`) aborts the cascade
+    /// immediately — there is no retry loop. Do not set `on_timeout: retry`
+    /// expecting it to retry; it does not.
     pub on_timeout: String,
+    /// **Accepted but ignored.** No code reads this field. See `on_timeout`.
     pub max_retries: u32,
+    /// **Accepted but ignored.** No code reads this field. See `on_timeout`.
     pub retry_backoff_seconds: u32,
+    /// **Accepted but ignored.** No code reads this field. A `validate_inputs`
+    /// failure aborts the cascade immediately (the error returns from
+    /// `BridgeManifestExecutor::execute_skill`).
     pub on_validation_failure: String,
     /// **Accepted but ignored.** No code reads this field.
     ///

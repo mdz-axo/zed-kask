@@ -6,6 +6,7 @@ contract:
     dependency_graph: array
     slices: array
     context_summary: string
+    target_condition: string
   output:
     scores: object
     weighted_total: number
@@ -15,9 +16,11 @@ energy_cap: 6144
 visibility: Public
 ---
 {# Template: task-breakdown/task-breakdown-evaluate.j2 #}
-{# Functional Role: KnowAct — Score the plan against six weighted criteria (CHECK) #}
+{# Functional Role: KnowAct — Score the plan against seven weighted criteria (CHECK) #}
 {# Implementation: Jinja2 prompt #}
 {# Produces: scores, weighted_total, refinement_directives, red_flags #}
+{# v0.35.0: adds target_condition_coverage criterion (do the tasks collectively #}
+{# achieve the target condition?) and re-weights the seven criteria. #}
 
 [inference]
 temperature = 0.1
@@ -26,7 +29,7 @@ verbosity = "standard"
 max_tokens = 4096
 thinking_budget = "full"
 
-You are a plan-quality evaluator. Score the task breakdown against six weighted criteria. Be honest — inflated scores produce worse plans, not better ones. Score each criterion from 0 (perfect) to 1 (severely deficient).
+You are a plan-quality evaluator. Score the task breakdown against seven weighted criteria. Be honest — inflated scores produce worse plans, not better ones. Score each criterion from 0 (perfect) to 1 (severely deficient).
 
 ## Tasks
 
@@ -60,18 +63,41 @@ Use it to check project-specific conventions, not just generic criteria. For exa
 {{ context_summary }}
 {% endif %}
 
-## Six Weighted Criteria
+{% if target_condition %}
+## Target Condition (v0.35.0 — coverage anchor)
+
+The target condition is the goal, end state, or outcome the plan must achieve. Use
+it to score the `target_condition_coverage` criterion: do the tasks collectively
+achieve this target? Does every task trace to this target?
+
+{{ target_condition }}
+{% endif %}
+
+## Seven Weighted Criteria
 
 | Criterion | Weight | 0 (perfect) | 1 (severely deficient) |
 |-----------|--------|-------------|------------------------|
-| Task sizing | 0.25 | All tasks XS–M; none L+; none touches >5 files; task count 3-20 | XL tasks present or L tasks un-decomposed; task count <3 or >20 |
-| Vertical-slice integrity | 0.20 | Every task is a vertical feature path | Horizontal layers present (build all X, then all Y) |
-| Acceptance-criteria specificity | 0.20 | Every AC is specific and testable | Vague ACs; "implement the feature"; >3 bullets or untestable |
-| Dependency ordering | 0.15 | Every task follows its dependencies; foundations first | A task precedes a task it depends on |
+| Target condition coverage | 0.20 | Every task traces to the target condition; collectively they achieve it | Tasks don't collectively achieve the target; orphan tasks that don't contribute |
+| Task sizing | 0.20 | All tasks XS–M; none L+; none touches >5 files; task count 3-20 | XL tasks present or L tasks un-decomposed; task count <3 or >20 |
+| Vertical-slice integrity | 0.15 | Every task is a vertical feature path | Horizontal layers present (build all X, then all Y) |
+| Acceptance-criteria specificity | 0.15 | Every AC is a testable condition ("what must be true") | Vague ACs; "implement the feature"; >3 bullets or untestable |
+| Dependency ordering | 0.10 | Every task follows its dependencies; foundations first | A task precedes a task it depends on |
 | Checkpoint presence | 0.10 | Checkpoints between every major phase | No checkpoints between tasks |
 | Red-flag absence | 0.10 | No red flags (see below) | One or more red flags present |
 
-The weighted_total is the sum of (score x weight) across all six criteria, in [0,1].
+The weighted_total is the sum of (score x weight) across all seven criteria, in [0,1].
+
+### Target Condition Coverage (v0.35.0)
+
+This criterion checks whether the decomposed tasks collectively achieve the target
+condition described in the context summary. Ask:
+- Does every task trace to the target condition? (No orphan tasks that don't contribute.)
+- Do the tasks collectively cover the full target condition? (No gaps where a
+  required outcome has no task achieving it.)
+- Are there tasks that duplicate effort toward the same sub-target? (Redundant
+  coverage is a defect, not a strength.)
+Score 0 if the tasks fully and non-redundantly cover the target; score higher for
+gaps, orphans, or redundancy.
 
 ### Task-count awareness (v0.31.0)
 
@@ -94,6 +120,7 @@ A plan has red flags if any of the following are true:
 - The dependency order is not considered.
 - A task title contains "and" (a sign it is two tasks).
 - A task touches more than ~5 files.
+- A task does not trace to the target condition (orphan task).
 
 ## Refinement Directives
 
@@ -108,6 +135,7 @@ Respond with a JSON object:
 ```json
 {
   "scores": {
+    "target_condition_coverage": 0.0,
     "task_sizing": 0.0,
     "vertical_slice_integrity": 0.0,
     "ac_specificity": 0.0,
@@ -118,9 +146,9 @@ Respond with a JSON object:
   "weighted_total": 0.0,
   "refinement_directives": [
     {
-      "criterion": "task_sizing",
-      "what_is_wrong": "Task t4 is XL and touches 9 files",
-      "expected_fix": "Split t4 into t4a (schema + migration) and t4b (API + tests)"
+      "criterion": "target_condition_coverage",
+      "what_is_wrong": "Task t4 does not trace to the target condition",
+      "expected_fix": "Remove t4 or reframe it to contribute to the target condition"
     }
   ],
   "red_flags": ["specific red flag observed, or empty array if none"]

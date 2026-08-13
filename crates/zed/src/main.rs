@@ -1439,49 +1439,65 @@ fn main() {
                                 // Note: set_context_injector uses OnceLock, so this is a one-shot.
                                 // If the user logs out and back in as a different user, the
                                 // injector is not re-wired.
-                                if kask_settings.memory.auto_inject {
-                                    let injector = std::sync::Arc::new(
-                                        kask_bridge::BridgeContextInjector::new(
-                                            real_memory_typed.clone(),
-                                            kask_settings.memory.recall_limit,
-                                            kask_settings.memory.recall_min_confidence,
-                                        ),
-                                    );
-                                    agent::set_context_injector(Some(injector));
-                                    log::info!("hKask context injector wired (agent: {agent_name})");
+                                //
+                                // zed-kask: D26 — the injector is wired unconditionally
+                                // (not gated on `kask.memory.auto_inject`) so the kask
+                                // tool-use warnings (`TOOL_WARNING_PROMPT`) always land
+                                // in the system prompt. `auto_inject` is passed into the
+                                // constructor and gates memory recall only; the warnings
+                                // are emitted from `inject_static_context` regardless.
+                                let auto_inject = kask_settings.memory.auto_inject;
+                                let injector = std::sync::Arc::new(
+                                    kask_bridge::BridgeContextInjector::new(
+                                        real_memory_typed.clone(),
+                                        kask_settings.memory.recall_limit,
+                                        kask_settings.memory.recall_min_confidence,
+                                        auto_inject,
+                                    ),
+                                );
+                                agent::set_context_injector(Some(injector));
+                                log::info!(
+                                    "hKask context injector wired (agent: {agent_name}, \
+                                     auto_inject={auto_inject}) — tool warnings always on"
+                                );
 
-                                    // D11 curator mirror: wire the curator context
-                                    // injector so the Curator recalls its own
-                                    // sovereign memory (episodic + semantic from
-                                    // `agents/curator/pod.db`). Without this, the
-                                    // Curator has no automatic recall — it must
-                                    // call `curator_memory_recall` /
-                                    // `curator_semantic_search` as tools, which is
-                                    // the asymmetry this block fixes.
-                                    let curator_injector = std::sync::Arc::new(
-                                        kask_bridge::BridgeContextInjector::new_curator(
-                                            real_memory_typed,
-                                            kask_settings.memory.recall_limit,
-                                            kask_settings.memory.recall_min_confidence,
-                                        ),
-                                    );
-                                    agent::set_curator_context_injector(Some(curator_injector));
-                                    log::info!(
-                                        "hKask curator context injector wired \
-                                         (agent: {agent_name}) — curator will \
-                                         recall from its own sovereign DB"
-                                    );
-                                } else {
-                                    // auto_inject is off — log that the curator
-                                    // injector is also unwired, per the .rules trap
-                                    // "Process-global hooks set at runtime need a
-                                    // startup-failure signal". The warn names both
-                                    // hooks left unwired so the operator can
-                                    // remediate correctly.
+                                // D11 curator mirror: wire the curator context
+                                // injector so the Curator recalls its own
+                                // sovereign memory (episodic + semantic from
+                                // `agents/curator/pod.db`). Without this, the
+                                // Curator has no automatic recall — it must
+                                // call `curator_memory_recall` /
+                                // `curator_semantic_search` as tools, which is
+                                // the asymmetry this block fixes.
+                                let curator_injector = std::sync::Arc::new(
+                                    kask_bridge::BridgeContextInjector::new_curator(
+                                        real_memory_typed,
+                                        kask_settings.memory.recall_limit,
+                                        kask_settings.memory.recall_min_confidence,
+                                        auto_inject,
+                                    ),
+                                );
+                                agent::set_curator_context_injector(Some(curator_injector));
+                                log::info!(
+                                    "hKask curator context injector wired \
+                                     (agent: {agent_name}, auto_inject={auto_inject}) — \
+                                     curator will recall from its own sovereign DB; \
+                                     tool warnings always on"
+                                );
+
+                                if !auto_inject {
+                                    // auto_inject is off — the injectors are wired
+                                    // (so tool warnings still land) but memory recall
+                                    // is disabled. Per the .rules trap "Process-global
+                                    // hooks set at runtime need a startup-failure signal",
+                                    // the warn names both hooks and their actual state
+                                    // (wired-but-recall-disabled, not unwired) so the
+                                    // operator can remediate correctly.
                                     log::warn!(
                                         "kask.memory.auto_inject is false — \
                                          both the user context injector and the \
-                                         curator context injector are unwired. \
+                                         curator context injector are wired with \
+                                         recall disabled. Tool warnings remain on. \
                                          Set kask.memory.auto_inject true to enable \
                                          memory recall for both agents."
                                     );

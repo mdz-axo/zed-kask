@@ -1,89 +1,100 @@
 # Template crate manifest for task-breakdown skill
-# hKask v0.31.0 (refinement cycle 1) — adapted from addyosmani/planning-and-task-breakdown
+# hKask v0.35.0 (target-condition anchoring) — adapted from addyosmani/planning-and-task-breakdown
 
 crate:
   name: task-breakdown
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
-    Decompose work into small, verifiable, vertically-sliced tasks with explicit
-    acceptance criteria and checkpoints. Convergent PDCA: gather read-only context
-    and dependency graph, decompose (slice + write tasks in one producer), evaluate
-    against sizing/red-flag/checkpoint criteria, iterate until the plan is stable,
-    then finalize tasks/plan.md + tasks/todo.md with PKO process-axis anchors.
-    v0.31.0: empty-spec validation, context_summary to evaluators (Good Regulator),
-    skill_catalog wired, algedonic escalation for catastrophic plans, mechanical
-    materiality guard, refinement history in plan.md. Distinct from
-    kanban-task-management (single-pass board populate) and tdd (consumes the
-    plan one vertical slice at a time).
+    Decompose a target condition (goal, end state, or outcome) into component
+    target conditions (sub-tasks) with acceptance criteria framed as "what must
+    be true for this sub-target to be achieved." Convergent PDCA: grasp the
+    current condition relative to the target, decompose (slice + write tasks in
+    one producer), evaluate against sizing/coverage/red-flag/checkpoint criteria,
+    iterate until the plan is stable, then finalize tasks/plan.md + tasks/todo.md
+    with PKO process-axis anchors. v0.35.0: anchored on target_condition (mapped
+    from {{ task }}), not spec_or_intent. v0.31.0: empty-target validation,
+    context_summary to evaluators (Good Regulator), skill_catalog wired, algedonic
+    escalation for catastrophic plans, mechanical materiality guard, refinement
+    history in plan.md. Distinct from kanban-task-management (single-pass board
+    populate) and tdd (consumes the plan one vertical slice at a time).
 
 templates:
   - id: task-breakdown/task-breakdown-plan
-    name: "PLAN phase — read-only mode with empty-spec validation"
+    name: "PLAN phase — grasp current condition relative to target"
     path: task-breakdown-plan.j2
     type: KnowAct
     description: >
-      PLAN phase — read-only mode. Read the spec and relevant codebase sections,
-      identify existing patterns/conventions, build the dependency graph, and
-      note risks/unknowns. v0.31.0: validates empty spec_or_intent to prevent
-      silent convergence on an empty plan. No code is written. Produces context
-      summary, dependency graph, and risk register.
+      PLAN phase — read-only mode. Grasp the current condition relative to the
+      target condition: identify what exists now (patterns, conventions, existing
+      modules), build the dependency graph, and note risks/unknowns. v0.35.0:
+      anchored on target_condition (mapped from {{ task }}). v0.31.0: validates
+      empty target_condition to prevent silent convergence on an empty plan. No
+      code is written. Produces context summary, dependency graph, and risk register.
     generates_spans:
       - reg.task-breakdown.plan
 
   - id: task-breakdown/task-breakdown-decompose
-    name: "DO phase — single producer with algedonic escalation"
+    name: "DO phase — decompose target into component target conditions"
     path: task-breakdown-decompose.j2
     type: KnowAct
     description: >
-      DO phase — single producer: slice vertically AND write tasks in one step.
-      v0.31.0: emits plan_escalation for catastrophic plans (all XL, no deps in
-      multi-task plan, no ACs, empty decomposition) as algedonic short-circuit.
-      Each task carries slice_id/feature_path, acceptance criteria, verification,
-      dependencies, files, scope (XS/S/M/L/XL), and skill_match_query (a natural-language
-      capability description consumed by skill-router when the skill_catalog input is
-      provided). The PDCA loop re-enters here so refinement directives are
+      DO phase — single producer: decompose the target condition into component
+      target conditions (sub-tasks) AND write each task in one step. v0.35.0:
+      each task is a sub-target with acceptance criteria framed as "what must be
+      true for this sub-target to be achieved." v0.31.0: emits plan_escalation
+      for catastrophic plans (all XL, no deps in multi-task plan, no ACs, empty
+      decomposition) as algedonic short-circuit. Each task carries
+      slice_id/feature_path, acceptance criteria, verification, dependencies,
+      files, scope (XS/S/M/L/XL), and skill_match_query (a natural-language
+      capability description consumed by skill-router when the skill_catalog input
+      is provided). The PDCA loop re-enters here so refinement directives are
       task-addressable and re-slicing + re-writing happen together.
     generates_spans:
       - reg.task-breakdown.decompose
 
   - id: task-breakdown/task-breakdown-evaluate
-    name: "CHECK phase — score with project context and task-count awareness"
+    name: "CHECK phase — score with target coverage and project context"
     path: task-breakdown-evaluate.j2
     type: KnowAct
     description: >
-      CHECK phase — score the plan against six weighted criteria: task sizing
-      (0.25, v0.31.0: now includes task-count awareness — >20 or <3 tasks penalized),
-      vertical-slice integrity (0.20), acceptance-criteria specificity (0.20),
-      dependency ordering (0.15), checkpoint presence (0.10), red-flag absence
-      (0.10). v0.31.0: receives context_summary for project-specific convention
-      checking (Good Regulator). Emits specific refinement_directives for criteria
-      above threshold — directives are task-addressable (consumed by decompose).
+      CHECK phase — score the plan against seven weighted criteria: target
+      condition coverage (0.20, v0.35.0 — do the tasks collectively achieve the
+      target?), task sizing (0.20, v0.31.0: now includes task-count awareness —
+      >20 or <3 tasks penalized), vertical-slice integrity (0.15),
+      acceptance-criteria specificity (0.15), dependency ordering (0.10),
+      checkpoint presence (0.10), red-flag absence (0.10). v0.31.0: receives
+      context_summary for project-specific convention checking (Good Regulator).
+      Emits specific refinement_directives for criteria above threshold —
+      directives are task-addressable (consumed by decompose).
     generates_spans:
       - reg.task-breakdown.evaluate
 
   - id: task-breakdown/task-breakdown-quality-gate
-    name: "Independent quality gate with project context"
+    name: "Independent quality gate with target coverage and project context"
     path: task-breakdown-quality-gate.j2
     type: KnowAct
     description: >
       Independent quality gate — evaluates the plan WITHOUT
-      self-assessment bias, distinct from the producer-coupled evaluate step. v0.31.0:
+      self-assessment bias, distinct from the producer-coupled evaluate step. v0.35.0:
+      scores seven criteria including target_condition_coverage. v0.31.0:
       receives context_summary for independent project-specific convention checking.
-      Scores the six criteria independently, flags compensation masking, and detects
-      bias deltas vs the producer's self-assessment.
+      Scores the seven criteria independently, flags compensation masking, and
+      detects bias deltas vs the producer's self-assessment.
     generates_spans:
       - reg.task-breakdown.quality-gate
 
   - id: task-breakdown/task-breakdown-write-plan
-    name: "ACT phase — finalize plan with refinement history"
+    name: "ACT phase — finalize plan with target condition and refinement history"
     path: task-breakdown-write-plan.j2
     type: KnowAct
     description: >
-      ACT phase — finalize the plan into tasks/plan.md (overview, architecture
-      decisions, phased task list with checkpoints, risks, open questions) and
-      tasks/todo.md (checklist-style task list), with a pko_anchors map giving each
-      element a PKO process-axis identity. v0.31.0: includes Refinement History
-      section in plan.md documenting what was refined across PDCA iterations,
-      making the loop visible in the artifact.
+      ACT phase — finalize the plan into tasks/plan.md (target condition, overview,
+      architecture decisions, phased task list with checkpoints, risks, open
+      questions) and tasks/todo.md (checklist-style task list), with a pko_anchors
+      map giving each element a PKO process-axis identity. v0.35.0: includes the
+      target condition at the top of plan.md so the plan is always anchored to
+      what it's achieving. v0.31.0: includes Refinement History section in plan.md
+      documenting what was refined across PDCA iterations, making the loop visible
+      in the artifact.
     generates_spans:
       - reg.task-breakdown.write-plan

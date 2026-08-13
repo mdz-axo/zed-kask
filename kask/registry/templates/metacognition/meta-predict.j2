@@ -23,7 +23,10 @@ temperature = 0.3
 work_effort = "medium"
 verbosity = "detailed"
 max_tokens = 2000
-thinking_budget = "medium"
+# "off" not "medium": see meta-establish-target.j2. Step 3 states a
+# hypothesis + confidence number — deterministic, no long reasoning
+# chain needed.
+thinking_budget = "off"
 
 You are performing Step 3 of the Toyota Improvement Kata: **Make a Prediction**.
 

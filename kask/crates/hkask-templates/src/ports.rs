@@ -16,6 +16,16 @@ pub enum TemplateError {
     Render(String),
     #[error("Manifest error: {0}")]
     Manifest(String),
+    /// A step exceeded its `timeout_seconds`. Carries the step ordinal and
+    /// the elapsed seconds so the retry loop in `run_pass` can detect it
+    /// without string-matching the `Manifest` message, and so callers can
+    /// report which step hung. Typed (not a `Manifest(String)`) because
+    /// retry policy branches on it.
+    #[error("Step {step_ordinal} timed out after {elapsed_seconds}s")]
+    Timeout {
+        step_ordinal: u32,
+        elapsed_seconds: u64,
+    },
     #[error("Database error: {0}")]
     Database(#[from] hkask_types::InfrastructureError),
     #[error("Inference error: {0}")]
@@ -62,6 +72,7 @@ impl TemplateError {
             Self::NotFound(_) => "HKASK-SKILL-001",
             Self::Render(_) => "HKASK-SKILL-002",
             Self::Manifest(_) => "HKASK-SKILL-003",
+            Self::Timeout { .. } => "HKASK-SKILL-013",
             Self::Database(_) => "HKASK-SKILL-004",
             Self::Inference(_) => "HKASK-SKILL-005",
             Self::Mcp(_) => "HKASK-SKILL-006",
@@ -77,11 +88,17 @@ impl TemplateError {
     }
 
     /// Whether this error is transient (retryable). Mirrors Nika's
-    /// `is_transient()` pattern. Database and inference errors are transient;
-    /// validation, not-found, and security errors are not.
+    /// `is_transient()` pattern. Database, inference, MCP, and timeout
+    /// errors are transient; validation, not-found, and security errors
+    /// are not. Timeouts are transient because a slow model round-trip
+    /// may succeed on retry (cold cache warms, transient network latency
+    /// clears).
     #[must_use]
     pub fn is_transient(&self) -> bool {
-        matches!(self, Self::Database(_) | Self::Inference(_) | Self::Mcp(_))
+        matches!(
+            self,
+            Self::Database(_) | Self::Inference(_) | Self::Mcp(_) | Self::Timeout { .. }
+        )
     }
 }
 

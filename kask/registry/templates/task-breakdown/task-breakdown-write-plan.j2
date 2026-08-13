@@ -3,6 +3,7 @@ template_type: KnowAct
 contract:
   input:
     context_summary: string
+    target_condition: string
     dependency_graph: array
     tasks: array
     slices: array
@@ -21,6 +22,8 @@ visibility: Public
 {# Functional Role: KnowAct — Finalize tasks/plan.md and tasks/todo.md (ACT) #}
 {# Implementation: Jinja2 prompt #}
 {# Produces: plan_md, todo_md, output_paths #}
+{# v0.35.0: includes the target condition at the top of plan.md so the plan is #}
+{# always anchored to what it's achieving. #}
 
 [inference]
 temperature = 0.2
@@ -34,6 +37,16 @@ You are a plan-finalization agent. Produce the two output files: `tasks/plan.md`
 ## Context Summary
 
 {{ context_summary }}
+
+{% if target_condition %}
+## Target Condition
+
+The target condition is the goal, end state, or outcome this plan achieves.
+Include it at the top of `tasks/plan.md` in a "## Target Condition" section so
+the plan is always anchored to what it's achieving.
+
+{{ target_condition }}
+{% endif %}
 
 ## Dependency Graph
 
@@ -99,8 +112,13 @@ Use this template structure:
 ```markdown
 # Implementation Plan: [Feature/Project Name]
 
+## Target Condition
+[The goal, end state, or outcome this plan achieves. Every task in this plan
+traces to this target condition. If a task does not contribute to reaching this
+condition, it does not belong in this plan.]
+
 ## Overview
-[One paragraph summary of what we're building]
+[One paragraph summary of what we're building and the current condition]
 
 ## Architecture Decisions
 - [Key decision 1 and rationale]
@@ -173,8 +191,9 @@ Respond with a JSON object:
 ## Constraints
 
 - Both files must be complete, self-contained markdown.
-- `plan.md` must include overview, architecture decisions, phased task list with
-  checkpoints, risks table, and open questions.
+- `plan.md` must include the target condition at the top, followed by overview,
+  architecture decisions, phased task list with checkpoints, risks table, and
+  open questions.
 - `todo.md` must be a checklist grouped by phase — scannable, not verbose.
 - Do not invent tasks not present in the input `tasks` array.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
