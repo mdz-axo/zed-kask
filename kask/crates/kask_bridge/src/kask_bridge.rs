@@ -47,7 +47,7 @@ pub use inference_providers::{
 };
 pub use mcp_servers::{
     BUILT_IN_MCP_SERVERS, BUILT_IN_MCP_SERVERS_IDS, BUILT_IN_MCP_SERVERS_PAIRS, BuiltinMcpServer,
-    filter_config_env_for_server, filter_credentials_for_server, find_server,
+    build_mcp_server_env, filter_config_env_for_server, filter_credentials_for_server, find_server,
 };
 pub use memory::{
     BridgeAlertEscalationSink, BridgeMemoryPort, RealMemoryPort, open_curator_escalation_queue,

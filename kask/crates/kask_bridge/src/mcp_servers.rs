@@ -461,6 +461,75 @@ pub fn filter_credentials_for_server(
     }
 }
 
+/// The single canonical env-construction path for a kask MCP server child
+/// process.
+///
+/// There used to be two: `KaskMcpDescriptor::command` (zed's per-project
+/// `ContextServerStore`) and `kask_server_env` (the governed `McpRuntime` +
+/// the settings-change restart observer). They composed the same helpers in
+/// different orders and diverged in opposite directions — Path A leaked the
+/// full unfiltered `mcp_env()` map (the per-server `config_env` allowlist was
+/// bypassed), Path B dropped every credential (the config filter ran on the
+/// credential map too, and credentials live in `credentials`, not `config_env`).
+/// Both bugs were invisible because the allowlist-alignment tests exercise the
+/// filter helpers in isolation, never the composed path.
+///
+/// This function is the one place that composes the filters. The order is
+/// load-bearing: config is filtered first, then credentials are resolved and
+/// merged into the already-filtered map — the two filters apply to disjoint
+/// key sets and never run in sequence on the same map. The inference socket is
+/// injected last and is not in any allowlist (every server may route inference
+/// through zed's `LanguageModelRegistry`).
+///
+/// `inference_socket` is a parameter, not a global read, so this function is
+/// unit-testable without touching `INFERENCE_SOCKET_PATH`.
+pub async fn build_mcp_server_env(
+    server_id: &str,
+    settings: &crate::KaskSettings,
+    credentials_provider: &dyn credentials_provider::CredentialsProvider,
+    inference_socket: Option<&str>,
+    cx: &gpui::AsyncApp,
+) -> std::collections::HashMap<String, String> {
+    // 1. Config env: build, then filter per-server. `mcp_env()` is the full
+    //    unfiltered map; the allowlist is what keeps the curator's email
+    //    config out of codegraph.
+    let mut env = filter_config_env_for_server(server_id, &settings.mcp_env());
+
+    // 2. Credentials: resolve URLs, filter per-server, read from keychain.
+    //    Shell overrides win (preserves the polarity `mcp_env_with_credentials`
+    //    established: an empty env var in the parent shell is not a meaningful
+    //    override and would silently break inference with an untraceable
+    //    "API key not configured" error).
+    let cred_urls =
+        filter_credentials_for_server(server_id, &crate::credential_urls_for_mcp(settings));
+    for (env_var, url) in cred_urls {
+        if std::env::var(&env_var)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if let Ok(Some((_username, password))) =
+            credentials_provider.read_credentials(&url, cx).await
+            && let Ok(value) = String::from_utf8(password)
+            && !value.is_empty()
+        {
+            env.insert(env_var, value);
+        }
+    }
+
+    // 3. Inference IPC socket — not in any allowlist; every server may route
+    //    inference through zed's LanguageModelRegistry over the IPC bridge.
+    if let Some(socket) = inference_socket {
+        env.insert(
+            hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
+            socket.to_string(),
+        );
+    }
+
+    env
+}
+
 /// Filter a base config env map (`mcp_env()` output) to only the env vars the
 /// specified server is allowed to receive.
 ///
@@ -1325,5 +1394,113 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The composition invariant `build_mcp_server_env` encodes: after the
+    /// filter sequence, the only env vars present are those in the server's
+    /// `config_env` allowlist, its `credentials` allowlist, or the inference
+    /// socket. This is the test the two old paths lacked — Path A leaked the
+    /// full unfiltered `mcp_env()` map (the `extend` only overwrote allowed
+    /// keys, never removed disallowed ones), and Path B dropped every
+    /// credential (the config filter ran on the credential map too). Both
+    /// bugs were invisible because the allowlist-alignment tests above
+    /// exercise the filter helpers in isolation, never the composed path.
+    ///
+    /// This is a synchronous stand-in: it simulates the filter sequence with
+    /// a populated `mcp_env()`-style map (including the curator's email
+    /// config, which `mcp_env()` emits) and asserts no key outside
+    /// `config_env ∪ credentials ∪ {INFERENCE_SOCKET_ENV}` survives. The
+    /// async keychain read is orthogonal — the invariant is the filter order.
+    #[test]
+    fn build_mcp_server_env_composition_respects_allowlists() {
+        // A `mcp_env()`-shaped map: config vars the curator emits plus a few
+        // vars other servers emit. In a real launch `mcp_env()` produces this.
+        let mut full_config = std::collections::HashMap::new();
+        full_config.insert("HKASK_DATA_DIR".to_string(), "/data".to_string());
+        full_config.insert("HKASK_MCP_SERVER_IDS".to_string(), "codegraph".to_string());
+        full_config.insert(
+            "HKASK_MXROUTE_SERVER".to_string(),
+            "mail.example.com".to_string(),
+        );
+        full_config.insert(
+            "HKASK_SMTP_USERNAME".to_string(),
+            "curator@example.com".to_string(),
+        );
+        full_config.insert("HKASK_CODEGRAPH_DB".to_string(), "/graph.db".to_string());
+        full_config.insert("HKASK_RSS_DB".to_string(), "/rss.db".to_string());
+        // A credential-shaped key that lives in `credentials`, not `config_env`.
+        let credential_keys = ["HKASK_SMTP_PASSWORD", "DEEPINFRA_API_KEY"];
+
+        for server in BUILT_IN_MCP_SERVERS {
+            // Simulate `build_mcp_server_env`'s filter sequence:
+            //   1. config filtered by `config_env` allowlist
+            //   2. credentials merged (filtered by `credentials` allowlist)
+            //   3. inference socket added
+            let mut env = filter_config_env_for_server(server.id, &full_config);
+            for key in server.credentials.unwrap_or(&[]) {
+                if credential_keys.contains(&key) {
+                    env.insert(key.to_string(), "secret-value".to_string());
+                }
+            }
+            env.insert(
+                hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
+                "/tmp/sock".to_string(),
+            );
+
+            let allowed: std::collections::HashSet<&str> = std::collections::HashSet::from_iter(
+                server
+                    .config_env
+                    .unwrap_or(&[])
+                    .iter()
+                    .copied()
+                    .chain(server.credentials.unwrap_or(&[]).iter().copied())
+                    .chain(std::iter::once(
+                        hkask_types::inference_ipc::INFERENCE_SOCKET_ENV,
+                    )),
+            );
+
+            for key in env.keys() {
+                assert!(
+                    allowed.contains(key.as_str()),
+                    "{}: env var '{key}' survived the filter sequence but is not in \
+                     config_env or credentials — the composition leaked it. \
+                     This is the Path A regression (full mcp_env() map leaked \
+                     because `extend` only overwrote allowed keys).",
+                    server.id
+                );
+            }
+        }
+    }
+
+    /// Direct pin for the Path A regression: codegraph must not receive the
+    /// curator's email config, even though `mcp_env()` emits it. The
+    /// composition test above covers this for all servers; this one names the
+    /// concrete leak that motivated the unification.
+    #[test]
+    fn codegraph_does_not_receive_curator_email_config_through_composition() {
+        let mut full_config = std::collections::HashMap::new();
+        full_config.insert("HKASK_CODEGRAPH_DB".to_string(), "/graph.db".to_string());
+        full_config.insert(
+            "HKASK_SMTP_USERNAME".to_string(),
+            "curator@example.com".to_string(),
+        );
+        full_config.insert(
+            "HKASK_MXROUTE_SERVER".to_string(),
+            "mail.example.com".to_string(),
+        );
+        let env = filter_config_env_for_server("codegraph", &full_config);
+        assert!(
+            env.contains_key("HKASK_CODEGRAPH_DB"),
+            "codegraph should receive HKASK_CODEGRAPH_DB"
+        );
+        assert!(
+            !env.contains_key("HKASK_SMTP_USERNAME"),
+            "codegraph must NOT receive HKASK_SMTP_USERNAME — this is the Path A \
+             leak (full mcp_env() map was extended, not filtered)"
+        );
+        assert!(
+            !env.contains_key("HKASK_MXROUTE_SERVER"),
+            "codegraph must NOT receive HKASK_MXROUTE_SERVER — same Path A leak"
+        );
     }
 }

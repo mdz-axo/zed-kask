@@ -895,63 +895,68 @@ async fn call_inference_stream(
 
     let stream = inference.generate_stream(prompt, params, tools);
 
-    let (full_text, tool_calls, cost_usd, finish_reason) = match tokio::time::timeout(timeout, async {
-        let mut full_text = String::new();
-        let mut final_chunk: Option<hkask_types::InferenceStreamChunk> = None;
-        let mut stream = stream;
-        while let Some(chunk_result) = stream.next().await {
-            match chunk_result {
-                Ok(chunk) => {
-                    // Only reasoning deltas belong in the thinking trace.
-                    // text_delta is the LLM's raw output (often JSON from
-                    // structured-output steps) — sending it through progress
-                    // pollutes the thinking trace with non-thinking content.
-                    if !chunk.reasoning_delta.is_empty() {
-                        if let Some(progress) = progress {
-                            progress(&chunk.reasoning_delta);
+    let (full_text, tool_calls, cost_usd, finish_reason) =
+        match tokio::time::timeout(timeout, async {
+            let mut full_text = String::new();
+            let mut accumulated_tool_calls = Vec::new();
+            let mut accumulated_cost_usd: Option<f64> = None;
+            let mut accumulated_finish_reason: Option<String> = None;
+            let mut stream = stream;
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        // Only reasoning deltas belong in the thinking trace.
+                        // text_delta is the LLM's raw output (often JSON from
+                        // structured-output steps) — sending it through progress
+                        // pollutes the thinking trace with non-thinking content.
+                        if !chunk.reasoning_delta.is_empty() {
+                            if let Some(progress) = progress {
+                                progress(&chunk.reasoning_delta);
+                            }
+                        }
+                        if !chunk.text_delta.is_empty() {
+                            full_text.push_str(&chunk.text_delta);
+                        }
+                        // Accumulate metadata across chunks. Providers may
+                        // send UsageUpdate (cost_usd) and Stop (finish_reason)
+                        // as separate events — tracking only the "final" chunk
+                        // would lose cost_usd when Stop arrives after UsageUpdate.
+                        if !chunk.tool_calls.is_empty() {
+                            accumulated_tool_calls = chunk.tool_calls;
+                        }
+                        if chunk.cost_usd.is_some() {
+                            accumulated_cost_usd = chunk.cost_usd;
+                        }
+                        if chunk.finish_reason.is_some() {
+                            accumulated_finish_reason = chunk.finish_reason;
                         }
                     }
-                    if !chunk.text_delta.is_empty() {
-                        full_text.push_str(&chunk.text_delta);
-                    }
-                    // Track the latest chunk — the final one carries
-                    // tool_calls, finish_reason, usage, and cost_usd.
-                    if chunk.finish_reason.is_some()
-                        || !chunk.tool_calls.is_empty()
-                        || chunk.cost_usd.is_some()
-                    {
-                        final_chunk = Some(chunk);
-                    }
+                    Err(e) => return Err(TemplateError::Inference(e)),
                 }
-                Err(e) => return Err(TemplateError::Inference(e)),
             }
-        }
-        let chunk = final_chunk.unwrap_or_else(|| hkask_types::InferenceStreamChunk {
-            text_delta: String::new(),
-            reasoning_delta: String::new(),
-            model: String::new(),
-            finish_reason: Some("stop".to_string()),
-            usage: None,
-            tool_calls: Vec::new(),
-            cost_usd: None,
-        });
-        Ok::<_, TemplateError>((full_text, chunk.tool_calls, chunk.cost_usd, chunk.finish_reason))
-    })
-    .await
-    {
-        Ok(Ok((text, tool_calls, cost_usd, finish_reason))) => (text, tool_calls, cost_usd, finish_reason),
-        Ok(Err(e)) => return Err(e),
-        Err(_elapsed) => {
-            // Typed Timeout error (not Manifest(String)) so the retry loop in
-            // `run_pass` can detect it without string-matching, and so callers
-            // report which step hung. The ordinal is threaded through this
-            // helper because it's a free function without access to the node.
-            return Err(TemplateError::Timeout {
-                step_ordinal,
-                elapsed_seconds: timeout.as_secs(),
-            });
-        }
-    };
+            Ok::<_, TemplateError>((
+                full_text,
+                accumulated_tool_calls,
+                accumulated_cost_usd,
+                accumulated_finish_reason,
+            ))
+        })
+        .await
+        {
+            Ok(Ok((text, tool_calls, cost_usd, finish_reason))) =>
+                (text, tool_calls, cost_usd, finish_reason),
+            Ok(Err(e)) => return Err(e),
+            Err(_elapsed) => {
+                // Typed Timeout error (not Manifest(String)) so the retry loop in
+                // `run_pass` can detect it without string-matching, and so callers
+                // report which step hung. The ordinal is threaded through this
+                // helper because it's a free function without access to the node.
+                return Err(TemplateError::Timeout {
+                    step_ordinal,
+                    elapsed_seconds: timeout.as_secs(),
+                });
+            }
+        };
 
     Ok((full_text, tool_calls, cost_usd, finish_reason))
 }

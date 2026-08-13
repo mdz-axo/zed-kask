@@ -64,7 +64,8 @@ pub struct TemplateRenderer {
     /// changed. Without this, a 5-step cascade with 3 `select` steps re-reads
     /// 3 files from disk per iteration — 30 file reads for a 10-iteration
     /// convergence loop.
-    disk_cache: std::sync::Mutex<std::collections::HashMap<String, (std::time::SystemTime, String)>>,
+    disk_cache:
+        std::sync::Mutex<std::collections::HashMap<String, (std::time::SystemTime, String)>>,
 }
 
 impl Clone for TemplateRenderer {
@@ -118,7 +119,9 @@ impl TemplateRenderer {
         // Check the disk cache — avoids re-reading the same file on every
         // cascade iteration when it hasn't changed.
         if let Ok(metadata) = std::fs::metadata(&template_path) {
-            let mtime = metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let mtime = metadata
+                .modified()
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
             if let Ok(cache) = self.disk_cache.lock() {
                 if let Some((cached_mtime, content)) = cache.get(template_ref) {
                     if *cached_mtime == mtime {
@@ -169,7 +172,9 @@ impl TemplateRenderer {
     /// Cache a template's content with its file modification time.
     fn cache_template(&self, template_ref: &str, path: &Path, content: &str) {
         if let Ok(metadata) = std::fs::metadata(path) {
-            let mtime = metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let mtime = metadata
+                .modified()
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
             if let Ok(mut cache) = self.disk_cache.lock() {
                 cache.insert(template_ref.to_string(), (mtime, content.to_string()));
             }

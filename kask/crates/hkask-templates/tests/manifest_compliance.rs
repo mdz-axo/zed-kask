@@ -240,18 +240,12 @@ fn input_mapping_matches_template_contract() {
                 .map(|o| o.keys().cloned().collect())
                 .unwrap_or_default();
 
-            let extra: Vec<String> = mapping_keys
-                .difference(&contract_keys)
-                .cloned()
-                .collect();
+            let extra: Vec<String> = mapping_keys.difference(&contract_keys).cloned().collect();
             if !extra.is_empty() {
                 mapping_extra.push((fname.clone(), step.ordinal, template_ref.clone(), extra));
             }
 
-            let missing: Vec<String> = contract_keys
-                .difference(&mapping_keys)
-                .cloned()
-                .collect();
+            let missing: Vec<String> = contract_keys.difference(&mapping_keys).cloned().collect();
             if !missing.is_empty() {
                 contract_missing.push((fname.clone(), step.ordinal, template_ref.clone(), missing));
             }

@@ -23,9 +23,9 @@ use hkask_types::{
 };
 use language_model::LanguageModel;
 use language_model_core::{
-    LanguageModelCompletionEvent, LanguageModelImage, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolChoice,
-    LanguageModelToolUseInput, MessageContent, Role, StopReason,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolChoice, LanguageModelToolUseInput, MessageContent, Role, StopReason,
 };
 use tokio::sync::oneshot;
 
@@ -47,6 +47,121 @@ struct StreamInferenceRequest {
     request: LanguageModelRequest,
     model_override: Option<String>,
     reply: tokio::sync::mpsc::UnboundedSender<Result<InferenceStreamChunk, InferenceError>>,
+}
+
+/// Shared accumulator for stream events — used by both `handle_non_streaming`
+/// (which builds an `InferenceResult` from the accumulated state) and
+/// `handle_streaming` (which forwards text/thinking deltas immediately but
+/// accumulates metadata for the final chunk).
+///
+/// `Text` and `Thinking` events are handled by the caller (collected or
+/// forwarded) — this struct handles `ToolUse`, `Stop`, and `UsageUpdate`,
+/// which are identical in both paths.
+struct StreamAccumulator {
+    model_name: String,
+    text: String,
+    reasoning: String,
+    tool_calls: Vec<StructuredToolCall>,
+    finish_reason: String,
+    usage: InferenceUsage,
+    cost_usd: Option<f64>,
+}
+
+impl StreamAccumulator {
+    fn new(model_name: String) -> Self {
+        Self {
+            model_name,
+            text: String::new(),
+            reasoning: String::new(),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            usage: InferenceUsage::default(),
+            cost_usd: None,
+        }
+    }
+
+    /// Process a `LanguageModelCompletionEvent` that isn't `Text` or `Thinking`
+    /// (those are handled by the caller). Returns `Err` on stream errors.
+    fn process_event(
+        &mut self,
+        event: Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+    ) -> Result<(), InferenceError> {
+        match event {
+            Ok(LanguageModelCompletionEvent::Text(delta)) => {
+                self.text.push_str(&delta);
+            }
+            Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => {
+                self.reasoning.push_str(&text);
+            }
+            Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
+                if tool_use.is_input_complete =>
+            {
+                let args = match &tool_use.input {
+                    LanguageModelToolUseInput::Json(json) => json.clone(),
+                    LanguageModelToolUseInput::Text(text) => {
+                        serde_json::from_str(text).unwrap_or(serde_json::Value::Null)
+                    }
+                };
+                self.tool_calls.push(StructuredToolCall {
+                    server: String::new(),
+                    tool: tool_use.name.to_string(),
+                    args,
+                    call_id: Some(tool_use.id.to_string()),
+                });
+            }
+            Ok(LanguageModelCompletionEvent::Stop(reason)) => {
+                self.finish_reason = match reason {
+                    StopReason::EndTurn => "stop",
+                    StopReason::MaxTokens => "length",
+                    StopReason::ToolUse => "tool_calls",
+                    StopReason::Refusal => "refusal",
+                }
+                .to_string();
+            }
+            Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
+                self.usage = InferenceUsage {
+                    prompt_tokens: token_usage.input_tokens as u32,
+                    completion_tokens: token_usage.output_tokens as u32,
+                    total_tokens: (token_usage.input_tokens + token_usage.output_tokens) as u32,
+                };
+                self.cost_usd = token_usage.cost;
+            }
+            Ok(_) => {}
+            Err(e) => return Err(InferenceError::Generation(e.to_string())),
+        }
+        Ok(())
+    }
+
+    /// Build a complete `InferenceResult` from the accumulated state.
+    fn into_result(self) -> InferenceResult {
+        InferenceResult {
+            text: self.text,
+            model: self.model_name,
+            usage: self.usage,
+            finish_reason: self.finish_reason,
+            token_probabilities: None,
+            tool_calls: self.tool_calls,
+            reasoning: if self.reasoning.is_empty() {
+                None
+            } else {
+                Some(self.reasoning)
+            },
+            cost_usd: self.cost_usd,
+        }
+    }
+
+    /// Build a final `InferenceStreamChunk` carrying accumulated metadata.
+    fn into_final_chunk(self) -> InferenceStreamChunk {
+        InferenceStreamChunk {
+            text_delta: String::new(),
+            reasoning_delta: String::new(),
+            model: self.model_name,
+            finish_reason: Some(self.finish_reason),
+            usage: Some(self.usage),
+            tool_calls: self.tool_calls,
+            cost_usd: self.cost_usd,
+        }
+    }
 }
 
 /// `InferencePort` implementation over zed's `LanguageModel`.
@@ -152,81 +267,13 @@ impl LanguageModelInferencePort {
             match stream_result {
                 Err(e) => Err(e),
                 Ok(mut stream) => {
-                    let mut text = String::new();
-                    let mut reasoning = String::new();
-                    let mut tool_calls = Vec::new();
-                    let mut finish_reason = "stop".to_string();
-                    let mut usage = InferenceUsage::default();
-                    let mut cost_usd: Option<f64> = None;
-
+                    let mut acc = StreamAccumulator::new(model.name().0.to_string());
                     while let Some(event) = stream.next().await {
-                        match event {
-                            Ok(LanguageModelCompletionEvent::Text(delta)) => {
-                                text.push_str(&delta);
-                            }
-                            Ok(LanguageModelCompletionEvent::Thinking {
-                                text: thinking,
-                                ..
-                            }) => {
-                                reasoning.push_str(&thinking);
-                            }
-                            Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
-                                if tool_use.is_input_complete =>
-                            {
-                                let args = match &tool_use.input {
-                                    LanguageModelToolUseInput::Json(json) => json.clone(),
-                                    LanguageModelToolUseInput::Text(text) => {
-                                        serde_json::from_str(text)
-                                            .unwrap_or(serde_json::Value::Null)
-                                    }
-                                };
-                                tool_calls.push(StructuredToolCall {
-                                    server: String::new(),
-                                    tool: tool_use.name.to_string(),
-                                    args,
-                                    call_id: Some(tool_use.id.to_string()),
-                                });
-                            }
-                            Ok(LanguageModelCompletionEvent::Stop(reason)) => {
-                                finish_reason = match reason {
-                                    StopReason::EndTurn => "stop",
-                                    StopReason::MaxTokens => "length",
-                                    StopReason::ToolUse => "tool_calls",
-                                    StopReason::Refusal => "refusal",
-                                }
-                                .to_string();
-                            }
-                            Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
-                                usage = InferenceUsage {
-                                    prompt_tokens: token_usage.input_tokens as u32,
-                                    completion_tokens: token_usage.output_tokens as u32,
-                                    total_tokens: (token_usage.input_tokens
-                                        + token_usage.output_tokens)
-                                        as u32,
-                                };
-                                cost_usd = token_usage.cost;
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                return Err(InferenceError::Generation(e.to_string()));
-                            }
+                        if let Err(e) = acc.process_event(event) {
+                            return Err(e);
                         }
                     }
-                    let model_name = model.name().0.to_string();
-                    Ok(InferenceResult {
-                        text,
-                        model: model_name,
-                        usage,
-                        finish_reason,
-                        token_probabilities: None,
-                        tool_calls,
-                        reasoning: if reasoning.is_empty() {
-                            None
-                        } else {
-                            Some(reasoning)
-                        },
-                        cost_usd,
-                    })
+                    Ok(acc.into_result())
                 }
             }
         }
@@ -262,12 +309,8 @@ impl LanguageModelInferencePort {
                     let _ = reply.send(Err(e));
                 }
                 Ok(mut stream) => {
-                    let mut tool_calls = Vec::new();
-                    let mut finish_reason = "stop".to_string();
-                    let mut usage = InferenceUsage::default();
-                    let mut cost_usd: Option<f64> = None;
                     let model_name = model.name().0.to_string();
-
+                    let mut acc = StreamAccumulator::new(model_name.clone());
                     while let Some(event) = stream.next().await {
                         match event {
                             Ok(LanguageModelCompletionEvent::Text(delta)) => {
@@ -282,8 +325,7 @@ impl LanguageModelInferencePort {
                                 }));
                             }
                             Ok(LanguageModelCompletionEvent::Thinking {
-                                text: thinking,
-                                ..
+                                text: thinking, ..
                             }) => {
                                 let _ = reply.send(Ok(InferenceStreamChunk {
                                     text_delta: String::new(),
@@ -295,43 +337,12 @@ impl LanguageModelInferencePort {
                                     cost_usd: None,
                                 }));
                             }
-                            Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
-                                if tool_use.is_input_complete =>
-                            {
-                                let args = match &tool_use.input {
-                                    LanguageModelToolUseInput::Json(json) => json.clone(),
-                                    LanguageModelToolUseInput::Text(text) => {
-                                        serde_json::from_str(text)
-                                            .unwrap_or(serde_json::Value::Null)
-                                    }
-                                };
-                                tool_calls.push(StructuredToolCall {
-                                    server: String::new(),
-                                    tool: tool_use.name.to_string(),
-                                    args,
-                                    call_id: Some(tool_use.id.to_string()),
-                                });
-                            }
-                            Ok(LanguageModelCompletionEvent::Stop(reason)) => {
-                                finish_reason = match reason {
-                                    StopReason::EndTurn => "stop",
-                                    StopReason::MaxTokens => "length",
-                                    StopReason::ToolUse => "tool_calls",
-                                    StopReason::Refusal => "refusal",
+                            Ok(other) => {
+                                if let Err(e) = acc.process_event(Ok(other)) {
+                                    let _ = reply.send(Err(e));
+                                    return;
                                 }
-                                .to_string();
                             }
-                            Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
-                                usage = InferenceUsage {
-                                    prompt_tokens: token_usage.input_tokens as u32,
-                                    completion_tokens: token_usage.output_tokens as u32,
-                                    total_tokens: (token_usage.input_tokens
-                                        + token_usage.output_tokens)
-                                        as u32,
-                                };
-                                cost_usd = token_usage.cost;
-                            }
-                            Ok(_) => {}
                             Err(e) => {
                                 let _ = reply.send(Err(InferenceError::Generation(e.to_string())));
                                 return;
@@ -340,15 +351,7 @@ impl LanguageModelInferencePort {
                     }
 
                     // Final chunk carries the accumulated metadata.
-                    let _ = reply.send(Ok(InferenceStreamChunk {
-                        text_delta: String::new(),
-                        reasoning_delta: String::new(),
-                        model: model_name,
-                        finish_reason: Some(finish_reason),
-                        usage: Some(usage),
-                        tool_calls,
-                        cost_usd,
-                    }));
+                    let _ = reply.send(Ok(acc.into_final_chunk()));
                 }
             }
         }

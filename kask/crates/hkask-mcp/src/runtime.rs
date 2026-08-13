@@ -212,6 +212,17 @@ struct Connection {
     generation: u64,
 }
 
+/// The supervisor's view of a server's connection state.
+#[derive(Debug)]
+enum ConnectionState {
+    /// Connection exists and transport is open.
+    Healthy,
+    /// Connection exists but transport has closed (keeper hasn't reaped yet).
+    TransportClosed,
+    /// No connection in the map (keeper reaped, or supervisor removed it).
+    Missing,
+}
+
 #[derive(Clone)]
 pub struct McpRuntime {
     /// Registered MCP servers (metadata)
@@ -342,8 +353,13 @@ impl McpRuntime {
             }
         }
         // Lock dropped — the spawn+handshake below does not hold the connections
-        // lock, so the future remains `Send` and can be spawned on the tokio
-        // runtime (required by the health supervisor's reconnect path).
+        // lock across `.await` points. This keeps the future closer to `Send`,
+        // though `start_server_with_env` is still not fully `Send` because
+        // `serve(transport).await` captures the `TokioChildProcess` (which
+        // contains a `Box<dyn ChildWrapper>`). The health supervisor therefore
+        // cannot call `try_reconnect` directly from a `tokio::spawn` — it
+        // removes dead connections and relies on the on-demand reconnect path
+        // (`call_tool_inner`) for healing.
 
         // Record the launch spec before spawning so a later reconnect can rebuild
         // this server even if this attempt fails partway through.
@@ -431,13 +447,27 @@ impl McpRuntime {
                 let stderr_server_id = server_id.to_string();
                 tokio::spawn(async move {
                     let mut reader = BufReader::new(stderr).lines();
-                    while let Ok(Some(line)) = reader.next_line().await {
-                        info!(
-                            target: "hkask.mcp.child",
-                            server_id = %stderr_server_id,
-                            "{}",
-                            line
-                        );
+                    loop {
+                        match reader.next_line().await {
+                            Ok(Some(line)) => {
+                                info!(
+                                    target: "hkask.mcp.child",
+                                    server_id = %stderr_server_id,
+                                    "{}",
+                                    line
+                                );
+                            }
+                            Ok(None) => break, // EOF — child closed stderr
+                            Err(e) => {
+                                warn!(
+                                    target: "hkask.mcp.child",
+                                    server_id = %stderr_server_id,
+                                    error = %e,
+                                    "stderr reader error"
+                                );
+                                break;
+                            }
+                        }
                     }
                 });
             }
@@ -469,9 +499,7 @@ impl McpRuntime {
 
         let Some(running) = running else {
             let error = last_error.unwrap_or_else(|| {
-                ServerStartError::SpawnFailed(
-                    "exhausted retries without a captured error".into(),
-                )
+                ServerStartError::SpawnFailed("exhausted retries without a captured error".into())
             });
             return Err(error);
         };
@@ -540,9 +568,30 @@ impl McpRuntime {
         })?;
 
         // Re-acquire the connections write lock to insert the new connection.
-        // The lock was dropped before the spawn+handshake to keep the future `Send`.
+        // The lock was dropped before the spawn+handshake to keep the future `Send`,
+        // which opens a TOCTOU window: a concurrent `start_server_with_env` for
+        // the same server_id (e.g. from `try_reconnect`) may have already inserted
+        // a live connection. If so, drop the new connection (its `RunningService`
+        // and child process are cleaned up by rmcp's DropGuard) rather than
+        // overwriting the existing one and orphaning its keeper task.
         {
             let mut connections = self.connections.write().await;
+            if let Some(existing) = connections.get(server_id)
+                && !existing.peer.is_transport_closed()
+            {
+                info!(
+                    target: "hkask.mcp",
+                    server_id = %server_id,
+                    "Concurrent start_server_with_env race — discarding duplicate connection"
+                );
+                // `peer` and the `RunningService` it came from are dropped here.
+                // The keeper task for this generation was never spawned (it is
+                // spawned below for the winning connection), so there is no
+                // orphaned keeper to worry about — the `running` variable was
+                // consumed by `running.peer().clone()` above, and the original
+                // `RunningService` is dropped when this function returns.
+                return Ok(());
+            }
             connections.insert(server_id.to_string(), Connection { peer, generation });
         }
 
@@ -575,22 +624,31 @@ impl McpRuntime {
 
         self.register_server(server).await;
 
-        // Spawn a health supervisor for this server. The supervisor detects
-        // two failure modes the keeper task does not cover:
+        // Spawn a health supervisor for this server. The supervisor closes a
+        // gap the keeper task and the on-demand reconnect path leave open: a
+        // server whose transport has closed but whose keeper task hasn't been
+        // scheduled yet to reap it. Without the supervisor, the dead connection
+        // sits in the map until the next tool call triggers `get_peer` →
+        // `try_reconnect`. The supervisor proactively removes it so the next
+        // call doesn't dispatch onto a corpse.
         //
-        // 1. **Hung process** — the child is alive but not responding (deadlocked,
-        //    stuck on I/O). The keeper only fires when the service loop exits, so a
-        //    hung process with an open transport is never reaped. The supervisor
-        //    checks `is_transport_closed()` periodically and, if the transport is
-        //    closed but the keeper hasn't reaped yet, triggers a reconnect.
-        // 2. **Proactive reconnect** — rather than waiting for the next tool call
-        //    to discover the server is down (the on-demand path), the supervisor
-        //    reconnects immediately, so the first call after a crash hits a live
-        //    server.
+        // The supervisor detects transport-closed connections. It does NOT
+        // detect hung processes (child alive but unresponsive with an open
+        // transport) — that would require a ping-based health check, which is
+        // a future enhancement.
+        //
+        // The supervisor does not call `try_reconnect` directly because
+        // `start_server_with_env` is not `Send` (it holds `RwLockWriteGuard`
+        // across `.await` points). Instead, it removes the dead connection and
+        // lets the on-demand reconnect path (`call_tool_inner → try_reconnect`)
+        // heal it on the next tool call.
         //
         // After [`MAX_CONSECUTIVE_HEALTH_FAILURES`] consecutive failures the
-        // supervisor stops auto-healing and logs an operator-actionable error,
-        // so a crash-looping binary doesn't spin forever.
+        // supervisor stops and logs an operator-actionable error, so a
+        // crash-looping binary doesn't spin forever. The failure counter
+        // increments on every check where the connection is dead or missing,
+        // and only resets when a genuinely healthy connection is seen — so a
+        // server that keeps dying accumulates failures across check intervals.
         let supervisor_cancel = cancel.clone();
         let supervisor_connections = self.connections.clone();
         let supervisor_health_failures = self.health_failures.clone();
@@ -604,31 +662,57 @@ impl McpRuntime {
                     _ = interval.tick() => {}
                 }
 
-                // Check if the transport is still alive. If the keeper already
-                // reaped the connection, there's nothing to supervise — the
-                // on-demand reconnect path will handle the next call.
-                let needs_heal = {
+                // Classify the connection state. The failure counter only
+                // resets on Healthy — Missing and TransportClosed both count
+                // as failures, so a server that dies and stays dead
+                // accumulates failures across intervals.
+                let connection_state = {
                     let connections = supervisor_connections.read().await;
                     match connections.get(&supervisor_id) {
-                        Some(conn) => conn.peer.is_transport_closed(),
-                        None => false, // already reaped; nothing to heal
+                        Some(conn) if !conn.peer.is_transport_closed() => {
+                            ConnectionState::Healthy
+                        }
+                        Some(_) => ConnectionState::TransportClosed,
+                        None => ConnectionState::Missing,
                     }
                 };
 
-                if !needs_heal {
-                    // Reset the failure counter on a healthy check.
-                    let mut failures = supervisor_health_failures.write().await;
-                    if let Some(count) = failures.get_mut(&supervisor_id)
-                        && *count > 0
-                    {
-                        *count = 0;
+                match connection_state {
+                    ConnectionState::Healthy => {
+                        let mut failures = supervisor_health_failures.write().await;
+                        if let Some(count) = failures.get_mut(&supervisor_id)
+                            && *count > 0
+                        {
+                            *count = 0;
+                        }
+                        continue;
                     }
-                    continue;
+                    ConnectionState::TransportClosed => {
+                        // Transport is closed but the keeper hasn't reaped yet.
+                        // Remove the dead connection so `get_peer` returns `None`
+                        // and `call_tool_inner` triggers `try_reconnect` on the
+                        // next call.
+                        warn!(
+                            target: "hkask.mcp",
+                            server_id = %supervisor_id,
+                            "MCP server transport closed — supervisor removing dead connection"
+                        );
+                        {
+                            let mut connections = supervisor_connections.write().await;
+                            connections.remove(&supervisor_id);
+                        }
+                    }
+                    ConnectionState::Missing => {
+                        // Connection was reaped (by the keeper or a prior
+                        // supervisor cycle). The on-demand reconnect path will
+                        // heal it on the next tool call. If no tool call comes,
+                        // the server stays missing — the supervisor can't force
+                        // a reconnect because `try_reconnect` is not `Send`.
+                    }
                 }
 
-                // Transport is closed but the keeper hasn't reaped yet (or the
-                // process is hung). Remove the dead connection so the on-demand
-                // reconnect path (triggered by the next tool call) picks it up.
+                // Increment the failure counter for both TransportClosed and
+                // Missing states. A healthy connection resets it (above).
                 let failures = {
                     let mut failures = supervisor_health_failures.write().await;
                     let count = failures.entry(supervisor_id.clone()).or_insert(0);
@@ -636,7 +720,7 @@ impl McpRuntime {
                     *count
                 };
 
-                if failures > MAX_CONSECUTIVE_HEALTH_FAILURES {
+                if failures >= MAX_CONSECUTIVE_HEALTH_FAILURES {
                     tracing::error!(
                         target: "hkask.mcp",
                         server_id = %supervisor_id,
@@ -651,18 +735,9 @@ impl McpRuntime {
                     target: "hkask.mcp",
                     server_id = %supervisor_id,
                     consecutive_failures = failures,
-                    "MCP server transport closed — supervisor removing dead connection"
+                    connection_state = ?connection_state,
+                    "MCP server unhealthy — will retry on next check"
                 );
-
-                // Remove the dead connection so `get_peer` returns `None` and
-                // `call_tool_inner` triggers `try_reconnect` on the next call.
-                // We don't call `try_reconnect` directly here because
-                // `start_server_with_env` holds locks across `.await` points that
-                // make its future `!Send`, and `tokio::spawn` requires `Send`.
-                {
-                    let mut connections = supervisor_connections.write().await;
-                    connections.remove(&supervisor_id);
-                }
             }
         });
 

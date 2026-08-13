@@ -434,6 +434,20 @@ mod tests {
 
     #[test]
     fn host_config_default() {
+        // The Default impl auto-detects the host from env vars (DeepInfra →
+        // Nebius → Runpod). Clear them so this test asserts the documented
+        // fallback deterministically, regardless of the operator's configured
+        // API keys. Without this, the test fails on any machine with
+        // DEEPINFRA_API_KEY or NEBIUS_PROJECT_ID set.
+        //
+        // Edition 2024 marks env mutation as unsafe. nextest runs each test in
+        // its own process by default, so there is no cross-test leakage; the
+        // crate permits unsafe in test builds via cfg_attr(not(test), ...).
+        unsafe {
+            std::env::remove_var("HKASK_TRAINING_HOST");
+            std::env::remove_var("DEEPINFRA_API_KEY");
+            std::env::remove_var("NEBIUS_PROJECT_ID");
+        }
         let config = TrainingHostConfig::default();
         assert_eq!(config.host, TrainingHostId::Runpod);
     }

@@ -2869,39 +2869,21 @@ impl project::context_server_store::registry::ContextServerDescriptor for KaskMc
         let server_id = self.id.to_string();
         cx.spawn(async move |cx| {
             // zed-kask: D3/D9 — F23: kask_server_env (env var resolution for MCP servers).
-            // Resolve env vars from kask settings + credentials.
-            let (settings, credential_urls, base_env) = cx.update(|cx| {
-                let settings = kask_bridge::KaskSettings::get_global(cx).clone();
-                let credential_urls = kask_bridge::credential_urls_for_mcp(&settings);
-                let env = settings.mcp_env();
-                (settings, credential_urls, env)
-            });
-
-            // Filter credentials to only those this server is allowed to
-            // receive (per-server allowlist in BuiltinMcpServer::credentials).
-            let credential_urls =
-                kask_bridge::filter_credentials_for_server(&server_id, &credential_urls);
-
+            // Single canonical path: `build_mcp_server_env` filters config and
+            // credentials per-server in the correct order. The previous inline
+            // composition leaked the full unfiltered `mcp_env()` map (the
+            // `extend` only overwrote allowed keys, never removed disallowed
+            // ones), so codegraph received the curator's email config.
+            let settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
             let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-            let std_env_map = settings
-                .mcp_env_with_credentials(&credential_urls, credentials_provider.as_ref(), cx)
-                .await;
-            let mut env_map: collections::HashMap<String, String> =
-                std_env_map.into_iter().collect();
-            // Filter the base config env (from mcp_env()) per-server too —
-            // the curator's email config should not be injected into codegraph.
-            let filtered_base_env =
-                kask_bridge::filter_config_env_for_server(&server_id, &base_env);
-            env_map.extend(filtered_base_env);
-
-            // Pass the inference IPC socket path so MCP servers can route
-            // inference through zed's LanguageModelRegistry.
-            if let Some(socket_path) = INFERENCE_SOCKET_PATH.get() {
-                env_map.insert(
-                    hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
-                    socket_path.clone(),
-                );
-            }
+            let env_map = kask_bridge::build_mcp_server_env(
+                &server_id,
+                &settings,
+                credentials_provider.as_ref(),
+                INFERENCE_SOCKET_PATH.get().map(|s| s.as_str()),
+                cx,
+            )
+            .await;
 
             Ok(context_server::ContextServerCommand {
                 path: resolve_mcp_binary(&server_id, &binary).into(),
@@ -3152,34 +3134,29 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
     });
 }
 
-/// Build the env map for a kask MCP server child process: per-server
-/// credential + config filtering (the same allowlists `KaskMcpDescriptor`
-/// and the launch loop use), plus the inference socket path once set.
+/// Build the env map for a kask MCP server child process via the single
+/// canonical path (`build_mcp_server_env`).
 ///
 /// Extracted so the deferred launch loop and the settings-change restart
 /// observer construct env identically — a divergence would restart servers
-/// with different env than the launch, or miss that the env changed.
+/// with different env than the launch, or miss that the env changed. Both
+/// this and `KaskMcpDescriptor::command` now go through `build_mcp_server_env`,
+/// so the per-project `ContextServerStore` path and the governed `McpRuntime`
+/// path can no longer drift apart.
 async fn kask_server_env(
     server_id: &str,
     cx: &mut gpui::AsyncApp,
 ) -> std::collections::HashMap<String, String> {
     let settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
-    let credential_urls = kask_bridge::credential_urls_for_mcp(&settings);
     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-    let server_credential_urls =
-        kask_bridge::filter_credentials_for_server(server_id, &credential_urls);
-    let server_env = settings
-        .mcp_env_with_credentials(&server_credential_urls, credentials_provider.as_ref(), cx)
-        .await;
-    let server_env = kask_bridge::filter_config_env_for_server(server_id, &server_env);
-    let mut mcp_env = server_env;
-    if let Some(socket_path) = INFERENCE_SOCKET_PATH.get() {
-        mcp_env.insert(
-            hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
-            socket_path.clone(),
-        );
-    }
-    mcp_env
+    kask_bridge::build_mcp_server_env(
+        server_id,
+        &settings,
+        credentials_provider.as_ref(),
+        INFERENCE_SOCKET_PATH.get().map(|s| s.as_str()),
+        cx,
+    )
+    .await
 }
 
 /// The env keys whose presence or value differs between two server env maps.

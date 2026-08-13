@@ -1406,11 +1406,9 @@ pub(crate) fn in_memory_port_for_tests() -> RealMemoryPort {
     use hkask_storage::database::sqlite::SqliteDriver;
     let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
     let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
-    let embedding_store =
-        EmbeddingStore::from_driver(driver, 1024).expect("embedding store init");
+    let embedding_store = EmbeddingStore::from_driver(driver, 1024).expect("embedding store init");
     let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
-    let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
-        SqliteDriver::in_memory_driver();
+    let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
     let curator_h_mem_store =
         HMemStore::from_driver(Arc::clone(&curator_driver)).expect("curator hmem store init");
     let curator_embedding_store =
