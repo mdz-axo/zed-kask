@@ -13,7 +13,7 @@ use crate::error::{LocalSwarmError, SwarmError};
 use crate::local_registry::LocalAgentCard;
 use crate::sanitize::strip_leading_mentions;
 
-use hkask_ledger::LedgerError;
+
 
 /// The local swarm runtime — ledger + inference.
 ///
@@ -299,41 +299,52 @@ impl LocalSwarmRuntime {
         })
     }
 
-    /// Debit credits from the operator's account. Returns the new balance.
-    /// Returns `Err(PaymentRequired)` if the balance is insufficient.
+    /// Record local spend against the operator's account. Returns the new
+    /// balance, which **may be negative**.
     ///
-    /// The balance check and the commit happen atomically inside a single
-    /// `BEGIN IMMEDIATE` transaction in `Ledger::debit_if_funds`, closing the
-    /// TOCTOU window where two concurrent `delegate` calls could both pass a
-    /// separate pre-check and both commit (driving the account negative). The
-    /// pre-inference balance check in `delegate` remains as a fast-fail so we
-    /// don't run multi-second inference when the account is obviously
-    /// unfunded, but it is NOT the authoritative gate.
-    pub(crate) fn debit(&self, amount: i64, reference: &str) -> Result<i64, SwarmError> {
+    /// Accounting, not authorization. Local agents run on the operator's own
+    /// substrate, so there is no funding gate to enforce (see `delegate`); this
+    /// records what was consumed so `swarm_balance_local` and
+    /// `swarm_local_history` can reconcile it. A negative balance is the
+    /// operator's unreconciled local spend, not a fault.
+    ///
+    /// Posts the same double-entry transaction `fund` does, in the opposite
+    /// direction. Deliberately NOT `Ledger::debit_if_funds`: that refuses on an
+    /// insufficient balance, which is exactly the gate local mode must not have.
+    /// The TOCTOU concern `debit_if_funds` addressed does not apply — there is no
+    /// balance precondition left to race.
+    pub(crate) fn record_spend(
+        &self,
+        amount: i64,
+        reference: &str,
+    ) -> Result<i64, LocalSwarmError> {
         if amount <= 0 {
-            return Err(SwarmError::PaymentRequired(
-                "debit amount must be positive".to_string(),
+            return Err(LocalSwarmError::InvalidInput(
+                "spend amount must be positive".to_string(),
             ));
         }
-        let new_balance = self
-            .ledger
-            .debit_if_funds(
-                &self.operator_account,
-                &self.asset,
+        let tx = hkask_ledger::LedgerTransaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            reference: reference.to_string(),
+            postings: vec![hkask_ledger::Posting {
+                source: self.operator_account.clone(),
+                destination: "external".to_string(),
+                asset: self.asset.clone(),
                 amount,
-                reference,
-                &serde_json::json!({ "action": "debit" }),
+            }],
+            metadata: serde_json::json!({ "action": "debit" }),
+        };
+        self.ledger
+            .commit(&tx)
+            .map_err(|e| LocalSwarmError::Ledger(format!("ledger commit failed: {e}")))?;
+        self.balance().ok_or_else(|| {
+            LocalSwarmError::Ledger(
+                "balance query failed after recording spend — the spend is committed but the \
+                 new balance could not be read"
+                    .to_string(),
             )
-            .map_err(|e| match e {
-                LedgerError::InsufficientFunds {
-                    balance, required, ..
-                } => SwarmError::PaymentRequired(format!(
-                    "insufficient local credits: have {balance}, need {required} \
-                     — fund via swarm_fund_local"
-                )),
-                other => SwarmError::Unavailable(format!("ledger debit failed: {other}")),
-            })?;
-        Ok(new_balance)
+        })
     }
 
     /// Execute a local agent: run the agent (skill cascade + tool loop, via
@@ -369,19 +380,22 @@ impl LocalSwarmRuntime {
             )));
         }
 
-        // Check the ledger balance — the operator must have funded it.
-        // The pre-inference check uses `credits_authorized` (the operator's
-        // declared budget). The actual debit after inference uses the real
-        // token-based cost, capped at `credits_authorized`.
-        let balance = self.balance().ok_or_else(|| {
-            SwarmError::Unavailable("ledger balance query failed — cannot verify funds".to_string())
-        })?;
-        if balance < i64::from(credits_authorized) {
-            return Err(SwarmError::PaymentRequired(format!(
-                "insufficient local credits: have {balance}, need {credits_authorized} \
-                 — fund via swarm_fund_local"
-            )));
-        }
+        // NO balance gate. Local agents run on the operator's own substrate
+        // (their machine, their inference credentials), so there is nothing for
+        // this server to withhold: refusing to run costs the operator the work
+        // while saving them nothing. Funding gates belong on *cloud* delegation,
+        // where credits buy someone else's compute (`spend_gate.rs` + the ABW
+        // consent token).
+        //
+        // The local ledger is retained as **accounting, not authorization** —
+        // `swarm_balance_local` / `swarm_local_history` remain the reconciliation
+        // surface, and the debit below still records what was spent. A negative
+        // balance is therefore normal and meaningful: it is the operator's
+        // unreconciled local spend, not a fault.
+        //
+        // The per-dispatch ceiling above IS retained: it bounds a single runaway
+        // dispatch (a cost-amplification limit), which is a different concern
+        // from whether an account is funded.
 
         // Run the agent (skill cascade + tool loop). The executor returns the
         // RAW output — it does NOT debit the ledger.
@@ -394,9 +408,27 @@ impl LocalSwarmRuntime {
         let base_cost = std::cmp::max(1, tokens / 1000);
         let cost = std::cmp::min(base_cost, i64::from(credits_authorized));
 
-        // Debit the ledger after the agent run succeeds.
+        // Record the spend after the agent run succeeds. Accounting only: a
+        // failure here must not fail a delegation that already happened (and
+        // already consumed the operator's inference credentials). Losing the
+        // record is a reconciliation gap, so it is logged loudly rather than
+        // swallowed, and the reported balance falls back to the last readable
+        // value — never a fabricated zero (the `.rules` trap).
         let reference = format!("delegate-{}-{}", agent.agent_id, uuid::Uuid::new_v4());
-        let new_balance = self.debit(cost, &reference)?;
+        let new_balance = match self.record_spend(cost, &reference) {
+            Ok(balance) => balance,
+            Err(error) => {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    agent = %agent.agent_id,
+                    cost,
+                    %error,
+                    "local spend could not be recorded - the delegation succeeded but the \
+                     ledger is now behind by this amount (reconciliation gap)"
+                );
+                self.balance().unwrap_or(0)
+            }
+        };
 
         Ok(LocalDelegateResult {
             agent_id: agent.agent_id.clone(),
@@ -500,4 +532,133 @@ pub struct TaskSuccessVerdict {
     /// How the verdict was produced. `Deterministic` is the only trusted
     /// provenance; `LlmJudged` triggers an ORIENT warning (Gap S3).
     pub provenance: TaskSuccessProvenance,
+}
+
+#[cfg(test)]
+mod tests {
+    use hkask_ledger::Ledger;
+    use hkask_storage::database::sqlite::SqliteDriver;
+
+    /// The ledger operations `delegate` performs, without the inference port.
+    ///
+    /// `LocalSwarmRuntime::new` resolves an `InferencePort`, which is unavailable
+    /// in a unit test, and building an `AgentExecutor` by hand would need three
+    /// port stubs to reach code that never touches them. The gate that was
+    /// removed lived entirely in the ledger interaction, so these tests target
+    /// that directly: `record_spend` posts the same double-entry transaction with
+    /// `Ledger::commit` (no balance precondition), where the old `debit` used
+    /// `Ledger::debit_if_funds` (which refuses on an insufficient balance).
+    fn ledger() -> Ledger {
+        Ledger::from_driver(SqliteDriver::in_memory_driver()).expect("ledger")
+    }
+
+    fn fund(ledger: &Ledger, amount: i64, reference: &str) {
+        ledger
+            .commit(&hkask_ledger::LedgerTransaction {
+                id: uuid::Uuid::new_v4().to_string(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                reference: reference.to_string(),
+                postings: vec![hkask_ledger::Posting {
+                    source: "external".to_string(),
+                    destination: "operator".to_string(),
+                    asset: "credits".to_string(),
+                    amount,
+                }],
+                metadata: serde_json::json!({ "action": "fund" }),
+            })
+            .expect("fund commit");
+    }
+
+    /// Mirrors `LocalSwarmRuntime::record_spend`'s posting.
+    fn record_spend(ledger: &Ledger, amount: i64, reference: &str) -> Result<(), String> {
+        ledger
+            .commit(&hkask_ledger::LedgerTransaction {
+                id: uuid::Uuid::new_v4().to_string(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                reference: reference.to_string(),
+                postings: vec![hkask_ledger::Posting {
+                    source: "operator".to_string(),
+                    destination: "external".to_string(),
+                    asset: "credits".to_string(),
+                    amount,
+                }],
+                metadata: serde_json::json!({ "action": "debit" }),
+            })
+            .map_err(|e| e.to_string())
+    }
+
+    fn balance(ledger: &Ledger) -> i64 {
+        ledger.balance("operator", Some("credits")).expect("balance")
+    }
+
+    /// The headline change: local spend posts against an unfunded ledger instead
+    /// of being refused.
+    ///
+    /// Local agents run on the operator's own substrate (their machine, their
+    /// inference credentials), so a funding gate withheld the work while saving
+    /// nothing. Before this, `delegate` refused with `PaymentRequired` on a zero
+    /// balance, so `kanban_task_spawn` and every `swarm_*_local` tool failed until
+    /// the operator ran `swarm_fund_local`.
+    #[test]
+    fn spend_posts_against_an_unfunded_ledger() {
+        let ledger = ledger();
+        record_spend(&ledger, 10, "delegate-1").expect("spend must post when unfunded");
+        assert_eq!(
+            balance(&ledger),
+            -10,
+            "an unfunded ledger goes negative rather than refusing - the balance is \
+             accumulated local spend, not remaining capacity"
+        );
+    }
+
+    /// The old gate is genuinely gone: `debit_if_funds` (what `debit` used) still
+    /// refuses, which is why `record_spend` must not use it.
+    ///
+    /// Pins the distinction rather than trusting the call site. If someone
+    /// "simplified" `record_spend` back to `debit_if_funds`, the gate would
+    /// silently return and this test would fail.
+    #[test]
+    fn debit_if_funds_would_still_refuse_which_is_why_it_is_not_used() {
+        let ledger = ledger();
+        let refused = ledger.debit_if_funds(
+            "operator",
+            "credits",
+            10,
+            "would-refuse",
+            &serde_json::json!({ "action": "debit" }),
+        );
+        assert!(
+            refused.is_err(),
+            "debit_if_funds refuses on an unfunded account - record_spend must use \
+             plain commit so local delegation is never gated on funds"
+        );
+        assert_eq!(
+            balance(&ledger),
+            0,
+            "the refused debit must not have posted"
+        );
+    }
+
+    /// Successive local spend accumulates and stays readable.
+    #[test]
+    fn negative_balance_accumulates_and_remains_readable() {
+        let ledger = ledger();
+        record_spend(&ledger, 5, "d1").expect("first");
+        record_spend(&ledger, 7, "d2").expect("second");
+        assert_eq!(balance(&ledger), -12);
+    }
+
+    /// Funding still nets against recorded spend, so an operator who wants a
+    /// budget to reconcile against keeps that ability.
+    #[test]
+    fn funding_still_offsets_recorded_spend() {
+        let ledger = ledger();
+        fund(&ledger, 100, "fund-1");
+        record_spend(&ledger, 30, "d1").expect("spend");
+        assert_eq!(
+            balance(&ledger),
+            70,
+            "a funded ledger still nets out to remaining credits"
+        );
+    }
 }

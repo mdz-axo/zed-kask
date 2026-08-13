@@ -20,4 +20,5 @@ detection:
 mitigation: "Add a taint: ToolTaint field to ToolInfo so every MCP tool is labeled Source/Sink/Pure/Endorser."
 source: "https://arxiv.org/pdf/2505.23643 — Microsoft Research FIDES"
 ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: obsolete
+note: "FIDES taint machinery deleted 2026-08-12. The gate was structurally present but operationally inert: `has_untrusted_input` was always false (the read path looked for legacy `__taint__` markers the write path stopped emitting) and every MCP tool was hardcoded `ToolTaint::Pure`, so the Source->Sink block could never fire. Operator decision was to simplify rather than repair: `ToolTaint`, `DefaultPolicy`, `PolicyVerdict`, `runtime_policy` wiring, `taint_of_key`, `StepResult.taint` and `check_untrusted_input` are all removed. Superseded by RR-0064, which forbids re-adding an inert gate. Do not resurrect this entry."

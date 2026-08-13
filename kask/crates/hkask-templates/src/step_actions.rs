@@ -8,14 +8,13 @@
 //! `InferencePort`). Everything else is deterministic.
 
 use crate::ports::{Result, TemplateError};
-use crate::step_context::{ContextLookup, StepContext};
+use crate::step_context::StepContext;
 use crate::step_graph::{ExitKind, StepId};
 use crate::step_machine::{CascadeOutcome, Infra, StepMachine};
 use crate::template_renderer::InferenceBlock;
 use futures_util::StreamExt;
 use futures_util::stream;
 use hkask_capability::ToolPort;
-use hkask_capability::tool_taint::ToolTaint;
 use hkask_types::ChatToolDefinition;
 use hkask_types::ports::inference_port::InferencePort;
 use hkask_types::template::LLMParameters;
@@ -29,13 +28,11 @@ pub enum Effect {
     Stored {
         step_id: StepId,
         value: Value,
-        taint: ToolTaint,
     },
     StoredNamed {
         step_id: StepId,
         suffix: String,
         value: Value,
-        taint: ToolTaint,
     },
     Jump(StepId),
     Reenter(StepId),
@@ -322,7 +319,6 @@ impl StepMachine {
         Ok(Effect::Stored {
             step_id: node.id,
             value: parsed,
-            taint: ToolTaint::Pure, // LLM output is not tainted (it's generated, not external)
         })
     }
 
@@ -347,7 +343,6 @@ impl StepMachine {
             step_id: node.id,
             suffix: "populated".to_string(),
             value: Value::String(populated),
-            taint: ToolTaint::Pure,
         })
     }
 
@@ -394,7 +389,6 @@ impl StepMachine {
         Ok(Effect::Stored {
             step_id: node.id,
             value: result,
-            taint: ToolTaint::Pure,
         })
     }
 
@@ -408,7 +402,6 @@ impl StepMachine {
         Ok(Effect::Stored {
             step_id: node.id,
             value: Value::String(rendered),
-            taint: ToolTaint::Pure,
         })
     }
 
@@ -428,12 +421,6 @@ impl StepMachine {
         // Resolve ${variable} references in the MCP reference.
         let mcp_ref =
             crate::template_renderer::TemplateRenderer::render_inline(mcp_ref_raw, &self.context);
-
-        // Check for untrusted input (FIDES taint check).
-        let has_untrusted_input = node
-            .input_mapping
-            .as_ref()
-            .is_some_and(|mapping| check_untrusted_input(mapping, &self.context));
 
         // Resolve the tool input.
         let input: Value = node
@@ -458,18 +445,8 @@ impl StepMachine {
         // Invoke the tool with a timeout. Without this, a hung MCP tool call
         // blocks the cascade forever — the tokio task has no external watchdog.
         let timeout_dur = effective_timeout(node.timeout_seconds);
-        let (result, tool_taint) = match tokio::time::timeout(
-            timeout_dur,
-            invoke_tool(
-                &infra.tools,
-                &infra.runtime_policy,
-                &mcp_ref,
-                input,
-                self.context.entries().count() as u64,
-                has_untrusted_input,
-            ),
-        )
-        .await
+        let result = match tokio::time::timeout(timeout_dur, invoke_tool(&infra.tools, &mcp_ref, input))
+            .await
         {
             Ok(inner) => inner?,
             Err(_elapsed) => {
@@ -484,7 +461,6 @@ impl StepMachine {
         Ok(Effect::Stored {
             step_id: node.id,
             value: result,
-            taint: tool_taint,
         })
     }
 
@@ -611,7 +587,6 @@ impl StepMachine {
         Ok(Effect::Stored {
             step_id: node.id,
             value: result_value,
-            taint: ToolTaint::Pure,
         })
     }
 
@@ -770,7 +745,6 @@ impl StepMachine {
         Ok(Effect::Stored {
             step_id: node.id,
             value: joined,
-            taint: ToolTaint::Pure,
         })
     }
 }
@@ -961,75 +935,15 @@ async fn call_inference_stream(
     Ok((full_text, tool_calls, None, finish_reason))
 }
 
-/// Check whether a JSON value references any tainted (Source) context entries.
-/// Walks the value for `$ref` and `{{ }}` references, then resolves each
-/// referenced key's taint label via `ContextLookup::taint_of_key` — the typed
-/// `StepContext` reads `StepResult.taint` for `step_N_result` keys. Returns
-/// true iff any referenced key is `ToolTaint::Source`.
-fn check_untrusted_input<C: ContextLookup>(value: &Value, context: &C) -> bool {
-    let mut keys = Vec::new();
-    collect_referenced_keys(value, &mut keys);
-    keys.iter()
-        .any(|key| context.taint_of_key(key) == ToolTaint::Source)
-}
-
-/// Collect all context keys referenced in a mapping value.
-fn collect_referenced_keys(value: &Value, keys: &mut Vec<String>) {
-    match value {
-        Value::Object(map) => {
-            if let Some(Value::String(ref_path)) = map.get("$ref") {
-                if let Some(key) = ref_path.split('.').next()
-                    && !key.is_empty()
-                {
-                    keys.push(key.to_string());
-                }
-                return;
-            }
-            for value in map.values() {
-                collect_referenced_keys(value, keys);
-            }
-        }
-        Value::Array(arr) => {
-            for value in arr {
-                collect_referenced_keys(value, keys);
-            }
-        }
-        Value::String(s) => {
-            let mut remaining = s.as_str();
-            while let Some(open) = remaining.find("{{") {
-                let after_open = &remaining[open + 2..];
-                let Some(close) = after_open.find("}}") else {
-                    break;
-                };
-                let expr = after_open[..close].trim();
-                let token = expr
-                    .split(|c: char| !c.is_alphanumeric() && c != '_')
-                    .find(|t| {
-                        !t.is_empty()
-                            && (t.starts_with(|c: char| c.is_alphabetic()) || t.starts_with('_'))
-                            && !matches!(*t, "if" | "for" | "endif" | "endfor" | "else" | "elif")
-                    });
-                if let Some(tok) = token
-                    && (tok.starts_with("step_") || tok == "task" || tok == "prev_step")
-                {
-                    keys.push(tok.to_string());
-                }
-                remaining = &after_open[close + 2..];
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Invoke a tool with runtime policy checks. Replaces the old `invoke_tool`.
-async fn invoke_tool(
-    tools: &Arc<dyn ToolPort>,
-    runtime_policy: &Option<Arc<hkask_regulation::DefaultPolicy>>,
-    tool_name: &str,
-    input: Value,
-    action_number: u64,
-    has_untrusted_input: bool,
-) -> Result<(Value, ToolTaint)> {
+/// Resolve a tool's server and dispatch the call.
+///
+/// A FIDES taint gate (`DefaultPolicy::check` on a `Source`→`Sink` flow) used to
+/// run here. It was removed rather than repaired: both of its inputs were
+/// constants — every `ToolInfo` was labelled `Pure` at its only construction
+/// site, and the untrusted-input flag read taint markers the context write side
+/// had stopped emitting — so the block could never fire. Restoring the gate
+/// means first giving tools real taint labels and propagating taint on write.
+async fn invoke_tool(tools: &Arc<dyn ToolPort>, tool_name: &str, input: Value) -> Result<Value> {
     let tool_info = tools.get_tool_info(tool_name).await.ok_or_else(|| {
         TemplateError::NotFound(hkask_types::NotFound {
             entity_type: "tool".to_string(),
@@ -1037,100 +951,19 @@ async fn invoke_tool(
         })
     })?;
 
-    if let Some(policy) = runtime_policy {
-        use hkask_regulation::PolicyVerdict;
-
-        match policy.check(
-            tool_name,
-            tool_info.taint,
-            has_untrusted_input,
-            action_number,
-        ) {
-            PolicyVerdict::Block(reason) => {
-                tracing::warn!(
-                    target: "reg.runtime.policy",
-                    tool = tool_name,
-                    verdict = "block",
-                    %reason,
-                    "REG"
-                );
-                return Err(TemplateError::Manifest(format!(
-                    "Runtime policy blocked tool '{tool_name}': {reason}"
-                )));
-            }
-            PolicyVerdict::RequireHuman(reason) => {
-                tracing::warn!(
-                    target: "reg.runtime.policy",
-                    tool = tool_name,
-                    verdict = "require_human",
-                    %reason,
-                    "REG"
-                );
-                return Err(TemplateError::Manifest(format!(
-                    "Runtime policy requires human confirmation for '{tool_name}': {reason}"
-                )));
-            }
-            PolicyVerdict::Log(message) => {
-                tracing::info!(
-                    target: "reg.runtime.policy",
-                    tool = tool_name,
-                    verdict = "log",
-                    %message,
-                    "REG"
-                );
-            }
-            PolicyVerdict::Allow => {}
-        }
-    }
-
     // Accounting identity for the call meter — not a credential. The cascade's
     // authority comes from which tools the manifest may name, not from this.
     let executor_webid = hkask_types::WebID::from_persona(b"manifest-executor");
 
-    let result = tools
+    tools
         .invoke(&tool_info.server_id, tool_name, input, executor_webid)
         .await
-        .map_err(|error| TemplateError::Mcp(Box::new(error)))?;
-
-    Ok((result, tool_info.taint))
+        .map_err(|error| TemplateError::Mcp(Box::new(error)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::step_context::StepContext;
-    use std::collections::HashMap;
-
-    #[test]
-    fn check_untrusted_input_detects_source_tainted_step_ref() {
-        let mut ctx = StepContext::new(HashMap::new());
-        ctx.store_result(0, 1, Value::Null, ToolTaint::Source);
-        ctx.store_result(1, 2, Value::Null, ToolTaint::Pure);
-
-        // Mapping referencing a Source-tainted step result -> true.
-        let mapping = serde_json::json!({
-            "query": "{{ step_1_result }}"
-        });
-        assert!(check_untrusted_input(&mapping, &ctx));
-
-        // Mapping referencing only Pure step results -> false.
-        let mapping = serde_json::json!({
-            "query": "{{ step_2_result }}"
-        });
-        assert!(!check_untrusted_input(&mapping, &ctx));
-
-        // Mapping referencing a $ref to a Source-tainted step -> true.
-        let mapping = serde_json::json!({
-            "$ref": "step_1_result.data"
-        });
-        assert!(check_untrusted_input(&mapping, &ctx));
-
-        // No references -> false.
-        let mapping = serde_json::json!({
-            "query": "static text"
-        });
-        assert!(!check_untrusted_input(&mapping, &ctx));
-    }
 
     #[test]
     fn effective_timeout_substitutes_fallback_for_zero() {

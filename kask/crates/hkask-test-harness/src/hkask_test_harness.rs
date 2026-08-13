@@ -348,14 +348,11 @@ pub fn arb_trace_entry() -> BoxedStrategy<TraceEntry> {
 //
 // These stubs implement InferencePort and ToolPort with no-op/error returns so
 // that ManifestExecutor can be constructed in tests without a real GPUI
-// runtime or MCP server. They are the critical enabler for taint-propagation
-// and runtime-policy end-to-end tests (RR-0053 companion, RR-0049 class).
+// runtime or MCP server.
 //
 // NoopInferencePort returns InferenceError::Generation on every call.
-// NoopToolPort returns ToolPortError::InvocationFailed on invoke, empty
-// discover_tools, and None for get_tool_info — except when configured with
-// a taint map via NoopToolPort::with_taints, which lets get_tool_info return
-// ToolInfo with a specific ToolTaint for FIDES flow tests.
+// NoopToolPort returns ToolPortError::InvocationFailed on invoke and reports
+// only the tools it was explicitly given via `with_tool`.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -387,33 +384,25 @@ impl hkask_types::InferencePort for NoopInferencePort {
     }
 }
 
-/// No-op ToolPort for testing. Returns errors by default, but can be
-/// configured with a taint map so `get_tool_info` returns `ToolInfo` with
-/// a specific `ToolTaint` — enabling FIDES Source→Sink flow tests.
+/// No-op ToolPort for testing. `invoke` always fails; `discover_tools` and
+/// `get_tool_info` report only the tools registered via [`NoopToolPort::with_tool`].
 #[derive(Debug, Clone, Default)]
 pub struct NoopToolPort {
-    taints: std::collections::HashMap<String, hkask_capability::tool_taint::ToolTaint>,
+    tools: Vec<String>,
 }
 
 impl NoopToolPort {
-    /// Create a new no-op tool port with no taint mappings.
+    /// Create a new no-op tool port that advertises no tools.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Register a tool with a specific FIDES taint label so `get_tool_info`
-    /// returns it. This enables taint-propagation tests: a Source-tainted
-    /// tool's output flows into the context, and a Sink-tainted tool's
-    /// invocation with untrusted input should be blocked by the runtime
-    /// policy.
+    /// Register a tool name so `discover_tools` lists it and `get_tool_info`
+    /// returns metadata for it.
     #[must_use]
-    pub fn with_taint(
-        mut self,
-        tool_name: &str,
-        taint: hkask_capability::tool_taint::ToolTaint,
-    ) -> Self {
-        self.taints.insert(tool_name.to_string(), taint);
+    pub fn with_tool(mut self, tool_name: &str) -> Self {
+        self.tools.push(tool_name.to_string());
         self
     }
 }
@@ -435,7 +424,7 @@ impl hkask_capability::ToolPort for NoopToolPort {
     }
 
     fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
-        Box::pin(async { self.taints.keys().cloned().collect() })
+        Box::pin(async { self.tools.clone() })
     }
 
     fn get_tool_info<'a>(
@@ -443,14 +432,14 @@ impl hkask_capability::ToolPort for NoopToolPort {
         tool_name: &'a str,
     ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
         Box::pin(async move {
-            self.taints
-                .get(tool_name)
-                .map(|taint| hkask_capability::ToolInfo {
+            self.tools
+                .iter()
+                .any(|registered| registered == tool_name)
+                .then(|| hkask_capability::ToolInfo {
                     name: tool_name.to_string(),
                     description: "noop tool".to_string(),
                     input_schema: serde_json::json!({}),
                     server_id: "noop".to_string(),
-                    taint: *taint,
                 })
         })
     }
@@ -458,25 +447,9 @@ impl hkask_capability::ToolPort for NoopToolPort {
 
 // ── Security-oriented proptest strategies ─────────────────────────────────
 
-/// Generate a `HashMap<String, ToolTaint>` with mixed Source/Sink/Pure labels.
-/// Used by taint-propagation tests to build context maps for `ManifestExecutor`
-/// (RR-0053 companion, FIDES L4).
-#[must_use]
-pub fn arb_taint_context()
--> BoxedStrategy<std::collections::HashMap<String, hkask_capability::tool_taint::ToolTaint>> {
-    let taint = prop_oneof![
-        Just(hkask_capability::tool_taint::ToolTaint::Source),
-        Just(hkask_capability::tool_taint::ToolTaint::Sink),
-        Just(hkask_capability::tool_taint::ToolTaint::Pure),
-        Just(hkask_capability::tool_taint::ToolTaint::Endorser),
-    ];
-    prop::collection::hash_map("[a-z_][a-z0-9_]{0,20}", taint, 1..10).boxed()
-}
-
 /// Generate a Jinja `{{ }}` template expression referencing a random
-/// identifier. Used by taint-propagation tests to verify `extract_referenced_keys`
-/// recognizes keys from the taint-labels map (not just `step_`-prefixed keys).
-/// The generated string is a single `{{ ident }}` or `{{ ident.field }}`.
+/// identifier. The generated string is a single `{{ ident }}` or
+/// `{{ ident.field }}`.
 #[must_use]
 pub fn arb_jinja_template() -> BoxedStrategy<String> {
     prop_oneof![

@@ -153,7 +153,9 @@ workspace_roster should be pre-populated):
   card are roster gaps (the id was added but no card exists yet —
   resolution happens at delegation time, mirroring ABW workspaces).
 - `swarm_balance_local` → the local ledger balance: `{ balance, asset }`.
-  An unfunded ledger reads 0. If the call fails, set
+  Records accumulated local spend rather than gating it, so an unfunded ledger
+  that has run delegations reads **negative**. That is normal, not a fault, and
+  is not a reason to withhold a local delegation. If the call fails, set
   `wallet_state = { balance: null, source: "local_ledger" }` — do NOT
   fabricate a zero balance (the `.rules` trap on `unwrap_or(0)` for
   regulation signals — a null balance means "not yet measured", not "zero").
@@ -261,11 +263,18 @@ two per-agent metrics. These complement the Team-level properties (alignment,
 cohesion, separation) with Agent-level fitness, enabling DECIDE to make
 per-agent decisions (route around a depleted agent, reconfigure a stuck one).
 
-- **energy** = `delegate_results[].balance` (the post-debit ledger balance
-  after that agent's last delegation). An agent with `energy = 0` is depleted —
-  DECIDE should route around it (delegate to a different agent or fund the
-  ledger). `null` when no prior delegation exists (first iteration or the agent
-  was hired but not yet delegated to).
+- **energy** = `delegate_results[].balance` (the ledger balance after that
+  agent's last delegation). `null` when no prior delegation exists (first
+  iteration or the agent was hired but not yet delegated to).
+  - **ABW mode:** a low or zero balance IS a constraint — cloud credits buy
+    someone else's compute, so DECIDE should route around a depleted agent or
+    have the operator fund the wallet.
+  - **Local mode:** balance is **accounting, not capacity**. Local delegation
+    never refuses for lack of funds, so a zero or negative `energy` means
+    "this much local spend has accumulated", NOT "depleted". Do NOT route
+    around a local agent on balance alone and do NOT propose funding the local
+    ledger as a remedy — treat local `energy` as a cost signal for
+    prioritisation, not a gate.
 - **distanceToGoal** = `delegate_results[].task_success.score` when
   `task_success` is present and `provenance == "deterministic"`. `null` when
   `task_success` is absent (open task, no oracle) or `provenance == "llm_judged"`

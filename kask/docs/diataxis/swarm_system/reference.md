@@ -55,12 +55,12 @@ relationships.
 
 | Tool                            | Purpose                                                                                                                                       | Gate                               |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `swarm_fund_local`              | fund operator ledger (starts at 0)                                                                                                            | —                                  |
-| `swarm_balance_local`           | read balance (proactive algedonic)                                                                                                            | read                               |
+| `swarm_fund_local`              | **optional** deposit — gives a budget to reconcile against; not required to delegate                                                          | —                                  |
+| `swarm_balance_local`           | read accumulated local spend (may be negative); **not a gate**                                                                                | read                               |
 | `swarm_local_history`           | recent ledger transactions (reconciliation)                                                                                                   | read                               |
-| `swarm_delegate_local`          | run a local agent (debit-before-scan)                                                                                                         | balance + ceiling                  |
-| `swarm_fanout_local`            | parallel fan-out                                                                                                                              | balance per dispatch               |
-| `swarm_pipeline_local`          | sequential pipeline with `{{prev_output}}`                                                                                                    | balance                            |
+| `swarm_delegate_local`          | run a local agent (records spend after the run)                                                                                               | ceiling only — **no funding gate** |
+| `swarm_fanout_local`            | parallel fan-out                                                                                                                              | ceiling per dispatch               |
+| `swarm_pipeline_local`          | sequential pipeline with `{{prev_output}}`                                                                                                    | ceiling only                       |
 | `swarm_a2a_send`                | A2A protocol message (in-process)                                                                                                             | —                                  |
 | `swarm_a2a_card`                | A2A Agent Card discovery                                                                                                                      | read                               |
 | `swarm_list_local_agents`       | local registry read                                                                                                                           | read                               |

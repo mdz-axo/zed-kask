@@ -64,11 +64,18 @@ all 51 tools are always registered.
 
 - **`abw`** (default): routes to Agent Bestiary World (cloud). Requires the ABW
   Pro-tier API key. Spend is consent-gated and wallet-reconciled.
-- **`local`**: runs on the zed-kask substrate — `hkask-inference` + `hkask-ledger`
-  (operator-funded SQLite) + `hkask-guard` (I/O scanning). No ABW round-trips.
-  The ledger starts at 0; fund it with `swarm_fund_local` before delegating, or
-  `swarm_delegate_local` returns `PaymentRequired`. There is no consent token
-  in local mode — the balance check is the gate (`swarm_panel.rs:149`).
+- **`local`**: runs on the zed-kask substrate — `hkask-inference` +
+  `hkask-ledger` (SQLite). No ABW round-trips.
+  **No funding and no consent are required.** Local agents run on your own
+  machine with your own inference credentials, so there is nothing for the server
+  to authorize — `swarm_delegate_local` never returns `PaymentRequired` for lack
+  of funds. The ledger is *accounting*: it records what each delegation cost so
+  `swarm_balance_local` and `swarm_local_history` can reconcile it. An unfunded
+  ledger that has run delegations reads **negative**, which is normal.
+  `swarm_fund_local` is optional — deposit only if you want the balance to read
+  as "remaining budget" instead of "accumulated spend".
+  Funding and consent gates apply to **cloud** delegation, where credits buy
+  someone else's compute.
 
 Toggle it in the panel header (the `Abw`/`Local` buttons call `set_swarm_mode`,
 `swarm_panel.rs:1814`). Toggling drops any open Steer conversation so the next

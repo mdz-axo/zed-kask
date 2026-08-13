@@ -39,6 +39,14 @@ pub struct BuiltinMcpServer {
 /// Order is stable and meaningful — the kask panel uses index-based selection.
 pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     BuiltinMcpServer {
+        // DEEPINFRA/OPENROUTER keys are NOT read directly by this server — its own
+        // doc (hkask_mcp_codegraph.rs:466) says credentials come from zed's
+        // LanguageModelRegistry over the IPC bridge. They are reachable only on
+        // the degraded no-socket fallback, where `resolve_inference_port` builds a
+        // MediaRouter from `InferenceConfig::from_env`, which does read them.
+        // Retained deliberately so embeddings still work when the inference socket
+        // is unavailable; reviewed 2026-08-12 (RR-0061). If the fallback is ever
+        // removed, drop these two entries in the same change.
         id: "codegraph",
         binary: "hkask-mcp-codegraph",
         description: "Codegraph — code structure query and traversal",
@@ -202,6 +210,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_MEDIA_STT_MODEL",
             "HKASK_MEDIA_VISION_MODEL",
             "HKASK_MEDIA_IMAGE_GEN_MODEL",
+            // rJoule spend cap — read at hkask-mcp-media/src/budget.rs:233.
+            // Unset means enforcement is OFF (budget.rs:222), so while this was
+            // unallowlisted the cap could not be enabled by an operator at all
+            // (RR-0061). Usage metering is only useful if it can be configured.
+            "HKASK_MEDIA_RJOULE_CAP",
         ]),
     },
     BuiltinMcpServer {
@@ -250,7 +263,14 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "swarm",
         binary: "hkask-mcp-swarm",
         description: "Swarm — Agent Bestiary World agent swarms and Xaman Ek curator",
-        credentials: Some(&["HKASK_ABW_API_KEY"]),
+        // HKASK_SWARM_MEMORY_PASSPHRASE is a SECRET (SQLCipher key for the swarm
+        // memory DB), so it belongs here, not in config_env. Before it was
+        // allowlisted (RR-0061) the read at hkask-mcp-swarm/src/config.rs:252
+        // could never receive a value, so the store always opened under the
+        // compiled-in pre-release default "allostery" (config.rs:157) — i.e.
+        // encrypted with a constant that ships in the source. The documented
+        // override in local_knowledge.rs was unreachable via the governed launch.
+        credentials: Some(&["HKASK_ABW_API_KEY", "HKASK_SWARM_MEMORY_PASSPHRASE"]),
         config_env: Some(&[
             "HKASK_ABW_API_URL",
             "HKASK_ABW_MAX_CREDITS",
@@ -282,6 +302,15 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // skills dir override is silently dropped by
             // `filter_config_env_for_server`.
             "HKASK_SKILLS_DIR",
+            // Swarm memory store shape — read in config.rs alongside the
+            // passphrase above. Without these the DB path and embedding
+            // dimension overrides were silently dropped (RR-0061).
+            "HKASK_SWARM_MEMORY_DB",
+            "HKASK_SWARM_EMBEDDING_DIM",
+            // A2A HTTP listener toggle — read via `config.a2a_http_enabled`
+            // (hkask_mcp_swarm.rs:264). Unallowlisted, an operator could not
+            // enable or disable the listener.
+            "HKASK_A2A_HTTP_ENABLE",
         ]),
     },
     BuiltinMcpServer {
@@ -821,9 +850,10 @@ mod tests {
     // `credentials` allowlist would not be caught by the generic
     // `all_servers_have_credential_allowlist` test.
     #[test]
-    fn swarm_credentials_only_include_abw_key() {
+    fn swarm_credentials_exclude_other_servers_secrets() {
         let all_credentials: Vec<(String, String)> = [
             "HKASK_ABW_API_KEY",
+            "HKASK_SWARM_MEMORY_PASSPHRASE",
             "HKASK_EODHD_API_KEY",
             "HKASK_FMP_API_KEY",
             "HKASK_SMTP_PASSWORD",
@@ -834,12 +864,16 @@ mod tests {
         .map(|env| (env.to_string(), "url".to_string()))
         .collect();
         let filtered = filter_credentials_for_server("swarm", &all_credentials);
+        // Renamed from `swarm_credentials_only_include_abw_key` 2026-08-12: the
+        // swarm legitimately receives TWO secrets now that the memory passphrase
+        // is allowlisted (RR-0061). The invariant that matters is not the count —
+        // it is that no OTHER server's secret reaches this one.
+        let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
-            filtered.len(),
-            1,
-            "swarm server should only receive HKASK_ABW_API_KEY"
+            names,
+            vec!["HKASK_ABW_API_KEY", "HKASK_SWARM_MEMORY_PASSPHRASE"],
+            "swarm should receive exactly its own two declared secrets"
         );
-        assert_eq!(filtered[0].0, "HKASK_ABW_API_KEY");
         assert!(
             !filtered.iter().any(|(k, _)| k == "HKASK_SMTP_PASSWORD"),
             "swarm server must not receive SMTP credentials"
@@ -1073,5 +1107,213 @@ mod tests {
             !cfg.contains(&"HKASK_USE_FAL_DOCRES"),
             "HKASK_USE_FAL_DOCRES must not be granted to the corpus server — fal.ai docres is removed"
         );
+    }
+
+    // ── RR-0061: read-alignment for the five previously-unguarded servers ────
+    //
+    // Before these tests, only 5 of 13 servers had a read-alignment test.
+    // `codegraph`, `curator`, `research`, `scenarios`, and `training` had none —
+    // including `training` (the registry's largest secret grant) and `curator`
+    // (SMTP password). Drift in an unguarded server is silent in both
+    // directions: an under-grant means an operator override never arrives, and
+    // an over-grant hands a secret to a process that never reads it.
+    //
+    // Each expectation below was derived by grepping the server's own source for
+    // `std::env::var` / `ctx.credentials.get` sites, so the assertion is against
+    // observed reads rather than intent.
+
+    #[test]
+    fn codegraph_allowlist_matches_actual_reads() {
+        let s = server_by_id("codegraph");
+        // Direct reads: HKASK_CODEGRAPH_DB, HKASK_EMBEDDING_DIM.
+        // HKASK_EMBEDDING_MODEL is read by the shared hkask-inference model
+        // constants, not by this crate directly.
+        // DEEPINFRA/OPENROUTER keys have NO direct read site — they are reachable
+        // only through `resolve_inference_port`'s no-socket fallback
+        // (`InferenceConfig::from_env`). Retained deliberately; see the registry
+        // comment. This test pins that decision so the grant cannot silently grow.
+        assert_eq!(
+            s.credentials.unwrap().to_vec(),
+            vec!["DEEPINFRA_API_KEY", "OPENROUTER_API_KEY"],
+            "codegraph credentials allowlist drifted — these two are justified ONLY \
+             by the degraded no-socket inference fallback; adding more secrets to a \
+             code-indexing process needs a read site"
+        );
+        assert_eq!(
+            s.config_env.unwrap().to_vec(),
+            vec![
+                "HKASK_CODEGRAPH_DB",
+                "HKASK_EMBEDDING_DIM",
+                "HKASK_EMBEDDING_MODEL",
+            ],
+            "codegraph config_env allowlist drifted"
+        );
+    }
+
+    #[test]
+    fn curator_allowlist_matches_actual_reads() {
+        let s = server_by_id("curator");
+        // Only secret read: ctx.credentials.get("HKASK_SMTP_PASSWORD").
+        assert_eq!(
+            s.credentials.unwrap().to_vec(),
+            vec!["HKASK_SMTP_PASSWORD"],
+            "curator credentials allowlist drifted — this server holds the SMTP \
+             password and must not accumulate unrelated secrets"
+        );
+        assert!(
+            !s.config_env.unwrap().is_empty(),
+            "curator config_env should not be empty — the server reads SMTP host/port \
+             and curator settings from it"
+        );
+    }
+
+    #[test]
+    fn research_allowlist_matches_actual_reads() {
+        let s = server_by_id("research");
+        // ctx.credentials.get sites: EXA, TAVILY, BRAVE, SERPAPI, FIRECRAWL,
+        // BROWSERBASE. HKASK_DB_PASSPHRASE is read for the RSS store.
+        let creds = s.credentials.unwrap();
+        for key in [
+            "HKASK_EXA_API_KEY",
+            "HKASK_TAVILY_API_KEY",
+            "HKASK_BRAVE_API_KEY",
+            "HKASK_SERPAPI_API_KEY",
+            "HKASK_FIRECRAWL_API_KEY",
+            "HKASK_BROWSERBASE_API_KEY",
+        ] {
+            assert!(
+                creds.contains(&key),
+                "research reads {key} via ctx.credentials.get but it is not \
+                 allowlisted — the provider would be silently unavailable"
+            );
+        }
+        assert!(
+            s.config_env.unwrap().contains(&"HKASK_RSS_DB"),
+            "research reads HKASK_RSS_DB via std::env::var but it is not allowlisted"
+        );
+    }
+
+    #[test]
+    fn scenarios_allowlist_matches_actual_reads() {
+        let s = server_by_id("scenarios");
+        // No secret read sites at all — the server is storage-only.
+        assert!(
+            s.credentials.unwrap().is_empty(),
+            "scenarios has no credential read site; granting one would be an \
+             unjustified secret grant"
+        );
+        assert_eq!(
+            s.config_env.unwrap().to_vec(),
+            vec!["HKASK_SCENARIOS_DATA"],
+            "scenarios config_env allowlist drifted — HKASK_SCENARIOS_DATA is its \
+             only std::env::var read"
+        );
+    }
+
+    #[test]
+    fn training_allowlist_matches_actual_reads() {
+        let s = server_by_id("training");
+        // Read sites include DEEPINFRA_API_KEY, HF_TOKEN, NEBIUS_PROJECT_ID,
+        // NEBIUS_SUBNET_ID, RUNPOD_* and HKASK_DB_PASSPHRASE. This is the largest
+        // secret grant in the registry, so pin that every granted secret has a
+        // read site.
+        let creds = s.credentials.unwrap();
+        for key in ["DEEPINFRA_API_KEY", "HF_TOKEN"] {
+            assert!(
+                creds.contains(&key),
+                "training reads {key} but it is not allowlisted"
+            );
+        }
+        // Guard the other direction: the training server must not be handed the
+        // SMTP password or another server's DB keys.
+        assert!(
+            !creds.contains(&"HKASK_SMTP_PASSWORD"),
+            "training must not receive the SMTP password — no read site exists"
+        );
+        assert!(
+            !s.config_env.unwrap().is_empty(),
+            "training config_env should not be empty — it reads cache dir, host, \
+             template root and GPU/pod config"
+        );
+    }
+
+    // ── RR-0061: the swarm under-grants that silently disabled real features ──
+
+    /// The sharpest instance: HKASK_SWARM_MEMORY_PASSPHRASE is READ at
+    /// hkask-mcp-swarm/src/config.rs:252 but was not allowlisted, so the override
+    /// could never arrive and the SQLCipher memory DB always opened under the
+    /// compiled-in default "allostery" (config.rs:157) — encrypted with a constant
+    /// that ships in the source.
+    #[test]
+    fn swarm_credentials_include_memory_passphrase() {
+        let s = server_by_id("swarm");
+        assert!(
+            s.credentials.unwrap().contains(&"HKASK_SWARM_MEMORY_PASSPHRASE"),
+            "HKASK_SWARM_MEMORY_PASSPHRASE is read by the swarm server but is not \
+             allowlisted — the SQLCipher memory DB would fall back to the \
+             compiled-in default passphrase with no way for an operator to \
+             override it (RR-0061)"
+        );
+    }
+
+    /// The swarm memory store shape and the A2A listener toggle were read but
+    /// unallowlisted, so those overrides were silently dropped.
+    #[test]
+    fn swarm_config_env_includes_memory_store_and_a2a_toggle() {
+        let cfg = server_by_id("swarm").config_env.unwrap();
+        for key in [
+            "HKASK_SWARM_MEMORY_DB",
+            "HKASK_SWARM_EMBEDDING_DIM",
+            "HKASK_A2A_HTTP_ENABLE",
+        ] {
+            assert!(
+                cfg.contains(&key),
+                "{key} is read by the swarm server but is not allowlisted — the \
+                 operator override is silently dropped (RR-0061)"
+            );
+        }
+    }
+
+    /// The media rJoule cap could not be enabled at all while unallowlisted:
+    /// budget.rs treats unset as "enforcement off", so usage metering was
+    /// unconfigurable.
+    #[test]
+    fn media_config_env_includes_rjoule_cap() {
+        assert!(
+            server_by_id("media")
+                .config_env
+                .unwrap()
+                .contains(&"HKASK_MEDIA_RJOULE_CAP"),
+            "HKASK_MEDIA_RJOULE_CAP is read at hkask-mcp-media/src/budget.rs:233 \
+             but is not allowlisted — unset means enforcement is OFF, so the media \
+             spend cap could not be turned on by an operator (RR-0061)"
+        );
+    }
+
+    /// Every secret-shaped credential grant must be justified by a read site.
+    /// This is the generic backstop for the 8 servers without a bespoke test:
+    /// it cannot verify each name, but it catches the case where a credential
+    /// allowlist grows without the registry comment that documents why.
+    #[test]
+    fn every_credential_grant_is_secret_shaped_or_documented() {
+        for server in BUILT_IN_MCP_SERVERS {
+            for key in server.credentials.unwrap_or(&[]) {
+                let upper = key.to_uppercase();
+                assert!(
+                    upper.contains("KEY")
+                        || upper.contains("TOKEN")
+                        || upper.contains("PASSWORD")
+                        || upper.contains("PASSPHRASE")
+                        || upper.contains("SECRET")
+                        || upper.contains("PROJECT_ID")
+                        || upper.contains("SUBNET_ID")
+                        || upper.contains("TEMPLATE_ID"),
+                    "{} grants '{key}' as a CREDENTIAL but the name is not \
+                     secret-shaped — non-secret configuration belongs in \
+                     config_env, which is not treated as sensitive",
+                    server.id
+                );
+            }
+        }
     }
 }

@@ -396,11 +396,11 @@ impl BridgeManifestExecutor {
     /// profile resolver. Factored out of `execute_skill` so both paths share
     /// the same executor wiring.
     ///
-    /// Wires `DefaultPolicy` as the runtime policy so the FIDES Source→Sink
-    /// block (Layer 4) fires on every production cascade. Without this, the
-    /// `reg.runtime.policy` span and Block/RequireHuman enforcement
-    /// are dead code — `runtime_policy` stays `None` and untrusted input flows
-    /// to Sink tools unchecked (OWASP LLM06, RR-0053).
+    /// The FIDES runtime policy (`DefaultPolicy`) used to be wired here. It was
+    /// removed, not unwired: its `Source`→`Sink` block read two constants (all
+    /// tools were labelled `Pure`, and the untrusted-input flag was always
+    /// false), so it denied nothing. Re-wiring a policy only helps once tools
+    /// carry real taint labels.
     fn build_executor(
         &self,
         progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
@@ -411,10 +411,7 @@ impl BridgeManifestExecutor {
             self.tools.clone(),
             hkask_types::template::LLMParameters::default(),
         )
-        .with_template_base_path(self.registry_templates_dir.clone())
-        .with_runtime_policy(std::sync::Arc::new(
-            hkask_regulation::DefaultPolicy::default(),
-        ));
+        .with_template_base_path(self.registry_templates_dir.clone());
 
         let executor = if let Some(ref resolver) = self.profile_resolver {
             let resolver = resolver.clone();
@@ -986,14 +983,11 @@ fn reshape_composite_to_manifest_file(composite: &serde_json::Value) -> serde_js
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_capability::tool_taint::ToolTaint;
     use hkask_templates::budget::BudgetSnapshot;
     use hkask_templates::step_context::StepContext;
     use hkask_templates::step_graph::{ExitKind, StepId};
     use hkask_templates::step_machine::CascadeOutcome;
     use serde_json::json;
-    use std::future::Future;
-    use std::pin::Pin;
 
     /// Build a minimal `CascadeOutcome` for the bridge's `extract_final_step_result`
     /// tests: typed context + machine-tracked `last_result_step`. Zeroed budget.
@@ -1023,9 +1017,9 @@ mod tests {
     #[test]
     fn extract_final_step_result_returns_last_result_step() {
         let mut ctx = StepContext::new(std::collections::HashMap::new());
-        ctx.store_result(0, 1, json!("first"), ToolTaint::Pure);
-        ctx.store_result(2, 3, json!("third"), ToolTaint::Pure);
-        ctx.store_result(1, 2, json!("second"), ToolTaint::Pure);
+        ctx.store_result(0, 1, json!("first"));
+        ctx.store_result(2, 3, json!("third"));
+        ctx.store_result(1, 2, json!("second"));
         let outcome = outcome_with_last(ctx, Some(2));
         let out = extract_final_step_result(&outcome);
         assert_eq!(
@@ -1037,9 +1031,9 @@ mod tests {
     #[test]
     fn extract_final_step_result_ignores_protocol_and_named_keys() {
         let mut ctx = StepContext::new(std::collections::HashMap::new());
-        ctx.store_result(0, 1, json!({"answer": 42}), ToolTaint::Pure);
+        ctx.store_result(0, 1, json!({"answer": 42}));
         ctx.insert_protocol("task".into(), json!("user request"));
-        ctx.store_named(1, 2, "populated", json!("populated"), ToolTaint::Pure);
+        ctx.store_named(1, 2, "populated", json!("populated"));
         let outcome = outcome_with_last(ctx, Some(0));
         let out = extract_final_step_result(&outcome);
         assert_eq!(
@@ -1064,7 +1058,7 @@ mod tests {
     #[test]
     fn extract_final_step_result_handles_single_step() {
         let mut ctx = StepContext::new(std::collections::HashMap::new());
-        ctx.store_result(0, 1, json!({"convergence_metric": 0.05}), ToolTaint::Pure);
+        ctx.store_result(0, 1, json!({"convergence_metric": 0.05}));
         let outcome = outcome_with_last(ctx, Some(0));
         let out = extract_final_step_result(&outcome);
         assert!(out.contains("convergence_metric"));
@@ -1269,86 +1263,4 @@ steps:
         }
     }
 
-    /// Stub InferencePort for testing — returns an error on every call.
-    /// Needed because BridgeManifestExecutor::new requires an InferencePort,
-    /// and no NoopInferencePort exists in the test harness yet.
-    #[cfg(test)]
-    struct StubInferencePort;
-
-    #[cfg(test)]
-    impl InferencePort for StubInferencePort {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &hkask_types::template::LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async { Err(hkask_types::InferenceError::Generation("stub".to_string())) })
-        }
-    }
-
-    /// Stub ToolPort for testing — returns errors on every call.
-    #[cfg(test)]
-    struct StubToolPort;
-
-    #[cfg(test)]
-    impl hkask_capability::ToolPort for StubToolPort {
-        fn invoke<'a>(
-            &'a self,
-            _server: &'a str,
-            _tool: &'a str,
-            _args: serde_json::Value,
-            _agent: hkask_types::WebID,
-        ) -> hkask_capability::ToolFuture<
-            'a,
-            Result<serde_json::Value, hkask_capability::ToolPortError>,
-        > {
-            Box::pin(async {
-                Err(hkask_capability::ToolPortError::InvocationFailed(
-                    "stub".to_string(),
-                ))
-            })
-        }
-        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
-            Box::pin(async { Vec::new() })
-        }
-        fn get_tool_info<'a>(
-            &'a self,
-            _tool_name: &'a str,
-        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
-            Box::pin(async { None })
-        }
-    }
-
-    /// RR-0053 wiring test: build_executor MUST wire with_runtime_policy so
-    /// the FIDES Source→Sink block (Layer 4) fires on production cascades.
-    /// Without .with_runtime_policy(...), runtime_policy stays None and
-    /// untrusted input flows to Sink tools unchecked (OWASP LLM06).
-    #[test]
-    fn build_executor_wires_runtime_policy() {
-        // BridgeManifestExecutor::new requires a tokio Handle — create a
-        // runtime for the test (build_executor doesn't actually run async
-        // code, it just constructs the executor).
-        let runtime = tokio::runtime::Runtime::new().expect("test tokio runtime");
-        let _guard = runtime.enter();
-        let executor = BridgeManifestExecutor::new(
-            Arc::new(StubInferencePort),
-            Arc::new(StubToolPort),
-            PathBuf::from("/tmp/nonexistent-manifests"),
-            PathBuf::from("/tmp/nonexistent-templates"),
-            runtime.handle().clone(),
-        );
-        let manifest_executor = executor.build_executor(None, None);
-        assert!(
-            manifest_executor.runtime_policy_is_wired(),
-            "build_executor must wire with_runtime_policy — without it the FIDES Source→Sink block is dead (OWASP LLM06, RR-0053)"
-        );
-    }
 }

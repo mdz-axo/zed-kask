@@ -1,12 +1,11 @@
 # hkask-capability
 
-Tool dispatch port and FIDES taint labels.
+Tool dispatch port.
 
 ## Core Types
 
 - `ToolPort` — dyn-compatible tool dispatch trait (`Arc<dyn ToolPort>`), implemented by `hkask_mcp::McpRuntime`
-- `ToolInfo` — tool metadata (name, description, input schema, server id, taint label)
-- `ToolTaint` — FIDES information-flow label (`Source` / `Sink` / `Pure` / `Endorser`)
+- `ToolInfo` — tool metadata (name, description, input schema, server id)
 - `SYSTEM_MAX_RECURSION` — cascade depth / subgoal nesting bound (runaway-recursion breaker)
 
 ## This crate does not authorize
@@ -35,9 +34,13 @@ enforced; per-call capability **gating** is deliberately not.
 
 ## Related
 
-- `ToolTaint` feeds the FIDES `Source`→`Sink` runtime policy check in
-  `hkask_templates::step_actions::invoke_tool` (RR-0053) — that check *is* a live
-  gate, on information flow rather than authority.
+- The FIDES `ToolTaint` labels used to live here and fed a `Source`→`Sink` runtime
+  policy check in `hkask_templates::step_actions::invoke_tool` (RR-0053).
+  **Both were removed (2026-08-12) because the check was inert:** every `ToolInfo`
+  was labelled `Pure` at its only construction site (`McpRuntime::get_tool_info`),
+  and the untrusted-input flag read taint markers the context write side had
+  stopped emitting — so the block could never fire. Reinstating information-flow
+  control means first giving tools real labels and propagating taint on write.
 - The call meter (runaway-loop breaker, fail-open on an unseeded agent) lives in
   `hkask_regulation::CallCapManager` — see RR-0057.
 

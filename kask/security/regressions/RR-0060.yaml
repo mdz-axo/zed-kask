@@ -14,8 +14,9 @@ detection:
   # Behavioral, not textual: assert a spawned child's environment does not carry
   # a secret absent from its allowlist. A grep for `env_clear` would pass the
   # moment someone writes the call, even in a branch that never runs.
-  # NOTE: this test does not exist yet — write it with the fix. Until then this
-  # entry must stay `pending` (the gate ratchets pending entries as warnings).
+  # Mutation-verified 2026-08-12: replacing the clear+passthrough construction
+  # with inherit-all makes this test FAIL with "child inherited parent secret
+  # DEEPINFRA_API_KEY", so the gate can actually detect the regression.
   pattern: "spawned_child_env_excludes_non_allowlisted_secrets"
   include: "crates/hkask-mcp/src/runtime.rs"
 mitigation: |
@@ -65,5 +66,22 @@ mitigation: |
   as vacuous (RR-0056) — these allowlists carry more of the load than they did.
 source: "https://cwe.mitre.org/data/definitions/497.html — Exposure of Sensitive System Information; OWASP LLM06:2025 Excessive Agency"
 ci_gate: scripts/check-kali-regressions.sh
-status: pending
-note: "Open finding as of 2026-08-12 — no fix attempted in the discovering audit. Flip to enforced when env_clear() lands with the named test."
+status: enforced
+note: |
+  Fixed 2026-08-12 in the discovering audit. `start_server_with_env`
+  (kask/crates/hkask-mcp/src/runtime.rs) now calls `cmd.env_clear()` and rebuilds
+  the child environment from `PASSTHROUGH_ENV_VARS` (12 non-secret plumbing vars,
+  each justified in its doc comment) plus the caller's filtered per-server set.
+  Four tests in `runtime::env_isolation_tests` pin the boundary: secrets excluded,
+  allowlisted credentials still delivered, non-secret plumbing retained, and
+  PASSTHROUGH_ENV_VARS itself contains no credential-shaped name (that last one
+  blocks the tempting "fix" of widening the passthrough list instead of the
+  server's allowlist).
+
+  REMAINING SCOPE: the upstream zed host path,
+  crates/context_server/src/transport/stdio_transport.rs:37
+  (`command.envs(...)`, additive, no env_clear), is NOT covered by this fix.
+  Per .rules that is an upstream file, so remediation belongs behind a D-seam or
+  by routing kask servers exclusively through McpRuntime. kask's own MCP servers
+  launch via McpRuntime (crates/zed/src/main.rs:2178 start_server_with_env), which
+  is fixed; a context-server-hosted MCP server would still inherit.

@@ -206,10 +206,15 @@ fn steer_system_prompt(
          closes the loop in one call). \
          These run on the local \
          substrate (`hkask-inference` + `hkask-ledger`) with no \
-         ABW round-trips. The local ledger is operator-funded — call \
-         `swarm_fund_local(credits)` before `swarm_delegate_local`, or it returns \
-         `PaymentRequired`. There is no consent token in local mode: the balance \
-         check is the gate. `swarm_clone_to_local` and `swarm_push_to_cloud` sync \
+         ABW round-trips. Local delegation needs NO funding and NO consent — it \
+         runs on the operator's own substrate, so there is nothing to authorize. \
+         The local ledger is accounting only: it records spend so \
+         `swarm_balance_local` and `swarm_local_history` can reconcile it, and a \
+         negative balance is accumulated local spend, not an error. Do NOT call \
+         `swarm_fund_local` before delegating and do NOT treat a low balance as a \
+         blocker. Funding and consent gates apply to the CLOUD tools \
+         (`swarm_hire`, `swarm_delegate`), where credits buy someone else's \
+         compute. `swarm_clone_to_local` and `swarm_push_to_cloud` sync \
          cards between the local registry (`agents/local/curated/<id>/agent_card.json`) \
          and ABW; a cloned card carries `cloud_id` to track the sync link. \
          `swarm_remove_local` deletes a local card (the local counterpart of \
@@ -3122,15 +3127,35 @@ mod tests {
             prompt.contains("kask.swarm.mode"),
             "steer prompt must name the kask.swarm.mode setting"
         );
-        // The local ledger funding requirement must be stated so the curator
-        // funds before delegating (the §15.6 constraint — no auto-replenish).
+        // Local delegation needs no funding: the local ledger records spend, it
+        // does not authorize it (`LocalSwarmRuntime::delegate` has no balance
+        // gate). The prompt must say so, or the Curator wastes a turn funding a
+        // ledger that was never blocking it — and may refuse to delegate at all
+        // when it reads a low or negative balance.
+        //
+        // This inverts the previous assertion, which required the prompt to
+        // promise a `PaymentRequired` that local mode no longer returns.
         assert!(
-            prompt.contains("swarm_fund_local"),
-            "steer prompt must tell the curator to fund the local ledger"
+            prompt.contains("NO funding") || prompt.contains("needs NO funding"),
+            "steer prompt must tell the curator local delegation needs no funding"
         );
         assert!(
-            prompt.contains("PaymentRequired"),
-            "steer prompt must name the PaymentRequired error for an unfunded ledger"
+            prompt.contains("Do NOT call `swarm_fund_local` before delegating"),
+            "steer prompt must actively steer the curator away from pre-funding, not \
+             merely omit the requirement"
+        );
+        assert!(
+            !prompt.contains("PaymentRequired"),
+            "steer prompt must NOT promise a PaymentRequired error on the local path — \
+             local delegation no longer refuses for lack of funds, so advertising it \
+             would make the curator plan around a gate that does not exist"
+        );
+        // The cloud path DOES gate, and the distinction must survive: a curator
+        // that generalizes "no funding needed" to `swarm_hire` would strand real
+        // spend.
+        assert!(
+            prompt.contains("CLOUD tools") || prompt.contains("swarm_hire"),
+            "steer prompt must preserve the cloud/local funding distinction"
         );
     }
 

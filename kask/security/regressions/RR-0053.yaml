@@ -1,26 +1,76 @@
 id: RR-0053
-title: "BridgeManifestExecutor must wire with_runtime_policy or the FIDES Source→Sink block (Layer 4) is dead in production"
+title: "FIDES taint / runtime-policy machinery must not be re-added in an inert form (a gate whose inputs are constants denies nothing)"
 surface: runtime
-cwe: CWE-863
+cwe: CWE-1188
 owasp_llm_2025: LLM06
-atlas_tactic: AML.TA0010
+atlas_tactic: AML.TA0006
 nist_ssdf: PW.4.1
-discovered_in: kask/crates/kask_bridge/src/skill_executor.rs
-discovered_by: runtime-posture-monitor
-discovered_at: 2026-08-10
-severity: critical
+discovered_in: kask/crates/hkask-templates/src/step_actions.rs (invoke_tool policy block), kask/crates/hkask-capability/src/tool_taint.rs, kask/crates/hkask-regulation/src/runtime_policy.rs
+discovered_by: kali-audit
+discovered_at: 2026-08-04
+severity: medium
 detection:
   kind: grep
-  # PRESENCE check: the production composition root (build_executor) must
-  # call .with_runtime_policy(...) on the ManifestExecutor it constructs.
-  # If the only callers of with_runtime_policy are in test modules, the
-  # runtime_policy field stays None and the reg.guard.runtime_policy span
-  # + Block/RequireHuman enforcement never fire in production (OWASP LLM06).
-  semantics: presence
-  pattern: 'with_runtime_policy'
-  include: "crates/kask_bridge/src/skill_executor.rs"
-mitigation: "Wire a DefaultPolicy in BridgeManifestExecutor::build_executor (kask/crates/kask_bridge/src/skill_executor.rs) by chaining .with_runtime_policy(Arc::new(DefaultPolicy::default())) on the ManifestExecutor. The policy code exists and is tested but was never attached in production, so runtime_policy was always None and the reg.guard.runtime_policy span (Layer 4 of the runtime-posture-monitor defense catalog) never fired. See .rules: Advertised invariants need enforcement points."
-source: "Static emitter-wiring audit (runtime-posture-monitor adapted) — defense layer 4 reachability"
+  # ABSENCE check: the deleted machinery must not reappear as CODE. This is the
+  # vulnerable idiom (declared-but-inert information-flow config), not the
+  # presence of a useful type. If a real IFC gate is ever built, it must be built
+  # with live inputs and this entry rewritten to assert THAT — not silently
+  # satisfied by re-adding the names.
+  #
+  # The negative lookahead skips comment lines (`///`, `//!`, `//`) so the
+  # removal-rationale comments left at each deletion site do not trip the gate.
+  # Those comments are load-bearing — they stop a future reader from "restoring"
+  # the gate — so the pattern must tolerate prose while still catching a real
+  # re-introduction (a `use`, a field, a call).
+  pattern: '^(?!\s*(///|//!|//)).*(ToolTaint|PolicyVerdict|DefaultPolicy|with_runtime_policy|check_untrusted_input|has_untrusted_input|taint_of_key)'
+  include: "--include=*.rs crates/ mcp-servers/"
+mitigation: |
+  ORIGINAL ENTRY (2026-08-04) asserted that `BridgeManifestExecutor` must wire
+  `with_runtime_policy` "or the FIDES Source->Sink block is dead in production."
+  It was `status: enforced` and its wiring test passed. The gate was nonetheless
+  dead, for reasons the wiring test could not see: BOTH inputs to
+  `DefaultPolicy::check` were constants.
+
+    1. `has_untrusted_input` was always `false` — `check_untrusted_input` read
+       taint from legacy `__taint__{key}` map markers, but the write side
+       (`StepContext::store_result` / `store_named`) had stopped emitting them
+       when taint moved to an inline `StepResult.taint` field.
+    2. Every MCP tool was labeled `ToolTaint::Pure` — `McpRuntime::get_tool_info`
+       hardcoded it, so the `Sink` arm never matched.
+
+  So `Source -> Sink` could never fire. The entry, its four `pending` companions
+  (RR-0026/0027/0033/0034), and RR-0012/RR-0013 were all measuring the plumbing
+  around a gate that had no live inputs. This is the same failure class as RR-0056
+  (a capability check comparing a value against itself): a wiring test proves a
+  call happens, not that the call can ever decide anything.
+
+  RESOLUTION (2026-08-12, operator decision): DELETE rather than repair. Removed
+  `kask/crates/hkask-capability/src/tool_taint.rs`,
+  `kask/crates/hkask-regulation/src/runtime_policy.rs`, the `runtime_policy`
+  parameter and policy block in `invoke_tool`, `check_untrusted_input`,
+  `ToolInfo.taint`, `StepResult.taint`, `taint_of_key`, `with_runtime_policy`, and
+  the orphaned deps (`serde` from hkask-capability, `hkask-capability` from
+  hkask-regulation, `hkask-regulation` from hkask-templates).
+
+  Information flow control (defense Layer 5) is therefore ABSENT, deliberately and
+  documented, rather than present-but-inert. That is the honest state and the
+  safer one: an inert gate invites reliance on a protection that does not exist.
+
+  IF a real IFC gate is wanted later, the bar is:
+    - tool taint labels derived from something real (per-tool metadata or server
+      declaration), NOT hardcoded;
+    - an untrusted-input signal read from the SAME field the write path sets,
+      with a test that fails if the two drift;
+    - a test proving a `Source`-labeled input to a `Sink` tool is actually BLOCKED,
+      on a path production can reach — not a test proving a function was called.
+  Rewrite this entry to assert that behavior. Do not satisfy it by re-adding the
+  type names.
+source: "https://arxiv.org/pdf/2505.23643 — Microsoft Research FIDES; .rules: advertised invariants must point to the enforcement line, and validation gates must not report Ready when the check was not performed"
 ci_gate: scripts/check-kali-regressions.sh
 status: enforced
-note: "hkask-guard crate deleted 2026-08-10, but runtime_policy is NOT in the guard — it lives in hkask-templates/src/executor.rs (ManifestExecutor::with_runtime_policy) and hkask-regulation (DefaultPolicy). The reg.guard.runtime_policy tracing target is still emitted from the executor's invoke_tool path. build_executor in kask_bridge/src/skill_executor.rs wires .with_runtime_policy(DefaultPolicy::default()) in production. This regression remains live and enforced."
+note: |
+  Rewritten 2026-08-12 from "must wire with_runtime_policy" (enforced, but
+  vacuous) to "must not re-add an inert gate" (enforced, absence-checked).
+  Supersedes RR-0012, RR-0013, RR-0026, RR-0027, RR-0033, RR-0034 — all six now
+  `obsolete`. Companion to RR-0056 (vacuous capability gate) and RR-0057
+  (fail-open meter): same lesson, three different surfaces.

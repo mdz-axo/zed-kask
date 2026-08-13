@@ -94,9 +94,10 @@ down the session (`consume_session`, `:280`).
 
 Local mode has **no consent token** — the ledger balance is the gate.
 
-1. `swarm_fund_local(credits)` — fund the operator ledger account (starts at 0).
-2. `swarm_balance_local` — read the balance **before** planning a delegation
-   (proactive sensing; the audit's Loop C fidelity note).
+1. *(optional)* `swarm_fund_local(credits)` — deposit a budget to reconcile
+   against. **Not required**: local delegation has no funding gate.
+2. `swarm_balance_local` — read accumulated local spend. Informational only; a
+   low or negative balance does not block a delegation.
 3. `swarm_delegate_local(agent_id, task, credits_authorized)` — the runtime
    scans input, runs the agent (inference + tool loop + skill cascade + guard),
    debits the ledger, then scans output (the debit-before-scan invariant,

@@ -61,7 +61,6 @@ pub(crate) fn extract_feedback_phase(template_ref: &str) -> Option<&'static str>
 /// - `InferencePort` — for `select` steps (the only probabilistic action)
 /// - `ToolPort` — for `execute` steps (MCP tool invocation)
 /// - `TemplateRenderer` — for `minijinja` template rendering
-/// - `RuntimePolicy` — for FIDES taint enforcement (Layer 6 defense)
 ///
 /// `execute_manifest` builds a `StepGraph` + `StepContext` + `StepMachine`
 /// and runs the cascade to completion. The machine's dispatch loop is ~30
@@ -72,7 +71,6 @@ pub struct ManifestExecutor {
     tools: Arc<dyn hkask_capability::ToolPort>,
     default_params: LLMParameters,
     template_renderer: TemplateRenderer,
-    runtime_policy: Option<Arc<hkask_regulation::DefaultPolicy>>,
     terminal_check: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
@@ -92,7 +90,6 @@ impl ManifestExecutor {
             template_renderer: TemplateRenderer::new(std::path::PathBuf::from(
                 crate::template_renderer::DEFAULT_TEMPLATE_BASE_PATH,
             )),
-            runtime_policy: None,
             terminal_check: None,
             progress: None,
             title: None,
@@ -126,18 +123,6 @@ impl ManifestExecutor {
     pub fn with_template_base_path(mut self, path: std::path::PathBuf) -> Self {
         self.template_renderer = TemplateRenderer::new(path);
         self
-    }
-
-    /// Attach a runtime policy for pre-execution checks (Layer 6 defense).
-    #[must_use]
-    pub fn with_runtime_policy(mut self, policy: Arc<hkask_regulation::DefaultPolicy>) -> Self {
-        self.runtime_policy = Some(policy);
-        self
-    }
-
-    /// Accessor: returns whether a runtime policy is wired.
-    pub fn runtime_policy_is_wired(&self) -> bool {
-        self.runtime_policy.is_some()
     }
 
     /// Execute the full manifest cascade.
@@ -193,7 +178,6 @@ impl ManifestExecutor {
             tools: self.tools.clone(),
             default_params: self.default_params.clone(),
             template_renderer: self.template_renderer.clone(),
-            runtime_policy: self.runtime_policy.clone(),
             terminal_check: self.terminal_check.clone(),
             progress: self.progress.clone(),
             title: self.title.clone(),
@@ -282,7 +266,6 @@ mod tests {
     use crate::step_context::StepContext;
     use crate::step_graph::{ExitKind, StepId};
     use crate::step_machine::CascadeOutcome;
-    use hkask_capability::tool_taint::ToolTaint;
     use hkask_capability::{ToolFuture, ToolInfo};
     use hkask_types::InferenceError;
     use std::future::Future;
@@ -464,9 +447,9 @@ steps:
     #[test]
     fn extract_final_step_result_returns_last_result_step_value() {
         let mut ctx = StepContext::new(HashMap::new());
-        ctx.store_result(0, 1, serde_json::json!("first"), ToolTaint::Pure);
-        ctx.store_result(2, 3, serde_json::json!("third"), ToolTaint::Pure);
-        ctx.store_result(1, 2, serde_json::json!("second"), ToolTaint::Pure);
+        ctx.store_result(0, 1, serde_json::json!("first"));
+        ctx.store_result(2, 3, serde_json::json!("third"));
+        ctx.store_result(1, 2, serde_json::json!("second"));
         // last_result_step = step_id 2 (ordinal 3), the last step to store in a
         // linear manifest. (K5) the ordinal-keyed HashMap scan is retired; the
         // machine-tracked last_result_step is deterministic by construction.
@@ -484,7 +467,6 @@ steps:
             0,
             1,
             Value::String(r#"<thinking>reasoning</thinking>{"answer": 5}"#.into()),
-            ToolTaint::Pure,
         );
         let outcome = outcome_with_last(ctx, Some(0));
         // `normalize_model_output` strips the `<thinking>` wrapper but leaves the
@@ -498,15 +480,9 @@ steps:
     #[test]
     fn extract_final_step_result_ignores_protocol_and_named_keys() {
         let mut ctx = StepContext::new(HashMap::new());
-        ctx.store_result(0, 1, serde_json::json!("result"), ToolTaint::Pure);
+        ctx.store_result(0, 1, serde_json::json!("result"));
         ctx.insert_protocol("task".into(), serde_json::json!("user request"));
-        ctx.store_named(
-            1,
-            2,
-            "populated",
-            serde_json::json!("populated"),
-            ToolTaint::Pure,
-        );
+        ctx.store_named(1, 2, "populated", serde_json::json!("populated"));
         // last_result_step points at step_id 0 (ordinal 1), NOT step 2's named
         // result. extract returns last_result_step's value only.
         let outcome = outcome_with_last(ctx, Some(0));

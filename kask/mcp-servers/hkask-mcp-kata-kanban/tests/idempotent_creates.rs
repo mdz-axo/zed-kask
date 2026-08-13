@@ -451,3 +451,55 @@ fn wire_contract_is_backward_compatible() {
          does not)"
     );
 }
+
+// ── Spawn on an unfunded ledger ─────────────────────────────────────────────
+
+/// `kanban_task_spawn` is not blocked by an unfunded ledger.
+///
+/// A kanban board does not need funding, and neither do local swarm agents: they
+/// run on the operator's own substrate, so there is nothing for the server to
+/// withhold. Before the local funding gate was removed, this call returned
+/// `permission_denied: "insufficient local credits: have 0, need 10 — fund via
+/// swarm_fund_local"` and never reached the work at all.
+///
+/// The spawn still fails here — no inference port is wired in a test binary — but
+/// it must fail *past* the funding check. The assertion is therefore about which
+/// failure occurs, which is the only honest thing to assert without a live model.
+#[tokio::test]
+async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
+    let server = make_server();
+    let board = create_board(&server, "Board", None).await;
+    let board_id = board["board_id"].as_str().expect("board_id").to_string();
+    let task = create_task(&server, &board_id, "Spawn me", None).await;
+    let task_id = task["task_id"].as_str().expect("task_id").to_string();
+
+    let out = server
+        .kanban_task_spawn(Parameters(TaskSpawnRequest {
+            task_id,
+            idempotency_key: Some("spawn-gesture".to_string()),
+            delegation_level: "standard".to_string(),
+            delegated_skills: vec![],
+            memory_scope: None,
+            gas_budget: None,
+            rjoule_budget: None,
+            swarm_id: None,
+        }))
+        .await;
+    let response = parse(&out);
+
+    let error = response
+        .get("error")
+        .and_then(|e| e.as_str())
+        .unwrap_or_default();
+    assert!(
+        !error.contains("insufficient local credits"),
+        "an unfunded ledger must NOT block a local spawn - the kanban board and local \
+         agents run on the operator's own substrate, so there is nothing to fund. \
+         Got: {out}"
+    );
+    assert!(
+        !error.contains("swarm_fund_local"),
+        "the spawn path must not tell the operator to fund a ledger that is not a \
+         gate. Got: {out}"
+    );
+}

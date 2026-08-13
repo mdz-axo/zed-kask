@@ -75,6 +75,46 @@ pub struct McpServer {
     pub tools: Vec<McpTool>,
 }
 
+/// Non-secret process plumbing forwarded to every MCP child process after
+/// `env_clear()` (RR-0060).
+///
+/// The child's environment is otherwise built solely from its own filtered
+/// per-server allowlist, so nothing here may be a credential. Each entry is
+/// justified:
+///
+/// - `PATH`, `HOME` — subprocess resolution and data-dir derivation. `HOME` is
+///   read directly by the training server; several servers derive paths from it.
+/// - `XDG_DATA_HOME`, `XDG_RUNTIME_DIR` — read by kask crates for data/socket
+///   paths on Linux.
+/// - `TMPDIR` — temp-file placement.
+/// - `RUST_LOG`, `RUST_BACKTRACE` — diagnostics. `hkask-mcp-server`'s transport
+///   builds an `EnvFilter` from the environment, so without `RUST_LOG` a child
+///   silently loses operator-configured log levels.
+/// - `LANG`, `LC_ALL`, `TZ` — locale and timezone correctness for date parsing
+///   and formatting.
+/// - `SSL_CERT_FILE`, `SSL_CERT_DIR` — TLS trust roots for servers making
+///   outbound HTTPS calls; omitting these breaks certificate verification on
+///   distributions that rely on them.
+///
+/// Deliberately absent: every `*_API_KEY`, `HF_TOKEN`, `HKASK_SMTP_PASSWORD`,
+/// `HKASK_DB_PASSPHRASE`, and every other secret. A server that needs one of
+/// those must declare it in its credential allowlist
+/// (`kask_bridge::mcp_servers`), which is the point of the boundary.
+pub(crate) const PASSTHROUGH_ENV_VARS: &[&str] = &[
+    "PATH",
+    "HOME",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+    "TMPDIR",
+    "RUST_LOG",
+    "RUST_BACKTRACE",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+];
+
 /// Error type for MCP server startup.
 #[derive(Debug, Error)]
 #[allow(clippy::enum_variant_names)]
@@ -292,6 +332,26 @@ impl McpRuntime {
         let binary = resolve_mcp_binary(server_id, command);
 
         let mut cmd = Command::new(&binary);
+        // Start from an empty environment, not an inherited one (RR-0060).
+        //
+        // `Command` inherits the parent env by default, and the parent loads every
+        // provider API key into its own environment (`dotenvy::from_path` in
+        // main.rs) and sets HKASK_SMTP_PASSWORD. Inheriting meant every MCP child
+        // received every secret regardless of its per-server allowlist — a server
+        // allowlisted `Some(&[])` still got the SMTP password and all the API keys,
+        // silently nullifying the credential scoping that `filter_credentials_for_server`
+        // exists to provide.
+        //
+        // `extra_env` is the caller's already-filtered per-server set, so after the
+        // clear the child sees exactly that, plus the non-secret process plumbing
+        // enumerated in `PASSTHROUGH_ENV_VARS` (a child with no PATH or HOME cannot
+        // resolve subprocesses or its own data directory).
+        cmd.env_clear();
+        for key in PASSTHROUGH_ENV_VARS {
+            if let Some(value) = std::env::var_os(key) {
+                cmd.env(key, value);
+            }
+        }
         for (key, value) in &extra_env {
             cmd.env(key, value);
         }
@@ -569,7 +629,6 @@ impl McpRuntime {
                 description: t.description.clone(),
                 input_schema: t.input_schema.clone(),
                 server_id: server_id.clone(),
-                taint: hkask_capability::tool_taint::ToolTaint::Pure,
             })
     }
 
@@ -1221,5 +1280,145 @@ mod tests {
             !runtime.try_reconnect("metadata-only").await,
             "a server with no recorded launch spec has no process to restart"
         );
+    }
+}
+
+/// RR-0060: the spawned-child environment boundary.
+///
+/// These tests assert on a REAL child process's environment rather than on
+/// `filter_credentials_for_server`. That distinction is the whole point: the
+/// three pre-existing "blast radius" tests in `kask_bridge::mcp_servers` all
+/// exercised the filter function in isolation and passed for months while every
+/// child inherited every secret, because nothing checked the actual boundary.
+///
+/// `start_server_with_env` needs a live MCP handshake, so these tests exercise
+/// the same clear + passthrough + extra_env construction against
+/// `/usr/bin/env`, which prints the environment it was given.
+///
+/// The simulated parent environment is passed in explicitly rather than written
+/// with `std::env::set_var`: this crate is `#![forbid(unsafe_code)]` with no test
+/// exemption, and mutating process env is `unsafe` in this edition. Passing it in
+/// is also a better test — it cannot race another test in the same binary.
+#[cfg(all(test, unix))]
+mod env_isolation_tests {
+    use super::PASSTHROUGH_ENV_VARS;
+
+    /// Mirror of the environment construction in `start_server_with_env`, with
+    /// the parent environment injected instead of read from the process. Kept
+    /// adjacent to the real code so a divergence shows up as a failing test.
+    // `tokio::process::Command` rather than `std::process::Command`: clippy.toml
+    // bans the std spawn methods because they block the calling thread for an
+    // unbounded time. The production path uses rmcp's TokioChildProcess for the
+    // same reason.
+    async fn child_env(parent: &[(&str, &str)], extra_env: &[(&str, &str)]) -> String {
+        let mut cmd = tokio::process::Command::new("/usr/bin/env");
+        cmd.env_clear();
+        for key in PASSTHROUGH_ENV_VARS {
+            if let Some((_, value)) = parent.iter().find(|(k, _)| k == key) {
+                cmd.env(key, value);
+            }
+        }
+        for (key, value) in extra_env {
+            cmd.env(key, value);
+        }
+        let output = cmd
+            .output()
+            .await
+            .expect("/usr/bin/env should be spawnable on unix");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    /// A parent environment shaped like the real one: `dotenvy::from_path` has
+    /// loaded the provider keys (main.rs) and login has set the SMTP password.
+    fn parent_with_secrets() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("PATH", "/usr/bin:/bin"),
+            ("HOME", "/home/tester"),
+            ("RUST_LOG", "hkask=debug"),
+            ("DEEPINFRA_API_KEY", "parent-deepinfra-secret"),
+            ("OPENROUTER_API_KEY", "parent-openrouter-secret"),
+            ("ATLASCLOUD_API_KEY", "parent-atlascloud-secret"),
+            ("HKASK_SMTP_PASSWORD", "parent-smtp-secret"),
+            ("HKASK_DB_PASSPHRASE", "parent-db-secret"),
+        ]
+    }
+
+    /// The regression: a secret present in the PARENT environment but absent
+    /// from the server's allowlist must NOT reach the child.
+    #[tokio::test]
+    async fn spawned_child_env_excludes_non_allowlisted_secrets() {
+        let parent = parent_with_secrets();
+        // A server allowlisted `Some(&[])` / `Some(&[])` — e.g. `portfolio`.
+        let env = child_env(&parent, &[]).await;
+
+        for (key, value) in &parent {
+            let looks_secret = key.contains("API_KEY")
+                || key.contains("PASSWORD")
+                || key.contains("PASSPHRASE");
+            if looks_secret {
+                assert!(
+                    !env.contains(value),
+                    "child inherited parent secret {key} despite an empty \
+                     allowlist (RR-0060). Child env was:\n{env}"
+                );
+            }
+        }
+    }
+
+    /// The complement: a credential the server IS allowlisted for must arrive.
+    /// Without this, "no secrets leak" could be satisfied by leaking nothing at
+    /// all, which would break every server that needs a real credential.
+    #[tokio::test]
+    async fn spawned_child_env_includes_allowlisted_credentials() {
+        let env = child_env(
+            &parent_with_secrets(),
+            &[("HKASK_DB_PASSPHRASE", "filtered-in-passphrase")],
+        )
+        .await;
+        assert!(
+            env.contains("filtered-in-passphrase"),
+            "an allowlisted credential must reach the child. Child env was:\n{env}"
+        );
+    }
+
+    /// Clearing the environment must not strip the non-secret plumbing a child
+    /// needs to function (subprocess resolution, data dirs, TLS roots, logging).
+    #[tokio::test]
+    async fn spawned_child_env_retains_non_secret_plumbing() {
+        let env = child_env(&parent_with_secrets(), &[]).await;
+        assert!(
+            env.contains("hkask=debug"),
+            "RUST_LOG must pass through so operator log levels survive; \
+             hkask-mcp-server builds its EnvFilter from the environment. Got:\n{env}"
+        );
+        assert!(
+            env.lines().any(|line| line.starts_with("PATH=")),
+            "PATH must pass through for subprocess resolution. Got:\n{env}"
+        );
+        assert!(
+            env.lines().any(|line| line.starts_with("HOME=")),
+            "HOME must pass through — the training server reads it directly and \
+             several servers derive data paths from it. Got:\n{env}"
+        );
+    }
+
+    /// No entry in the passthrough list may be a credential. This is the guard
+    /// against someone "fixing" a missing-credential bug by widening the
+    /// passthrough list instead of the server's allowlist.
+    #[test]
+    fn passthrough_list_contains_no_credentials() {
+        for key in PASSTHROUGH_ENV_VARS {
+            let upper = key.to_uppercase();
+            assert!(
+                !(upper.contains("KEY")
+                    || upper.contains("TOKEN")
+                    || upper.contains("SECRET")
+                    || upper.contains("PASSWORD")
+                    || upper.contains("PASSPHRASE")),
+                "{key} looks like a credential and must not be in \
+                 PASSTHROUGH_ENV_VARS — add it to the server's credential \
+                 allowlist in kask_bridge::mcp_servers instead (RR-0060)"
+            );
+        }
     }
 }

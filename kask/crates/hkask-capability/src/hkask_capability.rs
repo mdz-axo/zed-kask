@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::let_underscore_future)]
-//! hKask Capability — tool dispatch port and taint labels.
+//! hKask Capability — tool dispatch port.
 //!
 //! # No per-call capability gate
 //!
@@ -14,12 +14,14 @@
 //! the caller cannot choose: the per-request `tool_allowlist` on the inference
 //! IPC dispatch, each swarm agent card's `mcp_tools` allowlist, and the
 //! per-server MCP env/credential allowlists. What remains here is the dispatch
-//! port itself plus the FIDES taint labels that drive the information-flow
-//! policy check in the manifest executor.
+//! port itself.
+//!
+//! The FIDES `ToolTaint` labels also lived here. They were removed with the
+//! runtime-policy gate they fed: every `ToolInfo` was labelled `Pure` at its
+//! only construction site, so the `Source`→`Sink` block could not fire.
 
 pub mod token_types;
 pub mod tool_port;
-pub mod tool_taint;
 
 pub use token_types::SYSTEM_MAX_RECURSION;
 pub use tool_port::{ToolFuture, ToolInfo, ToolPort, ToolPortError};

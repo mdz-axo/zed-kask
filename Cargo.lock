@@ -9168,7 +9168,6 @@ name = "hkask-capability"
 version = "0.34.0"
 dependencies = [
  "hkask-types",
- "serde",
  "serde_json",
  "thiserror 2.0.17",
 ]
@@ -9766,7 +9765,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "hkask-capability",
  "hkask-test-harness",
  "hkask-types",
  "parking_lot",
@@ -9845,7 +9843,6 @@ dependencies = [
  "hkask-capability",
  "hkask-forecast",
  "hkask-lisp",
- "hkask-regulation",
  "hkask-test-harness",
  "hkask-types",
  "minijinja",

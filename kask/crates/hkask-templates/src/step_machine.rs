@@ -36,7 +36,6 @@ pub struct Infra {
     pub tools: Arc<dyn ToolPort>,
     pub default_params: LLMParameters,
     pub template_renderer: TemplateRenderer,
-    pub runtime_policy: Option<Arc<hkask_regulation::DefaultPolicy>>,
     pub terminal_check: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     pub progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     pub title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
@@ -330,23 +329,17 @@ impl StepMachine {
         node: &crate::step_graph::StepNode,
     ) -> Result<()> {
         match effect {
-            crate::step_actions::Effect::Stored {
-                step_id,
-                value,
-                taint,
-            } => {
-                self.context
-                    .store_result(step_id, node.ordinal, value, taint);
+            crate::step_actions::Effect::Stored { step_id, value } => {
+                self.context.store_result(step_id, node.ordinal, value);
                 self.last_result_step = Some(step_id);
             }
             crate::step_actions::Effect::StoredNamed {
                 step_id,
                 suffix,
                 value,
-                taint,
             } => {
                 self.context
-                    .store_named(step_id, node.ordinal, &suffix, value, taint);
+                    .store_named(step_id, node.ordinal, &suffix, value);
                 self.last_result_step = Some(step_id);
             }
             crate::step_actions::Effect::ConsumedGas(amount) => {

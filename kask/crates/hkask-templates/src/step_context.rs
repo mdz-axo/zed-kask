@@ -19,7 +19,6 @@
 //! trait methods `get`/`insert` keeps call-site bodies unchanged.
 
 use crate::step_graph::StepId;
-use hkask_capability::tool_taint::ToolTaint;
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use serde_json::Value;
@@ -40,14 +39,6 @@ use std::sync::Arc;
 /// Read-only string-key lookup over a context map.
 pub trait ContextLookup {
     fn get(&self, key: &str) -> Option<&Value>;
-
-    /// Resolve a string key to its taint label. Default: no taint metadata
-    /// available (flat maps don't carry taint); `StepContext` overrides to
-    /// read `StepResult.taint` for `step_N_result` / `prev_step_N_result` keys.
-    /// Used by `check_untrusted_input` for the FIDES Source→Sink guard.
-    fn taint_of_key(&self, _key: &str) -> ToolTaint {
-        ToolTaint::Pure
-    }
 }
 
 /// Mutable string-key map: `ContextLookup` plus `insert`. Writers (convergence
@@ -70,11 +61,10 @@ impl ContextMap for HashMap<String, Value> {
     }
 }
 
-/// A step's result, with its taint label inline.
+/// A step's result.
 #[derive(Debug, Clone)]
 pub struct StepResult {
     pub value: Arc<Value>,
-    pub taint: ToolTaint,
     pub step_id: StepId,
     pub ordinal: u32,
 }
@@ -136,13 +126,12 @@ impl StepContext {
     /// Store a step result under `step_{ordinal}_result`. No mirror to keep in
     /// sync (K1) — the `by_ordinal` index makes `{{ step_N_result }}` resolve
     /// O(1) without a parallel string-keyed map.
-    pub fn store_result(&mut self, step_id: StepId, ordinal: u32, value: Value, taint: ToolTaint) {
+    pub fn store_result(&mut self, step_id: StepId, ordinal: u32, value: Value) {
         self.by_ordinal.insert(ordinal, step_id);
         self.results.insert(
             step_id,
             StepResult {
                 value: Arc::new(value),
-                taint,
                 step_id,
                 ordinal,
             },
@@ -160,7 +149,6 @@ impl StepContext {
         ordinal: u32,
         suffix: &str,
         value: Value,
-        taint: ToolTaint,
     ) {
         let key = format!("step_{ordinal}_{suffix}");
         let arc = Arc::new(value);
@@ -170,7 +158,6 @@ impl StepContext {
             step_id,
             StepResult {
                 value: arc,
-                taint,
                 step_id,
                 ordinal,
             },
@@ -182,13 +169,6 @@ impl StepContext {
         self.results.get(&step_id)
     }
 
-    /// Get the taint label of a step result by `StepId`. O(1).
-    pub fn taint_of(&self, step_id: StepId) -> ToolTaint {
-        self.results
-            .get(&step_id)
-            .map(|r| r.taint)
-            .unwrap_or(ToolTaint::Pure)
-    }
 
     /// The last step result that stored a value (highest StepId with a result).
     /// O(1) — the machine tracks `last_result_step`, no string-key scan.
@@ -335,12 +315,7 @@ impl StepContext {
     ) {
         for (step_id, result) in sub.results_iter() {
             if parent_step_ids.contains(step_id) {
-                self.store_result(
-                    *step_id,
-                    result.ordinal,
-                    result.value.as_ref().clone(),
-                    result.taint,
-                );
+                self.store_result(*step_id, result.ordinal, result.value.as_ref().clone());
             }
         }
         for key in parent_protocol_keys {
@@ -377,32 +352,6 @@ impl StepContext {
 impl ContextLookup for StepContext {
     fn get(&self, key: &str) -> Option<&Value> {
         self.lookup(key)
-    }
-
-    fn taint_of_key(&self, key: &str) -> ToolTaint {
-        // Resolve `step_N_result` → ordinal → StepId → StepResult.taint.
-        if let Some(rest) = key.strip_prefix("step_")
-            && let Some(rest) = rest.strip_suffix("_result")
-            && let Ok(ordinal) = rest.parse::<u32>()
-        {
-            if let Some(step_id) = self.by_ordinal.get(&ordinal)
-                && let Some(result) = self.results.get(step_id)
-            {
-                return result.taint;
-            }
-        }
-        // Resolve `prev_step_N_result` → prev ordinal → StepId → prev taint.
-        if let Some(rest) = key.strip_prefix("prev_step_")
-            && let Some(rest) = rest.strip_suffix("_result")
-            && let Ok(ordinal) = rest.parse::<u32>()
-        {
-            if let Some(step_id) = self.prev_by_ordinal.get(&ordinal)
-                && let Some(result) = self.prev_results.get(step_id)
-            {
-                return result.taint;
-            }
-        }
-        ToolTaint::Pure
     }
 }
 
@@ -446,7 +395,7 @@ mod tests {
     #[test]
     fn store_result_resolves_by_ordinal_via_lookup() {
         let mut ctx = StepContext::new(HashMap::new());
-        ctx.store_result(0, 1, Value::String("hello".into()), ToolTaint::Pure);
+        ctx.store_result(0, 1, Value::String("hello".into()));
 
         assert_eq!(
             ctx.result(0).unwrap().value.as_ref(),
@@ -460,19 +409,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn taint_is_inline_on_result() {
-        let mut ctx = StepContext::new(HashMap::new());
-        ctx.store_result(0, 1, Value::Null, ToolTaint::Source);
-
-        assert_eq!(ctx.taint_of(0), ToolTaint::Source);
-    }
 
     #[test]
     fn snapshot_prev_resolves_via_prev_lookup_no_legacy_writes() {
         let mut ctx = StepContext::new(HashMap::new());
-        ctx.store_result(0, 1, Value::String("first".into()), ToolTaint::Pure);
-        ctx.store_result(1, 2, Value::String("second".into()), ToolTaint::Source);
+        ctx.store_result(0, 1, Value::String("first".into()));
+        ctx.store_result(1, 2, Value::String("second".into()));
 
         ctx.snapshot_prev();
 
@@ -499,9 +441,9 @@ mod tests {
     #[test]
     fn last_result_is_o1_by_step_id() {
         let mut ctx = StepContext::new(HashMap::new());
-        ctx.store_result(0, 1, Value::String("a".into()), ToolTaint::Pure);
-        ctx.store_result(1, 3, Value::String("b".into()), ToolTaint::Pure);
-        ctx.store_result(2, 7, Value::String("c".into()), ToolTaint::Pure);
+        ctx.store_result(0, 1, Value::String("a".into()));
+        ctx.store_result(1, 3, Value::String("b".into()));
+        ctx.store_result(2, 7, Value::String("c".into()));
 
         let last = ctx.last_result(2).unwrap();
         assert_eq!(last.value.as_ref(), &Value::String("c".into()));
@@ -532,12 +474,7 @@ mod tests {
         let mut inputs = HashMap::new();
         inputs.insert("target".into(), Value::String("x".into()));
         let mut ctx = StepContext::new(inputs);
-        ctx.store_result(
-            0,
-            1,
-            Value::Number(serde_json::Number::from(6)),
-            ToolTaint::Pure,
-        );
+        ctx.store_result(0, 1, Value::Number(serde_json::Number::from(6)));
         ctx.insert_protocol("convergence_signal".into(), serde_json::json!(0.1));
 
         let serialized = serde_json::to_value(&ctx).expect("StepContext serializes");
@@ -550,67 +487,22 @@ mod tests {
         assert_eq!(obj["convergence_signal"], serde_json::json!(0.1));
     }
 
-    // ── Follow-up #2: taint_of_key (FIDES Source→Sink guard) ──────────────
-
-    #[test]
-    fn taint_of_key_resolves_step_result_taint() {
-        let mut ctx = StepContext::new(HashMap::new());
-        ctx.store_result(0, 1, Value::Null, ToolTaint::Pure);
-        ctx.store_result(1, 2, Value::Null, ToolTaint::Source);
-
-        // `step_1_result` is Pure, `step_2_result` is Source.
-        assert_eq!(
-            ContextLookup::taint_of_key(&ctx, "step_1_result"),
-            ToolTaint::Pure
-        );
-        assert_eq!(
-            ContextLookup::taint_of_key(&ctx, "step_2_result"),
-            ToolTaint::Source
-        );
-        // Unknown keys default to Pure (no false-positive taint).
-        assert_eq!(
-            ContextLookup::taint_of_key(&ctx, "step_99_result"),
-            ToolTaint::Pure
-        );
-        // Non-result keys default to Pure.
-        assert_eq!(ContextLookup::taint_of_key(&ctx, "target"), ToolTaint::Pure);
-    }
-
-    #[test]
-    fn taint_of_key_resolves_prev_step_result_taint() {
-        let mut ctx = StepContext::new(HashMap::new());
-        ctx.store_result(0, 1, Value::Null, ToolTaint::Source);
-        ctx.snapshot_prev();
-        // Overwrite step 1 with Pure in the current iteration.
-        ctx.store_result(0, 1, Value::Null, ToolTaint::Pure);
-
-        // `step_1_result` is Pure (current), `prev_step_1_result` is Source.
-        assert_eq!(
-            ContextLookup::taint_of_key(&ctx, "step_1_result"),
-            ToolTaint::Pure
-        );
-        assert_eq!(
-            ContextLookup::taint_of_key(&ctx, "prev_step_1_result"),
-            ToolTaint::Source
-        );
-    }
-
     // ── Follow-up #1: merge_back_sub_cascade (FlowDef integration) ────────
 
     #[test]
     fn merge_back_sub_cascade_keeps_only_parent_keys() {
         // Parent has results at StepIds 0, 1, 2 (ordinals 1, 2, 3).
         let mut parent = StepContext::new(HashMap::new());
-        parent.store_result(0, 1, Value::from(10), ToolTaint::Pure);
-        parent.store_result(1, 2, Value::from(20), ToolTaint::Pure);
-        parent.store_result(2, 3, Value::from(30), ToolTaint::Pure);
+        parent.store_result(0, 1, Value::from(10));
+        parent.store_result(1, 2, Value::from(20));
+        parent.store_result(2, 3, Value::from(30));
         parent.insert_protocol("target".into(), Value::String("x".into()));
 
         // Sub-cascade is a clone of parent, then step 1 is updated and a
         // sub-only step 3 (StepId 3) is added.
         let mut sub = parent.clone();
-        sub.store_result(1, 2, Value::from(99), ToolTaint::Pure); // update
-        sub.store_result(3, 4, Value::from(40), ToolTaint::Pure); // sub-only
+        sub.store_result(1, 2, Value::from(99)); // update
+        sub.store_result(3, 4, Value::from(40)); // sub-only
         sub.insert_protocol("sub_only".into(), Value::from(7)); // sub-only
 
         let parent_step_ids: HashSet<StepId> = parent.results_iter().map(|(id, _)| *id).collect();
@@ -650,14 +542,14 @@ mod tests {
         //
         // Parent: ordinals [1, 3, 5] → StepIds [0, 1, 2].
         let mut parent = StepContext::new(HashMap::new());
-        parent.store_result(0, 1, Value::from("parent-ord-1"), ToolTaint::Pure);
-        parent.store_result(1, 3, Value::from("parent-ord-3"), ToolTaint::Pure);
-        parent.store_result(2, 5, Value::from("parent-ord-5"), ToolTaint::Pure);
+        parent.store_result(0, 1, Value::from("parent-ord-1"));
+        parent.store_result(1, 3, Value::from("parent-ord-3"));
+        parent.store_result(2, 5, Value::from("parent-ord-5"));
 
         // Sub-cascade starts as a clone of parent, then overwrites StepId 1
         // (which was ordinal 3 in the parent) with its own ordinal 2 result.
         let mut sub = parent.clone();
-        sub.store_result(1, 2, Value::from("sub-ord-2"), ToolTaint::Source);
+        sub.store_result(1, 2, Value::from("sub-ord-2"));
 
         let parent_step_ids: HashSet<StepId> = parent.results_iter().map(|(id, _)| *id).collect();
 
@@ -673,7 +565,6 @@ mod tests {
             &Value::from("sub-ord-2")
         );
         assert_eq!(parent.result(1).unwrap().ordinal, 2);
-        assert_eq!(parent.result(1).unwrap().taint, ToolTaint::Source);
         // StepIds 0 and 2 are unaffected (sub didn't touch them).
         assert_eq!(
             parent.result(0).unwrap().value.as_ref(),

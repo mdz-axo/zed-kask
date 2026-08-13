@@ -1,6 +1,16 @@
 //! Local ledger (wallet) tools — fund, balance, and history for the local
-//! swarm ledger. Split from `hkask_mcp_swarm.rs` (M2). These are the read/seed
-//! surface for the operator-funded local economy (no ABW calls, no spend).
+//! swarm ledger. Split from `hkask_mcp_swarm.rs` (M2).
+//!
+//! The local ledger is **accounting, not authorization**: local agents run on
+//! the operator's own substrate, so `swarm_delegate_local` never refuses for
+//! lack of funds (see `LocalSwarmRuntime::delegate`). These tools are the
+//! reconciliation surface — what was spent, not what is permitted. Funding
+//! gates live on the *cloud* path, where credits buy someone else's compute.
+//!
+//! Because spend is recorded without a balance precondition, a balance may be
+//! **negative**: that is the operator's unreconciled local spend, not a fault.
+//! `swarm_fund_local` remains available for operators who want to track a budget
+//! against a deposit.
 use crate::SwarmServer;
 use crate::error::map_local_swarm_error;
 use crate::request_types::*;
@@ -9,12 +19,12 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 #[tool_router(router = ledger_router, vis = "pub")]
 impl SwarmServer {
-    /// Fund the local swarm ledger. The operator deposits credits that
-    /// `swarm_delegate_local` debits per call. The ledger must be
-    /// operator-funded — no auto-replenishment (§15.6 — the strongest
-    /// objection: a synthetic ledger breaks the corrective feedback loop).
+    /// Fund the local swarm ledger. Optional: local delegation does not require
+    /// funds (the ledger is accounting, not authorization). Depositing gives the
+    /// operator a budget to reconcile spend against, so the balance reads as
+    /// "remaining" rather than "consumed".
     #[tool(
-        description = "Deposit local credits into the swarm ledger. The operator funds the local economy — no auto-replenishment. If unfunded, swarm_delegate_local returns PaymentRequired. Returns the new balance."
+        description = "Deposit local credits into the swarm ledger. OPTIONAL - local delegation never refuses for lack of funds; the ledger records spend rather than authorizing it. Fund it only to track spend against a budget. Returns the new balance."
     )]
     pub(crate) async fn swarm_fund_local(
         &self,
@@ -42,13 +52,16 @@ impl SwarmServer {
         .await
     }
 
-    /// Read the local swarm ledger balance. The local economy is
-    /// operator-funded (`swarm_fund_local`); an unfunded ledger reads 0.
-    /// This is the read-only sense input for local mode — the panel shows it
-    /// and the `swarm-intelligence` skill's local SENSE step reads it instead
-    /// of inferring the balance from delegation responses.
+    /// Read the local swarm ledger balance. An unfunded ledger that has run
+    /// delegations reads **negative** — the accumulated local spend. This is the
+    /// read-only sense input for local mode: the panel shows it and the
+    /// `swarm-intelligence` skill's local SENSE step reads it instead of
+    /// inferring the balance from delegation responses.
+    ///
+    /// Not a gate. A low or negative balance does not block local delegation; it
+    /// reports what has been consumed.
     #[tool(
-        description = "Read the local swarm ledger balance (credits). Operator-funded via swarm_fund_local; unfunded reads 0. No ABW calls, no spend. Returns balance + asset."
+        description = "Read the local swarm ledger balance (credits). Records local spend rather than gating it, so an unfunded ledger that has run delegations reads negative. Does NOT block delegation. No ABW calls, no spend. Returns balance + asset."
     )]
     pub(crate) async fn swarm_balance_local(
         &self,

@@ -107,8 +107,11 @@ where
         idempotency::Reservation::Replay { response } => {
             // Return the first call's result. `replayed` lets a caller
             // distinguish "your retry was absorbed" from "this ran now".
+            // `response` was written by this same function's Fresh arm via
+            // `serde_json::to_string`, so a parse failure means our own store is
+            // corrupt — not a caller error and not a per-variant domain error.
             let mut value: serde_json::Value = serde_json::from_str(&response).map_err(|e| {
-                McpToolError::internal(format!("stored idempotent response is not JSON: {e}"))
+                McpToolError::internal(format!("stored idempotent response is not JSON: {e}")) // rr0044-ok: deserialize-own-struct
             })?;
             if let Some(object) = value.as_object_mut() {
                 object.insert("replayed".to_string(), serde_json::Value::Bool(true));

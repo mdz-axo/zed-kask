@@ -3,7 +3,7 @@ name = "hkask-capability"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Tool dispatch port and FIDES taint labels"
+description = "Tool dispatch port"
 
 
 [lib]
@@ -11,7 +11,6 @@ path = "src/hkask_capability.rs"
 
 [dependencies]
 hkask-types.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 

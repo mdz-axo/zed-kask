@@ -25,7 +25,6 @@ pub(crate) mod tool_stats; // Loop 6 — statistical learning for MCP tool costs
 pub mod types; // Loop 6 — regulation loop types
 
 pub mod runtime; // Loop 6 — runtime
-pub mod runtime_policy; // Layer 6 — runtime action policy (VeriGuard + AgentGuard)
 pub use algedonic::{AlertEmailSink, AlertEscalationSink, RuntimeAlert};
 pub use cybernetics_loop::CyberneticsLoop;
 pub use energy::{
@@ -43,7 +42,6 @@ pub use qa_span::QaSpan;
 pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
 pub use runtime::StoredSkillSpan;
-pub use runtime_policy::{DefaultPolicy, PolicyConfig, PolicyVerdict};
 pub use sensor_provider::{
     EnergyBudgetSensor, Sensor, SensorBus, SensorRegistry, ToolReliabilitySensor, VarietySensor,
 };
