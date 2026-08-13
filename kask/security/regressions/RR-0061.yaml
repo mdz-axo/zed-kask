@@ -1,0 +1,75 @@
+id: RR-0061
+title: "Every MCP server must have an allowlist/read-alignment test (drift is silent, and one drift pins a SQLCipher DB to a public constant)"
+surface: config
+cwe: CWE-1188
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0008
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/kask_bridge/src/mcp_servers.rs (5 of 13 servers have no read-alignment test), kask/mcp-servers/hkask-mcp-swarm/src/config.rs:252
+discovered_by: kali-audit
+discovered_at: 2026-08-12
+severity: high
+detection:
+  kind: cargo-test
+  # The swarm passphrase is the sharpest instance: it is READ but not
+  # allowlisted, so the override can never arrive and the store always opens
+  # under the compiled-in default. Pin that specific alignment; the broader
+  # per-server coverage gap is tracked in the mitigation.
+  # NOTE: this test does not exist yet — write it with the fix.
+  pattern: "swarm_config_env_includes_memory_passphrase"
+  include: "crates/kask_bridge/src/mcp_servers.rs"
+mitigation: |
+  `*_allowlist_matches_actual_reads` tests exist for only 5 of 13 servers:
+  companies (:560), kata-kanban (:587), condenser (:607), prediction-markets
+  (:636), portfolio (:668). UNGUARDED: codegraph, curator, research, scenarios,
+  training — including `training` (7 credentials, the registry's largest secret
+  grant) and `curator` (SMTP password).
+
+  Confirmed under-grants (read by the server, absent from its allowlist, so the
+  value can never arrive):
+
+  1. HKASK_SWARM_MEMORY_PASSPHRASE — read at
+     kask/mcp-servers/hkask-mcp-swarm/src/config.rs:252; verified absent from the
+     swarm allowlists (`grep -c HKASK_SWARM_MEMORY_PASSPHRASE
+     kask/crates/kask_bridge/src/mcp_servers.rs` -> 0). The SQLCipher swarm
+     memory DB therefore ALWAYS opens under the compiled-in pre-release default
+     "allostery" (config.rs:157, pinned by
+     config_memory_passphrase_default_is_allostery:372), and the documented
+     override (local_knowledge.rs:15) is unreachable through the governed launch
+     path. Effectively: encrypted with a public constant.
+  2. HKASK_MEDIA_RJOULE_CAP — read at
+     kask/mcp-servers/hkask-mcp-media/src/budget.rs:233, not allowlisted. Unset
+     means enforcement off (budget.rs:222), so an operator cannot enable the
+     media spend cap at all.
+
+  Also: HKASK_SWARM_MEMORY_DB, HKASK_SWARM_EMBEDDING_DIM, HKASK_A2A_HTTP_ENABLE
+  are read and unallowlisted. The existing test
+  swarm_config_env_includes_all_read_vars:1012 enumerates 11 read vars and
+  claims to have been "verified against grep std::env::var" — that claim is now
+  stale, which is precisely the failure mode a per-server test is meant to catch.
+
+  Over-grant: codegraph is allowlisted DEEPINFRA_API_KEY + OPENROUTER_API_KEY
+  (mcp_servers.rs:45) with no direct read site, and the crate's own doc says
+  "Credentials are resolved from zed's LanguageModelRegistry — no env-var API
+  keys needed" (hkask_mcp_codegraph.rs:466). Reachable only via the degraded
+  no-socket fallback.
+
+  Dead config with a name mismatch: companies reads HKASK_SERPAPI_KEY
+  (hkask_mcp_companies.rs:317) while the credential registry declares
+  HKASK_SERPAPI_API_KEY (inference_providers.rs:213); it is in neither the
+  allowlist nor the server's CredentialRequirement list, so the error at
+  tools/transcript.rs:72 is unreachable.
+
+  Fix: add a `*_allowlist_matches_actual_reads` test for each of the 5 unguarded
+  servers; allowlist the swarm passphrase and the media rJoule cap; drop the
+  codegraph over-grant; reconcile the SerpAPI spelling. Prefer deriving the
+  expected set from a grep of the server's own `std::env::var` sites so the test
+  cannot go stale the way :1012 did.
+
+  Related: RR-0060 (children inherit the parent env, which bypasses these
+  allowlists for any secret present in .env) and RR-0038 (unknown server id is
+  fail-closed — that part holds).
+source: ".rules: MCP server credentials/config are scoped per-server via allowlists; allowlists must align with actual env-var reads"
+ci_gate: scripts/check-kali-regressions.sh
+status: pending
+note: "Open finding as of 2026-08-12 — no fix attempted in the discovering audit. The swarm passphrase item is the highest-value piece: it silently reduces a SQLCipher DB to a public constant."

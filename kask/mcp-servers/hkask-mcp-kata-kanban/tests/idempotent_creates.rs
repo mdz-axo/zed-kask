@@ -425,13 +425,10 @@ fn wire_field_name_matches_what_clients_send() {
          either side silently disables replay protection"
     );
 
-    for payload in [
-        serde_json::json!({ "name": "B", "idempotency_key": "k" }),
-    ] {
-        let board: BoardCreateRequest =
-            serde_json::from_value(payload).expect("board payload deserializes");
-        assert_eq!(board.idempotency_key.as_deref(), Some("k"));
-    }
+    let board: BoardCreateRequest =
+        serde_json::from_value(serde_json::json!({ "name": "B", "idempotency_key": "k" }))
+            .expect("board payload deserializes");
+    assert_eq!(board.idempotency_key.as_deref(), Some("k"));
 
     let spawn: TaskSpawnRequest = serde_json::from_value(serde_json::json!({
         "task_id": "t-1",

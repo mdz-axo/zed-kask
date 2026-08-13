@@ -1,0 +1,49 @@
+id: RR-0058
+title: "kask/deny.toml must parse and cargo-deny must run in CI (an unparseable config silently disables the entire supply-chain policy)"
+surface: supply-chain
+cwe: CWE-1104
+owasp_llm_2025: LLM03
+atlas_tactic: AML.TA0010
+nist_ssdf: PW.4.1
+discovered_in: kask/deny.toml (line 16, doubled closing quote), .github/workflows/kask-ci.yml (no cargo-deny job)
+discovered_by: kali-audit
+discovered_at: 2026-08-12
+severity: critical
+detection:
+  kind: grep
+  # PRESENCE check: the CI job must exist. A parse-only check is not enough —
+  # the config was ALSO never executed, which is why the parse error survived.
+  # The job itself runs `cargo deny ... check`, which fails on a parse error, so
+  # this presence check plus the job's own exit code covers both halves.
+  semantics: presence
+  pattern: 'cargo deny --manifest-path Cargo.toml --config kask/deny.toml check'
+  # The gate runs from kask/, so include paths are kask/-relative. The CI workflow
+  # lives at the repo root, hence the ../ prefix.
+  include: "../.github/workflows/kask-ci.yml"
+mitigation: |
+  A doubled closing quote at kask/deny.toml:16 (`... re-review 2026-10-22."" },`)
+  made the file unparseable. cargo-deny aborts before reading ANY rule, so the
+  [advisories] ignore list, [bans] deny list, [licenses] allowlist, and [sources]
+  restriction were all inert. Independently confirmed by Python tomllib
+  ("Unclosed inline table at line 16, column 325").
+
+  It survived because cargo-deny was never invoked in CI: `grep -rn 'deny'
+  .github/workflows/*.yml` returned zero matches. An unparseable policy produced
+  no signal at all.
+
+  Two-part fix, both required:
+    1. The config must parse. Verify with either
+       `cargo deny --manifest-path Cargo.toml --config kask/deny.toml check`
+       or `python3 -c "import tomllib; tomllib.load(open('kask/deny.toml','rb'))"`.
+    2. CI must actually run it (the `cargo-deny` job in kask-ci.yml). The
+       explicit `--config` is load-bearing: cargo-deny only auto-discovers
+       deny.toml at the workspace root, so a bare `cargo deny check` here
+       silently falls back to defaults and reports every documented ignore as an
+       error.
+
+  Generalizes: a policy file with no executing gate is indistinguishable from no
+  policy. Any config asserting a security property needs a CI job that fails when
+  the config is broken — not merely when the config says something is wrong.
+source: "https://embarkstudios.github.io/cargo-deny/ — cargo-deny configuration reference; .rules: advertised invariants must point to the enforcement line"
+ci_gate: .github/workflows/kask-ci.yml (cargo-deny job)
+status: enforced

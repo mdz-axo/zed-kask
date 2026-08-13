@@ -1,0 +1,69 @@
+id: RR-0060
+title: "MCP child processes must not inherit parent-process secrets (env_clear before the filtered per-server env)"
+surface: config
+cwe: CWE-497
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0008
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-mcp/src/runtime.rs:294, crates/context_server/src/transport/stdio_transport.rs:37
+discovered_by: kali-audit
+discovered_at: 2026-08-12
+severity: high
+detection:
+  kind: cargo-test
+  # Behavioral, not textual: assert a spawned child's environment does not carry
+  # a secret absent from its allowlist. A grep for `env_clear` would pass the
+  # moment someone writes the call, even in a branch that never runs.
+  # NOTE: this test does not exist yet — write it with the fix. Until then this
+  # entry must stay `pending` (the gate ratchets pending entries as warnings).
+  pattern: "spawned_child_env_excludes_non_allowlisted_secrets"
+  include: "crates/hkask-mcp/src/runtime.rs"
+mitigation: |
+  `env_clear()` is called on NO MCP spawn path:
+    $ grep -rn "env_clear" --include=*.rs crates/context_server/ \
+        kask/crates/hkask-mcp/ crates/zed/src/
+    (no output)
+
+  Both spawn sites only ADD to an inherited environment:
+    - kask/crates/hkask-mcp/src/runtime.rs:294 — `Command::new(&binary)` then
+      `cmd.env(k, v)` per extra_env entry. std::process::Command inherits the
+      parent env unless env_clear() is called.
+    - crates/context_server/src/transport/stdio_transport.rs:37 —
+      `command.envs(binary.env.unwrap_or_default())`, additive.
+
+  Meanwhile the parent deliberately loads every provider API key into its own
+  environment (crates/zed/src/main.rs:379, `dotenvy::from_path`) and injects the
+  SMTP password (main.rs:1591, `std::env::set_var("HKASK_SMTP_PASSWORD", ...)`).
+
+  Consequence: all 13 MCP servers inherit DEEPINFRA_API_KEY, OPENROUTER_API_KEY,
+  ATLASCLOUD_API_KEY, HKASK_SMTP_PASSWORD and every other .env/shell secret
+  regardless of their allowlist. `portfolio`, allowlisted `Some(&[])`/`Some(&[])`,
+  receives all of them. The intent documented at
+  kask/crates/kask_bridge/src/mcp_servers.rs:405 ("a server that only needs
+  DEEPINFRA_API_KEY won't receive HKASK_SMTP_PASSWORD") holds only for
+  keychain-only secrets, NOT for the .env deployment main.rs:344 supports as
+  first-class.
+
+  Why the existing tests miss it: the three blast-radius tests
+  (curator_credentials_do_not_include_data_service_keys:690,
+  codegraph_credentials_do_not_include_smtp_password:718,
+  media_credentials_only_include_used_keys:860) all exercise
+  `filter_credentials_for_server` in isolation. None asserts anything about a
+  spawned child's actual environment, so every one passes while children inherit
+  the secrets they claim to exclude. Testing the filter is not testing the
+  boundary.
+
+  Fix: in kask/crates/hkask-mcp/src/runtime.rs, call `cmd.env_clear()` before
+  applying extra_env, then re-add only the explicitly required base vars (PATH,
+  HOME, locale/TZ) plus the filtered per-server set. Per .rules, remediation goes
+  in kask/ — for the upstream stdio_transport.rs path either add a D-seam entry
+  plus a test in the same PR, or route kask servers exclusively through
+  McpRuntime. Ship with the test named above.
+
+  Severity note: this is now the widest hole on the authority surface, because the
+  per-call capability gate that used to sit in front of tool dispatch was removed
+  as vacuous (RR-0056) — these allowlists carry more of the load than they did.
+source: "https://cwe.mitre.org/data/definitions/497.html — Exposure of Sensitive System Information; OWASP LLM06:2025 Excessive Agency"
+ci_gate: scripts/check-kali-regressions.sh
+status: pending
+note: "Open finding as of 2026-08-12 — no fix attempted in the discovering audit. Flip to enforced when env_clear() lands with the named test."
