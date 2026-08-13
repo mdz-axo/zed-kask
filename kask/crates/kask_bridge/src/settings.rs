@@ -646,9 +646,14 @@ impl KaskModelsSettings {
 /// tool-directed requests.
 ///
 /// `Default` is the single source of truth — `From<Content>` reads from it
-/// via `unwrap_or(default.field)`. These defaults match the historical
-/// `LazyToolRouter::new()` hardcoded values (`0.30` / `40`) so behavior is
-/// unchanged unless the operator overrides them in settings.json.
+/// via `unwrap_or(default.field)`.
+///
+/// `complex_word_threshold` was lowered from 40 to 9 (2026-08-12). At 40 the
+/// router almost never activated: it is fail-open, so a sub-threshold message
+/// retains **all** MCP tool schemas (~15,000 tokens across 331 tools), and few
+/// real requests reach 40 words. 9 words is short enough that any substantive
+/// request routes while genuine one-liners ("fix this", "what does this do")
+/// still fail open, which is the safe direction.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskToolRouterSettings {
     /// Score threshold for tool inclusion (0.0–1.0). Messages scoring above
@@ -664,7 +669,7 @@ impl Default for KaskToolRouterSettings {
     fn default() -> Self {
         Self {
             threshold: 0.30,
-            complex_word_threshold: 40,
+            complex_word_threshold: 9,
         }
     }
 }
@@ -1351,6 +1356,25 @@ impl From<KaskSettingsContent> for KaskSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pins the `kask_bridge` half of the tool-router default-sync contract.
+    /// `LazyToolRouter::new()` in the `agent` crate hardcodes the same pair as a
+    /// fallback for settings-free construction, and `agent` cannot depend on
+    /// this crate (that would invert the D8 seam), so the invariant is pinned
+    /// from both sides against literals. Change one, change the other:
+    /// `crates/agent/src/tool_router.rs::default_thresholds_are_the_documented_values`.
+    #[test]
+    fn tool_router_defaults_match_agent_side_fallback() {
+        let default = KaskToolRouterSettings::default();
+        assert_eq!(
+            default.complex_word_threshold, 9,
+            "word threshold changed — update LazyToolRouter::new() in crates/agent/src/tool_router.rs"
+        );
+        assert!(
+            (default.threshold - 0.30).abs() < f64::EPSILON,
+            "score threshold changed — update LazyToolRouter::new() in crates/agent/src/tool_router.rs"
+        );
+    }
 
     // Regression test for the silent `embedding_dim == 0` bug. A user
     // setting `embedding_dim: 0` in their settings file would construct a

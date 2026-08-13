@@ -149,8 +149,14 @@ pub struct LazyToolRouter {
 }
 
 impl LazyToolRouter {
+    /// Thresholds here must match `KaskToolRouterSettings::default()` in
+    /// `kask_bridge` — that is the operator-facing source of truth, and this is
+    /// the fallback for callers that construct the router without settings
+    /// (tests, and any pre-settings construction). Two defaults that disagree is
+    /// the drift class that silently changed routing behaviour before; pinned by
+    /// `default_thresholds_match_kask_settings_default`.
     pub fn new() -> Self {
-        Self::new_with_thresholds(0.30, 40)
+        Self::new_with_thresholds(0.30, 9)
     }
 
     /// Construct with explicit thresholds. The composition root (main.rs)
@@ -521,6 +527,57 @@ mod tests {
             selected.is_none(),
             "simple message should fail-open (no filtering)"
         );
+    }
+
+    /// Pins this crate's half of the default-sync contract. `agent` cannot
+    /// depend on `kask_bridge` (that would invert the D8 seam), so the paired
+    /// assertion lives in `kask_bridge::settings` and references these values.
+    /// Both must be updated together.
+    #[test]
+    fn default_thresholds_are_the_documented_values() {
+        let router = LazyToolRouter::new();
+        assert_eq!(router.complex_word_threshold, 9);
+        assert!((router.threshold - 0.30).abs() < f64::EPSILON);
+    }
+
+    /// At the previous threshold of 40 words the router almost never activated,
+    /// so every ordinary request paid for all MCP tool schemas. These are real
+    /// message shapes that must now route (they carry tool-relevant intent) and
+    /// must still fail open (bare one-liners with no actionable signal).
+    #[test]
+    fn nine_word_threshold_routes_ordinary_requests_but_not_one_liners() {
+        let router = LazyToolRouter::new();
+        let candidates = vec![
+            candidate("grep", "Search file contents using a regular expression"),
+            candidate("read_file", "Read a file from the project filesystem"),
+            candidate("fetch", "Fetches a URL and returns the content as Markdown"),
+        ];
+        let probe = |msg: &str| {
+            router.select_tools(&ToolSelectionContext {
+                user_message: Some(msg.to_string()),
+                open_file_paths: vec![],
+                candidates: candidates.clone(),
+            })
+        };
+
+        // 10+ words, no tool name, no complex signal — routes on word count
+        // alone, which is exactly what the 40-word threshold used to miss.
+        assert!(
+            probe(
+                "can you take a look at how the parser handles nested quotes for me"
+            )
+            .is_some(),
+            "an ordinary multi-clause request must activate the router"
+        );
+
+        // Short and genuinely ambiguous — must still fail open so a terse
+        // request never loses a tool it needed.
+        for short in ["hello", "thanks", "what does this do", "fix this"] {
+            assert!(
+                probe(short).is_none(),
+                "short message {short:?} must fail open, not filter"
+            );
+        }
     }
 
     #[test]

@@ -138,23 +138,39 @@ def overlays() -> dict[str, int]:
     return out
 
 
-def builtin_tool_schemas() -> tuple[int, int]:
-    """Built-in Zed agent tools: doc comments become the model-facing schema.
+def builtin_tool_schemas() -> tuple[int, int, list[tuple[str, int]]]:
+    """Built-in Zed agent tools: only the *input struct* docs reach the model.
 
-    Counts the doc comments on each `*ToolInput` struct plus its fields, which
-    is what schemars renders into the tool description.
+    `AgentTool::description()` (`crates/agent/src/thread.rs:6252`) derives the
+    model-facing description from `schemars::schema_for!(Self::Input)`, so the
+    surface is the doc comment above the `*Input` struct plus its per-field doc
+    comments — **not** every `///` in the file. Counting all doc comments
+    over-states this by ~2x (e.g. `skill_tool.rs` has ~12.5 KB of docs but only
+    ~1.2 KB on its input struct); the rest documents internal traits.
     """
-    total = 0
-    count = 0
+    rows: list[tuple[str, int]] = []
     tools_dir = REPO / "crates/agent/src/tools"
     for src in sorted(tools_dir.glob("*_tool.rs")):
         text = read(src)
-        if "ToolInput" not in text:
-            continue
-        count += 1
-        # Doc comments (`///`) are the description surface.
-        total += sum(len(line) for line in re.findall(r"^\s*///.*$", text, re.MULTILINE))
-    return total, count
+        total = 0
+        # Doc-comment run immediately preceding the input struct declaration.
+        for m in re.finditer(
+            r"((?:^\s*///.*\n)+)(?:^\s*#\[[^\]]*\]\s*\n)*^\s*pub struct (\w*Input\w*)",
+            text,
+            re.MULTILINE,
+        ):
+            total += sum(len(line) for line in m.group(1).splitlines())
+        # Per-field docs inside the struct body.
+        body = re.search(r"pub struct \w*Input\w*\s*\{(.*?)\n\}", text, re.DOTALL)
+        if body:
+            total += sum(
+                len(line)
+                for line in re.findall(r"^\s*///.*$", body.group(1), re.MULTILINE)
+            )
+        if total:
+            rows.append((src.stem, total))
+    rows.sort(key=lambda r: -r[1])
+    return sum(b for _, b in rows), len(rows), rows
 
 
 def mcp_tool_schemas() -> tuple[int, int, list[tuple[str, int, int]]]:
@@ -206,7 +222,7 @@ def main() -> int:
     static_prose = tmpl_bytes - directive_bytes
     catalog_bytes, skill_count, entries = skill_catalog()
     ov = overlays()
-    builtin_bytes, builtin_count = builtin_tool_schemas()
+    builtin_bytes, builtin_count, builtin_rows = builtin_tool_schemas()
     mcp_bytes, mcp_tools, per_server = mcp_tool_schemas()
     rules_bytes = project_rules()
 
@@ -260,6 +276,8 @@ def main() -> int:
     print()
     print("NOT IN THE PROMPT, BUT IN EVERY REQUEST")
     print(row(f"  Built-in tool schemas ({builtin_count} tools)", builtin_bytes))
+    for name, b in builtin_rows[:6]:
+        print(row(f"    {name}", b))
     print(row(f"  MCP tool schemas ({mcp_tools} tools)", mcp_bytes))
     for name, n, b in per_server:
         print(row(f"    {name} ({n})", b))
@@ -281,8 +299,11 @@ def main() -> int:
     print("    So the MCP figure above is what a SHORT message actually pays.")
     print("  - Overlay figures count Rust string literals, an upper bound: escapes and")
     print("    line continuations are included, and `{}` placeholders are unexpanded.")
-    print("  - Built-in tool schemas are counted from `///` doc comments, which is what")
-    print("    schemars renders; the JSON envelope adds more.")
+    print("  - Built-in tool schemas count only the *input struct* doc comments, which")
+    print("    is what schemars renders into the description; the JSON envelope (field")
+    print("    names, types, required lists) adds more on top.")
+    print("  - Built-in tools are NOT filtered by LazyToolRouter — it scores MCP tools")
+    print("    only, so this block is paid on every request regardless.")
     return 0
 
 
