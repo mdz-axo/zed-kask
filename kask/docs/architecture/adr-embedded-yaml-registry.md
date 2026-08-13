@@ -45,8 +45,8 @@ The embedding described in this block is real — `build.rs` still compiles all 
 Disk is the single runtime source of truth. The embedded payload exists solely so a self-contained binary can populate the registry on a fresh install with no source tree.
 
 - `BridgeManifestExecutor::manifest_yaml` (`kask/crates/kask_bridge/src/skill_executor.rs:148`) reads the filesystem path **first and only**. There is no compiled-in runtime fallback: if the file is absent or unreadable, it returns `None` (with a `tracing::warn!` on read error, `skill_executor.rs:154`).
-- `seed_registry_to_disk` (`skill_executor.rs:184`) materializes the embedded seed to `data_dir()/agents/registry/` at startup: process manifests, per-skill template manifests, `.j2` templates, and `.yaml` template files. It is **seed-if-missing** — `fs.is_file` short-circuits every write (`skill_executor.rs:188`, `:208`, `:219`, `:232`), so user edits are never overwritten. A user who deletes a shipped file sees it re-seeded on the next startup. `agent_skills::seed_shipped_skills` does the same for shipped `SKILL.md` files.
-- DIVERGENCE.md D1 pins the invariant: *"There is no compiled-in runtime fallback — reads exclusively from disk."* In dev (CWD = repo root) the bridge points at the live `kask/registry/` source tree so edits take effect without recompilation; in production it points at the seeded `data_dir()/agents/registry/`.
+- `seed_registry_to_disk` (`skill_executor.rs:184`) materializes the embedded seed to `{kask_data_dir}/skills/registry/` at startup: process manifests, per-skill template manifests, `.j2` templates, and `.yaml` template files. It is **seed-if-missing** — `fs.is_file` short-circuits every write (`skill_executor.rs:188`, `:208`, `:219`, `:232`), so user edits are never overwritten. A user who deletes a shipped file sees it re-seeded on the next startup. `agent_skills::seed_shipped_skills` does the same for shipped `SKILL.md` files.
+- DIVERGENCE.md D1 pins the invariant: *"There is no compiled-in runtime fallback — reads exclusively from disk."* In dev (CWD = repo root) the bridge points at the live `kask/registry/` source tree so edits take effect without recompilation; in production it points at the seeded `{kask_data_dir}/skills/registry/`.
 
 Why the inversion: under embedded-preferred, a YAML edit was silently shadowed by the compiled copy until a rebuild — the "edit takes effect" promise was false, and operator-supplied manifests could not override built-ins. Disk-first makes the YAML/Jinja layer a genuine runtime evolution surface (for both developers and end users) while keeping the install-time path-resolution guarantee via the one-time seed.
 
@@ -55,7 +55,7 @@ Why the inversion: under embedded-preferred, a YAML edit was silently shadowed b
 ### The "rapid evolution" property is now user-scoped as well as dev-scoped
 
 - **For developers**: edit a `.yaml` or `.j2` → takes effect immediately (dev points at the live source tree). `deny_unknown_fields` on `ManifestFile`/`ManifestHeader` still gives parse-time schema enforcement against drift.
-- **For end users**: the seeded registry under `data_dir()/agents/registry/` is editable and hot-effective. No reinstall or rebuild is needed to change a skill. User edits are sovereign (seed-if-missing never overwrites); only deletions are repaired on the next startup.
+- **For end users**: the seeded registry under `{kask_data_dir}/skills/registry/` is editable and hot-effective. No reinstall or rebuild is needed to change a skill. User edits are sovereign (seed-if-missing never overwrites); only deletions are repaired on the next startup.
 
 ### What this means for the architectural rationale
 

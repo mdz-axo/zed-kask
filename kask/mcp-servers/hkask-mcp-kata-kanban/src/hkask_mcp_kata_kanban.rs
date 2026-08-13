@@ -1663,3 +1663,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     )
     .await
 }
+
+    // D28 — pins the default DB path resolution.
+    #[test]
+    fn default_db_path_follows_standardized_layout() {
+        let relative = hkask_types::agent_paths::mcp_server_db("kata-kanban", "kanban");
+        assert_eq!(
+            relative,
+            std::path::PathBuf::from("mcp").join("kata-kanban").join("kanban.db"),
+            "kata-kanban default DB path must follow mcp/kata-kanban/kanban.db"
+        );
+    }

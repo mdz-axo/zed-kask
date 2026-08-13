@@ -149,39 +149,20 @@ pub fn agent_memory_db(name: &str) -> PathBuf {
 
 // ── Initialization ───────────────────────────────────────────────────────────
 
-/// All subdirectories created by `ensure_agent_dirs` during agent provisioning.
-///
-/// All entries are scaffolding — created on disk as part of the agent
-/// directory structure but not read/written by any production code (D28
-/// migrated `adapters` to `mcp/training/adapters/`). They are retained so
-/// future features have a pre-created home without needing a migration.
-/// Removing a name from this list is safe (the dir is simply not created);
-/// adding one requires updating `ensure_agent_dirs`'s test.
-pub const AGENT_SUBDIRS: &[&str] = &[
-    "gallery",
-    "documents",
-    "library",
-    "sessions",
-    "adapters",
-    "portfolios",
-    "artifacts",
-];
-
-/// Create the full agent directory structure on disk.
+/// Create the agent's root directory on disk.
 ///
 /// Called during agent provisioning to ensure the agent's space exists
 /// before any databases are deployed. Safe to call multiple times
 /// (idempotent — directories already existing are not errors).
 ///
-/// Creates the agent root directory and all subdirectories listed in
-/// `AGENT_SUBDIRS`.
+/// D28: the scaffolding subdirs (`gallery`, `documents`, `library`,
+/// `sessions`, `adapters`, `portfolios`, `artifacts`) were removed — they
+/// were created on disk but never read/written by any production code.
+/// MCP-server artifacts now live under `mcp/{server_id}/`, not under
+/// `agents/{name}/`. Agent DBs (`agent_db`, `agent_memory_db`) create
+/// their own parent dir on open.
 pub fn ensure_agent_dirs(name: &str) -> std::io::Result<()> {
-    let dir = agent_dir(name);
-    std::fs::create_dir_all(&dir)?;
-    for sub in AGENT_SUBDIRS {
-        std::fs::create_dir_all(dir.join(sub))?;
-    }
-    Ok(())
+    std::fs::create_dir_all(agent_dir(name))
 }
 
 /// Sanitize an agent name for filesystem use.
@@ -251,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_dirs_creates_all_subdirs() {
+    fn ensure_dirs_creates_agent_root() {
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -259,12 +240,6 @@ mod tests {
         ensure_agent_dirs("testagent").expect("create dirs");
 
         assert!(agent_dir("testagent").exists());
-        for sub in AGENT_SUBDIRS {
-            assert!(
-                agent_dir("testagent").join(sub).exists(),
-                "missing subdir: {sub}"
-            );
-        }
 
         // Idempotent: calling again should not error
         ensure_agent_dirs("testagent").expect("idempotent");

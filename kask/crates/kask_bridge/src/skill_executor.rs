@@ -448,8 +448,8 @@ impl BridgeManifestExecutor {
 /// user who deletes a shipped manifest/template will see it re-seeded on the
 /// next startup.
 ///
-/// `registry_root` is the on-disk registry root (e.g.
-/// `data_dir()/agents/registry/`). Writes:
+/// `registry_root` is the on-disk registry root (D28:
+/// `{kask_data_dir}/skills/registry/`). Writes:
 /// - `registry_root/manifests/<skill>.yaml` (process manifests)
 /// - `registry_root/templates/<skill>/manifest.yaml` (per-skill template manifests)
 /// - `registry_root/templates/<skill>/<file>.j2` (Jinja2 templates)

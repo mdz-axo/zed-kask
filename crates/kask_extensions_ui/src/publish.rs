@@ -143,7 +143,7 @@ pub fn gather_shipped_skill_package(name: &str, skill_md: Option<&str>) -> Vec<(
 /// [`gather_shipped_skill_package`]'s canonical names so the two hashes are
 /// comparable. SKILL.md is read from the global skills directory; the
 /// registry files are read from `registry_root` (dev: `kask/registry/`,
-/// prod: `data_dir()/agents/registry/`). Missing files are skipped — an
+/// prod: `{kask_data_dir}/skills/registry/`). Missing files are skipped — an
 /// unmodified install has every file seeded to disk, so a missing file is
 /// itself a modification signal (or not-yet-seeded, which resolves after
 /// startup; the panel fetches on user toggle, post-startup).
@@ -207,7 +207,9 @@ pub async fn gather_disk_skill_package(
 
 /// zed-kask: Decide the on-disk registry root for bundled-skill package
 /// hashing. Dev (source tree present): `kask/registry/`. Prod (seeded):
-/// `data_dir()/agents/registry/` — the global skills dir's sibling `registry/`.
+/// `{kask_data_dir}/skills/registry/` — a subdirectory of the skills class,
+/// containing execution manifests and templates for all skills. Sibling of
+/// the per-skill dirs under `skills/`.
 /// Pure decision behind the async `fs.is_dir` check in `fetch_bundled_skills`,
 /// extracted so the dev/prod branch + the no-parent fallback are testable
 /// without a GPUI executor. Mirrors the resolution in `main.rs`.
@@ -215,14 +217,8 @@ pub fn resolve_registry_root(dev_manifests_exist: bool, globals_dir: &Path) -> P
     if dev_manifests_exist {
         return PathBuf::from("kask/registry");
     }
-    // Fall back to the dev root when the globals dir has no usable parent
-    // (None, or an empty path — `Path::new("skills").parent()` is `Some("")`,
-    // not `None`), so the panel never produces a bare relative `registry`
-    // that resolves against CWD.
-    match globals_dir.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p.join("registry"),
-        _ => PathBuf::from("kask/registry"),
-    }
+    // D28 — registry is a child of the skills dir, not a sibling.
+    globals_dir.join("registry")
 }
 
 #[cfg(test)]
@@ -232,24 +228,15 @@ mod resolve_registry_root_tests {
 
     #[test]
     fn dev_source_tree_present_uses_kask_registry() {
-        let root = resolve_registry_root(true, Path::new("/data/agents/skills"));
+        let root = resolve_registry_root(true, Path::new("/data/skills"));
         assert_eq!(root, Path::new("kask/registry"));
     }
 
+    // D28 — registry is now a child of the skills dir, not a sibling.
     #[test]
-    fn prod_uses_seeded_registry_sibling_of_globals_dir() {
-        let root = resolve_registry_root(false, Path::new("/data/agents/skills"));
-        assert_eq!(root, Path::new("/data/agents/registry"));
-    }
-
-    #[test]
-    fn globals_dir_without_parent_falls_back_to_dev_root() {
-        // A one-component path has no parent; fall back to the dev root so the
-        // panel never produces an empty registry path (which would make every
-        // bundled skill hash-miss and falsely badge, or no-op, depending on
-        // seeding). This pins the `unwrap_or_else` fallback.
-        let root = resolve_registry_root(false, Path::new("skills"));
-        assert_eq!(root, Path::new("kask/registry"));
+    fn prod_uses_seeded_registry_child_of_skills_dir() {
+        let root = resolve_registry_root(false, Path::new("/data/skills"));
+        assert_eq!(root, Path::new("/data/skills/registry"));
     }
 }
 

@@ -180,47 +180,53 @@ impl CorpusServer {
         &self,
         Parameters(params): Parameters<CacheWorkRequest>,
     ) -> String {
-        execute_tool_semantic(self, "corpus_cache_work", Self::ontology_anchor("corpus_cache_work"), async {
-            if params.slug.is_empty()
-                || !params
-                    .slug
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-            {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Invalid slug '{}': must be alphanumeric with hyphens/underscores only",
-                    params.slug
-                )));
-            }
-
-            let cache_dir = crate::path_safety::contain_for_write(&params.cache_dir)?;
-            let cache_path = cache_dir.join(format!("{}.txt", params.slug));
-
-            if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                return Err(map_corpus_io_error(
-                    e,
-                    &format!("Failed to create cache directory '{}'", cache_dir.display()),
-                ));
-            }
-
-            let bytes = params.content.as_bytes();
-            match std::fs::write(&cache_path, bytes) {
-                Ok(()) => {
-                    let result = CacheWorkResult {
-                        slug: params.slug.clone(),
-                        path: cache_path.to_string_lossy().to_string(),
-                        bytes_written: bytes.len() as u64,
-                    };
-                    let output = serde_json::to_value(&result)
-                        .unwrap_or_else(|_| serde_json::json!({"error": "serialization failed"}));
-                    Ok(output)
+        execute_tool_semantic(
+            self,
+            "corpus_cache_work",
+            Self::ontology_anchor("corpus_cache_work"),
+            async {
+                if params.slug.is_empty()
+                    || !params
+                        .slug
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "Invalid slug '{}': must be alphanumeric with hyphens/underscores only",
+                        params.slug
+                    )));
                 }
-                Err(e) => Err(map_corpus_io_error(
-                    e,
-                    &format!("Failed to write cache file '{}'", cache_path.display()),
-                )),
-            }
-        })
+
+                let cache_dir = crate::path_safety::contain_for_write(&params.cache_dir)?;
+                let cache_path = cache_dir.join(format!("{}.txt", params.slug));
+
+                if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+                    return Err(map_corpus_io_error(
+                        e,
+                        &format!("Failed to create cache directory '{}'", cache_dir.display()),
+                    ));
+                }
+
+                let bytes = params.content.as_bytes();
+                match std::fs::write(&cache_path, bytes) {
+                    Ok(()) => {
+                        let result = CacheWorkResult {
+                            slug: params.slug.clone(),
+                            path: cache_path.to_string_lossy().to_string(),
+                            bytes_written: bytes.len() as u64,
+                        };
+                        let output = serde_json::to_value(&result).unwrap_or_else(
+                            |_| serde_json::json!({"error": "serialization failed"}),
+                        );
+                        Ok(output)
+                    }
+                    Err(e) => Err(map_corpus_io_error(
+                        e,
+                        &format!("Failed to write cache file '{}'", cache_path.display()),
+                    )),
+                }
+            },
+        )
         .await
     }
 
@@ -296,13 +302,14 @@ impl CorpusServer {
                     //    `kask/registry/company-sources/{symbol}.yaml` —
                     //    the live source tree.
                     // 2. Production (CWD ≠ repo root): resolve
-                    //    `agents/registry/company-sources/{symbol}.yaml`
+                    //    `skills/registry/company-sources/{symbol}.yaml`
                     //    under the data dir — where `seed_registry_to_disk`
-                    //    materialises the compiled-in seed payload.
+                    //    materialises the compiled-in seed payload (D28:
+                    //    registry is under `skills/`, not `agents/`).
                     let symbol_lower = params.symbol.to_lowercase();
                     let dev_path =
                         std::path::PathBuf::from(format!("kask/registry/company-sources/{symbol_lower}.yaml"));
-                    let prod_relative = std::path::Path::new("agents/registry/company-sources")
+                    let prod_relative = std::path::Path::new("skills/registry/company-sources")
                         .join(format!("{symbol_lower}.yaml"));
                     let prod_path =
                         hkask_types::agent_paths::resolve_under_data_dir(&prod_relative);

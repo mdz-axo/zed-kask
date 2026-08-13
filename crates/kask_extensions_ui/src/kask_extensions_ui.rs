@@ -432,11 +432,11 @@ impl KaskExtensionsPage {
                 entries.dedup_by(|a, b| a.name == b.name);
 
                 // zed-kask: resolve the on-disk registry root. Dev (source
-                // tree present): `kask/registry/`. Prod (seeded): the global
-                // skills dir's sibling `registry/` (i.e.
-                // `data_dir()/agents/registry/`). Mirrors `main.rs`; the
-                // decision is pure in [`crate::publish::resolve_registry_root`]
-                // so the dev/prod branch + no-parent fallback are tested.
+                // tree present): `kask/registry/`. Prod (seeded):
+                // `{kask_data_dir}/skills/registry/` (a child of the skills
+                // dir, D28). Mirrors `main.rs`; the decision is pure in
+                // [`crate::publish::resolve_registry_root`] so the dev/prod
+                // branch is tested.
                 let globals_dir = agent_skills::global_skills_dir();
                 let dev_manifests_exist = fs
                     .is_dir(std::path::Path::new("kask/registry/manifests"))

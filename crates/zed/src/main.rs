@@ -2290,8 +2290,12 @@ fn main() {
                 // source — no compiled-in fallback.
                 let dev_manifests_dir = std::path::PathBuf::from("kask/registry/manifests");
                 let dev_templates_dir = std::path::PathBuf::from("kask/registry/templates");
-                let seeded_registry_root =
-                    paths::data_dir().join("agents").join("registry");
+                // D28 — Standardized Artifact Storage. The registry lives
+                // under the skills class dir: `{kask_data_dir}/skills/
+                // registry/`. Resolved via the global skills dir override
+                // hook (same as `global_skills_dir()`).
+                let globals_dir = agent_skills::global_skills_dir();
+                let seeded_registry_root = globals_dir.join("registry");
                 let using_dev_source =
                     dev_manifests_dir.is_dir() && dev_templates_dir.is_dir();
                 let (registry_manifests_dir, registry_templates_dir) = if using_dev_source {

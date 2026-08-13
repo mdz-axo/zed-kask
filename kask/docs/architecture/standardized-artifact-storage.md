@@ -40,7 +40,7 @@ consistently regardless of launch context.
 |---|---|---|---|---|
 | MCP servers | `{data_dir}` | `mcp/{server_id}/` | `server_id` matches `BUILT_IN_MCP_SERVERS[].id` (`kask/crates/kask_bridge/src/mcp_servers.rs:53`); files named `{purpose}.db` | `resolve_under_data_dir(Path::new("mcp/{server_id}/{purpose}.db"))` |
 | User skills | `{data_dir}` | `skills/{skill_name}/` (marketplace skills nest as `skills/_marketplace/{source_user}/{skill_name}/`) | `skill_name` sanitized via `sanitize_name()` (`agent_paths.rs:157-187`); files: `manifest.yaml`, `*.j2`, `SKILL.md` | `resolve_under_data_dir(Path::new("skills/{skill_name}/"))` |
-| User agent files | `{data_dir}` | `agents/{agent_name}/` | `agent_name` via `sanitize_name()`; DB file is `{agent_name}.db` (e.g., `agents/curator/curator.db`); subdirs from `AGENT_SUBDIRS` (`agent_paths.rs:124-132`) | `agent_dir(name)` + `agent_db(name)` (existing, `agent_paths.rs:79-81`, `agent_paths.rs:141-143`) |
+| User agent files | `{data_dir}` | `agents/{agent_name}/` | `agent_name` via `sanitize_name()`; DB file is `{agent_name}.db` (e.g., `agents/curator/curator.db`); memory DB is `memory.db` | `agent_dir(name)` + `agent_db(name)` (existing, `agent_paths.rs:79-81`, `agent_paths.rs:141-143`) |
 | Archived chat threads | `{data_dir}` | `threads/` | files: `threads.db` (SQLite) | `resolve_under_data_dir(Path::new("threads/threads.db"))` |
 
 ## 3. Ownership principle

@@ -431,3 +431,20 @@ mod tests {
         );
     }
 }
+
+    // D28 — pins the default ledger + consent DB paths.
+    #[test]
+    fn default_db_paths_follow_standardized_layout() {
+        let ledger = hkask_types::agent_paths::mcp_server_db("swarm", "ledger");
+        assert_eq!(
+            ledger,
+            std::path::PathBuf::from("mcp").join("swarm").join("ledger.db"),
+            "swarm ledger path must follow mcp/swarm/ledger.db"
+        );
+        let consent = hkask_types::agent_paths::mcp_server_db("swarm", "consent");
+        assert_eq!(
+            consent,
+            std::path::PathBuf::from("mcp").join("swarm").join("consent.db"),
+            "swarm consent path must follow mcp/swarm/consent.db"
+        );
+    }

@@ -225,12 +225,11 @@ pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, ProvisionErro
 
     // 1. Create the agent directory structure (idempotent).
     //    Resolve against the hKask data directory so paths are absolute.
+    //    D28: scaffolding subdirs removed — `ensure_agent_dirs` now creates
+    //    only the agent root. DBs create their own parent dir on open.
     let data_dir = hkask_services_core::config::resolve_data_dir();
     let agent_root = data_dir.join(hkask_types::agent_paths::agent_dir(&agent_name));
     std::fs::create_dir_all(&agent_root).map_err(ProvisionError::DirectoryCreation)?;
-    for sub in hkask_types::agent_paths::AGENT_SUBDIRS {
-        std::fs::create_dir_all(agent_root.join(sub)).map_err(ProvisionError::DirectoryCreation)?;
-    }
 
     let db_path = agent_root.join("memory.db").to_string_lossy().to_string();
 
