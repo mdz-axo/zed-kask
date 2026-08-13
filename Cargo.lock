@@ -9607,6 +9607,7 @@ name = "hkask-mcp-scenarios"
 version = "0.34.0"
 dependencies = [
  "chrono",
+ "hkask-bridge-ontology",
  "hkask-forecast",
  "hkask-mcp-prediction-markets",
  "hkask-mcp-server",

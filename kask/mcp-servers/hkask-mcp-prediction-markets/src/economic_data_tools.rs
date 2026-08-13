@@ -49,10 +49,7 @@ impl PredictionMarketsServer {
             "fred_search_series",
             Self::ontology_anchor("fred_search_series"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("fred_search_series".to_string());
+                self.record_call("fred_search_series");
                 let result = fred::search_series(
                     &EconomicDataClient::new(&self.http),
                     self.fred_api_key.as_deref(),
@@ -80,10 +77,7 @@ impl PredictionMarketsServer {
             "fred_get_observations",
             Self::ontology_anchor("fred_get_observations"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("fred_get_observations".to_string());
+                self.record_call("fred_get_observations");
                 let result = fred::get_observations(
                     &EconomicDataClient::new(&self.http),
                     self.fred_api_key.as_deref(),
@@ -109,10 +103,7 @@ impl PredictionMarketsServer {
             "fred_get_series_info",
             Self::ontology_anchor("fred_get_series_info"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("fred_get_series_info".to_string());
+                self.record_call("fred_get_series_info");
                 let result = fred::get_series_info(
                     &EconomicDataClient::new(&self.http),
                     self.fred_api_key.as_deref(),
@@ -138,10 +129,7 @@ impl PredictionMarketsServer {
             "fred_list_categories",
             Self::ontology_anchor("fred_list_categories"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("fred_list_categories".to_string());
+                self.record_call("fred_list_categories");
                 let result = fred::list_categories(
                     &EconomicDataClient::new(&self.http),
                     self.fred_api_key.as_deref(),
@@ -167,10 +155,7 @@ impl PredictionMarketsServer {
             "fred_get_release",
             Self::ontology_anchor("fred_get_release"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("fred_get_release".to_string());
+                self.record_call("fred_get_release");
                 let result = fred::get_release(
                     &EconomicDataClient::new(&self.http),
                     self.fred_api_key.as_deref(),
@@ -201,10 +186,7 @@ impl PredictionMarketsServer {
             "wb_search_indicators",
             Self::ontology_anchor("wb_search_indicators"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("wb_search_indicators".to_string());
+                self.record_call("wb_search_indicators");
                 let result =
                     worldbank::search_indicators(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
@@ -227,10 +209,7 @@ impl PredictionMarketsServer {
             "wb_get_observations",
             Self::ontology_anchor("wb_get_observations"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("wb_get_observations".to_string());
+                self.record_call("wb_get_observations");
                 let result =
                     worldbank::get_observations(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
@@ -252,10 +231,7 @@ impl PredictionMarketsServer {
             "wb_list_countries",
             Self::ontology_anchor("wb_list_countries"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("wb_list_countries".to_string());
+                self.record_call("wb_list_countries");
                 let result =
                     worldbank::list_countries(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
@@ -274,10 +250,7 @@ impl PredictionMarketsServer {
             "wb_list_topics",
             Self::ontology_anchor("wb_list_topics"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("wb_list_topics".to_string());
+                self.record_call("wb_list_topics");
                 let result =
                     worldbank::list_topics(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
@@ -299,10 +272,7 @@ impl PredictionMarketsServer {
             "wb_get_indicator_info",
             Self::ontology_anchor("wb_get_indicator_info"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("wb_get_indicator_info".to_string());
+                self.record_call("wb_get_indicator_info");
                 let result =
                     worldbank::get_indicator_info(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
@@ -329,10 +299,7 @@ impl PredictionMarketsServer {
             "dbnomics_search",
             Self::ontology_anchor("dbnomics_search"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("dbnomics_search".to_string());
+                self.record_call("dbnomics_search");
                 let result = dbnomics::search(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
             },
@@ -353,10 +320,7 @@ impl PredictionMarketsServer {
             "dbnomics_list_providers",
             Self::ontology_anchor("dbnomics_list_providers"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("dbnomics_list_providers".to_string());
+                self.record_call("dbnomics_list_providers");
                 let result =
                     dbnomics::list_providers(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
@@ -378,10 +342,7 @@ impl PredictionMarketsServer {
             "dbnomics_get_dataset",
             Self::ontology_anchor("dbnomics_get_dataset"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("dbnomics_get_dataset".to_string());
+                self.record_call("dbnomics_get_dataset");
                 let result =
                     dbnomics::get_dataset(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
@@ -403,10 +364,7 @@ impl PredictionMarketsServer {
             "dbnomics_get_series",
             Self::ontology_anchor("dbnomics_get_series"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("dbnomics_get_series".to_string());
+                self.record_call("dbnomics_get_series");
                 let result = dbnomics::get_series(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
             },
@@ -434,10 +392,7 @@ impl PredictionMarketsServer {
             "market_score_rationale",
             Self::ontology_anchor("market_score_rationale"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_score_rationale".to_string());
+                self.record_call("market_score_rationale");
                 let result = eqm::score_rationale(self.inference_port.as_ref(), &req).await;
                 result.map_err(McpToolError::from).and_then(|eqm_result| {
                     serde_json::to_value(&eqm_result).map_err(|e| {

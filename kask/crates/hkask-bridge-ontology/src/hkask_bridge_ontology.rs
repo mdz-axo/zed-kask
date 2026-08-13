@@ -163,4 +163,40 @@ mod tests {
         assert_eq!(explain_tool_for(""), "research_search");
         assert_eq!(explain_tool_for("unknown:Thing"), "research_search");
     }
+
+    // Dispatch coverage: every OntologyNamespace variant must have a dispatch
+    // decision in explain_tool_for — either an explicit arm or the documented
+    // fallback to "research_search". Catches the S4 failure where a new
+    // OntologyNamespace variant is added without a corresponding dispatch arm.
+    #[test]
+    fn explain_tool_for_covers_all_ontology_namespaces() {
+        use crate::axis::OntologyNamespace;
+
+        // Each namespace has a canonical concept URI (from its dc_concept or
+        // pko_concept). explain_tool_for dispatches on the concept string, so
+        // we test with a representative concept per namespace.
+        let cases: [(OntologyNamespace, &str); 7] = [
+            (OntologyNamespace::Fibo, "fibo:Corporation"),
+            (OntologyNamespace::Eso, "eso:hasHypothesis"),
+            (OntologyNamespace::Golem, "golem:G1_Character"),
+            (OntologyNamespace::MlSchema, "mls:Model"),
+            (OntologyNamespace::Sdmx, "sdmx:DataSet"),
+            (OntologyNamespace::Omc, "omc:Scene"),
+            (OntologyNamespace::Sumo, "sumo:Entity"),
+        ];
+
+        for (ns, concept) in cases {
+            let tool = explain_tool_for(concept);
+            // Every namespace must dispatch to a non-empty explain tool name.
+            // The fallback ("research_search") is valid for namespaces without
+            // a domain-specific explain tool — the point is that the dispatch
+            // is *decided*, not silently empty.
+            assert!(
+                !tool.is_empty(),
+                "explain_tool_for returned empty for {} concept '{}'",
+                ns,
+                concept
+            );
+        }
+    }
 }

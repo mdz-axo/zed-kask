@@ -333,7 +333,7 @@ impl ModelInputQuality {
                         .partial_cmp(&b.1.confidence)
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
-                .unwrap();
+                .expect("dims is a non-empty static array of 6 elements");
             if worst.1.confidence < 0.6 {
                 Some(format!(
                     "Low confidence in {} (confidence={:.2}): {}",

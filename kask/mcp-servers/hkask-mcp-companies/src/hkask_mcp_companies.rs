@@ -283,6 +283,40 @@ mod tool_surface_tests {
             );
         }
     }
+
+    // Regression: the ontology anchor must not collapse to a single constant
+    // (the stub pattern). Distinct tool families must anchor on distinct FIBO
+    // concepts — financial data, valuation, and portfolio tools are different
+    // ontological categories.
+    #[test]
+    fn ontology_anchor_distinguishes_tool_families() {
+        let profile = CompaniesServer::ontology_anchor("company_profile");
+        let dcf = CompaniesServer::ontology_anchor("dcf_valuation");
+        let ledger = CompaniesServer::ontology_anchor("ledger_import");
+        assert_ne!(
+            profile, dcf,
+            "company_profile and dcf_valuation must anchor on distinct concepts"
+        );
+        assert_ne!(
+            dcf, ledger,
+            "dcf_valuation and ledger_import must anchor on distinct concepts"
+        );
+        assert_eq!(
+            profile,
+            Some(fibo::CORPORATION),
+            "company_profile must anchor on FIBO Corporation"
+        );
+        assert_eq!(
+            dcf,
+            Some(fibo::DCF_VALUATION),
+            "dcf_valuation must anchor on FIBO DCF Valuation"
+        );
+        assert_eq!(
+            ledger,
+            Some(fibo::TRANSACTION_LEDGER),
+            "ledger_import must anchor on FIBO TransactionLedger"
+        );
+    }
 }
 
 // ── Entry point ─────────────────────────────────────────────────────

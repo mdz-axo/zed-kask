@@ -38,16 +38,24 @@ fn is_skill_catalog_file(path: &Path) -> bool {
     if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
         return false;
     }
-    // A skills directory is one whose parent is `.agents` (project) or `agents`
-    // (global / marketplace). Walk ancestors so nested layouts
+    // A skills directory is one whose parent is `.agents` (project) or the
+    // global skills root (D28: `{kask_data_dir}/skills/` or legacy
+    // `paths::data_dir()/agents/skills/`). Walk ancestors so nested layouts
     // (`.../skills/_marketplace/<name>/SKILL.md`) match too.
+    //
+    // zed-kask: D28 — the global skills dir is resolved via
+    // `agent_skills::global_skills_dir()` which honors the override hook.
+    // We check `starts_with` against it so any kask data root (custom
+    // `HKASK_DATA_DIR`, XDG default, etc.) is accepted.
+    let global_skills_dir = agent_skills::global_skills_dir();
     path.ancestors().skip(1).any(|anc| {
         anc.file_name().and_then(|n| n.to_str()) == Some("skills")
-            && anc
+            && (anc
                 .parent()
                 .and_then(|p| p.file_name())
                 .map(|n| n == ".agents" || n == "agents")
                 .unwrap_or(false)
+                || anc.starts_with(&global_skills_dir))
     })
 }
 
@@ -665,6 +673,22 @@ mod test {
         assert!(!is_skill_catalog_file(Path::new(
             "/home/u/repos/skills/foo/SKILL.md"
         )));
+        // zed-kask: D28 — a `skills/` dir under the kask data root (via the
+        // `global_skills_dir` override) IS flagged. Use a tempdir so the
+        // path matches what `global_skills_dir()` returns.
+        {
+            let tmp = tempfile::TempDir::new().expect("tempdir");
+            let kask_skills = tmp.path().join("skills");
+            std::fs::create_dir_all(&kask_skills).expect("create skills dir");
+            agent_skills::set_global_skills_dir_override(Some(kask_skills.clone()));
+            assert!(is_skill_catalog_file(
+                &kask_skills.join("my-skill/SKILL.md")
+            ));
+            assert!(is_skill_catalog_file(
+                &kask_skills.join("_marketplace/alice/bug-hunt/SKILL.md")
+            ));
+            agent_skills::set_global_skills_dir_override(None);
+        }
     }
 
     #[test]

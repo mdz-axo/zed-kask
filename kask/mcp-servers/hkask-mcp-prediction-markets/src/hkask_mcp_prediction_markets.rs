@@ -89,6 +89,15 @@ impl PredictionMarketsServer {
         Self::prediction_markets_router() + Self::economic_data_tools_router()
     }
 
+    /// Record that a tool was called on this server instance. Used by the
+    /// status tool to report which tools have been invoked this session.
+    fn record_call(&self, tool: &str) {
+        self.called_tools
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(tool.to_string());
+    }
+
     /// Map a tool name to its ontology concept URI. The concept is used both
     /// as the `reg.tool.*` span ontology tag (via `execute_tool_semantic`) and
     /// as the `"ontology"` field in some tool output JSON.
@@ -169,10 +178,7 @@ impl PredictionMarketsServer {
             "prediction_markets_status",
             Self::ontology_anchor("prediction_markets_status"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("prediction_markets_status".to_string());
+                self.record_call("prediction_markets_status");
                 Ok(serde_json::json!({
                     "server": "hkask-mcp-prediction-markets",
                     "cache_ttl_secs": self.cache_ttl_secs,
@@ -200,10 +206,7 @@ impl PredictionMarketsServer {
             "market_lookup",
             Self::ontology_anchor("market_lookup"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_lookup".to_string());
+                self.record_call("market_lookup");
                 let mut records = self.gather_candidates().await?;
                 Self::substring_filter(&mut records, &req.query);
                 if let Some(category) = &req.category {
@@ -230,10 +233,7 @@ impl PredictionMarketsServer {
             "market_match",
             Self::ontology_anchor("market_match"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_match".to_string());
+                self.record_call("market_match");
                 let records = self.gather_candidates().await?;
                 let mut matches = matcher::rank_matches(&req.question, &records);
                 matches.truncate(req.limit.unwrap_or(5).min(20) as usize);
@@ -258,10 +258,7 @@ impl PredictionMarketsServer {
             "market_ontology_map",
             Self::ontology_anchor("market_ontology_map"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_ontology_map".to_string());
+                self.record_call("market_ontology_map");
                 Ok(ontology::mapping_document())
             },
         )
@@ -281,10 +278,7 @@ impl PredictionMarketsServer {
             "market_calibration",
             Self::ontology_anchor("market_calibration"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_calibration".to_string());
+                self.record_call("market_calibration");
                 let store = self
                     .calibration_store
                     .lock()
@@ -311,10 +305,7 @@ impl PredictionMarketsServer {
             "market_record_resolution",
             Self::ontology_anchor("market_record_resolution"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_record_resolution".to_string());
+                self.record_call("market_record_resolution");
                 if !(0.0..=1.0).contains(&req.probability) {
                     return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
                         format!("probability {} not in [0, 1]", req.probability),
@@ -365,10 +356,7 @@ impl PredictionMarketsServer {
             "market_subscribe_resolutions",
             Self::ontology_anchor("market_subscribe_resolutions"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_subscribe_resolutions".to_string());
+                self.record_call("market_subscribe_resolutions");
                 let max = req.max_resolutions.unwrap_or(1).max(1);
                 let ingested = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
                 let store = std::sync::Arc::clone(&self.calibration_store);
@@ -427,10 +415,7 @@ impl PredictionMarketsServer {
             "market_ladder",
             Self::ontology_anchor("market_ladder"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_ladder".to_string());
+                self.record_call("market_ladder");
                 let now = chrono::Utc::now();
                 let mut rungs: Vec<serde_json::Value> = Vec::new();
                 let mut warnings: Vec<String> = Vec::new();
@@ -530,10 +515,7 @@ impl PredictionMarketsServer {
             "market_cmp",
             Self::ontology_anchor("market_cmp"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_cmp".to_string());
+                self.record_call("market_cmp");
                 if !self.base_events.iter().any(|(_, series)| series == &req.series) {
                     return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
                         format!(
@@ -587,10 +569,7 @@ impl PredictionMarketsServer {
             "market_residual",
             Self::ontology_anchor("market_residual"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_residual".to_string());
+                self.record_call("market_residual");
                 let window = i64::from(req.window_days.unwrap_or(90));
                 let now = chrono::Utc::now().timestamp();
                 let start = (now - window * 86_400).max(0) as u64;
@@ -664,10 +643,7 @@ impl PredictionMarketsServer {
             "market_check_resolutions",
             Self::ontology_anchor("market_check_resolutions"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_check_resolutions".to_string());
+                self.record_call("market_check_resolutions");
                 let limit = req.limit.unwrap_or(100).min(500);
                 let mut recorded = 0u32;
                 let mut skipped_ambiguous = 0u32;
@@ -788,10 +764,7 @@ impl PredictionMarketsServer {
             "market_history",
             Self::ontology_anchor("market_history"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_history".to_string());
+                self.record_call("market_history");
                 let source = req.source.as_deref().unwrap_or("kalshi");
                 let prices: Vec<f64> = match source {
                     "kalshi" => {
@@ -853,10 +826,7 @@ impl PredictionMarketsServer {
             "market_cmp_index",
             Self::ontology_anchor("market_cmp_index"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_cmp_index".to_string());
+                self.record_call("market_cmp_index");
                 if !self.base_events.iter().any(|(_, series)| series == &req.series) {
                     return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
                         format!(
@@ -929,10 +899,7 @@ impl PredictionMarketsServer {
             "market_volatility",
             Self::ontology_anchor("market_volatility"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_volatility".to_string());
+                self.record_call("market_volatility");
                 let config = volatility::DrasConfig {
                     k: k.unwrap_or_else(|| volatility::DrasConfig::default().k),
                     activity_proxy: activity_proxy.unwrap_or_default(),
@@ -999,10 +966,7 @@ impl PredictionMarketsServer {
             "market_cmp_index_store",
             Self::ontology_anchor("market_cmp_index_store"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_cmp_index_store".to_string());
+                self.record_call("market_cmp_index_store");
                 if !self.base_events.iter().any(|(_, s)| s == &series) {
                     return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
                         format!(
@@ -1360,10 +1324,7 @@ impl PredictionMarketsServer {
             "market_cmp_portfolio_store",
             Self::ontology_anchor("market_cmp_portfolio_store"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_cmp_portfolio_store".to_string());
+                self.record_call("market_cmp_portfolio_store");
                 if !self.base_events.iter().any(|(_, s)| s == &series) {
                     return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
                         format!(
@@ -1419,10 +1380,7 @@ impl PredictionMarketsServer {
             "market_cmp_context_suggest",
             Self::ontology_anchor("market_cmp_context_suggest"),
             async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_cmp_context_suggest".to_string());
+                self.record_call("market_cmp_context_suggest");
                 if !self.base_events.iter().any(|(_, s)| s == &series) {
                     return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
                         format!(

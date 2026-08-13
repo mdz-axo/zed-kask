@@ -3,11 +3,34 @@
 //! Each agent (1:1 with a user) owns a directory tree under `{data_dir}/agents/{name}/`
 //! containing its pod DB, memory DB, wallet DB, sessions, artifacts, etc.
 //! These helpers compute those paths and bootstrap the directory structure.
+//!
+//! # Standardized Artifact Storage
+//!
+//! All persistent kask artifacts live under four class subdirs of
+//! `resolve_data_dir()` (see `kask/docs/architecture/standardized-artifact-storage.md`):
+//!
+//! - `agents/`  — per-agent files (pod DB, memory DB, etc.)
+//! - `mcp/`     — per-MCP-server artifacts (`mcp/{server_id}/{purpose}.db`)
+//! - `skills/`  — user skills (`skills/{skill_name}/`)
+//! - `threads/` — archived chat threads (`threads/threads.db`)
 
 use std::path::PathBuf;
 
 /// Root directory for agent artifacts.
 pub const AGENTS_DIR: &str = "agents";
+
+/// Root directory for MCP server artifacts (D28 — Standardized Artifact Storage).
+/// Each server owns a subtree: `mcp/{server_id}/{purpose}.db`.
+pub const MCP_DIR: &str = "mcp";
+
+/// Root directory for user skills (D28 — Standardized Artifact Storage).
+/// Each skill owns a subtree: `skills/{skill_name}/`.
+/// Marketplace skills nest as `skills/_marketplace/{source_user}/{skill_name}/`.
+pub const SKILLS_DIR: &str = "skills";
+
+/// Root directory for archived chat threads (D28 — Standardized Artifact Storage).
+/// Contains `threads.db` (SQLite).
+pub const THREADS_DIR: &str = "threads";
 
 /// Default filename for the primary hKask database.
 ///
@@ -78,6 +101,38 @@ pub fn resolve_under_data_dir(relative: &std::path::Path) -> std::path::PathBuf 
 /// Get the directory for a specific agent.
 pub fn agent_dir(name: &str) -> PathBuf {
     PathBuf::from(AGENTS_DIR).join(sanitize_name(name))
+}
+
+// ── MCP server paths (D28 — Standardized Artifact Storage) ───────────────────
+
+/// Relative path for a per-server MCP artifact.
+///
+/// Returns `mcp/{server_id}/{purpose}.db` — the caller resolves this against
+/// the data dir via `resolve_under_data_dir`.
+pub fn mcp_server_db(server_id: &str, purpose: &str) -> PathBuf {
+    PathBuf::from(MCP_DIR)
+        .join(sanitize_name(server_id))
+        .join(format!("{purpose}.db"))
+}
+
+// ── Skills paths (D28 — Standardized Artifact Storage) ───────────────────────
+
+/// Relative path for the skills root directory.
+///
+/// Returns `skills/` — the caller resolves this against the data dir via
+/// `resolve_under_data_dir`.
+pub fn skills_dir() -> PathBuf {
+    PathBuf::from(SKILLS_DIR)
+}
+
+// ── Threads paths (D28 — Standardized Artifact Storage) ──────────────────────
+
+/// Relative path for the archived threads SQLite DB.
+///
+/// Returns `threads/threads.db` — the caller resolves this against the data
+/// dir via `resolve_under_data_dir`.
+pub fn threads_db_path() -> PathBuf {
+    PathBuf::from(THREADS_DIR).join("threads.db")
 }
 
 // ── Database paths ───────────────────────────────────────────────────────────
@@ -234,5 +289,35 @@ mod tests {
         ensure_agent_dirs("testagent").expect("idempotent");
 
         std::env::set_current_dir(cwd).unwrap();
+    }
+
+    // D28 — pins the four standardized storage class-dir constants.
+    #[test]
+    fn storage_layout_has_four_class_dirs() {
+        assert_eq!(AGENTS_DIR, "agents");
+        assert_eq!(MCP_DIR, "mcp");
+        assert_eq!(SKILLS_DIR, "skills");
+        assert_eq!(THREADS_DIR, "threads");
+        // All four must be distinct.
+        let dirs = [AGENTS_DIR, MCP_DIR, SKILLS_DIR, THREADS_DIR];
+        for i in 0..dirs.len() {
+            for j in (i + 1)..dirs.len() {
+                assert_ne!(dirs[i], dirs[j], "class dirs must be distinct");
+            }
+        }
+    }
+
+    // D28 — pins the path-constructor helpers.
+    #[test]
+    fn storage_path_helpers() {
+        assert_eq!(
+            mcp_server_db("codegraph", "codegraph"),
+            PathBuf::from("mcp").join("codegraph").join("codegraph.db")
+        );
+        assert_eq!(skills_dir(), PathBuf::from("skills"));
+        assert_eq!(
+            threads_db_path(),
+            PathBuf::from("threads").join("threads.db")
+        );
     }
 }

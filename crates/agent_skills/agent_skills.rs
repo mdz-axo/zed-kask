@@ -12,7 +12,7 @@ use util::paths::component_matches_ignore_ascii_case;
 
 /// First segment of the project-local skills directory path: `.agents`.
 /// Used only for project-local skills (`.agents/skills/` inside a worktree).
-/// Global skills use `paths::data_dir()/agents/skills/` (zed-kask-isolated).
+/// Global skills use `{kask_data_dir}/skills/` (D28 — Standardized Artifact Storage).
 pub const AGENTS_DIR_NAME: &str = ".agents";
 
 /// Second segment of the skills directory path: `skills`.
@@ -20,13 +20,12 @@ pub const SKILLS_DIR_NAME: &str = "skills";
 
 /// User-facing display form of the global skills directory path.
 ///
-/// zed-kask: global skills live under the app's data directory (isolated
-/// from upstream Zed), not `~/.agents/skills/`. The display form uses
-/// the app data path since that's what the user sees in messages.
+/// zed-kask: D28 — global skills live under the kask data root
+/// (`~/.local/share/hkask/skills/`), not the app data root.
 #[cfg(target_os = "windows")]
-pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = "%LOCALAPPDATA%\\Zed-Kask\\agents\\skills";
+pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = r"%LOCALAPPDATA%\hkask\skills";
 #[cfg(not(target_os = "windows"))]
-pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = "~/Library/Application Support/Zed-Kask/agents/skills";
+pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = "~/.local/share/hkask/skills";
 
 /// Opaque identifier for the project scope a skill was loaded from.
 ///
@@ -131,8 +130,7 @@ pub enum SkillSource {
     /// the lowest override priority (global and project-local skills can
     /// shadow them).
     BuiltIn,
-    /// From the global skills directory (zed-kask-isolated under
-    /// `paths::data_dir()/agents/skills/`).
+    /// From the global skills directory (zed-kask D28: `{kask_data_dir}/skills/`).
     Global,
     /// From {project}/.agents/skills/
     ProjectLocal {
@@ -961,26 +959,63 @@ pub async fn seed_shipped_skills(fs: &dyn Fs, skills_dir: &Path) {
 
 /// Returns the global skills directory.
 ///
-/// zed-kask: isolated from upstream Zed's `~/.agents/skills/` to prevent
-/// bidirectional skill leakage between co-installed Zed and zed-kask.
+/// zed-kask: D28 — Standardized Artifact Storage. Global skills live
+/// under the kask data root (`{kask_data_dir}/skills/`), resolved via the
+/// `global_skills_dir_override` hook (set by `kask_bridge` at startup), NOT
+/// `paths::data_dir()/agents/skills/` (the zed-kask app data root). This
+/// keeps all kask artifacts under one rooted tree per the standardized
+/// storage layout (`kask/docs/architecture/standardized-artifact-storage.md`).
+///
 /// zed-kask skills are manifest-driven (manifest.yaml + Jinja2 templates
 /// executed via BridgeManifestExecutor), not SKILL.md body-injection. They
 /// are not portable to upstream Zed or any tool without the hKask cascade
-/// engine. Sharing the directory would only cause confusion — a zed-kask
-/// skill appearing in Zed does nothing useful (no manifest to execute),
-/// and a Zed skill appearing in zed-kask can't run (no manifest cascade).
+/// engine.
 ///
-/// Uses `paths::data_dir()` which is already zed-kask-isolated:
-///   Linux:   `~/.local/share/zed-kask/agents/skills/`
-///   macOS:   `~/Library/Application Support/Zed-Kask/agents/skills/`
-///   Windows: `%LOCALAPPDATA%\Zed-Kask\agents\skills\`
+/// When the override is set (production, wired early in `main.rs`), returns
+/// the kask data-root skills path. When unset (tests, or pre-wiring), falls
+/// back to `paths::data_dir()/agents/skills/` so tests and the editor remain
+/// functional.
 ///
 /// In test builds, `paths::home_dir()` is hardcoded to a fixed path
 /// (e.g. `/Users/zed`), so all tests using this function operate on the
 /// same simulated home directory. Each test should use its own `FakeFs`
 /// instance to keep skill setups from leaking across tests.
 pub fn global_skills_dir() -> PathBuf {
+    // zed-kask: D28 — check the override first.
+    if let Some(path) = global_skills_dir_override() {
+        return path;
+    }
     paths::data_dir().join("agents").join(SKILLS_DIR_NAME)
+}
+
+// zed-kask: D28 — Standardized Artifact Storage.
+// Global hook for the kask data-root skills directory path. Mirrors the
+// `THREADS_DB_PATH_OVERRIDE` pattern (D28 in `agent.rs`). `agent_skills`
+// does NOT depend on `hkask-types` (preserving the §13.1 invariant); the
+// path is passed through this hook from `main.rs`.
+//
+// Uses a `Mutex` (not `OnceLock`) so the path can be replaced after startup
+// (e.g. if the operator changes the kask data directory). Per `.rules`,
+// `Mutex` hooks are re-settable and do not need the `Err`-branch warn.
+static GLOBAL_SKILLS_DIR_OVERRIDE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Set the global skills directory override (D28 composition root).
+///
+/// Called by zed-kask's app startup to wire the canonical kask data-root
+/// skills path. When `None`, `global_skills_dir()` falls back to the
+/// upstream `paths::data_dir()/agents/skills/` path.
+pub fn set_global_skills_dir_override(path: Option<PathBuf>) {
+    *GLOBAL_SKILLS_DIR_OVERRIDE
+        .lock()
+        .expect("GLOBAL_SKILLS_DIR_OVERRIDE poisoned") = path;
+}
+
+/// Get the global skills directory override, if set.
+pub(crate) fn global_skills_dir_override() -> Option<PathBuf> {
+    GLOBAL_SKILLS_DIR_OVERRIDE
+        .lock()
+        .expect("GLOBAL_SKILLS_DIR_OVERRIDE poisoned")
+        .clone()
 }
 
 /// Project-local skills live at this path relative to a worktree root,

@@ -631,6 +631,40 @@ mod tool_surface_tests {
             );
         }
     }
+
+    // Regression: the ontology anchor must not collapse to a single constant.
+    // Portfolio management, ledger operations, and returns analysis are
+    // distinct FIBO categories.
+    #[test]
+    fn ontology_anchor_distinguishes_tool_families() {
+        use hkask_bridge_ontology::fibo;
+        let create = ontology_anchor("portfolio_create");
+        let apply = ontology_anchor("ledger_apply");
+        let returns = ontology_anchor("portfolio_returns");
+        assert_ne!(
+            create, apply,
+            "portfolio_create and ledger_apply must anchor on distinct concepts"
+        );
+        assert_ne!(
+            apply, returns,
+            "ledger_apply and portfolio_returns must anchor on distinct concepts"
+        );
+        assert_eq!(
+            create,
+            Some(fibo::PORTFOLIO),
+            "portfolio_create must anchor on FIBO Portfolio"
+        );
+        assert_eq!(
+            apply,
+            Some(fibo::TRANSACTION_LEDGER),
+            "ledger_apply must anchor on FIBO TransactionLedger"
+        );
+        assert_eq!(
+            returns,
+            Some(fibo::TIME_WEIGHTED_RETURN),
+            "portfolio_returns must anchor on FIBO TimeWeightedReturn"
+        );
+    }
 }
 
 // ── Entry point ─────────────────────────────────────────────────────

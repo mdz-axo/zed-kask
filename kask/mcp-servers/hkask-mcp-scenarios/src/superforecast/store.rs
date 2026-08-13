@@ -114,7 +114,8 @@ impl ForecastStore {
         self.records.get(key)
     }
 
-    /// Get mutable reference. Caller must call persist() after modification.
+    /// Get mutable reference. Caller must call `persist()` after modification
+    /// to durably persist changes, or use `insert` to persist via journal append.
     pub fn get_mut(&mut self, key: &str) -> Option<&mut StoredForecastRecord> {
         self.records.get_mut(key)
     }

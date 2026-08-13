@@ -738,6 +738,23 @@ fn main() {
             ));
         agent::set_threads_db_path_override(Some(kask_threads_db_path));
 
+        // zed-kask: D28 — Standardized Artifact Storage.
+        // Wire the canonical kask data-root skills directory into
+        // `agent_skills::global_skills_dir`. The path is
+        // `{kask_data_dir}/skills/`, resolved by `resolve_under_data_dir`.
+        // This relocates global skills from the upstream
+        // `paths::data_dir()/agents/skills/`
+        // (`~/.local/share/zed-kask/agents/skills/`) to the kask data root
+        // (`~/.local/share/hkask/skills/`) so all kask artifacts share one
+        // rooted tree. Pre-release: no back-compat. Wired early
+        // (user-independent) so the path is available before any skill is
+        // loaded.
+        let kask_skills_dir =
+            hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+                hkask_types::agent_paths::SKILLS_DIR,
+            ));
+        agent_skills::set_global_skills_dir_override(Some(kask_skills_dir));
+
         // zed-kask: D8 — F4: algedonic threshold → variety_max_deficit (Guardrail).
         // Wire `kask.curator.algedonic_threshold` (0.0–1.0, default 0.8) to
         // scale `SetPoints.variety_max_deficit` (default 100.0). Higher
