@@ -31,6 +31,7 @@
 //! - **GOLEM** (`golem`): literature, narrative, persona.
 //! - **OMC** (`omc`): media production.
 //! - **ML-Schema** (`mlschema`): machine-learning experiments.
+//! - **SDMX** (`sdmx`): statistical data exchange (FRED, DBnomics, World Bank).
 //!
 //! The domain-selection logic (`axis`) maps a domain hint to its axis
 //! anchoring: state axis is always Dublin Core; process axis is the domain
@@ -59,6 +60,7 @@
 //! - GOLEM: <https://w3id.org/golem/>
 //! - OMC: <https://movielabs.com/ontology-for-media-creation/>
 //! - ML-Schema: <https://www.w3.org/community/ml-schema/>
+//! - SDMX: <https://sdmx.org/> (ISO 17369)
 
 pub mod axis;
 pub mod dc_bibo;
@@ -69,6 +71,7 @@ pub mod golem;
 pub mod mlschema;
 pub mod omc;
 pub mod pko;
+pub mod sdmx;
 pub mod sumo;
 
 // Re-export the universal-axis type aliases at the crate root for ergonomic
@@ -86,6 +89,7 @@ pub use pko::PkoConcept;
 /// - `omc:Scene` / `omc:Asset` → `gallery_analyze` (media scene/asset)
 /// - `omc:*` → `describe_image` (media vision fallback)
 /// - `fibo:*` → `research_search` (financial research)
+/// - `sdmx:*` → `research_search` (statistical data research)
 /// - `pko:*` → `kanban_task_list` (process step inspection)
 /// - `dcterms:*` / `dublin-core` → `research_search` (general research)
 /// - empty / unknown → `research_search` (the general fallback)
@@ -99,6 +103,9 @@ pub fn explain_tool_for(ontology: &str) -> &'static str {
         return omc::explain_tool_for(ontology);
     }
     if ontology.starts_with("fibo:") || ontology == "dublin-core" {
+        return "research_search";
+    }
+    if ontology.starts_with("sdmx:") {
         return "research_search";
     }
     if ontology.starts_with("pko:") {
@@ -131,6 +138,12 @@ mod tests {
             explain_tool_for("fibo:TransactionLedger"),
             "research_search"
         );
+    }
+
+    #[test]
+    fn explain_tool_for_sdmx_concepts() {
+        assert_eq!(explain_tool_for("sdmx:DataSet"), "research_search");
+        assert_eq!(explain_tool_for("sdmx:TimeSeries"), "research_search");
     }
 
     #[test]

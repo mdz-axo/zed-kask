@@ -5,7 +5,7 @@ use crate::{
     parse_symbol_from_query, portfolio::PersistedForecast, projected_terminal_multiple, scenarios,
     superforecast, types, validate_symbol,
 };
-use hkask_mcp_server::server::{McpToolError, execute_tool};
+use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use hkask_types::time::now_rfc3339;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use uuid::Uuid;
@@ -77,7 +77,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ComparableAnalysisRequest>,
     ) -> String {
-        execute_tool(self, "comparable_analysis", async {
+        execute_tool_semantic(self, "comparable_analysis", Self::ontology_anchor("comparable_analysis"), async {
             validate_symbol(&req.symbol)?;
 
             // 1. Fetch target company profile and key_metrics
@@ -307,7 +307,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::SensitivityAnalysisRequest>,
     ) -> String {
-        execute_tool(self, "sensitivity_analysis", async {
+        execute_tool_semantic(self, "sensitivity_analysis", Self::ontology_anchor("sensitivity_analysis"), async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
@@ -406,7 +406,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::EquityDurationRequest>,
     ) -> String {
-        execute_tool(self, "equity_duration", async {
+        execute_tool_semantic(self, "equity_duration", Self::ontology_anchor("equity_duration"), async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
@@ -489,7 +489,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::MonteCarloDcfRequest>,
     ) -> String {
-        execute_tool(self, "monte_carlo_dcf", async {
+        execute_tool_semantic(self, "monte_carlo_dcf", Self::ontology_anchor("monte_carlo_dcf"), async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
@@ -588,7 +588,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ScenarioImpactValuationRequest>,
     ) -> String {
-        execute_tool(self, "scenario_impact_valuation", async {
+        execute_tool_semantic(self, "scenario_impact_valuation", Self::ontology_anchor("scenario_impact_valuation"), async {
             validate_symbol(&req.symbol)?;
 
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
@@ -728,7 +728,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::CalibrateForecastRequest>,
     ) -> String {
-        execute_tool(self, "calibrate_forecast", async {
+        execute_tool_semantic(self, "calibrate_forecast", Self::ontology_anchor("calibrate_forecast"), async {
             validate_symbol(&req.symbol)?;
             if let Some(ref revision_of) = req.revision_of {
                 let revision_of = revision_of.clone();
@@ -913,7 +913,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ForecastGetRequest>,
     ) -> String {
-        execute_tool(self, "forecast_get", async {
+        execute_tool_semantic(self, "forecast_get", Self::ontology_anchor("forecast_get"), async {
             let forecast = self
                 .get_persisted_forecast(req.forecast_id)
                 .await?
@@ -932,7 +932,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ForecastListRequest>,
     ) -> String {
-        execute_tool(self, "forecast_list", async {
+        execute_tool_semantic(self, "forecast_list", Self::ontology_anchor("forecast_list"), async {
             validate_symbol(&req.symbol)?;
             let forecasts = self.list_persisted_forecasts(req.symbol.clone()).await?;
             Ok(serde_json::json!({"symbol": req.symbol, "forecasts": forecasts}))
@@ -947,7 +947,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ForecastRecordRequest>,
     ) -> String {
-        execute_tool(self, "forecast_record", async {
+        execute_tool_semantic(self, "forecast_record", Self::ontology_anchor("forecast_record"), async {
             validate_symbol(&req.symbol)?;
             for (name, value) in [
                 ("forecast_multiple", req.forecast_multiple),
@@ -1154,7 +1154,7 @@ impl CompaniesServer {
             provider,
         }): Parameters<types::ResultFeedbackRequest>,
     ) -> String {
-        execute_tool(self, "result_feedback", async {
+        execute_tool_semantic(self, "result_feedback", Self::ontology_anchor("result_feedback"), async {
             // Validate score range if provided
             if let Some(s) = score
                 && !(1..=5).contains(&s)

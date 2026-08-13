@@ -40,6 +40,12 @@ pub mod tools;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+/// Maximum image file size for base64 encoding (32 MiB). Gallery images larger
+/// than this are rejected to prevent OOM — the image is read into memory and
+/// base64-encoded, which triples the size. A multi-GB image would exhaust the
+/// process's address space.
+const MAX_IMAGE_READ_BYTES: u64 = 32 * 1024 * 1024;
 use video::FfmpegRunner;
 
 use ab_glyph::Font;
@@ -308,8 +314,7 @@ impl MediaServer {
                 ))
             })?;
 
-        let data = std::fs::read(&img.absolute_path)
-            .map_err(|e| MediaError::Io(format!("Failed to read image: {}", e)))?;
+        let data = read_image_capped(&img.absolute_path)?;
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
         let mime = match img.format.as_str() {
             "jpg" | "jpeg" => "image/jpeg",
@@ -386,8 +391,7 @@ impl MediaServer {
             })?
             .to_string();
 
-        let data = std::fs::read(&absolute_path)
-            .map_err(|e| MediaError::Io(format!("Failed to read image: {}", e)))?;
+        let data = read_image_capped(&absolute_path)?;
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
         let mime = if absolute_path.ends_with(".png") {
             "image/png"
@@ -1519,7 +1523,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             None => {
                 tracing::warn!(
                     target: "hkask.mcp.media",
-                    "HKASK_MEDIA_DB not set — gallery DB is in-memory;                          tag/face/lineage metadata will not persist across restarts"
+                    "HKASK_MEDIA_DB not set — gallery DB is in-memory; tag/face/lineage metadata will not persist across restarts"
                 );
                 SqliteDriver::in_memory_driver()
             }
@@ -1540,6 +1544,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         "hkask-mcp-media",
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::ServerContext| {
+            let media_budget = build_media_budget().map_err(|e| {
+                hkask_mcp_server::McpError::UnexpectedResponse {
+                    context: "media budget init".into(),
+                    detail: e,
+                }
+            })?;
             Ok(MediaServer::new(
                 ctx.webid,
                 vision_port.clone(),
@@ -1547,7 +1557,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 gallery_store.clone(),
                 templates::create_env(),
                 FfmpegRunner::detect(),
-                build_media_budget(),
+                media_budget,
             ))
         },
         vec![hkask_mcp_server::CredentialRequirement::optional(

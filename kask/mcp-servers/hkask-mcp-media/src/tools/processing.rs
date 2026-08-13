@@ -25,6 +25,8 @@ impl MediaServer {
                 ..Default::default()
             };
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
+            self.charge_budget("remove_background", &media_params)
+                .await?;
             self.vision_port
                 .media_generate("remove_background", &media_params)
                 .await
@@ -70,6 +72,7 @@ impl MediaServer {
                 ..Default::default()
             };
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
+            self.charge_budget("image_to_image", &media_params).await?;
             self.vision_port
                 .media_generate("image_to_image", &media_params)
                 .await
@@ -440,6 +443,7 @@ impl MediaServer {
                 ..Default::default()
             };
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
+            self.charge_budget("image_to_video", &media_params).await?;
             self.vision_port
                 .media_generate("image_to_video", &media_params)
                 .await
@@ -839,6 +843,7 @@ impl MediaServer {
             };
             let args = serde_json::to_value(&media_params)
                 .unwrap_or(serde_json::Value::Null);
+            self.charge_budget("image_to_video", &media_params).await?;
             self.vision_port
                 .media_generate("image_to_video", &media_params)
                 .await

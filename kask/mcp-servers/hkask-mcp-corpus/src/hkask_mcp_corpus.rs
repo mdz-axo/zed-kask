@@ -164,7 +164,7 @@ pub(crate) fn ocr_concurrency() -> usize {
 /// Consolidates 6 hardcoded "DeepInfra/Qwen/Qwen3-Embedding-0.6B" references (Q3).
 /// Result is cached in a OnceLock to avoid repeated disk reads and eliminate
 /// the `String::leak` anti-pattern (BUG-1 fix, BUG-2 fix).
-fn default_embedding_model() -> &'static str {
+pub(crate) fn default_embedding_model() -> &'static str {
     use std::sync::OnceLock;
     static CACHED: OnceLock<String> = OnceLock::new();
 
@@ -430,7 +430,12 @@ async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolError> {
                 structure: Some(structure),
             }
         }
-        _ => unreachable!("supported check above guards this branch"),
+        _ => {
+            return Err(McpToolError::invalid_argument(format!(
+                "Format '{}' was reported as supported by detect_format but has no extraction backend",
+                format
+            )));
+        }
     };
 
     Ok(extract_result)

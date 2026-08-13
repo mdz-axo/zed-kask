@@ -9,7 +9,7 @@ use crate::{
         TransactionNoteRequest,
     },
 };
-use hkask_mcp_server::server::{McpToolError, execute_tool, map_join_error};
+use hkask_mcp_server::server::{McpToolError, execute_tool_semantic, map_join_error};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 pub(crate) async fn run_portfolio<T>(
@@ -42,7 +42,7 @@ impl CompaniesServer {
         &self,
         Parameters(PortfolioNameRequest { name }): Parameters<PortfolioNameRequest>,
     ) -> String {
-        execute_tool(self, "portfolio_delete", async {
+        execute_tool_semantic(self, "portfolio_delete", Self::ontology_anchor("portfolio_delete"), async {
             let response_name = name.clone();
             run_portfolio(self.portfolio.clone(), move |portfolio| {
                 portfolio.delete(&name)
@@ -55,7 +55,7 @@ impl CompaniesServer {
 
     #[tool(description = "List all portfolios")]
     pub async fn portfolio_list(&self) -> String {
-        execute_tool(self, "portfolio_list", async {
+        execute_tool_semantic(self, "portfolio_list", Self::ontology_anchor("portfolio_list"), async {
             let names = run_portfolio(self.portfolio.clone(), |portfolio| portfolio.list()).await?;
             Ok(fibo::enrich_with_ontology(
                 serde_json::json!({"portfolios": names, "fibo": {"portfolio": fibo::PORTFOLIO}}),
@@ -74,7 +74,7 @@ impl CompaniesServer {
             data,
         }): Parameters<LedgerImportRequest>,
     ) -> String {
-        execute_tool(self, "ledger_import", async {
+        execute_tool_semantic(self, "ledger_import", Self::ontology_anchor("ledger_import"), async {
             let (ids, validation) = run_portfolio(self.portfolio.clone(), move |manager| {
                 if !manager.list()?.contains(&portfolio) {
                     manager
@@ -116,7 +116,7 @@ impl CompaniesServer {
         &self,
         Parameters(LedgerExportRequest { portfolio, format }): Parameters<LedgerExportRequest>,
     ) -> String {
-        execute_tool(self, "ledger_export", async {
+        execute_tool_semantic(self, "ledger_export", Self::ontology_anchor("ledger_export"), async {
             let output_format = format.clone();
             let data = run_portfolio(self.portfolio.clone(), move |manager| match format {
                 types::ImportFormat::Csv => manager.export_csv(&portfolio),
@@ -140,7 +140,7 @@ impl CompaniesServer {
             note,
         }): Parameters<TransactionNoteRequest>,
     ) -> String {
-        execute_tool(self, "transaction_note_append", async {
+        execute_tool_semantic(self, "transaction_note_append", Self::ontology_anchor("transaction_note_append"), async {
             let response_tx_id = tx_id.clone();
             run_portfolio(self.portfolio.clone(), move |manager| {
                 manager.append_note(&portfolio, &tx_id, &note)
@@ -161,7 +161,7 @@ impl CompaniesServer {
             portfolio_b,
         }): Parameters<PortfolioCompareRequest>,
     ) -> String {
-        execute_tool(self, "portfolio_comparison", async {
+        execute_tool_semantic(self, "portfolio_comparison", Self::ontology_anchor("portfolio_comparison"), async {
             run_portfolio(self.portfolio.clone(), move |manager| {
                 manager.compare(&portfolio_a, &portfolio_b)
             })
@@ -179,7 +179,7 @@ impl CompaniesServer {
             to,
         }): Parameters<PortfolioReturnsRequest>,
     ) -> String {
-        execute_tool(self, "portfolio_returns", async {
+        execute_tool_semantic(self, "portfolio_returns", Self::ontology_anchor("portfolio_returns"), async {
             // SF-4: validate from/to up front — never silently epoch-substitute
             // a malformed date (the prior `unwrap_or_default()` produced
             // garbage IRR while `irr_converged` reported true).
@@ -347,7 +347,7 @@ impl CompaniesServer {
             tags,
         }): Parameters<NoteAddRequest>,
     ) -> String {
-        execute_tool(self, "note_add", async {
+        execute_tool_semantic(self, "note_add", Self::ontology_anchor("note_add"), async {
             let id = run_portfolio(self.portfolio.clone(), move |manager| {
                 manager.add_note(&portfolio, &symbol, &date, &title, &body, &tags)
             })
@@ -368,7 +368,7 @@ impl CompaniesServer {
             tags,
         }): Parameters<NoteListRequest>,
     ) -> String {
-        execute_tool(self, "note_list", async {
+        execute_tool_semantic(self, "note_list", Self::ontology_anchor("note_list"), async {
             let notes = run_portfolio(self.portfolio.clone(), move |manager| {
                 manager.list_notes(
                     &portfolio,
@@ -389,7 +389,7 @@ impl CompaniesServer {
         &self,
         Parameters(NoteDeleteRequest { note_id }): Parameters<NoteDeleteRequest>,
     ) -> String {
-        execute_tool(self, "note_delete", async {
+        execute_tool_semantic(self, "note_delete", Self::ontology_anchor("note_delete"), async {
             let response_note_id = note_id.clone();
             run_portfolio(self.portfolio.clone(), move |manager| {
                 manager.delete_note(&note_id)
@@ -413,7 +413,7 @@ impl CompaniesServer {
             notes,
         }): Parameters<FileAttachRequest>,
     ) -> String {
-        execute_tool(self, "file_attach", async {
+        execute_tool_semantic(self, "file_attach", Self::ontology_anchor("file_attach"), async {
             let id = run_portfolio(self.portfolio.clone(), move |manager| {
                 manager.attach_file(
                     &portfolio, &symbol, &date, &filename, &mime_type, &data, &notes,
@@ -430,7 +430,7 @@ impl CompaniesServer {
         &self,
         Parameters(FileListRequest { portfolio, symbol }): Parameters<FileListRequest>,
     ) -> String {
-        execute_tool(self, "file_list", async {
+        execute_tool_semantic(self, "file_list", Self::ontology_anchor("file_list"), async {
             let files = run_portfolio(self.portfolio.clone(), move |manager| {
                 manager.list_files(&portfolio, &symbol)
             })
@@ -445,7 +445,7 @@ impl CompaniesServer {
         &self,
         Parameters(FileDeleteRequest { file_id }): Parameters<FileDeleteRequest>,
     ) -> String {
-        execute_tool(self, "file_delete", async {
+        execute_tool_semantic(self, "file_delete", Self::ontology_anchor("file_delete"), async {
             let response_file_id = file_id.clone();
             run_portfolio(self.portfolio.clone(), move |manager| {
                 manager.delete_file(&file_id)

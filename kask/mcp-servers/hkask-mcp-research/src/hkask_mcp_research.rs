@@ -1263,7 +1263,11 @@ impl ResearchServer {
 
             let feed_id: i64 = feed_url
                 .strip_prefix("synthetic://")
-                .unwrap()
+                .ok_or_else(|| {
+                    McpToolError::internal(
+                        "feed_url missing synthetic:// prefix despite starts_with check",
+                    )
+                })?
                 .parse()
                 .map_err(|e| McpToolError::invalid_argument(format!("invalid feed_id: {e}")))?;
 

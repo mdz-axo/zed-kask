@@ -493,7 +493,7 @@ impl CorpusServer {
             }
         }
 
-        let model_name = model.unwrap_or_else(hkask_inference::model_constants::embedding_model);
+        let model_name = model.unwrap_or_else(|| default_embedding_model().to_string());
 
         let dim = embedding_dim();
         let store = hkask_memory::MemoryStore::open(db_path, passphrase, dim).map_err(|e| {
@@ -656,12 +656,12 @@ fn default_embed_batch_size() -> usize {
 
 /// Default passphrase for the corpus memory DB.
 ///
-/// Shared across the corpus tool groups (semantic + corpus) so every DB-touching
-/// request struct defaults consistently. Production sets `HKASK_DB_PASSPHRASE`;
-/// local dev (env unset) falls back to the shared dev passphrase so the corpus
-/// pipeline runs without extra config. The pipeline YAML no longer hardcodes
-/// the passphrase per-step (F12 — no hardcoded secrets).
+/// Returns an empty string when `HKASK_DB_PASSPHRASE` is unset. `Database::open`
+/// rejects empty passphrases with a clear error ("Passphrase cannot be empty"),
+/// so tools that use this default will fail with an actionable message rather
+/// than silently encrypting the DB with a publicly-known hardcoded passphrase.
+/// Production must set `HKASK_DB_PASSPHRASE` (keychain-provisioned, delivered
+/// via the registry `credentials` allowlist under governed launch).
 pub(crate) fn default_corpus_passphrase() -> String {
-    std::env::var("HKASK_DB_PASSPHRASE")
-        .unwrap_or_else(|_| "hkask-default-passphrase-2024".to_string())
+    std::env::var("HKASK_DB_PASSPHRASE").unwrap_or_default()
 }

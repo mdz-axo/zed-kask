@@ -13,7 +13,8 @@
 //! Shared engine: Fermi decomposition, outside/inside view, Bayesian updating,
 //! Brier scoring, dragonfly-eye synthesis, calibration tracking, cross-validation.
 //!
-//! ## Tools (18)
+//! ## Tools (21) — pinned by `tool_surface_is_exactly_21_registered_tools`
+//! - `scenario_status` — Server state: pipeline overview, calibration curve, cached tree
 //! - `scenario_frame_document` — Structure framing answers into FramingDocument
 //! - `scenario_frame` — 7-turn conversational framing interview
 //! - `scenario_triage` — Goldilocks zone classification
@@ -21,6 +22,7 @@
 //! - `scenario_brainstorm` — 4-round temperature-shifting protocol
 //! - `scenario_build` — Construct event tree template from research
 //! - `scenario_quantify` — Resolve conditional probability tree
+//! - `scenario_propagate` — Update one event's prior and propagate through descendants
 //! - `scenario_calibrate` — Fermi decomposition + outside/inside view
 //! - `scenario_update` — Bayesian evidence revision
 //! - `scenario_synthesize` — Dragonfly-eye multi-perspective aggregation
@@ -30,7 +32,9 @@
 //! - `scenario_cross_validate` — LLM vs computation cross-validation
 //! - `scenario_assess` — Chermack five-phase project evaluation
 //! - `scenario_full` — Full pipeline orchestrator (single call)
-//! - `scenario_from_markets` — Bridge from prediction-markets MCP server
+//! - `scenario_from_markets` — Bridge from prediction-markets MCP server (single record)
+//! - `scenario_from_markets_set` — Bridge from prediction-markets (multi-record EventTree)
+//! - `scenario_from_cmp_indices` — Bridge from prediction-markets CMP indices (EventTree)
 
 use std::collections::HashSet;
 

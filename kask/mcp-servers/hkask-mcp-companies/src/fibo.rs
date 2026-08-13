@@ -86,51 +86,78 @@ pub fn fmp_field_to_fibo(field: &str) -> Option<FiboConcept> {
     }
 }
 
-/// Map a companies-server tool name to its top-level FIBO concept URI — the
-/// concept that represents *what the artifact is* (not the per-field concepts
+/// Map a companies-server tool name to its top-level ontology concept URI —
+/// the concept that represents *what the artifact is* (not the per-field concepts
 /// in the `"fibo"` map). This is the unified `"ontology"` field the widget
-/// reads for the "I" pattern dispatch and the compose-back body.
+/// reads for the "I" pattern dispatch and the compose-back body, AND the
+/// concept tagged on the `reg.tool.*` span via `execute_tool_semantic` for
+/// type-aware feedback routing.
 ///
-/// Returns `None` for tools that don't produce a FIBO-anchored artifact
-/// (e.g. `symbol_search`, `note_add`).
-pub fn tool_to_fibo(tool: &str) -> Option<FiboConcept> {
+/// Financial tools return FIBO concepts (`fibo-*` URIs). Non-financial
+/// artifacts (notes, files, transcripts) return Dublin Core concepts
+/// (`dcterms:Text`, `dcterms:Dataset`) — these are text/dataset artifacts,
+/// not financial instruments, so FIBO does not cover them. Both are
+/// `&'static str`, compatible with `execute_tool_semantic`'s
+/// `ontology: Option<&'static str>` parameter.
+///
+/// Returns `None` only for tools that produce no artifact worth anchoring
+/// (currently none — all 44 tools are mapped).
+pub fn tool_to_ontology(tool: &str) -> Option<&'static str> {
     match tool {
         // Portfolio tools
         "portfolio_list" | "portfolio_delete" | "portfolio_comparison" => Some(PORTFOLIO),
         "portfolio_returns" => Some(TIME_WEIGHTED_RETURN),
+        "portfolio_attribution" => Some(ATTRIBUTION_ANALYSIS),
+        "portfolio_characteristics" => Some(WEIGHTED_AVERAGE),
         "ledger_import" | "ledger_export" | "transaction_note_append" => Some(TRANSACTION_LEDGER),
         // Valuation tools
         "dcf_valuation" | "reverse_dcf" => Some(DCF_VALUATION),
         "ep_valuation" => Some(ECONOMIC_PROFIT),
         "expectations_gap" => Some(INTRINSIC_VALUE_PER_SHARE),
-        "scenario_analysis" => Some(SCENARIO_PROBABILITY),
-        "scenario_impact_valuation" => Some(SCENARIO_PROBABILITY),
+        "scenario_analysis" | "scenario_impact_valuation" => Some(SCENARIO_PROBABILITY),
+        "comparable_analysis" => Some(COMPARABLE_COMPANY_ANALYSIS),
+        "monte_carlo_dcf" => Some(MONTE_CARLO_DCF),
+        "sensitivity_analysis" => Some(SENSITIVITY_ANALYSIS),
+        "equity_duration" => Some(INTERNAL_RATE_OF_RETURN),
+        // Forecast tools
+        "calibrate_forecast" | "forecast_record" | "forecast_get" | "forecast_list" => {
+            Some(FORECAST_ID)
+        }
+        "result_feedback" => Some(BRIER_SCORE),
         // Analysis tools
         "company_screener" => Some(STOCK_SCREENER),
         "moat_check" => Some(COMPETITIVE_ADVANTAGE),
         "management_scorecard" => Some(CAPITAL_ALLOCATION),
         "working_capital_cycle" => Some(NET_WORKING_CAPITAL),
-        "portfolio_attribution" => Some(ATTRIBUTION_ANALYSIS),
-        "portfolio_characteristics" => Some(WEIGHTED_AVERAGE),
         "research_search" => Some(CORPORATION),
         // Financial data tools
         "company_profile" => Some(CORPORATION),
         "stock_quote" => Some(MARKET_CAPITALIZATION),
         "key_metrics" => Some(PRICE_EARNINGS_RATIO),
         "historical_price" => Some(MARKET_CAPITALIZATION),
-        // Not FIBO-anchored (utility/metadata tools)
+        "income_statement" => Some(EBIT),
+        "balance_sheet" => Some(TOTAL_ASSETS),
+        "cash_flow_statement" => Some(FREE_CASH_FLOW),
+        "symbol_search" => Some(TICKER_SYMBOL),
+        // Non-financial artifacts — Dublin Core (text/dataset artifacts)
+        "company_transcript" => Some(hkask_bridge_ontology::dc_bibo::TEXT),
+        "note_add" | "note_list" | "note_delete" => Some(hkask_bridge_ontology::dc_bibo::TEXT),
+        "file_attach" | "file_list" | "file_delete" => {
+            Some(hkask_bridge_ontology::dc_bibo::DATASET)
+        }
         _ => None,
     }
 }
 
 /// Inject the unified `"ontology"` key into a tool output `Value` if the tool
-/// has a FIBO concept mapping. Tools without a mapping are returned unchanged.
+/// has an ontology concept mapping. Tools without a mapping are returned unchanged.
 /// This is the companies-server equivalent of the media server's
 /// `enrich_with_omc_and_provenance` — it bakes the ontology concept into the
 /// tool output so the portfolio widget can read it for the "I" pattern dispatch
-/// and the compose-back body.
+/// and the compose-back body. The `reg.tool.*` span carries the same concept
+/// via `execute_tool_semantic` (wired separately).
 pub fn enrich_with_ontology(mut result: serde_json::Value, tool: &str) -> serde_json::Value {
-    if let Some(concept) = tool_to_fibo(tool) {
+    if let Some(concept) = tool_to_ontology(tool) {
         if let Some(obj) = result.as_object_mut() {
             obj.insert(
                 "ontology".to_string(),
@@ -160,36 +187,84 @@ mod tests {
     }
 
     #[test]
-    fn tool_to_fibo_maps_portfolio_tools() {
-        assert_eq!(tool_to_fibo("portfolio_list"), Some(PORTFOLIO));
+    fn tool_to_ontology_maps_portfolio_tools() {
+        assert_eq!(tool_to_ontology("portfolio_list"), Some(PORTFOLIO));
         assert_eq!(
-            tool_to_fibo("portfolio_returns"),
+            tool_to_ontology("portfolio_returns"),
             Some(TIME_WEIGHTED_RETURN)
         );
-        assert_eq!(tool_to_fibo("ledger_import"), Some(TRANSACTION_LEDGER));
+        assert_eq!(tool_to_ontology("ledger_import"), Some(TRANSACTION_LEDGER));
     }
 
     #[test]
-    fn tool_to_fibo_maps_valuation_tools() {
-        assert_eq!(tool_to_fibo("dcf_valuation"), Some(DCF_VALUATION));
-        assert_eq!(tool_to_fibo("ep_valuation"), Some(ECONOMIC_PROFIT));
-    }
-
-    #[test]
-    fn tool_to_fibo_maps_analysis_tools() {
-        assert_eq!(tool_to_fibo("company_screener"), Some(STOCK_SCREENER));
-        assert_eq!(tool_to_fibo("research_search"), Some(CORPORATION));
+    fn tool_to_ontology_maps_valuation_tools() {
+        assert_eq!(tool_to_ontology("dcf_valuation"), Some(DCF_VALUATION));
+        assert_eq!(tool_to_ontology("ep_valuation"), Some(ECONOMIC_PROFIT));
         assert_eq!(
-            tool_to_fibo("portfolio_attribution"),
+            tool_to_ontology("comparable_analysis"),
+            Some(COMPARABLE_COMPANY_ANALYSIS)
+        );
+        assert_eq!(tool_to_ontology("monte_carlo_dcf"), Some(MONTE_CARLO_DCF));
+        assert_eq!(
+            tool_to_ontology("sensitivity_analysis"),
+            Some(SENSITIVITY_ANALYSIS)
+        );
+    }
+
+    #[test]
+    fn tool_to_ontology_maps_analysis_tools() {
+        assert_eq!(tool_to_ontology("company_screener"), Some(STOCK_SCREENER));
+        assert_eq!(tool_to_ontology("research_search"), Some(CORPORATION));
+        assert_eq!(
+            tool_to_ontology("portfolio_attribution"),
             Some(ATTRIBUTION_ANALYSIS)
         );
     }
 
     #[test]
-    fn tool_to_fibo_unknown_returns_none() {
-        assert!(tool_to_fibo("symbol_search").is_none());
-        assert!(tool_to_fibo("note_add").is_none());
-        assert!(tool_to_fibo("").is_none());
+    fn tool_to_ontology_maps_financial_data_tools() {
+        assert_eq!(tool_to_ontology("company_profile"), Some(CORPORATION));
+        assert_eq!(tool_to_ontology("stock_quote"), Some(MARKET_CAPITALIZATION));
+        assert_eq!(tool_to_ontology("income_statement"), Some(EBIT));
+        assert_eq!(tool_to_ontology("balance_sheet"), Some(TOTAL_ASSETS));
+        assert_eq!(
+            tool_to_ontology("cash_flow_statement"),
+            Some(FREE_CASH_FLOW)
+        );
+        assert_eq!(tool_to_ontology("symbol_search"), Some(TICKER_SYMBOL));
+    }
+
+    #[test]
+    fn tool_to_ontology_maps_forecast_tools() {
+        assert_eq!(tool_to_ontology("calibrate_forecast"), Some(FORECAST_ID));
+        assert_eq!(tool_to_ontology("forecast_record"), Some(FORECAST_ID));
+        assert_eq!(tool_to_ontology("forecast_get"), Some(FORECAST_ID));
+        assert_eq!(tool_to_ontology("forecast_list"), Some(FORECAST_ID));
+        assert_eq!(tool_to_ontology("result_feedback"), Some(BRIER_SCORE));
+    }
+
+    #[test]
+    fn tool_to_ontology_maps_non_financial_artifacts_to_dc() {
+        // Notes and transcripts are text artifacts — Dublin Core, not FIBO.
+        assert_eq!(
+            tool_to_ontology("note_add"),
+            Some(hkask_bridge_ontology::dc_bibo::TEXT)
+        );
+        assert_eq!(
+            tool_to_ontology("company_transcript"),
+            Some(hkask_bridge_ontology::dc_bibo::TEXT)
+        );
+        // Files are datasets.
+        assert_eq!(
+            tool_to_ontology("file_attach"),
+            Some(hkask_bridge_ontology::dc_bibo::DATASET)
+        );
+    }
+
+    #[test]
+    fn tool_to_ontology_unknown_returns_none() {
+        assert!(tool_to_ontology("").is_none());
+        assert!(tool_to_ontology("nonexistent_tool").is_none());
     }
 
     #[test]
@@ -199,8 +274,14 @@ mod tests {
     }
 
     #[test]
-    fn enrich_with_ontology_no_mapping_leaves_result_unchanged() {
+    fn enrich_with_ontology_injects_dc_concept_for_notes() {
         let result = enrich_with_ontology(serde_json::json!({"status": "ok"}), "note_add");
+        assert_eq!(result["ontology"], "dcterms:Text");
+    }
+
+    #[test]
+    fn enrich_with_ontology_no_mapping_leaves_result_unchanged() {
+        let result = enrich_with_ontology(serde_json::json!({"status": "ok"}), "nonexistent_tool");
         assert!(result.get("ontology").is_none());
     }
 }

@@ -4,7 +4,7 @@ use crate::{
     types::{self, SymbolLimitRequest, SymbolRequest},
     validate_symbol,
 };
-use hkask_mcp_server::server::{McpToolError, execute_tool};
+use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 fn parse_screener_response(
@@ -31,7 +31,7 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
     ) -> String {
-        execute_tool(self, "moat_check", async {
+        execute_tool_semantic(self, "moat_check", Self::ontology_anchor("moat_check"), async {
             validate_symbol(&symbol)?;
 
             // Fetch 10 years of key metrics for gross margin stability analysis
@@ -98,7 +98,7 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
     ) -> String {
-        execute_tool(self, "management_scorecard", async {
+        execute_tool_semantic(self, "management_scorecard", Self::ontology_anchor("management_scorecard"), async {
             validate_symbol(&symbol)?;
 
             let limit = "10";
@@ -164,7 +164,7 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolLimitRequest { symbol, limit }): Parameters<SymbolLimitRequest>,
     ) -> String {
-        execute_tool(self, "working_capital_cycle", async {
+        execute_tool_semantic(self, "working_capital_cycle", Self::ontology_anchor("working_capital_cycle"), async {
             validate_symbol(&symbol)?;
             let limit_str = (limit.unwrap_or(10) as usize).min(40).to_string();
 
@@ -252,7 +252,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ScreenerRequest>,
     ) -> String {
-        execute_tool(self, "company_screener", async {
+        execute_tool_semantic(self, "company_screener", Self::ontology_anchor("company_screener"), async {
             // Parse the prompt
             let mut criteria = screener::parse_screening_prompt(&req.prompt);
 
@@ -345,7 +345,7 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ResearchSearchRequest>,
     ) -> String {
-        execute_tool(self, "research_search", async {
+        execute_tool_semantic(self, "research_search", Self::ontology_anchor("research_search"), async {
             // 1. Fetch company profile for name
             let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
             let profile = profile_result?;

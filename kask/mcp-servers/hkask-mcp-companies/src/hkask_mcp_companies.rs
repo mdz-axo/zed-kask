@@ -6,54 +6,27 @@
 //! symbol characteristics, with automatic fallback. EODHD responses are
 //! normalized to match FMP format so analysis functions work transparently.
 //!
-//! ## Financial data tools
-//! - `company_profile` — Company profile by symbol
-//! - `stock_quote` — Real-time stock quote
-//! - `income_statement` — Income statements
-//! - `balance_sheet` — Balance sheet statements
-//! - `cash_flow_statement` — Cash flow statements
-//! - `key_metrics` — Key financial metrics
-//! - `historical_price` — Historical price data
-//! - `symbol_search` — Symbol search
+//! ## Tools (44) — pinned by `tool_surface_is_exactly_44_registered_tools`
 //!
-//! ## MAIA fundamental analysis
-//! - `moat_check` — Competitive moat: gross margin stability + WC signal
-//! - `management_scorecard` — CEO capital allocation scorecard (ROIC vs IC)
-//! - `working_capital_cycle` — CFO working capital analysis (DPO, DSO, CCC)
+//! Tools are split across submodules under `src/tools/`, each with its own
+//! `#[tool_router]` block, merged in `combined_router()`:
+//! - `tools/financial_data.rs` — company_profile, stock_quote, income_statement,
+//!   balance_sheet, cash_flow_statement, key_metrics, historical_price, symbol_search
+//! - `tools/analysis.rs` — moat_check, management_scorecard, working_capital_cycle
+//! - `tools/valuation.rs` — dcf_valuation, reverse_dcf, ep_valuation, comparable_analysis,
+//!   scenario_analysis, sensitivity_analysis, monte_carlo_dcf, scenario_impact_valuation,
+//!   calibrate_forecast, forecast_record
+//! - `tools/analytics.rs` — portfolio_attribution, portfolio_characteristics,
+//!   portfolio_comparison, portfolio_returns
+//! - `tools/economic_profit.rs` — ep_valuation (economic profit view)
+//! - `tools/expectations.rs` — expectations_gap
+//! - `tools/portfolio.rs` — ledger_import, ledger_export, portfolio_list,
+//!   portfolio_delete, transaction_note_append, note_add, note_list, note_delete,
+//!   file_attach, file_list, file_delete
+//! - `tools/transcript.rs` — earnings-call transcript tools
+//! - `tools/screener.rs` — stock_screener, research_search
 //!
-//! ## Valuation tools
-//! - `dcf_valuation` — Two-stage 11-line-item DCF (Damodaran 2012)
-//! - `reverse_dcf` — Market-implied growth rate (Mauboussin's Expectations Investing)
-//! - `ep_valuation` — Economic Profit / Residual Income Model (Bergen et al. 2025)
-//! - `comparable_analysis` — Peer multiples + DCF overlay
-//! - `scenario_analysis` — Schwartz 2×2 scenario matrix
-//! - `sensitivity_analysis` — Driver-by-driver intrinsic value sensitivity
-//! - `monte_carlo_dcf` — N-simulation Monte Carlo with histogram
-//! - `scenario_impact_valuation` — Scenario event-tree impact on DCF
-//! - `calibrate_forecast` — Fermi decomposition + Bayesian update (Tetlock)
-//! - `forecast_record` — Forecast-vs-actual decomposition (11-line-item gap)
-//!
-//! ## Research & screening
-//! - `research_search` — Multi-provider claim search with classification
-//! - `stock_screener` — Natural language screening
-//! - `expectations_gap` — Market-implied vs management vs analyst growth gap
-//!
-//! ## Portfolio tools
-//! - `ledger_import` — Import CSV/JSON (auto-creates portfolio)
-//! - `ledger_export` — Export CSV/JSON
-//! - `portfolio_list` — List all portfolios
-//! - `portfolio_delete` — Delete a portfolio
-//! - `transaction_note_append` — Annotate a transaction
-//! - `note_add` — Add a research note to a security
-//! - `note_list` — List notes with optional date/tag filtering
-//! - `note_delete` — Delete a note
-//! - `file_attach` — Attach a file (base64) to a security
-//! - `file_list` — List attached files for a security
-//! - `file_delete` — Delete an attached file
-//! - `portfolio_attribution` — What moved the portfolio
-//! - `portfolio_characteristics` — Weighted-average fundamentals
-//! - `portfolio_comparison` — Side-by-side comparison
-//! - `portfolio_returns` — TWR and IRR for any date range
+//! The pin test is the source of truth for the count; this list is a map.
 //!
 //! ## Data quality framework (FinGPT §3.2)
 //! - Regulation `data_quality` spans on every valuation tool — staleness, CV, confidence
@@ -68,7 +41,9 @@
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
-use hkask_mcp_server::server::{McpToolError, map_join_error, validate_identifier};
+use hkask_mcp_server::server::{
+    McpToolError, execute_tool_semantic, map_join_error, validate_identifier,
+};
 use serde::{Deserialize, Serialize};
 
 pub mod aggregation;
@@ -185,6 +160,15 @@ hkask_mcp_server::mcp_server!(
 use hkask_mcp_portfolio::map_portfolio_error;
 
 impl CompaniesServer {
+    /// Map a tool name to its ontology concept URI. The concept is used both
+    /// as the `reg.tool.*` span ontology tag (via `execute_tool_semantic`)
+    /// and as the `"ontology"` field in the tool output JSON (via
+    /// `fibo::enrich_with_ontology`). Financial tools return FIBO concepts;
+    /// non-financial artifacts (notes, files, transcripts) return Dublin Core.
+    fn ontology_anchor(tool: &str) -> Option<&'static str> {
+        fibo::tool_to_ontology(tool)
+    }
+
     async fn fetch(
         &self,
         tool: &str,
@@ -265,6 +249,64 @@ impl CompaniesServer {
             + Self::economic_profit_router()
             + Self::expectations_router()
             + Self::transcript_router()
+    }
+
+    /// Map a tool name to its FIBO / Dublin Core ontology concept URI. The
+    /// concept is used as the `reg.tool.*` span ontology tag (via
+    /// `execute_tool_semantic`). The existing `fibo::enrich_with_ontology`
+    /// calls in `tools/financial_data.rs` are the optional output-field layer
+    /// for widget consumption; this span tag is the canonical convention.
+    fn ontology_anchor(tool: &str) -> Option<&'static str> {
+        use hkask_bridge_ontology::{dc_bibo, fibo};
+        match tool {
+            // Financial data
+            "company_profile" => Some(fibo::CORPORATION),
+            "stock_quote" | "historical_price" => Some(fibo::MARKET_CAPITALIZATION),
+            "income_statement" | "balance_sheet" | "cash_flow_statement" | "key_metrics" => {
+                Some(dc_bibo::DATASET)
+            }
+            "symbol_search" => Some(dc_bibo::IDENTIFIER),
+
+            // MAIA analysis
+            "moat_check" => Some(fibo::COMPETITIVE_ADVANTAGE),
+            "management_scorecard" => Some(fibo::CAPITAL_ALLOCATION),
+            "working_capital_cycle" => Some(fibo::NET_WORKING_CAPITAL),
+
+            // Valuation
+            "dcf_valuation" | "reverse_dcf" => Some(fibo::DCF_VALUATION),
+            "ep_valuation" => Some(fibo::ECONOMIC_PROFIT),
+            "comparable_analysis" | "portfolio_comparison" => {
+                Some(fibo::COMPARABLE_COMPANY_ANALYSIS)
+            }
+            "scenario_analysis" | "scenario_impact_valuation" => Some(fibo::SCENARIO_PROBABILITY),
+            "sensitivity_analysis" => Some(fibo::SENSITIVITY_ANALYSIS),
+            "monte_carlo_dcf" => Some(fibo::MONTE_CARLO_DCF),
+            "equity_duration" => Some(fibo::DCF_VALUATION),
+            "calibrate_forecast" => Some(fibo::BRIER_SCORE),
+            "forecast_record" | "forecast_get" | "forecast_list" => Some(fibo::FORECAST_ID),
+            "result_feedback" => Some(dc_bibo::DESCRIPTION),
+
+            // Research & screening
+            "research_search" => Some(dc_bibo::DATASET),
+            "company_screener" => Some(fibo::STOCK_SCREENER),
+            "expectations_gap" => Some(fibo::REVENUE_GROWTH_RATE),
+
+            // Portfolio
+            "ledger_import"
+            | "ledger_export"
+            | "portfolio_list"
+            | "portfolio_delete"
+            | "transaction_note_append" => Some(fibo::TRANSACTION_LEDGER),
+            "note_add" | "note_list" | "note_delete" => Some(dc_bibo::DESCRIPTION),
+            "file_attach" | "file_list" | "file_delete" => Some(dc_bibo::TYPE),
+            "portfolio_attribution" => Some(fibo::ATTRIBUTION_ANALYSIS),
+            "portfolio_characteristics" => Some(fibo::WEIGHTED_AVERAGE),
+            "portfolio_returns" => Some(fibo::TIME_WEIGHTED_RETURN),
+
+            // Transcript — Dublin Core text
+            "company_transcript" => Some(dc_bibo::TEXT),
+            _ => Some(dc_bibo::TEXT),
+        }
     }
 }
 

@@ -17,6 +17,7 @@
 
 use crate::dc_bibo;
 use crate::pko;
+use crate::sdmx;
 use crate::sumo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -52,6 +53,9 @@ pub enum OntologyNamespace {
     Golem,
     /// ML-Schema — machine-learning experiments.
     MlSchema,
+    /// SDMX (Statistical Data and Metadata eXchange) — statistical data
+    /// from FRED, DBnomics, World Bank, IMF, OECD, ECB, INSEE.
+    Sdmx,
     /// MovieLabs Ontology for Media Creation — media production.
     Omc,
     /// SUMO (Suggested Upper Merged Ontology) — the universal upper ontology
@@ -68,6 +72,7 @@ impl OntologyNamespace {
             OntologyNamespace::Eso => dc_bibo::TEXT,
             OntologyNamespace::Golem => dc_bibo::TEXT,
             OntologyNamespace::MlSchema => dc_bibo::DATASET,
+            OntologyNamespace::Sdmx => dc_bibo::DATASET,
             OntologyNamespace::Omc => dc_bibo::COLLECTION,
             OntologyNamespace::Sumo => dc_bibo::TEXT,
         }
@@ -80,6 +85,7 @@ impl OntologyNamespace {
             OntologyNamespace::Eso => pko::STEP_VERIFICATION,
             OntologyNamespace::Golem => pko::PROCEDURE,
             OntologyNamespace::MlSchema => pko::PROCEDURE,
+            OntologyNamespace::Sdmx => pko::PROCEDURE,
             OntologyNamespace::Omc => pko::PROCEDURE_EXECUTION,
             OntologyNamespace::Sumo => pko::PROCEDURE,
         }
@@ -94,6 +100,7 @@ impl std::str::FromStr for OntologyNamespace {
             "eso" => Ok(OntologyNamespace::Eso),
             "golem" => Ok(OntologyNamespace::Golem),
             "mlschema" | "ml_schema" | "ml-schema" => Ok(OntologyNamespace::MlSchema),
+            "sdmx" => Ok(OntologyNamespace::Sdmx),
             "omc" => Ok(OntologyNamespace::Omc),
             "sumo" => Ok(OntologyNamespace::Sumo),
             _ => Err(format!("Unknown ontology namespace: {s}")),
@@ -108,6 +115,7 @@ impl std::fmt::Display for OntologyNamespace {
             OntologyNamespace::Eso => write!(f, "eso"),
             OntologyNamespace::Golem => write!(f, "golem"),
             OntologyNamespace::MlSchema => write!(f, "mlschema"),
+            OntologyNamespace::Sdmx => write!(f, "sdmx"),
             OntologyNamespace::Omc => write!(f, "omc"),
             OntologyNamespace::Sumo => write!(f, "sumo"),
         }
@@ -172,6 +180,7 @@ impl OntologyAnchor {
                 OntologyNamespace::Golem => 1.0,
                 OntologyNamespace::MlSchema => 1.1,
                 OntologyNamespace::Omc => 1.0,
+                OntologyNamespace::Sdmx => 1.1,
                 OntologyNamespace::Sumo => 1.0,
             },
         }
@@ -220,6 +229,26 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
             || lower.contains(&format!("_{kw}"))
             || lower.contains(&format!(" {kw}"))
     };
+    // Statistical data → SDMX (FRED, DBnomics, World Bank).
+    if [
+        "economic",
+        "fred",
+        "dbnomics",
+        "worldbank",
+        "world_bank",
+        "world bank",
+        "indicator",
+        "timeseries",
+        "time_series",
+    ]
+    .iter()
+    .any(|kw| matches_kw(kw))
+    {
+        return OntologyAnchor::DomainSupplement {
+            namespace: OntologyNamespace::Sdmx,
+            concept: sdmx::DATASET.to_string(),
+        };
+    }
     // Financial / company analysis → FIBO.
     if [
         "finance",
@@ -418,6 +447,29 @@ mod tests {
     }
 
     #[test]
+    fn statistical_domains_map_to_sdmx() {
+        for domain in [
+            "economic",
+            "fred",
+            "dbnomics",
+            "worldbank",
+            "world_bank",
+            "indicator",
+            "timeseries",
+        ] {
+            let anchor = select_ontology_anchor(domain);
+            assert_eq!(
+                anchor,
+                OntologyAnchor::DomainSupplement {
+                    namespace: OntologyNamespace::Sdmx,
+                    concept: sdmx::DATASET.to_string()
+                },
+                "domain '{domain}' must map to SDMX"
+            );
+        }
+    }
+
+    #[test]
     fn process_domains_map_to_pko_dual_axis() {
         let anchor = select_ontology_anchor("kanban");
         assert_eq!(
@@ -504,6 +556,7 @@ mod tests {
             ("eso", OntologyNamespace::Eso),
             ("golem", OntologyNamespace::Golem),
             ("mlschema", OntologyNamespace::MlSchema),
+            ("sdmx", OntologyNamespace::Sdmx),
             ("omc", OntologyNamespace::Omc),
             ("sumo", OntologyNamespace::Sumo),
         ] {
@@ -521,6 +574,7 @@ mod tests {
             OntologyNamespace::Eso,
             OntologyNamespace::Golem,
             OntologyNamespace::MlSchema,
+            OntologyNamespace::Sdmx,
             OntologyNamespace::Omc,
             OntologyNamespace::Sumo,
         ] {
@@ -539,6 +593,7 @@ mod tests {
             OntologyNamespace::Eso,
             OntologyNamespace::Golem,
             OntologyNamespace::MlSchema,
+            OntologyNamespace::Sdmx,
             OntologyNamespace::Omc,
             OntologyNamespace::Sumo,
         ] {

@@ -107,7 +107,7 @@ impl CorpusServer {
 
             let k = top_k.unwrap_or(5).clamp(1, 50);
 
-            let model_name = hkask_inference::model_constants::embedding_model();
+            let model_name = crate::default_embedding_model().to_string();
 
             let query_embedding = match self
                 .inference_router
@@ -382,5 +382,8 @@ fn default_purge_prefix() -> String {
 }
 
 fn default_purge_passphrase() -> String {
-    "hkask-default-passphrase-2024".to_string()
+    // Returns empty when env unset — `Database::open` rejects empty passphrases
+    // with "Passphrase cannot be empty", so the tool fails with an actionable
+    // error rather than silently using a hardcoded dev passphrase.
+    std::env::var("HKASK_DB_PASSPHRASE").unwrap_or_default()
 }

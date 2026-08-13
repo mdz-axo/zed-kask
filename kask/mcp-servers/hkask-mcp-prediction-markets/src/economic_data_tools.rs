@@ -47,7 +47,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "fred_search_series",
-            Some(Self::ontology_anchor("fred_search_series")),
+            Self::ontology_anchor("fred_search_series"),
             async {
                 self.called_tools
                     .lock()
@@ -78,7 +78,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "fred_get_observations",
-            Some(Self::ontology_anchor("fred_get_observations")),
+            Self::ontology_anchor("fred_get_observations"),
             async {
                 self.called_tools
                     .lock()
@@ -107,7 +107,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "fred_get_series_info",
-            Some(Self::ontology_anchor("fred_get_series_info")),
+            Self::ontology_anchor("fred_get_series_info"),
             async {
                 self.called_tools
                     .lock()
@@ -136,7 +136,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "fred_list_categories",
-            Some(Self::ontology_anchor("fred_list_categories")),
+            Self::ontology_anchor("fred_list_categories"),
             async {
                 self.called_tools
                     .lock()
@@ -165,7 +165,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "fred_get_release",
-            Some(Self::ontology_anchor("fred_get_release")),
+            Self::ontology_anchor("fred_get_release"),
             async {
                 self.called_tools
                     .lock()
@@ -199,7 +199,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "wb_search_indicators",
-            Some(Self::ontology_anchor("wb_search_indicators")),
+            Self::ontology_anchor("wb_search_indicators"),
             async {
                 self.called_tools
                     .lock()
@@ -225,7 +225,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "wb_get_observations",
-            Some(Self::ontology_anchor("wb_get_observations")),
+            Self::ontology_anchor("wb_get_observations"),
             async {
                 self.called_tools
                     .lock()
@@ -250,7 +250,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "wb_list_countries",
-            Some(Self::ontology_anchor("wb_list_countries")),
+            Self::ontology_anchor("wb_list_countries"),
             async {
                 self.called_tools
                     .lock()
@@ -272,7 +272,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "wb_list_topics",
-            Some(Self::ontology_anchor("wb_list_topics")),
+            Self::ontology_anchor("wb_list_topics"),
             async {
                 self.called_tools
                     .lock()
@@ -297,7 +297,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "wb_get_indicator_info",
-            Some(Self::ontology_anchor("wb_get_indicator_info")),
+            Self::ontology_anchor("wb_get_indicator_info"),
             async {
                 self.called_tools
                     .lock()
@@ -327,7 +327,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "dbnomics_search",
-            Some(Self::ontology_anchor("dbnomics_search")),
+            Self::ontology_anchor("dbnomics_search"),
             async {
                 self.called_tools
                     .lock()
@@ -351,7 +351,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "dbnomics_list_providers",
-            Some(Self::ontology_anchor("dbnomics_list_providers")),
+            Self::ontology_anchor("dbnomics_list_providers"),
             async {
                 self.called_tools
                     .lock()
@@ -376,7 +376,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "dbnomics_get_dataset",
-            Some(Self::ontology_anchor("dbnomics_get_dataset")),
+            Self::ontology_anchor("dbnomics_get_dataset"),
             async {
                 self.called_tools
                     .lock()
@@ -401,7 +401,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "dbnomics_get_series",
-            Some(Self::ontology_anchor("dbnomics_get_series")),
+            Self::ontology_anchor("dbnomics_get_series"),
             async {
                 self.called_tools
                     .lock()
@@ -432,7 +432,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_score_rationale",
-            Some(Self::ontology_anchor("market_score_rationale")),
+            Self::ontology_anchor("market_score_rationale"),
             async {
                 self.called_tools
                     .lock()

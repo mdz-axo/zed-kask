@@ -140,6 +140,14 @@ fn estimate_rjoule(
         "generate_video" => {
             unit_costs.per_video_second * params.duration.unwrap_or(5.0).max(1.0) as f64
         }
+        // TTS/STT/processing are billable API calls without a dedicated
+        // unit-cost field. Use `per_image` as a conservative floor — it
+        // over-counts (TTS/STT are typically cheaper than image gen), which
+        // is the safe direction for a hard cost gate. Add dedicated fields
+        // to `UnitCosts` when per-call pricing needs precision.
+        "generate_speech" | "transcribe" | "remove_background" | "image_to_video" => {
+            unit_costs.per_image
+        }
         _ => unit_costs.per_image,
     }
 }
@@ -220,19 +228,19 @@ pub(super) async fn charge_budget_gate(
 /// startup so the gate is deterministic.
 ///
 /// `HKASK_MEDIA_RJOULE_CAP` sets the total rJoule (USD) ceiling. Unset or `0` =
-/// enforcement disabled. A set-but-malformed value (e.g. `100.5`, `1e3`) warns
-/// and fails open to disabled — the operator gets a signal rather than a
-/// silently absent gate (the "Process-global hooks need a startup-failure
-/// signal" trap). The gas (compute) cap is constructed inert — gas is enforced
-/// upstream at `McpRuntime::invoke` + `CyberneticsLoop`, and the media server
-/// never charges gas itself, so a gas cap here would be dead config (the
-/// "Advertised invariants need enforcement points" trap).
-pub(super) fn build_media_budget() -> MediaBudget {
+/// enforcement disabled. A set-but-malformed value (e.g. `100.5`, `1e3`) is a
+/// config error — the server returns an error from `run()` rather than
+/// silently disabling enforcement (fail-closed on a cost-control setting: a
+/// typo in the cap must not remove the spend ceiling silently). The gas
+/// (compute) cap is constructed inert — gas is enforced upstream at
+/// `McpRuntime::invoke` + `CyberneticsLoop`, and the media server never
+/// charges gas itself, so a gas cap here would be dead config.
+pub(super) fn build_media_budget() -> Result<MediaBudget, String> {
     let unit_costs = UnitCosts::from_env();
     let alert_threshold = env_f64("HKASK_MEDIA_RJOULE_ALERT_THRESHOLD", 0.8).clamp(0.0, 1.0);
     match std::env::var("HKASK_MEDIA_RJOULE_CAP") {
         // Unset — legitimately disabled (the default).
-        Err(_) => MediaBudget::disabled(unit_costs, alert_threshold),
+        Err(_) => Ok(MediaBudget::disabled(unit_costs, alert_threshold)),
         Ok(raw) => match raw.trim().parse::<u32>() {
             // Explicit opt-out (documented: 0 = disabled).
             Ok(0) => {
@@ -240,7 +248,7 @@ pub(super) fn build_media_budget() -> MediaBudget {
                     target: "hkask.mcp.media.budget",
                     "HKASK_MEDIA_RJOULE_CAP=0 — rJoule enforcement disabled"
                 );
-                MediaBudget::disabled(unit_costs, alert_threshold)
+                Ok(MediaBudget::disabled(unit_costs, alert_threshold))
             }
             Ok(cap) => {
                 tracing::info!(
@@ -249,23 +257,21 @@ pub(super) fn build_media_budget() -> MediaBudget {
                     alert_threshold = alert_threshold,
                     "rJoule budget enforcement enabled"
                 );
-                MediaBudget {
+                Ok(MediaBudget {
                     tracker: Some(make_rjoule_tracker(cap, alert_threshold)),
                     unit_costs,
                     alert_threshold,
                     alerted: std::sync::atomic::AtomicBool::new(false),
-                }
+                })
             }
-            // Malformed cap — warn (config error) and fail open to disabled so
-            // the operator knows their cap did not take.
-            Err(_) => {
-                tracing::warn!(
-                    target: "hkask.mcp.media.budget",
-                    raw = %raw,
-                    "HKASK_MEDIA_RJOULE_CAP is set but not a positive integer — rJoule enforcement disabled (malformed config; expected a u32 rJoule ceiling, e.g. 100)"
-                );
-                MediaBudget::disabled(unit_costs, alert_threshold)
-            }
+            // Malformed cap — fail closed. A typo in the cap must not silently
+            // remove the spend ceiling. Return an error so `run()` surfaces it
+            // to the operator rather than starting with enforcement off.
+            Err(_) => Err(format!(
+                "HKASK_MEDIA_RJOULE_CAP is set to '{raw}' but is not a valid u32 \
+                 (expected a positive integer rJoule ceiling, e.g. 100). \
+                 Fix the value or unset it to disable enforcement."
+            )),
         },
     }
 }

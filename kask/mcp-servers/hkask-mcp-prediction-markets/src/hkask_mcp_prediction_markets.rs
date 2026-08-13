@@ -89,9 +89,56 @@ impl PredictionMarketsServer {
         Self::prediction_markets_router() + Self::economic_data_tools_router()
     }
 
-    /// Registry-convention ontology anchor (mirrors scenarios server).
-    fn ontology_anchor(_tool: &str) -> &'static str {
-        "dublin-core"
+    /// Map a tool name to its ontology concept URI. The concept is used both
+    /// as the `reg.tool.*` span ontology tag (via `execute_tool_semantic`) and
+    /// as the `"ontology"` field in some tool output JSON.
+    ///
+    /// Economic-data tools (FRED, World Bank, DBnomics) anchor on SDMX — the
+    /// ISO 17369 standard all three providers use as their data model. Market
+    /// tools anchor on Dublin Core (`dcterms:Dataset`) as the fallback per the
+    /// standardization decision: no prediction-market-specific ontology yet,
+    /// and Dublin Core is always a valid state-axis anchor.
+    fn ontology_anchor(tool: &str) -> Option<&'static str> {
+        use hkask_bridge_ontology::{dc_bibo, sdmx};
+        match tool {
+            // Economic-data tools — SDMX (ISO 17369)
+            "fred_search_series"
+            | "fred_get_series_info"
+            | "fred_list_categories"
+            | "fred_get_release"
+            | "dbnomics_search"
+            | "dbnomics_get_dataset" => Some(sdmx::DATASET),
+            "fred_get_observations" | "dbnomics_get_series" | "wb_get_observations" => {
+                Some(sdmx::TIME_SERIES)
+            }
+            "wb_search_indicators" | "wb_list_topics" | "wb_get_indicator_info" => {
+                Some(sdmx::DATASET)
+            }
+            "wb_list_countries" => Some(sdmx::CATEGORY),
+            "dbnomics_list_providers" => Some(sdmx::DATA_PROVIDER),
+
+            // Market tools + EQM — Dublin Core fallback (no PM ontology yet)
+            "prediction_markets_status"
+            | "market_lookup"
+            | "market_match"
+            | "market_ontology_map"
+            | "market_calibration"
+            | "market_record_resolution"
+            | "market_subscribe_resolutions"
+            | "market_ladder"
+            | "market_cmp"
+            | "market_residual"
+            | "market_check_resolutions"
+            | "market_history"
+            | "market_cmp_index"
+            | "market_volatility"
+            | "market_cmp_index_store"
+            | "market_cmp_portfolio_store"
+            | "market_cmp_context_suggest"
+            | "market_score_rationale" => Some(dc_bibo::DATASET),
+
+            _ => Some(dc_bibo::DATASET),
+        }
     }
 }
 
@@ -120,7 +167,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "prediction_markets_status",
-            Some(Self::ontology_anchor("prediction_markets_status")),
+            Self::ontology_anchor("prediction_markets_status"),
             async {
                 self.called_tools
                     .lock()
@@ -151,7 +198,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_lookup",
-            Some(Self::ontology_anchor("market_lookup")),
+            Self::ontology_anchor("market_lookup"),
             async {
                 self.called_tools
                     .lock()
@@ -181,7 +228,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_match",
-            Some(Self::ontology_anchor("market_match")),
+            Self::ontology_anchor("market_match"),
             async {
                 self.called_tools
                     .lock()
@@ -209,7 +256,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_ontology_map",
-            Some(Self::ontology_anchor("market_ontology_map")),
+            Self::ontology_anchor("market_ontology_map"),
             async {
                 self.called_tools
                     .lock()
@@ -232,7 +279,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_calibration",
-            Some(Self::ontology_anchor("market_calibration")),
+            Self::ontology_anchor("market_calibration"),
             async {
                 self.called_tools
                     .lock()
@@ -262,7 +309,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_record_resolution",
-            Some(Self::ontology_anchor("market_record_resolution")),
+            Self::ontology_anchor("market_record_resolution"),
             async {
                 self.called_tools
                     .lock()
@@ -316,7 +363,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_subscribe_resolutions",
-            Some(Self::ontology_anchor("market_subscribe_resolutions")),
+            Self::ontology_anchor("market_subscribe_resolutions"),
             async {
                 self.called_tools
                     .lock()
@@ -378,7 +425,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_ladder",
-            Some(Self::ontology_anchor("market_ladder")),
+            Self::ontology_anchor("market_ladder"),
             async {
                 self.called_tools
                     .lock()
@@ -481,7 +528,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_cmp",
-            Some(Self::ontology_anchor("market_cmp")),
+            Self::ontology_anchor("market_cmp"),
             async {
                 self.called_tools
                     .lock()
@@ -538,7 +585,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_residual",
-            Some(Self::ontology_anchor("market_residual")),
+            Self::ontology_anchor("market_residual"),
             async {
                 self.called_tools
                     .lock()
@@ -615,7 +662,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_check_resolutions",
-            Some(Self::ontology_anchor("market_check_resolutions")),
+            Self::ontology_anchor("market_check_resolutions"),
             async {
                 self.called_tools
                     .lock()
@@ -739,7 +786,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_history",
-            Some(Self::ontology_anchor("market_history")),
+            Self::ontology_anchor("market_history"),
             async {
                 self.called_tools
                     .lock()
@@ -804,7 +851,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_cmp_index",
-            Some(Self::ontology_anchor("market_cmp_index")),
+            Self::ontology_anchor("market_cmp_index"),
             async {
                 self.called_tools
                     .lock()
@@ -880,7 +927,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_volatility",
-            Some(Self::ontology_anchor("market_volatility")),
+            Self::ontology_anchor("market_volatility"),
             async {
                 self.called_tools
                     .lock()
@@ -950,7 +997,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_cmp_index_store",
-            Some(Self::ontology_anchor("market_cmp_index_store")),
+            Self::ontology_anchor("market_cmp_index_store"),
             async {
                 self.called_tools
                     .lock()
@@ -1318,7 +1365,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_cmp_portfolio_store",
-            Some(Self::ontology_anchor("market_cmp_portfolio_store")),
+            Self::ontology_anchor("market_cmp_portfolio_store"),
             async {
                 self.called_tools
                     .lock()
@@ -1377,7 +1424,7 @@ impl PredictionMarketsServer {
         execute_tool_semantic(
             self,
             "market_cmp_context_suggest",
-            Some(Self::ontology_anchor("market_cmp_context_suggest")),
+            Self::ontology_anchor("market_cmp_context_suggest"),
             async {
                 self.called_tools
                     .lock()
