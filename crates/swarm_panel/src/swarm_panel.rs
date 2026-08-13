@@ -252,8 +252,8 @@ fn steer_system_prompt(
          delegate without first calling `swarm_request_consent` and passing the \
          returned token to the spend tool. The consent gate is the enforcement \
          point — it must actually block, not just warn. In local mode there is no \
-         consent token; the `credits_authorized` + ledger balance check is the \
-         gate.\n\
+         consent token and no funding gate; the per-dispatch ceiling below is the \
+         only local bound.\n\
     \
          The per-dispatch credit ceiling (`HKASK_ABW_MAX_CREDITS`, default 50) is \
          a hard server-side gate. `swarm_hire` and `swarm_create_swarm` refuse \
@@ -3157,6 +3157,28 @@ mod tests {
             prompt.contains("CLOUD tools") || prompt.contains("swarm_hire"),
             "steer prompt must preserve the cloud/local funding distinction"
         );
+
+        // No surviving phrasing may call the local balance a gate.
+        //
+        // The prompt is one long string assembled from several paragraphs, and a
+        // previous pass fixed only the first occurrence — leaving the prompt
+        // self-contradictory (one paragraph said "do NOT treat a low balance as a
+        // blocker", another said "the ledger balance check is the gate"). An
+        // internally inconsistent prompt is worse for a model than a uniformly
+        // stale one, so scan for the *class* of claim rather than one instance.
+        for stale in [
+            "balance check is the",
+            "ledger balance check",
+            "balance is the gate",
+            "balance gate",
+        ] {
+            assert!(
+                !prompt.contains(stale),
+                "steer prompt still calls the local ledger balance a gate ({stale:?}) — \
+                 local delegation has no funding gate, and a second occurrence in the \
+                 same prompt makes it self-contradictory"
+            );
+        }
     }
 
     // The steer prompt must carry the current backend mode and instruct the

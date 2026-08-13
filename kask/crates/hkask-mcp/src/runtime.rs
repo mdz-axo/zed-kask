@@ -490,8 +490,9 @@ impl McpRuntime {
     /// Not exposed unconditionally because nothing in production consumes it, and
     /// an always-present "for health checks" accessor with no health surface is
     /// the dead-advertised-invariant pattern this crate already deleted once
-    /// (`list_servers`/`connection_count`/`connections`, audit rows 38). Wire a
-    /// real health consumer before promoting this.
+    /// (`list_servers`/`connection_count`/`connections`). Wire a real health
+    /// consumer before promoting this to unconditional `pub` — see
+    /// `tasks/kask-core-audit.md` §2a.
     #[cfg(feature = "test-fixture")]
     pub async fn is_connected(&self, server_id: &str) -> bool {
         self.get_peer(server_id).await.is_some()

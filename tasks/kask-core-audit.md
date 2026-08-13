@@ -119,12 +119,12 @@ benchmark. IS = asserted fact about current code; OUGHT = normative proposal.
 | 32 | `kask/crates/kask_bridge/src/memory.rs:343,476` | 2 literal drift | `ConsolidationRequest { limit: 100, … }` literal; `Default::limit=100` lives in `hkask-types/src/ports/regulation.rs:13` | 2 | Guardrail | IS | `..Default::default()` |
 | 33 | `kask/crates/kask_bridge/src/identity.rs:63` (+ re-export `kask_bridge.rs:40`) | 5 dead surface | `webid_from_username` test-only; production uses `WebID::for_agent_name` directly (`identity.rs:232`) | 1 | Prohibition | IS | drop `pub use`, downgrade to `pub(crate)` |
 | 34 | `kask/crates/kask_bridge/src/memory.rs:916-923` | 6 duplication | `open_curator_store` re-implements `curator_db_path()` (L538) verbatim | 1 | Guardrail | IS | replace with `let p = curator_db_path();` |
-| 35 | `kask/crates/hkask-mcp/src/runtime.rs:46` | 5 dead surface + advertised-invariant | `McpTool::validate_input` zero prod callers; `call_tool_inner`/`invoke` do not call it — advertised JSON-Schema gate has no enforcement point | 1 | Prohibition | IS | wire into `call_tool_inner`, or delete + document server-side (rmcp) validation |
-| 36 | `kask/crates/hkask-mcp/src/runtime.rs:241` | 5 dead surface | `McpRuntime::start_server` zero callers (all use `start_server_with_env`) | 1 | Prohibition | IS | delete |
-| 37 | `kask/crates/hkask-mcp/src/runtime.rs:424` | 5 dead surface | `McpRuntime::get_tool` zero prod callers (`get_tool_info` used instead) | 1 | Prohibition | IS | delete |
-| 38 | `kask/crates/hkask-mcp/src/runtime.rs:465,471,476,481` | 5 dead surface + advertised-invariant | `list_servers`/`servers`/`connection_count`/`connections`: zero callers; docs say "for health checks" but no health endpoint exists | 4 | Prohibition | IS | land the health endpoint or delete all four |
+| 35 | ~~`kask/crates/hkask-mcp/src/runtime.rs:46`~~ | 5 dead surface + advertised-invariant | **RESOLVED (verified 2026-08-13)** — `McpTool::validate_input` was deleted; zero occurrences repo-wide. Tool-input validation is server-side (rmcp/schemars) by design; `input_schema` survives only as metadata for LLM tool advertisement. The original finding (advertised gate with no enforcement point) was correct. | 0 | Prohibition | ~~IS~~ RESOLVED | done — see §7 |
+| 36 | ~~`kask/crates/hkask-mcp/src/runtime.rs:241`~~ | 5 dead surface | **RESOLVED (verified 2026-08-13)** — `McpRuntime::start_server` deleted; only `start_server_with_env` remains (called from `crates/zed/src/main.rs`). | 0 | Prohibition | ~~IS~~ RESOLVED | done — see §7 |
+| 37 | ~~`kask/crates/hkask-mcp/src/runtime.rs:424`~~ | 5 dead surface | **RESOLVED (verified 2026-08-13)** — `McpRuntime::get_tool` deleted; `get_tool_info` is live (`hkask-templates/src/step_actions.rs`). | 0 | Prohibition | ~~IS~~ RESOLVED | done — see §7 |
+| 38 | ~~`kask/crates/hkask-mcp/src/runtime.rs:465,471,476,481`~~ | 5 dead surface + advertised-invariant | **RESOLVED (verified 2026-08-13)** — `list_servers`/`servers`/`connection_count`/`connections` all deleted rather than wired; no health endpoint consumes `McpRuntime` state (the only `/healthz` is a static responder in `hkask-mcp-swarm/src/a2a_http.rs`). See the §2a note on `is_connected`, which re-created a scoped version of this surface. | 0 | Prohibition | ~~IS~~ RESOLVED | done — see §7 |
 | 39 | `kask/crates/hkask-mcp/src/runtime.rs:647` | 6 hot-path clone | `call_tool_inner` clones the entire `args` map on every governed dispatch though `args` is owned | 1 | Guardrail | IS | `match args { Value::Object(map) => map, _ => Map::new() }` (move) |
-| 40 | `kask/crates/hkask-mcp/src/runtime.rs:629` | 6 hot-path clone | `verify_capability_domain` over-clones via `get_tool_info` (clones `input_schema`/`description`) when only `required_capability` is needed | 1 | Guardrail | IS | add `required_capability_for()` lightweight accessor |
+| 40 | ~~`kask/crates/hkask-mcp/src/runtime.rs:629`~~ | 6 hot-path clone | **SUPERSEDED (verified 2026-08-13)** — `verify_capability_domain` no longer exists: the whole per-call capability gate was removed (commits `1cc0`/`403e`, RR-0056), so neither it nor the `required_capability_for()` helper §7 credits is present. Originally: over-cloned via `get_tool_info` (clones `input_schema`/`description`) when only `required_capability` is needed | 1 | Guardrail | IS | add `required_capability_for()` lightweight accessor |
 | 41 | `kask/crates/hkask-mcp-server/src/http_helpers.rs:76,84` | 5 dead surface | `api_get`/`api_put` zero callers incl tests; private `http_req` only used by these | 2 | Prohibition | IS | delete both (keep `classify_http_error`) |
 | 42 | `kask/crates/hkask-mcp-server/src/tool_span.rs:240` | 5 dead surface + advertised-invariant | `tool_internal_error` zero callers; doc advertises a convenience no server adopted | 1 | Prohibition | IS | delete |
 | 43 | `crates/hkask-tool-invoker/src/hkask_tool_invoker.rs:118-127` | 5 dead surface + advertised-invariant | `BlockProvenance::is_empty` zero prod callers; doc claims widgets use it for fallback decision (they key on `is_dispatchable` only) | 1 | Prohibition | IS | delete or wire a widget fallback to it |
@@ -150,6 +150,39 @@ than via `mcp_env` (intentional in-process seam); `hkask-mcp` dual launch path
 (McpRuntime + ContextServerStore); port traits in `hkask-types/src/ports/`
 (multiple impls = legitimate port-promotion); `hkask-tool-invoker`
 `.expect("…poisoned")` on process-global Mutex (convention).
+
+## 2a. Reverification pass (2026-08-13)
+
+Rows 35-38 and 40 were re-checked against the current tree and **all are
+resolved or superseded**; §2 above is annotated accordingly. Before this pass §2
+asserted them as open (`IS`) while §7 already recorded 35-38 as `fixed` — the
+table and the fix log contradicted each other, and §7 was the trustworthy half.
+
+**Line numbers throughout §2 are unreliable for `hkask-mcp/src/runtime.rs`.**
+That file gained connection-healing (reap-on-death, liveness-on-read,
+reconnect-on-demand) and the `DispatchError` split, so every cited offset has
+moved. Search by symbol name, not line.
+
+### New finding: `McpRuntime::is_connected` re-created the row-38 surface
+
+`is_connected` (`kask/crates/hkask-mcp/src/runtime.rs`) was added for the
+connection-healing tests and has **zero production callers** — the dispatch path
+uses `get_peer`. Under the repo's "test-only callers are dead code" rule that is
+the same pattern row 38 deleted: an accessor advertising a health surface that no
+health consumer reads.
+
+Mitigated rather than deleted, because reap-on-death is otherwise unobservable:
+every production path *heals* on a missing peer, so it cannot distinguish
+"reaped" from "reconnected". It is now `#[cfg(feature = "test-fixture")]`-gated,
+so it does not exist in a normal build, with a doc comment pointing at this row.
+**Wire a real health consumer before promoting it to unconditional `pub`.**
+
+### Process note
+
+This is the second time a dead-surface item in this crate was resolved by
+deletion while §2 kept asserting it. When a fix lands, annotate §2 in the same
+pass — a stale inventory is worse than no inventory, because it sends readers to
+verify claims that were settled months earlier.
 
 ## 3. Deliverable 2 — Settings coverage gaps
 
@@ -214,9 +247,9 @@ correct (UI layer doesn't depend on `settings_content`).
 | 3 | Resolve `OllamaRegistry` advertised seam (#8): wire or delete | #8 | medium — either lands the train→local migration the doc promises, or removes ~290 lines + a misleading doc |
 | 4 | Surface the 6 unsurfaced `KaskCorpusSettings` OCR/embedding-dim fields in `corpus.rs` (§3a) | §3a | low — pure UI additions; fields + `mcp_env` already exist |
 | 5 | Derive `Default` on `InferenceParams` and switch 11 sites to `..Default::default()` (#10) | #10 | low-medium — mechanical, ~280 `None` lines removed; touches `hkask-types` + `hkask-inference` |
-| 6 | Wire `McpTool::validate_input` into `call_tool_inner` or delete it (#35) | #35 | medium — either makes the JSON-Schema gate load-bearing (behavior change for malformed tool inputs) or removes advertised theater |
+| 6 | ~~Wire `McpTool::validate_input` into `call_tool_inner` or delete it (#35)~~ **RESOLVED** — deleted; validation is server-side (rmcp/schemars) | #35 | medium — either makes the JSON-Schema gate load-bearing (behavior change for malformed tool inputs) or removes advertised theater |
 | 7 | Add `tracing::warn!` to the three silent-degradation env reads (#1, #13) + fix `config.rs` pool_max_idle drift (#2) | #1,#2,#13 | low — diagnostics only, no behavior change; #2 fixes a real default mismatch |
-| 8 | Delete the `McpRuntime` health-check cluster (#38) or land the health endpoint | #36,#37,#38 | low if delete (4 dead methods); medium if land endpoint (new surface) |
+| 8 | ~~Delete the `McpRuntime` health-check cluster (#38) or land the health endpoint~~ **RESOLVED** — all four deleted; no health endpoint landed | #36,#37,#38 | low if delete (4 dead methods); medium if land endpoint (new surface) |
 | 9 | Fix the `salience.rs`/`engine.rs`/`ollama_registry.rs` advertised-invariant doc lies (#8,#25,#28) — delete the dead fns or wire them; refresh the `.rules` example (#18) to a live site | #8,#18,#25,#28 | low — mostly deletion; the `.rules` refresh is a separate doc commit |
 | 10 | Add `KaskToolRouterSettings` for the two hardcoded `LazyToolRouter` thresholds (#44) behind a D-seam | #44 | medium — new settings struct + `Default` + UI sub-page + D-seam wiring in `main.rs:1469` |
 
@@ -299,7 +332,7 @@ verified with `cargo check` and the affected test suites. Status per finding:
 | 35 | fixed | `McpTool::validate_input` deleted (rmcp validates server-side; the client-side duplicate was unenforced theater); `jsonschema` dep removed from `hkask-mcp` Cargo.toml |
 | 36–38 | fixed | `McpRuntime::start_server`/`get_tool`/`list_servers`/`servers`/`connection_count`/`connections` deleted (health-check cluster with no health endpoint) |
 | 39 | fixed | `call_tool_inner` moves the owned `args` map instead of cloning |
-| 40 | fixed | `verify_capability_domain` uses a new lightweight `required_capability_for()` (no `input_schema`/`description` clone) |
+| 40 | ~~fixed~~ **superseded — this entry is inaccurate** | The `required_capability_for()` helper this credits does NOT exist in the tree (verified 2026-08-13). Both it and `verify_capability_domain` were removed when the per-call capability gate was deleted (RR-0056). The clone concern is moot: there is no capability lookup on the dispatch path. |
 | 41 | fixed | `api_get`/`api_put`/`http_req` deleted; re-exports removed |
 | 42 | fixed | `tool_internal_error` deleted; the now-dead `ToolSpanGuard::internal_error` method also removed (cascade cleanup) |
 | **43** | **INVALID** | see §8 |

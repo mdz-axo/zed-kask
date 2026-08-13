@@ -25,7 +25,8 @@ visibility: Public
 {#
   Emit the gated composition change. The gate is mode-dependent:
   - abw: consent token from swarm_request_consent (the v1 gate).
-  - local: ledger balance check (no consent token — §15.1.2 rejected).
+  - local: per-dispatch ceiling only — no consent token (§15.1.2 rejected) and
+    no funding gate (the ledger records spend, it does not authorize it).
   No call is emitted without passing the gate.
 #}
 
@@ -73,11 +74,12 @@ curator, which requires separate per-dispatch opt-in.
 ## Step 2 — Route through the gate
 
 {% if mode == "local" %}
-In local mode, the gate is the **ledger balance check** — no consent token
-(§15.1.2 rejected consent tokens on local tools). Each delegate call to
-`swarm_delegate_local` takes `credits_authorized` and checks it against the
-ledger balance + the per-dispatch ceiling. If the balance is insufficient,
-the call returns `PaymentRequired` — the same error ABW returns.
+In local mode the only gate is the **per-dispatch ceiling** — no consent token
+(§15.1.2 rejected consent tokens on local tools) and **no funding gate**. Each
+delegate call to `swarm_delegate_local` takes `credits_authorized`, which is
+checked against the per-dispatch ceiling only; `PaymentRequired` is returned
+solely when `credits_authorized` exceeds that ceiling, never for insufficient
+funds. An unfunded or negative ledger does not block a delegation.
 
 Each dispatch intent must produce a gate decision:
 - `Proceed { credits_authorized }` — the operator authorized the spend.

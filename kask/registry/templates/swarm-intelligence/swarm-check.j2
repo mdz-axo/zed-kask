@@ -98,11 +98,14 @@ loop_closure = (successful_delegations / total_delegations)
 where:
 - `total_delegations` = count of emitted_calls from ACT.
 - `successful_delegations` = count of emitted_calls whose `swarm_delegate_local`
-  response did not return `PaymentRequired`.
+  response returned a result rather than an error. Do NOT anchor this on
+  `PaymentRequired`-for-funds: local delegation has no funding gate, so that
+  error cannot occur for an unfunded ledger.
 
 There is no curator dispatch in local mode (no `curator_involved` field).
-The algedonic signal in local mode is the ledger balance itself — if it
-hits zero, the next delegation will fail.
+The ledger balance is **not** an algedonic signal in local mode: it records
+accumulated spend (and may be negative), so it never predicts a failure. Zero is
+not a floor and does not mean the next delegation will fail.
 
 Vacuous-truth default: if `total_delegations = 0`, `loop_closure = 1.0`
 (vacuously satisfied).
@@ -167,9 +170,13 @@ convergence_metric = d.
 
 {% if mode == "local" %}
 Check for algedonic signals that override convergence:
-- Any `PaymentRequired` from `swarm_delegate_local` during the Act (the
-  ledger ran out of credits — the operator needs to fund via
-  `swarm_fund_local`).
+- Any `PaymentRequired` from `swarm_delegate_local` during the Act. In local
+  mode this means only that `credits_authorized` exceeded the per-dispatch
+  ceiling — a misconfigured request, NOT an exhausted ledger. The remedy is to
+  lower `credits_authorized` or raise `HKASK_ABW_MAX_CREDITS`; do **not**
+  propose `swarm_fund_local`, which gates nothing.
+- A delegation error that is not a ceiling refusal (inference unreachable,
+  agent missing) — the substrate, not the budget.
 
 If present, set algedonic_signal = { type, detail } and the loop
 MUST NOT claim convergence regardless of d.

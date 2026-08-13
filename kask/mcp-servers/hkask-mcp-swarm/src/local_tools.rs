@@ -691,8 +691,8 @@ impl SwarmServer {
     /// counterpart of `swarm_remove_local`: remove deletes a card, create
     /// writes one. No ABW round-trip (unlike `swarm_clone_to_local`, which
     /// copies from ABW). No consent token — local mode has no consent gate;
-    /// card creation is free (the ledger balance gates *execution*, not
-    /// authoring).
+    /// card creation is free, and local execution is not gated on funds either (the
+    /// ledger records spend rather than authorizing it).
     #[tool(
         description = "Create a new local agent card programmatically. Writes agents/local/curated/<id>/agent_card.json and reloads the registry. No consent token — local mode has no consent gate."
     )]
@@ -860,7 +860,8 @@ impl SwarmServer {
 
     /// Create a local swarm - the local replica of an ABW workspace/team. A
     /// named, mission-bearing grouping of local agent ids. No cost and no
-    /// consent token - the local ledger gates delegation, not roster edits.
+    /// consent token. The local ledger records spend; it gates neither
+    /// delegation nor roster edits.
     /// Optionally seeds the roster with `agents`. Returns the new swarm with
     /// its generated `swarm_id`. The counterpart of `swarm_create_swarm` for
     /// the local backend.

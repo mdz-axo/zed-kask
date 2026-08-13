@@ -93,8 +93,9 @@ steps:
     description: >
       DIRECT: Produce the local-swarm steering directive. Take the
       swarm-intelligence plan (emitted_calls) + the task + the credit budget,
-      and produce a structured steering directive: pre-flight checks (ledger
-      funded via swarm_balance_local, agents exist via swarm_list_local_agents),
+      and produce a structured steering directive: pre-flight checks (agents exist
+      via swarm_list_local_agents; NO ledger-funding check — local delegation
+      is never gated on funds),
       the swarm_execute_plan_local delegation sequence (with optional
       deterministic evaluators), the delegate_results collection shape
       (LocalDelegateResult array with task_success verdicts), and the re-invoke

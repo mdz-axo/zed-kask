@@ -699,8 +699,8 @@ impl SwarmServer {
             // `credits_authorized` field is the operator's declared budget,
             // not a hard limit on ABW's spend. This is inherent to the ABW
             // architecture: zed-kask posts a message; ABW executes and charges.
-            // The local mode (`swarm_delegate_local`) does not have this
-            // limitation — the local ledger debit is a hard gate.
+            // // Local mode has no equivalent gate at all: its ledger records spend
+            // rather than authorizing it, so neither path hard-caps ABW's charge.
             let auth = spend_gate::authorize_delegate(
                 &self.client,
                 &self.consent,

@@ -65,17 +65,24 @@ swarm-intelligence plan and feed the results back.
 
 Before executing, the directive must instruct the executor to verify the swarm
 is ready:
-- **Ledger funded**: call `swarm_balance_local` and confirm the balance covers
-  the sum of credits across all delegate emitted calls. If the balance is
-  insufficient, the executor must call `swarm_fund_local` first (or report
-  `status: unfunded` and stop).
 - **Agents exist**: call `swarm_list_local_agents` and confirm every
   `agent_name` in the delegate emitted calls is present in the local registry.
   If any agent is missing, report `status: missing_agents` (list the missing
   agents) and stop — do not execute a partial plan.
 
-Record the pre-flight checks in `pre_flight` = { balance, balance_sufficient,
-required_credits, agents_present, missing_agents }.
+**Do NOT gate execution on the ledger balance.** Local delegation has no funding
+gate: local agents run on the operator's own substrate, so an unfunded — or
+negative — balance does not block anything. Requiring funds here would refuse a
+perfectly valid plan. Do not call `swarm_fund_local`, and do not report an
+`unfunded` status.
+
+You MAY still read `swarm_balance_local` and record it as informational context
+(it reports accumulated local spend, which may be negative). It is a cost signal,
+never a readiness condition.
+
+Record the pre-flight checks in `pre_flight` = { balance, agents_present,
+missing_agents }. `balance` is informational only; omit it (or record `null`) if
+the read fails — never substitute a zero.
 
 ## Step 2 — Execution sequence
 
@@ -140,8 +147,7 @@ telemetry, so they are NOT in the execution_sequence. Record them in
 Set `status` to one of:
 - `ready` — pre-flight passed, execution_sequence is non-empty, the directive
   is executable.
-- `unfunded` — the ledger balance is insufficient (the executor must fund via
-  `swarm_fund_local` before re-running this skill).
+
 - `missing_agents` — one or more delegate agents are not in the local registry
   (the operator must add them via `swarm_create_local_agent` or
   `swarm_clone_to_local` before re-running).

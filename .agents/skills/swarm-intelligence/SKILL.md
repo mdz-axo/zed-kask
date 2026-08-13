@@ -269,7 +269,7 @@ templates, the registry wins.
   `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_create_swarm`,
   `swarm_xaman`) are consent-gated via `swarm_request_consent` (single-use,
   action+target+credits-scoped, TTL-bounded) or `swarm_authorize_session`
-  (headless). In local mode there is no consent token — the ledger balance +
+  (headless). In local mode there is no consent token and no funding gate —
   the per-dispatch ceiling (`HKASK_ABW_MAX_CREDITS`, default 50) is the gate.
   See the [Swarm Systems Reference](../../../kask/docs/diataxis/swarm_system/reference.md)
   for the full tool/contract table and the token model.

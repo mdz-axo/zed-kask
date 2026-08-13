@@ -3,8 +3,8 @@
 //! A local swarm is a named grouping of local agent ids: `{swarm_id, name,
 //! mission, members}`. It mirrors an ABW workspace (created via
 //! `swarm_create_swarm`'s `POST /teams`) but lives on disk, costs nothing, and
-//! has no consent gate — the local ledger (`swarm_delegate_local`) is the only
-//! spend surface. Membership is just roster edits; agents themselves stay in
+//! has no consent gate. Local delegation has no funding gate either — the
+//! ledger records spend rather than authorizing it. Membership is just roster edits; agents themselves stay in
 //! `LocalAgentRegistry`.
 //!
 //! Persistence mirrors `LocalAgentRegistry`: one JSON file per swarm under

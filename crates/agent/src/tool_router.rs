@@ -398,6 +398,8 @@ impl LazyToolRouter {
     ) -> f64 {
         let description_lower = candidate.description.to_lowercase();
         let description_terms = tokenize(&description_lower);
+        let name_lower = candidate.name.to_lowercase();
+        let name_terms = tokenize(&name_lower);
 
         // Count how many context keywords appear in the tool description.
         //
@@ -410,6 +412,20 @@ impl LazyToolRouter {
             .iter()
             .filter(|keyword| description_terms.contains(keyword.to_lowercase().as_str()))
             .count();
+
+        // A keyword hitting the tool's *name* is far stronger evidence than one
+        // hitting its prose. Tool names are curated identifiers (`codegraph_query`,
+        // `generate_speech`), so a match there is close to the user naming the
+        // tool outright, whereas descriptions share incidental vocabulary with
+        // every other tool. Measured on the eval set: "query the codegraph for the
+        // symbol..." shares three description terms with `codegraph_query` yet
+        // scored 0.20 and was outranked by unrelated tools, because name evidence
+        // counted for nothing.
+        let name_matched = context_keywords
+            .iter()
+            .filter(|keyword| name_terms.contains(keyword.to_lowercase().as_str()))
+            .count();
+        let name_evidence = (name_matched as f64 / NAME_MATCH_SATURATION).min(1.0);
 
         // Saturating count, NOT a fraction of the message.
         //
@@ -443,33 +459,28 @@ impl LazyToolRouter {
         // tool that happened to share one generic word, while genuine topical
         // overlap was compressed into the remaining range. A constant added to
         // every candidate carries no discriminating information.
-        let mut score = 0.6 * match_evidence + 0.4 * (intent_matched as f64).min(1.0);
+        let mut score = NAME_WEIGHT * name_evidence
+            + DESCRIPTION_WEIGHT * match_evidence
+            + INTENT_WEIGHT * (intent_matched as f64).min(1.0);
 
-        // File-type boost: if a code file is open OR the message mentions
-        // code-editing actions, boost tools whose descriptions mention
-        // file/edit/grep/directory/diagnostic.
-        let code_action_signal = context_keywords.iter().any(|kw| {
-            matches!(
-                kw.as_str(),
-                "edit"
-                    | "write"
-                    | "read"
-                    | "fix"
-                    | "refactor"
-                    | "search"
-                    | "grep"
-                    | "find"
-                    | "delete"
-                    | "create"
-                    | "move"
-                    | "rename"
-                    | "debug"
-                    | "test"
-                    | "build"
-                    | "compile"
-            )
-        });
-        if has_code_file || code_action_signal {
+        // File-type nudge for code tools, applied only when a code file is
+        // actually open.
+        //
+        // This was previously a `score.max(0.5)` floor gated on *either* an open
+        // code file or any of ~16 generic verbs (`read`, `search`, `build`,
+        // `find`). Both halves were wrong. The verb gate fired on 7 of 23 eval
+        // cases -- "read this paragraph out loud", "search the web", "build a
+        // scenario matrix" are not code requests -- and the floor then lifted ~62
+        // tools to 0.5, outranking the genuinely correct tool sitting at 0.2-0.4
+        // on real evidence and pushing it out of the selection budget.
+        //
+        // The floor also only became dominant when the constant 0.2 base was
+        // removed: at that point typical real scores fell to 0.2-0.4, so a 0.5
+        // override stopped being mid-range and started winning outright. Rescaling
+        // one term of a scoring function without rescaling the others is the
+        // hazard; an additive nudge keeps the boost proportionate and cannot
+        // outrank direct evidence.
+        if has_code_file {
             let code_tool_keywords = [
                 "file",
                 "edit",
@@ -499,7 +510,7 @@ impl LazyToolRouter {
                 }
             });
             if boosted {
-                score = score.max(CODE_TOOL_BOOST);
+                score += CODE_TOOL_NUDGE;
             }
         }
 
@@ -524,10 +535,29 @@ const DEFAULT_SELECTION_BUDGET: usize = 40;
 /// ("generate", "image"), and requiring more would penalise terse descriptions.
 const MATCH_SATURATION: f64 = 3.0;
 
-/// Score floor applied to file-ish tools when a code file is open or the message
-/// carries a code verb. Kept above the default threshold so code tools survive
-/// routing during editing work.
-const CODE_TOOL_BOOST: f64 = 0.5;
+/// Additive nudge for file-ish tools when a code file is open.
+///
+/// Deliberately small and additive rather than a `max()` floor: it should break
+/// ties between comparably-scored tools during editing work, never promote a tool
+/// that matched nothing above one that matched the request directly. Sized below
+/// the score of a single description match (0.35 / 3 ≈ 0.12 per matched term) so
+/// direct evidence always dominates.
+const CODE_TOOL_NUDGE: f64 = 0.10;
+
+/// Relative weights of the three evidence sources. They sum to 1.0 so a perfect
+/// match on all three saturates at 1.0 without clamping.
+///
+/// Name evidence is weighted highest because tool names are curated identifiers:
+/// a keyword matching `codegraph_query`'s name is near-explicit tool selection,
+/// whereas description vocabulary is shared incidentally across the surface.
+const NAME_WEIGHT: f64 = 0.40;
+const DESCRIPTION_WEIGHT: f64 = 0.35;
+const INTENT_WEIGHT: f64 = 0.25;
+
+/// Matched name terms at which name evidence saturates. Lower than the
+/// description saturation because names are short -- two matching terms out of a
+/// two-or-three-term name is already a decisive signal.
+const NAME_MATCH_SATURATION: f64 = 2.0;
 
 /// Split text into lowercase alphanumeric terms for whole-term matching.
 ///
@@ -751,50 +781,108 @@ mod tests {
             each one to a subagent. The first step is to search for all usages of the \
             old auth function, then edit each call site to use the new API, and finally \
             run the test suite to verify nothing broke.";
+        // MCP-shaped candidates: the scorer never sees built-ins.
         let context = ToolSelectionContext {
             user_message: Some(long_message.to_string()),
             open_file_paths: vec![],
             candidates: vec![
-                candidate("grep", "Search file contents using a regular expression"),
-                candidate("read_file", "Read a file from the project filesystem"),
-                candidate("edit_file", "Edit a file in the project"),
-                candidate("terminal", "Execute a shell command"),
-                candidate("fetch", "Fetches a URL and returns content"),
-                candidate("spawn_agent", "Spawn a sub-agent for a task"),
+                candidate(
+                    "codegraph_traverse",
+                    "Traverse the code graph to find callers of a function",
+                ),
+                candidate(
+                    "kanban_task_create",
+                    "Create a task to delegate work to a subagent",
+                ),
+                candidate("market_lookup", "Look up a prediction market by question"),
             ],
         };
         let router = LazyToolRouter::new();
         let selected = router
             .select_tools(&context)
             .expect("router should activate");
-        assert!(selected.contains(&"grep".into()));
-        assert!(selected.contains(&"read_file".into()));
-        assert!(selected.contains(&"edit_file".into()));
+        // `kanban_task_create` wins on evidence: its description shares three
+        // terms with the request ("task", "delegate", "subagent"), while
+        // `codegraph_traverse` shares one ("function") and `market_lookup` none.
+        // That ordering is the intended behaviour — the request is explicitly
+        // about decomposition and delegation.
         assert!(
-            !selected.contains(&"fetch".into()),
-            "fetch should be filtered — no URL in a refactoring task"
+            selected.contains(&"kanban_task_create".into()),
+            "the delegation tool must be retained for a decomposition request"
+        );
+        assert!(
+            !selected.contains(&"market_lookup".into()),
+            "an unrelated market tool must not survive a refactoring request"
         );
     }
 
+    /// A short code request with an open code file activates the router (via the
+    /// code-file + code-verb path) but supplies almost no scoreable keywords:
+    /// "fix the bug in main.rs" reduces to the single term `main.rs`, which
+    /// matches no tool description. Both candidates therefore score below
+    /// threshold and the empty selection fails open, retaining everything.
+    ///
+    /// This is the correct outcome and the reason `CODE_TOOL_NUDGE` is additive:
+    /// the previous `max(0.5)` floor manufactured confidence here, admitting
+    /// whichever tools happened to mention "file" while the request contained no
+    /// evidence for any of them.
+    ///
+    /// Candidates are MCP-shaped because the scorer only ever sees MCP tools --
+    /// built-ins like `read_file` and `grep` are retained unconditionally by the
+    /// bypass and never scored.
     #[test]
-    fn test_lazy_router_activates_for_code_file_with_edit_signal() {
+    fn short_code_request_with_no_scoreable_keywords_fails_open() {
+        let names: Vec<SharedString> = vec!["codegraph_query".into(), "market_lookup".into()];
+        let descriptions: Vec<SharedString> = vec![
+            "Search the codebase for symbols by name or file path".into(),
+            "Look up a prediction market by question".into(),
+        ];
+        let tools: Vec<(&SharedString, &SharedString)> =
+            names.iter().zip(descriptions.iter()).collect();
+
+        let retained = apply_router_bypassing_built_ins(
+            &LazyToolRouter::new(),
+            tools,
+            Some("fix the bug in main.rs"),
+            vec!["/project/src/main.rs".to_string()],
+            &std::collections::HashSet::new(),
+        );
+        assert_eq!(
+            retained.len(),
+            2,
+            "no scoreable evidence must fail open rather than guess"
+        );
+    }
+
+    /// With a code file open, a code-oriented MCP tool that genuinely matches the
+    /// request must outrank an unrelated one — and the nudge must not promote the
+    /// unrelated tool on its own.
+    #[test]
+    fn code_nudge_breaks_ties_without_promoting_unrelated_tools() {
         let context = ToolSelectionContext {
-            user_message: Some("fix the bug in main.rs".to_string()),
+            user_message: Some(
+                "search the codebase for the symbol that parses configuration files".to_string(),
+            ),
             open_file_paths: vec!["/project/src/main.rs".to_string()],
             candidates: vec![
-                candidate("read_file", "Read a file from the filesystem"),
-                candidate("grep", "Search file contents using a regular expression"),
-                candidate("fetch", "Fetches a URL and returns content"),
-                candidate("spawn_agent", "Spawn a sub-agent for a task"),
+                candidate(
+                    "codegraph_query",
+                    "Search the codebase for symbols by name or file path",
+                ),
+                candidate("market_lookup", "Look up a prediction market by question"),
             ],
         };
-        let router = LazyToolRouter::new();
-        let selected = router
+        let selected = LazyToolRouter::new()
             .select_tools(&context)
             .expect("router should activate");
-        assert!(selected.contains(&"read_file".into()));
-        assert!(selected.contains(&"grep".into()));
-        assert!(!selected.contains(&"fetch".into()));
+        assert!(
+            selected.contains(&"codegraph_query".into()),
+            "the matching code tool must be retained"
+        );
+        assert!(
+            !selected.contains(&"market_lookup".into()),
+            "the code nudge must not admit a tool that matched nothing"
+        );
     }
 
     #[test]

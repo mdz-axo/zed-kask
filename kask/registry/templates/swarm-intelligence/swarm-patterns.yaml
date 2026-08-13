@@ -178,7 +178,7 @@ move_types:
     local: "`swarm_create_local_agent` (free — no `swarm_hire_local`, §15.1.1 rejected) or `swarm_clone_to_local`"
   - move: delegate
     abw: "`swarm_delegate` / `swarm_delegate_and_wait` (consent-gated, 1 cr + tokens; one level deep)"
-    local: "`swarm_delegate_local` / `swarm_fanout_local` / `swarm_pipeline_local` (ledger-gated, 1 cr / 1000 tokens)"
+    local: "`swarm_delegate_local` / `swarm_fanout_local` / `swarm_pipeline_local` (ledger-recorded, 1 cr / 1000 tokens; not gated on funds)"
   - move: remove
     abw: "`swarm_fire` (roster removal, verified live 2026-08-02; agent not deleted)"
     local: "`swarm_remove_local` (deletes the local card; a synced card's ABW agent is untouched)"

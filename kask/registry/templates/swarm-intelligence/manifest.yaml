@@ -136,8 +136,9 @@ templates:
     description: >
       Emit the gated composition change. Mode-aware (v2 §15): in `abw`
       mode, the gate is the consent token from `swarm_request_consent`;
-      in `local` mode, the gate is the ledger balance check (no consent
-      token — §15.1.2 rejected). For each proposed delegate, construct a
+      in `local` mode there is NO funding gate and no consent token — the
+      per-dispatch ceiling is the only local bound, and an unfunded or
+      negative ledger does not block a delegation. For each proposed delegate, construct a
       DispatchIntent { swarm_id, task, estimated_credits, curator_involved
       (default false), data_shared }. If the operator Aborts, record the
       abort reason and emit no spend. Enforces the .rules "Advertised
@@ -159,8 +160,8 @@ templates:
       + (1 - loop_closure)^2 ). d = 0 means the target condition is met
       on all three axes. Emit next_focus (which axis dominates d). Emit
       the algedonic signal: in `abw` mode, any 402 or un-acknowledged
-      curator dispatch; in `local` mode, any PaymentRequired or guard
-      rejection. Vacuous-truth default: zero
+      curator dispatch; in `local` mode, a ceiling-exceeded PaymentRequired (NOT an
+      insufficient-funds one — local delegation has no funding gate). Vacuous-truth default: zero
       dispatches → loop_closure 1.0 (vacuously satisfied).
     generates_spans:
       - reg.skill.swarm-intelligence.check

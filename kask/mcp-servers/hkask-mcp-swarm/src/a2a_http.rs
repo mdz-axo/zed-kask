@@ -9,8 +9,10 @@
 //! `LocalAgentRegistry` on every request, so agents created at runtime appear
 //! without a server restart.
 //!
-//! The local ledger (`swarm_fund_local` / `LocalSwarmRuntime::delegate`) is the
-//! only spend gate — no consent tokens on this path, consistent with the local
+//! There is NO funding gate on this path: the local ledger records spend rather
+//! than authorizing it, so the per-dispatch ceiling is the only bound. Note this
+//! gateway is externally reachable (loopback JSON-RPC), so the ceiling and the
+//! agent-card allowlist are the whole defence — no consent tokens, consistent with the local
 //! model. Streaming, push notifications, and task cancellation are not supported
 //! in v1 (the card declares `streaming=false`, `push_notifications=false`);
 //! `delegate` is synchronous and returns a completed `Task` inline, so there is

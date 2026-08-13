@@ -401,8 +401,8 @@ pub struct RemoveLocalRequest {
 /// `reconfigure_agent` / fan-out composition needs a programmatic create
 /// path; `swarm_clone_to_local` only copies from ABW). Writes
 /// `agents/local/curated/<id>/agent_card.json` and reloads the registry. No
-/// consent token — local mode has no consent gate (the ledger balance is the
-/// gate for *execution*, but card creation is free).
+/// consent token — local mode has no consent gate and no funding gate (the
+/// ledger records spend rather than authorizing it; card creation is free).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateLocalAgentRequest {
     pub agent_id: String,
@@ -471,7 +471,7 @@ pub struct ReconfigureLocalAgentRequest {
 
 /// Create a local swarm — the local replica of an ABW workspace/team. A named
 /// grouping of local agent ids with a mission. No cost, no consent token (the
-/// local ledger gates delegation, not roster edits). Optionally seed members.
+/// local ledger records spend; it gates neither delegation nor roster edits). Optionally seed members.
 /// Returns the new swarm with its generated `swarm_id`.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateLocalSwarmRequest {
