@@ -97,7 +97,7 @@ fn resolve_under_data_dir_honors_dot_prefixed_hkask_data_dir() {
         std::env::set_var("HKASK_DATA_DIR", "./data");
     }
     let data_dir = resolve_data_dir();
-    let under = resolve_under_data_dir(std::path::Path::new("agents/alice/pod.db"));
+    let under = resolve_under_data_dir(std::path::Path::new("agents/alice/curator.db"));
     unsafe {
         std::env::remove_var("HKASK_DATA_DIR");
     }
@@ -109,7 +109,7 @@ fn resolve_under_data_dir_honors_dot_prefixed_hkask_data_dir() {
     );
     assert_eq!(
         under,
-        std::path::PathBuf::from("./data").join("agents/alice/pod.db"),
+        std::path::PathBuf::from("./data").join("agents/alice/curator.db"),
         "resolve_under_data_dir must delegate (.-prefixed path preserved)"
     );
 }

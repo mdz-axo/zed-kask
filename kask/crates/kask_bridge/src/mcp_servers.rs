@@ -173,7 +173,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         credentials: Some(&[
             // SMTP password — read by the curator email sink for algedonic alerts.
             "HKASK_SMTP_PASSWORD",
-            // SQLCipher passphrase for the curator's sovereign `pod.db`.
+            // SQLCipher passphrase for the curator's sovereign `curator.db`.
             // Without this, `open_curator_stores` cannot decrypt the DB under
             // governed launch and every store-backed tool returns
             // `permission_denied` (escalations, regulation archive, memory).
@@ -192,7 +192,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DIGEST_INTERVAL_SECS",
             // Curator DB path — injected by the deferred task after
             // provisioning, so the curator MCP server reads from the same
-            // `agents/curator/pod.db` the agent writes curator copies to.
+            // `agents/curator/curator.db` the agent writes curator copies to.
             "HKASK_CURATOR_DB",
             // Curator WebID — stashed in a non-global env var by the deferred
             // task. `mcp_env()` maps this to `HKASK_WEBID` for the curator
@@ -1259,7 +1259,7 @@ mod tests {
     fn curator_allowlist_matches_actual_reads() {
         let s = server_by_id("curator");
         // Secret reads: ctx.credentials.get("HKASK_SMTP_PASSWORD") (email sink)
-        // and ctx.credentials.get("HKASK_DB_PASSPHRASE") (SQLCipher pod.db).
+        // and ctx.credentials.get("HKASK_DB_PASSPHRASE") (SQLCipher curator.db).
         // The passphrase has no std::env::var fallback in the curator's `run()`,
         // so the allowlist is the only delivery path under governed launch.
         let creds = s.credentials.unwrap();
@@ -1269,7 +1269,7 @@ mod tests {
         );
         assert!(
             creds.contains(&"HKASK_DB_PASSPHRASE"),
-            "curator must receive HKASK_DB_PASSPHRASE to open its SQLCipher pod.db \
+            "curator must receive HKASK_DB_PASSPHRASE to open its SQLCipher curator.db \
              under governed launch — the run() reads it from ctx.credentials \
              with no std::env::var fallback"
         );

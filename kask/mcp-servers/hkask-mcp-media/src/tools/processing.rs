@@ -801,15 +801,10 @@ impl MediaServer {
             let mut errors = Vec::new();
             for frame in &frames {
                 match self.import_reference_image(frame) {
-                    Ok((image_id, _image_url)) => {
-                        let ga = self.access_gallery().map_err(map_media_error)?;
-                        let index = self
-                            .resolve_image_url_by_id(&ga, &image_id)
-                            .map(|(idx, _)| idx)
-                            .map_err(map_media_error)?;
+                    Ok((image_id, image_url)) => {
                         imported.push(serde_json::json!({
-                            "image_index": index,
                             "image_id": image_id,
+                            "image_url": image_url,
                         }));
                     }
                     Err(e) => {

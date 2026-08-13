@@ -10,7 +10,7 @@ use std::sync::Arc;
 use super::curator_db_path;
 
 /// Open an `EscalationQueue` (reviewable alert backlog) on the curator's
-/// sovereign `pod.db` — the same DB the curator MCP server's
+/// sovereign `curator.db` — the same DB the curator MCP server's
 /// `curator_escalations` / `curator_escalation_resolve` /
 /// `curator_escalation_dismiss` tools read. Returns `None` on any failure;
 /// the caller degrades to no escalation-queue persistence with a warn.
@@ -56,7 +56,7 @@ pub fn open_curator_escalation_queue(
 }
 /// Adapter implementing `hkask_regulation::AlertEscalationSink` by forwarding
 /// algedonic alerts to the `EscalationQueue` (the reviewable backlog on the
-/// curator's `pod.db`).
+/// curator's `curator.db`).
 ///
 /// This closes the Store seam: `CyberneticsLoop` calls
 /// `persist_alert_to_queue` → this adapter → `EscalationQueue::add` → the

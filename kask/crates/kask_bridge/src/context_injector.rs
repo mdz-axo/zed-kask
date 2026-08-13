@@ -183,7 +183,7 @@ impl BridgeContextInjector {
     /// Construct a new context injector for the curator's sovereign memory.
     /// Same recall logic, but delegates to `recall_context_curator` /
     /// `recall_thread_curator` so the Curator recalls from
-    /// `agents/curator/pod.db` rather than the user's `memory.db`.
+    /// `agents/curator/curator.db` rather than the user's `memory.db`.
     ///
     /// `auto_inject` gates memory recall only; the kask tool-use warnings
     /// (`TOOL_WARNING_PROMPT`) are always emitted from `inject_static_context`

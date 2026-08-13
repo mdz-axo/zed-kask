@@ -78,17 +78,42 @@ impl ToolRetryTracker {
     }
 }
 
-/// Hash a `serde_json::Value` deterministically. Uses `serde_json::to_string`
-/// (canonical serialization) then hashes the bytes — this is stable across
-/// calls with the same logical input even if the key order in the JSON object
-/// differs (serde_json serializes in insertion order, but the agent typically
-/// sends the same key order on retries).
+/// Hash a `serde_json::Value` deterministically with key-order normalization.
+///
+/// Serializes the value with sorted object keys (`serde_json` preserves
+/// insertion order by default; we recursively sort to make the hash stable
+/// across trivially different parameter orderings). Whitespace differences are
+/// already handled by `serde_json::to_vec` (canonical serialization), but key
+/// order is not — `{"a":1,"b":2}` and `{"b":2,"a":1}` would hash
+/// differently without normalization. This function sorts keys at every level
+/// so the agent cannot escape the retry cap by reordering JSON keys.
 fn input_hash(input: &serde_json::Value) -> u64 {
+    let normalized = normalize_json(input);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    if let Ok(bytes) = serde_json::to_vec(input) {
+    if let Ok(bytes) = serde_json::to_vec(&normalized) {
         bytes.hash(&mut hasher);
     }
     hasher.finish()
+}
+
+/// Recursively normalize a JSON value so that object key order doesn't affect
+/// the hash. Arrays preserve order (order is semantically meaningful for
+/// arrays). Object keys are sorted alphabetically.
+fn normalize_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut sorted: Vec<(String, serde_json::Value)> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), normalize_json(v)))
+                .collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            serde_json::Value::Object(sorted.into_iter().collect())
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(normalize_json).collect())
+        }
+        other => other.clone(),
+    }
 }
 
 #[cfg(test)]

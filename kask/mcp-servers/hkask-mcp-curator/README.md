@@ -19,11 +19,11 @@ MCP server exposing Curator tools: system health, escalation management, Regulat
 
 ## Configuration
 
-No environment variables required. The server opens its sovereign `pod.db` (SQLCipher) using the `HKASK_CURATOR_DB` path and `HKASK_DB_PASSPHRASE` from the keychain. If the DB cannot be opened at startup, the server self-heals: every tool call re-attempts the open (rate-limited to once per 5s) until it succeeds.
+No environment variables required. The server opens its sovereign `curator.db` (SQLCipher) using the `HKASK_CURATOR_DB` path and `HKASK_DB_PASSPHRASE` from the keychain. If the DB cannot be opened at startup, the server self-heals: every tool call re-attempts the open (rate-limited to once per 5s) until it succeeds.
 
 ## Dependencies
 
 - `hkask-mcp-server` — MCP runtime and dispatch
-- `hkask-storage` / `hkask-memory` — sovereign `pod.db` stores
+- `hkask-storage` / `hkask-memory` — sovereign `curator.db` stores
 - `governance` module — escalation CRUD + Regulation event emission
 - `hkask-capability` — DelegationToken consent registry

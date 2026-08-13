@@ -7,7 +7,9 @@
 //! which OMC concept. That is the server's business, not the ontology's.
 
 use hkask_bridge_ontology::omc::OmcConcept;
-use hkask_bridge_ontology::omc::{ASSET, CREATIVE_WORK, MEDIA_SOURCE, SCENE, SEQUENCE, VERSION};
+use hkask_bridge_ontology::omc::{
+    ASSET, CREATIVE_WORK, MEDIA_SOURCE, SCENE, SEQUENCE, SHOT, TASK, VERSION,
+};
 
 // Re-export the shared explain-tool dispatch so the media server's tests and
 // any in-server consumers reference the single source of truth.
@@ -36,6 +38,10 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         "video_clip" | "video_to_gif" | "image_to_video" | "video_concat" => Some(SEQUENCE),
         // Collage — produces a new creative work from sources.
         "image_create_collage" => Some(CREATIVE_WORK),
+        // Frame extraction — produces shots (individual frames as gallery assets).
+        "video_extract_frames" => Some(SHOT),
+        // Generation lineage recording — produces a task (a unit of production work).
+        "gallery_record_generation" => Some(TASK),
         // Not covered by OMC (pure metadata / registry tools).
         _ => None,
     }
@@ -85,6 +91,16 @@ mod tests {
         assert_eq!(tool_to_omc("video_to_gif"), Some(SEQUENCE));
         assert_eq!(tool_to_omc("image_to_video"), Some(SEQUENCE));
         assert_eq!(tool_to_omc("video_concat"), Some(SEQUENCE));
+    }
+
+    #[test]
+    fn frame_extraction_maps_to_shot() {
+        assert_eq!(tool_to_omc("video_extract_frames"), Some(SHOT));
+    }
+
+    #[test]
+    fn generation_lineage_maps_to_task() {
+        assert_eq!(tool_to_omc("gallery_record_generation"), Some(TASK));
     }
 
     #[test]

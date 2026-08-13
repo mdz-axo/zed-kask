@@ -204,7 +204,7 @@ impl CyberneticsLoop {
     /// Wire the reviewable escalation queue sink for algedonic alerts.
     ///
     /// When set, every escalated alert is persisted to the escalation queue
-    /// (the `EscalationQueue` on the curator's pod.db) so the Curator/user can
+    /// (the `EscalationQueue` on the curator's curator.db) so the Curator/user can
     /// review pending alerts via `curator_escalations` and resolve/dismiss them
     /// with an audit trail. This is the primary durable path for alert review.
     ///

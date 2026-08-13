@@ -39,7 +39,7 @@ const SERVER_NAME: &str = "hkask-mcp-curator";
 const HEAL_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The four stores the curator's tools read, all backed by the curator's
-/// sovereign `pod.db`. Grouped so the self-healing handle can swap the whole
+/// sovereign `curator.db`. Grouped so the self-healing handle can swap the whole
 /// set atomically after a re-open.
 ///
 /// Named fields (not a positional tuple): tools address stores by name, so
@@ -94,7 +94,7 @@ impl CuratorStores {
     }
 }
 
-/// Self-healing handle over the curator's sovereign `pod.db` — the MCP-side
+/// Self-healing handle over the curator's sovereign `curator.db` — the MCP-side
 /// mirror of `CuratorStores` in `kask_bridge::memory`.
 ///
 /// When the DB cannot be opened at startup (transient SQLCipher lock from a
@@ -274,7 +274,7 @@ impl CuratorDb {
 
 hkask_mcp_server::mcp_server!(
     pub struct CuratorServer {
-        /// Self-healing handle over the curator's sovereign `pod.db`. All
+        /// Self-healing handle over the curator's sovereign `curator.db`. All
         /// four stores are read through `db.get()` on every tool call so a
         /// mid-process heal takes effect without a server restart.
         db: Arc<CuratorDb>,
@@ -784,7 +784,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-/// Open the curator's sovereign `pod.db` and construct all four stores from
+/// Open the curator's sovereign `curator.db` and construct all four stores from
 /// a single shared driver. Called at construction and on every heal attempt.
 /// All-or-nothing on the DB-open steps (a failure before store construction
 /// returns all `None`s); per-store `from_driver` failures degrade only that
