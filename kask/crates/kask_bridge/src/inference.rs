@@ -20,7 +20,7 @@ use gpui::AsyncApp;
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, InferenceError, InferencePort, InferenceResult,
-    InferenceUsage, StructuredToolCall,
+    InferenceStreamChunk, InferenceUsage, StructuredToolCall,
 };
 use language_model::LanguageModel;
 use language_model_core::{
@@ -42,6 +42,14 @@ struct InferenceRequest {
     reply: oneshot::Sender<Result<InferenceResult, InferenceError>>,
 }
 
+/// Streaming request — forwards `InferenceStreamChunk`s as they arrive
+/// instead of collecting the full result. Used by `generate_stream`.
+struct StreamInferenceRequest {
+    request: LanguageModelRequest,
+    model_override: Option<String>,
+    reply: tokio::sync::mpsc::UnboundedSender<Result<InferenceStreamChunk, InferenceError>>,
+}
+
 /// `InferencePort` implementation over zed's `LanguageModel`.
 ///
 /// Collects the streaming completion into a single `InferenceResult`.
@@ -51,6 +59,7 @@ struct InferenceRequest {
 /// call happens on the GPUI side via a spawned task that owns the `AsyncApp`.
 pub struct LanguageModelInferencePort {
     tx: tokio::sync::mpsc::UnboundedSender<InferenceRequest>,
+    stream_tx: tokio::sync::mpsc::UnboundedSender<StreamInferenceRequest>,
 }
 
 impl LanguageModelInferencePort {
@@ -60,157 +69,289 @@ impl LanguageModelInferencePort {
     /// inference requests. Drop the returned `Task` to stop it.
     pub fn new(model: Arc<dyn LanguageModel>, cx: AsyncApp) -> (Self, gpui::Task<()>) {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
+        let (stream_tx, mut stream_rx) =
+            tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
         let model_for_task = model.clone();
 
         let task = cx.spawn(async move |cx| {
-            while let Some(req) = rx.recv().await {
-                // Resolve the model: use the override if provided, else the default.
-                let model = if let Some(ref override_name) = req.model_override {
-                    let override_name = override_name.clone();
-                    let resolved = cx.update(|cx| {
-                        let registry = language_model::LanguageModelRegistry::read_global(cx);
-                        crate::model_resolution::resolve_model_names(
-                            registry,
-                            std::slice::from_ref(&override_name),
-                            cx,
-                        )
-                        .0
-                        .into_values()
-                        .next()
-                    });
-                    match resolved {
-                        Some(m) => m,
-                        None => {
-                            tracing::warn!(
-                                target: "hkask.inference",
-                                model_override = %override_name.as_str(),
-                                "model_override could not be resolved from LanguageModelRegistry — \
-                                 falling back to the default model. Ensure the model is configured \
-                                 in Settings → AI → LLM Providers."
-                            );
-                            model_for_task.clone()
-                        }
+            // Process both channels on the GPUI foreground executor.
+            // `stream_completion` needs `&AsyncApp` which is not `Send`,
+            // so both must run here.
+            loop {
+                // Use tokio::select to poll both channels. The non-streaming
+                // path is the common case; the streaming path is used by
+                // `generate_stream` (skill cascade thinking traces).
+                tokio::select! {
+                    Some(req) = rx.recv() => {
+                        Self::handle_non_streaming(req, &model_for_task, cx).await;
                     }
-                } else {
-                    model_for_task.clone()
-                };
-                let cx = cx.clone();
-                // Run on the foreground executor — stream_completion needs &AsyncApp
-                // which is not Send, so it can't go to background_spawn.
-                let result = async move {
-                    let stream_result = model
-                        .stream_completion(req.request, &cx)
-                        .await
-                        .map_err(|e| InferenceError::Connection(e.to_string()));
-
-                    match stream_result {
-                        Err(e) => Err(e),
-                        Ok(mut stream) => {
-                            let mut text = String::new();
-                            let mut reasoning = String::new();
-                            let mut tool_calls = Vec::new();
-                            let mut finish_reason = "stop".to_string();
-                            let mut usage = InferenceUsage::default();
-                            // Observed per-call USD cost from the provider's
-                            // `UsageUpdate` event (zed-kask D20 — the OpenAI-
-                            // compatible and OpenRouter provider impls populate
-                            // `TokenUsage.cost` from `usage.cost`/
-                            // `estimated_cost`/`market_cost`). `None` when the
-                            // provider reports no cost (Anthropic, Ollama, local).
-                            let mut cost_usd: Option<f64> = None;
-
-                            while let Some(event) = stream.next().await {
-                                match event {
-                                    Ok(LanguageModelCompletionEvent::Text(delta)) => {
-                                        text.push_str(&delta);
-                                    }
-                                    Ok(LanguageModelCompletionEvent::Thinking {
-                                        text: thinking,
-                                        ..
-                                    }) => {
-                                        reasoning.push_str(&thinking);
-                                    }
-                                    Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
-                                        if tool_use.is_input_complete =>
-                                    {
-                                        let args = match &tool_use.input {
-                                            LanguageModelToolUseInput::Json(json) => json.clone(),
-                                            LanguageModelToolUseInput::Text(text) => {
-                                                serde_json::from_str(text)
-                                                    .unwrap_or(serde_json::Value::Null)
-                                            }
-                                        };
-                                        tool_calls.push(StructuredToolCall {
-                                            // Zed's `LanguageModelToolUse.name` is the
-                                            // tool name only, not a `server/tool` pair.
-                                            // The `server` field is left empty to signal
-                                            // "unknown server from zed bridge path".
-                                            server: String::new(),
-                                            tool: tool_use.name.to_string(),
-                                            args,
-                                            call_id: Some(tool_use.id.to_string()),
-                                        });
-                                    }
-                                    Ok(LanguageModelCompletionEvent::Stop(reason)) => {
-                                        finish_reason = match reason {
-                                            StopReason::EndTurn => "stop",
-                                            StopReason::MaxTokens => "length",
-                                            StopReason::ToolUse => "tool_calls",
-                                            StopReason::Refusal => "refusal",
-                                        }
-                                        .to_string();
-                                    }
-                                    Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
-                                        usage = InferenceUsage {
-                                            prompt_tokens: token_usage.input_tokens as u32,
-                                            completion_tokens: token_usage.output_tokens as u32,
-                                            total_tokens: (token_usage.input_tokens
-                                                + token_usage.output_tokens)
-                                                as u32,
-                                        };
-                                        cost_usd = token_usage.cost;
-                                    }
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        return Err(InferenceError::Generation(e.to_string()));
-                                    }
-                                }
-                            }
-                            let model_name = model.name().0.to_string();
-                            // rJoule = USD: `cost_usd` is the observed per-call
-                            // cost the provider reported in its `UsageUpdate` event
-                            // (zed-kask D20), now that zed's `TokenUsage` carries
-                            // `cost`. The manifest executor charges this to the
-                            // rJoule budget via `BudgetTracker::charge_rjoule`.
-                            // `None` when the provider reports no cost (Anthropic,
-                            // Ollama, local) — free, not charged.
-                            Ok(InferenceResult {
-                                text,
-                                model: model_name,
-                                usage,
-                                finish_reason,
-                                token_probabilities: None,
-                                tool_calls,
-                                reasoning: if reasoning.is_empty() {
-                                    None
-                                } else {
-                                    Some(reasoning)
-                                },
-                                cost_usd,
-                            })
-                        }
+                    Some(req) = stream_rx.recv() => {
+                        Self::handle_streaming(req, &model_for_task, cx).await;
                     }
-                }
-                .await;
-
-                if let Err(result) = req.reply.send(result) {
-                    tracing::trace!(target: "hkask.inference", "inference reply dropped — caller cancelled");
-                    let _ = result;
+                    else => break,
                 }
             }
         });
 
-        (Self { tx }, task)
+        (Self { tx, stream_tx }, task)
+    }
+
+    /// Resolve a model, using the override if provided, else the default.
+    async fn resolve_model(
+        model_for_task: &Arc<dyn LanguageModel>,
+        override_name: Option<&str>,
+        cx: &AsyncApp,
+    ) -> Arc<dyn LanguageModel> {
+        if let Some(override_name) = override_name {
+            let override_name = override_name.to_string();
+            let resolved = cx.update(|cx| {
+                let registry = language_model::LanguageModelRegistry::read_global(cx);
+                crate::model_resolution::resolve_model_names(
+                    registry,
+                    std::slice::from_ref(&override_name),
+                    cx,
+                )
+                .0
+                .into_values()
+                .next()
+            });
+            match resolved {
+                Some(m) => m,
+                None => {
+                    tracing::warn!(
+                        target: "hkask.inference",
+                        model_override = %override_name.as_str(),
+                        "model_override could not be resolved from LanguageModelRegistry — \
+                         falling back to the default model. Ensure the model is configured \
+                         in Settings → AI → LLM Providers."
+                    );
+                    model_for_task.clone()
+                }
+            }
+        } else {
+            model_for_task.clone()
+        }
+    }
+
+    /// Handle a non-streaming inference request (the original path).
+    async fn handle_non_streaming(
+        req: InferenceRequest,
+        model_for_task: &Arc<dyn LanguageModel>,
+        cx: &AsyncApp,
+    ) {
+        let model = Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await;
+        let cx = cx.clone();
+        let result = async move {
+            let stream_result = model
+                .stream_completion(req.request, &cx)
+                .await
+                .map_err(|e| InferenceError::Connection(e.to_string()));
+
+            match stream_result {
+                Err(e) => Err(e),
+                Ok(mut stream) => {
+                    let mut text = String::new();
+                    let mut reasoning = String::new();
+                    let mut tool_calls = Vec::new();
+                    let mut finish_reason = "stop".to_string();
+                    let mut usage = InferenceUsage::default();
+                    let mut cost_usd: Option<f64> = None;
+
+                    while let Some(event) = stream.next().await {
+                        match event {
+                            Ok(LanguageModelCompletionEvent::Text(delta)) => {
+                                text.push_str(&delta);
+                            }
+                            Ok(LanguageModelCompletionEvent::Thinking {
+                                text: thinking,
+                                ..
+                            }) => {
+                                reasoning.push_str(&thinking);
+                            }
+                            Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
+                                if tool_use.is_input_complete =>
+                            {
+                                let args = match &tool_use.input {
+                                    LanguageModelToolUseInput::Json(json) => json.clone(),
+                                    LanguageModelToolUseInput::Text(text) => {
+                                        serde_json::from_str(text)
+                                            .unwrap_or(serde_json::Value::Null)
+                                    }
+                                };
+                                tool_calls.push(StructuredToolCall {
+                                    server: String::new(),
+                                    tool: tool_use.name.to_string(),
+                                    args,
+                                    call_id: Some(tool_use.id.to_string()),
+                                });
+                            }
+                            Ok(LanguageModelCompletionEvent::Stop(reason)) => {
+                                finish_reason = match reason {
+                                    StopReason::EndTurn => "stop",
+                                    StopReason::MaxTokens => "length",
+                                    StopReason::ToolUse => "tool_calls",
+                                    StopReason::Refusal => "refusal",
+                                }
+                                .to_string();
+                            }
+                            Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
+                                usage = InferenceUsage {
+                                    prompt_tokens: token_usage.input_tokens as u32,
+                                    completion_tokens: token_usage.output_tokens as u32,
+                                    total_tokens: (token_usage.input_tokens
+                                        + token_usage.output_tokens)
+                                        as u32,
+                                };
+                                cost_usd = token_usage.cost;
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                return Err(InferenceError::Generation(e.to_string()));
+                            }
+                        }
+                    }
+                    let model_name = model.name().0.to_string();
+                    Ok(InferenceResult {
+                        text,
+                        model: model_name,
+                        usage,
+                        finish_reason,
+                        token_probabilities: None,
+                        tool_calls,
+                        reasoning: if reasoning.is_empty() {
+                            None
+                        } else {
+                            Some(reasoning)
+                        },
+                        cost_usd,
+                    })
+                }
+            }
+        }
+        .await;
+
+        if let Err(result) = req.reply.send(result) {
+            tracing::trace!(target: "hkask.inference", "inference reply dropped — caller cancelled");
+            let _ = result;
+        }
+    }
+
+    /// Handle a streaming inference request — forwards `InferenceStreamChunk`s
+    /// as they arrive so the caller (skill cascade) can emit live thinking
+    /// traces. The final chunk carries the accumulated `usage`, `cost_usd`,
+    /// and `finish_reason`.
+    async fn handle_streaming(
+        req: StreamInferenceRequest,
+        model_for_task: &Arc<dyn LanguageModel>,
+        cx: &AsyncApp,
+    ) {
+        let model = Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await;
+        let cx = cx.clone();
+        let reply = req.reply;
+
+        let result = async move {
+            let stream_result = model
+                .stream_completion(req.request, &cx)
+                .await
+                .map_err(|e| InferenceError::Connection(e.to_string()));
+
+            match stream_result {
+                Err(e) => {
+                    let _ = reply.send(Err(e));
+                }
+                Ok(mut stream) => {
+                    let mut tool_calls = Vec::new();
+                    let mut finish_reason = "stop".to_string();
+                    let mut usage = InferenceUsage::default();
+                    let mut cost_usd: Option<f64> = None;
+                    let model_name = model.name().0.to_string();
+
+                    while let Some(event) = stream.next().await {
+                        match event {
+                            Ok(LanguageModelCompletionEvent::Text(delta)) => {
+                                let _ = reply.send(Ok(InferenceStreamChunk {
+                                    text_delta: delta,
+                                    reasoning_delta: String::new(),
+                                    model: model_name.clone(),
+                                    finish_reason: None,
+                                    usage: None,
+                                    tool_calls: Vec::new(),
+                                    cost_usd: None,
+                                }));
+                            }
+                            Ok(LanguageModelCompletionEvent::Thinking {
+                                text: thinking,
+                                ..
+                            }) => {
+                                let _ = reply.send(Ok(InferenceStreamChunk {
+                                    text_delta: String::new(),
+                                    reasoning_delta: thinking,
+                                    model: model_name.clone(),
+                                    finish_reason: None,
+                                    usage: None,
+                                    tool_calls: Vec::new(),
+                                    cost_usd: None,
+                                }));
+                            }
+                            Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
+                                if tool_use.is_input_complete =>
+                            {
+                                let args = match &tool_use.input {
+                                    LanguageModelToolUseInput::Json(json) => json.clone(),
+                                    LanguageModelToolUseInput::Text(text) => {
+                                        serde_json::from_str(text)
+                                            .unwrap_or(serde_json::Value::Null)
+                                    }
+                                };
+                                tool_calls.push(StructuredToolCall {
+                                    server: String::new(),
+                                    tool: tool_use.name.to_string(),
+                                    args,
+                                    call_id: Some(tool_use.id.to_string()),
+                                });
+                            }
+                            Ok(LanguageModelCompletionEvent::Stop(reason)) => {
+                                finish_reason = match reason {
+                                    StopReason::EndTurn => "stop",
+                                    StopReason::MaxTokens => "length",
+                                    StopReason::ToolUse => "tool_calls",
+                                    StopReason::Refusal => "refusal",
+                                }
+                                .to_string();
+                            }
+                            Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
+                                usage = InferenceUsage {
+                                    prompt_tokens: token_usage.input_tokens as u32,
+                                    completion_tokens: token_usage.output_tokens as u32,
+                                    total_tokens: (token_usage.input_tokens
+                                        + token_usage.output_tokens)
+                                        as u32,
+                                };
+                                cost_usd = token_usage.cost;
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                let _ = reply.send(Err(InferenceError::Generation(e.to_string())));
+                                return;
+                            }
+                        }
+                    }
+
+                    // Final chunk carries the accumulated metadata.
+                    let _ = reply.send(Ok(InferenceStreamChunk {
+                        text_delta: String::new(),
+                        reasoning_delta: String::new(),
+                        model: model_name,
+                        finish_reason: Some(finish_reason),
+                        usage: Some(usage),
+                        tool_calls,
+                        cost_usd,
+                    }));
+                }
+            }
+        }
+        .await;
+        let _ = result;
     }
 
     fn build_request(
@@ -394,9 +535,63 @@ impl InferencePort for LanguageModelInferencePort {
         }
         .boxed()
     }
-}
 
-// ── LanguageModelEmbeddingPort ───────────────────────────────────────────────
+    /// Streaming override — forwards `InferenceStreamChunk`s as they arrive
+    /// from zed's `LanguageModel::stream_completion`. This is the live
+    /// thinking-trace path used by the skill cascade: each `reasoning_delta`
+    /// and `text_delta` is forwarded immediately so the user sees the model
+    /// thinking in real time, not after the full response completes.
+    ///
+    /// Without this override, the default trait impl wraps `generate()` in
+    /// `stream::once` — the entire response is collected before any chunk is
+    /// emitted, so the thinking trace appears all at once after the LLM
+    /// finishes, not live during generation.
+    fn generate_stream(
+        &self,
+        prompt: &str,
+        parameters: &LLMParameters,
+        tools: Option<&[ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn futures_util::Stream<Item = Result<InferenceStreamChunk, InferenceError>>
+                + Send
+                + '_,
+        >,
+    > {
+        let messages = vec![ChatMessage::user(prompt.to_string())];
+        let request = self.build_request(&messages, parameters, tools);
+        let (tx_stream, mut rx_stream) =
+            tokio::sync::mpsc::unbounded_channel::<Result<InferenceStreamChunk, InferenceError>>;
+
+        let stream_tx = self.stream_tx.clone();
+        let send_result = stream_tx.send(StreamInferenceRequest {
+            request,
+            model_override: None,
+            reply: tx_stream,
+        });
+
+        if send_result.is_err() {
+            return Box::pin(futures_util::stream::once(async {
+                Err(InferenceError::Connection(
+                    "inference stream channel closed".to_string(),
+                ))
+            }));
+        }
+
+        // Convert the tokio mpsc receiver into a futures_util::Stream by
+        // polling it asynchronously. This avoids adding a tokio-stream
+        // dependency.
+        Box::pin(futures_util::stream::unfold(
+            rx_stream,
+            |mut rx| async move {
+                match rx.recv().await {
+                    Some(chunk) => Some((chunk, rx)),
+                    None => None,
+                }
+            },
+        ))
+    }
+}
 //
 // Embedding generation over OpenAI-compatible provider credentials.
 //

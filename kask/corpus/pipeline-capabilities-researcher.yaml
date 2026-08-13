@@ -11,16 +11,17 @@
 #   Embedding:                  DeepInfra/Qwen/Qwen3-Embedding-0.6B (HKASK_EMBEDDING_MODEL)
 #
 # Phases:
+#   Pre-flight: Verify corpus MCP server is running and responsive
 #   0. Extract text from 138 source files
 #   1. Chunk extracted text into passages
 #   2a. Tag chunks with ontology annotations
 #   2b. Embed chunks with ontology-anchored vectors
-#   2c. Extract RDF triples as h_mems
+#   2c. Extract RDF triples as h_mems (ontology-anchored: dc_type=dcterms:Assertion)
 #   3. Dedup near-identical chunks
 #   4. Consolidate related chunks via LLM synthesis
 #   5. Build Bloom taxonomy QA prompts
 #   6. Generate QA pairs
-#   7. Ingest QAs into training JSONL + DB
+#   7. Ingest QAs into training JSONL + DB (ontology-anchored: dc_type=bibo:Document)
 #   8. Assemble ChatML dataset
 #   9. Submit LoRA training job
 #
@@ -30,6 +31,12 @@
 #   the stats to the user for review and approval before proceeding.
 #   A failed gate halts the pipeline. Gates do NOT check tool response
 #   fields — the disk artifact is the sole source of truth.
+#
+#   Ontology-aware gates (triples, QA ingest) also verify the h_mem
+#   ontology column via json_extract: dc_type, dimensions, dc_source,
+#   and pko_procedure must be populated and match the service contract.
+#   This catches silent ontology-column failures that would blind
+#   downstream json_extract queries in build_prompts and consolidate.
 #
 # Artifact retention:
 #   The entire corpus/ directory is gitignored. Final outputs will be
@@ -62,6 +69,50 @@ env:
   HKASK_EMBEDDING_MODEL: "{{ embedding_model }}"
 
 steps:
+  # ═══════════════════════════════════════════════════════════════════════
+  # Pre-flight: Verify corpus MCP server is running and responsive
+  #
+  # The corpus MCP server (hkask-mcp-corpus) provides every corpus_* tool
+  # this pipeline calls. It is a stdio MCP server launched by Zed's
+  # ContextServerStore when kask.mcp.load_default is true (the default).
+  # This gate verifies the server is registered and responding before any
+  # pipeline stage runs, so a missing server fails fast instead of
+  # producing cryptic tool-not-found errors mid-pipeline.
+  # ═══════════════════════════════════════════════════════════════════════
+  - id: gate_corpus_server_alive
+    type: gate
+    blocking: true
+    description: >
+      Verify the corpus MCP server is running and responsive by calling
+      corpus_is_complex on a small source file. If the tool is unavailable
+      or returns an error, halt before any pipeline stage runs. The agent
+      should attempt to restart the server via sync_kask_mcp_servers before
+      retrying this gate.
+    command: |
+      python3 - <<'PY'
+      import json, sys
+      # This gate is a declarative contract — the agent executing the pipeline
+      # must invoke the corpus_is_complex MCP tool on a file from corpus/source-library
+      # and verify it returns a valid JSON response. The agent presents the result
+      # to the user before proceeding.
+      #
+      # If the tool is unavailable (MCP server not running), the agent should:
+      #   1. Check that kask.mcp.load_default is true in Zed settings
+      #   2. Call sync_kask_mcp_servers to re-register built-in servers
+      #   3. Wait for the ContextServerStore to restart the corpus server
+      #   4. Retry this gate
+      #
+      # The agent fills in the actual tool response here before asserting.
+      print(json.dumps({
+          "instruction": "Agent must call corpus_is_complex on any file in corpus/source-library,",
+          "verify": "tool returns valid JSON with 'is_complex' field",
+          "on_failure": "restart corpus MCP server via sync_kask_mcp_servers, then retry",
+      }, indent=2))
+      PY
+    on_failure:
+      action: halt
+      resume: "restart corpus MCP server via sync_kask_mcp_servers, rerun this gate"
+
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 0: Extract text from source files
   # ═══════════════════════════════════════════════════════════════════════
@@ -378,7 +429,10 @@ steps:
   - id: extract_triples
     description: >
       Extract RDF triples from each chunk with the canonical classifier model.
-      Stores triples as h_mems with entity=chunk_ref, owner=john-brooks.
+      Stores triples as h_mems with entity=chunk_ref, attribute=predicate,
+      value={subject, object}, and a dual-axis ontology blob (dc_type=
+      dcterms:Assertion, dc_source=chunk_ref, 5W1H dimension from predicate,
+      optional ontology_tags for tagged namespaces). owner=john-brooks.
     tool: corpus_extract_triples
     params:
       chunks_jsonl: "corpus/chunks/chunks.jsonl"
@@ -393,19 +447,41 @@ steps:
     blocking: true
     description: >
       Verify the DB contains a non-trivial, distributed knowledge graph with
-      triple coverage across at least 80% of chunks. Present triple distribution
-      and coverage stats to the user before proceeding to dedup. Requires sqlcipher.
+      triple coverage across at least 80% of chunks. Verify the ontology column
+      is populated and well-formed for every triple h_mem: dc_type must be
+      dcterms:Assertion, dimensions must be non-empty, dc_source must match
+      the chunk entity_ref. Present triple distribution, coverage, and ontology
+      stats to the user before proceeding to dedup. Requires sqlcipher.
     command: |
       command -v sqlcipher >/dev/null || { echo "sqlcipher CLI is required"; exit 2; }
       PASSPHRASE="${HKASK_DB_PASSPHRASE:-hkask-default-passphrase-2024}"
-      COUNTS=$(sqlcipher -batch corpus/memory/john-brooks.db \
-        "PRAGMA key='$PASSPHRASE'; SELECT COUNT(*), COUNT(DISTINCT entity) FROM hmems WHERE entity LIKE 'corpus:researcher:%';")
-      python3 - "$COUNTS" <<'PY'
+      DB="corpus/memory/john-brooks.db"
+      KEY="PRAGMA key='$PASSPHRASE';"
+      # Count + coverage + ontology column checks in one query pass.
+      # json_extract returns NULL for null/malformed ontology — the right
+      # signal for a broken write that would blind downstream json_extract
+      # queries in build_prompts and consolidate.
+      STATS=$(sqlcipher -batch "$DB" "$KEY
+        SELECT
+          COUNT(*)                                          AS total,
+          COUNT(DISTINCT entity)                            AS distinct_entities,
+          SUM(CASE WHEN ontology IS NULL THEN 1 ELSE 0 END) AS null_ontology,
+          SUM(CASE WHEN json_extract(ontology,'$.dc_type') != 'dcterms:Assertion'
+                   THEN 1 ELSE 0 END)                       AS wrong_dc_type,
+          SUM(CASE WHEN json_extract(ontology,'$.dimensions') IS NULL
+                        OR json_extract(ontology,'$.dimensions') = '[]'
+                   THEN 1 ELSE 0 END)                       AS empty_dimensions,
+          SUM(CASE WHEN json_extract(ontology,'$.dc_source') IS NULL
+                        OR json_extract(ontology,'$.dc_source') = ''
+                   THEN 1 ELSE 0 END)                       AS missing_dc_source
+        FROM hmems WHERE entity LIKE 'corpus:researcher:%';")
+      python3 - "$STATS" <<'PY'
       import json, sys
       with open("corpus/chunks/chunks.jsonl") as handle:
           chunks = sum(1 for _ in handle)
       parts = sys.argv[1].strip().split("|")
-      total, entities = int(parts[0]), int(parts[1])
+      total, entities, null_ont, wrong_dc, empty_dims, missing_src = \
+          int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4]), int(parts[5])
       coverage = entities / max(chunks, 1)
       avg_per_entity = total / max(entities, 1)
       stats = {
@@ -414,15 +490,23 @@ steps:
           "entities_with_triples": entities,
           "entity_coverage": round(coverage, 3),
           "avg_h_mems_per_entity": round(avg_per_entity, 1),
+          "ontology_null": null_ont,
+          "ontology_wrong_dc_type": wrong_dc,
+          "ontology_empty_dimensions": empty_dims,
+          "ontology_missing_dc_source": missing_src,
       }
       print(json.dumps(stats, indent=2))
       assert total >= chunks, f"only {total} h_mems for {chunks} chunks"
       assert coverage >= 0.80, f"coverage {coverage:.3f} below 0.80"
+      assert null_ont == 0, f"{null_ont} triple h_mems have null ontology column"
+      assert wrong_dc == 0, f"{wrong_dc} triple h_mems have dc_type != dcterms:Assertion"
+      assert empty_dims == 0, f"{empty_dims} triple h_mems have empty dimensions"
+      assert missing_src == 0, f"{missing_src} triple h_mems have missing dc_source"
       print("GATE_PASS triples_complete")
       PY
     on_failure:
       action: halt
-      resume: "repair triple extraction, rerun this gate, present stats to user"
+      resume: "repair triple extraction or ontology anchoring, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 3: Dedup near-identical chunks (cosine > 0.85)
@@ -731,9 +815,11 @@ steps:
     blocking: true
     description: >
       Verify the training JSONL has required fields, quality minima, unique
-      instructions, and that DB h_mem count matches the file. Present training
-      dataset stats to the user before proceeding to ChatML assembly.
-      Requires sqlcipher CLI.
+      instructions, and that DB h_mem count matches the file. Verify the
+      ontology column is populated for every QA h_mem: dc_type must be
+      bibo:Document, pko_procedure must be corpus_generate_qa, dimensions
+      must be non-empty. Present training dataset and ontology stats to the
+      user before proceeding to ChatML assembly. Requires sqlcipher CLI.
     command: |
       python3 - <<'PY'
       import json
@@ -764,15 +850,50 @@ steps:
       PY
       command -v sqlcipher >/dev/null || { echo "sqlcipher CLI is required for DB reconciliation"; exit 2; }
       PASSPHRASE="${HKASK_DB_PASSPHRASE:-hkask-default-passphrase-2024}"
+      DB="corpus/memory/john-brooks.db"
+      KEY="PRAGMA key='$PASSPHRASE';"
       TRAIN_COUNT=$(wc -l < corpus/qa_pairs/train.jsonl)
-      DB_COUNT=$(sqlcipher -batch corpus/memory/john-brooks.db \
-        "PRAGMA key='$PASSPHRASE'; SELECT COUNT(*) FROM hmems WHERE attribute = 'training_qa_pair' AND value LIKE '%\"dataset\":\"capabilities-researcher\"%';")
-      echo "train_jsonl=$TRAIN_COUNT db_training_qa_pairs=$DB_COUNT"
-      test "$DB_COUNT" -eq "$TRAIN_COUNT" || { echo "MISMATCH: DB $DB_COUNT != train $TRAIN_COUNT"; exit 1; }
-      echo "GATE_PASS qa_ingest_complete"
+      # Count + ontology column checks for QA h_mems. The QA ingest service
+      # sets dc_type=bibo:Document, pko_procedure=corpus_generate_qa,
+      # pko_step=chunk_ref, and dimensions=[What] (from HMemOntology::semantic).
+      QA_STATS=$(sqlcipher -batch "$DB" "$KEY
+        SELECT
+          COUNT(*)                                          AS total,
+          SUM(CASE WHEN ontology IS NULL THEN 1 ELSE 0 END) AS null_ontology,
+          SUM(CASE WHEN json_extract(ontology,'$.dc_type') != 'bibo:Document'
+                   THEN 1 ELSE 0 END)                       AS wrong_dc_type,
+          SUM(CASE WHEN json_extract(ontology,'$.pko_procedure') != 'corpus_generate_qa'
+                   THEN 1 ELSE 0 END)                       AS wrong_pko_procedure,
+          SUM(CASE WHEN json_extract(ontology,'$.dimensions') IS NULL
+                        OR json_extract(ontology,'$.dimensions') = '[]'
+                   THEN 1 ELSE 0 END)                       AS empty_dimensions
+        FROM hmems WHERE attribute = 'training_qa_pair'
+          AND value LIKE '%\"dataset\":\"capabilities-researcher\"%';")
+      python3 - "$TRAIN_COUNT" "$QA_STATS" <<'PY'
+      import json, sys
+      train_count = int(sys.argv[1])
+      parts = sys.argv[2].strip().split("|")
+      db_count, null_ont, wrong_dc, wrong_pko, empty_dims = \
+          int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
+      stats = {
+          "train_jsonl": train_count,
+          "db_training_qa_pairs": db_count,
+          "ontology_null": null_ont,
+          "ontology_wrong_dc_type": wrong_dc,
+          "ontology_wrong_pko_procedure": wrong_pko,
+          "ontology_empty_dimensions": empty_dims,
+      }
+      print(json.dumps(stats, indent=2))
+      assert db_count == train_count, f"MISMATCH: DB {db_count} != train {train_count}"
+      assert null_ont == 0, f"{null_ont} QA h_mems have null ontology column"
+      assert wrong_dc == 0, f"{wrong_dc} QA h_mems have dc_type != bibo:Document"
+      assert wrong_pko == 0, f"{wrong_pko} QA h_mems have pko_procedure != corpus_generate_qa"
+      assert empty_dims == 0, f"{empty_dims} QA h_mems have empty dimensions"
+      print("GATE_PASS qa_ingest_complete")
+      PY
     on_failure:
       action: halt
-      resume: "repair ingestion, rerun this gate, present stats to user"
+      resume: "repair ingestion or ontology anchoring, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 8: Assemble ChatML dataset (80/20 train/test split)

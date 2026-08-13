@@ -124,15 +124,16 @@ impl StepMachine {
                 snap.rjoule_cap,
             );
 
-            // Emit step label to the title callback.
+            // Emit step label to the title callback and a step-boundary
+            // marker to the thinking trace.
+            let total = self.graph.len();
+            let node = self.graph.step(self.pc);
+            let desc = if node.description.is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", node.description)
+            };
             if let Some(ref title) = infra.title {
-                let total = self.graph.len();
-                let node = self.graph.step(self.pc);
-                let desc = if node.description.is_empty() {
-                    String::new()
-                } else {
-                    format!(" — {}", node.description)
-                };
                 if self.iteration > 1 {
                     title(&format!(
                         "Iteration {}, step {}/{}: {}{}",
@@ -151,6 +152,30 @@ impl StepMachine {
                         desc
                     ));
                 }
+            }
+            // Also emit a step-boundary marker to the thinking trace so
+            // the user can see which step is running even when the model
+            // doesn't produce reasoning deltas (e.g. non-thinking models).
+            if let Some(ref progress) = infra.progress {
+                let marker = if self.iteration > 1 {
+                    format!(
+                        "\n\n---\n**Iteration {}, Step {}/{}: {}{}**\n\n",
+                        self.iteration,
+                        self.pc + 1,
+                        total,
+                        node.action,
+                        desc
+                    )
+                } else {
+                    format!(
+                        "\n\n---\n**Step {}/{}: {}{}**\n\n",
+                        self.pc + 1,
+                        total,
+                        node.action,
+                        desc
+                    )
+                };
+                progress(&marker);
             }
 
             // Execute steps until we hit a Reenter, Exit, or the end of the graph.

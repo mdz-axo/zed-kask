@@ -59,16 +59,20 @@ pub fn safe_template_join(base: &Path, template_ref: &str) -> Option<PathBuf> {
 pub struct TemplateRenderer {
     base_path: PathBuf,
     env: Mutex<minijinja::Environment<'static>>,
+    /// Disk content cache: template_ref → (mtime, content). Avoids re-reading
+    /// the same .j2/.yaml file on every cascade iteration when the file hasn't
+    /// changed. Without this, a 5-step cascade with 3 `select` steps re-reads
+    /// 3 files from disk per iteration — 30 file reads for a 10-iteration
+    /// convergence loop.
+    disk_cache: std::sync::Mutex<std::collections::HashMap<String, (std::time::SystemTime, String)>>,
 }
 
 impl Clone for TemplateRenderer {
     fn clone(&self) -> Self {
-        // `Environment` is `Clone` (holds `Arc` internally) — cloning is cheap
-        // and produces an independent environment that does not share template
-        // registrations with the original.
         Self {
             base_path: self.base_path.clone(),
             env: Mutex::new(self.env.lock().unwrap_or_else(|e| e.into_inner()).clone()),
+            disk_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 }

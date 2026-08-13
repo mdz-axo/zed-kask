@@ -1,3 +1,6 @@
+# Source library — original PDFs/HTML, never source-controlled
+source-library/
+
 # Raw text extractions — derived from source PDFs/HTML, not source-controlled
 extracted/
 

@@ -264,6 +264,7 @@ impl StepMachine {
             &params,
             tools,
             timeout_dur,
+            node.ordinal,
             infra.progress.as_deref(),
         )
         .await?;
@@ -859,6 +860,7 @@ async fn call_inference_stream(
     params: &LLMParameters,
     tools: Option<&[ChatToolDefinition]>,
     timeout: std::time::Duration,
+    step_ordinal: u32,
     progress: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<(
     String,
@@ -884,25 +886,33 @@ async fn call_inference_stream(
 
     let stream = inference.generate_stream(prompt, params, tools);
 
-    let (full_text, tool_calls, finish_reason) = match tokio::time::timeout(timeout, async {
+    let (full_text, tool_calls, cost_usd, finish_reason) = match tokio::time::timeout(timeout, async {
         let mut full_text = String::new();
         let mut final_chunk: Option<hkask_types::InferenceStreamChunk> = None;
         let mut stream = stream;
         while let Some(chunk_result) = stream.next().await {
             match chunk_result {
                 Ok(chunk) => {
+                    // Only reasoning deltas belong in the thinking trace.
+                    // text_delta is the LLM's raw output (often JSON from
+                    // structured-output steps) — sending it through progress
+                    // pollutes the thinking trace with non-thinking content.
                     if !chunk.reasoning_delta.is_empty() {
                         if let Some(progress) = progress {
                             progress(&chunk.reasoning_delta);
                         }
                     }
                     if !chunk.text_delta.is_empty() {
-                        if let Some(progress) = progress {
-                            progress(&chunk.text_delta);
-                        }
                         full_text.push_str(&chunk.text_delta);
                     }
-                    final_chunk = Some(chunk);
+                    // Track the latest chunk — the final one carries
+                    // tool_calls, finish_reason, usage, and cost_usd.
+                    if chunk.finish_reason.is_some()
+                        || !chunk.tool_calls.is_empty()
+                        || chunk.cost_usd.is_some()
+                    {
+                        final_chunk = Some(chunk);
+                    }
                 }
                 Err(e) => return Err(TemplateError::Inference(e)),
             }
@@ -916,24 +926,27 @@ async fn call_inference_stream(
             tool_calls: Vec::new(),
             cost_usd: None,
         });
-        Ok::<_, TemplateError>((full_text, chunk.tool_calls, chunk.finish_reason))
+        Ok::<_, TemplateError>((full_text, chunk.tool_calls, chunk.cost_usd, chunk.finish_reason))
     })
     .await
     {
-        Ok(Ok((text, tool_calls, finish_reason))) => (text, tool_calls, finish_reason),
+        Ok(Ok((text, tool_calls, cost_usd, finish_reason))) => (text, tool_calls, cost_usd, finish_reason),
         Ok(Err(e)) => return Err(e),
         Err(_elapsed) => {
+            // Include the step ordinal so operators can identify which
+            // inference step hung — without it the error reads "Step timed
+            // out after 60s" with no way to locate the offending step in a
+            // multi-step cascade. Mirrors the `execute_tool_invoke` error
+            // at line ~454 ("Tool step {} timed out after {}s").
             return Err(TemplateError::Manifest(format!(
-                "Step timed out after {}s",
+                "Inference step {} timed out after {}s",
+                step_ordinal,
                 timeout.as_secs()
             )));
         }
     };
 
-    // The streaming path does not surface cost_usd. Return None — the budget
-    // tracker treats None as free (not charged). When cost tracking is needed,
-    // use the non-streaming generate() path.
-    Ok((full_text, tool_calls, None, finish_reason))
+    Ok((full_text, tool_calls, cost_usd, finish_reason))
 }
 
 /// Resolve a tool's server and dispatch the call.
@@ -1042,6 +1055,7 @@ mod tests {
             &LLMParameters::default(),
             None,
             std::time::Duration::from_secs(30),
+            1,
             None,
         )
         .await

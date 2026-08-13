@@ -57,6 +57,33 @@ const MEMORY_CONTEXT_OPEN: &str =
 /// Closing data-boundary marker for a single recalled memory snippet.
 const MEMORY_CONTEXT_CLOSE: &str = "--- End Memory Context ---";
 
+/// Kask-specific tool-use warnings appended to every coding-agent thread's
+/// system prompt via `inject_static_context`. The upstream Zed agent harness
+/// prompt already carries general tool-use guidance ("Do not waste tokens by
+/// re-reading files...", "send a brief preamble...", a 3-strikes loop rule);
+/// this const adds kask-specific warnings for tool failure modes we have
+/// observed in production (`read_file` returning "tool input was not fully
+/// received", `edit_file` `old_text` mismatch loops, opaque `terminal`
+/// commands with no preamble). The upstream tool implementations and prompt
+/// are out of scope per `DIVERGENCE.md` (don't edit upstream speculatively);
+/// this is the kask-owned lever — appended via the static-context injection
+/// path, never by editing `system_prompt.hbs`.
+///
+/// Rendered once per session (not per turn) and cached on
+/// `Thread.static_context`, so it lands in the system prompt after the
+/// project context section for every coding-agent thread, regardless of
+/// `kask_settings.memory.auto_inject` (recall is gated on `auto_inject`;
+/// this warning is not).
+pub(crate) const TOOL_WARNING_PROMPT: &str = "\
+## Tool failure-mode warnings (kask)
+
+The built-in file/terminal tools have known failure modes. Follow these rules to avoid loops:
+
+- `read_file`: Do not re-read a file after `write_file`/`edit_file`/`create_directory`/`delete_path` returns success — the tool fails loudly on error, so success means the change landed. Do not loop on stale per-file diagnostics (the crate lib root is authoritative). Do not read a path that hasn't been mentioned or discovered first. If `read_file` returns \"tool input was not fully received\" or an outline-only result, retry once with explicit `start_line`/`end_line`; if it fails again, fall back to `terminal` (`sed`/`cat`) for that read and note the malfunction.
+- `edit_file`: Read the file first; make surgical `old_text`/`new_text` edits. If an edit fails because `old_text` didn't match, re-read the targeted region once and retry with the exact current text — do not loop blindly on the same `old_text`, and do not fall back to `write_file` to overwrite unrelated content.
+- `terminal`: Always send a 1–2 sentence preamble before the call stating what the command does and why; never run a command whose effect the user can't infer from the preamble + command text; prefer `read_file`/`edit_file`/`grep`/`find_path` over shell for file inspection; bound long-running commands with `timeout_ms`.
+- General anti-loop rule: if the same tool call (same args, same target) fails or returns the same result 3× in a row, stop, summarize what was tried, and ask the user — do not continue the loop. This covers \"returns the same result\" (e.g. `read_file` returning the same outline) not just \"same error.\"";
+
 /// Neutralize occurrences of the closing data-boundary marker inside snippet
 /// text so recalled content cannot close its own data frame and inject
 /// instructions into the surrounding system message for the remainder of the
@@ -123,20 +150,33 @@ pub struct BridgeContextInjector {
     /// user's stores. Selects the perspective-scoped recall path without
     /// duplicating the injector logic.
     curator: bool,
+    /// When true, perform memory recall in `inject_context` and the recall
+    /// half of `inject_static_context`. When false, recall is skipped but
+    /// `inject_static_context` still returns `Some(TOOL_WARNING_PROMPT)` so
+    /// the kask tool-use warnings always land in the system prompt regardless
+    /// of the `kask.memory.auto_inject` setting. Tool warnings are not memory
+    /// recall and should not be gated on it.
+    auto_inject: bool,
 }
 
 impl BridgeContextInjector {
     /// Construct a new context injector for the user's memory.
+    ///
+    /// `auto_inject` gates memory recall only; the kask tool-use warnings
+    /// (`TOOL_WARNING_PROMPT`) are always emitted from `inject_static_context`
+    /// regardless of this flag.
     pub fn new(
         memory_port: Arc<RealMemoryPort>,
         recall_limit: u32,
         recall_min_confidence: f64,
+        auto_inject: bool,
     ) -> Self {
         Self {
             memory_port,
             recall_limit,
             recall_min_confidence,
             curator: false,
+            auto_inject,
         }
     }
 
@@ -144,16 +184,22 @@ impl BridgeContextInjector {
     /// Same recall logic, but delegates to `recall_context_curator` /
     /// `recall_thread_curator` so the Curator recalls from
     /// `agents/curator/pod.db` rather than the user's `memory.db`.
+    ///
+    /// `auto_inject` gates memory recall only; the kask tool-use warnings
+    /// (`TOOL_WARNING_PROMPT`) are always emitted from `inject_static_context`
+    /// regardless of this flag.
     pub fn new_curator(
         memory_port: Arc<RealMemoryPort>,
         recall_limit: u32,
         recall_min_confidence: f64,
+        auto_inject: bool,
     ) -> Self {
         Self {
             memory_port,
             recall_limit,
             recall_min_confidence,
             curator: true,
+            auto_inject,
         }
     }
 
@@ -183,7 +229,10 @@ impl ContextInjector for BridgeContextInjector {
         };
         let log_label = if curator { "curator" } else { "user" };
 
-        if !Self::should_recall(&prompt) {
+        // Tool warnings are not per-turn; they live in `inject_static_context`.
+        // Recall is gated on `auto_inject` — when off, no per-turn memory
+        // injection. The tool warnings still land via `inject_static_context`.
+        if !self.auto_inject || !Self::should_recall(&prompt) {
             return Box::pin(async move { Vec::new() });
         }
 
