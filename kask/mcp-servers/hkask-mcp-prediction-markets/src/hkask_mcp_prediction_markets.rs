@@ -1059,13 +1059,9 @@ impl PredictionMarketsServer {
                 let stored = tokio::task::spawn_blocking(move || {
                     use hkask_mcp_portfolio::{AssetType, PortfolioError, Transaction, TxType};
                     // Create the portfolio (idempotent) as a prediction-contract portfolio.
-                    if let Err(e) = store.create(&portfolio_name, AssetType::PredictionContract) {
-                        // Already exists is fine; other errors propagate.
-                        match e {
-                            PortfolioError::InvalidArgument(_) => {}
-                            other => return Err(other),
-                        }
-                    }
+                    // `create` uses INSERT OR IGNORE — already-exists is Ok, not an error.
+                    // Any error here (invalid name, DB failure) must propagate.
+                    store.create(&portfolio_name, AssetType::PredictionContract)?;
                     let mut applied = 0usize;
                     let mut withheld = 0usize;
                     for point in &index.points {
@@ -1276,12 +1272,9 @@ impl PredictionMarketsServer {
                     index.bucket.label(),
                     index.orientation
                 );
-                if let Err(e) = store.create(&portfolio_name, AssetType::PredictionContract) {
-                    match e {
-                        PortfolioError::InvalidArgument(_) => {}
-                        other => return Err(other),
-                    }
-                }
+                // `create` uses INSERT OR IGNORE — already-exists is Ok, not an error.
+                // Any error here (invalid name, DB failure) must propagate.
+                store.create(&portfolio_name, AssetType::PredictionContract)?;
                 for constituent in &index.portfolio.constituents {
                     let symbol = market_ids
                         .get(constituent.market_index)
@@ -1617,6 +1610,23 @@ mod tool_surface_tests {
             Some(hkask_bridge_ontology::dc_bibo::DATASET),
             "market_lookup must anchor on Dublin Core Dataset"
         );
+    }
+
+    // Coverage: every registered tool must have a non-None ontology anchor.
+    // Catches the silent-drop failure mode where a new tool is added to the
+    // router without a corresponding arm in ontology_anchor. The count pin
+    // above catches addition; this test catches anchoring.
+    #[test]
+    fn ontology_anchor_covers_all_registered_tools() {
+        let router = PredictionMarketsServer::combined_router();
+        for tool in router.list_all() {
+            assert!(
+                PredictionMarketsServer::ontology_anchor(&tool.name).is_some(),
+                "ontology_anchor returned None for registered tool '{}'; \
+                 add an explicit arm or adjust the fallback",
+                tool.name
+            );
+        }
     }
 }
 

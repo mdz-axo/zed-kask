@@ -182,14 +182,16 @@ impl PortfolioStore {
     }
 
     /// Delete a portfolio and all its transactions, holdings, and returns
-    /// (FK cascade). Returns `InvalidArgument` if it does not exist.
+    /// (FK cascade). Returns `NotFound` if it does not exist.
     pub fn delete(&self, name: &str) -> Result<(), PortfolioError> {
         let conn = self.open()?;
         let rows = conn
             .execute("DELETE FROM portfolios WHERE name = ?1", params![name])
             .map_err(|e| format!("delete: {e}"))?;
         if rows == 0 {
-            return Err(format!("portfolio '{name}' does not exist").into());
+            return Err(PortfolioError::NotFound(format!(
+                "portfolio '{name}' does not exist"
+            )));
         }
         Ok(())
     }
@@ -635,7 +637,9 @@ impl PortfolioStore {
             )
             .is_ok();
         if !exists {
-            return Err(format!("portfolio '{name}' does not exist").into());
+            return Err(PortfolioError::NotFound(format!(
+                "portfolio '{name}' does not exist"
+            )));
         }
         Ok(())
     }

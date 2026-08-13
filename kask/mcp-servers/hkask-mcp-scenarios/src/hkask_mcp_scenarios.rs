@@ -339,9 +339,7 @@ impl ScenariosServer {
     #[tool(description = "Run the complete scenario pipeline in a single call.")]
     pub async fn scenario_full(&self, Parameters(req): Parameters<FullPipelineRequest>) -> String {
         execute_tool_semantic(self, "scenario_full", Self::ontology_anchor("scenario_full"), async {
-            let events: Vec<ScenarioEvent> = serde_json::from_str(&req.events)
-                .map_err(|e| McpToolError::invalid_argument(format!("invalid events JSON: {}", e)))?;
-
+            let events = &req.events;
             // The pipeline anchors synthesis on the first event, so an empty
             // array is refused up front rather than indexed later. `build_event_tree`
             // also rejects empty input, but the synthesis step at step 5 is
@@ -359,7 +357,7 @@ impl ScenariosServer {
             }).collect();
 
             // Step 2: Quantify
-            let tree = superforecast::build_event_tree(&events)
+            let tree = superforecast::build_event_tree(events)
                 .map_err(map_scenario_error)?;
 
             // Step 3: Sensitivity
@@ -385,36 +383,24 @@ impl ScenariosServer {
             }).collect();
 
             // Step 5: Synthesize (if perspectives provided)
-            let synth = req.perspectives.as_deref().and_then(|s| {
-                match serde_json::from_str::<Vec<Perspective>>(s) {
-                    Ok(perspectives) => {
-                        if perspectives.len() < 2 {
+            let synth = req.perspectives.as_deref().and_then(|perspectives| {
+                if perspectives.len() < 2 {
+                    tracing::warn!(
+                        target: "hkask.mcp.scenarios",
+                        "scenario_full: fewer than 2 perspectives provided; skipping synthesis"
+                    );
+                    None
+                } else {
+                    match superforecast::synthesize_perspectives(&first_event_id, perspectives) {
+                        Ok(synthesis) => Some(synthesis),
+                        Err(error) => {
                             tracing::warn!(
                                 target: "hkask.mcp.scenarios",
-                                "scenario_full: fewer than 2 perspectives provided; skipping synthesis"
+                                %error,
+                                "scenario_full: perspective synthesis failed; skipping"
                             );
                             None
-                        } else {
-                            match superforecast::synthesize_perspectives(&first_event_id, &perspectives) {
-                                Ok(synthesis) => Some(synthesis),
-                                Err(error) => {
-                                    tracing::warn!(
-                                        target: "hkask.mcp.scenarios",
-                                        %error,
-                                        "scenario_full: perspective synthesis failed; skipping"
-                                    );
-                                    None
-                                }
-                            }
                         }
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "hkask.mcp.scenarios",
-                            %error,
-                            "scenario_full: perspectives JSON parse failed; skipping synthesis"
-                        );
-                        None
                     }
                 }
             });
@@ -477,7 +463,7 @@ impl ScenariosServer {
     ) -> String {
         execute_tool_semantic(self, "scenario_from_markets", Self::ontology_anchor("scenario_from_markets"), async {
             let record: hkask_mcp_prediction_markets::types::MarketRecord =
-                serde_json::from_str(&req.market_record)
+                serde_json::from_value(req.market_record.into())
                     .map_err(|e| McpToolError::invalid_argument(format!("invalid market record JSON: {e}")))?;
 
             let (event, warnings) = {
@@ -540,7 +526,7 @@ impl ScenariosServer {
     ) -> String {
         execute_tool_semantic(self, "scenario_from_markets_set", Self::ontology_anchor("scenario_from_markets_set"), async {
             let records: Vec<hkask_mcp_prediction_markets::types::MarketRecord> =
-                serde_json::from_str(&req.market_records)
+                serde_json::from_value(req.market_records.into())
                     .map_err(|e| McpToolError::invalid_argument(format!("invalid market records JSON array: {e}")))?;
 
             let confidences = req.match_confidences.unwrap_or_else(|| vec![None; records.len()]);
@@ -621,7 +607,7 @@ impl ScenariosServer {
     ) -> String {
         execute_tool_semantic(self, "scenario_from_cmp_indices", Self::ontology_anchor("scenario_from_cmp_indices"), async {
             let indices: Vec<hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex> =
-                serde_json::from_str(&req.cmp_indices)
+                serde_json::from_value(req.cmp_indices.into())
                     .map_err(|e| McpToolError::invalid_argument(format!("invalid cmp_indices JSON array: {e}")))?;
 
             let observation_date = chrono::NaiveDate::parse_from_str(&req.observation_date, "%Y-%m-%d")
@@ -717,15 +703,10 @@ impl ScenariosServer {
         Parameters(req): Parameters<CrossValidateRequest>,
     ) -> String {
         execute_tool_semantic(self, "scenario_cross_validate", Self::ontology_anchor("scenario_cross_validate"), async {
-            let sq_a: Vec<SubQuestion> = serde_json::from_str(&req.sub_questions_a)
-                .map_err(|e| McpToolError::invalid_argument(format!("invalid sub_questions_a JSON: {}", e)))?;
-            let sq_b: Vec<SubQuestion> = serde_json::from_str(&req.sub_questions_b)
-                .map_err(|e| McpToolError::invalid_argument(format!("invalid sub_questions_b JSON: {}", e)))?;
-
             let validation = superforecast::cross_validate(
                 &req.event_id,
-                &req.source_a, req.estimate_a, &sq_a,
-                &req.source_b, req.estimate_b, &sq_b,
+                &req.source_a, req.estimate_a, &req.sub_questions_a,
+                &req.source_b, req.estimate_b, &req.sub_questions_b,
                 req.review_threshold,
             );
 
@@ -798,19 +779,7 @@ impl ScenariosServer {
             let protocol = templates::generate_framing_session(&req.subject);
 
             // If prior answers were provided, merge them into the template
-            let prior: Option<serde_json::Value> = req.prior_answers.as_deref().and_then(|s| {
-                match serde_json::from_str(s) {
-                    Ok(value) => Some(value),
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "hkask.mcp.scenarios",
-                            %error,
-                            "prior_answers JSON parse failed; ignoring prior answers"
-                        );
-                        None
-                    }
-                }
-            });
+            let prior: Option<serde_json::Value> = req.prior_answers.map(|v| v.into());
 
             let mut output = protocol;
             if let Some(ref prior) = prior
@@ -851,8 +820,7 @@ impl ScenariosServer {
         Parameters(req): Parameters<FrameDocumentRequest>,
     ) -> String {
         execute_tool_semantic(self, "scenario_frame_document", Self::ontology_anchor("scenario_frame_document"), async {
-            let answers: serde_json::Value = serde_json::from_str(&req.answers)
-                .map_err(|e| McpToolError::invalid_argument(format!("invalid answers JSON: {}", e)))?;
+            let answers: serde_json::Value = req.answers.into();
 
             let document = superforecast::structure_framing_document(&req.subject, &answers)
                 .map_err(map_scenario_error)?;
@@ -1255,10 +1223,7 @@ impl ScenariosServer {
     )]
     pub async fn scenario_quantify(&self, Parameters(req): Parameters<QuantifyRequest>) -> String {
         execute_tool_semantic(self, "scenario_quantify", Self::ontology_anchor("scenario_quantify"), async {
-            let events: Vec<ScenarioEvent> = serde_json::from_str(&req.events)
-                .map_err(|e| McpToolError::invalid_argument(format!("invalid events JSON: {}", e)))?;
-
-            let tree = superforecast::build_event_tree(&events)
+            let tree = superforecast::build_event_tree(&req.events)
                 .map_err(map_scenario_error)?;
 
             // Cache for TUI status queries
@@ -1327,11 +1292,9 @@ impl ScenariosServer {
         &self,
         Parameters(req): Parameters<PropagateRequest>,
     ) -> String {
+        pub async fn scenario_propagate(&self, Parameters(req): Parameters<PropagateRequest>) -> String {
         execute_tool_semantic(self, "scenario_propagate", Self::ontology_anchor("scenario_propagate"), async {
-            let events: Vec<ScenarioEvent> = serde_json::from_str(&req.events)
-                .map_err(|e| McpToolError::invalid_argument(format!("invalid events JSON array: {e}")))?;
-
-            let result = superforecast::propagate_prior_update(&events, &req.event_id, req.new_prior)
+            let result = superforecast::propagate_prior_update(&req.events, &req.event_id, req.new_prior)
                 .map_err(map_scenario_error)?;
 
             let nodes: Vec<serde_json::Value> = result
@@ -1971,6 +1934,23 @@ mod tool_surface_tests {
     fn tool_surface_is_exactly_21_registered_tools() {
         let n = ScenariosServer::combined_router().list_all().len();
         assert_eq!(n, 21, "scenarios registered tool surface changed; got {n}");
+    }
+
+    // Coverage: every registered tool must have a non-None ontology anchor.
+    // Catches the silent-drop failure mode where a new tool is added to the
+    // router without a corresponding arm in ontology_anchor. The count pin
+    // above catches addition; this test catches anchoring.
+    #[test]
+    fn ontology_anchor_covers_all_registered_tools() {
+        let router = ScenariosServer::combined_router();
+        for tool in router.list_all() {
+            assert!(
+                ScenariosServer::ontology_anchor(&tool.name).is_some(),
+                "ontology_anchor returned None for registered tool '{}'; \
+                 add an explicit arm or adjust the fallback",
+                tool.name
+            );
+        }
     }
 }
 

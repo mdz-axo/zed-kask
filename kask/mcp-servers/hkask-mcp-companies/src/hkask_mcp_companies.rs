@@ -266,6 +266,23 @@ mod tool_surface_tests {
         let n = CompaniesServer::combined_router().list_all().len();
         assert_eq!(n, 44, "companies registered tool surface changed; got {n}");
     }
+
+    // Coverage: every registered tool must have a non-None ontology anchor.
+    // Catches the silent-drop failure mode where a new tool is added to the
+    // router without a corresponding arm in fibo::tool_to_ontology. The count
+    // pin above catches addition; this test catches anchoring.
+    #[test]
+    fn ontology_anchor_covers_all_registered_tools() {
+        let router = CompaniesServer::combined_router();
+        for tool in router.list_all() {
+            assert!(
+                CompaniesServer::ontology_anchor(&tool.name).is_some(),
+                "ontology_anchor returned None for registered tool '{}'; \
+                 add an explicit arm in fibo::tool_to_ontology",
+                tool.name
+            );
+        }
+    }
 }
 
 // ── Entry point ─────────────────────────────────────────────────────

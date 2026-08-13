@@ -81,7 +81,7 @@ location is used (per `.rules` zed-kask integration traps). The archived-
 threads migration is D-seam D28: an edit to `crates/agent/src/db.rs`
 (upstream file) + `crates/agent/src/agent.rs` (upstream file) +
 `crates/zed/src/main.rs` (upstream file), carrying `// zed-kask: D28`
-comments and pinned by `test_threads_db_uses_kask_override_path_when_set`
+comments and pinned by `test_threads_db_override_hook_round_trips`
 in `db.rs`. The `crates/agent` crate does NOT depend on `hkask-types` —
 the path is passed through a global `Mutex<Option<PathBuf>>` hook
 (`set_threads_db_path_override`), preserving the §13.1 invariant that

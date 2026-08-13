@@ -194,6 +194,11 @@ pub async fn execute_tool<C: ToolContext>(
 
 /// Like `execute_tool` but tags the Regulation span with a domain ontology concept
 /// (e.g. "pko:ChangeOfStatus") for type-aware feedback routing.
+///
+/// When `ontology` is `None`, emits a `tracing::warn!` naming the tool — the
+/// algedonic signal that a registered tool lacks an ontology anchor. This
+/// opens the S1→S5 feedback channel: a missing anchor is visible at runtime
+/// rather than silently producing an untagged span.
 #[must_use]
 pub async fn execute_tool_semantic<C: ToolContext>(
     ctx: &C,
@@ -204,6 +209,14 @@ pub async fn execute_tool_semantic<C: ToolContext>(
     let mut span = ToolSpanGuard::new(tool_name, ctx.webid());
     if let Some(concept) = ontology {
         span = span.with_ontology(concept);
+    } else {
+        tracing::warn!(
+            target: "hkask.mcp.ontology",
+            tool = %tool_name,
+            "execute_tool_semantic called with None ontology for tool '{}'; \
+             add an arm to the server's ontology_anchor fn",
+            tool_name
+        );
     }
     let result = fut.await;
     span.finish(result)

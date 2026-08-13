@@ -7,12 +7,17 @@ pub(crate) const MAX_IMPORT_TRANSACTION_COUNT: usize = 10_000;
 
 /// Portfolio operation errors, classified for MCP tool dispatch.
 ///
-/// `InvalidArgument` variants map to `McpToolError::invalid_argument` (user error).
-/// All other variants map to `McpToolError::internal` (system error).
+/// Each variant maps to a distinct `McpToolError` kind in `map_portfolio_error`:
+/// - `InvalidArgument` → `invalid_argument` (caller input defect)
+/// - `NotFound` → `not_found` (portfolio or resource does not exist)
+/// - `Database` → `internal` (SQLite error — system failure)
+/// - `Serialize` → `internal` (serialization failure — system bug)
 #[derive(Debug, thiserror::Error)]
 pub enum PortfolioError {
     #[error("{0}")]
     InvalidArgument(String),
+    #[error("{0}")]
+    NotFound(String),
     #[error("database error: {0}")]
     Database(String),
     #[error("serialize error: {0}")]

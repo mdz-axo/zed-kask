@@ -1,5 +1,8 @@
+use hkask_mcp_server::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::Deserialize;
+
+use crate::types::{Perspective, ScenarioEvent, SubQuestion};
 
 // ── Request types for MCP tools ────────────────────────────────────────────
 
@@ -35,8 +38,11 @@ pub struct BrainstormRequest {
 pub struct FrameRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
-    /// Optional: pre-populated answers from a previous framing session
-    pub prior_answers: Option<String>,
+    /// Optional: pre-populated answers from a previous framing session, as a
+    /// JSON object. Typed as [`AnyJsonValue`] so the generated tool input
+    /// schema is the empty object `{}` rather than the bare boolean `true`
+    /// schemars emits for `serde_json::Value`.
+    pub prior_answers: Option<AnyJsonValue>,
 }
 
 /// Request to structure a completed framing conversation into a FramingDocument.
@@ -48,15 +54,22 @@ pub struct FrameDocumentRequest {
     /// Expected keys: focal_question, decision_at_stake, time_horizon,
     /// action_deadline, in_scope, out_of_scope, stakeholders, use_case,
     /// success_criteria, constraints, surfaced_assumptions, exploration_prompts.
-    pub answers: String,
+    ///
+    /// Typed as [`AnyJsonValue`] so the generated tool input schema is the
+    /// empty object `{}` rather than the bare boolean `true` schemars emits
+    /// for `serde_json::Value`.
+    pub answers: AnyJsonValue,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarketsBridgeRequest {
-    /// JSON of an annotated MarketRecord from hkask-mcp-prediction-markets
+    /// An annotated MarketRecord from hkask-mcp-prediction-markets
     /// (market_lookup or market_match output; for market_match, pass the
-    /// nested `market` object and set match_confidence).
-    pub market_record: String,
+    /// nested `market` object and set match_confidence). Typed as
+    /// [`AnyJsonValue`] because `MarketRecord` is defined in the
+    /// prediction-markets crate and does not derive `JsonSchema`; the tool
+    /// body deserializes it into the typed struct.
+    pub market_record: AnyJsonValue,
     /// Match confidence from market_match ("high"/"medium"/"low") — omit when
     /// the caller resolved the market unambiguously (e.g. direct lookup).
     pub match_confidence: Option<String>,
@@ -79,9 +92,9 @@ pub struct DependencySpecRequest {
 /// the whole tree (T5).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PropagateRequest {
-    /// JSON array of ScenarioEvents (the current tree's events, e.g. from a
-    /// prior scenario_from_markets_set / scenario_quantify output).
-    pub events: String,
+    /// The current tree's events (e.g. from a prior
+    /// scenario_from_markets_set / scenario_quantify output).
+    pub events: Vec<ScenarioEvent>,
     /// ID of the event whose prior is being revised.
     pub event_id: String,
     /// The new prior probability in [0, 1].
@@ -92,8 +105,10 @@ pub struct PropagateRequest {
 /// dependent event tree.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarketsSetBridgeRequest {
-    /// JSON array of annotated MarketRecords from hkask-mcp-prediction-markets.
-    pub market_records: String,
+    /// Annotated MarketRecords from hkask-mcp-prediction-markets. Typed as
+    /// [`AnyJsonValue`] because `MarketRecord` is defined in the
+    /// prediction-markets crate and does not derive `JsonSchema`.
+    pub market_records: AnyJsonValue,
     /// Optional per-record match confidences ("high"/"medium"/"low" or null),
     /// parallel to the records array. Omit for direct lookups.
     pub match_confidences: Option<Vec<Option<String>>>,
@@ -118,9 +133,11 @@ pub struct CmpDependencySpecRequest {
 /// EventTree with optional dependency edges (R1).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CmpBridgeRequest {
-    /// JSON array of ProvenancedCmpIndex objects from
-    /// hkask-mcp-prediction-markets (build_cmp_indices output).
-    pub cmp_indices: String,
+    /// ProvenancedCmpIndex objects from hkask-mcp-prediction-markets
+    /// (build_cmp_indices output). Typed as [`AnyJsonValue`] because
+    /// `ProvenancedCmpIndex` is defined in the prediction-markets crate and
+    /// does not derive `JsonSchema`.
+    pub cmp_indices: AnyJsonValue,
     /// The observation date (YYYY-MM-DD) the CMP indices were built. The event
     /// deadlines are observation_date + target_maturity_days.
     pub observation_date: String,
@@ -133,10 +150,10 @@ pub struct CmpBridgeRequest {
 pub struct FullPipelineRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
-    /// Events as JSON array of ScenarioEvent objects (from scenario_brainstorm or manual construction)
-    pub events: String,
-    /// Optional: perspectives for dragonfly-eye synthesis, as JSON array of Perspective objects
-    pub perspectives: Option<String>,
+    /// Events (from scenario_brainstorm or manual construction)
+    pub events: Vec<ScenarioEvent>,
+    /// Optional: perspectives for dragonfly-eye synthesis
+    pub perspectives: Option<Vec<Perspective>>,
     /// Optional: project-level metadata for assessment
     pub perspective_count: Option<usize>,
     /// Optional: how many strategies were generated from the scenarios
@@ -157,22 +174,22 @@ pub struct CrossValidateRequest {
     pub source_a: String,
     /// First probability estimate (0.0-1.0)
     pub estimate_a: f64,
-    /// Fermi sub-questions for estimate A as JSON array
-    pub sub_questions_a: String,
+    /// Fermi sub-questions for estimate A
+    pub sub_questions_a: Vec<SubQuestion>,
     /// Label for the second estimate source (e.g., 'scenario_calibrate')
     pub source_b: String,
     /// Second probability estimate (0.0-1.0)
     pub estimate_b: f64,
-    /// Fermi sub-questions for estimate B as JSON array
-    pub sub_questions_b: String,
+    /// Fermi sub-questions for estimate B
+    pub sub_questions_b: Vec<SubQuestion>,
     /// Review threshold (default 0.15). Divergence above this triggers review.
     pub review_threshold: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct QuantifyRequest {
-    /// Events as JSON array of ScenarioEvent objects
-    pub events: String,
+    /// Events to quantify
+    pub events: Vec<ScenarioEvent>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -191,22 +208,31 @@ pub struct UpdateRequest {
     pub evidence_description: Option<String>,
 }
 
+/// One outcome entry for `ScoreRequest`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct OutcomeEntry {
+    /// The event ID this outcome refers to.
+    pub event_id: String,
+    /// Whether the event occurred (true = Yes, false = No).
+    pub occurred: bool,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ScoreRequest {
     /// Forecast record ID
     pub forecast_id: String,
-    /// Events as JSON array of ScenarioEvent objects
-    pub events: String,
-    /// Outcomes: array of {event_id, occurred} objects as JSON
-    pub outcomes: String,
+    /// Events to score
+    pub events: Vec<ScenarioEvent>,
+    /// Outcomes: which events occurred.
+    pub outcomes: Vec<OutcomeEntry>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CalibrateRequest {
     /// The forecast question
     pub question: String,
-    /// Fermi sub-questions as JSON array of {question, estimate, confidence}
-    pub sub_questions: String,
+    /// Fermi sub-questions
+    pub sub_questions: Vec<SubQuestion>,
     /// Reference class description
     pub reference_class: Option<String>,
     /// Base rate from outside view
@@ -217,16 +243,16 @@ pub struct CalibrateRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SensitivityRequest {
-    /// Events as JSON array of ScenarioEvent objects
-    pub events: String,
+    /// Events to analyze
+    pub events: Vec<ScenarioEvent>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SynthesizeRequest {
     /// Event ID to synthesize perspectives for
     pub event_id: String,
-    /// Perspectives as JSON array of Perspective objects
-    pub perspectives: String,
+    /// Perspectives to aggregate
+    pub perspectives: Vec<Perspective>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
