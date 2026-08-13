@@ -1,17 +1,16 @@
 //! `InferencePort` adapter over zed's `LanguageModel`.
 //!
-//! hKask's `InferencePort` is non-streaming (`generate() -> InferenceResult`).
 //! Zed's `LanguageModel` streams (`stream_completion() -> BoxStream<CompletionEvent>`).
-//! This adapter collects the stream into a single `InferenceResult`, mapping the
-//! event types. Streaming is lost in this adapter — that's acceptable for the
-//! ManifestExecutor cascade (which needs complete results for PDCA convergence),
-//! and for MCP servers that already use the non-streaming `InferencePort`.
+//! This adapter has two paths:
+//! - **Non-streaming** (`generate`): collects the stream into a single `InferenceResult`.
+//!   Used by MCP servers and code that needs the complete result.
+//! - **Streaming** (`generate_stream`): forwards `InferenceStreamChunk`s as they arrive.
+//!   Used by the skill cascade for live thinking traces.
 //!
 //! `AsyncApp` is not `Send` (GPUI's `ForegroundExecutor` holds `Rc`-based state),
-//! so the bridge uses a channel: trait methods send a request to a GPUI-side task
-//! that holds the `AsyncApp` and executes the streaming completion, collecting the
-//! result and sending it back. The adapter struct itself only holds a channel
-//! sender (`Send + Sync`).
+//! so the bridge uses channels: trait methods send a request to a GPUI-side task
+//! that holds the `AsyncApp` and executes the streaming completion. The adapter
+//! struct itself only holds channel senders (`Send + Sync`).
 
 use std::sync::Arc;
 
@@ -52,10 +51,12 @@ struct StreamInferenceRequest {
 
 /// `InferencePort` implementation over zed's `LanguageModel`.
 ///
-/// Collects the streaming completion into a single `InferenceResult`.
-/// The model is selected at construction time — one adapter instance per model.
+/// Has two paths: non-streaming (`generate`) collects the stream into a
+/// single `InferenceResult`; streaming (`generate_stream`) forwards chunks
+/// as they arrive for live thinking traces. The model is selected at
+/// construction time — one adapter instance per model.
 ///
-/// The adapter holds only a channel sender (`Send + Sync`); the actual inference
+/// The adapter holds only channel senders (`Send + Sync`); the actual inference
 /// call happens on the GPUI side via a spawned task that owns the `AsyncApp`.
 pub struct LanguageModelInferencePort {
     tx: tokio::sync::mpsc::UnboundedSender<InferenceRequest>,
@@ -133,7 +134,8 @@ impl LanguageModelInferencePort {
         }
     }
 
-    /// Handle a non-streaming inference request (the original path).
+    /// Handle a non-streaming inference request — collects the full stream
+    /// into a single `InferenceResult` before replying.
     async fn handle_non_streaming(
         req: InferenceRequest,
         model_for_task: &Arc<dyn LanguageModel>,
@@ -249,7 +251,7 @@ impl LanguageModelInferencePort {
         let cx = cx.clone();
         let reply = req.reply;
 
-        let result = async move {
+        async move {
             let stream_result = model
                 .stream_completion(req.request, &cx)
                 .await
@@ -351,7 +353,6 @@ impl LanguageModelInferencePort {
             }
         }
         .await;
-        let _ = result;
     }
 
     fn build_request(
@@ -538,9 +539,9 @@ impl InferencePort for LanguageModelInferencePort {
 
     /// Streaming override — forwards `InferenceStreamChunk`s as they arrive
     /// from zed's `LanguageModel::stream_completion`. This is the live
-    /// thinking-trace path used by the skill cascade: each `reasoning_delta`
-    /// and `text_delta` is forwarded immediately so the user sees the model
-    /// thinking in real time, not after the full response completes.
+    /// thinking-trace path used by the skill cascade: `reasoning_delta` chunks
+    /// appear in the thinking trace in real time, not after the full response
+    /// completes.
     ///
     /// Without this override, the default trait impl wraps `generate()` in
     /// `stream::once` — the entire response is collected before any chunk is
@@ -560,7 +561,7 @@ impl InferencePort for LanguageModelInferencePort {
     > {
         let messages = vec![ChatMessage::user(prompt.to_string())];
         let request = self.build_request(&messages, parameters, tools);
-        let (tx_stream, mut rx_stream) =
+        let (tx_stream, rx_stream) =
             tokio::sync::mpsc::unbounded_channel::<Result<InferenceStreamChunk, InferenceError>>();
 
         let stream_tx = self.stream_tx.clone();

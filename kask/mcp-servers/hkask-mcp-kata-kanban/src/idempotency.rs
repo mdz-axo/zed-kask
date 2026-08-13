@@ -49,6 +49,15 @@ use hkask_storage::database::driver::DatabaseDriver;
 use hkask_storage::database::types::DbError;
 use hkask_storage::database::value::DbValue;
 
+/// Validation failure for a client-supplied idempotency key.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum IdempotencyKeyError {
+    #[error("idempotency_key must not be empty or whitespace")]
+    Empty,
+    #[error("idempotency_key exceeds {max_len} bytes (got {actual_len})")]
+    TooLong { max_len: usize, actual_len: usize },
+}
+
 /// How long a recorded response stays replayable.
 ///
 /// Bounds durability rather than correctness: a retry follows its original call
@@ -134,15 +143,15 @@ impl IdempotencyStore {
     ///
     /// Rejects empty and over-long keys. A whitespace-only key is a client bug
     /// that would otherwise collapse distinct gestures onto one reservation.
-    pub fn validate_key(key: &str) -> Result<(), String> {
+    pub fn validate_key(key: &str) -> Result<(), IdempotencyKeyError> {
         if key.trim().is_empty() {
-            return Err("idempotency_key must not be empty or whitespace".to_string());
+            return Err(IdempotencyKeyError::Empty);
         }
         if key.len() > MAX_KEY_LEN {
-            return Err(format!(
-                "idempotency_key exceeds {MAX_KEY_LEN} bytes (got {})",
-                key.len()
-            ));
+            return Err(IdempotencyKeyError::TooLong {
+                max_len: MAX_KEY_LEN,
+                actual_len: key.len(),
+            });
         }
         Ok(())
     }

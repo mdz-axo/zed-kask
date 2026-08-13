@@ -852,13 +852,17 @@ fn effective_timeout(timeout_seconds: u32) -> std::time::Duration {
 }
 
 /// Call inference with streaming, timeout, and reasoning-delta forwarding.
-/// Returns (text, tool_calls, cost_usd).
+/// Returns (text, tool_calls, cost_usd, finish_reason).
 ///
-/// The streaming path does not surface `cost_usd` (the stream chunks carry
-/// token deltas, not the provider's observed cost). When cost tracking is
-/// needed, the non-streaming `InferencePort::generate()` path populates it
-/// from the full response. For now, the streaming path returns `None` for
-/// cost — the budget tracker treats `None` as free (not charged).
+/// Only `reasoning_delta` is forwarded to the `progress` callback (the
+/// thinking trace). `text_delta` is accumulated into `full_text` for the
+/// cascade's result parsing but is NOT sent to the thinking trace — it's
+/// the LLM's raw output (often JSON from structured-output steps) and
+/// pollutes the thinking trace with non-thinking content.
+///
+/// `cost_usd` is extracted from the final streaming chunk (carried by the
+/// provider's `UsageUpdate` event) and returned so the budget tracker can
+/// charge rJoules.
 async fn call_inference_stream(
     inference: &Arc<dyn InferencePort>,
     prompt: &str,

@@ -626,21 +626,23 @@ mod tests {
     }
 
     /// Mirrors `LocalSwarmRuntime::record_spend`'s posting.
-    fn record_spend(ledger: &Ledger, amount: i64, reference: &str) -> Result<(), String> {
-        ledger
-            .commit(&hkask_ledger::LedgerTransaction {
-                id: uuid::Uuid::new_v4().to_string(),
-                timestamp: chrono::Utc::now().to_rfc3339(),
-                reference: reference.to_string(),
-                postings: vec![hkask_ledger::Posting {
-                    source: "operator".to_string(),
-                    destination: "external".to_string(),
-                    asset: "credits".to_string(),
-                    amount,
-                }],
-                metadata: serde_json::json!({ "action": "debit" }),
-            })
-            .map_err(|e| e.to_string())
+    fn record_spend(
+        ledger: &Ledger,
+        amount: i64,
+        reference: &str,
+    ) -> Result<(), hkask_ledger::LedgerError> {
+        ledger.commit(&hkask_ledger::LedgerTransaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            reference: reference.to_string(),
+            postings: vec![hkask_ledger::Posting {
+                source: "operator".to_string(),
+                destination: "external".to_string(),
+                asset: "credits".to_string(),
+                amount,
+            }],
+            metadata: serde_json::json!({ "action": "debit" }),
+        })
     }
 
     fn balance(ledger: &Ledger) -> i64 {

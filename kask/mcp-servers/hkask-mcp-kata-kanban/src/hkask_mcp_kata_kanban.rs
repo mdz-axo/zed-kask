@@ -93,7 +93,8 @@ where
     let Some(key) = key else {
         return work.await;
     };
-    idempotency::IdempotencyStore::validate_key(key).map_err(McpToolError::invalid_argument)?;
+    idempotency::IdempotencyStore::validate_key(key)
+        .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
 
     // Fail closed: if the claim cannot be recorded, the caller asked for replay
     // protection and must not be handed a call that silently lacks it.

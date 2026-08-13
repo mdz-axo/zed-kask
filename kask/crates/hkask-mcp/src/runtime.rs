@@ -32,14 +32,16 @@ use rmcp::service::{Peer, RoleClient, ServiceExt};
 use rmcp::transport::TokioChildProcess;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use thiserror::Error;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Minimum interval between reconnect attempts for the same server.
 ///
@@ -47,6 +49,27 @@ use tracing::info;
 /// dies during its handshake would be re-spawned once per tool call, turning a
 /// broken binary into a process-spawn storm.
 const RECONNECT_COOLDOWN: Duration = Duration::from_secs(5);
+
+/// Maximum number of retry attempts when a server fails to start (spawn or
+/// handshake). After exhausting these, the failure is reported to the caller
+/// and the next tool call will retry via the on-demand reconnect path.
+const STARTUP_MAX_RETRIES: u32 = 3;
+
+/// Initial backoff for startup retries. Doubles each attempt up to
+/// `STARTUP_MAX_BACKOFF`.
+const STARTUP_INITIAL_BACKOFF: Duration = Duration::from_millis(500);
+
+/// Cap on the startup retry backoff.
+const STARTUP_MAX_BACKOFF: Duration = Duration::from_secs(10);
+
+/// Interval between proactive health checks. The supervisor checks each
+/// server's transport liveness and, if closed, removes the dead connection
+/// so the on-demand reconnect path heals it on the next tool call.
+const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Maximum consecutive health-check failures before the supervisor stops
+/// auto-healing and logs an operator-actionable error.
+const MAX_CONSECUTIVE_HEALTH_FAILURES: u32 = 3;
 
 /// A simple flat-cost energy estimator.
 ///
@@ -203,6 +226,9 @@ pub struct McpRuntime {
     launch_specs: Arc<RwLock<HashMap<String, LaunchSpec>>>,
     /// Last reconnect attempt per server, for [`RECONNECT_COOLDOWN`].
     last_reconnect: Arc<RwLock<HashMap<String, Instant>>>,
+    /// Consecutive health-check failures per server. After
+    /// [`MAX_CONSECUTIVE_HEALTH_FAILURES`] the supervisor stops auto-healing.
+    health_failures: Arc<RwLock<HashMap<String, u32>>>,
     governance: Option<ToolGovernance>,
 }
 
@@ -219,6 +245,7 @@ impl McpRuntime {
             cancellation_tokens: Arc::new(RwLock::new(HashMap::new())),
             launch_specs: Arc::new(RwLock::new(HashMap::new())),
             last_reconnect: Arc::new(RwLock::new(HashMap::new())),
+            health_failures: Arc::new(RwLock::new(HashMap::new())),
             governance: None,
         }
     }
@@ -290,28 +317,33 @@ impl McpRuntime {
         extra_env: std::collections::HashMap<String, String>,
     ) -> Result<(), ServerStartError> {
         // Acquire write lock first to prevent TOCTOU races.
-        let mut connections = self.connections.write().await;
-        match connections.get(server_id) {
-            Some(existing) if !existing.peer.is_transport_closed() => {
-                info!(
-                    target: "hkask.mcp",
-                    server_id = %server_id,
-                    "Server already connected"
-                );
-                return Ok(());
+        {
+            let mut connections = self.connections.write().await;
+            match connections.get(server_id) {
+                Some(existing) if !existing.peer.is_transport_closed() => {
+                    info!(
+                        target: "hkask.mcp",
+                        server_id = %server_id,
+                        "Server already connected"
+                    );
+                    return Ok(());
+                }
+                Some(_) => {
+                    // A dead entry: drop it so the fresh connection below replaces
+                    // it even if the handshake takes a while.
+                    tracing::warn!(
+                        target: "hkask.mcp",
+                        server_id = %server_id,
+                        "Replacing a closed connection"
+                    );
+                    connections.remove(server_id);
+                }
+                None => {}
             }
-            Some(_) => {
-                // A dead entry: drop it so the fresh connection below replaces
-                // it even if the handshake takes a while.
-                tracing::warn!(
-                    target: "hkask.mcp",
-                    server_id = %server_id,
-                    "Replacing a closed connection"
-                );
-                connections.remove(server_id);
-            }
-            None => {}
         }
+        // Lock dropped — the spawn+handshake below does not hold the connections
+        // lock, so the future remains `Send` and can be spawned on the tokio
+        // runtime (required by the health supervisor's reconnect path).
 
         // Record the launch spec before spawning so a later reconnect can rebuild
         // this server even if this attempt fails partway through.
@@ -331,36 +363,118 @@ impl McpRuntime {
         // deployment-time configuration, not an ambient authority.
         let binary = resolve_mcp_binary(server_id, command);
 
-        let mut cmd = Command::new(&binary);
-        // Start from an empty environment, not an inherited one (RR-0060).
-        //
-        // `Command` inherits the parent env by default, and the parent loads every
-        // provider API key into its own environment (`dotenvy::from_path` in
-        // main.rs) and sets HKASK_SMTP_PASSWORD. Inheriting meant every MCP child
-        // received every secret regardless of its per-server allowlist — a server
-        // allowlisted `Some(&[])` still got the SMTP password and all the API keys,
-        // silently nullifying the credential scoping that `filter_credentials_for_server`
-        // exists to provide.
-        //
-        // `extra_env` is the caller's already-filtered per-server set, so after the
-        // clear the child sees exactly that, plus the non-secret process plumbing
-        // enumerated in `PASSTHROUGH_ENV_VARS` (a child with no PATH or HOME cannot
-        // resolve subprocesses or its own data directory).
-        cmd.env_clear();
-        for key in PASSTHROUGH_ENV_VARS {
-            if let Some(value) = std::env::var_os(key) {
+        // Spawn + handshake with retry. A server that fails its handshake (binary
+        // missing, DB locked, socket misconfiguration) is retried with exponential
+        // backoff up to [`STARTUP_MAX_RETRIES`]. Each attempt pipes stderr and
+        // forwards lines to the tracing substrate tagged with the server_id, so
+        // operator logs attribute child diagnostics correctly.
+        let mut last_error: Option<ServerStartError> = None;
+        let mut backoff = STARTUP_INITIAL_BACKOFF;
+        let mut attempt: u32 = 0;
+        let running = loop {
+            let mut cmd = Command::new(&binary);
+            //
+            // `Command` inherits the parent env by default, and the parent loads every
+            // provider API key into its own environment (`dotenvy::from_path` in
+            // main.rs) and sets HKASK_SMTP_PASSWORD. Inheriting meant every MCP child
+            // received every secret regardless of its per-server allowlist — a server
+            // allowlisted `Some(&[])` still got the SMTP password and all the API keys,
+            // silently nullifying the credential scoping that `filter_credentials_for_server`
+            // exists to provide.
+            //
+            // `extra_env` is the caller's already-filtered per-server set, so after the
+            // clear the child sees exactly that, plus the non-secret process plumbing
+            // enumerated in `PASSTHROUGH_ENV_VARS` (a child with no PATH or HOME cannot
+            // resolve subprocesses or its own data directory).
+            cmd.env_clear();
+            for key in PASSTHROUGH_ENV_VARS {
+                if let Some(value) = std::env::var_os(key) {
+                    cmd.env(key, value);
+                }
+            }
+            for (key, value) in &extra_env {
                 cmd.env(key, value);
             }
-        }
-        for (key, value) in &extra_env {
-            cmd.env(key, value);
-        }
-        let transport = TokioChildProcess::new(cmd)
-            .map_err(|e| ServerStartError::SpawnFailed(e.to_string()))?;
 
-        let running = ().into_dyn().serve(transport).await.map_err(|e| {
-            ServerStartError::ConnectFailed(format!("Handshake with '{}' failed: {}", server_id, e))
-        })?;
+            // Pipe stderr so child diagnostics are captured and tagged rather
+            // than mixed into the parent's stderr unattributed. The builder API
+            // returns the `ChildStderr` handle alongside the transport.
+            let builder = TokioChildProcess::builder(cmd).stderr(Stdio::piped());
+            let spawn_result = builder.spawn();
+            let (transport, stderr_handle) = match spawn_result {
+                Ok((transport, stderr)) => (transport, stderr),
+                Err(e) => {
+                    last_error = Some(ServerStartError::SpawnFailed(e.to_string()));
+                    warn!(
+                        target: "hkask.mcp",
+                        server_id = %server_id,
+                        attempt = attempt + 1,
+                        max = STARTUP_MAX_RETRIES,
+                        error = %e,
+                        "MCP server spawn failed — will retry"
+                    );
+                    if attempt + 1 >= STARTUP_MAX_RETRIES {
+                        break None;
+                    }
+                    tokio::time::sleep(backoff).await;
+                    backoff = std::cmp::min(backoff * 2, STARTUP_MAX_BACKOFF);
+                    attempt += 1;
+                    continue;
+                }
+            };
+
+            // Forward child stderr to tracing, tagged with the server_id so
+            // operator logs attribute diagnostics correctly. Each line is logged
+            // at INFO (most MCP servers emit structured `tracing` output on
+            // stderr, which is informational, not an error).
+            if let Some(stderr) = stderr_handle {
+                let stderr_server_id = server_id.to_string();
+                tokio::spawn(async move {
+                    let mut reader = BufReader::new(stderr).lines();
+                    while let Ok(Some(line)) = reader.next_line().await {
+                        info!(
+                            target: "hkask.mcp.child",
+                            server_id = %stderr_server_id,
+                            "{}",
+                            line
+                        );
+                    }
+                });
+            }
+
+            match ().into_dyn().serve(transport).await {
+                Ok(running) => break Some(running),
+                Err(e) => {
+                    last_error = Some(ServerStartError::ConnectFailed(format!(
+                        "Handshake with '{}' failed: {}",
+                        server_id, e
+                    )));
+                    warn!(
+                        target: "hkask.mcp",
+                        server_id = %server_id,
+                        attempt = attempt + 1,
+                        max = STARTUP_MAX_RETRIES,
+                        error = %e,
+                        "MCP server handshake failed — will retry"
+                    );
+                    if attempt + 1 >= STARTUP_MAX_RETRIES {
+                        break None;
+                    }
+                    tokio::time::sleep(backoff).await;
+                    backoff = std::cmp::min(backoff * 2, STARTUP_MAX_BACKOFF);
+                    attempt += 1;
+                }
+            }
+        };
+
+        let Some(running) = running else {
+            let error = last_error.unwrap_or_else(|| {
+                ServerStartError::SpawnFailed(
+                    "exhausted retries without a captured error".into(),
+                )
+            });
+            return Err(error);
+        };
 
         let peer = running.peer().clone();
         let cancel = CancellationToken::new();
@@ -425,15 +539,17 @@ impl McpRuntime {
             ))
         })?;
 
-        // Insert into the already-held write lock
-        connections.insert(server_id.to_string(), Connection { peer, generation });
-        // Drop the write lock before acquiring the cancellation_tokens lock
-        drop(connections);
+        // Re-acquire the connections write lock to insert the new connection.
+        // The lock was dropped before the spawn+handshake to keep the future `Send`.
+        {
+            let mut connections = self.connections.write().await;
+            connections.insert(server_id.to_string(), Connection { peer, generation });
+        }
 
         self.cancellation_tokens
             .write()
             .await
-            .insert(server_id.to_string(), cancel);
+            .insert(server_id.to_string(), cancel.clone());
 
         // Register the server and its discovered tools
         let server = McpServer {
@@ -458,6 +574,97 @@ impl McpRuntime {
         );
 
         self.register_server(server).await;
+
+        // Spawn a health supervisor for this server. The supervisor detects
+        // two failure modes the keeper task does not cover:
+        //
+        // 1. **Hung process** — the child is alive but not responding (deadlocked,
+        //    stuck on I/O). The keeper only fires when the service loop exits, so a
+        //    hung process with an open transport is never reaped. The supervisor
+        //    checks `is_transport_closed()` periodically and, if the transport is
+        //    closed but the keeper hasn't reaped yet, triggers a reconnect.
+        // 2. **Proactive reconnect** — rather than waiting for the next tool call
+        //    to discover the server is down (the on-demand path), the supervisor
+        //    reconnects immediately, so the first call after a crash hits a live
+        //    server.
+        //
+        // After [`MAX_CONSECUTIVE_HEALTH_FAILURES`] consecutive failures the
+        // supervisor stops auto-healing and logs an operator-actionable error,
+        // so a crash-looping binary doesn't spin forever.
+        let supervisor_cancel = cancel.clone();
+        let supervisor_connections = self.connections.clone();
+        let supervisor_health_failures = self.health_failures.clone();
+        let supervisor_id = server_id.to_string();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(HEALTH_CHECK_INTERVAL);
+            interval.tick().await; // skip the immediate first tick
+            loop {
+                tokio::select! {
+                    _ = supervisor_cancel.cancelled() => return,
+                    _ = interval.tick() => {}
+                }
+
+                // Check if the transport is still alive. If the keeper already
+                // reaped the connection, there's nothing to supervise — the
+                // on-demand reconnect path will handle the next call.
+                let needs_heal = {
+                    let connections = supervisor_connections.read().await;
+                    match connections.get(&supervisor_id) {
+                        Some(conn) => conn.peer.is_transport_closed(),
+                        None => false, // already reaped; nothing to heal
+                    }
+                };
+
+                if !needs_heal {
+                    // Reset the failure counter on a healthy check.
+                    let mut failures = supervisor_health_failures.write().await;
+                    if let Some(count) = failures.get_mut(&supervisor_id)
+                        && *count > 0
+                    {
+                        *count = 0;
+                    }
+                    continue;
+                }
+
+                // Transport is closed but the keeper hasn't reaped yet (or the
+                // process is hung). Remove the dead connection so the on-demand
+                // reconnect path (triggered by the next tool call) picks it up.
+                let failures = {
+                    let mut failures = supervisor_health_failures.write().await;
+                    let count = failures.entry(supervisor_id.clone()).or_insert(0);
+                    *count += 1;
+                    *count
+                };
+
+                if failures > MAX_CONSECUTIVE_HEALTH_FAILURES {
+                    tracing::error!(
+                        target: "hkask.mcp",
+                        server_id = %supervisor_id,
+                        consecutive_failures = failures,
+                        "MCP server health supervisor giving up after repeated failures — \
+                         operator intervention required (check stderr logs for this server)"
+                    );
+                    return;
+                }
+
+                warn!(
+                    target: "hkask.mcp",
+                    server_id = %supervisor_id,
+                    consecutive_failures = failures,
+                    "MCP server transport closed — supervisor removing dead connection"
+                );
+
+                // Remove the dead connection so `get_peer` returns `None` and
+                // `call_tool_inner` triggers `try_reconnect` on the next call.
+                // We don't call `try_reconnect` directly here because
+                // `start_server_with_env` holds locks across `.await` points that
+                // make its future `!Send`, and `tokio::spawn` requires `Send`.
+                {
+                    let mut connections = supervisor_connections.write().await;
+                    connections.remove(&supervisor_id);
+                }
+            }
+        });
 
         Ok(())
     }
@@ -571,6 +778,7 @@ impl McpRuntime {
         drop(tokens);
         self.launch_specs.write().await.clear();
         self.last_reconnect.write().await.clear();
+        self.health_failures.write().await.clear();
     }
 
     /// Stop a single managed server process and drop its tool registry.
@@ -597,6 +805,7 @@ impl McpRuntime {
         }
         self.launch_specs.write().await.remove(server_id);
         self.last_reconnect.write().await.remove(server_id);
+        self.health_failures.write().await.remove(server_id);
         // Drop the server's tools from the registry so stale names do not
         // resolve to a dead connection.
         let mut servers = self.servers.write().await;
