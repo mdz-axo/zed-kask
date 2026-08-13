@@ -9647,6 +9647,7 @@ dependencies = [
  "a2a-lf",
  "chrono",
  "dirs",
+ "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-ledger",
  "hkask-mcp-server",

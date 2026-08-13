@@ -103,9 +103,11 @@ pub fn fmp_field_to_fibo(field: &str) -> Option<FiboConcept> {
 /// Returns `None` only for tools that produce no artifact worth anchoring
 /// (currently none — all 44 tools are mapped).
 pub fn tool_to_ontology(tool: &str) -> Option<&'static str> {
+    use hkask_bridge_ontology::dc_bibo;
     match tool {
         // Portfolio tools
-        "portfolio_list" | "portfolio_delete" | "portfolio_comparison" => Some(PORTFOLIO),
+        "portfolio_list" | "portfolio_delete" => Some(PORTFOLIO),
+        "portfolio_comparison" => Some(COMPARABLE_COMPANY_ANALYSIS),
         "portfolio_returns" => Some(TIME_WEIGHTED_RETURN),
         "portfolio_attribution" => Some(ATTRIBUTION_ANALYSIS),
         "portfolio_characteristics" => Some(WEIGHTED_AVERAGE),
@@ -120,9 +122,8 @@ pub fn tool_to_ontology(tool: &str) -> Option<&'static str> {
         "sensitivity_analysis" => Some(SENSITIVITY_ANALYSIS),
         "equity_duration" => Some(INTERNAL_RATE_OF_RETURN),
         // Forecast tools
-        "calibrate_forecast" | "forecast_record" | "forecast_get" | "forecast_list" => {
-            Some(FORECAST_ID)
-        }
+        "calibrate_forecast" => Some(BRIER_SCORE),
+        "forecast_record" | "forecast_get" | "forecast_list" => Some(FORECAST_ID),
         "result_feedback" => Some(BRIER_SCORE),
         // Analysis tools
         "company_screener" => Some(STOCK_SCREENER),
@@ -132,19 +133,15 @@ pub fn tool_to_ontology(tool: &str) -> Option<&'static str> {
         "research_search" => Some(CORPORATION),
         // Financial data tools
         "company_profile" => Some(CORPORATION),
-        "stock_quote" => Some(MARKET_CAPITALIZATION),
+        "stock_quote" | "historical_price" => Some(MARKET_CAPITALIZATION),
         "key_metrics" => Some(PRICE_EARNINGS_RATIO),
-        "historical_price" => Some(MARKET_CAPITALIZATION),
         "income_statement" => Some(EBIT),
         "balance_sheet" => Some(TOTAL_ASSETS),
         "cash_flow_statement" => Some(FREE_CASH_FLOW),
         "symbol_search" => Some(TICKER_SYMBOL),
         // Non-financial artifacts — Dublin Core (text/dataset artifacts)
-        "company_transcript" => Some(hkask_bridge_ontology::dc_bibo::TEXT),
-        "note_add" | "note_list" | "note_delete" => Some(hkask_bridge_ontology::dc_bibo::TEXT),
-        "file_attach" | "file_list" | "file_delete" => {
-            Some(hkask_bridge_ontology::dc_bibo::DATASET)
-        }
+        "company_transcript" | "note_add" | "note_list" | "note_delete" => Some(dc_bibo::TEXT),
+        "file_attach" | "file_list" | "file_delete" => Some(dc_bibo::DATASET),
         _ => None,
     }
 }
@@ -194,6 +191,10 @@ mod tests {
             Some(TIME_WEIGHTED_RETURN)
         );
         assert_eq!(tool_to_ontology("ledger_import"), Some(TRANSACTION_LEDGER));
+        assert_eq!(
+            tool_to_ontology("portfolio_comparison"),
+            Some(COMPARABLE_COMPANY_ANALYSIS)
+        );
     }
 
     #[test]
@@ -236,10 +237,13 @@ mod tests {
 
     #[test]
     fn tool_to_ontology_maps_forecast_tools() {
-        assert_eq!(tool_to_ontology("calibrate_forecast"), Some(FORECAST_ID));
+        // calibrate_forecast is about scoring accuracy → BRIER_SCORE.
+        assert_eq!(tool_to_ontology("calibrate_forecast"), Some(BRIER_SCORE));
+        // forecast_record/get/list are about forecast identity.
         assert_eq!(tool_to_ontology("forecast_record"), Some(FORECAST_ID));
         assert_eq!(tool_to_ontology("forecast_get"), Some(FORECAST_ID));
         assert_eq!(tool_to_ontology("forecast_list"), Some(FORECAST_ID));
+        // result_feedback is about forecast accuracy feedback.
         assert_eq!(tool_to_ontology("result_feedback"), Some(BRIER_SCORE));
     }
 

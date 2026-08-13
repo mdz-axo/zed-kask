@@ -38,6 +38,9 @@ const DEFAULT_PAGE_SIZE: usize = 20;
 const MAX_PAGE_SIZE: usize = 100;
 const RATE_LIMIT_MAX_REQUESTS: u32 = 30;
 const RATE_LIMIT_WINDOW_SECS: u64 = 60;
+/// Maximum response body size for feed/synthetic fetches (64 MiB). Prevents
+/// OOM from malicious or misconfigured feeds that serve unbounded content.
+const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
 // ── ResearchServer ──
 
@@ -850,6 +853,14 @@ impl ResearchServer {
             let body = response.bytes().await.map_err(|e| {
                 McpToolError::unavailable(format!("read source body: {e}"))
             })?;
+            if body.len() > MAX_RESPONSE_BYTES {
+                return Err(McpToolError::unavailable(format!(
+                    "source body is {} bytes ({:.1} MiB) — exceeds the {} byte limit",
+                    body.len(),
+                    body.len() as f64 / (1024.0 * 1024.0),
+                    MAX_RESPONSE_BYTES
+                )));
+            };
 
             let title = req.title.clone().unwrap_or_else(|| req.source_url.clone());
             let description = req.description.clone().unwrap_or_default();
@@ -1114,6 +1125,14 @@ impl ResearchServer {
             .bytes()
             .await
             .map_err(|e| McpToolError::unavailable(format!("read source body: {e}")))?;
+        if body.len() > MAX_RESPONSE_BYTES {
+            return Err(McpToolError::unavailable(format!(
+                "source body is {} bytes ({:.1} MiB) — exceeds the {} byte limit",
+                body.len(),
+                body.len() as f64 / (1024.0 * 1024.0),
+                MAX_RESPONSE_BYTES
+            )));
+        };
 
         // For diff_hash: check if content changed.
         if kind == crate::research::synthetic::ExtractorKind::DiffHash {

@@ -91,7 +91,7 @@ pub use pko::PkoConcept;
 /// - `fibo:*` → `research_search` (financial research)
 /// - `sdmx:*` → `research_search` (statistical data research)
 /// - `pko:*` → `kanban_task_list` (process step inspection)
-/// - `dcterms:*` / `dublin-core` → `research_search` (general research)
+/// - `dcterms:*` → `research_search` (general research)
 /// - empty / unknown → `research_search` (the general fallback)
 ///
 /// Widgets that already have a domain-specific explain tool (e.g. the
@@ -102,7 +102,7 @@ pub fn explain_tool_for(ontology: &str) -> &'static str {
     if ontology.starts_with("omc:") {
         return omc::explain_tool_for(ontology);
     }
-    if ontology.starts_with("fibo:") || ontology == "dublin-core" {
+    if ontology.starts_with("fibo:") {
         return "research_search";
     }
     if ontology.starts_with("sdmx:") {
@@ -156,7 +156,6 @@ mod tests {
     #[test]
     fn explain_tool_for_dublin_core() {
         assert_eq!(explain_tool_for("dcterms:Dataset"), "research_search");
-        assert_eq!(explain_tool_for("dublin-core"), "research_search");
     }
 
     #[test]

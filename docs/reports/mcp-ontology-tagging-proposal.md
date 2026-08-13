@@ -2,7 +2,7 @@
 
 ## Status
 
-Decided — awaiting implementation in a single PR.
+Implemented — all five steps complete. Tests and clippy pass.
 
 ## Decisions (per operator review 2026-08-13)
 

@@ -154,7 +154,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListAgentsRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_list_agents", Some("dublin-core"), async {
+        execute_tool_semantic(self, "swarm_list_agents", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             // The ABW `/agents` catalogue endpoint is open (no API key required).
             // The module doc (L10) and the tool doc both say "Keyless". The prior
             // `require_auth()` call broke the panel's primary browse surface in
@@ -249,7 +249,7 @@ impl SwarmServer {
         description = "List your Agent Bestiary World workspaces (agent swarms) with budgets and agent counts, or pass workspace_id (UUID or slug) for the full roster of hired agents. Requires API key."
     )]
     pub(crate) async fn swarm_get_swarm(&self, parameters: Parameters<GetSwarmRequest>) -> String {
-        execute_tool_semantic(self, "swarm_get_swarm", Some("dublin-core"), async {
+        execute_tool_semantic(self, "swarm_get_swarm", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -297,7 +297,7 @@ impl SwarmServer {
         description = "Get the full agent card (capabilities, dependencies, ontology, execution stats, versions) for one Agent Bestiary World agent. Requires API key."
     )]
     pub(crate) async fn swarm_get_agent(&self, parameters: Parameters<GetAgentRequest>) -> String {
-        execute_tool_semantic(self, "swarm_get_agent", Some("dublin-core"), async {
+        execute_tool_semantic(self, "swarm_get_agent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -346,7 +346,7 @@ impl SwarmServer {
         description = "List published Agent Bestiary World Apps (reusable agent-team manifests composed via Xaman Ek). The sharing/discovery surface. Requires API key."
     )]
     pub(crate) async fn swarm_list_apps(&self, parameters: Parameters<ListAppsRequest>) -> String {
-        execute_tool_semantic(self, "swarm_list_apps", Some("dublin-core"), async {
+        execute_tool_semantic(self, "swarm_list_apps", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -386,7 +386,7 @@ impl SwarmServer {
         execute_tool_semantic(
             self,
             "swarm_ontology_templates",
-            Some("dublin-core"),
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
             async {
                 self.client
                     .require_auth()
@@ -410,7 +410,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ExecuteAgentRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_execute_agent", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_execute_agent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -465,7 +465,7 @@ impl SwarmServer {
         description = "Estimate the credit cost of hiring an Agent Bestiary World agent (including its required/optional dependency team). Read-only pre-flight for the cost/consent gate — spends nothing. Requires API key."
     )]
     pub(crate) async fn swarm_hire_cost(&self, parameters: Parameters<HireCostRequest>) -> String {
-        execute_tool_semantic(self, "swarm_hire_cost", Some("dublin-core"), async {
+        execute_tool_semantic(self, "swarm_hire_cost", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -541,7 +541,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RequestConsentRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_request_consent", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_request_consent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             // Auth required: without this, a prompt-injected agent could mint
             // consent tokens and self-authorize credit spends. Every spend tool
             // calls `require_auth()`; the token minter must too.
@@ -589,7 +589,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<AuthorizeSessionRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_authorize_session", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_authorize_session", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.total_credits == 0 {
                 return Err(McpToolError::invalid_argument(
@@ -619,7 +619,7 @@ impl SwarmServer {
         description = "Hire an Agent Bestiary World agent into a workspace (swarm). Spends credits — requires a consent_token from swarm_request_consent (action 'hire', target = agent_name)."
     )]
     pub(crate) async fn swarm_hire(&self, parameters: Parameters<HireRequest>) -> String {
-        execute_tool_semantic(self, "swarm_hire", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_hire", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -678,7 +678,7 @@ impl SwarmServer {
         description = "Delegate a task to an agent in an Agent Bestiary World workspace via @mention (full tool access, gas-charged). Spends credits — requires a consent_token from swarm_request_consent (action 'delegate', target = workspace_id)."
     )]
     pub(crate) async fn swarm_delegate(&self, parameters: Parameters<DelegateRequest>) -> String {
-        execute_tool_semantic(self, "swarm_delegate", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_delegate", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -744,7 +744,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DelegateAndWaitRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_delegate_and_wait", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_delegate_and_wait", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -856,7 +856,7 @@ impl SwarmServer {
         description = "Read an Agent Bestiary World workspace's recent run status: the latest chat messages and agent activity. Read-only. Requires API key."
     )]
     pub(crate) async fn swarm_run_status(&self, parameters: Parameters<SwarmRunRequest>) -> String {
-        execute_tool_semantic(self, "swarm_run_status", Some("dublin-core"), async {
+        execute_tool_semantic(self, "swarm_run_status", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -908,7 +908,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GeneratePromptRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_generate_prompt", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_generate_prompt", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -953,7 +953,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GenerateOntologyRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_generate_ontology", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_generate_ontology", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -993,7 +993,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateAgentRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_create_agent", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_create_agent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -1040,7 +1040,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateSwarmRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_create_swarm", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_create_swarm", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -1183,7 +1183,7 @@ impl SwarmServer {
         description = "Ask Xaman Ek, the Agent Bestiary World curator. Use session_type 'composition_design' to plan a team (agent recommendations + I/O compatibility), 'workspace_help' for workspace questions, or 'free'. Returns the curator's response and, when a composition plan is ready, ready_to_create + in_progress. Requires API key."
     )]
     pub(crate) async fn swarm_xaman(&self, parameters: Parameters<XamanRequest>) -> String {
-        execute_tool_semantic(self, "swarm_xaman", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_xaman", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -1298,7 +1298,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateAppRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_create_app", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_create_app", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -1337,7 +1337,7 @@ impl SwarmServer {
         description = "Parallel multi-agent fan-out to an ABW workspace: post N @mention delegations in one call. Each entry needs its own consent token. ABW is fire-and-forget — responses arrive via swarm_run_status. Capped at 10 agents."
     )]
     pub(crate) async fn swarm_fanout(&self, parameters: Parameters<FanoutRequest>) -> String {
-        execute_tool_semantic(self, "swarm_fanout", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_fanout", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -1438,7 +1438,7 @@ impl SwarmServer {
         description = "Fire (un-hire) an agent from an ABW workspace (swarm). Removes the agent from the roster; the agent itself is NOT deleted (use swarm_delete_agent for that). No credit cost. Requires API key."
     )]
     pub(crate) async fn swarm_fire(&self, parameters: Parameters<FireRequest>) -> String {
-        execute_tool_semantic(self, "swarm_fire", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_fire", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -1482,7 +1482,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DeleteAgentRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_delete_agent", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_delete_agent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -1568,7 +1568,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DeleteSwarmRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_delete_swarm", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_delete_swarm", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -1623,7 +1623,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<SearchKnowledgeRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_search_knowledge", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_search_knowledge", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -1743,7 +1743,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PublishChecksRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_publish_checks", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_publish_checks", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -1777,7 +1777,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PublishAgentRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_publish_agent", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_publish_agent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -1842,7 +1842,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ForkAgentRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_fork_agent", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_fork_agent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;

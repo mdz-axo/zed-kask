@@ -41,9 +41,7 @@
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
-use hkask_mcp_server::server::{
-    McpToolError, execute_tool_semantic, map_join_error, validate_identifier,
-};
+use hkask_mcp_server::server::{McpToolError, map_join_error, validate_identifier};
 use serde::{Deserialize, Serialize};
 
 pub mod aggregation;
@@ -160,15 +158,6 @@ hkask_mcp_server::mcp_server!(
 use hkask_mcp_portfolio::map_portfolio_error;
 
 impl CompaniesServer {
-    /// Map a tool name to its ontology concept URI. The concept is used both
-    /// as the `reg.tool.*` span ontology tag (via `execute_tool_semantic`)
-    /// and as the `"ontology"` field in the tool output JSON (via
-    /// `fibo::enrich_with_ontology`). Financial tools return FIBO concepts;
-    /// non-financial artifacts (notes, files, transcripts) return Dublin Core.
-    fn ontology_anchor(tool: &str) -> Option<&'static str> {
-        fibo::tool_to_ontology(tool)
-    }
-
     async fn fetch(
         &self,
         tool: &str,
@@ -251,62 +240,13 @@ impl CompaniesServer {
             + Self::transcript_router()
     }
 
-    /// Map a tool name to its FIBO / Dublin Core ontology concept URI. The
-    /// concept is used as the `reg.tool.*` span ontology tag (via
-    /// `execute_tool_semantic`). The existing `fibo::enrich_with_ontology`
-    /// calls in `tools/financial_data.rs` are the optional output-field layer
-    /// for widget consumption; this span tag is the canonical convention.
+    /// Map a tool name to its ontology concept URI. The concept is used both
+    /// as the `reg.tool.*` span ontology tag (via `execute_tool_semantic`)
+    /// and as the `"ontology"` field in the tool output JSON (via
+    /// `fibo::enrich_with_ontology`). Delegates to `fibo::tool_to_ontology` —
+    /// the single source of truth for the tool → concept mapping.
     fn ontology_anchor(tool: &str) -> Option<&'static str> {
-        use hkask_bridge_ontology::{dc_bibo, fibo};
-        match tool {
-            // Financial data
-            "company_profile" => Some(fibo::CORPORATION),
-            "stock_quote" | "historical_price" => Some(fibo::MARKET_CAPITALIZATION),
-            "income_statement" | "balance_sheet" | "cash_flow_statement" | "key_metrics" => {
-                Some(dc_bibo::DATASET)
-            }
-            "symbol_search" => Some(dc_bibo::IDENTIFIER),
-
-            // MAIA analysis
-            "moat_check" => Some(fibo::COMPETITIVE_ADVANTAGE),
-            "management_scorecard" => Some(fibo::CAPITAL_ALLOCATION),
-            "working_capital_cycle" => Some(fibo::NET_WORKING_CAPITAL),
-
-            // Valuation
-            "dcf_valuation" | "reverse_dcf" => Some(fibo::DCF_VALUATION),
-            "ep_valuation" => Some(fibo::ECONOMIC_PROFIT),
-            "comparable_analysis" | "portfolio_comparison" => {
-                Some(fibo::COMPARABLE_COMPANY_ANALYSIS)
-            }
-            "scenario_analysis" | "scenario_impact_valuation" => Some(fibo::SCENARIO_PROBABILITY),
-            "sensitivity_analysis" => Some(fibo::SENSITIVITY_ANALYSIS),
-            "monte_carlo_dcf" => Some(fibo::MONTE_CARLO_DCF),
-            "equity_duration" => Some(fibo::DCF_VALUATION),
-            "calibrate_forecast" => Some(fibo::BRIER_SCORE),
-            "forecast_record" | "forecast_get" | "forecast_list" => Some(fibo::FORECAST_ID),
-            "result_feedback" => Some(dc_bibo::DESCRIPTION),
-
-            // Research & screening
-            "research_search" => Some(dc_bibo::DATASET),
-            "company_screener" => Some(fibo::STOCK_SCREENER),
-            "expectations_gap" => Some(fibo::REVENUE_GROWTH_RATE),
-
-            // Portfolio
-            "ledger_import"
-            | "ledger_export"
-            | "portfolio_list"
-            | "portfolio_delete"
-            | "transaction_note_append" => Some(fibo::TRANSACTION_LEDGER),
-            "note_add" | "note_list" | "note_delete" => Some(dc_bibo::DESCRIPTION),
-            "file_attach" | "file_list" | "file_delete" => Some(dc_bibo::TYPE),
-            "portfolio_attribution" => Some(fibo::ATTRIBUTION_ANALYSIS),
-            "portfolio_characteristics" => Some(fibo::WEIGHTED_AVERAGE),
-            "portfolio_returns" => Some(fibo::TIME_WEIGHTED_RETURN),
-
-            // Transcript — Dublin Core text
-            "company_transcript" => Some(dc_bibo::TEXT),
-            _ => Some(dc_bibo::TEXT),
-        }
+        fibo::tool_to_ontology(tool)
     }
 }
 

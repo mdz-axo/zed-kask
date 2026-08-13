@@ -188,6 +188,7 @@ impl CorpusServer {
                     .map(|r| r["text"].as_str().unwrap_or(""))
                     .collect::<Vec<_>>()
                     .join("\n\n");
+                let context = crate::guard_content(&context);
 
                 // C10: Load prompt from registry template, fall back to inline if unavailable
                 let mut vars = std::collections::HashMap::new();
@@ -196,10 +197,11 @@ impl CorpusServer {
                 let prompt = render_docproc_template("rag-answer", &vars);
                 let prompt = if prompt.is_empty() {
                     format!(
-                        "Answer the following question based on the provided context. If the context doesn't contain enough information, say so.\n\n\
+                        "{CONTENT_GUARD_INSTRUCTION}Answer the following question based on the provided context. If the context doesn't contain enough information, say so.\n\n\
                          Context:\n{context}\n\n\
                          Question: {query}\n\n\
-                         Answer:"
+                         Answer:",
+                        CONTENT_GUARD_INSTRUCTION = crate::CONTENT_GUARD_INSTRUCTION
                     )
                 } else {
                     prompt

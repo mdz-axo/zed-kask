@@ -30,7 +30,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<FundLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_fund_local", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_fund_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.credits <= 0 {
                 return Err(McpToolError::invalid_argument(
@@ -67,7 +67,7 @@ impl SwarmServer {
         &self,
         _parameters: Parameters<BalanceLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_balance_local", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_balance_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let runtime = self
                 .local_runtime
                 .get_or_init()
@@ -100,7 +100,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<LocalHistoryRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_local_history", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_local_history", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             let limit = req.limit.unwrap_or(50).min(500) as usize;
             let runtime = self

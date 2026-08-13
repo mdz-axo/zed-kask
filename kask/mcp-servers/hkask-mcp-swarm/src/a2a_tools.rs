@@ -22,7 +22,7 @@ impl SwarmServer {
         description = "Send an A2A (Agent2Agent) protocol message to a local agent. Wraps in A2A types (Message/Task/Artifact) and dispatches in-process. Returns an A2A Task with the agent's response as a text Artifact. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in mcp_tools to communicate with each other."
     )]
     pub(crate) async fn swarm_a2a_send(&self, parameters: Parameters<A2aSendRequest>) -> String {
-        execute_tool_semantic(self, "swarm_a2a_send", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_a2a_send", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.agent_name.trim().is_empty() || req.message.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -71,7 +71,7 @@ impl SwarmServer {
         description = "Get the A2A (Agent2Agent) Agent Card for a local agent, or all local agents if agent_name is omitted. The card describes the agent's capabilities, skills, and supported interface. A2A-compliant discovery."
     )]
     pub(crate) async fn swarm_a2a_card(&self, parameters: Parameters<A2aCardRequest>) -> String {
-        execute_tool_semantic(self, "swarm_a2a_card", Some("dublin-core"), async {
+        execute_tool_semantic(self, "swarm_a2a_card", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             let base_url = "local://swarm/agents".to_string();
             match req.agent_name {

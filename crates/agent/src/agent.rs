@@ -2976,6 +2976,42 @@ pub(crate) fn memory_port() -> Option<Arc<dyn ThreadMemoryPort>> {
     MEMORY_PORT.lock().expect("MEMORY_PORT poisoned").clone()
 }
 
+/// Global override for the archived threads DB path (D28 — Standardized
+/// Artifact Storage).
+///
+/// When set, `ThreadsDatabase::new` resolves the threads SQLite DB at this
+/// path instead of the upstream `paths::data_dir()/threads/threads.db`.
+/// The canonical kask path is `{kask_data_dir}/threads/threads.db`, resolved
+/// by `hkask_types::agent_paths::resolve_under_data_dir`. Wired by the
+/// zed-kask composition root at startup.
+///
+/// Uses a `Mutex` (not `OnceLock`) so the path can be replaced after startup
+/// — e.g. if the operator changes the kask data directory via settings and
+/// the composition root re-wires. Per `.rules`, `Mutex` hooks are re-settable
+/// and do not need the `Err`-branch warn.
+static THREADS_DB_PATH_OVERRIDE: std::sync::Mutex<Option<std::path::PathBuf>> =
+    std::sync::Mutex::new(None);
+
+/// Set the global archived-threads DB path override (D28 composition root).
+///
+/// Called by zed-kask's app startup to wire the canonical kask data-root
+/// threads path into the threads database. When `None`, the threads DB falls
+/// back to the legacy upstream path so the editor remains functional
+/// pre-wiring.
+pub fn set_threads_db_path_override(path: Option<std::path::PathBuf>) {
+    *THREADS_DB_PATH_OVERRIDE
+        .lock()
+        .expect("THREADS_DB_PATH_OVERRIDE poisoned") = path;
+}
+
+/// Get the global archived-threads DB path override, if set.
+pub(crate) fn threads_db_path_override() -> Option<std::path::PathBuf> {
+    THREADS_DB_PATH_OVERRIDE
+        .lock()
+        .expect("THREADS_DB_PATH_OVERRIDE poisoned")
+        .clone()
+}
+
 /// Context injector — enriches prompts with retrieved context (D11).
 ///
 /// Called from `build_request_messages_until` after the system prompt and

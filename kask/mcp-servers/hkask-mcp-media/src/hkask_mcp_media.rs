@@ -127,6 +127,25 @@ pub mod transcript;
 pub mod types;
 use types::*;
 
+/// Read an image file with a size cap to prevent OOM. Gallery images are
+/// read into memory and base64-encoded (which triples the size), so a
+/// multi-GB image would exhaust the process's address space. Rejects files
+/// larger than `MAX_IMAGE_READ_BYTES` before reading.
+fn read_image_capped(path: &str) -> Result<Vec<u8>, MediaError> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| MediaError::Io(format!("Failed to stat image: {e}")))?;
+    let size = metadata.len();
+    if size > MAX_IMAGE_READ_BYTES {
+        return Err(MediaError::Io(format!(
+            "Image file is {size} bytes ({:.1} MiB) — exceeds the {} byte limit; \
+             use a smaller image or increase MAX_IMAGE_READ_BYTES",
+            size as f64 / (1024.0 * 1024.0),
+            MAX_IMAGE_READ_BYTES
+        )));
+    }
+    std::fs::read(path).map_err(|e| MediaError::Io(format!("Failed to read image: {e}")))
+}
+
 /// Compute normalized Levenshtein similarity between two strings.
 /// Returns 1.0 for identical strings, 0.0 for completely different.
 fn levenshtein_similarity(a: &str, b: &str) -> f64 {

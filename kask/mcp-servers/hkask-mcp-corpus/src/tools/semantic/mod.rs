@@ -17,8 +17,8 @@ use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
 use crate::helpers::map_corpus_io_error;
 use crate::services::triples::{TriplesRequest, TriplesService};
 use crate::{
-    Arc, CorpusServer, LLMParameters, McpToolError, Mutex, Parameters, default_owner,
-    embedding_dim, execute_tool, extract_json_from_response, json, read_jsonl,
+    Arc, CorpusServer, LLMParameters, McpToolError, Mutex, Parameters, default_embedding_model,
+    default_owner, embedding_dim, execute_tool, extract_json_from_response, json, read_jsonl,
     render_docproc_template, tool, tool_router,
 };
 use ontology_io::read_ontology_tags_annotated;
@@ -68,16 +68,18 @@ impl CorpusServer {
                 let passages = _texts.as_ref().unwrap();
                 let mut text = String::new();
                 for (i, p) in passages.iter().enumerate() {
-                    text.push_str(&format!("[Passage {}]\n{}\n\n", i + 1, p));
+                    text.push_str(&format!("[Passage {}]\n{}\n\n", i + 1, crate::guard_content(p)));
                 }
                 (
                     format!(
-                        "You are synthesizing knowledge across {} passages.\n\nGenerate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nThe questions should require synthesizing information from MULTIPLE passages — compare, contrast, diagnose patterns, or trace causal connections across sources.\n\nFor each QA, cite which passages support the answer (e.g., 'Per Passage 1, ... while Passage 2 notes ...').\n\nPassages (chunk group {chunk_id}):\n{text}\n\nRespond in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"...\", \"sources\": [1, 3]}}]}}",
-                        passages.len()
+                        "{CONTENT_GUARD_INSTRUCTION}You are synthesizing knowledge across {n} passages.\n\nGenerate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nThe questions should require synthesizing information from MULTIPLE passages — compare, contrast, diagnose patterns, or trace causal connections across sources.\n\nFor each QA, cite which passages support the answer (e.g., 'Per Passage 1, ... while Passage 2 notes ...').\n\nPassages (chunk group {chunk_id}):\n{text}\n\nRespond in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"...\", \"sources\": [1, 3]}}]}}",
+                        CONTENT_GUARD_INSTRUCTION = crate::CONTENT_GUARD_INSTRUCTION,
+                        n = passages.len()
                     ),
                     "inline-cross-reference",
                 )
             } else {
+                let single_text = crate::guard_content(&single_text);
                 let mut vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
                 vars.insert("levels", levels_str.clone());
                 vars.insert("chunk_id", chunk_id.clone());
@@ -86,7 +88,8 @@ impl CorpusServer {
                 if tpl.is_empty() {
                     (
                         format!(
-                            "Based on the following text, generate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nText (chunk {chunk_id}):\n{single_text}\n\nFor each level, provide question, answer, and bloom_level.\nRespond in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"...\"}}]}}"
+                            "{CONTENT_GUARD_INSTRUCTION}Based on the following text, generate question-answer pairs at these Bloom's taxonomy levels: {levels_str}.\n\nText (chunk {chunk_id}):\n{single_text}\n\nFor each level, provide question, answer, and bloom_level.\nRespond in JSON: {{\"qa_pairs\": [{{\"question\": \"...\", \"answer\": \"...\", \"bloom_level\": \"...\"}}]}}",
+                            CONTENT_GUARD_INSTRUCTION = crate::CONTENT_GUARD_INSTRUCTION
                         ),
                         "inline-fallback",
                     )

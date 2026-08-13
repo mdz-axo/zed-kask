@@ -435,9 +435,35 @@ impl ThreadsDatabase {
                 test_name.unwrap_or_default()
             )))
         } else {
-            let threads_dir = paths::data_dir().join("threads");
-            std::fs::create_dir_all(&threads_dir)?;
-            let sqlite_path = threads_dir.join("threads.db");
+            // zed-kask: D28 — Standardized Artifact Storage.
+            // Archived chat threads live under the kask data root
+            // (`{data_dir}/threads/threads.db`), resolved via the kask-side
+            // `threads_db_path_override` hook (set by `kask_bridge` at
+            // startup), NOT the upstream `paths::data_dir()` (which points at
+            // the zed-kask app data root `~/.local/share/zed-kask/`). This
+            // keeps all kask artifacts under one rooted tree per the
+            // standardized storage layout
+            // (kask/docs/architecture/standardized-artifact-storage.md).
+            //
+            // Pre-release: no back-compat. The override is always wired early
+            // in `main.rs` (user-independent), so this branch always uses
+            // the kask path. The `None` arm is a defensive fallback for the
+            // pre-wiring window or if `kask_bridge` is not loaded.
+            let sqlite_path = match crate::threads_db_path_override() {
+                Some(kask_path) => {
+                    if let Some(parent) = kask_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    kask_path
+                }
+                None => {
+                    // Hook not wired — fall back to upstream path so the
+                    // editor remains functional pre-kask-bridge wiring.
+                    let threads_dir = paths::data_dir().join("threads");
+                    std::fs::create_dir_all(&threads_dir)?;
+                    threads_dir.join("threads.db")
+                }
+            };
             Connection::open_file(&sqlite_path.to_string_lossy())
         };
 
@@ -1245,5 +1271,34 @@ mod tests {
             .expect("scroll_position should be restored");
         assert_eq!(scroll.item_ix, 42);
         assert!((scroll.offset_in_item - 13.5).abs() < f32::EPSILON);
+    }
+
+    // zed-kask: D28 — pins the canonical archived-threads DB path.
+    // When `set_threads_db_path_override` is wired, `ThreadsDatabase::new`
+    // must create the SQLite DB at the kask data-root path, NOT the upstream
+    // `paths::data_dir()/threads/threads.db`. Pre-release: no back-compat.
+    #[gpui::test]
+    async fn test_threads_db_uses_kask_override_path_when_set(cx: &mut gpui::TestAppContext) {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let kask_threads_dir = tmp.path().join("kask-data").join("threads");
+        let kask_threads_db = kask_threads_dir.join("threads.db");
+
+        // Wire the override to the kask path.
+        crate::set_threads_db_path_override(Some(kask_threads_db.clone()));
+
+        // Construct the DB — this should create the file at the override path.
+        let database = ThreadsDatabase::new(cx.executor()).expect("construct threads DB");
+
+        // The override path's parent must have been created and the DB file
+        // must exist.
+        assert!(
+            kask_threads_db.exists(),
+            "threads DB must be created at the kask override path, not the upstream path"
+        );
+
+        // Clean up: drop the DB and reset the override so other tests are
+        // not affected (the override is a global Mutex).
+        drop(database);
+        crate::set_threads_db_path_override(None);
     }
 }

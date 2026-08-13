@@ -331,16 +331,12 @@ impl<'a> ConvertService<'a> {
 
                 let page_images = vec![image];
                 let expected = page_images.len();
-                let emb_model = default_embedding_model();
-                let emb: Option<(&dyn InferencePort, &str)> =
-                    Some((&self.inference_router, emb_model));
                 let outcome = pipeline::run_pipeline(
                     page_images,
                     expected,
                     Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
                     &self.ocr_thresholds,
                     Some(&model),
-                    emb,
                     Some(ocr_concurrency()),
                 )
                 .await;
@@ -381,16 +377,12 @@ impl<'a> ConvertService<'a> {
                             }
                         };
                         let expected = page_images.len();
-                        let emb_model = default_embedding_model();
-                        let emb: Option<(&dyn InferencePort, &str)> =
-                            Some((&self.inference_router, emb_model));
                         let outcome = pipeline::run_pipeline(
                             page_images,
                             expected,
                             Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
                             &self.ocr_thresholds,
                             Some(&model),
-                            emb,
                             Some(ocr_concurrency()),
                         )
                         .await;
@@ -507,16 +499,12 @@ impl<'a> ConvertService<'a> {
                 {
                     Ok(page_images) if !page_images.is_empty() => {
                         let expected = page_images.len();
-                        let emb_model = default_embedding_model();
-                        let emb: Option<(&dyn InferencePort, &str)> =
-                            Some((&self.inference_router, emb_model));
                         let outcome = pipeline::run_pipeline(
                             page_images,
                             expected,
                             Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
                             &self.ocr_thresholds,
                             Some(&model),
-                            emb,
                             Some(ocr_concurrency()),
                         )
                         .await;
@@ -586,16 +574,12 @@ impl<'a> ConvertService<'a> {
                 match imgs_res {
                     Ok(page_images) => {
                         let expected = page_images.len();
-                        let emb_model = default_embedding_model();
-                        let emb: Option<(&dyn InferencePort, &str)> =
-                            Some((&self.inference_router, emb_model));
                         let outcome = pipeline::run_pipeline(
                             page_images,
                             expected,
                             Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
                             &self.ocr_thresholds,
                             Some(&model),
-                            emb,
                             Some(ocr_concurrency()),
                         )
                         .await;

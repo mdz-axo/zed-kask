@@ -1594,6 +1594,30 @@ mod tool_surface_tests {
             "prediction-markets registered tool surface changed; got {n}"
         );
     }
+
+    // Regression: the ontology anchor must not collapse to a single constant
+    // (the prior stub returned "dublin-core" for every tool). Economic-data
+    // tools anchor on SDMX; market tools anchor on Dublin Core. A future stub
+    // regression would make these equal.
+    #[test]
+    fn ontology_anchor_distinguishes_economic_data_from_market_tools() {
+        let fred = PredictionMarketsServer::ontology_anchor("fred_get_observations");
+        let market = PredictionMarketsServer::ontology_anchor("market_lookup");
+        assert_ne!(
+            fred, market,
+            "economic-data and market tools must anchor on distinct ontologies"
+        );
+        assert_eq!(
+            fred,
+            Some(hkask_bridge_ontology::sdmx::TIME_SERIES),
+            "fred_get_observations must anchor on SDMX TimeSeries"
+        );
+        assert_eq!(
+            market,
+            Some(hkask_bridge_ontology::dc_bibo::DATASET),
+            "market_lookup must anchor on Dublin Core Dataset"
+        );
+    }
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────

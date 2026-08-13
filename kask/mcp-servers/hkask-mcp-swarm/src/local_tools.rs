@@ -65,7 +65,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DelegateLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_delegate_local", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_delegate_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.agent_name.trim().is_empty() || req.task.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -120,7 +120,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<FanoutLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_fanout_local", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_fanout_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.delegations.is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -221,7 +221,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PipelineLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_pipeline_local", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_pipeline_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.steps.is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -329,7 +329,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListLocalAgentsRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_list_local_agents", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_list_local_agents", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             let limit = req.limit.unwrap_or(200) as usize;
             let mut agents = self.local_registry.list();
@@ -363,7 +363,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CloneToLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_clone_to_local", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_clone_to_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.agent_name.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -535,7 +535,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PushToCloudRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_push_to_cloud", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_push_to_cloud", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
@@ -627,7 +627,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RemoveLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_remove_local", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_remove_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.agent_name.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -700,7 +700,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateLocalAgentRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_create_local_agent", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_create_local_agent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.agent_id.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -807,7 +807,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ReconfigureLocalAgentRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_reconfigure_local_agent", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_reconfigure_local_agent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.agent_name.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -872,7 +872,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateLocalSwarmRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_create_local_swarm", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_create_local_swarm", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.name.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -899,7 +899,7 @@ impl SwarmServer {
         &self,
         _parameters: Parameters<ListLocalSwarmsRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_list_local_swarms", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_list_local_swarms", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let swarms = self.local_swarms.list();
             Ok(serde_json::json!({
                 "count": swarms.len(),
@@ -917,7 +917,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GetLocalSwarmRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_get_local_swarm", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_get_local_swarm", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.swarm_id.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -944,7 +944,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DeleteLocalSwarmRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_delete_local_swarm", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_delete_local_swarm", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.swarm_id.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -971,7 +971,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<AddAgentToLocalSwarmRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_add_agent_local", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_add_agent_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -999,7 +999,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RemoveAgentFromLocalSwarmRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_remove_agent_local", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_remove_agent_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -1030,7 +1030,7 @@ impl SwarmServer {
         description = "AI assist for the swarm panel authoring forms (agent/swarm). Suggests completions for partial inputs or validates well-formedness. Authoring aid — read-only, spends nothing. Runs the swarm-compose-guide skill cascade (Jinja2 guidance template) via the SkillExecPort — the template is the source of truth, not hardcoded Rust. The mode field (abw/local) tailors the guidance; no ABW calls in either mode."
     )]
     pub(crate) async fn swarm_ai_assist(&self, parameters: Parameters<AiAssistRequest>) -> String {
-        execute_tool_semantic(self, "swarm_ai_assist", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_ai_assist", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             match req.action.as_str() {
                 "suggest" | "validate" => {}
@@ -1198,7 +1198,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<EvaluateLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_evaluate_local", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_evaluate_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.response.trim().is_empty() || req.spec.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -1239,7 +1239,7 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ExecutePlanLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_execute_plan_local", Some("pko"), async {
+        execute_tool_semantic(self, "swarm_execute_plan_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
             let req = parameters.0;
             if req.delegations.is_empty() {
                 return Err(McpToolError::invalid_argument(

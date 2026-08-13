@@ -17,7 +17,7 @@ use crate::ocr::{
     ComplexityTier, CrossValidation, OcrBackend, OcrResult, PipelineError, PipelineOutcome,
     ThresholdConfig,
 };
-use hkask_types::InferencePort;
+
 use image::DynamicImage;
 
 use crate::ocr::complexity::score_page_complexity;
@@ -91,7 +91,6 @@ pub trait OcrExecutor: Send + Sync {
 /// * `executor` — Pluggable OCR executor (`Arc` for parallel task spawning).
 /// * `thresholds` — Complexity scoring thresholds.
 /// * `llm_model` — Optional model ID for `LlmOcr` backend routing.
-/// * `embedding_router` — Optional embedding router for semantic cross-validation.
 /// * `max_concurrency` — `Some(n)` for parallel, `None` for sequential.
 ///
 /// # Returns
@@ -102,32 +101,14 @@ pub async fn run_pipeline(
     executor: Arc<dyn OcrExecutor>,
     thresholds: &ThresholdConfig,
     llm_model: Option<&str>,
-    embedding_router: Option<(&dyn InferencePort, &str)>,
     max_concurrency: Option<usize>,
 ) -> PipelineOutcome {
     match max_concurrency {
         Some(n) if n > 1 => {
-            run_pipeline_parallel(
-                pages,
-                expected_pages,
-                executor,
-                thresholds,
-                llm_model,
-                embedding_router,
-                n,
-            )
-            .await
+            run_pipeline_parallel(pages, expected_pages, executor, thresholds, llm_model, n).await
         }
         _ => {
-            run_pipeline_sequential(
-                pages,
-                expected_pages,
-                &*executor,
-                thresholds,
-                llm_model,
-                embedding_router,
-            )
-            .await
+            run_pipeline_sequential(pages, expected_pages, &*executor, thresholds, llm_model).await
         }
     }
 }
@@ -139,7 +120,6 @@ async fn run_pipeline_sequential(
     executor: &(dyn OcrExecutor + '_),
     thresholds: &ThresholdConfig,
     llm_model: Option<&str>,
-    embedding_router: Option<(&dyn InferencePort, &str)>,
 ) -> PipelineOutcome {
     let start = Instant::now();
     let mut last_log = Instant::now();
@@ -187,15 +167,7 @@ async fn run_pipeline_sequential(
         }
     }
 
-    finalize_outcome(
-        results,
-        cross_validations,
-        errors,
-        expected_pages,
-        start,
-        embedding_router,
-    )
-    .await
+    finalize_outcome(results, cross_validations, errors, expected_pages, start).await
 }
 
 /// Parallel pipeline — uses `Arc<Semaphore>` + `tokio::spawn` for concurrent page processing.
@@ -208,7 +180,6 @@ async fn run_pipeline_parallel(
     executor: Arc<dyn OcrExecutor>,
     thresholds: &ThresholdConfig,
     llm_model: Option<&str>,
-    embedding_router: Option<(&dyn InferencePort, &str)>,
     max_concurrency: usize,
 ) -> PipelineOutcome {
     let start = Instant::now();
@@ -337,8 +308,6 @@ async fn run_pipeline_parallel(
     // Semantic enrichment is deferred to caller — the parallel path collects
     // raw CrossValidations without original text access. The caller can
     // enrich via PipelineOutcome if needed.
-    let _ = embedding_router;
-
     finalize_outcome_inner(results, cross_validations, errors, expected_pages, start)
 }
 
@@ -570,12 +539,10 @@ async fn finalize_outcome(
     errors: Vec<PipelineError>,
     expected_pages: usize,
     start: Instant,
-    embedding_router: Option<(&dyn InferencePort, &str)>,
 ) -> PipelineOutcome {
     // Semantic enrichment requires the original text strings, which CrossValidation
     // doesn't store (it stores backend identifiers and confidences). Enrichment is
     // done inline in the sequential loop where text is available, and skipped here.
-    let _ = embedding_router;
     finalize_outcome_inner(results, cross_validations, errors, expected_pages, start)
 }
 
@@ -759,7 +726,7 @@ mod tests {
         let executor = Arc::new(TestExecutor::new(vec![Some("Hello world".into())]));
         let t = default_thresholds();
 
-        let outcome = run_pipeline(pages, expected, executor, &t, None, None, None).await;
+        let outcome = run_pipeline(pages, expected, executor, &t, None, None).await;
 
         assert_eq!(outcome.results.len(), 1);
         assert!(outcome.results[0].text.contains("Hello world"));
@@ -786,7 +753,6 @@ mod tests {
             executor.clone(),
             &thresholds,
             Some("RunPod/kask-ocr"),
-            None,
             None,
         )
         .await;
@@ -853,7 +819,6 @@ mod tests {
             executor.clone(),
             &default_thresholds(),
             None,
-            None,
             Some(4),
         )
         .await;
@@ -877,7 +842,7 @@ mod tests {
         let expected = pages.len();
 
         let t = default_thresholds();
-        let outcome = run_pipeline(pages, expected, executor, &t, None, None, None).await;
+        let outcome = run_pipeline(pages, expected, executor, &t, None, None).await;
 
         assert_eq!(outcome.results.len(), 3);
         // Results should be in page order with correct content
@@ -897,7 +862,7 @@ mod tests {
 
         let expected = pages.len();
         let t = default_thresholds();
-        let outcome = run_pipeline(pages, expected, executor, &t, None, None, None).await;
+        let outcome = run_pipeline(pages, expected, executor, &t, None, None).await;
 
         assert_eq!(outcome.results.len(), 1, "only first page should succeed");
         assert_eq!(outcome.errors.len(), 1, "second page should produce error");
