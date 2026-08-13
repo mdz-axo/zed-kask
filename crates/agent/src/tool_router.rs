@@ -217,6 +217,9 @@ pub struct LazyToolRouter {
     complex_word_threshold: usize,
     /// Maximum number of MCP tools to retain when the router activates.
     selection_budget: usize,
+    /// Minimum best-match score required before the ranking is trusted enough to
+    /// prune. Below this, the router fails open.
+    confidence_gate: f64,
 }
 
 impl LazyToolRouter {
@@ -227,7 +230,7 @@ impl LazyToolRouter {
     /// the drift class that silently changed routing behaviour before; pinned by
     /// `default_thresholds_are_the_documented_values`.
     pub fn new() -> Self {
-        Self::new_with_thresholds(0.30, 9)
+        Self::new_with_thresholds(0.30, 6)
     }
 
     /// Construct with explicit thresholds. The composition root (main.rs)
@@ -239,6 +242,7 @@ impl LazyToolRouter {
             threshold,
             complex_word_threshold,
             selection_budget: DEFAULT_SELECTION_BUDGET,
+            confidence_gate: DEFAULT_CONFIDENCE_GATE,
         }
     }
 
@@ -303,10 +307,32 @@ impl ToolRouter for LazyToolRouter {
                 .then_with(|| a.1.name.cmp(&b.1.name))
         });
 
-        // Keep every tool that clears the confidence bar, plus enough of the
-        // next-best to fill the budget. The asymmetry is deliberate: dropping a
-        // needed tool costs a failed turn, whereas carrying a spare costs a few
-        // dozen tokens, so the budget errs generous.
+        // Confidence gate: only prune when the best match is strong enough that
+        // the ranking is trustworthy.
+        //
+        // Keyword scoring fails in a specific and dangerous way -- it can be
+        // *confidently wrong*. "read this paragraph out loud in a natural voice"
+        // shares no term with `generate_speech`'s "Generate speech audio from
+        // text", so the correct tool scores 0.12 while `voice_design`,
+        // `ledger_read`, and `rss_mark_all_read` score 0.32 on the incidental
+        // words "voice" and "read". The router then prunes to 3 tools, none of
+        // them right. Small confident selections are worse than no selection.
+        //
+        // Measured on the eval set, the best-match score separates these cases
+        // cleanly: every correct pruning peaked at >= 0.52, both wrong prunings
+        // peaked at 0.32, and every request that should fail open peaked at
+        // <= 0.23. Requiring a strong top match before trusting the ranking took
+        // recall from 0.91 to 1.00 while costing ~22 extra tools on average,
+        // because 5 of the 7 newly-opened cases were already failing open.
+        let top_score = scored.first().map(|(score, _)| *score).unwrap_or(0.0);
+        if top_score < self.confidence_gate {
+            return None;
+        }
+
+        // Keep every tool that clears the threshold, up to the budget. The
+        // asymmetry is deliberate: dropping a needed tool costs a failed turn,
+        // whereas carrying a spare costs a few dozen tokens, so the budget errs
+        // generous.
         let selected: Vec<SharedString> = scored
             .iter()
             .take(self.selection_budget)
@@ -518,6 +544,16 @@ impl LazyToolRouter {
     }
 }
 
+/// Minimum best-match score required before the router trusts its ranking.
+///
+/// Set at 0.50 from the eval-set separation: correct prunings peaked at >= 0.52,
+/// incorrect ones at 0.32. Chosen at the top of the viable 0.35-0.50 band because
+/// every value in that band produced identical recall and token cost on the eval
+/// set, so the higher value buys margin against phrasings the set does not cover
+/// at no measured cost. Revisit with a larger eval set -- 26 cases cannot
+/// distinguish 0.35 from 0.50.
+const DEFAULT_CONFIDENCE_GATE: f64 = 0.50;
+
 /// Maximum number of MCP tools retained when the router activates.
 ///
 /// Sized against the observed cost asymmetry: an unnecessary MCP tool schema is
@@ -708,7 +744,7 @@ mod tests {
     #[test]
     fn default_thresholds_are_the_documented_values() {
         let router = LazyToolRouter::new();
-        assert_eq!(router.complex_word_threshold, 9);
+        assert_eq!(router.complex_word_threshold, 6);
         assert!((router.threshold - 0.30).abs() < f64::EPSILON);
     }
 
@@ -732,14 +768,14 @@ mod tests {
             })
         };
 
-        // 10+ words, no tool name, no complex signal — routes on word count
-        // alone, which is exactly what the 40-word threshold used to miss.
+        // 10+ words with a strong tool match — routes on word count alone, which
+        // is exactly what the 40-word threshold used to miss. The message must
+        // also clear the confidence gate, so it names something a tool actually
+        // does ("search" / "file contents") rather than being merely long.
         assert!(
-            probe(
-                "can you take a look at how the parser handles nested quotes for me"
-            )
-            .is_some(),
-            "an ordinary multi-clause request must activate the router"
+            probe("can you search the file contents for the parser regular expression")
+                .is_some(),
+            "an ordinary multi-clause request with a clear tool match must route"
         );
 
         // Short and genuinely ambiguous — must still fail open so a terse
@@ -797,22 +833,20 @@ mod tests {
                 candidate("market_lookup", "Look up a prediction market by question"),
             ],
         };
-        let router = LazyToolRouter::new();
-        let selected = router
-            .select_tools(&context)
-            .expect("router should activate");
-        // `kanban_task_create` wins on evidence: its description shares three
-        // terms with the request ("task", "delegate", "subagent"), while
-        // `codegraph_traverse` shares one ("function") and `market_lookup` none.
-        // That ordering is the intended behaviour — the request is explicitly
-        // about decomposition and delegation.
+        // The best candidate here is `kanban_task_create` at 0.35 (three shared
+        // description terms: "task", "delegate", "subagent"), which is below the
+        // 0.50 confidence gate, so the router declines to prune and returns
+        // `None`. That is the intended outcome: a long decomposition request whose
+        // strongest match is only moderate is exactly the shape that produced
+        // confidently-wrong selections before the gate existed.
+        //
+        // Ranking is still asserted directly by
+        // `code_nudge_breaks_ties_without_promoting_unrelated_tools`; this test
+        // pins activation plus the gate's conservatism.
+        let selected = LazyToolRouter::new().select_tools(&context);
         assert!(
-            selected.contains(&"kanban_task_create".into()),
-            "the delegation tool must be retained for a decomposition request"
-        );
-        assert!(
-            !selected.contains(&"market_lookup".into()),
-            "an unrelated market tool must not survive a refactoring request"
+            selected.is_none(),
+            "a moderate best match must fail open rather than prune, got {selected:?}"
         );
     }
 
@@ -1093,10 +1127,39 @@ mod tests {
         );
     }
 
-    /// The router must never hand back an empty MCP set. Keyword scoring can
-    /// find no match at all on a substantive-but-vague request, and at the
-    /// 9-word activation threshold such requests now reach the scorer. Stripping
-    /// every MCP tool in that case is worse than paying for the schemas.
+    /// The gate's purpose: a *small, confident, wrong* selection is the worst
+    /// outcome, and keyword scoring produces exactly that when the request and
+    /// the tool share no vocabulary. "read this paragraph out loud in a natural
+    /// voice" needs `generate_speech` ("Generate speech audio from text") but
+    /// shares no term with it, while `voice_design` and `ledger_read` match the
+    /// incidental words "voice" and "read". Without the gate the router pruned to
+    /// those three and dropped the right tool.
+    #[test]
+    fn moderate_best_match_fails_open_rather_than_pruning_confidently_wrong() {
+        let selected = LazyToolRouter::new().select_tools(&ToolSelectionContext {
+            user_message: Some("read this paragraph out loud in a natural voice".to_string()),
+            open_file_paths: vec![],
+            candidates: vec![
+                candidate(
+                    "generate_speech",
+                    "Generate speech audio from text using a voice design",
+                ),
+                candidate("ledger_read", "Read ledger entries for a portfolio"),
+                candidate("voice_design", "Create a voice profile from a description"),
+            ],
+        });
+        assert!(
+            selected.is_none(),
+            "a request sharing only incidental vocabulary must fail open, got {selected:?}"
+        );
+    }
+
+    /// The router must never hand back an empty or low-confidence MCP set.
+    /// Keyword scoring can find no match at all on a substantive-but-vague
+    /// request, and at the 9-word activation threshold such requests reach the
+    /// scorer. Stripping every MCP tool in that case is worse than paying for the
+    /// schemas. The confidence gate now catches this before an empty selection is
+    /// even constructed, so this asserts the outcome rather than the mechanism.
     #[test]
     fn empty_selection_fails_open_instead_of_stripping_all_mcp_tools() {
         let names: Vec<SharedString> = vec!["widget_alpha".into(), "widget_beta".into()];
@@ -1124,10 +1187,9 @@ mod tests {
                 })
                 .collect(),
         });
-        assert_eq!(
-            selection.as_ref().map(|s| s.len()),
-            Some(0),
-            "precondition: this message must activate the router and match nothing"
+        assert!(
+            selection.is_none(),
+            "a request matching nothing must fail open, got {selection:?}"
         );
 
         let retained =

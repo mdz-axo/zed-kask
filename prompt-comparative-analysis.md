@@ -154,12 +154,15 @@ Ranked. Each: change → axis → expected effect → falsifiable test. All surv
 |---|---|---|---|
 | Prompt surface (`system_prompt.hbs`) | 24,350 B / 313 lines | **23,949 B / 313 lines** | **−401 B** |
 | Upstream Zed, for scale | 19,815 B | — | zed-kask carries +4.1 KB of fork-specific instruction |
-| Skill catalog payload | ≈17 KB (of upstream's 50 KB budget) | **≈15.7 KB** | within budget; H2 stays eliminated |
+| Skill catalog, `description:` lines only | ≈17 KB | **≈15.7 KB** | the figure H2 was eliminated against — within upstream's 50 KB budget |
+| Skill catalog, **as rendered** (63 skills) | — | **26.3 KB / ≈6,560 tok** | corrected: the `<available_skills>` block also carries `<name>` and an absolute `<location>` per skill, ~57% more than description text alone. H2's verdict is unchanged (still inside a 50 KB description budget), but the true context cost is 6.5k tokens, not ~4k. |
 | Reliability gates added | 0 | **6** | R1 delivery fix, R2 kanban tool pin, R3 mermaid contract, R4 loop bound, F1 `SKILL.md` refusal, F3 board-staleness fix |
 
 Surface moved a little; **reliability moved a lot**, and that is the right shape — the objective function ranks "no fabrication / correct tool use" above byte count, and every surface reduction here was a by-product of installing an enforcement point rather than a trade against one.
 
-Validation at `HEAD`: `agent --lib templates::` 14/14, `agent --lib read_file_tool` 27/27, `markdown --lib mermaid` 21/21, `kanban_panel` 3/3, `swarm_panel` 40/40, `hkask-templates` 12 suites / 0 failures, `kask_bridge` 142/142.
+**Whole-context accounting (measured by `kask/scripts/measure-prompt-budget.py`).** The prompt is not the dominant cost. Per-turn fixed overhead is ≈**40,000 tokens**, of which the system prompt proper is ~14,300 (36%) and **tool schemas are ~23,500 (59%)** — built-in Zed tools ~8,300 and MCP tools ~15,100. An earlier draft put built-ins at 16,677 tokens; that counted every `///` in each tool file, whereas `AgentTool::description()` (`crates/agent/src/thread.rs:6252`) renders only the *input struct* docs via `schemars`. Corrected figure is ~8,300. The practical consequence: prompt-byte trimming had a ceiling of a few hundred tokens, while tool-surface routing was worth ~10,000 — which is why the work moved there (§5.3).
+
+Validation at `HEAD`: `agent --lib` 797/797, `markdown --lib` 147/147, `kanban_panel` 16/16, `swarm_panel` 45/45, `hkask-templates` 12 suites / 0 failures, `kask_bridge` 142/142; `cargo clippy --workspace --all-targets` clean.
 
 ### R1 — Un-nest the `## Session Context` block *(reliability; surface-neutral)*
 - **Change:** in `system_prompt.hbs`, move the `{{/if}}` that currently closes the `(or user_agents_md has_rules)` guard so it precedes the `{{#if static_context}}` block, making the block a sibling rather than a child (a swap of the closers at `:311`/`:313`). Add a permanent regression test in `templates.rs` with `static_context: Some(_)`, `user_agents_md: None`, `ProjectContext::new(vec![])`.
@@ -247,6 +250,36 @@ The F-series follow-ups (F1–F4) drifted from prompt analysis into registry cle
 3. **Deletion is only in-scope for this objective when the surface reaches the model.** Prompt bytes and skill-catalog bytes enter the context window; unreachable registry YAML does not. The registry cleanup improved build hygiene and honesty, which is real value — but it moved neither axis of *this* function. Filing it under "minimise prompt surface" was a category error I should have named at F2 rather than at F4.
 
 **Recentred status.** Against the stated objective, the prompt work is complete: sections 1–6 stand, every recommendation is implemented-or-refuted with a falsifiable test, and both axes are measured in the scorecard above. The one genuinely open prompt-scope item is F4's measurement (`skill.catalog_read_blocked` firings), which needs production sessions, not more analysis.
+
+---
+
+## 5.3 Tool routing — where the reliability gain actually came from
+
+The whole-context measurement (§5, scorecard) redirected the work: tool schemas are ~59% of per-turn overhead against the prompt's ~36%, and unlike prompt bytes they are *filterable*. `LazyToolRouter` (`crates/agent/src/tool_router.rs`) already existed for this and was measurably broken.
+
+**Measured against a 226-case labelled eval set** (`kask/scripts/eval-tool-router.py`, cases in `tool-router-eval-set.json`), split into 26 tuned-against `dev` cases and **192 `holdout` cases written without consulting any score**. Recall is the headline metric because the costs are asymmetric — dropping a needed tool costs a failed turn, carrying a spare costs ~45 tokens — so retained-set size is reported alongside it rather than instead of it.
+
+| Stage | Recall | Mean tools kept (of 252) |
+|---|---|---|
+| Baseline | 0.78 | 102 |
+| → fix score dilution + whole-term matching + rank-and-budget | 0.91 | 86 |
+| → weight name matches, gate the code nudge on an open file | 0.91→1.00 on dev | 108 |
+| → confidence gate (decline to prune when the best match is weak) | **1.000** | 108 |
+| → activation threshold 9→6 words | **1.000** | **93** |
+
+Final: **recall 1.000 on all 215 graded cases, dev and holdout identical (gap +0.00), 93 of 252 tools retained, fail-open correct on all 11 vague messages.**
+
+Four defects were found, each by measurement rather than reading:
+
+1. **Length dilution.** `overlap_ratio` divided matched keywords by *total* message keywords, so padding an unchanged request destroyed its score — "generate an image of a mountain" kept `generate_image` at 14 words and kept *nothing* at 25. Match evidence now saturates on matched-term count.
+2. **Substring false positives.** Keywords over 4 characters used `description.contains()`, so `search` matched "re**search**" and `file` matched "pro**file**". Present in *two* locations — the main loop and the code-tool boost.
+3. **A mis-scaled constant, introduced mid-work.** Removing the constant `0.2` base dropped typical scores to 0.2–0.4, at which point the surviving `max(0.5)` code boost stopped being mid-range and started *dominating*: it fired on 7 of 23 cases via generic verbs (`read`, `search`, `build`) and lifted ~62 tools above the correct answer. **Rescaling one term of a scoring function without rescaling the others is the hazard**, and my own probe missed it because I checked which tools were kept, never their ranks.
+4. **Confidently wrong pruning.** The worst failure mode is a *small, confident, wrong* selection: "read this paragraph out loud" pruned to 3 tools, none of them `generate_speech`. Best-match score separates this cleanly — correct prunings peaked ≥0.52, wrong ones at 0.32 — so the router now declines to prune below 0.50. This is L6 again: knowing when not to act is the load-bearing property.
+
+**Two proposals of mine were falsified here, which is the section's real value.**
+
+- **Ontology-based routing** (`hkask-bridge-ontology`, 9 vocabularies): unusable as-is. Only 2 of 13 MCP servers have any `tool_to_*` mapping; concepts are flat `&'static str` tags whose subclass relations exist **only in doc comments**, so "is `omc:Version` a kind of `omc:CreativeWork`" cannot be asked; and the mapping runs tool→concept (provenance tagging) rather than the intent→concept direction routing needs.
+- **Embedding ranking** (`qwen3-embedding:0.6b` via Ollama, harness at `kask/scripts/eval-tool-router-embedding.py`): built and measured, and it **loses**. On holdout it reaches 0.995 recall at 40 tools but needs budget **100** to reach 1.000 — worse than keyword on both axes at matched recall — and it fails the fail-open check outright, because cosine similarity always produces a ranking, so vague messages get pruned instead of retaining everything. Hybrid designs came out at 101 tools, worse than keyword's 93. My error was benchmarking against keyword's *ranking* when the real baseline is keyword's *behaviour*, which handles hard cases by declining. Beating a ranker that knows when to abstain is much harder than beating one that answers badly.
 
 ---
 

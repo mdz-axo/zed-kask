@@ -34,7 +34,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 # ── Router constants, mirrored from crates/agent/src/tool_router.rs ──────────
 THRESHOLD = 0.30
-COMPLEX_WORD_THRESHOLD = 9
+COMPLEX_WORD_THRESHOLD = 6
 SELECTION_BUDGET = 40
 MATCH_SATURATION = 3.0
 NAME_MATCH_SATURATION = 2.0
@@ -42,6 +42,7 @@ NAME_WEIGHT = 0.40
 DESCRIPTION_WEIGHT = 0.35
 INTENT_WEIGHT = 0.25
 CODE_TOOL_NUDGE = 0.10
+CONFIDENCE_GATE = 0.50
 NO_CONFIDENCE_FLOOR = 1
 
 STOPWORDS = {
@@ -160,6 +161,12 @@ def route(message: str, tools: list[dict], has_code_file: bool = False):
         ),
         key=lambda pair: (-pair[0], pair[1]["name"]),
     )
+    # Confidence gate: only prune when the best match is strong enough that the
+    # ranking can be trusted. A small confident selection is worse than none.
+    top_score = scored[0][0] if scored else 0.0
+    if top_score < CONFIDENCE_GATE:
+        return [t["name"] for t in tools], True
+
     selected = [t["name"] for score, t in scored[:SELECTION_BUDGET] if score >= THRESHOLD]
 
     # Empty selection is scorer failure, not a narrowing -> fail open.
@@ -192,76 +199,26 @@ def load_tools() -> list[dict]:
     return tools
 
 
-# ── The labelled eval set ────────────────────────────────────────────────────
-#
-# Each case: a request phrased as a user would phrase it, and the tools that
-# genuinely serve it. `needed` is deliberately conservative -- only tools a
-# competent operator would call for that request, verified to exist in the live
-# surface. Phrasings are varied on purpose: some name the tool's own vocabulary,
-# some describe the intent in plain language (the case keyword overlap handles
-# worst, and the reason embeddings are under consideration).
-EVAL_SET: list[dict] = [
-    # ── Plain-language intent (no shared vocabulary with the description) ──
-    {"id": "media-plain", "message": "make me a picture of a snowy mountain at sunset",
-     "needed": ["generate_image"], "tag": "paraphrase"},
-    {"id": "media-plain-2", "message": "turn this photo into a short video clip for me",
-     "needed": ["image_to_video"], "tag": "paraphrase"},
-    {"id": "speech-plain", "message": "read this paragraph out loud in a natural voice",
-     "needed": ["generate_speech"], "tag": "paraphrase"},
-    {"id": "transcribe-plain", "message": "what is being said in this audio recording",
-     "needed": ["transcribe"], "tag": "paraphrase"},
-    {"id": "code-plain", "message": "who calls this function and what breaks if i change it",
-     "needed": ["codegraph_traverse", "codegraph_impact"], "tag": "paraphrase"},
-    # Note: there is no `corpus_search`; semantic recall over stored material is
-     # `curator_semantic_search`. The eval-set guard caught this mislabel.
-    {"id": "corpus-plain", "message": "what do my saved documents say about interest rate policy",
-     "needed": ["curator_semantic_search"], "tag": "paraphrase"},
-    {"id": "kanban-plain", "message": "add a card to the board for fixing the parser bug",
-     "needed": ["kanban_task_create"], "tag": "paraphrase"},
-    {"id": "forecast-plain", "message": "how likely is it that this event happens before december",
-     "needed": ["market_lookup"], "tag": "paraphrase"},
+EVAL_SET_PATH = Path(__file__).resolve().parent / "tool-router-eval-set.json"
 
-    # ── Tool-vocabulary phrasing (keyword overlap should do well) ──
-    {"id": "web-search", "message": "search the web for recent papers on retrieval augmented generation",
-     "needed": ["web_search"], "tag": "vocabulary"},
-    {"id": "web-extract", "message": "extract the readable content from this article url https://example.com/x",
-     "needed": ["web_extract"], "tag": "vocabulary"},
-    {"id": "codegraph-query", "message": "query the codegraph for the symbol that parses configuration",
-     "needed": ["codegraph_query"], "tag": "vocabulary"},
-    {"id": "gallery", "message": "search the media gallery for the mountain images i generated",
-     "needed": ["gallery_search"], "tag": "vocabulary"},
-    {"id": "portfolio", "message": "show me a snapshot of my portfolio positions and returns",
-     "needed": ["portfolio_snapshot", "portfolio_returns"], "tag": "vocabulary"},
-    {"id": "training", "message": "assemble the training dataset and submit a fine tuning run",
-     "needed": ["training_assemble_dataset", "training_submit"], "tag": "vocabulary"},
-    {"id": "scenario", "message": "build a scenario matrix from the current prediction markets",
-     "needed": ["scenario_from_markets"], "tag": "vocabulary"},
-    {"id": "condenser", "message": "condense this long thread into a short summary for me",
-     "needed": ["condenser_thread_summary"], "tag": "vocabulary"},
-    {"id": "curator", "message": "show me the outstanding curator escalations for review",
-     "needed": ["curator_escalations"], "tag": "vocabulary"},
-    {"id": "ocr", "message": "run ocr over this scanned pdf and convert it to text",
-     "needed": ["corpus_ocr", "corpus_convert"], "tag": "vocabulary"},
 
-    # ── Multi-tool / compound requests ──
-    {"id": "compound-media", "message": "generate an image of a mountain then upscale it and add it to the gallery",
-     "needed": ["generate_image", "upscale_image"], "tag": "compound"},
-    {"id": "compound-research", "message": "search the web for the latest earnings coverage then extract the top article",
-     "needed": ["web_search", "web_extract"], "tag": "compound"},
-    {"id": "compound-code", "message": "find the dead code in this project and analyze the complexity of the worst offenders",
-     "needed": ["codegraph_analysis"], "tag": "compound"},
+def load_eval_set() -> list[dict]:
+    """Load the labelled cases from JSON, normalising the `phrasing` key to `tag`."""
+    data = json.loads(EVAL_SET_PATH.read_text(encoding="utf-8"))
+    cases = []
+    for case in data["cases"]:
+        cases.append(
+            {
+                "id": case["id"],
+                "message": case["message"],
+                "needed": case["needed"],
+                "tag": case["phrasing"],
+                "split": case.get("split", "dev"),
+            }
+        )
+    return cases
 
-    # ── Conversationally padded (the dilution case) ──
-    {"id": "padded-media", "message": "i was wondering earlier today whether you might be able to help me out with something here since i would really like you to make me a picture of a snowy mountain",
-     "needed": ["generate_image"], "tag": "padded"},
-    {"id": "padded-web", "message": "when you get a chance and if it is not too much trouble could you please go and search the web for recent commentary on this topic",
-     "needed": ["web_search"], "tag": "padded"},
 
-    # ── Should fail open (too short / no actionable signal) ──
-    {"id": "greeting", "message": "hello", "needed": [], "tag": "fail-open"},
-    {"id": "terse", "message": "fix this", "needed": [], "tag": "fail-open"},
-    {"id": "vague", "message": "what does this do", "needed": [], "tag": "fail-open"},
-]
 
 
 def main() -> int:
@@ -283,6 +240,7 @@ def main() -> int:
             ("DESCRIPTION_WEIGHT", DESCRIPTION_WEIGHT),
             ("INTENT_WEIGHT", INTENT_WEIGHT),
             ("CODE_TOOL_NUDGE", CODE_TOOL_NUDGE),
+            ("CONFIDENCE_GATE", CONFIDENCE_GATE),
             ("NO_CONFIDENCE_FLOOR", NO_CONFIDENCE_FLOOR),
         ):
             print(f"  {name} = {value}")
@@ -291,18 +249,19 @@ def main() -> int:
     tools = load_tools()
     names = {t["name"] for t in tools}
     total = len(tools)
+    eval_set = load_eval_set()
 
     # Fail loudly if the eval set references a tool that no longer exists --
     # a silently-stale label would inflate or deflate recall.
     missing = sorted(
-        {n for case in EVAL_SET for n in case["needed"] if n not in names}
+        {n for case in eval_set for n in case["needed"] if n not in names}
     )
     if missing:
         print(f"ERROR: eval set references non-existent tools: {missing}")
         return 1
 
     results = []
-    for case in EVAL_SET:
+    for case in eval_set:
         retained, activated = route(case["message"], tools)
         retained_set = set(retained)
         needed = case["needed"]
@@ -312,6 +271,7 @@ def main() -> int:
             {
                 "id": case["id"],
                 "tag": case["tag"],
+                "split": case["split"],
                 "words": len(case["message"].split()),
                 "activated": activated,
                 "kept": len(retained),
@@ -320,52 +280,72 @@ def main() -> int:
             }
         )
 
-    scored = [r for r in results if r["tag"] != "fail-open"]
-    mean_recall = sum(r["recall"] for r in scored) / max(len(scored), 1)
-    perfect = sum(1 for r in scored if r["recall"] == 1.0)
-    mean_kept = sum(r["kept"] for r in scored) / max(len(scored), 1)
-    fail_open_ok = all(
-        r["kept"] == total for r in results if r["tag"] == "fail-open"
-    )
+    def summarise(rows: list[dict]) -> dict:
+        graded = [r for r in rows if r["tag"] != "fail-open"]
+        opens = [r for r in rows if r["tag"] == "fail-open"]
+        return {
+            "cases": len(graded),
+            "recall": sum(r["recall"] for r in graded) / max(len(graded), 1),
+            "perfect": sum(1 for r in graded if r["recall"] == 1.0),
+            "mean_kept": sum(r["kept"] for r in graded) / max(len(graded), 1),
+            "fail_open_cases": len(opens),
+            "fail_open_correct": all(r["kept"] == total for r in opens),
+        }
+
+    overall = summarise(results)
+    dev = summarise([r for r in results if r["split"] == "dev"])
+    holdout = summarise([r for r in results if r["split"] == "holdout"])
 
     if args.json:
-        print(json.dumps({"total_tools": total, "summary": {
-            "mean_recall": mean_recall, "perfect_recall_cases": perfect,
-            "scored_cases": len(scored), "mean_kept": mean_kept,
-            "fail_open_correct": fail_open_ok}, "cases": results}, indent=2))
+        print(json.dumps({"total_tools": total, "overall": overall, "dev": dev,
+                          "holdout": holdout, "cases": results}, indent=2))
         return 0
 
-    print(f"\nTool surface: {total} MCP tools | eval cases: {len(EVAL_SET)}")
+    print(f"\nTool surface: {total} MCP tools | eval cases: {len(eval_set)}")
     print("=" * 78)
     if args.verbose:
-        print(f"{'case':<18}{'tag':<12}{'w':>3}{'kept':>6}{'recall':>8}  missed")
+        print(f"{'case':<7}{'split':<9}{'tag':<13}{'w':>3}{'kept':>6}{'recall':>8}  missed")
         for r in results:
+            if r["recall"] == 1.0 and not args.json and r["tag"] != "fail-open":
+                continue  # only show imperfect cases; full detail via --json
             miss = ",".join(r["missed"]) or "-"
             print(
-                f"{r['id']:<18}{r['tag']:<12}{r['words']:>3}{r['kept']:>6}"
-                f"{r['recall']:>8.2f}  {miss}"
+                f"{r['id']:<7}{r['split']:<9}{r['tag']:<13}{r['words']:>3}"
+                f"{r['kept']:>6}{r['recall']:>8.2f}  {miss}"
             )
-        print()
+        print("  (perfect-recall cases omitted; use --json for all)\n")
 
+    graded = [r for r in results if r["tag"] != "fail-open"]
     by_tag: dict[str, list[dict]] = {}
-    for r in scored:
+    for r in graded:
         by_tag.setdefault(r["tag"], []).append(r)
-    print(f"{'tag':<14}{'cases':>6}{'recall':>9}{'mean kept':>11}")
-    for tag, rows in sorted(by_tag.items()):
+    print(f"{'phrasing':<14}{'cases':>6}{'recall':>9}{'mean kept':>11}")
+    for tag, rows in sorted(by_tag.items(), key=lambda kv: -len(kv[1])):
         rc = sum(x["recall"] for x in rows) / len(rows)
         kp = sum(x["kept"] for x in rows) / len(rows)
         print(f"{tag:<14}{len(rows):>6}{rc:>9.2f}{kp:>11.1f}")
 
     print("-" * 78)
-    print(f"{'OVERALL':<14}{len(scored):>6}{mean_recall:>9.2f}{mean_kept:>11.1f}")
+    print(f"{'split':<14}{'cases':>6}{'recall':>9}{'mean kept':>11}{'perfect':>10}")
+    for label, s in (("dev (tuned)", dev), ("holdout", holdout), ("ALL", overall)):
+        print(
+            f"{label:<14}{s['cases']:>6}{s['recall']:>9.2f}"
+            f"{s['mean_kept']:>11.1f}{s['perfect']:>6}/{s['cases']}"
+        )
     print()
-    print(f"  Perfect-recall cases : {perfect}/{len(scored)}")
-    print(f"  Mean retained        : {mean_kept:.1f} of {total} "
-          f"({100.0 * mean_kept / total:.0f}%)")
-    print(f"  Fail-open correct    : {'yes' if fail_open_ok else 'NO'}")
+    print(f"  Mean retained (all)  : {overall['mean_kept']:.1f} of {total} "
+          f"({100.0 * overall['mean_kept'] / total:.0f}%)")
+    print(f"  Fail-open correct    : "
+          f"{'yes' if overall['fail_open_correct'] else 'NO'} "
+          f"({overall['fail_open_cases']} cases)")
+    gap = dev["recall"] - holdout["recall"]
+    print(f"  Dev - holdout gap    : {gap:+.2f} "
+          f"({'overfitting risk' if gap > 0.10 else 'generalises'})")
     print()
     print("Recall is the metric that matters: a dropped tool costs a failed turn,")
     print("a spare one costs ~45 tokens. Mean-kept is the token side of the trade.")
+    print("The holdout split was written without consulting scores; treat it as the")
+    print("honest number and never tune against it.")
     return 0
 
 
