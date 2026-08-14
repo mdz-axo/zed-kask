@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Diataxis Documentation Index"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-05
-version: "0.3.1"
+last_updated: 2026-08-13
+version: "1.0.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -24,7 +24,7 @@ Every artifact cites concrete file:line references in the current tree.
 | Reference   | Look up a fact    | Domain           | ERD or class diagram      |
 | Explanation | Understand why    | Trust + Curation | State or sequence diagram |
 
-## Major crates (10 cross-cutting sets, 39 artifacts)
+## Major crates (11 cross-cutting sets, 40 artifacts)
 
 | Crate                                             | Tutorial                                   | How-to                                      | Reference                                    | Explanation                                      |
 | ------------------------------------------------- | ------------------------------------------ | ------------------------------------------- | -------------------------------------------- | ------------------------------------------------ |

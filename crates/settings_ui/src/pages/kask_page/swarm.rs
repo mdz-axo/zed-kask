@@ -1,5 +1,6 @@
 //! Swarm sub-page — Agent Bestiary World backend mode, credit ceiling,
-//! curator consent default, and local agent/swarm directories.
+//! curator consent default, local agent/swarm directories, default agent
+//! model, A2A HTTP gateway, and local semantic-memory configuration.
 
 use super::*;
 
@@ -22,6 +23,11 @@ pub(crate) fn render_swarm_page(
     let local_agents_dir = swarm.local_agents_dir;
     let local_swarms_dir = swarm.local_swarms_dir;
     let skills_dir = swarm.skills_dir;
+    let default_agent_model = swarm.default_agent_model;
+    let a2a_http_enabled = swarm.a2a_http_enabled;
+    let memory_passphrase = swarm.memory_passphrase;
+    let memory_db_path = swarm.memory_db_path;
+    let embedding_dim = swarm.embedding_dim.to_string();
 
     // Mode toggle: Abw (remote) vs Local (zed-kask substrate).
     let mode_is_local = mode == kask_bridge::SwarmModeConfig::Local;
@@ -223,6 +229,143 @@ pub(crate) fn render_swarm_page(
             }
         });
 
+    let default_agent_model_input = SettingsInputField::new("kask-swarm-default-agent-model")
+        .tab_index(7)
+        .with_initial_text(default_agent_model)
+        .with_placeholder("claude-haiku-4-5-20251001")
+        .aria_label("Default Agent Model")
+        .confirm_on_focus_out()
+        .on_confirm(move |value, _window, cx| {
+            if let Some(text) = value {
+                let parsed = text.trim().to_string();
+                SettingsStore::global(cx).update_settings_file(
+                    <dyn fs::Fs>::global(cx),
+                    move |settings, _| {
+                        settings
+                            .kask
+                            .get_or_insert_default()
+                            .swarm
+                            .get_or_insert_default()
+                            .default_agent_model = if parsed.is_empty() {
+                            None
+                        } else {
+                            Some(parsed)
+                        };
+                    },
+                );
+            }
+        });
+
+    let a2a_http_toggle = SwitchField::new(
+        "kask-swarm-a2a-http-enabled",
+        Some("A2A HTTP Gateway"),
+        Some(
+            "Enable the A2A HTTP gateway (loopback JSON-RPC server that exposes local \
+             agents to external A2A clients). Opens a loopback port — only enable when \
+             you need external A2A clients to reach your local agents. Or set \
+             HKASK_A2A_HTTP_ENABLE=1."
+                .into(),
+        ),
+        if a2a_http_enabled {
+            ToggleState::Selected
+        } else {
+            ToggleState::Unselected
+        },
+        move |state, _window, cx| {
+            let enabled = *state == ToggleState::Selected;
+            SettingsStore::global(cx).update_settings_file(
+                <dyn fs::Fs>::global(cx),
+                move |settings, _| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .swarm
+                        .get_or_insert_default()
+                        .a2a_http_enabled = Some(enabled);
+                },
+            );
+        },
+    )
+    .tab_index(8);
+
+    let memory_passphrase_input = SettingsInputField::new("kask-swarm-memory-passphrase")
+        .tab_index(9)
+        .with_initial_text(memory_passphrase)
+        .with_placeholder("allostery")
+        .aria_label("Memory Passphrase")
+        .confirm_on_focus_out()
+        .on_confirm(move |value, _window, cx| {
+            if let Some(text) = value {
+                let parsed = text.trim().to_string();
+                SettingsStore::global(cx).update_settings_file(
+                    <dyn fs::Fs>::global(cx),
+                    move |settings, _| {
+                        settings
+                            .kask
+                            .get_or_insert_default()
+                            .swarm
+                            .get_or_insert_default()
+                            .memory_passphrase = if parsed.is_empty() {
+                            None
+                        } else {
+                            Some(parsed)
+                        };
+                    },
+                );
+            }
+        });
+
+    let memory_db_path_input = SettingsInputField::new("kask-swarm-memory-db-path")
+        .tab_index(10)
+        .with_initial_text(memory_db_path)
+        .with_placeholder("swarm_memory.db")
+        .aria_label("Memory DB Path")
+        .confirm_on_focus_out()
+        .on_confirm(move |value, _window, cx| {
+            if let Some(text) = value {
+                let parsed = text.trim().to_string();
+                SettingsStore::global(cx).update_settings_file(
+                    <dyn fs::Fs>::global(cx),
+                    move |settings, _| {
+                        settings
+                            .kask
+                            .get_or_insert_default()
+                            .swarm
+                            .get_or_insert_default()
+                            .memory_db_path = if parsed.is_empty() {
+                            None
+                        } else {
+                            Some(parsed)
+                        };
+                    },
+                );
+            }
+        });
+
+    let embedding_dim_input = SettingsInputField::new("kask-swarm-embedding-dim")
+        .tab_index(11)
+        .with_initial_text(embedding_dim)
+        .with_placeholder("1024")
+        .aria_label("Embedding Dimension")
+        .confirm_on_focus_out()
+        .on_confirm(move |value, _window, cx| {
+            if let Some(text) = value {
+                if let Ok(parsed) = text.trim().parse::<usize>() {
+                    SettingsStore::global(cx).update_settings_file(
+                        <dyn fs::Fs>::global(cx),
+                        move |settings, _| {
+                            settings
+                                .kask
+                                .get_or_insert_default()
+                                .swarm
+                                .get_or_insert_default()
+                                .embedding_dim = Some(parsed);
+                        },
+                    );
+                }
+            }
+        });
+
     v_flex()
         .id("kask-swarm-page")
         .size_full()
@@ -329,6 +472,72 @@ pub(crate) fn render_swarm_page(
                     .color(Color::Muted),
                 )
                 .child(skills_dir_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Default Agent Model"))
+                .child(
+                    Label::new(
+                        "Default model id for newly created ABW agents when the caller omits \
+                         `model`. Leave empty for the server default \
+                         (claude-haiku-4-5-20251001). Or set \
+                         HKASK_ABW_DEFAULT_AGENT_MODEL.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(default_agent_model_input),
+        )
+        .child(Divider::horizontal())
+        .child(a2a_http_toggle)
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Memory Passphrase"))
+                .child(
+                    Label::new(
+                        "SQLCipher passphrase for the local swarm semantic-memory store. \
+                         Must be >=8 chars. Leave empty for the pre-release default \
+                         (allostery). Or set HKASK_SWARM_MEMORY_PASSPHRASE.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(memory_passphrase_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Memory DB Path"))
+                .child(
+                    Label::new(
+                        "On-disk path for the local swarm semantic-memory DB. Leave empty \
+                         for the default (<hkask data dir>/swarm_memory.db). Or set \
+                         HKASK_SWARM_MEMORY_DB.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(memory_db_path_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Embedding Dimension"))
+                .child(
+                    Label::new(
+                        "Embedding vector dimension for the semantic-memory embedding \
+                         store. Default 1024. Or set HKASK_SWARM_EMBEDDING_DIM.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(embedding_dim_input),
         )
         .into_any_element()
 }

@@ -70,7 +70,7 @@ pub fn url_encode_segment(segment: &str) -> String {
 
 /// Build an ABW workspace slug from a name base and a timestamp. ABW slugs
 /// allow only lowercase letters, digits, and underscores, and are capped at
-/// 3–64 chars (verified live 2026-08-02 — a 66-char slug was rejected with
+/// 3–64 chars (verified live 2026-08-13 — a 66-char slug was rejected with
 /// HTTP 400). The timestamp suffix disambiguates swarms created with the
 /// same name: the FULL epoch-millis value is used — the prior version
 /// truncated to the first 4 digits of the epoch-millis string, which is
@@ -106,7 +106,7 @@ pub fn make_swarm_slug(slug_base: &str, now: std::time::SystemTime) -> String {
 
 /// Validate an ABW agent name (the creation surface). ABW agent names are
 /// slugs: 3–64 chars, lowercase letters, digits, and underscores only
-/// (verified live 2026-08-02 — `zed_kask_verify_<uuid>` with hyphens was
+/// (verified live 2026-08-13 — `zed_kask_verify_<uuid>` with hyphens was
 /// rejected with HTTP 400 "slug must contain only lowercase letters, digits,
 /// and underscores"). Rejecting here turns ABW's confusing 400 into a clear
 /// argument error.
@@ -137,7 +137,7 @@ pub fn validate_agent_name(name: &str) -> Result<(), LocalSwarmError> {
 /// quote at this fee so a 1-credit authorization cannot spend 2.
 ///
 /// Third-party hires are a different tier: `/hire` charges a flat 5 cr base
-/// (verified live 2026-08-02 on `sensor_advisor`: `gas_charged: 5` with
+/// (verified live 2026-08-13 on `sensor_advisor`: `gas_charged: 5` with
 /// `dependencies_hired: []`), and the third-party `/dependencies` quote
 /// already INCLUDES the base (quote `total=10, required=0, optional=5` =
 /// base 5 + optional 5). So the floor only needs to cover the owned-agent
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn make_swarm_slug_caps_total_length_at_64() {
-        // ABW rejects slugs longer than 64 chars (verified live 2026-08-02).
+        // ABW rejects slugs longer than 64 chars (verified live 2026-08-13).
         // A long name base must be truncated, keeping the disambiguating
         // millis suffix, so the total never exceeds 64.
         let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);

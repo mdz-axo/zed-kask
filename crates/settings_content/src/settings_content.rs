@@ -1752,6 +1752,28 @@ pub struct KaskSwarmSettingsContent {
     /// descriptions into the local agent's system prompt (Slice 6 — local
     /// agent skill-awareness). When empty/None, skill-awareness is disabled.
     pub skills_dir: Option<String>,
+    /// Default model id for newly created ABW agents when the caller omits
+    /// `model`. Operator-configurable so the default is not a code literal
+    /// that goes stale when the provider renames/deprecates the model
+    /// (KA-05). When empty, uses the server default
+    /// (`claude-haiku-4-5-20251001`).
+    pub default_agent_model: Option<String>,
+    /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that
+    /// exposes local agents to external A2A clients). Default `false`
+    /// (opt-in — it opens a loopback port). Security-relevant: only enable
+    /// when you need external A2A clients to reach your local agents.
+    pub a2a_http_enabled: Option<bool>,
+    /// SQLCipher passphrase for the local swarm semantic-memory store (the
+    /// `hkask-memory` `MemoryStore` backing the local knowledge tools). Must
+    /// be >=8 chars. When empty, uses the pre-release default `"allostery"`
+    /// — override with a real secret for production use.
+    pub memory_passphrase: Option<String>,
+    /// On-disk path for the local swarm semantic-memory DB. When empty, uses
+    /// the default `<hkask data dir>/swarm_memory.db`.
+    pub memory_db_path: Option<String>,
+    /// Embedding vector dimension for the semantic-memory embedding store.
+    /// Default 1024. Only relevant if the embedding-search path is used.
+    pub embedding_dim: Option<usize>,
 }
 
 /// Mirror of `SwarmModeConfig` in the bridge crate, kept separate to avoid a

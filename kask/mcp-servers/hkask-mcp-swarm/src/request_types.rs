@@ -180,7 +180,7 @@ pub struct ValenceInput {
 
 /// Inbound MCP server declaration — a third-party MCP server an ABW agent
 /// may *consume* (call as a client). Mirrors fermi's `RemoteMcpServer` shape
-/// (fermi v0.11.6, mig-177; `src/agent_backend/mcp_client.rs`). fermi accepts
+/// (fermi v0.16.1, mig-177 (fermi v0.16.1); `src/agent_backend/mcp_client.rs`). fermi accepts
 /// both a sequence and a map form; zed-kask sends the sequence form because
 /// the map form's keys are server namespaces that the model cannot
 /// authoritatively choose.
@@ -278,14 +278,14 @@ pub struct CreateAgentRequest {
     /// card's `capabilities.mcp_tools` (executed by
     /// `swarm_delegate_local`).
     ///
-    /// Distinct from `mcp_servers` (inbound). fermi v0.11.8 release notes
+    /// Distinct from `mcp_servers` (inbound). fermi v0.16.1 release notes
     /// pin the mnemonic: `mcp_tools` = outbound (what I expose),
     /// `mcp_servers` = inbound (who I can call).
     pub mcp_tools: Option<Vec<String>>,
     /// Inbound MCP server declarations — third-party MCP servers this
-    /// agent may *call* as a client at execution time. fermi v0.11.6
-    /// (mig-177) added the `agents.mcp_servers` JSONB column; v0.11.8
-    /// (mig-178) wired `resolve_agent_card` to bridge it over the file
+    /// agent may *call* as a client at execution time. fermi v0.16.1
+    /// (mig-177 (fermi v0.16.1)) added the `agents.mcp_servers` JSONB column; v0.16.1
+    /// (mig-178 (fermi v0.16.1)) wired `resolve_agent_card` to bridge it over the file
     /// card. fermi discovers each server's `tools/list` (TTL-cached),
     /// namespaces the results as `<name>__<tool>`, and routes
     /// `tools/call` back out. Builtins win on name collisions.
@@ -570,7 +570,7 @@ pub struct FireRequest {
     /// The workspace (swarm) id.
     pub workspace_id: String,
     /// The agent to fire — the roster's `agent_name` or `agent_id` (ABW
-    /// resolves both; verified live 2026-08-02).
+    /// resolves both; verified live 2026-08-13).
     pub agent_name: String,
 }
 
@@ -590,14 +590,14 @@ pub struct DeleteSwarmRequest {
     pub workspace_id: String,
 }
 
-// ── Knowledge search (fermi v0.10.26 embedder fix) ───────────────────────────
+// ── Knowledge search (fermi v0.16.1 embedder fix) ───────────────────────────
 
 /// Search an agent's consolidated dreaming-memory knowledge graph. fermi
 /// does not expose a vector-search HTTP endpoint — the `MemoryStore` has
 /// the capability (`search_similar_episodes`, semantic entity/rule search
 /// via pgvector `<=>` cosine distance) but it's not wired to a route. The
 /// tool fetches `GET /api/agents/{id}/kg/rules` + `GET /api/agents/{id}/kg/entities`
-/// and does client-side text matching against the query. The v0.10.26
+/// and does client-side text matching against the query. The v0.16.1
 /// embedder fix (OpenAI `text-embedding-3-large` @ 1024) is still
 /// load-bearing — without it, consolidation never runs and the KG tables
 /// stay empty. Requires API key.
@@ -611,7 +611,7 @@ pub struct SearchKnowledgeRequest {
     pub query: String,
 }
 
-// ── Publish (fermi v0.10.15 admin force-publish) ───────────────────────────
+// ── Publish (fermi v0.16.1 admin force-publish) ───────────────────────────
 
 /// Preflight an agent publish — `GET /api/agents/{id}/publish-checks`. Returns
 /// `can_publish` and the list of failing checks (name/description/system_prompt/
@@ -624,7 +624,7 @@ pub struct PublishChecksRequest {
 
 /// Publish an agent to the public catalogue — `POST /api/agents/{id}/publish`.
 /// With `force=true` (admin only), failing checks are bypassed and `reason` is
-/// audited to `admin_bypass_events` (mig-164, wired in fermi v0.10.5/v0.10.15).
+/// audited to `admin_bypass_events` (mig-164 (fermi v0.16.1), wired in fermi v0.16.1).
 /// Requires API key.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PublishAgentRequest {
@@ -639,8 +639,8 @@ pub struct PublishAgentRequest {
 }
 
 /// Fork an ABW agent into a derivative — `POST /api/agents/{id}/fork`
-/// (fermi v0.10.16 fixed the fork path, which 500'd for everyone since
-/// mig-006 due to an `agents.owner_id` column reference). Creates
+/// (fermi v0.16.1 fixed the fork path, which 500'd for everyone since
+/// mig-006 (fermi v0.16.1) due to an `agents.owner_id` column reference). Creates
 /// `{source}_fork_{n}` with author-royalty tracking; the derived name is
 /// slug-validated (a legacy-name source containing `-` or `/` is refused with
 /// a detailed 400 — those need an admin rename via `/api/admin/agents/legacy-slugs`

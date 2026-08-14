@@ -520,6 +520,28 @@ pub struct KaskSwarmSettings {
     /// agent runs skill-blind). Set from the project's `.agents/skills/`
     /// directory.
     pub skills_dir: String,
+
+    /// Default model id for newly created ABW agents when the caller omits
+    /// `model` (KA-05). When empty, uses the server default
+    /// (`claude-haiku-4-5-20251001`).
+    pub default_agent_model: String,
+
+    /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that
+    /// exposes local agents to external A2A clients). Default `false`
+    /// (opt-in — it opens a loopback port).
+    pub a2a_http_enabled: bool,
+
+    /// SQLCipher passphrase for the local swarm semantic-memory store. Must
+    /// be >=8 chars. When empty, uses the pre-release default `"allostery"`.
+    pub memory_passphrase: String,
+
+    /// On-disk path for the local swarm semantic-memory DB. When empty, uses
+    /// the default `<hkask data dir>/swarm_memory.db`.
+    pub memory_db_path: String,
+
+    /// Embedding vector dimension for the semantic-memory embedding store.
+    /// Default 1024.
+    pub embedding_dim: usize,
 }
 
 /// Mirror of `SwarmMode` in the server crate, kept separate to avoid a
@@ -557,15 +579,14 @@ impl From<settings_content::SwarmModeContent> for SwarmModeConfig {
 impl Default for KaskSwarmSettings {
     fn default() -> Self {
         // These defaults MUST stay in sync with `SwarmConfig::default()` in
-        // `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`. The bridge
-        // emits env vars (`HKASK_ABW_*` / `HKASK_SWARM_*`) from this `Default` via `mcp_env()`;
-        // the server reads them in `SwarmConfig::from_env`. The two `Default` impls
-        // are deliberately separate (the server crate does not depend on the
-        // bridge crate) to avoid a circular dependency — the duplication is
-        // the seam between them. If you change a default here, change it there
-        // too, and update the `swarm_settings_default_emits_no_env` test below.
-        // Note: `default_agent_model` is server-only (operator env var, not
-        // settings-file) — it has no counterpart here.
+        // `kask/mcp-servers/hkask-mcp-swarm/src/config.rs`. The bridge emits
+        // env vars (`HKASK_ABW_*` / `HKASK_SWARM_*`) from this `Default` via
+        // `mcp_env()`; the server reads them in `SwarmConfig::from_env`. The
+        // two `Default` impls are deliberately separate (the server crate
+        // does not depend on the bridge crate) to avoid a circular dependency
+        // — the duplication is the seam between them. If you change a default
+        // here, change it there too, and update the
+        // `swarm_settings_default_emits_no_env` test below.
         Self {
             mode: SwarmModeConfig::default(),
             api_url: String::new(),
@@ -574,6 +595,11 @@ impl Default for KaskSwarmSettings {
             local_agents_dir: String::new(),
             local_swarms_dir: String::new(),
             skills_dir: String::new(),
+            default_agent_model: String::new(),
+            a2a_http_enabled: false,
+            memory_passphrase: String::new(),
+            memory_db_path: String::new(),
+            embedding_dim: 1024,
         }
     }
 }
@@ -956,6 +982,36 @@ impl KaskSettings {
                 self.swarm.skills_dir.clone(),
             );
         }
+        if !self.swarm.default_agent_model.is_empty() {
+            env.insert(
+                "HKASK_ABW_DEFAULT_AGENT_MODEL".to_string(),
+                self.swarm.default_agent_model.clone(),
+            );
+        }
+        if self.swarm.a2a_http_enabled != swarm_default.a2a_http_enabled {
+            env.insert(
+                "HKASK_A2A_HTTP_ENABLE".to_string(),
+                self.swarm.a2a_http_enabled.to_string(),
+            );
+        }
+        if !self.swarm.memory_passphrase.is_empty() {
+            env.insert(
+                "HKASK_SWARM_MEMORY_PASSPHRASE".to_string(),
+                self.swarm.memory_passphrase.clone(),
+            );
+        }
+        if !self.swarm.memory_db_path.is_empty() {
+            env.insert(
+                "HKASK_SWARM_MEMORY_DB".to_string(),
+                self.swarm.memory_db_path.clone(),
+            );
+        }
+        if self.swarm.embedding_dim != swarm_default.embedding_dim {
+            env.insert(
+                "HKASK_SWARM_EMBEDDING_DIM".to_string(),
+                self.swarm.embedding_dim.to_string(),
+            );
+        }
 
         // ── Training ──
         if !self.training.host.is_empty() {
@@ -1246,6 +1302,11 @@ impl From<KaskSwarmSettingsContent> for KaskSwarmSettings {
             local_agents_dir: c.local_agents_dir.unwrap_or(default.local_agents_dir),
             local_swarms_dir: c.local_swarms_dir.unwrap_or(default.local_swarms_dir),
             skills_dir: c.skills_dir.unwrap_or(default.skills_dir),
+            default_agent_model: c.default_agent_model.unwrap_or(default.default_agent_model),
+            a2a_http_enabled: c.a2a_http_enabled.unwrap_or(default.a2a_http_enabled),
+            memory_passphrase: c.memory_passphrase.unwrap_or(default.memory_passphrase),
+            memory_db_path: c.memory_db_path.unwrap_or(default.memory_db_path),
+            embedding_dim: c.embedding_dim.unwrap_or(default.embedding_dim),
         }
     }
 }
@@ -1774,6 +1835,11 @@ mod tests {
         assert!(!env.contains_key("HKASK_LOCAL_AGENTS_DIR"));
         assert!(!env.contains_key("HKASK_LOCAL_SWARMS_DIR"));
         assert!(!env.contains_key("HKASK_SKILLS_DIR"));
+        assert!(!env.contains_key("HKASK_ABW_DEFAULT_AGENT_MODEL"));
+        assert!(!env.contains_key("HKASK_A2A_HTTP_ENABLE"));
+        assert!(!env.contains_key("HKASK_SWARM_MEMORY_PASSPHRASE"));
+        assert!(!env.contains_key("HKASK_SWARM_MEMORY_DB"));
+        assert!(!env.contains_key("HKASK_SWARM_EMBEDDING_DIM"));
         assert!(
             !env.contains_key("HKASK_ABW_API_KEY"),
             "the ABW API key is a credential, not config — it must never appear in mcp_env()"
@@ -1781,6 +1847,8 @@ mod tests {
         assert_eq!(settings.swarm.max_credits_per_dispatch, 50);
         assert!(!settings.swarm.curator_consent_default);
         assert_eq!(settings.swarm.mode, SwarmModeConfig::Abw);
+        assert!(!settings.swarm.a2a_http_enabled);
+        assert_eq!(settings.swarm.embedding_dim, 1024);
     }
 
     #[test]

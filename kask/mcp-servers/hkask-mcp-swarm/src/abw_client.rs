@@ -121,7 +121,7 @@ impl SwarmClient {
 
     /// Generalized request carrying a query string and an optional JSON body.
     /// The verb helpers (`get`/`post`/`delete`) take only a path; ABW endpoints
-    /// added after fermi v0.10.15 take query parameters
+    /// added after fermi v0.16.1 take query parameters
     /// (`/agents/{id}/publish?force=…&reason=…`, `/agents/{id}/kg/rules?active_only=true`)
     /// that the helpers cannot carry. This is the deep path for those — it keeps
     /// the auth/timeout/error-mapping behavior of `send` without spawning a
@@ -144,7 +144,7 @@ impl SwarmClient {
     }
 
     /// Send a PATCH request. The workspace-update endpoint is 405 on ABW
-    /// (verified live 2026-08-02 — no PATCH /workspaces/{id}); this exists
+    /// (verified live 2026-08-13 — no PATCH /workspaces/{id}); this exists
     /// only for the live probe that pins that fact.
     #[cfg(test)]
     #[expect(dead_code)]

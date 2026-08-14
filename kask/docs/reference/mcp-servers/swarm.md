@@ -1,8 +1,8 @@
 ---
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-05
-version: "0.32.2"
+last_updated: 2026-08-13
+version: "0.34.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -226,7 +226,7 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-SWARM-001
-verified_date: 2026-08-04
+verified_date: 2026-08-13
 verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs; kask/mcp-servers/hkask-mcp-swarm/src/tools/swarm_hire.rs
 status: VERIFIED
 -->
@@ -419,13 +419,13 @@ injected by `mcp_env_with_credentials` — it never appears in the config env ma
 | `kask.swarm.local_agents_dir`         | `HKASK_LOCAL_AGENTS_DIR`            | (empty = `agents/local/curated`) | Local agent cards directory                                   |
 | `kask.swarm.local_swarms_dir`         | `HKASK_LOCAL_SWARMS_DIR`            | (empty = `agents/local/swarms`) | Local swarms directory (local replica of ABW workspace roster) |
 | `kask.swarm.skills_dir`               | `HKASK_SKILLS_DIR`                  | (empty = skill-blind)            | Skill corpus dir for local agent skill-awareness (Slice 6)   |
-| —                                     | `HKASK_ABW_DEFAULT_AGENT_MODEL`     | `claude-haiku-4-5-20251001`      | Default model for new ABW agents (KA-05; server-only env var) |
-| —                                     | `HKASK_SWARM_LEDGER_PATH`           | (data dir)                       | Local ledger SQLite path                                      |
-| —                                     | `HKASK_SWARM_CONSENT_STORE`         | (data dir)                       | Consent store SQLite path (cross-process token sharing)      |
-| —                                     | `HKASK_SWARM_MEMORY_PASSPHRASE`     | `allostery`                       | SQLCipher passphrase for local swarm semantic-memory store   |
-| —                                     | `HKASK_SWARM_MEMORY_DB`             | (data dir)                       | Local swarm semantic-memory DB path                           |
-| —                                     | `HKASK_SWARM_EMBEDDING_DIM`         | `1024`                           | Embedding vector dimension for semantic-memory store          |
-| —                                     | `HKASK_A2A_HTTP_ENABLE`             | `false`                          | Enable A2A HTTP gateway (loopback JSON-RPC; opens a port)     |
+| `kask.swarm.default_agent_model`      | `HKASK_ABW_DEFAULT_AGENT_MODEL`     | `claude-haiku-4-5-20251001`      | Default model for new ABW agents (KA-05)                      |
+| `kask.swarm.a2a_http_enabled`         | `HKASK_A2A_HTTP_ENABLE`             | `false`                          | Enable A2A HTTP gateway (loopback JSON-RPC; opens a port)     |
+| `kask.swarm.memory_passphrase`        | `HKASK_SWARM_MEMORY_PASSPHRASE`     | `allostery`                      | SQLCipher passphrase for local swarm semantic-memory store   |
+| `kask.swarm.memory_db_path`           | `HKASK_SWARM_MEMORY_DB`             | (empty = data dir)               | Local swarm semantic-memory DB path                           |
+| `kask.swarm.embedding_dim`            | `HKASK_SWARM_EMBEDDING_DIM`         | `1024`                           | Embedding vector dimension for semantic-memory store          |
+| —                                     | `HKASK_SWARM_LEDGER_PATH`           | (data dir)                       | Local ledger SQLite path (operator env var only)              |
+| —                                     | `HKASK_SWARM_CONSENT_STORE`         | (data dir)                       | Consent store SQLite path (operator env var only)             |
 | —                                     | `HKASK_ABW_API_KEY`                 | —                                | ABW Pro API key (keychain credential, **never** in `mcp_env`) |
 
 ## Security posture

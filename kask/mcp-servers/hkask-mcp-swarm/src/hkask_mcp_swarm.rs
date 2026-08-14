@@ -31,10 +31,10 @@
 //! `swarm_fire` (roster removal, verified live), `swarm_delete_agent`
 //! (permanent agent deletion, verified live), `swarm_delete_swarm`
 //! (permanent workspace deletion via the team-scoped route, verified live),
-//! `swarm_search_knowledge` (knowledge-graph search, fermi v0.10.26),
-//! `swarm_publish_checks` (publish preflight, fermi v0.10.15),
-//! `swarm_publish_agent` (catalogue publish, fermi v0.10.5/v0.10.15),
-//! `swarm_fork_agent` (derivative fork, fermi v0.10.16).
+//! `swarm_search_knowledge` (knowledge-graph search, fermi v0.16.1),
+//! `swarm_publish_checks` (publish preflight, fermi v0.16.1),
+//! `swarm_publish_agent` (catalogue publish, fermi v0.16.1),
+//! `swarm_fork_agent` (derivative fork, fermi v0.16.1).
 //! Local tools (14): `swarm_fund_local`, `swarm_balance_local`,
 //! `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
 //! `swarm_pipeline_local`, `swarm_a2a_send` (A2A protocol message, in-process),
@@ -48,7 +48,7 @@
 //! `kask/docs/plans/abw-swarm-intelligence.md`
 //! §3.6. Workspace update has NO ABW endpoint (405, verified live) and must
 //! not be added. Workspace delete IS implemented as `swarm_delete_swarm` via
-//! the team-scoped `DELETE /api/teams/{id}` (verified live 2026-08-02);
+//! the team-scoped `DELETE /api/teams/{id}` (verified live 2026-08-13);
 //! `DELETE /api/workspaces/{id}` is 405. Workspace create (`POST /api/teams`)
 //! is verified; the create-path response shapes are pinned in §0.
 //!

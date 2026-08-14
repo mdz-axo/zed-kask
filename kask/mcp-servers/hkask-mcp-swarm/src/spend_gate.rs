@@ -337,7 +337,7 @@ pub(crate) async fn complete_hire(
         Err(SwarmError::Unavailable(m)) if m.contains("Use /add for your own agents") => {
             // fermi-contract: the `/hire`→`/add` fallback matches this exact
             // error string from fermi's `POST /workspaces/{id}/hire` handler
-            // (verified live 2026-08-02). fermi returns it with HTTP 500 when
+            // (verified live 2026-08-13). fermi returns it with HTTP 500 when
             // the caller owns the agent being hired — own-agent hires go via
             // `POST /workspaces/{id}/add` (flat 2 cr) instead of `/hire`
             // (third-party 5 cr base + dependencies). If fermi rewords this

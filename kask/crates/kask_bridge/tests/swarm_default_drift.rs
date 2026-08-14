@@ -96,6 +96,27 @@ fn swarm_settings_default_round_trips_through_env_to_server_default() {
         "server skills_dir default changed — update the docs and the bridge's \
          KaskSwarmSettings comment.",
     );
+    // The new fields: default_agent_model, a2a_http_enabled, memory_passphrase,
+    // memory_db_path, embedding_dim. The bridge defaults for these are empty
+    // strings / false / 1024 (the server's defaults are the real values). The
+    // bridge's empty-string default means "use the server default" — same
+    // pattern as api_url and the dir fields.
+    assert_eq!(
+        server_default.default_agent_model, "claude-haiku-4-5-20251001",
+        "server default_agent_model default changed — update the docs.",
+    );
+    assert!(
+        !server_default.a2a_http_enabled,
+        "server a2a_http_enabled default changed"
+    );
+    assert_eq!(
+        server_default.memory_passphrase, "allostery",
+        "server memory_passphrase default changed — update the docs.",
+    );
+    assert_eq!(
+        server_default.embedding_dim, 1024,
+        "server embedding_dim default changed — update the docs.",
+    );
 }
 
 /// A non-default bridge setting must round-trip through `mcp_env` →

@@ -17,14 +17,14 @@ use crate::request_types::CreateAgentRequest;
 /// - `capabilities.mcp_tools` (outbound — what the agent exposes over
 ///   `/mcp/agents/:id`). Always present, defaulting to `[]`.
 /// - `capabilities.mcp_servers` (inbound — third-party MCP servers the agent
-///   may call as a client, fermi v0.11.6 / mig-177). Injected only when the
+///   may call as a client, fermi v0.16.1 / mig-177 (fermi v0.16.1)). Injected only when the
 ///   caller supplies a value: `None` omits the field (fermi inherits from the
 ///   filesystem card via NULL column); `Some([])` is authoritative "no
 ///   servers"; `Some([...])` is authoritative replacement. Secrets are
 ///   referenced by `auth.secret_key` (agent owner's scoped secret store) —
 ///   never inlined in the card.
-/// - `metadata.valence` (personality encoding, fermi v0.10.x).
-/// - `dependencies` (compound agent team, fermi v0.10.x).
+/// - `metadata.valence` (personality encoding, fermi v0.16.x).
+/// - `dependencies` (compound agent team, fermi v0.16.x).
 pub fn build_create_agent_card(
     req: &CreateAgentRequest,
     default_agent_model: &str,
@@ -48,7 +48,7 @@ pub fn build_create_agent_card(
         },
         "visibility": req.visibility.clone().unwrap_or_else(|| "private".to_string()),
     });
-    // fermi v0.11.6 (mig-177): inbound MCP servers. Inject only when the
+    // fermi v0.16.1 (mig-177 (fermi v0.16.1)): inbound MCP servers. Inject only when the
     // caller supplied a value. See the struct doc on `CreateAgentRequest`
     // for the None/Some([])/Some([...]) precedence contract.
     if let Some(mcp_servers) = &req.mcp_servers {
@@ -56,7 +56,7 @@ pub fn build_create_agent_card(
             serde_json::to_value(mcp_servers).unwrap_or_else(|_| serde_json::json!([]));
     }
     // Valence (personality encoding) goes under metadata.valence, matching
-    // the ABW agent card shape (verified live 2026-08-04).
+    // the ABW agent card shape (verified live 2026-08-13).
     if let Some(valence) = &req.valence {
         card["metadata"]["valence"] = serde_json::json!({
             "arousal": valence.arousal,

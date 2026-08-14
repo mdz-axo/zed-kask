@@ -116,7 +116,7 @@ impl SwarmServer {
                             // about per-tier model resolution and tool gating.
                             "model_ladder": a.get("model_ladder"),
                             "capability_gates": a.get("capability_gates"),
-                            // `agents.updated_at` exists in fermi's DB (mig-166) but
+                            // `agents.updated_at` exists in fermi's DB (mig-166 (fermi v0.16.1)) but
                             // `build_agent_json` does not expose it in the list
                             // response. Forwarded as null for schema stability;
                             // re-enable when fermi adds it.
@@ -962,7 +962,7 @@ impl SwarmServer {
                 }
                 // ABW agent names are slugs ([a-z0-9_], 3–64) — reject invalid
                 // names here so ABW's confusing 400 becomes a clear argument error
-                // (verified live 2026-08-02).
+                // (verified live 2026-08-13).
                 if let Err(e) = validate_agent_name(&req.agent_name) {
                     return Err(crate::error::map_local_swarm_error(e));
                 }
@@ -1373,7 +1373,7 @@ impl SwarmServer {
     /// firing: removes the agent from the roster — the redundant-duplicate
     /// pruning the skill's DECIDE phase flags (`flag_redundant_duplicate`).
     /// The agent itself is NOT deleted — use `swarm_delete_agent` for that.
-    /// Spends no credits (verified live 2026-08-02: `DELETE
+    /// Spends no credits (verified live 2026-08-13: `DELETE
     /// /workspaces/{id}/agents/{agent}` → 200 `{"message": "Agent removed
     /// from workspace"}`).
     #[tool(
@@ -1420,7 +1420,7 @@ impl SwarmServer {
     /// removed from the operator's library and from every workspace roster
     /// (fire first if it is hired, or fire happens implicitly). A synced
     /// local card is NOT touched (the sync link simply dangles — use
-    /// `swarm_remove_local` to sever it). Verified live 2026-08-02: `DELETE
+    /// `swarm_remove_local` to sever it). Verified live 2026-08-13: `DELETE
     /// /agents/{agent_id}` → 200 `{"message": "Agent deleted successfully"}`.
     #[tool(
         description = "Permanently delete an ABW agent (irreversible — removes it from your library and all workspace rosters). Accepts the agent_id or agent_name from swarm_list_agents. A synced local card is NOT touched — use swarm_remove_local to sever the local link. Requires API key."
@@ -1509,7 +1509,7 @@ impl SwarmServer {
 
     /// Permanently delete an ABW workspace (swarm). The counterpart of
     /// `swarm_create_swarm`. Workspaces are created as teams, so the delete
-    /// is team-scoped: `DELETE /api/teams/{id}` — verified live 2026-08-02
+    /// is team-scoped: `DELETE /api/teams/{id}` — verified live 2026-08-13
     /// (`DELETE /api/workspaces/{id}` is 405; the team route returns 200
     /// `{"status": "deleted"}`). Irreversible — all roster membership is
     /// dropped with the workspace. Requires API key.
@@ -1696,7 +1696,7 @@ impl SwarmServer {
     }
 
     /// Preflight an agent publish — `GET /api/agents/{id}/publish-checks`
-    /// (fermi v0.10.15). Returns `can_publish` plus the failing checks
+    /// (fermi v0.16.1). Returns `can_publish` plus the failing checks
     /// (name/description/system_prompt/tags). Requires API key.
     #[tool(
         description = "Preflight an Agent Bestiary World agent publish (GET /api/agents/{id}/publish-checks). Returns can_publish and the list of failing checks. Requires API key."
@@ -1734,8 +1734,8 @@ impl SwarmServer {
     }
 
     /// Publish an agent to the public catalogue — `POST /api/agents/{id}/publish`
-    /// (fermi v0.10.5/v0.10.15). With `force=true` (admin), failing checks are
-    /// bypassed and `reason` is audited to `admin_bypass_events` (mig-164).
+    /// (fermi v0.16.1). With `force=true` (admin), failing checks are
+    /// bypassed and `reason` is audited to `admin_bypass_events` (mig-164 (fermi v0.16.1)).
     /// Requires API key.
     #[tool(
         description = "Publish an Agent Bestiary World agent to the public catalogue (POST /api/agents/{id}/publish). With force=true (admin), failing checks are bypassed and reason is audited to admin_bypass_events. Requires API key."
@@ -1791,18 +1791,18 @@ impl SwarmServer {
     }
 
     /// Fork an ABW agent into a derivative — `POST /api/agents/{id}/fork`
-    /// (fermi v0.10.16 fixed the fork path, which 500'd for everyone since
-    /// mig-006 due to an `agents.owner_id` column reference). Creates
+    /// (fermi v0.16.1 fixed the fork path, which 500'd for everyone since
+    /// mig-006 (fermi v0.16.1) due to an `agents.owner_id` column reference). Creates
     /// `{source}_fork_{n}` with author-royalty tracking; the derived name is
     /// slug-validated (a legacy-name source with `-` or `/` is refused with a
     /// detailed 400 — rename via `/api/admin/agents/legacy-slugs` first).
     /// Requires API key.
     ///
-    /// fermi-contract (v0.10.16, commit `4a7cd27f`): the fork endpoint was
-    /// broken from mig-006 (2026-05-23) until v0.10.16 (2026-08-01) because
+    /// fermi-contract (v0.16.1, commit `4a7cd27f`): the fork endpoint was
+    /// broken from mig-006 (fermi v0.16.1) (2026-05-23) until v0.16.1 (2026-08-01) because
     /// the SELECT and INSERT both referenced `agents.owner_id` — a column
     /// that has never existed (the owner column is `agents.user_id` since
-    /// mig-006). Every fork attempt 500'd at the SELECT. The fix aliased
+    /// mig-006 (fermi v0.16.1)). Every fork attempt 500'd at the SELECT. The fix aliased
     /// `user_id AS owner_id` in the SELECT and writes `user_id` in the
     /// INSERT. zed-kask's `swarm_fork_agent` just POSTs — the server-side
     /// fix means the tool now works where it previously 500'd. A live probe
