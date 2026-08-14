@@ -51,6 +51,9 @@ impl SwarmPanel {
                         Headline::new(format!("{} — roster", detail.name))
                             .size(HeadlineSize::Small),
                     )
+                    // Spacer so the source badge right-aligns and the
+                    // headline truncates rather than colliding at narrow widths.
+                    .child(div().flex_1())
                     .child(
                         Label::new(format!("{} {}", source_badge, source_label))
                             .color(Color::Accent)
@@ -75,6 +78,7 @@ impl SwarmPanel {
             .child(
                 h_flex()
                     .gap_2()
+                    .flex_wrap()
                     .child(
                         Label::new(format!(
                             "agents: {}",

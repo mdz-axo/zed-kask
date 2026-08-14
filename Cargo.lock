@@ -11156,6 +11156,7 @@ dependencies = [
  "hkask-email",
  "hkask-inference",
  "hkask-keystore",
+ "hkask-mcp-swarm",
  "hkask-memory",
  "hkask-regulation",
  "hkask-services-core",

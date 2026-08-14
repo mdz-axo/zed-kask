@@ -64,7 +64,7 @@ impl std::str::FromStr for SwarmMode {
 /// stored here — `api_key` is the resolved credential value, passed in from
 /// the `ServerContext` credentials map at server construction.
 #[derive(Debug, Clone)]
-pub(crate) struct SwarmConfig {
+pub struct SwarmConfig {
     /// Which backend to route to (§15). Default `Abw` (v1 behavior).
     pub mode: SwarmMode,
     /// ABW API base URL (apex — endpoints are `/api/*` under it).
@@ -201,7 +201,7 @@ pub fn resolve_local_swarms_dir(local_swarms_dir: &str) -> String {
 impl SwarmConfig {
     /// Build from environment, returning the config plus any warnings about
     /// degraded operation (missing key → catalogue-only mode).
-    pub(crate) fn from_env(api_key: Option<String>) -> (Self, Option<String>) {
+    pub fn from_env(api_key: Option<String>) -> (Self, Option<String>) {
         let default = Self::default();
         let mode = std::env::var("HKASK_SWARM_MODE")
             .ok()

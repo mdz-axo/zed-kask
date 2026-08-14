@@ -36,7 +36,10 @@ use hkask_types::kanban_wire::KANBAN_SERVER_NAME;
 use hkask_types::tool_response::parse_tool_response;
 use serde::Deserialize;
 use serde_json::json;
-use ui::{CommonAnimationExt, IconName, IconSize, Tooltip, prelude::*};
+use ui::{
+    CommonAnimationExt, IconName, IconSize, ToggleButtonGroup, ToggleButtonGroupSize,
+    ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, prelude::*,
+};
 use workspace::{
     Workspace,
     item::{Item, ItemEvent, SerializableItem},
@@ -1777,55 +1780,42 @@ impl Render for KanbanPanel {
                                     .gap_2()
                                     .items_center()
                                     .child(
-                                        // Mode toggle: Browse / Steer
-                                        h_flex()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .id("kanban-mode-browse")
-                                                    .cursor_pointer()
-                                                    .px_2()
-                                                    .py_1()
-                                                    .rounded_md()
-                                                    .when(mode == PanelMode::Browse, |this| {
-                                                        this.bg(Color::Accent.color(cx))
-                                                    })
-                                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                                        this.set_mode(PanelMode::Browse, cx);
-                                                    }))
-                                                    .child(
-                                                        Label::new("Browse")
-                                                            .size(LabelSize::Small)
-                                                            .color(if mode == PanelMode::Browse {
-                                                                Color::Default
-                                                            } else {
-                                                                Color::Muted
-                                                            }),
+                                        // Mode toggle: Browse / Steer — uses
+                                        // `ToggleButtonGroup` for consistency with the
+                                        // swarm panel (the prior hand-rolled
+                                        // `div().cursor_pointer()` toggle had no
+                                        // measurement and could collide at narrow
+                                        // widths).
+                                        div().child(
+                                            ToggleButtonGroup::single_row(
+                                                "kanban-mode-buttons",
+                                                [
+                                                    ToggleButtonSimple::new(
+                                                        "Browse",
+                                                        cx.listener(move |this, _, _, cx| {
+                                                            this.set_mode(PanelMode::Browse, cx);
+                                                        }),
                                                     ),
+                                                    ToggleButtonSimple::new(
+                                                        "Steer",
+                                                        cx.listener(move |this, _, _, cx| {
+                                                            this.set_mode(PanelMode::Steer, cx);
+                                                        }),
+                                                    ),
+                                                ],
                                             )
-                                            .child(
-                                                div()
-                                                    .id("kanban-mode-steer")
-                                                    .cursor_pointer()
-                                                    .px_2()
-                                                    .py_1()
-                                                    .rounded_md()
-                                                    .when(mode == PanelMode::Steer, |this| {
-                                                        this.bg(Color::Accent.color(cx))
-                                                    })
-                                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                                        this.set_mode(PanelMode::Steer, cx);
-                                                    }))
-                                                    .child(
-                                                        Label::new("Steer")
-                                                            .size(LabelSize::Small)
-                                                            .color(if mode == PanelMode::Steer {
-                                                                Color::Default
-                                                            } else {
-                                                                Color::Muted
-                                                            }),
-                                                    ),
-                                            ),
+                                            .style(ToggleButtonGroupStyle::Outlined)
+                                            .size(ToggleButtonGroupSize::Custom(rems_from_px(
+                                                30.0_f32,
+                                            )))
+                                            .label_size(LabelSize::Default)
+                                            .auto_width()
+                                            .selected_index(match mode {
+                                                PanelMode::Browse => 0,
+                                                PanelMode::Steer => 1,
+                                            })
+                                            .into_any_element(),
+                                        ),
                                     )
                                     .when(mode == PanelMode::Browse, |this| {
                                         this.child(self.render_toolbar(cx))

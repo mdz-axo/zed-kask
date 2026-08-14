@@ -1,40 +1,66 @@
-# Todo — Upstream-Zed Removal Principles
+# D28 Documentation & Settings Alignment — TODO
 
-## Phase 1 — Category slices
-- [x] C1 Install/runtime collision: decision test on `check-desktop-no-collision.sh` + `check-zed-isolation.sh`; failure mode = Zed hijack; anchor `.rules:787-821`, D7 L28, D16 L37
-- [x] C2 Platform scope: test = `#[cfg(target_os)]`-gated non-Linux / non-Linux bundler absent from build matrix; negative test excludes cross-platform libs; anchor D7 L28
-- [x] C3 Redundant surface superseded by kask: two-part test (wired replacement + concrete defect); anchor D1 L22, D3 L24, D10 L31, `.rules:602-631`
-- [x] C4 Dead surface rendered unreachable: G1+G2 test; anchor `.rules:586-602`,`:734-752`,`:752-775` (no upstream anchor — proposed)
-- [x] Checkpoint P1: all 4 decision tests falsifiable + anchored
+## Phase A — Foundation
 
-## Phase 2 — Audit slices
-- [x] A1 D-seam-compatibility audit: no category authorizes editing upstream outside a D-seam
-- [x] A2 Cross-category overlap: decision-test-disjoint + co-occurrence resolution documented
-- [x] Checkpoint P2: D-seam-compat passes; overlap matrix complete
+- [ ] T1: Audit and fix kask-settings.md
+  - [ ] Every env var emitted by `mcp_env()` is documented
+  - [ ] `transactions_dir` default says `mcp/portfolio/transactions/`
+  - [ ] No references to `pod.db`, `agents/registry`, `AGENT_SUBDIRS`, `swarm_ledger`, `docproc-cache`
+- [ ] T2: Scan all docs for stale D28 references
+  - [ ] Complete hit list with file:line for each stale reference
+  - [ ] No false positives (`.agents/skills/` repo-root is not stale)
 
-## Phase 3 — Ranking + self-assessment
-- [x] R1 MCDA: 5 criteria, composite scores, ±20% sensitivity, robust/fragile
-- [x] R2 Metacognition: Brier-scored coverage prediction over 12-case ground truth
-- [x] Checkpoint P3: robust/fragile + Brier recorded
+**Checkpoint A:** Settings doc clean; hit list complete.
 
-## Phase 4 — Finalize
-- [x] F1 Write principles document; acceptance-criteria checklist all hold
+## Phase B — Pruning
 
-## Phase 5 — Tool-loop / feedback system-prompt warnings
+- [ ] T3: Delete stale status/continuation docs
+  - [ ] Each deleted doc passes essentialist deletion test
+  - [ ] Deleted docs removed from all indexes
+  - [ ] No surviving doc links to a deleted doc
 
-**Policy:** The malfunctioning tools (`read_file`, `edit_file`, `terminal`) are upstream Zed code, and so are the tool-use instructions in the system prompt (the "Do not waste tokens by re-reading files..." / "send a brief preamble..." / 3-strikes loop lines). Per `DIVERGENCE.md` and `.rules` ("Don't 'fix' upstream files speculatively — push fixes into `kask/` behind a D-seam"), we do **not** edit the tool implementations *or* the upstream prompt section. The kask-owned lever is the **static-context injection path**: `CURATOR_STATIC_CONTEXT` (`crates/agent/src/curator_agent_server.rs`) and the per-thread `static_context` / `agent_static_context` merged in `Thread::render_system_prompt` (`crates/agent/src/thread.rs`). These are *appended* to the upstream prompt — they can add kask-specific tool warnings, they cannot rewrite the upstream tool-use block. Note: `crates/agent/src/templates/system_prompt.hbs` is the in-editor *agent panel* prompt, NOT the coding-agent harness prompt we operate under — do not confuse the two (prior version of this to-do did).
+**Checkpoint B:** Dead docs pruned; no broken links.
 
-- [x] T1 `read_file` warning (added via kask static-context injection, NOT by editing `system_prompt.hbs`): don't re-read a file after `write_file`/`edit_file`/`create_directory`/`delete_path` returns success — the tool fails loudly on error, so success means the change landed. Don't loop on stale per-file diagnostics (the crate lib root is authoritative). Don't read a path that hasn't been mentioned/discovered first. If `read_file` returns "tool input was not fully received" or an outline-only result, retry once with explicit `start_line`/`end_line`; if it fails again, fall back to `terminal` (`sed`/`cat`) for that read and note the malfunction. (Observed: this glitch hit `system_prompt.hbs` and `tasks/todo.md` during this very task.)
-- [x] T2 `edit_file` warning (same injection path): read the file first; make surgical `old_text`/`new_text` edits. If an edit fails because `old_text` didn't match, re-read the targeted region once and retry with the exact current text — don't loop blindly on the same `old_text`, and don't fall back to `write_file` to overwrite unrelated content.
-- [x] T3 `terminal` warning (same injection path): always send a 1–2 sentence preamble before the call stating what the command does and why; never run a command whose effect the user can't infer from the preamble + command text; prefer `read_file`/`edit_file`/`grep`/`find_path` over shell for file inspection; bound long-running commands with `timeout_ms`.
-- [x] T4 General anti-loop rule (same injection path; the upstream prompt already has a 3-strikes rule — extend, don't duplicate): if the same tool call (same args, same target) fails or returns the same result 3× in a row, stop, summarize what was tried, and ask the user — do not continue the loop. Cover "returns the same result" (e.g. `read_file` returning the same outline) not just "same error."
-- [x] T5 **Decision: `ContextInjector` (confirmed, research complete).** Compose the tool-warning text into the existing `BridgeContextInjector::inject_static_context` rather than adding a second injector. Research findings:
-  - `BridgeContextInjector::inject_static_context` (`kask/crates/kask_bridge/src/context_injector.rs`) already returns `Option<String>` — `Some(memory_context)` when recall produces filtered snippets, `None` when empty. So composing means: if memory returns `Some(s)`, return `Some(format!("{TOOL_WARNING_PROMPT}\n\n{s}"))`; if `None`, return `Some(TOOL_WARNING_PROMPT.to_string())`. The warning always lands.
-  - There are two `OnceLock`s: `CONTEXT_INJECTOR` (user agent) and `CURATOR_CONTEXT_INJECTOR` (curator), both wired from the same block in `crates/zed/src/main.rs` (~L1442), both gated on `kask_settings.memory.auto_inject`. The `BridgeContextInjector` struct already carries a `curator: bool` flag that selects user-vs-curator recall inside `inject_static_context` — so a single change to `BridgeContextInjector` covers both paths automatically. No second `OnceLock` race.
-  - **`auto_inject` gate problem:** the wiring block only runs inside `if kask_settings.memory.auto_inject`. Tool warnings should always be on for kask threads, not gated on memory recall. Resolution: make `BridgeContextInjector` always emit the tool warning from `inject_static_context` regardless of `auto_inject`, and only gate the *memory recall* portion on `auto_inject`. This requires splitting the wiring in `main.rs` — construct and set the injector unconditionally (so the warning always lands), but pass an `auto_inject: bool` field on `BridgeContextInjector` that the recall path checks. Concretely: add `auto_inject: bool` to `BridgeContextInjector`, have `inject_context` and the recall half of `inject_static_context` early-return when `!auto_inject`, but always return `Some(TOOL_WARNING_PROMPT)` (optionally concatenated with recall) from `inject_static_context`. Move the `set_context_injector` / `set_curator_context_injector` calls outside the `if kask_settings.memory.auto_inject` block, and pass `kask_settings.memory.auto_inject` into the constructor.
-  - `TOOL_WARNING_PROMPT` lives as a `const &str` in `kask/crates/kask_bridge/src/context_injector.rs` (or a sibling `tool_warnings.rs` module if it grows). It carries the T1–T4 warning text.
-  - Add a D-seam entry in `DIVERGENCE.md` for: (1) the `BridgeContextInjector` `auto_inject` field + unconditional wiring, (2) the `TOOL_WARNING_PROMPT` static-context injection.
-  - **`else`-branch warn update:** the existing `else` branch of the `auto_inject` block in `main.rs` (~L1480+) logs a warn naming both hooks as unwired. After moving the `set_context_injector` / `set_curator_context_injector` calls outside the `if`, the hooks are *wired* (just with recall disabled via `auto_inject: false`). Update the warn text to reflect this — per `.rules` ("when a deferred task wires multiple hooks in one `if` block, the `else` warn must name ALL unwired hooks"), the warn must now say the hooks are wired-but-recall-disabled, not unwired. Otherwise the operator log is misleading.
-  - Precedent: the existing `BridgeContextInjector` is the only kask `ContextInjector`; this change extends it rather than adding a parallel injector.
-- [x] T6 Add a pinning test asserting the kask tool-warning text renders in the rendered system prompt (locate the right test surface — likely `crates/agent/src/tests/mod.rs::test_system_prompt` or a new test on the injection path, NOT `templates.rs` since the warning isn't in `system_prompt.hbs`).
-- [x] Checkpoint P5: warnings drafted, injection wired, pinning test added. No changes to `crates/agent/src/tools/*` or `crates/agent/src/templates/system_prompt.hbs` (both upstream). **Note:** `./script/clippy` could not complete due to pre-existing compile errors in `kask/crates/hkask-templates/src/template_renderer.rs` (uncommitted `cache_template` move errors, not from this work). The `kask_bridge` changes are syntactically verified by reading them back; full validation requires fixing the `hkask-templates` errors first.
+## Phase C — Documentation updates
+
+- [ ] T4: Update architecture docs
+  - [ ] No arch doc references `pod.db`, `agents/registry`, `AGENT_SUBDIRS`
+  - [ ] `memory-system-specification.md` references `curator.db`
+  - [ ] `adr-embedded-yaml-registry.md` references `skills/registry/`
+- [ ] T5: Update reference docs
+  - [ ] Each MCP server reference doc shows `mcp/{server_id}/` default path
+  - [ ] `corpus.md` references `mcp/corpus/cache/` (not `docproc-cache`)
+  - [ ] `swarm.md` references `mcp/swarm/ledger.db` and `mcp/swarm/consent.db`
+- [ ] T6: Update explanation docs
+  - [ ] `memory-system.md` references `curator.db`
+  - [ ] `skills-and-composition.md` references `{kask_data_dir}/skills/`
+  - [ ] `training-and-adapters.md` references `mcp/training/adapters/`
+- [ ] T7: Update diataxis docs
+  - [ ] No diataxis doc references `pod.db` or `agents/registry`
+  - [ ] `INDEX.md` lists all surviving docs
+  - [ ] File:line references point to current code
+
+**Checkpoint C:** All docs updated; no stale references.
+
+## Phase D — Diagrams & indexes
+
+- [ ] T8: Regenerate stale diagrams
+  - [ ] `standardized-artifact-storage.md` has 4-class mermaid diagram
+  - [ ] `memory-system-specification.md` diagram shows `curator.db`
+  - [ ] All mermaid diagrams render without syntax errors
+- [ ] T9: Repair indexes and crosslinks
+  - [ ] No broken internal links
+  - [ ] `INDEX.md` and `SUMMARY.md` list all surviving docs
+  - [ ] `DIVERGENCE.md` supporting-files section is current
+
+**Checkpoint D:** Diagrams regenerated; indexes repaired.
+
+## Phase E — Validation
+
+- [ ] T10: Final validation
+  - [ ] `grep` for stale refs returns 0 hits (excluding DIVERGENCE.md history)
+  - [ ] `./script/clippy -p hkask-types -p kask_bridge` passes
+  - [ ] `cargo test -p hkask-types -p kask_bridge` passes
+  - [ ] No broken doc links
+
+**Checkpoint E (final):** All docs aligned; all tests pass.

@@ -64,8 +64,14 @@ futures.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 proptest.workspace = true
 hkask-test-harness.workspace = true
+hkask-mcp-swarm = { workspace = true, features = ["test-utils"] }
 
 [[test]]
 name = "bridge_gap_properties"
 path = "tests/bridge_gap_properties.rs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "swarm_default_drift"
+path = "tests/swarm_default_drift.rs"
 required-features = ["test-utils"]

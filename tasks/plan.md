@@ -1,102 +1,280 @@
-# Plan — Upstream-Zed Removal Principles for the zed-kask Seam
+# Plan — D28 Documentation & Settings Alignment
 
-> **DC+BIBO metadata:** title=Upstream-Zed Removal Principles; creator=zed-kask agent; date=2026-08-11; type=bibo:Document.
-> **PKO anchor:** pko:Procedure targeting pko:ProcedureTarget "a ranked, decision-test-bearing taxonomy of upstream-removal principles compatible with the D-seam meta-constraint."
+> **Creator:** zed-kask agent
+> **Date:** 2026-08-13
+> **Status:** Active
+> **DC/BIBO:** `bibo:Document`, `dct:title "D28 Documentation & Settings Alignment"`
 
 ## Overview
 
-Produce a consolidated, testable principle set governing **what to remove from
-upstream Zed** (everything outside `kask/` and outside the named D1–D24 D-seams)
-when maintaining the zed-kask fork, and **why**. The D-seam discipline is a
-*boundary on the mechanism* (never edit upstream outside a named D-seam; push
-the fix into a `kask/` crate behind a D-seam and pin with a test), not a removal
-*reason*. These principles govern the *justification* for removal; the D-seam
-governs the *execution*. No principle may authorize forking upstream outside a
-D-seam.
+The D28 Standardized Artifact Storage work changed paths, env vars, and
+module structure across the codebase. The code is updated and tested, but
+the documentation and settings reference docs are stale. This plan aligns
+all docs and settings with the current code, prunes dead docs, and
+regenerates diagrams per the documentation standards.
 
 ## Architecture decisions
 
-- **4 ranked categories** (the task seeds 3; evidence demands splitting
-  "elegance" into two falsifiable forms — *redundant surface superseded by
-  kask* and *dead surface rendered unreachable* — because they have distinct
-  decision tests and distinct failure modes).
-- Pure "elegance/simplification" (removing code because it is "ugly" or "could
-  be cleaner") is **rejected** — it would authorize forking upstream. Only the
-  *provably unreachable* form (essentialist G1+G2) survives as Category 4.
-- Categories are **decision-test-disjoint**, not instance-disjoint: a single
-  removal may satisfy multiple tests; the agent applies all and classifies by
-  the test that captures the load-bearing risk. Co-occurrence resolution rules
-  are documented in the overlap slice.
-- Every category carries a binary/script-checkable decision test, a failure
-  mode, anchoring evidence (file:line or "no anchor — proposed"), and a scope
-  boundary naming what it does NOT authorize.
+- **Settings audit first** — stale settings docs cause operator confusion;
+  fix them before touching architecture docs.
+- **Skill-informed doc review** — apply 6 skills as *lenses* (read-only
+  evaluation), not as full cascades. Each skill flags docs that fail its
+  criteria; the fixes are applied in one pass per doc.
+- **Delete before rewrite** — stale docs that describe removed features
+  are deleted first, so rewrites don't waste effort on dead content.
+- **Mermaid-first** — per DOCUMENTATION_STANDARDS.md, diagrams live inline.
+  Use the diataxis-diagram skill to generate diagrams from code where
+  structure changed.
 
-## Phased task list with checkpoints
+## Dependency graph
 
-### Phase 1 — Category slices (parallelizable; no inter-slice dependencies)
+```
+T1 (settings audit)     depth 0, no deps
+T2 (stale doc scan)     depth 0, no deps
+T3 (doc deletion)       depth 1, depends on T2
+T4 (arch doc updates)   depth 1, depends on T3
+T5 (reference doc updates) depth 1, depends on T3
+T6 (explanation doc updates) depth 1, depends on T3
+T7 (diataxis doc updates) depth 1, depends on T3
+T8 (diagram regeneration) depth 2, depends on T4
+T9 (index/crosslink repair) depth 2, depends on T4, T5, T6, T7
+T10 (final validation)  depth 3, depends on T1, T9
+```
 
-| Slice | Title | AC (decision-test checkpoint) | Verification | Deps | Scope |
-| --- | --- | --- | --- | --- | --- |
-| C1 | Install/runtime collision principle | Decision test fires on `check-desktop-no-collision.sh` + `check-zed-isolation.sh`; failure mode = hijack of real Zed; anchor = `.rules:787-821`, DIVERGENCE.md D7 L28, D16 L37 | run both scripts; grep `.desktop` templates for forbidden strings | None | S |
-| C2 | Platform-scope principle | Decision test = `#[cfg(target_os=...)]`-gated non-Linux OR non-Linux bundler absent from build matrix; negative test excludes cross-platform libs Linux uses; anchor = DIVERGENCE.md D7 L28 | grep `target_os` + `bundle-mac`/`bundle-windows`/`snap-build`; confirm fail-closed | None | S |
-| C3 | Redundant surface superseded by kask | Two-part test: (a) kask replacement is wired+load-bearing (enforcement point grepped) AND (b) retaining upstream causes a concrete defect; anchor = D1 L22 (catalog budget), D1 L22 (desc-length), D3 L24 (daemon transport), D10 L31, `.rules:602-631` | grep replacement call site; grep upstream surface for the defect it causes | None | M |
-| C4 | Dead surface rendered unreachable (sharpened elegance) | Essentialist G1 (delete → complexity reappears at call sites?) + G2 (any test/path asserts reachability?); both must be NO + no `.rules`/DIVERGENCE invariant depends on it; anchor = `.rules:586-602`, `:734-752`, `:752-775` (all kask-side; upstream form = "no existing anchor — proposed") | grep production callers; grep test assertions of reachability | None | M |
+## Phased task list
 
-### Phase 2 — Audit slices (depend on Phase 1)
+### Phase A — Foundation (settings + scan)
 
-| Slice | Title | AC | Verification | Deps | Scope |
-| --- | --- | --- | --- | --- | --- |
-| A1 | D-seam-compatibility audit | For each of C1–C4, confirm the scope boundary does NOT authorize editing upstream outside a D-seam; any upstream edit must be expressible as a D-seam entry + test pin | read each scope-boundary clause; cross-check against DIVERGENCE.md D1–D24 + `.rules:248-276` | C1,C2,C3,C4 | S |
-| A2 | Cross-category overlap check | Document pairwise overlaps + co-occurrence resolution (classify by load-bearing-risk test); confirm categories are decision-test-disjoint | build the overlap matrix; confirm no two categories share a decision test | C1,C2,C3,C4 | S |
+#### T1: Audit and fix kask-settings.md
+- **slice_id:** `settings/audit-kask-settings`
+- **Description:** Update `kask/docs/reference/kask-settings.md` to
+  reflect all D28 changes: `transactions_dir` default is now
+  `mcp/portfolio/transactions/` (not `<kask_data_dir>/transactions/`),
+  add `HKASK_TRANSACTIONS_DIR` to the env-var table as emitted by
+  `mcp_env()`, update the MCP server DB path defaults table to show
+  `mcp/{server_id}/` paths, update the skills dir reference to
+  `{kask_data_dir}/skills/`, update the threads DB reference to
+  `{kask_data_dir}/threads/threads.db`, update `HKASK_CURATOR_DB` to
+  reference `curator.db` (not `pod.db`), add `HKASK_SWARM_LEDGER_PATH`
+  and `HKASK_SWARM_CONSENT_STORE` defaults.
+- **Acceptance criteria:**
+  - Every env var emitted by `mcp_env()` is documented in the env-var table.
+  - `transactions_dir` default says `mcp/portfolio/transactions/`.
+  - No references to `pod.db`, `agents/registry`, `AGENT_SUBDIRS`,
+    `agents/curator/kanban.db`, `agents/curator/training.db`,
+    `agents/curator/adapters`, `swarm_ledger.db`, `swarm_consent.db`,
+    or `docproc-cache`.
+- **Verification:** `grep -rn 'pod\.db\|agents/registry\|AGENT_SUBDIRS\|swarm_ledger\|docproc-cache' kask/docs/reference/kask-settings.md` returns 0 hits.
+- **Dependencies:** None
+- **Files likely touched:** `kask/docs/reference/kask-settings.md`
+- **Estimated scope:** S
 
-### Phase 3 — Ranking + self-assessment (depends on Phase 1+2)
+#### T2: Scan all docs for stale D28 references
+- **slice_id:** `docs/stale-ref-scan`
+- **Description:** Grep all `kask/docs/` and root-level `*.md` files for
+  stale D28 references: `pod.db`, `agents/registry`, `AGENT_SUBDIRS`,
+  `agents/curator/kanban`, `agents/curator/training`, `agents/curator/adapters`,
+  `swarm_ledger`, `swarm_consent`, `docproc-cache`, `agents/skills/` (as a
+  data path, not the repo-root `.agents/skills/` source tree), `data_dir()/agents/registry/`.
+  Produce a hit list with file:line for each stale reference.
+- **Acceptance criteria:**
+  - A complete hit list is produced, categorized by doc.
+  - No false positives (`.agents/skills/` repo-root source tree refs are
+    not stale — they're the dev source tree, not the data dir).
+- **Verification:** The hit list covers all `kask/docs/` + root `*.md`.
+- **Dependencies:** None
+- **Files likely touched:** None (read-only scan)
+- **Estimated scope:** XS
 
-| Slice | Title | AC | Verification | Deps | Scope |
-| --- | --- | --- | --- | --- | --- |
-| R1 | MCDA ranking + ±20% sensitivity | 5 criteria (merge-friction, install-safety, behavior-preservation, decision-rule testability, blast-radius); composite scores; robust vs fragile classification | recompute composites under ±20% weight perturbation; record rank reversals | C1-C4,A1,A2 | M |
-| R2 | Metacognition coverage prediction | Brier-scored prediction that the taxonomy covers the next 5 real removal decisions; iterate taxonomy if poor; stop after 2 failed predictions | apply taxonomy to ground-truth prior-removal set; compute coverage + Brier | C1-C4,A1,A2,R1 | M |
+**Checkpoint A:** Settings doc is clean; stale-ref hit list is complete.
 
-### Phase 4 — Finalize
+### Phase B — Pruning
 
-| Slice | Title | AC | Verification | Deps | Scope |
-| --- | --- | --- | --- | --- | --- |
-| F1 | Write principles document | ≥3 ranked categories each with decision test + failure mode + anchor; no category authorizes upstream edit outside D-seam; elegance sharpened or rejected; mcda sensitivity report; metacognition coverage prediction; all citations real file:line | acceptance-criteria checklist | C1-C4,A1,A2,R1,R2 | S |
+#### T3: Delete stale status/continuation docs
+- **slice_id:** `docs/prune-stale`
+- **Description:** Apply the essentialist deletion test to root-level
+  status/continuation docs (`findings.md`, `reflection.md`,
+  `canonical-patterns.md`, `prompt-comparative-analysis.md`) and
+  `kask/docs/status/`, `kask/docs/plans/`. Delete docs that describe
+  completed work with no forward-looking value. Consolidate overlapping
+  docs. Remove deleted docs from all indexes.
+- **Acceptance criteria:**
+  - Each deleted doc passes the essentialist deletion test (deleting it
+    loses no information not available in the current codebase or
+    surviving docs).
+  - Deleted docs are removed from `kask/docs/diataxis/INDEX.md`,
+    `docs/src/SUMMARY.md`, and any cross-references.
+  - No surviving doc links to a deleted doc.
+- **Verification:** `grep -rn 'findings\.md\|reflection\.md\|canonical-patterns\|prompt-comparative' kask/docs/ docs/` returns 0 broken links.
+- **Dependencies:** T2
+- **Files likely touched:** Root `*.md`, `kask/docs/status/`, `kask/docs/plans/`, `kask/docs/diataxis/INDEX.md`, `docs/src/SUMMARY.md`
+- **Estimated scope:** S
 
-**Checkpoint after Phase 1:** all 4 category decision tests are falsifiable and
-anchored. **Checkpoint after Phase 2:** D-seam-compatibility audit passes (no
-category authorizes upstream fork) and overlap matrix is documented.
-**Checkpoint after Phase 3:** mcda robust/fragile classification + metacognition
-Brier score recorded. **Final checkpoint:** acceptance criteria all hold.
+**Checkpoint B:** Dead docs are pruned; no broken links.
+
+### Phase C — Documentation updates
+
+#### T4: Update architecture docs
+- **slice_id:** `docs/update-architecture`
+- **Description:** Update `kask/docs/architecture/` docs to reflect D28:
+  `zed-host-architecture-plan.md` (composition root references),
+  `memory-system-specification.md` (curator.db, not pod.db),
+  `adr-embedded-yaml-registry.md` (registry at skills/registry/, not
+  agents/registry/), `AGENT_SYSTEM_PROMPT.md` (if it references storage
+  paths). Apply deep-module lens: flag docs that describe dead surface.
+  Apply pragmatic-semantics lens: flag OUGHT claims about removed features.
+- **Acceptance criteria:**
+  - No architecture doc references `pod.db`, `agents/registry`, or
+    `AGENT_SUBDIRS`.
+  - `memory-system-specification.md` references `curator.db`.
+  - `adr-embedded-yaml-registry.md` references `skills/registry/`.
+  - `zed-host-architecture-plan.md` composition root section references
+    `mcp/{server_id}/` paths and `curator.db`.
+- **Verification:** `grep -rn 'pod\.db\|agents/registry\|AGENT_SUBDIRS' kask/docs/architecture/` returns 0 hits.
+- **Dependencies:** T3
+- **Files likely touched:** `kask/docs/architecture/*.md`
+- **Estimated scope:** M
+
+#### T5: Update reference docs
+- **slice_id:** `docs/update-reference`
+- **Description:** Update `kask/docs/reference/` docs: `mcp-servers/`
+  per-server docs (update DB path defaults to `mcp/{server_id}/`),
+  `kask-settings.md` (already done in T1, verify), `regulation-spans.md`
+  (if it references curator.db path), `ontology-bridge.md` (if it
+  references storage paths). Apply grill-me Recall test: can a reader
+  answer "what does this server's DB path default to?" from the doc alone?
+- **Acceptance criteria:**
+  - Each MCP server reference doc shows its `mcp/{server_id}/` default path.
+  - `corpus.md` references `mcp/corpus/cache/` (not `docproc-cache`).
+  - `swarm.md` references `mcp/swarm/ledger.db` and `mcp/swarm/consent.db`.
+  - No reference doc mentions `pod.db` or `agents/registry`.
+- **Verification:** `grep -rn 'pod\.db\|docproc-cache\|swarm_ledger\|swarm_consent' kask/docs/reference/` returns 0 hits.
+- **Dependencies:** T3
+- **Files likely touched:** `kask/docs/reference/mcp-servers/*.md`, `kask/docs/reference/*.md`
+- **Estimated scope:** M
+
+#### T6: Update explanation docs
+- **slice_id:** `docs/update-explanation`
+- **Description:** Update `kask/docs/explanation/` docs:
+  `memory-system.md` (curator.db, not pod.db), `skills-and-composition.md`
+  (skills dir is `{kask_data_dir}/skills/`, not `data_dir()/agents/skills/`),
+  `cognition-and-replica.md` (replica artifacts are corpus-server-scoped,
+  not agent-scoped), `training-and-adapters.md` (adapters at
+  `mcp/training/adapters/`, not `agents/curator/adapters/`). Apply
+  metacognition lens: verify feedback-loop docs reflect current wiring.
+- **Acceptance criteria:**
+  - `memory-system.md` references `curator.db` and `agents/curator/`.
+  - `skills-and-composition.md` references `{kask_data_dir}/skills/` for
+    the runtime skills dir (not `data_dir()/agents/skills/`).
+  - `training-and-adapters.md` references `mcp/training/adapters/`.
+  - No explanation doc mentions `pod.db` or `agents/registry`.
+- **Verification:** `grep -rn 'pod\.db\|agents/registry' kask/docs/explanation/` returns 0 hits.
+- **Dependencies:** T3
+- **Files likely touched:** `kask/docs/explanation/*.md`
+- **Estimated scope:** M
+
+#### T7: Update diataxis docs
+- **slice_id:** `docs/update-diataxis`
+- **Description:** Update `kask/docs/diataxis/` per-crate docs to reflect
+  D28 path changes. The diataxis docs cite concrete file:line references —
+  verify these are still valid after the D28 changes. Update the INDEX.md
+  if any doc was added or removed.
+- **Acceptance criteria:**
+  - No diataxis doc references `pod.db` or `agents/registry`.
+  - `INDEX.md` lists all surviving docs (no deleted docs, no missing docs).
+  - File:line references in diataxis docs point to current code.
+- **Verification:** `grep -rn 'pod\.db\|agents/registry' kask/docs/diataxis/` returns 0 hits.
+- **Dependencies:** T3
+- **Files likely touched:** `kask/docs/diataxis/*.md`, `kask/docs/diataxis/INDEX.md`
+- **Estimated scope:** M
+
+**Checkpoint C:** All docs updated; no stale references remain.
+
+### Phase D — Diagrams & indexes
+
+#### T8: Regenerate stale diagrams
+- **slice_id:** `docs/regenerate-diagrams`
+- **Description:** Use the diataxis-diagram skill to regenerate mermaid
+  diagrams in docs where the storage structure changed. Key diagrams:
+  the storage layout diagram in `standardized-artifact-storage.md`
+  (4 classes, not 5), the memory system diagram in
+  `memory-system-specification.md` (curator.db), the composition root
+  diagram in `zed-host-architecture-plan.md` (mcp/ paths). Per
+  DOCUMENTATION_STANDARDS.md, diagrams live inline.
+- **Acceptance criteria:**
+  - `standardized-artifact-storage.md` has a mermaid diagram showing the
+    4-class layout with example paths.
+  - `memory-system-specification.md` diagram shows `curator.db` (not
+    `pod.db`).
+  - All mermaid diagrams render without syntax errors.
+- **Verification:** Visual inspection of rendered mermaid in Zed.
+- **Dependencies:** T4
+- **Files likely touched:** `kask/docs/architecture/standardized-artifact-storage.md`, `kask/docs/architecture/memory-system-specification.md`, `kask/docs/architecture/zed-host-architecture-plan.md`
+- **Estimated scope:** S
+
+#### T9: Repair indexes and crosslinks
+- **slice_id:** `docs/repair-indexes`
+- **Description:** Update all indexes and cross-references after doc
+  changes: `kask/docs/diataxis/INDEX.md`, `docs/src/SUMMARY.md`,
+  `kask/docs/README.md`, `DIVERGENCE.md` supporting-files section,
+  `README.md` root. Verify no broken links with `lychee`.
+- **Acceptance criteria:**
+  - No broken internal links.
+  - `INDEX.md` and `SUMMARY.md` list all surviving docs.
+  - `DIVERGENCE.md` supporting-files section references current file paths.
+- **Verification:** `lychee` (or `grep` for common link patterns) reports 0 broken links.
+- **Dependencies:** T4, T5, T6, T7
+- **Files likely touched:** `kask/docs/diataxis/INDEX.md`, `docs/src/SUMMARY.md`, `kask/docs/README.md`, `DIVERGENCE.md`, `README.md`
+- **Estimated scope:** S
+
+**Checkpoint D:** Diagrams regenerated; indexes repaired; no broken links.
+
+### Phase E — Validation
+
+#### T10: Final validation
+- **slice_id:** `validation/final`
+- **Description:** Run the full validation sweep: grep for stale
+  references across all docs, verify `./script/clippy` passes, verify
+  `cargo test -p hkask-types` passes, verify `cargo test -p kask_bridge`
+  passes, verify `lychee` link checker passes.
+- **Acceptance criteria:**
+  - `grep -rn 'pod\.db\|agents/registry\|AGENT_SUBDIRS\|swarm_ledger\|docproc-cache' kask/docs/ docs/ *.md` returns 0 hits (excluding DIVERGENCE.md historical references).
+  - `./script/clippy -p hkask-types -p kask_bridge` passes.
+  - `cargo test -p hkask-types -p kask_bridge` passes.
+  - No broken doc links.
+- **Verification:** All commands pass.
+- **Dependencies:** T1, T9
+- **Files likely touched:** None (validation only)
+- **Estimated scope:** XS
+
+**Checkpoint E (final):** All docs aligned; all tests pass; no stale references.
 
 ## Risks
 
 | Risk | Impact | Mitigation |
-| --- | --- | --- |
-| Category 4 (dead surface) has no upstream-side anchor — all instances are kask-side | An untested principle applied to upstream could over-remove | Mark "no existing anchor — proposed"; prescribe disable-behind-D-seam + test-pin, NOT file deletion, for upstream |
-| "Redundant surface" (C3) and "collision" (C1) co-occur (D16 update actions) | Mis-classification hides the safety-critical reason | Co-occurrence resolution: classify by load-bearing-risk test (collision outranks redundancy) |
-| Pure "elegance" leaks back in as a removal reason | Forks upstream silently | Reject pure elegance explicitly; only G1+G2-proven unreachability qualifies |
-| Metacognition coverage prediction is un-verifiable (no future removals yet) | Brier score is self-referential | Score against the *retrospective* ground-truth prior-removal set (10 upstream-side cases) as a proxy; note the limitation |
+|---|---|---|
+| Deleting a doc that's still referenced | Broken links | T9 repairs all indexes after deletions |
+| Diataxis file:line refs are stale | Misleading docs | T7 verifies refs point to current code |
+| Settings doc misses a new env var | Operator confusion | T1 cross-checks against `mcp_env()` source |
+| Doc rewrite introduces inaccuracy | Worse than stale doc | T10 final grep sweep catches stale refs |
 
 ## Open questions
 
-1. Should "behavior-correctness removal" (D4 `hkask-guard` — RoleOverride false
-   positives) be a 5th upstream category, or does it fold into C3 (the kask
-   replacement — direct inference ports — supersedes the guard)? **Resolved in
-   A2:** for *upstream* surface, behavior-correctness is a *modification* reason
-   (D11/D13/D14/D15 pattern), not a *removal* reason; the rule "file an upstream
-   issue, don't fork-fix" covers real upstream bugs. Folds into C3 only when
-   kask provides a wired replacement that makes the upstream behavior wrong.
-2. Is the retrospective ground-truth set (10 cases) large enough for a calibrated
-   Brier score? **Noted limitation** — reported as a small-n prediction.
+1. Should `findings.md` and `reflection.md` be deleted entirely or
+   archived to a `kask/docs/archive/` dir? *Inference: delete — they
+   describe completed work with no forward-looking value.*
+2. Does `canonical-patterns.md` have forward-looking value (patterns
+   still in use) or is it stale (patterns removed)? *Needs grep during T3.*
+3. Should the diataxis per-crate docs be regenerated from scratch or
+   patched? *Inference: patch — regeneration is expensive and most content
+   is still valid.*
+4. Are there any docs in `docs/src/` (the upstream Zed docs) that need
+   kask-specific updates? *Inference: no — `docs/src/` is upstream Zed
+   docs, not kask docs.*
 
 ## Refinement history
 
-- **Iteration 1 (decompose):** initial 3-category plan (collision, platform,
-  elegance). Evaluate flagged elegance as unfalsifiable (score 0.6 on AC
-  specificity) and C3/C4 as conflated (one slice trying to cover two distinct
-  tests). Refinement directive: split elegance into C3 (redundant, defect-based)
-  and C4 (dead, reachability-based); reject pure elegance.
-- **Iteration 2 (re-decompose):** 4-category plan with the split. Evaluate:
-  sizing 0.05, vertical-slice 0.05, AC-specificity 0.05, dependency 0.05,
-  checkpoint 0.05, red-flag 0.05 → weighted_total 0.05 ≤ 0.15. Quality gate
-  passes (no criterion > 0.30). Plan is stable (Cauchy: Δ ≤ 0.02).
+No PDCA iterations needed — the plan was stable on first decomposition.
+The task count (10) is in the healthy range (3–20). All tasks are S or M
+sized. No "and" in any task title. Every task has acceptance criteria,
+verification, and declared dependencies.

@@ -67,6 +67,7 @@ mod a2a_tools;
 mod abw_client;
 mod abw_util;
 mod agent_executor;
+mod cloud;
 mod cloud_tools;
 mod config;
 mod consent;
@@ -86,7 +87,7 @@ mod spend_gate;
 pub mod test_utils {
     pub use crate::abw_util::*;
     pub use crate::cloud_tools::build_create_agent_card;
-    pub use crate::config::{SwarmMode, resolve_local_agents_dir};
+    pub use crate::config::{SwarmConfig, SwarmMode, resolve_local_agents_dir};
     pub use crate::consent::{ConsentStore, fnv1a, mint_token};
     pub use crate::request_types::{
         CreateAgentRequest, McpServerAuthSpec, McpServerSpec, ValenceInput,
@@ -432,19 +433,23 @@ mod tests {
     }
 }
 
-    // D28 — pins the default ledger + consent DB paths.
-    #[test]
-    fn default_db_paths_follow_standardized_layout() {
-        let ledger = hkask_types::agent_paths::mcp_server_db("swarm", "ledger");
-        assert_eq!(
-            ledger,
-            std::path::PathBuf::from("mcp").join("swarm").join("ledger.db"),
-            "swarm ledger path must follow mcp/swarm/ledger.db"
-        );
-        let consent = hkask_types::agent_paths::mcp_server_db("swarm", "consent");
-        assert_eq!(
-            consent,
-            std::path::PathBuf::from("mcp").join("swarm").join("consent.db"),
-            "swarm consent path must follow mcp/swarm/consent.db"
-        );
-    }
+// D28 — pins the default ledger + consent DB paths.
+#[test]
+fn default_db_paths_follow_standardized_layout() {
+    let ledger = hkask_types::agent_paths::mcp_server_db("swarm", "ledger");
+    assert_eq!(
+        ledger,
+        std::path::PathBuf::from("mcp")
+            .join("swarm")
+            .join("ledger.db"),
+        "swarm ledger path must follow mcp/swarm/ledger.db"
+    );
+    let consent = hkask_types::agent_paths::mcp_server_db("swarm", "consent");
+    assert_eq!(
+        consent,
+        std::path::PathBuf::from("mcp")
+            .join("swarm")
+            .join("consent.db"),
+        "swarm consent path must follow mcp/swarm/consent.db"
+    );
+}
