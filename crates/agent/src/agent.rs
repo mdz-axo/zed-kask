@@ -963,8 +963,11 @@ impl NativeAgent {
             // Register the pipeline tool for executing pipeline manifests
             // (category: pipeline). Shares the same manifest executor resolver
             // as SkillTool — the bridge loads the manifest from a file path
-            // and runs the cascade with access to all MCP tools.
+            // and runs the cascade with access to all MCP tools. The project
+            // entity is passed for path containment (same pattern as
+            // ReadFileTool — resolve_project_path enforces worktree boundaries).
             thread.add_tool(PipelineTool::with_manifest_executor_resolver(
+                project.clone(),
                 crate::manifest_executor_cloned,
             ));
         });

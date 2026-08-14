@@ -257,7 +257,7 @@ impl TemplateRenderer {
 ///
 /// Templates without a `\n---\n` separator are returned as-is (no front
 /// matter to strip — e.g., inline templates, simple prompts).
-pub(crate) fn strip_front_matter(template_content: &str) -> &str {
+pub fn strip_front_matter(template_content: &str) -> &str {
     if let Some(separator_pos) = template_content.find("\n---\n") {
         // Skip past the separator (5 chars: \n---\n)
         &template_content[separator_pos + 5..]

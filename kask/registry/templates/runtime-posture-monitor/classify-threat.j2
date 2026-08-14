@@ -12,7 +12,6 @@
   does not overlap with `adversarial-red-team` (synthetic LLM I/O attacks) #}
 
 [inference]
-max_tokens = 4096
 template_type: KnowAct
 contract:
   input:
@@ -31,6 +30,9 @@ contract:
 energy_cap: 2048
 visibility: Public
 ---
+
+[inference]
+max_tokens = 4096
 
 INPUT: signal_sources = {{ signal_sources }}
 INPUT: signal = {{ signal }}

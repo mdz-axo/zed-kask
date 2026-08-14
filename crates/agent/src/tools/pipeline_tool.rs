@@ -11,11 +11,18 @@
 //!
 //! The tool supports `resume_from` (skip steps before the named step id) and
 //! `dry_run` (parse + validate without executing).
+//!
+//! Path containment: the manifest path is resolved against the project's
+//! worktree roots via `resolve_project_path` (same mechanism as `ReadFileTool`),
+//! not via the MCP server's `contain_for_read`. This is the correct containment
+//! layer for agent tools — the bridge is process-global, but the project
+//! entity is per-thread, so containment is enforced per-invocation.
 
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
-use gpui::{App, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -62,21 +69,25 @@ impl From<PipelineToolOutput> for language_model::LanguageModelToolResultContent
 }
 
 /// The pipeline tool. Resolves the `SkillManifestExecutor` at invocation time
-/// (same pattern as `SkillTool`) to avoid the session-creation race.
+/// (same pattern as `SkillTool`) to avoid the session-creation race. Holds a
+/// project entity for path containment (same pattern as `ReadFileTool`).
 pub struct PipelineTool {
+    project: Entity<Project>,
     manifest_executor_resolver:
         Arc<dyn Fn() -> Option<Arc<dyn SkillManifestExecutor>> + Send + Sync>,
 }
 
 impl PipelineTool {
-    /// Construct a `PipelineTool` whose manifest executor is resolved at
-    /// invocation time by calling `resolver`. This mirrors `SkillTool`'s
-    /// production constructor.
-    pub fn with_manifest_executor_resolver<R>(resolver: R) -> Self
+    /// Construct a `PipelineTool` with a project entity for path containment
+    /// and a manifest executor resolved at invocation time. This mirrors
+    /// `SkillTool`'s production constructor and `ReadFileTool`'s project
+    /// containment.
+    pub fn with_manifest_executor_resolver<R>(project: Entity<Project>, resolver: R) -> Self
     where
         R: Fn() -> Option<Arc<dyn SkillManifestExecutor>> + Send + Sync + 'static,
     {
         Self {
+            project,
             manifest_executor_resolver: Arc::new(resolver),
         }
     }
@@ -116,10 +127,34 @@ impl AgentTool for PipelineTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        cx.spawn(async move |_cx| {
+        cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| PipelineToolOutput::Error {
                 error: e.to_string(),
             })?;
+
+            // Resolve the manifest path against the project's worktree roots.
+            // This is the same containment mechanism used by ReadFileTool —
+            // find_project_path checks if the path is inside a worktree, and
+            // absolute_path returns the full path. The bridge's execute_pipeline
+            // does NOT do its own containment (it's process-global, not
+            // per-project), so containment must happen here, at the per-thread
+            // tool layer.
+            let project = self.project.clone();
+            let abs_path = cx.update(|cx| {
+                let project = project.read(cx);
+                project
+                    .find_project_path(&input.manifest_path, cx)
+                    .and_then(|project_path| project.absolute_path(&project_path, cx))
+            });
+
+            let abs_path = abs_path.ok_or_else(|| PipelineToolOutput::Error {
+                error: format!(
+                    "Manifest path '{}' is not inside any project worktree.",
+                    input.manifest_path
+                ),
+            })?;
+
+            let manifest_path_str = abs_path.to_string_lossy().to_string();
 
             let executor =
                 (self.manifest_executor_resolver)().ok_or_else(|| PipelineToolOutput::Error {
@@ -134,7 +169,7 @@ impl AgentTool for PipelineTool {
 
             match executor
                 .execute_pipeline(
-                    &input.manifest_path,
+                    &manifest_path_str,
                     input.resume_from,
                     input.dry_run,
                     progress,

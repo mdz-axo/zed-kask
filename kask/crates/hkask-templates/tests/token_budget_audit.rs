@@ -22,7 +22,7 @@
 //!   output boundary; a too-low `max_tokens` makes the output boundary
 //!   unreachable.
 
-use hkask_templates::test_utils::parse_and_strip_inference_block;
+use hkask_templates::test_utils::{parse_and_strip_inference_block, strip_front_matter};
 use std::fs;
 use std::path::PathBuf;
 
@@ -107,7 +107,8 @@ fn count_output_fields(template_content: &str) -> usize {
 /// Parse the full `[inference]` block (including contract) from a template.
 /// `parse_and_strip_inference_block` returns the stripped body and the parsed
 /// config, but we need the raw block content to count output fields. We
-/// re-extract it here.
+/// re-extract it here using the same blank-line boundary that
+/// `parse_and_strip_inference_block` uses.
 fn extract_inference_block_raw(template_content: &str) -> &str {
     let marker = "[inference]";
     let start = match template_content.find(marker) {
@@ -115,9 +116,11 @@ fn extract_inference_block_raw(template_content: &str) -> &str {
         None => return "",
     };
     let after = &template_content[start + marker.len()..];
-    let end = after
-        .find("\n---")
-        .unwrap_or(after.find("\n\n").unwrap_or(after.len()));
+    // The block ends at the first blank line (\n\n), matching
+    // `parse_and_strip_inference_block`'s boundary. Do NOT use \n--- as a
+    // boundary — `---` appears inside template content (fences, frontmatter)
+    // and would truncate the block early.
+    let end = after.find("\n\n").unwrap_or(after.len());
     &template_content[start..start + marker.len() + end]
 }
 
@@ -134,7 +137,12 @@ fn all_templates_have_adequate_max_tokens_for_output_schema() {
     for path in &templates {
         let content = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-        let (_, inference) = parse_and_strip_inference_block(&content);
+        // Strip YAML frontmatter first — the first [inference] block is the
+        // frontmatter-style block (template_type, contract, energy_cap). The
+        // second [inference] block (after frontmatter) holds the inference
+        // parameters (temperature, max_tokens, thinking_budget).
+        let after_fm = strip_front_matter(&content);
+        let (_, inference) = parse_and_strip_inference_block(after_fm);
         let max_tokens = inference.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
 
         let raw_block = extract_inference_block_raw(&content);
@@ -194,7 +202,8 @@ fn default_max_tokens_is_sufficient_for_simple_templates() {
     for path in &templates {
         let content = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-        let (_, inference) = parse_and_strip_inference_block(&content);
+        let after_fm = strip_front_matter(&content);
+        let (_, inference) = parse_and_strip_inference_block(after_fm);
         // Only check templates that use the default (no explicit max_tokens).
         if inference.max_tokens.is_some() {
             continue;

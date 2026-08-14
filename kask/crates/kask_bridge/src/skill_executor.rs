@@ -918,17 +918,12 @@ steps:
         progress: Option<agent::CascadeProgress>,
         title: Option<agent::CascadeProgress>,
     ) -> Result<String, String> {
-        // Contain the manifest path under the project root.
-        let resolved_path = std::path::Path::new(manifest_path)
-            .canonicalize()
-            .map_err(|e| format!("Pipeline manifest not found at '{manifest_path}': {e}"))?;
-
-        let yaml = std::fs::read_to_string(&resolved_path).map_err(|e| {
-            format!(
-                "Failed to read pipeline manifest at {}: {e}",
-                resolved_path.display()
-            )
-        })?;
+        // The manifest path is already resolved to an absolute path and
+        // contained by the PipelineTool (via find_project_path + absolute_path).
+        // The bridge is process-global and cannot do per-project containment,
+        // so containment is enforced at the tool layer, not here.
+        let yaml = std::fs::read_to_string(manifest_path)
+            .map_err(|e| format!("Failed to read pipeline manifest at '{manifest_path}': {e}"))?;
 
         let manifest = load_manifest_from_yaml(&yaml)
             .map_err(|e| format!("Failed to parse pipeline manifest: {e:?}"))?;

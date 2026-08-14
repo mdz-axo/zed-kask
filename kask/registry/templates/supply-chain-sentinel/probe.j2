@@ -14,7 +14,6 @@
   does not overlap with `adversarial-red-team` (LLM boundary only) #}
 
 [inference]
-max_tokens = 4096
 template_type: KnowAct
 contract:
   input:
@@ -33,6 +32,9 @@ contract:
 energy_cap: 2048
 visibility: Public
 ---
+
+[inference]
+max_tokens = 4096
 
 INPUT: manifest_paths = {{ manifest_paths }}
 INPUT: surface = {{ surface }}

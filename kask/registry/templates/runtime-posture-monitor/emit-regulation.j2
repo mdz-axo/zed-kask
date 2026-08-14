@@ -5,7 +5,6 @@
 {# Emits reg.outcome for downstream regulation action #}
 
 [inference]
-max_tokens = 4096
 template_type: KnowAct
 contract:
   input:
@@ -27,6 +26,9 @@ contract:
 energy_cap: 2048
 visibility: Public
 ---
+
+[inference]
+max_tokens = 4096
 
 INPUT: threats = {{ threats }} (structured array from classify-threat phase)
 INPUT: defense_layers_firing = {{ defense_layers_firing }}

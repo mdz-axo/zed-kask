@@ -12,12 +12,12 @@ contract:
     user_choice: string
     reason: string
     next_action: string
-energy_cap: 2048
+energy_cap: 4096
 visibility: Public
 
 ---
-{# Template: skill-maintenance/logic-user-choice.j2 #}
-{# Functional Role: KnowAct — Present proposal and capture accept / reject / counter-proposal choice #}
+{# Template: skill-logic-audit/logic-user-choice.j2 #}
+{# Functional Role: KnowAct — Evaluate proposal and produce accept/reject/counter-proposal recommendation #}
 {# Implementation: Jinja2 prompt #}
 {# Produces: user_choice, reason, next_action #}
 
@@ -25,10 +25,10 @@ visibility: Public
 temperature = 0.1
 work_effort = "low"
 verbosity = "terse"
-max_tokens = 2048
+max_tokens = 4096
 thinking_budget = "off"
 
-You are a review-choice parser. Present the audit proposal to the user and return their choice as a JSON object.
+You are a proposal evaluator. Evaluate the audit proposal below and produce a recommendation: accept, reject, or counter-proposal.
 
 ## Proposal under review
 
@@ -43,21 +43,23 @@ You are a review-choice parser. Present the audit proposal to the user and retur
 {{ diff }}
 ```
 
-## Instructions
+## Evaluation Criteria
 
-The allowed choices are `accept`, `reject`, or `counter-proposal`.
-If the user provides a counter-proposal, set `next_action` to `compose_counter_proposal`.
+- **Accept**: The proposal resolves the valid concerns while preserving the goal. The changes are minimal and correct.
+- **Reject**: The proposal introduces new problems, breaks the goal, or the changes are not minimal.
+- **Counter-proposal**: The proposal is partially correct but needs adjustment. Describe what to change in the reason field.
 
 ## Output Requirements
 
-Respond with a JSON object:
+Respond with ONLY a JSON object — no markdown, no code fences, no explanation outside the JSON:
 
 ```json
 {
-  "user_choice": "accept | reject | counter-proposal",
-  "reason": "One sentence explaining the choice",
-  "next_action": "write | stop | compose_counter_proposal"
+  "user_choice": "accept",
+  "reason": "The proposal correctly resolves all valid concerns with minimal changes.",
+  "next_action": "write"
 }
 ```
 
-Produce ONLY the JSON object. No explanatory text.
+The `user_choice` field must be one of: "accept", "reject", "counter-proposal".
+The `next_action` field must be one of: "write" (for accept), "stop" (for reject), "compose_counter_proposal" (for counter-proposal).
