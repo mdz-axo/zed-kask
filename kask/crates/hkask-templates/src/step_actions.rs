@@ -773,10 +773,7 @@ impl StepMachine {
         _infra: &Infra,
     ) -> Result<Effect> {
         let command = node.command.as_deref().ok_or_else(|| {
-            TemplateError::Manifest(format!(
-                "Gate step {} has no `command` field",
-                node.ordinal
-            ))
+            TemplateError::Manifest(format!("Gate step {} has no `command` field", node.ordinal))
         })?;
 
         let timeout_dur = effective_timeout(node.timeout_seconds);

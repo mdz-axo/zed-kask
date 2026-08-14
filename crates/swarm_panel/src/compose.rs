@@ -7,8 +7,8 @@
 use editor::Editor;
 use gpui::{Context, Entity, SharedString, Window};
 use ui::{
-    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple,
-    Tooltip, prelude::*,
+    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip,
+    prelude::*,
 };
 
 use crate::SwarmPanel;
@@ -97,49 +97,47 @@ impl SwarmPanel {
             // Cloud/Local target toggle — a per-form choice, not a global
             // setting. Both backends are always available.
             .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                Label::new("Target:")
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                div().child(
-                                    ToggleButtonGroup::single_row(
-                                        "compose-create-target",
-                                        [
-                                            ToggleButtonSimple::new(
-                                                "Cloud",
-                                                cx.listener(|this, _, _, cx| {
-                                                    this.compose.create_target =
-                                                        super::CreateTarget::Cloud;
-                                                    cx.notify();
-                                                }),
-                                            ),
-                                            ToggleButtonSimple::new(
-                                                "Local",
-                                                cx.listener(|this, _, _, cx| {
-                                                    this.compose.create_target =
-                                                        super::CreateTarget::Local;
-                                                    cx.notify();
-                                                }),
-                                            ),
-                                        ],
-                                    )
-                                    .style(ToggleButtonGroupStyle::Outlined)
-                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(24.0_f32)))
-                                    .label_size(LabelSize::XSmall)
-                                    .auto_width()
-                                    .selected_index(if is_local { 1 } else { 0 })
-                                    .into_any_element(),
-                                ),
+                v_flex().gap_1().child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            Label::new("Target:")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            div().child(
+                                ToggleButtonGroup::single_row(
+                                    "compose-create-target",
+                                    [
+                                        ToggleButtonSimple::new(
+                                            "Cloud",
+                                            cx.listener(|this, _, _, cx| {
+                                                this.compose.create_target =
+                                                    super::CreateTarget::Cloud;
+                                                cx.notify();
+                                            }),
+                                        ),
+                                        ToggleButtonSimple::new(
+                                            "Local",
+                                            cx.listener(|this, _, _, cx| {
+                                                this.compose.create_target =
+                                                    super::CreateTarget::Local;
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    ],
+                                )
+                                .style(ToggleButtonGroupStyle::Outlined)
+                                .size(ToggleButtonGroupSize::Custom(rems_from_px(24.0_f32)))
+                                .label_size(LabelSize::XSmall)
+                                .auto_width()
+                                .selected_index(if is_local { 1 } else { 0 })
+                                .into_any_element(),
                             ),
-                    ),
+                        ),
+                ),
             )
             .child(
                 v_flex()

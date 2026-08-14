@@ -833,9 +833,8 @@ impl KanbanPanel {
                         // `Err(InvokeError::Failed(_))`.
                         if let Some(err) = parse_tool_error(&output) {
                             this.update(cx, |this, cx| {
-                                this.error = Some(
-                                    format!("Failed to {label}: {}", err.message).into(),
-                                );
+                                this.error =
+                                    Some(format!("Failed to {label}: {}", err.message).into());
                                 cx.notify();
                             })
                             .log_err();
@@ -2014,8 +2013,8 @@ mod tests {
     use super::{
         ADVERTISED_KANBAN_TOOLS, BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, IDEMPOTENT_TOOLS,
         MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL, TASK_DELETE_TOOL, TASK_SPAWN_TOOL,
-        TASK_UPDATE_TOOL, attach_idempotency_key, classify_kanban_fetch_error,
-        is_idempotent_tool, mutation_retry_delay, refresh_target, steer_system_prompt,
+        TASK_UPDATE_TOOL, attach_idempotency_key, classify_kanban_fetch_error, is_idempotent_tool,
+        mutation_retry_delay, refresh_target, steer_system_prompt,
     };
     use hkask_tool_invoker::InvokeError;
     use std::time::Duration;
@@ -2216,8 +2215,7 @@ mod tests {
         // The exact wire format pinned by `error_wire_format_golden_strings`
         // in hkask-mcp-server. A failed_precondition is the canonical kanban
         // case (DB not initialized at first launch).
-        let out =
-            r#"{"error":"kanban database not initialized","kind":"failed_precondition"}"#;
+        let out = r#"{"error":"kanban database not initialized","kind":"failed_precondition"}"#;
         let err = hkask_types::tool_response::parse_tool_error(out)
             .expect("server error envelope must be detected");
         assert_eq!(err.message, "kanban database not initialized");

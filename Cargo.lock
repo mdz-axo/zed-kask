@@ -9846,7 +9846,6 @@ dependencies = [
  "serde",
  "serde_json",
  "theme",
- "tracing",
  "ui",
 ]
 
@@ -19191,7 +19190,6 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "settings",
- "settings_content",
  "shell_command_parser",
  "strum 0.27.2",
  "telemetry",
@@ -20328,7 +20326,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "settings_content",
  "ui",
  "workspace",
 ]

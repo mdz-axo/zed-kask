@@ -944,8 +944,7 @@ mod schema_tests {
         ($test_name:ident, $ty:ty) => {
             #[test]
             fn $test_name() {
-                let schema =
-                    serde_json::to_value(&schema_for!($ty)).expect("schema serializes");
+                let schema = serde_json::to_value(&schema_for!($ty)).expect("schema serializes");
                 let violations = find_boolean_schema_positions(&schema);
                 assert!(
                     violations.is_empty(),

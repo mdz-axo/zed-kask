@@ -10,8 +10,7 @@ use hkask_templates::bundle::manifest::{BundleManifestStep, OnFailureConfig};
 #[test]
 fn on_failure_config_deserializes_halt_action() {
     let yaml = "action: halt\nresume: \"repair extraction, rerun this gate\"";
-    let config: OnFailureConfig =
-        serde_yaml_neo::from_str(yaml).expect("should parse");
+    let config: OnFailureConfig = serde_yaml_neo::from_str(yaml).expect("should parse");
     assert_eq!(config.action, "halt");
     assert_eq!(config.resume, "repair extraction, rerun this gate");
 }
@@ -20,7 +19,10 @@ fn on_failure_config_deserializes_halt_action() {
 fn on_failure_config_rejects_unknown_fields() {
     let yaml = "action: halt\nresume: \"test\"\nbogus: true";
     let result: Result<OnFailureConfig, _> = serde_yaml_neo::from_str(yaml);
-    assert!(result.is_err(), "deny_unknown_fields must reject bogus field");
+    assert!(
+        result.is_err(),
+        "deny_unknown_fields must reject bogus field"
+    );
 }
 
 // ── BundleManifestStep with gate fields ─────────────────────────────────────
@@ -28,8 +30,7 @@ fn on_failure_config_rejects_unknown_fields() {
 #[test]
 fn bundle_manifest_step_accepts_gate_fields() {
     let yaml = "ordinal: 1\naction: gate\ndescription: \"Verify extraction\"\ncommand: \"echo GATE_PASS\"\non_failure:\n  action: halt\n  resume: \"repair extraction\"\n";
-    let step: BundleManifestStep =
-        serde_yaml_neo::from_str(yaml).expect("should parse");
+    let step: BundleManifestStep = serde_yaml_neo::from_str(yaml).expect("should parse");
     assert_eq!(step.action, "gate");
     assert_eq!(step.command.as_deref(), Some("echo GATE_PASS"));
     assert!(step.on_failure.is_some());
@@ -39,8 +40,7 @@ fn bundle_manifest_step_accepts_gate_fields() {
 #[test]
 fn bundle_manifest_step_accepts_id_field() {
     let yaml = "ordinal: 1\naction: execute\ndescription: \"Extract text\"\nmcp: corpus_convert\nid: extract_text\n";
-    let step: BundleManifestStep =
-        serde_yaml_neo::from_str(yaml).expect("should parse");
+    let step: BundleManifestStep = serde_yaml_neo::from_str(yaml).expect("should parse");
     assert_eq!(step.id.as_deref(), Some("extract_text"));
     assert_eq!(step.mcp.as_deref(), Some("corpus_convert"));
 }
@@ -48,9 +48,11 @@ fn bundle_manifest_step_accepts_id_field() {
 #[test]
 fn bundle_manifest_step_gate_fields_default_to_none() {
     let yaml = "ordinal: 1\naction: select\ndescription: \"test\"\n";
-    let step: BundleManifestStep =
-        serde_yaml_neo::from_str(yaml).expect("should parse");
-    assert!(step.id.is_none(), "id must default to None for skill manifests");
+    let step: BundleManifestStep = serde_yaml_neo::from_str(yaml).expect("should parse");
+    assert!(
+        step.id.is_none(),
+        "id must default to None for skill manifests"
+    );
     assert!(step.command.is_none(), "command must default to None");
     assert!(step.on_failure.is_none(), "on_failure must default to None");
 }

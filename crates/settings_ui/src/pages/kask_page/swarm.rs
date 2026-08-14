@@ -35,8 +35,7 @@ pub(crate) fn render_swarm_page(
     // swarm backend auth credential), so it has no Data Services page row.
     // Without this field the operator had no UI path to configure it at all.
     let credentials_provider = zed_credentials::global(cx);
-    let abw_credential_url =
-        format!("{KASK_CREDENTIAL_NAMESPACE}/hkask_abw_api_key");
+    let abw_credential_url = format!("{KASK_CREDENTIAL_NAMESPACE}/hkask_abw_api_key");
     let abw_key_configured = has_credential(
         &credentials_provider,
         &[&abw_credential_url],
@@ -78,16 +77,8 @@ pub(crate) fn render_swarm_page(
                     .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
                     .aria_label("ABW API Key")
                     .on_confirm(move |api_key, _window, cx| {
-                        if let Some(key_value) =
-                            api_key.filter(|key_value| !key_value.is_empty())
-                        {
-                            write_credential(
-                                &provider,
-                                &url,
-                                &key_value,
-                                cx,
-                            )
-                            .detach();
+                        if let Some(key_value) = api_key.filter(|key_value| !key_value.is_empty()) {
+                            write_credential(&provider, &url, &key_value, cx).detach();
                         }
                     }),
             )

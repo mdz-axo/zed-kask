@@ -21,10 +21,8 @@
 //! internally, so the path-containment property below exercises the sanitizer
 //! — the security-relevant behavior — through the public seam.
 
-use hkask_mcp_swarm::{
-    LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry,
-};
 use hkask_mcp_swarm::test_utils::{LocalAgentDependencies, SwarmError};
+use hkask_mcp_swarm::{LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry};
 use hkask_test_harness::{OracleVerdict, oracle_invariant, oracle_reference};
 use proptest::prelude::*;
 use serde_json::Value as JsonValue;

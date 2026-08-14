@@ -403,6 +403,4 @@ fn lisp_eval_step_result_references_are_backward() {
 /// Regex to find `step_N_result` references in the env block's JSON
 /// serialization. Matches `step_` followed by digits followed by `_result`.
 static STEP_RESULT_RE: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"step_(\d+)_result").unwrap()
-    });
+    std::sync::LazyLock::new(|| regex::Regex::new(r"step_(\d+)_result").unwrap());

@@ -168,7 +168,7 @@ Skill lifecycle, registry, cascade, convergence, budget, provenance, profile-enf
 |---|---|---|
 | `reg.skill.lifecycle` | `.skill_activated`, `.skills_loaded`, `.skills_discovered`, `.skill_published` | Skill lifecycle events (activation, loading, publishing) |
 | `reg.skill.registry` | `.registry_validated` | Registry manifest validated successfully |
-| `reg.skill.cascade` | `.step_executed`, `.compute`, `.escalated`, `.branching_misconfigured` | Cascade step execution; cascade escalation; branching misconfiguration detected |
+| `reg.skill.cascade` | `.step_executed`, `.compute`, `.escalated`, `.branching_misconfigured`, `.choice_misconfigured`, `.timeout_retry`, `.gate_passed`, `.gate_failed` | Cascade step execution; cascade escalation; branching/choice misconfiguration; timeout retry; gate pass/fail outcomes |
 | `reg.skill.convergence` | `.converged`, `.escalated` | Cascade convergence outcomes (metric ≤ threshold, or max iterations exhausted) |
 | `reg.skill.budget` | `.gas_exhausted`, `.gas_alert`, `.rjoule_exhausted`, `.rjoule_alert` | Gas and rJoule budget events |
 | `reg.skill.provenance` | (bare) | Skill provenance tracking (skill_executor / manifest executor) |

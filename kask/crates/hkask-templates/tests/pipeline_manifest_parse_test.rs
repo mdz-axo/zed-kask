@@ -17,9 +17,7 @@ fn pipeline_manifest_parses_with_general_executor() {
     });
 
     let manifest = load_manifest_from_yaml(&yaml).unwrap_or_else(|e| {
-        panic!(
-            "pipeline-capabilities-researcher.yaml must parse with the general executor: {e:?}"
-        )
+        panic!("pipeline-capabilities-researcher.yaml must parse with the general executor: {e:?}")
     });
 
     // The manifest declares category: pipeline.
@@ -44,11 +42,7 @@ fn pipeline_manifest_parses_with_general_executor() {
     );
 
     // Verify step structure: alternating execute/gate pattern.
-    let gate_count = manifest
-        .steps
-        .iter()
-        .filter(|s| s.action == "gate")
-        .count();
+    let gate_count = manifest.steps.iter().filter(|s| s.action == "gate").count();
     let execute_count = manifest
         .steps
         .iter()
@@ -101,11 +95,9 @@ fn pipeline_manifest_parses_with_general_executor() {
 fn pipeline_manifest_gate_steps_have_literal_command_blocks() {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let manifest_path = manifest_dir.join("../../corpus/pipeline-capabilities-researcher.yaml");
-    let yaml = std::fs::read_to_string(&manifest_path)
-        .expect("Failed to read pipeline manifest");
+    let yaml = std::fs::read_to_string(&manifest_path).expect("Failed to read pipeline manifest");
 
-    let manifest = load_manifest_from_yaml(&yaml)
-        .expect("pipeline manifest must parse");
+    let manifest = load_manifest_from_yaml(&yaml).expect("pipeline manifest must parse");
 
     // The first gate (gate_corpus_server_alive) must have a command that
     // contains the Python heredoc — verifying literal block scalars survived

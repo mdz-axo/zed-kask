@@ -13,7 +13,9 @@ pub mod manifest;
 
 pub use composition::*;
 pub use config::*;
-pub use manifest::{BundleManifest, BundleManifestStep, BundleSkill, OnFailureConfig, MAX_CONCURRENCY};
+pub use manifest::{
+    BundleManifest, BundleManifestStep, BundleSkill, MAX_CONCURRENCY, OnFailureConfig,
+};
 // cascade types are pub(crate) — not re-exported
 
 /// CRUD for bundle manifests. Read methods return owned values for HashMap/SQLite compat.
