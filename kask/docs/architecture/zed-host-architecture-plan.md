@@ -327,7 +327,7 @@ The authoritative divergence surface is [`DIVERGENCE.md`](../../../DIVERGENCE.md
 | Group | D-seams | Summary |
 | --- | --- | --- |
 | Core integration | D1–D10 | Skill execution (D1), Curator agent (D2), in-process MCP tools (D3), the **removed** guard layer (D4), keychain access (D5), thread→memory (D6), app-identity (D7), the bridge (D8), settings/credentials (D9), and the **removed** Kask panel (D10). |
-| Targeted upstream fixes | D11–D20 | Carried until upstream lands them: `time` deprecation allow (D11), OpenAI-compatible env var name (D12), OpenRouter output budget (D13), streaming-reveal timer (D14), bounded cursor-blink timers (D15), app-menu rename + update item (D16), GitHub-backed update feed (D17), viz-widget block rendering (D18), update-progress popup (D19), per-call USD cost in `TokenUsage` (D20). |
+| Targeted upstream fixes | D11–D20 | Carried until upstream lands them: `time` deprecation allow (D11), OpenAI-compatible env var name (D12), OpenRouter output budget (D13), streaming-reveal timer (D14), bounded cursor-blink timers (D15), app-menu rename + safe terminal-based zed-kask updater (D16, which superseded the **removed** D17 GitHub feed and D19 progress popup), viz-widget block rendering (D18), per-call USD cost in `TokenUsage` (D20). |
 | Kask-extension seams | D21–D23 | Widget→agent compose-back injector (D21), block-reachability pins in `main.rs` (D22), `AgentPanelSiblingHost` visibility + worktree spawn wiring (D23). |
 | Upstream model/UX/storage seams | D24–D28 | Edit predictions via `LanguageModelRegistry` (D24), Chat Completions `finish_reason: "length"` → `MaxTokens` (D25), tool-use warnings via static-context injection (D26), sandboxed-terminal non-interactive shell (D27), standardized artifact storage (D28). |
 
