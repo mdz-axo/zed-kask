@@ -593,6 +593,27 @@ The `when_to_use` field is prose extracted from SKILL.md, not a structured manif
 | `reg.skill.discovery.searched` | skill-discovery searches the catalog for candidates |
 | `reg.skill.discovery.evaluated` | skill-discovery scores a candidate skill |
 
+### MCP Tool Invocation from FlowDef Steps
+
+A flowdef manifest can invoke MCP tools **directly from a step** — without
+going through the agent's tool-use loop. This is a first-class capability:
+`action: execute` with an `mcp: <tool_name>` field, or `action: select` with
+`mcp:`/`tool:` fields. The tool call is deterministic (happens at a known step
+ordinal with inputs bound from prior step results), governed (flows through
+`ToolPort::invoke` — same gas budget, call cap, and span emission as
+agent-initiated calls), and composable (the result lands in
+`step_{ordinal}_result` and is available to all downstream steps).
+
+**This is not a future feature.** It has been in the executor since v0.31 and
+is production-tested by the `pipeline-capabilities-researcher.yaml` manifest.
+Multiple agents and developers have incorrectly assumed MCP tools can only be
+invoked through the agent's tool-use loop — that is wrong.
+
+See **[Skill ↔ MCP Tool Integration](./skill-mcp-integration.md)** for the
+full reference: the two invocation patterns, the action dispatch table, the
+code path from flowdef step to `ToolPort::invoke`, and guidance on when to use
+native `execute` steps vs. agent-mediated tool calls.
+
 ---
 
 ## Building MCP Servers

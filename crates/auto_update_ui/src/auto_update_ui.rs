@@ -58,12 +58,13 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 
-    // zed-kask: D18 — surface a prominent progress popup while a manual
-    // (single-click) zed-kask update is checking / downloading / installing.
-    // The popup re-renders in place on every progress tick via the entity's
-    // own observer on the shared `AutoUpdater`; this App-level observer only
-    // manages the show/dismiss lifecycle on rising/falling edges so the
-    // notification is not torn down and rebuilt on every percent change.
+    // zed-kask: dead code — retained from the removed D17 (GitHub update feed)
+    // and D19 (update-progress popup) seams. The in-app GitHub feed was replaced
+    // by the terminal-based `update-zed-kask.sh` script (D16); `auto_update_ui::init`
+    // is never called in zed-kask (enforced by `check-zed-isolation.sh`), so this
+    // popup is never wired. Kept to minimize the diff against upstream Zed's
+    // `auto_update_ui` crate; the `AutoUpdater` status machine it observes is itself
+    // dormant. Do not re-wire without re-introducing D17/D19 in DIVERGENCE.md.
     if let Some(updater) = AutoUpdater::get(cx) {
         cx.observe(&updater, |_updater, cx| {
             manage_update_progress_notification(cx)
@@ -417,12 +418,14 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
     .detach();
 }
 
-// zed-kask: D18 — prominent update-progress popup. The title bar already shows
-// a compact `UpdateButton` with a circular progress ring; this popup adds a
-// larger, horizontal `ProgressBar` surface so a single-click `Update Zed-Kask`
-// gives visible feedback while the GitHub release asset downloads. The popup
-// is driven entirely by the existing `AutoUpdater` status machine (D17) — no
-// new download logic.
+// zed-kask: dead code — retained from the removed D17 (GitHub update feed) and
+// D19 (update-progress popup) seams. The title bar already shows a compact
+// `UpdateButton` with a circular progress ring; this popup added a larger,
+// horizontal `ProgressBar` surface for the single-click `Update Zed-Kask` flow.
+// That flow was replaced by the terminal-based `update-zed-kask.sh` script (D16);
+// `auto_update_ui::init` is never called in zed-kask (enforced by
+// `check-zed-isolation.sh`), so this code is never wired. Kept to minimize the
+// diff against upstream Zed's `auto_update_ui` crate.
 
 /// Marker type for the app-global progress notification id.
 struct UpdateProgressNotificationId;
@@ -554,7 +557,7 @@ impl Render for UpdateProgressNotification {
                         })),
                 );
             }
-            // zed-kask: D18 — positive feedback for a manual check that found no
+            // zed-kask: dead code (removed D19) — positive feedback for a manual check that found no
             // update. Without this the popup flashed "Checking…" then vanished,
             // looking like nothing happened. Auto-dismissed after a few seconds
             // (see `manage_update_progress_notification`) since it's
@@ -654,7 +657,7 @@ fn manage_update_progress_notification(cx: &mut App) {
             },
         );
 
-        // zed-kask: D18 — the "up to date" popup is informational, not
+        // zed-kask: dead code (removed D19) — the "up to date" popup is informational, not
         // actionable, so auto-dismiss it after a short delay rather than
         // leaving it for the user to close. The guard re-checks the status
         // after the timer fires so a state change (e.g. a new manual check)
@@ -715,7 +718,7 @@ mod tests {
         semver::Version::new(1, 0, 0)
     }
 
-    // zed-kask: D18 — pins the popup gating contract: Idle never shows;
+    // zed-kask: dead code (removed D19) — pins the popup gating contract: Idle never shows;
     // Checking shows only for manual checks; Downloading / Installing /
     // Updated / Errored show for any check type; a dismissed status suppresses
     // only the matching state.
@@ -757,7 +760,7 @@ mod tests {
             false,
             None
         ));
-        // zed-kask: D18 — a manual check that found no update surfaces a
+        // zed-kask: dead code (removed D19) — a manual check that found no update surfaces a
         // positive "up to date" popup, for any check type (only manual checks
         // ever set this status in production).
         assert!(should_show_progress(
