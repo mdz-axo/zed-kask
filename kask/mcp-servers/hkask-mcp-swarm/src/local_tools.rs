@@ -794,8 +794,8 @@ impl SwarmServer {
                     .map_err(|e| hkask_mcp_server::map_io_error(e, "failed to create agent dir"))?;
                 let card_path = card_dir.join("agent_card.json");
                 let json = serde_json::to_string_pretty(&card).map_err(|e| {
-                    McpToolError::internal(format!("failed to serialize card: {e}"))
-                })?; // rr0044-ok: serde serialization of own struct
+                    McpToolError::internal(format!("failed to serialize card: {e}")) // rr0044-ok: serde serialization of own struct
+                })?;
                 std::fs::write(&card_path, &json)
                     .map_err(|e| hkask_mcp_server::map_io_error(e, "failed to write card"))?;
                 self.local_registry.load().map_err(map_local_swarm_error)?;

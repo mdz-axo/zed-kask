@@ -21,7 +21,7 @@
 //! HTTP 500 for domain failures like unfunded agents. `SwarmError` mapping
 //! therefore inspects response bodies, not just status codes.
 //!
-//! ## Tools (41 — both tool sets always available in either mode)
+//! ## Tools (53 — both tool sets always available in either mode)
 //! ABW tools (27): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
 //! `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
 //! `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`,
@@ -35,13 +35,19 @@
 //! `swarm_publish_checks` (publish preflight, fermi v0.16.1),
 //! `swarm_publish_agent` (catalogue publish, fermi v0.16.1),
 //! `swarm_fork_agent` (derivative fork, fermi v0.16.1).
-//! Local tools (14): `swarm_fund_local`, `swarm_balance_local`,
+//! Local tools (26): `swarm_fund_local`, `swarm_balance_local`,
 //! `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
 //! `swarm_pipeline_local`, `swarm_a2a_send` (A2A protocol message, in-process),
 //! `swarm_a2a_card` (A2A Agent Card discovery),
 //! `swarm_list_local_agents`, `swarm_clone_to_local`,
 //! `swarm_push_to_cloud`, `swarm_remove_local`, `swarm_create_local_agent`,
-//! `swarm_reconfigure_local_agent` (Cybernetic Swarm Plan C6).
+//! `swarm_reconfigure_local_agent` (Cybernetic Swarm Plan C6),
+//! `swarm_create_local_swarm`, `swarm_list_local_swarms`,
+//! `swarm_get_local_swarm`, `swarm_delete_local_swarm`,
+//! `swarm_add_agent_local`, `swarm_remove_agent_local`,
+//! `swarm_search_knowledge_local`, `swarm_generate_prompt_local`,
+//! `swarm_generate_ontology_local`, `swarm_ai_assist`,
+//! `swarm_evaluate_local`, `swarm_execute_plan_local`.
 //!
 //! Spend-mutating tools (`swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`,
 //! `swarm_fanout`, `swarm_create_swarm`, `swarm_xaman`) are consent-gated — see

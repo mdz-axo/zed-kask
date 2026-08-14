@@ -943,8 +943,9 @@ async fn call_inference_stream(
         })
         .await
         {
-            Ok(Ok((text, tool_calls, cost_usd, finish_reason))) =>
-                (text, tool_calls, cost_usd, finish_reason),
+            Ok(Ok((text, tool_calls, cost_usd, finish_reason))) => {
+                (text, tool_calls, cost_usd, finish_reason)
+            }
             Ok(Err(e)) => return Err(e),
             Err(_elapsed) => {
                 // Typed Timeout error (not Manifest(String)) so the retry loop in

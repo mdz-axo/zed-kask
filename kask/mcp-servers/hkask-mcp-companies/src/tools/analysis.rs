@@ -31,63 +31,68 @@ impl CompaniesServer {
         &self,
         Parameters(SymbolRequest { symbol }): Parameters<SymbolRequest>,
     ) -> String {
-        execute_tool_semantic(self, "moat_check", Self::ontology_anchor("moat_check"), async {
-            validate_symbol(&symbol)?;
+        execute_tool_semantic(
+            self,
+            "moat_check",
+            Self::ontology_anchor("moat_check"),
+            async {
+                validate_symbol(&symbol)?;
 
-            // Fetch 10 years of key metrics for gross margin stability analysis
-            let limit = "10";
-            let metrics_result = self
-                .fetch("key_metrics", &symbol, &[("limit", limit)])
-                .await;
+                // Fetch 10 years of key metrics for gross margin stability analysis
+                let limit = "10";
+                let metrics_result = self
+                    .fetch("key_metrics", &symbol, &[("limit", limit)])
+                    .await;
 
-            let metrics = match metrics_result {
-                Ok(v) => v,
-                Err(e) => {
-                    return Err(e);
+                let metrics = match metrics_result {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(e);
+                    }
+                };
+
+                let gross_margins = analysis::extract_gross_margins(&metrics);
+                if gross_margins.is_empty() {
+                    let output = serde_json::json!({
+                        "symbol": symbol,
+                        "moat": "insufficient_data",
+                        "reason": "No gross margin data available for this symbol",
+                    });
+                    return Ok(output);
                 }
-            };
 
-            let gross_margins = analysis::extract_gross_margins(&metrics);
-            if gross_margins.is_empty() {
+                let margin_values: Vec<f64> = gross_margins.iter().map(|(_, m)| *m).collect();
+                let stability = analysis::gross_margin_stability(&margin_values);
+
+                let wc_data = analysis::extract_wc_days(&metrics);
+                let (wc_spread, dpo, dso) = match wc_data {
+                    Some((dpo_val, dso_val)) => (
+                        analysis::working_capital_spread(dpo_val, dso_val),
+                        Some(dpo_val),
+                        Some(dso_val),
+                    ),
+                    None => (0.0, None, None),
+                };
+
+                let wc_label = analysis::wc_signal_label(wc_spread);
+                let moat = analysis::classify_moat(stability, wc_spread, gross_margins.len());
+
                 let output = serde_json::json!({
                     "symbol": symbol,
-                    "moat": "insufficient_data",
-                    "reason": "No gross margin data available for this symbol",
+                    "moat": moat,
+                    "margin_stability": stability,
+                    "gross_margins": gross_margins,
+                    "working_capital": {
+                        "spread_days": wc_spread,
+                        "dpo": dpo,
+                        "dso": dso,
+                        "signal": wc_label,
+                    },
+                    "data_periods": gross_margins.len(),
                 });
-                return Ok(output);
-            }
-
-            let margin_values: Vec<f64> = gross_margins.iter().map(|(_, m)| *m).collect();
-            let stability = analysis::gross_margin_stability(&margin_values);
-
-            let wc_data = analysis::extract_wc_days(&metrics);
-            let (wc_spread, dpo, dso) = match wc_data {
-                Some((dpo_val, dso_val)) => (
-                    analysis::working_capital_spread(dpo_val, dso_val),
-                    Some(dpo_val),
-                    Some(dso_val),
-                ),
-                None => (0.0, None, None),
-            };
-
-            let wc_label = analysis::wc_signal_label(wc_spread);
-            let moat = analysis::classify_moat(stability, wc_spread, gross_margins.len());
-
-            let output = serde_json::json!({
-                "symbol": symbol,
-                "moat": moat,
-                "margin_stability": stability,
-                "gross_margins": gross_margins,
-                "working_capital": {
-                    "spread_days": wc_spread,
-                    "dpo": dpo,
-                    "dso": dso,
-                    "signal": wc_label,
-                },
-                "data_periods": gross_margins.len(),
-            });
-            Ok(fibo::enrich_with_ontology(output, "moat_check"))
-        })
+                Ok(fibo::enrich_with_ontology(output, "moat_check"))
+            },
+        )
         .await
     }
 

@@ -30,7 +30,7 @@ pub fn map_portfolio_error(e: PortfolioError) -> McpToolError {
         PortfolioError::InvalidArgument(_) => McpToolError::invalid_argument(e.to_string()),
         PortfolioError::NotFound(_) => McpToolError::not_found(e.to_string()),
         PortfolioError::Database(_) | PortfolioError::Serialize(_) => {
-            McpToolError::internal(e.to_string())
+            McpToolError::internal(e.to_string()) // rr0044-ok: mapper-internal-arm
         }
     }
 }

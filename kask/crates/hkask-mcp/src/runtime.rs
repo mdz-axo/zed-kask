@@ -678,9 +678,7 @@ impl McpRuntime {
                 let connection_state = {
                     let connections = supervisor_connections.read().await;
                     match connections.get(&supervisor_id) {
-                        Some(conn) if !conn.peer.is_transport_closed() => {
-                            ConnectionState::Healthy
-                        }
+                        Some(conn) if !conn.peer.is_transport_closed() => ConnectionState::Healthy,
                         Some(_) => ConnectionState::TransportClosed,
                         None => ConnectionState::Missing,
                     }

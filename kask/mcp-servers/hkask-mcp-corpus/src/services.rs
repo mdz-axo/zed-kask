@@ -13,7 +13,7 @@
 //! - `consolidation`   — `ConsolidationService` (cluster + LLM-synthesize + re-embed)
 //! - `prompt_builder`  — `PromptBuilderService` (KNN + concept graph + knowledge graph + QA prompts)
 
+pub mod assertions;
 pub mod consolidation;
 pub mod convert;
 pub mod prompt_builder;
-pub mod assertions;

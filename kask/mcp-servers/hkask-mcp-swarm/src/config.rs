@@ -141,8 +141,10 @@ impl Default for SwarmConfig {
         // circular dependency — the duplication is the seam between them. If
         // you change a default here, change it there too, and update the
         // `swarm_settings_default_emits_no_env` test in `settings.rs`.
-        // Note: `default_agent_model` is server-only (operator env var, not
-        // settings-file) — it has no counterpart here.
+        // All fields here have a counterpart in `KaskSwarmSettings::default()`.
+        // The bridge emits env vars for non-default values; the server reads
+        // them in `from_env`. Fields the bridge defaults to empty/false use
+        // the server's defaults here as the fallback.
         Self {
             mode: SwarmMode::default(),
             api_base_url: "https://agent-bestiary.world".to_string(),

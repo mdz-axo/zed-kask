@@ -10276,10 +10276,9 @@ mod tests {
         let shell = Shell::Program("/bin/sh".to_string());
 
         // Interactive (upstream default for non-headless GUI): -i flag present.
-        let (program, args) =
-            ShellBuilder::new(&shell, false)
-                .redirect_stdin_to_dev_null()
-                .build(Some("echo hello".to_string()), &[]);
+        let (program, args) = ShellBuilder::new(&shell, false)
+            .redirect_stdin_to_dev_null()
+            .build(Some("echo hello".to_string()), &[]);
         assert_eq!(program, "/bin/sh");
         assert!(
             args.contains(&"-i".to_string()),
@@ -10287,11 +10286,10 @@ mod tests {
         );
 
         // Non-interactive (zed-kask sandboxed path): no -i flag.
-        let (program, args) =
-            ShellBuilder::new(&shell, false)
-                .non_interactive()
-                .redirect_stdin_to_dev_null()
-                .build(Some("echo hello".to_string()), &[]);
+        let (program, args) = ShellBuilder::new(&shell, false)
+            .non_interactive()
+            .redirect_stdin_to_dev_null()
+            .build(Some("echo hello".to_string()), &[]);
         assert_eq!(program, "/bin/sh");
         assert!(
             !args.contains(&"-i".to_string()),

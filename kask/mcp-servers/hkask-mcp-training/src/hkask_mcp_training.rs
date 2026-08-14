@@ -589,13 +589,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-    // D28 — pins the default DB path.
-    #[test]
-    fn default_db_path_follows_standardized_layout() {
-        let relative = hkask_types::agent_paths::mcp_server_db("training", "training");
-        assert_eq!(
-            relative,
-            std::path::PathBuf::from("mcp").join("training").join("training.db"),
-            "training default DB path must follow mcp/training/training.db"
-        );
-    }
+// D28 — pins the default DB path.
+#[test]
+fn default_db_path_follows_standardized_layout() {
+    let relative = hkask_types::agent_paths::mcp_server_db("training", "training");
+    assert_eq!(
+        relative,
+        std::path::PathBuf::from("mcp")
+            .join("training")
+            .join("training.db"),
+        "training default DB path must follow mcp/training/training.db"
+    );
+}

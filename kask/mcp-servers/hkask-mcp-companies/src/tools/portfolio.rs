@@ -42,14 +42,19 @@ impl CompaniesServer {
         &self,
         Parameters(PortfolioNameRequest { name }): Parameters<PortfolioNameRequest>,
     ) -> String {
-        execute_tool_semantic(self, "portfolio_delete", Self::ontology_anchor("portfolio_delete"), async {
-            let response_name = name.clone();
-            run_portfolio(self.portfolio.clone(), move |portfolio| {
-                portfolio.delete(&name)
-            })
-            .await?;
-            Ok(serde_json::json!({"status": "deleted", "name": response_name}))
-        })
+        execute_tool_semantic(
+            self,
+            "portfolio_delete",
+            Self::ontology_anchor("portfolio_delete"),
+            async {
+                let response_name = name.clone();
+                run_portfolio(self.portfolio.clone(), move |portfolio| {
+                    portfolio.delete(&name)
+                })
+                .await?;
+                Ok(serde_json::json!({"status": "deleted", "name": response_name}))
+            },
+        )
         .await
     }
 
@@ -74,40 +79,45 @@ impl CompaniesServer {
             data,
         }): Parameters<LedgerImportRequest>,
     ) -> String {
-        execute_tool_semantic(self, "ledger_import", Self::ontology_anchor("ledger_import"), async {
-            let (ids, validation) = run_portfolio(self.portfolio.clone(), move |manager| {
-                if !manager.list()?.contains(&portfolio) {
-                    manager
-                        .create(&portfolio)
-                        .map_err(|error| format!("auto-create failed: {error}"))?;
-                }
-                let ids = match format {
-                    types::ImportFormat::Csv => manager.import_csv(&portfolio, &data),
-                    types::ImportFormat::Json => manager.import_json(&portfolio, &data),
-                }?;
-                let validation = manager.validate(&portfolio).unwrap_or_else(|error| {
-                    portfolio::ValidationReport {
-                        valid: false,
-                        transaction_count: ids.len(),
-                        positions: vec![],
-                        cash_balance: 0.0,
-                        issues: vec![error.to_string()],
+        execute_tool_semantic(
+            self,
+            "ledger_import",
+            Self::ontology_anchor("ledger_import"),
+            async {
+                let (ids, validation) = run_portfolio(self.portfolio.clone(), move |manager| {
+                    if !manager.list()?.contains(&portfolio) {
+                        manager
+                            .create(&portfolio)
+                            .map_err(|error| format!("auto-create failed: {error}"))?;
                     }
-                });
-                Ok((ids, validation))
-            })
-            .await?;
-            Ok(serde_json::json!({
-                "status": "imported",
-                "count": ids.len(),
-                "validation": {
-                    "valid": validation.valid,
-                    "positions": validation.positions.len(),
-                    "cash": validation.cash_balance,
-                    "issues": validation.issues,
-                }
-            }))
-        })
+                    let ids = match format {
+                        types::ImportFormat::Csv => manager.import_csv(&portfolio, &data),
+                        types::ImportFormat::Json => manager.import_json(&portfolio, &data),
+                    }?;
+                    let validation = manager.validate(&portfolio).unwrap_or_else(|error| {
+                        portfolio::ValidationReport {
+                            valid: false,
+                            transaction_count: ids.len(),
+                            positions: vec![],
+                            cash_balance: 0.0,
+                            issues: vec![error.to_string()],
+                        }
+                    });
+                    Ok((ids, validation))
+                })
+                .await?;
+                Ok(serde_json::json!({
+                    "status": "imported",
+                    "count": ids.len(),
+                    "validation": {
+                        "valid": validation.valid,
+                        "positions": validation.positions.len(),
+                        "cash": validation.cash_balance,
+                        "issues": validation.issues,
+                    }
+                }))
+            },
+        )
         .await
     }
 
@@ -140,14 +150,19 @@ impl CompaniesServer {
             note,
         }): Parameters<TransactionNoteRequest>,
     ) -> String {
-        execute_tool_semantic(self, "transaction_note_append", Self::ontology_anchor("transaction_note_append"), async {
-            let response_tx_id = tx_id.clone();
-            run_portfolio(self.portfolio.clone(), move |manager| {
-                manager.append_note(&portfolio, &tx_id, &note)
-            })
-            .await?;
-            Ok(serde_json::json!({"status": "note appended", "tx_id": response_tx_id}))
-        })
+        execute_tool_semantic(
+            self,
+            "transaction_note_append",
+            Self::ontology_anchor("transaction_note_append"),
+            async {
+                let response_tx_id = tx_id.clone();
+                run_portfolio(self.portfolio.clone(), move |manager| {
+                    manager.append_note(&portfolio, &tx_id, &note)
+                })
+                .await?;
+                Ok(serde_json::json!({"status": "note appended", "tx_id": response_tx_id}))
+            },
+        )
         .await
     }
 
@@ -161,12 +176,17 @@ impl CompaniesServer {
             portfolio_b,
         }): Parameters<PortfolioCompareRequest>,
     ) -> String {
-        execute_tool_semantic(self, "portfolio_comparison", Self::ontology_anchor("portfolio_comparison"), async {
-            run_portfolio(self.portfolio.clone(), move |manager| {
-                manager.compare(&portfolio_a, &portfolio_b)
-            })
-            .await
-        })
+        execute_tool_semantic(
+            self,
+            "portfolio_comparison",
+            Self::ontology_anchor("portfolio_comparison"),
+            async {
+                run_portfolio(self.portfolio.clone(), move |manager| {
+                    manager.compare(&portfolio_a, &portfolio_b)
+                })
+                .await
+            },
+        )
         .await
     }
 
@@ -179,157 +199,166 @@ impl CompaniesServer {
             to,
         }): Parameters<PortfolioReturnsRequest>,
     ) -> String {
-        execute_tool_semantic(self, "portfolio_returns", Self::ontology_anchor("portfolio_returns"), async {
-            // SF-4: validate from/to up front — never silently epoch-substitute
-            // a malformed date (the prior `unwrap_or_default()` produced
-            // garbage IRR while `irr_converged` reported true).
-            let _from_date = parse_date_arg(&from, "from")?;
-            let _to_date = parse_date_arg(&to, "to")?;
+        execute_tool_semantic(
+            self,
+            "portfolio_returns",
+            Self::ontology_anchor("portfolio_returns"),
+            async {
+                // SF-4: validate from/to up front — never silently epoch-substitute
+                // a malformed date (the prior `unwrap_or_default()` produced
+                // garbage IRR while `irr_converged` reported true).
+                let _from_date = parse_date_arg(&from, "from")?;
+                let _to_date = parse_date_arg(&to, "to")?;
 
-            // Gather the symbols we need prices for, by reading the ledger
-            // and computing the positions at `from` and `to`. The returns
-            // computation itself is delegated to the portfolio crate
-            // (`hkask_mcp_portfolio::returns`), which is provider-agnostic.
-            // This tool's job is to seed the portfolio store's price cache
-            // from FMP/EODHD so the delegated computation has prices to read.
-            let transaction_portfolio = portfolio.clone();
-            let txs = run_portfolio(self.portfolio.clone(), move |manager| {
-                manager.get_transactions(&transaction_portfolio, None, None, None, None)
-            })
-            .await?;
+                // Gather the symbols we need prices for, by reading the ledger
+                // and computing the positions at `from` and `to`. The returns
+                // computation itself is delegated to the portfolio crate
+                // (`hkask_mcp_portfolio::returns`), which is provider-agnostic.
+                // This tool's job is to seed the portfolio store's price cache
+                // from FMP/EODHD so the delegated computation has prices to read.
+                let transaction_portfolio = portfolio.clone();
+                let txs = run_portfolio(self.portfolio.clone(), move |manager| {
+                    manager.get_transactions(&transaction_portfolio, None, None, None, None)
+                })
+                .await?;
 
-            // Compute positions at `from` and `to` to know which symbols
-            // need prices. This mirrors the portfolio crate's returns logic
-            // but only to enumerate symbols — the actual returns math runs
-            // in the portfolio crate.
-            let mut positions_start: std::collections::HashMap<String, f64> =
-                std::collections::HashMap::new();
-            let mut positions_end: std::collections::HashMap<String, f64> =
-                std::collections::HashMap::new();
-            for tx in &txs {
-                if let Some(ref sym) = tx.symbol {
-                    let qty = tx.quantity.unwrap_or(0.0);
-                    if tx.date.as_str() <= from.as_str() {
-                        match tx.tx_type {
-                            TxType::Buy => {
-                                *positions_start.entry(sym.clone()).or_insert(0.0) += qty
+                // Compute positions at `from` and `to` to know which symbols
+                // need prices. This mirrors the portfolio crate's returns logic
+                // but only to enumerate symbols — the actual returns math runs
+                // in the portfolio crate.
+                let mut positions_start: std::collections::HashMap<String, f64> =
+                    std::collections::HashMap::new();
+                let mut positions_end: std::collections::HashMap<String, f64> =
+                    std::collections::HashMap::new();
+                for tx in &txs {
+                    if let Some(ref sym) = tx.symbol {
+                        let qty = tx.quantity.unwrap_or(0.0);
+                        if tx.date.as_str() <= from.as_str() {
+                            match tx.tx_type {
+                                TxType::Buy => {
+                                    *positions_start.entry(sym.clone()).or_insert(0.0) += qty
+                                }
+                                TxType::Sell => {
+                                    *positions_start.entry(sym.clone()).or_insert(0.0) -= qty
+                                }
+                                _ => {}
                             }
-                            TxType::Sell => {
-                                *positions_start.entry(sym.clone()).or_insert(0.0) -= qty
-                            }
-                            _ => {}
                         }
-                    }
-                    if tx.date.as_str() <= to.as_str() {
-                        match tx.tx_type {
-                            TxType::Buy => *positions_end.entry(sym.clone()).or_insert(0.0) += qty,
-                            TxType::Sell => *positions_end.entry(sym.clone()).or_insert(0.0) -= qty,
-                            _ => {}
+                        if tx.date.as_str() <= to.as_str() {
+                            match tx.tx_type {
+                                TxType::Buy => {
+                                    *positions_end.entry(sym.clone()).or_insert(0.0) += qty
+                                }
+                                TxType::Sell => {
+                                    *positions_end.entry(sym.clone()).or_insert(0.0) -= qty
+                                }
+                                _ => {}
+                            }
                         }
                     }
                 }
-            }
-            positions_start.retain(|_, v| *v > 0.0001);
+                positions_start.retain(|_, v| *v > 0.0001);
 
-            let all_symbols: Vec<String> = positions_start
-                .keys()
-                .chain(positions_end.keys())
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect();
+                let all_symbols: Vec<String> = positions_start
+                    .keys()
+                    .chain(positions_end.keys())
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
 
-            // Seed the portfolio store's price cache: try the cache first,
-            // then fall back to FMP/EODHD and seed the cache for next time.
-            for date in [&from, &to] {
-                for sym in &all_symbols {
-                    let cached = run_portfolio(self.portfolio.clone(), {
-                        let portfolio = portfolio.clone();
-                        let symbol = sym.clone();
-                        let date = (*date).to_string();
-                        move |manager| manager.get_prices(&portfolio, &symbol, &date, &date)
-                    })
-                    .await;
-                    let already_cached = matches!(cached, Ok(ref v) if !v.is_empty());
-                    if already_cached {
-                        continue;
-                    }
-                    // Fall back to the provider API, then seed the cache.
-                    if let Ok(value) = self
-                        .fetch("historical_price", sym, &[("from", date), ("to", date)])
-                        .await
-                        && let Some(days) = value.get("historical").and_then(|h| h.as_array())
-                        && let Some(day) = days.first()
-                        && let Some(close) = day
-                            .get("close")
-                            .or_else(|| day.get("adjClose"))
-                            .and_then(|v| v.as_f64())
-                    {
-                        let seed_portfolio = portfolio.clone();
-                        let seed_symbol = sym.clone();
-                        let seed_date = (*date).to_string();
-                        run_portfolio(self.portfolio.clone(), move |manager| {
-                            manager.seed_price_cache(
-                                &seed_portfolio,
-                                &seed_symbol,
-                                &seed_date,
-                                close,
-                                "fmp-eodhd",
-                            )
+                // Seed the portfolio store's price cache: try the cache first,
+                // then fall back to FMP/EODHD and seed the cache for next time.
+                for date in [&from, &to] {
+                    for sym in &all_symbols {
+                        let cached = run_portfolio(self.portfolio.clone(), {
+                            let portfolio = portfolio.clone();
+                            let symbol = sym.clone();
+                            let date = (*date).to_string();
+                            move |manager| manager.get_prices(&portfolio, &symbol, &date, &date)
                         })
-                        .await?;
+                        .await;
+                        let already_cached = matches!(cached, Ok(ref v) if !v.is_empty());
+                        if already_cached {
+                            continue;
+                        }
+                        // Fall back to the provider API, then seed the cache.
+                        if let Ok(value) = self
+                            .fetch("historical_price", sym, &[("from", date), ("to", date)])
+                            .await
+                            && let Some(days) = value.get("historical").and_then(|h| h.as_array())
+                            && let Some(day) = days.first()
+                            && let Some(close) = day
+                                .get("close")
+                                .or_else(|| day.get("adjClose"))
+                                .and_then(|v| v.as_f64())
+                        {
+                            let seed_portfolio = portfolio.clone();
+                            let seed_symbol = sym.clone();
+                            let seed_date = (*date).to_string();
+                            run_portfolio(self.portfolio.clone(), move |manager| {
+                                manager.seed_price_cache(
+                                    &seed_portfolio,
+                                    &seed_symbol,
+                                    &seed_date,
+                                    close,
+                                    "fmp-eodhd",
+                                )
+                            })
+                            .await?;
+                        }
                     }
                 }
-            }
 
-            // Delegate the returns computation to the portfolio crate. It
-            // reads prices from the cache we just seeded.
-            let returns_portfolio = portfolio.clone();
-            let returns_from = from.clone();
-            let returns_to = to.clone();
-            let report = run_portfolio(self.portfolio.clone(), move |manager| {
-                manager.compute_returns(&returns_portfolio, &returns_from, &returns_to)
-            })
-            .await?;
+                // Delegate the returns computation to the portfolio crate. It
+                // reads prices from the cache we just seeded.
+                let returns_portfolio = portfolio.clone();
+                let returns_from = from.clone();
+                let returns_to = to.clone();
+                let report = run_portfolio(self.portfolio.clone(), move |manager| {
+                    manager.compute_returns(&returns_portfolio, &returns_from, &returns_to)
+                })
+                .await?;
 
-            // Server-authoritative provenance (T3): the widget carries this so it
-            // can re-issue `portfolio_returns` with a scrubbed date range (T5).
-            let provenance_args = serde_json::json!({
-                "portfolio": portfolio.clone(),
-                "from": from.clone(),
-                "to": to.clone(),
-            });
-            let provenance_span_id = serde_json::Value::Null;
+                // Server-authoritative provenance (T3): the widget carries this so it
+                // can re-issue `portfolio_returns` with a scrubbed date range (T5).
+                let provenance_args = serde_json::json!({
+                    "portfolio": portfolio.clone(),
+                    "from": from.clone(),
+                    "to": to.clone(),
+                });
+                let provenance_span_id = serde_json::Value::Null;
 
-            Ok(fibo::enrich_with_ontology(
-                serde_json::json!({
-                    "portfolio": report.portfolio,
-                    "from": report.from,
-                    "to": report.to,
-                    "total_return": report.total_return,
-                    "modified_dietz": report.modified_dietz,
-                    "irr": report.irr,
-                    "irr_converged": report.irr_converged,
-                    "start_value": report.start_value,
-                    "end_value": report.end_value,
-                    "net_cash_flows": report.net_cash_flows,
-                    "cash_flow_count": report.cash_flow_count,
-                    "positions_at_start": report.positions_at_start,
-                    "positions_at_end": report.positions_at_end,
-                    "fibo": {
-                        "time_weighted_return": fibo::TIME_WEIGHTED_RETURN,
-                        "internal_rate_of_return": fibo::INTERNAL_RATE_OF_RETURN,
-                    },
-                    "provenance": {
-                        "tool": "portfolio_returns",
-                        "server": "hkask-mcp-companies",
-                        "args": provenance_args,
-                        "span_id": provenance_span_id,
-                    },
-                }),
-                "portfolio_returns",
-            ))
-        })
+                Ok(fibo::enrich_with_ontology(
+                    serde_json::json!({
+                        "portfolio": report.portfolio,
+                        "from": report.from,
+                        "to": report.to,
+                        "total_return": report.total_return,
+                        "modified_dietz": report.modified_dietz,
+                        "irr": report.irr,
+                        "irr_converged": report.irr_converged,
+                        "start_value": report.start_value,
+                        "end_value": report.end_value,
+                        "net_cash_flows": report.net_cash_flows,
+                        "cash_flow_count": report.cash_flow_count,
+                        "positions_at_start": report.positions_at_start,
+                        "positions_at_end": report.positions_at_end,
+                        "fibo": {
+                            "time_weighted_return": fibo::TIME_WEIGHTED_RETURN,
+                            "internal_rate_of_return": fibo::INTERNAL_RATE_OF_RETURN,
+                        },
+                        "provenance": {
+                            "tool": "portfolio_returns",
+                            "server": "hkask-mcp-companies",
+                            "args": provenance_args,
+                            "span_id": provenance_span_id,
+                        },
+                    }),
+                    "portfolio_returns",
+                ))
+            },
+        )
         .await
     }
 
@@ -368,19 +397,24 @@ impl CompaniesServer {
             tags,
         }): Parameters<NoteListRequest>,
     ) -> String {
-        execute_tool_semantic(self, "note_list", Self::ontology_anchor("note_list"), async {
-            let notes = run_portfolio(self.portfolio.clone(), move |manager| {
-                manager.list_notes(
-                    &portfolio,
-                    &symbol,
-                    date_from.as_deref(),
-                    date_to.as_deref(),
-                    tags.as_deref(),
-                )
-            })
-            .await?;
-            Ok(serde_json::json!({"notes": notes}))
-        })
+        execute_tool_semantic(
+            self,
+            "note_list",
+            Self::ontology_anchor("note_list"),
+            async {
+                let notes = run_portfolio(self.portfolio.clone(), move |manager| {
+                    manager.list_notes(
+                        &portfolio,
+                        &symbol,
+                        date_from.as_deref(),
+                        date_to.as_deref(),
+                        tags.as_deref(),
+                    )
+                })
+                .await?;
+                Ok(serde_json::json!({"notes": notes}))
+            },
+        )
         .await
     }
 
@@ -389,14 +423,19 @@ impl CompaniesServer {
         &self,
         Parameters(NoteDeleteRequest { note_id }): Parameters<NoteDeleteRequest>,
     ) -> String {
-        execute_tool_semantic(self, "note_delete", Self::ontology_anchor("note_delete"), async {
-            let response_note_id = note_id.clone();
-            run_portfolio(self.portfolio.clone(), move |manager| {
-                manager.delete_note(&note_id)
-            })
-            .await?;
-            Ok(serde_json::json!({"status": "deleted", "id": response_note_id}))
-        })
+        execute_tool_semantic(
+            self,
+            "note_delete",
+            Self::ontology_anchor("note_delete"),
+            async {
+                let response_note_id = note_id.clone();
+                run_portfolio(self.portfolio.clone(), move |manager| {
+                    manager.delete_note(&note_id)
+                })
+                .await?;
+                Ok(serde_json::json!({"status": "deleted", "id": response_note_id}))
+            },
+        )
         .await
     }
 
@@ -413,15 +452,20 @@ impl CompaniesServer {
             notes,
         }): Parameters<FileAttachRequest>,
     ) -> String {
-        execute_tool_semantic(self, "file_attach", Self::ontology_anchor("file_attach"), async {
-            let id = run_portfolio(self.portfolio.clone(), move |manager| {
-                manager.attach_file(
-                    &portfolio, &symbol, &date, &filename, &mime_type, &data, &notes,
-                )
-            })
-            .await?;
-            Ok(serde_json::json!({"status": "attached", "id": id}))
-        })
+        execute_tool_semantic(
+            self,
+            "file_attach",
+            Self::ontology_anchor("file_attach"),
+            async {
+                let id = run_portfolio(self.portfolio.clone(), move |manager| {
+                    manager.attach_file(
+                        &portfolio, &symbol, &date, &filename, &mime_type, &data, &notes,
+                    )
+                })
+                .await?;
+                Ok(serde_json::json!({"status": "attached", "id": id}))
+            },
+        )
         .await
     }
 
@@ -430,13 +474,18 @@ impl CompaniesServer {
         &self,
         Parameters(FileListRequest { portfolio, symbol }): Parameters<FileListRequest>,
     ) -> String {
-        execute_tool_semantic(self, "file_list", Self::ontology_anchor("file_list"), async {
-            let files = run_portfolio(self.portfolio.clone(), move |manager| {
-                manager.list_files(&portfolio, &symbol)
-            })
-            .await?;
-            Ok(serde_json::json!({"files": files}))
-        })
+        execute_tool_semantic(
+            self,
+            "file_list",
+            Self::ontology_anchor("file_list"),
+            async {
+                let files = run_portfolio(self.portfolio.clone(), move |manager| {
+                    manager.list_files(&portfolio, &symbol)
+                })
+                .await?;
+                Ok(serde_json::json!({"files": files}))
+            },
+        )
         .await
     }
 
@@ -445,14 +494,19 @@ impl CompaniesServer {
         &self,
         Parameters(FileDeleteRequest { file_id }): Parameters<FileDeleteRequest>,
     ) -> String {
-        execute_tool_semantic(self, "file_delete", Self::ontology_anchor("file_delete"), async {
-            let response_file_id = file_id.clone();
-            run_portfolio(self.portfolio.clone(), move |manager| {
-                manager.delete_file(&file_id)
-            })
-            .await?;
-            Ok(serde_json::json!({"status": "deleted", "id": response_file_id}))
-        })
+        execute_tool_semantic(
+            self,
+            "file_delete",
+            Self::ontology_anchor("file_delete"),
+            async {
+                let response_file_id = file_id.clone();
+                run_portfolio(self.portfolio.clone(), move |manager| {
+                    manager.delete_file(&file_id)
+                })
+                .await?;
+                Ok(serde_json::json!({"status": "deleted", "id": response_file_id}))
+            },
+        )
         .await
     }
 

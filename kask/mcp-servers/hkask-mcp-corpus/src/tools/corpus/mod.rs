@@ -138,21 +138,26 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<ConsolidateChunksRequest>,
     ) -> String {
-        execute_tool_semantic(self, "corpus_consolidate_chunks", Self::ontology_anchor("corpus_consolidate_chunks"), async {
-            ConsolidationService::new(Arc::clone(&self.inference_router))
-                .consolidate(ChunkConsolidationRequest {
-                    tagged_jsonl: req.tagged_jsonl,
-                    output: req.output,
-                    db_path: req.db_path,
-                    passphrase: req.passphrase,
-                    prefix: req.prefix,
-                    threshold: req.threshold,
-                    concurrency: req.concurrency,
-                    max_chunks_per_cluster: req.max_chunks_per_cluster,
-                    dry_run: req.dry_run,
-                })
-                .await
-        })
+        execute_tool_semantic(
+            self,
+            "corpus_consolidate_chunks",
+            Self::ontology_anchor("corpus_consolidate_chunks"),
+            async {
+                ConsolidationService::new(Arc::clone(&self.inference_router))
+                    .consolidate(ChunkConsolidationRequest {
+                        tagged_jsonl: req.tagged_jsonl,
+                        output: req.output,
+                        db_path: req.db_path,
+                        passphrase: req.passphrase,
+                        prefix: req.prefix,
+                        threshold: req.threshold,
+                        concurrency: req.concurrency,
+                        max_chunks_per_cluster: req.max_chunks_per_cluster,
+                        dry_run: req.dry_run,
+                    })
+                    .await
+            },
+        )
         .await
     }
 
@@ -165,23 +170,28 @@ impl CorpusServer {
         &self,
         Parameters(req): Parameters<BuildPromptsRequest>,
     ) -> String {
-        execute_tool_semantic(self, "corpus_build_prompts", Self::ontology_anchor("corpus_build_prompts"), async {
-            PromptBuilderService::new()
-                .build_prompts(ServiceBuildPromptsRequest {
-                    tagged_jsonl: req.tagged_jsonl,
-                    output: req.output,
-                    db_path: req.db_path,
-                    passphrase: req.passphrase,
-                    context_k: req.context_k,
-                    prompts_per_chunk: req.prompts_per_chunk,
-                    type_distribution: req.type_distribution,
-                    cross_reference: req.cross_reference,
-                    max_prompts: req.max_prompts,
-                    owner: req.owner,
-                    ontology_bloom_overrides: req.ontology_bloom_overrides,
-                })
-                .await
-        })
+        execute_tool_semantic(
+            self,
+            "corpus_build_prompts",
+            Self::ontology_anchor("corpus_build_prompts"),
+            async {
+                PromptBuilderService::new()
+                    .build_prompts(ServiceBuildPromptsRequest {
+                        tagged_jsonl: req.tagged_jsonl,
+                        output: req.output,
+                        db_path: req.db_path,
+                        passphrase: req.passphrase,
+                        context_k: req.context_k,
+                        prompts_per_chunk: req.prompts_per_chunk,
+                        type_distribution: req.type_distribution,
+                        cross_reference: req.cross_reference,
+                        max_prompts: req.max_prompts,
+                        owner: req.owner,
+                        ontology_bloom_overrides: req.ontology_bloom_overrides,
+                    })
+                    .await
+            },
+        )
         .await
     }
 

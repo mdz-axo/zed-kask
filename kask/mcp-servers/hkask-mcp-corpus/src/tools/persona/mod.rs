@@ -274,118 +274,128 @@ impl CorpusServer {
         &self,
         Parameters(params): Parameters<BuildRequest>,
     ) -> String {
-        execute_tool_semantic(self, "corpus_build_persona", Self::ontology_anchor("corpus_build_persona"), async {
-            // The config_path is LLM-reachable (params.config_path), so
-            // contain it under the project root before reading or passing
-            // it to EmbedService (CWE-22/200). contain_for_read canonicalizes
-            // the path (collapsing symlink escapes) and rejects anything
-            // outside the root; the size cap is enforced inside embed_corpus
-            // via the YAML parse, but the path itself is bounded here.
-            let config_path =
-                crate::path_safety::contain_for_read(&params.config_path).map_err(|error| {
-                    McpToolError::invalid_argument(format!(
-                        "Config file not found or outside the project root at {}: {error}",
-                        params.config_path
-                    ))
-                })?;
+        execute_tool_semantic(
+            self,
+            "corpus_build_persona",
+            Self::ontology_anchor("corpus_build_persona"),
+            async {
+                // The config_path is LLM-reachable (params.config_path), so
+                // contain it under the project root before reading or passing
+                // it to EmbedService (CWE-22/200). contain_for_read canonicalizes
+                // the path (collapsing symlink escapes) and rejects anything
+                // outside the root; the size cap is enforced inside embed_corpus
+                // via the YAML parse, but the path itself is bounded here.
+                let config_path = crate::path_safety::contain_for_read(&params.config_path)
+                    .map_err(|error| {
+                        McpToolError::invalid_argument(format!(
+                            "Config file not found or outside the project root at {}: {error}",
+                            params.config_path
+                        ))
+                    })?;
 
-            let progress = Arc::new(|p: &crate::corpus::EmbedProgress| {
-                tracing::info!(
-                    target: "hkask.mcp.replica",
-                    phase = ?p.phase,
-                    author = %p.author,
-                    work = %p.current_work,
-                    done = p.completed_passages,
-                    total = p.total_passages,
-                    "Embedding progress"
-                );
-            });
+                let progress = Arc::new(|p: &crate::corpus::EmbedProgress| {
+                    tracing::info!(
+                        target: "hkask.mcp.replica",
+                        phase = ?p.phase,
+                        author = %p.author,
+                        work = %p.current_work,
+                        done = p.completed_passages,
+                        total = p.total_passages,
+                        "Embedding progress"
+                    );
+                });
 
-            let passphrase = match params.passphrase {
-                Some(passphrase) => passphrase,
-                None => database_passphrase()?,
-            };
-            let result = EmbedService::embed_corpus(
-                &config_path,
-                &params.db_path,
-                &passphrase,
-                None,
-                Some(progress),
-                self.inference_router.clone(),
-            )
-            .await
-            .map_err(|e| map_service_error(e, "Embed corpus failed"))?;
+                let passphrase = match params.passphrase {
+                    Some(passphrase) => passphrase,
+                    None => database_passphrase()?,
+                };
+                let result = EmbedService::embed_corpus(
+                    &config_path,
+                    &params.db_path,
+                    &passphrase,
+                    None,
+                    Some(progress),
+                    self.inference_router.clone(),
+                )
+                .await
+                .map_err(|e| map_service_error(e, "Embed corpus failed"))?;
 
-            let json_str = serde_json::to_string(&BuildResult {
-                author: result.author,
-                purged: result.purged,
-                total_passages: result.total_passages,
-                centroid_ref: result.centroid_ref,
-                centroid_stored: result.centroid_stored,
-                passage_count: result.passage_count,
-                budget: result.budget,
-                tagged_passages: result.tagged_passages,
-                assertions_stored: result.assertions_stored,
-                embedding_only: result.embedding_only,
-            })
-            .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: serialize-own-struct
+                let json_str = serde_json::to_string(&BuildResult {
+                    author: result.author,
+                    purged: result.purged,
+                    total_passages: result.total_passages,
+                    centroid_ref: result.centroid_ref,
+                    centroid_stored: result.centroid_stored,
+                    passage_count: result.passage_count,
+                    budget: result.budget,
+                    tagged_passages: result.tagged_passages,
+                    assertions_stored: result.assertions_stored,
+                    embedding_only: result.embedding_only,
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: serialize-own-struct
 
-            let parsed: Value = serde_json::from_str(&json_str).unwrap_or(json!({}));
-            Ok(parsed)
-        })
+                let parsed: Value = serde_json::from_str(&json_str).unwrap_or(json!({}));
+                Ok(parsed)
+            },
+        )
         .await
     }
 
     #[tool(description = "Generate prose in an author's style.")]
     pub async fn corpus_compose(&self, Parameters(params): Parameters<ComposeRequest>) -> String {
-        execute_tool_semantic(self, "corpus_compose", Self::ontology_anchor("corpus_compose"), async {
-            let model = embedding_model();
-            let gen_model = generation_model();
-            let inf_cfg = inference_config();
-            let config = crate::compose::CognitionConfig {
-                author: params.author.clone(),
-                jinja2_template: None,
-                embedding: crate::compose::EmbeddingSection {
-                    model: model.clone(),
-                    dim: embedding_dim(),
-                    centroid_entity_ref: format!("style:{}:centroid", params.author),
-                    retrieval: Default::default(),
-                },
-                validation: crate::compose::ValidationSection {
-                    centroid_distance_max: 0.25,
-                },
-            };
+        execute_tool_semantic(
+            self,
+            "corpus_compose",
+            Self::ontology_anchor("corpus_compose"),
+            async {
+                let model = embedding_model();
+                let gen_model = generation_model();
+                let inf_cfg = inference_config();
+                let config = crate::compose::CognitionConfig {
+                    author: params.author.clone(),
+                    jinja2_template: None,
+                    embedding: crate::compose::EmbeddingSection {
+                        model: model.clone(),
+                        dim: embedding_dim(),
+                        centroid_entity_ref: format!("style:{}:centroid", params.author),
+                        retrieval: Default::default(),
+                    },
+                    validation: crate::compose::ValidationSection {
+                        centroid_distance_max: 0.25,
+                    },
+                };
 
-            let inference_ctx = crate::inference_svc::InferenceContext::from_parts(
-                Some(self.inference_router.clone()),
-                &gen_model,
-                inf_cfg,
-            );
+                let inference_ctx = crate::inference_svc::InferenceContext::from_parts(
+                    Some(self.inference_router.clone()),
+                    &gen_model,
+                    inf_cfg,
+                );
 
-            let request = crate::compose::ComposeRequest {
-                prompt: params.prompt,
-                db_path: PathBuf::from(&params.db_path),
-                db_passphrase: params.passphrase,
-                cognition: config,
-                inference_ctx,
-                no_validate: params.no_validate,
-            };
+                let request = crate::compose::ComposeRequest {
+                    prompt: params.prompt,
+                    db_path: PathBuf::from(&params.db_path),
+                    db_passphrase: params.passphrase,
+                    cognition: config,
+                    inference_ctx,
+                    no_validate: params.no_validate,
+                };
 
-            let result = crate::compose::ComposeService::compose(request)
-                .await
-                .map_err(|e| map_service_error(e, "Compose failed"))?;
+                let result = crate::compose::ComposeService::compose(request)
+                    .await
+                    .map_err(|e| map_service_error(e, "Compose failed"))?;
 
-            let json_str = serde_json::to_string(&ComposeResult {
-                prose: result.generated_prose,
-                exemplar_count: result.exemplar_count,
-                centroid_distance: result.validation.as_ref().map(|v| v.distance),
-                style_passed: result.validation.map(|v| v.passed),
-            })
-            .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: serialize-own-struct
+                let json_str = serde_json::to_string(&ComposeResult {
+                    prose: result.generated_prose,
+                    exemplar_count: result.exemplar_count,
+                    centroid_distance: result.validation.as_ref().map(|v| v.distance),
+                    style_passed: result.validation.map(|v| v.passed),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: serialize-own-struct
 
-            let parsed: Value = serde_json::from_str(&json_str).unwrap_or(json!({}));
-            Ok(parsed)
-        })
+                let parsed: Value = serde_json::from_str(&json_str).unwrap_or(json!({}));
+                Ok(parsed)
+            },
+        )
         .await
     }
 
@@ -484,265 +494,277 @@ impl CorpusServer {
         let persona = params.persona.clone();
         let document_content = params.document_content.clone();
 
-        execute_tool_semantic(self, "corpus_compare", Self::ontology_anchor("corpus_compare"), async {
-            let db = Database::open(&params.db_path, &params.passphrase)
-                .map_err(|e| map_database_error(e, "Open memory DB"))?;
-            let pool = db
-                .sqlite_pool()
-                .map_err(|e| map_database_error(e, "sqlite pool"))?;
-            let store =
-                EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim())
-                    .map_err(|e| map_embedding_error(e, "embedding store init"))?;
+        execute_tool_semantic(
+            self,
+            "corpus_compare",
+            Self::ontology_anchor("corpus_compare"),
+            async {
+                let db = Database::open(&params.db_path, &params.passphrase)
+                    .map_err(|e| map_database_error(e, "Open memory DB"))?;
+                let pool = db
+                    .sqlite_pool()
+                    .map_err(|e| map_database_error(e, "sqlite pool"))?;
+                let store =
+                    EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim())
+                        .map_err(|e| map_embedding_error(e, "embedding store init"))?;
 
-            // ── Document comparison path ──────────────────────────────
-            if let Some(ref doc_text) = document_content {
-                let started = Instant::now();
+                // ── Document comparison path ──────────────────────────────
+                if let Some(ref doc_text) = document_content {
+                    let started = Instant::now();
 
-                let emb_model = embedding_model();
-                let vectors = self
-                    .inference_router
-                    .embed(&emb_model, std::slice::from_ref(doc_text))
-                    .await
-                    .map_err(|e| {
-                        McpToolError::unavailable(format!("Failed to embed document: {e}"))
-                    })?;
-                let doc_vec = vectors
-                    .first()
-                    .ok_or_else(|| McpToolError::internal("Embedding returned empty result"))?; // rr0044-ok: embedding-empty-result
+                    let emb_model = embedding_model();
+                    let vectors = self
+                        .inference_router
+                        .embed(&emb_model, std::slice::from_ref(doc_text))
+                        .await
+                        .map_err(|e| {
+                            McpToolError::unavailable(format!("Failed to embed document: {e}"))
+                        })?;
+                    let doc_vec = vectors
+                        .first()
+                        .ok_or_else(|| McpToolError::internal("Embedding returned empty result"))?; // rr0044-ok: embedding-empty-result
 
-                let prefix = format!("style:{}:", persona.as_deref().unwrap_or(""));
-                let all_refs = store
-                    .query_by_prefix(&prefix)
-                    .map_err(|e| map_embedding_error(e, "query persona embeddings"))?;
+                    let prefix = format!("style:{}:", persona.as_deref().unwrap_or(""));
+                    let all_refs = store
+                        .query_by_prefix(&prefix)
+                        .map_err(|e| map_embedding_error(e, "query persona embeddings"))?;
 
-                let total_passages = all_refs.iter().filter(|r| !is_centroid_entity(r)).count();
+                    let total_passages = all_refs.iter().filter(|r| !is_centroid_entity(r)).count();
 
-                let mut dimension_scores: Vec<DimensionScore> = Vec::new();
-                let mut composite_score: Option<DimensionScore> = None;
+                    let mut dimension_scores: Vec<DimensionScore> = Vec::new();
+                    let mut composite_score: Option<DimensionScore> = None;
 
-                for entity_ref in &all_refs {
-                    if !is_centroid_entity(entity_ref) {
-                        continue;
-                    }
-
-                    let emb = store
-                        .get(entity_ref)
-                        .map_err(|e| map_embedding_error(e, "get centroid embedding"))?;
-                    let dist = cosine_distance(doc_vec, &emb.vector);
-
-                    let last_segment = entity_ref.rsplit(':').next().unwrap_or(entity_ref);
-
-                    let (dimension_name, is_composite) = if last_segment == "centroid" {
-                        ("composite".to_string(), true)
-                    } else if let Some(dim) = last_segment.strip_suffix("-centroid") {
-                        let mut chars = dim.chars();
-                        let capitalized = match chars.next() {
-                            Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-                            None => dim.to_string(),
-                        };
-                        (capitalized, false)
-                    } else {
-                        continue;
-                    };
-
-                    let dim_lower = dimension_name.to_lowercase();
-                    let dim_passage_count = all_refs
-                        .iter()
-                        .filter(|r| !is_centroid_entity(r) && r.to_lowercase().contains(&dim_lower))
-                        .count();
-
-                    let score = DimensionScore {
-                        centroid_ref: entity_ref.clone(),
-                        cosine_distance: dist,
-                        qualitative: qualitative_label(dist),
-                        passage_count: if is_composite {
-                            total_passages
-                        } else {
-                            dim_passage_count
-                        },
-                        dimension_name: dimension_name.clone(),
-                        description: String::new(),
-                    };
-
-                    if is_composite {
-                        composite_score = Some(score);
-                    } else {
-                        dimension_scores.push(score);
-                    }
-                }
-
-                let result = PersonaCompareResult {
-                    persona: persona.unwrap_or_default(),
-                    compare_mode: params.compare_mode.clone(),
-                    embedding_model: emb_model,
-                    composite_score,
-                    dimension_scores: if params.compare_mode == "composite" {
-                        Vec::new()
-                    } else {
-                        dimension_scores
-                    },
-                    elapsed_ms: started.elapsed().as_millis() as u64,
-                };
-
-                return serde_json::to_value(&result)
-                    .map_err(|e| McpToolError::internal(e.to_string())); // rr0044-ok: serialize-own-struct
-            }
-
-            // ── Pairwise author comparison path (backward compat) ─────
-            let centroids = store
-                .query_by_prefix("style:")
-                .map_err(|e| map_embedding_error(e, "query centroids"))?;
-
-            let mut author_names: Vec<String> = Vec::new();
-            let mut author_info: Vec<AuthorInfo> = Vec::new();
-
-            for entity_ref in &centroids {
-                if entity_ref.ends_with(":centroid") {
-                    let parts: Vec<&str> = entity_ref.split(':').collect();
-                    if parts.len() >= 3 {
-                        let name = parts[1].to_string();
-                        if name.contains(':') {
+                    for entity_ref in &all_refs {
+                        if !is_centroid_entity(entity_ref) {
                             continue;
                         }
-                        let prefix = format!("style:{}:", name);
-                        let refs = store
-                            .query_by_prefix(&prefix)
-                            .map_err(|e| map_embedding_error(e, "query author passages"))?;
-                        let passage_count =
-                            refs.iter().filter(|r| !r.ends_with(":centroid")).count();
-                        author_names.push(name.clone());
-                        author_info.push(AuthorInfo {
-                            name,
+
+                        let emb = store
+                            .get(entity_ref)
+                            .map_err(|e| map_embedding_error(e, "get centroid embedding"))?;
+                        let dist = cosine_distance(doc_vec, &emb.vector);
+
+                        let last_segment = entity_ref.rsplit(':').next().unwrap_or(entity_ref);
+
+                        let (dimension_name, is_composite) = if last_segment == "centroid" {
+                            ("composite".to_string(), true)
+                        } else if let Some(dim) = last_segment.strip_suffix("-centroid") {
+                            let mut chars = dim.chars();
+                            let capitalized = match chars.next() {
+                                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                                None => dim.to_string(),
+                            };
+                            (capitalized, false)
+                        } else {
+                            continue;
+                        };
+
+                        let dim_lower = dimension_name.to_lowercase();
+                        let dim_passage_count = all_refs
+                            .iter()
+                            .filter(|r| {
+                                !is_centroid_entity(r) && r.to_lowercase().contains(&dim_lower)
+                            })
+                            .count();
+
+                        let score = DimensionScore {
                             centroid_ref: entity_ref.clone(),
-                            passage_count,
-                        });
-                    }
-                }
-            }
-
-            let mut distances: Vec<AuthorDistance> = Vec::new();
-            for i in 0..author_names.len() {
-                for j in (i + 1)..author_names.len() {
-                    let ca = format!("style:{}:centroid", author_names[i]);
-                    let cb = format!("style:{}:centroid", author_names[j]);
-                    if let (Ok(a), Ok(b)) = (store.get(&ca), store.get(&cb)) {
-                        let dist = cosine_distance(&a.vector, &b.vector);
-                        distances.push(AuthorDistance {
-                            author_a: author_names[i].clone(),
-                            author_b: author_names[j].clone(),
                             cosine_distance: dist,
-                            compatible: dist < 0.30,
-                        });
+                            qualitative: qualitative_label(dist),
+                            passage_count: if is_composite {
+                                total_passages
+                            } else {
+                                dim_passage_count
+                            },
+                            dimension_name: dimension_name.clone(),
+                            description: String::new(),
+                        };
+
+                        if is_composite {
+                            composite_score = Some(score);
+                        } else {
+                            dimension_scores.push(score);
+                        }
+                    }
+
+                    let result = PersonaCompareResult {
+                        persona: persona.unwrap_or_default(),
+                        compare_mode: params.compare_mode.clone(),
+                        embedding_model: emb_model,
+                        composite_score,
+                        dimension_scores: if params.compare_mode == "composite" {
+                            Vec::new()
+                        } else {
+                            dimension_scores
+                        },
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                    };
+
+                    return serde_json::to_value(&result)
+                        .map_err(|e| McpToolError::internal(e.to_string())); // rr0044-ok: serialize-own-struct
+                }
+
+                // ── Pairwise author comparison path (backward compat) ─────
+                let centroids = store
+                    .query_by_prefix("style:")
+                    .map_err(|e| map_embedding_error(e, "query centroids"))?;
+
+                let mut author_names: Vec<String> = Vec::new();
+                let mut author_info: Vec<AuthorInfo> = Vec::new();
+
+                for entity_ref in &centroids {
+                    if entity_ref.ends_with(":centroid") {
+                        let parts: Vec<&str> = entity_ref.split(':').collect();
+                        if parts.len() >= 3 {
+                            let name = parts[1].to_string();
+                            if name.contains(':') {
+                                continue;
+                            }
+                            let prefix = format!("style:{}:", name);
+                            let refs = store
+                                .query_by_prefix(&prefix)
+                                .map_err(|e| map_embedding_error(e, "query author passages"))?;
+                            let passage_count =
+                                refs.iter().filter(|r| !r.ends_with(":centroid")).count();
+                            author_names.push(name.clone());
+                            author_info.push(AuthorInfo {
+                                name,
+                                centroid_ref: entity_ref.clone(),
+                                passage_count,
+                            });
+                        }
                     }
                 }
-            }
 
-            serde_json::to_value(&CompareResult {
-                authors: author_info,
-                distances,
-            })
-            .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
-        })
+                let mut distances: Vec<AuthorDistance> = Vec::new();
+                for i in 0..author_names.len() {
+                    for j in (i + 1)..author_names.len() {
+                        let ca = format!("style:{}:centroid", author_names[i]);
+                        let cb = format!("style:{}:centroid", author_names[j]);
+                        if let (Ok(a), Ok(b)) = (store.get(&ca), store.get(&cb)) {
+                            let dist = cosine_distance(&a.vector, &b.vector);
+                            distances.push(AuthorDistance {
+                                author_a: author_names[i].clone(),
+                                author_b: author_names[j].clone(),
+                                cosine_distance: dist,
+                                compatible: dist < 0.30,
+                            });
+                        }
+                    }
+                }
+
+                serde_json::to_value(&CompareResult {
+                    authors: author_info,
+                    distances,
+                })
+                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+            },
+        )
         .await
     }
 
     #[tool(description = "Generate prose blending two authors' styles.")]
     pub async fn corpus_mashup(&self, Parameters(params): Parameters<MashupRequest>) -> String {
-        execute_tool_semantic(self, "corpus_mashup", Self::ontology_anchor("corpus_mashup"), async {
-            let blend = params.blend.clamp(0.0, 1.0);
-            let centroid_a_ref = format!("style:{}:centroid", params.author_a);
-            let centroid_b_ref = format!("style:{}:centroid", params.author_b);
-            let blended_ref = format!(
-                "style:mashup:{}:{}:centroid",
-                params.author_a, params.author_b
-            );
+        execute_tool_semantic(
+            self,
+            "corpus_mashup",
+            Self::ontology_anchor("corpus_mashup"),
+            async {
+                let blend = params.blend.clamp(0.0, 1.0);
+                let centroid_a_ref = format!("style:{}:centroid", params.author_a);
+                let centroid_b_ref = format!("style:{}:centroid", params.author_b);
+                let blended_ref = format!(
+                    "style:mashup:{}:{}:centroid",
+                    params.author_a, params.author_b
+                );
 
-            let db = Database::open(&params.db_path, &params.passphrase)
-                .map_err(|e| map_database_error(e, "Open memory DB"))?;
-            let pool = db
-                .sqlite_pool()
-                .map_err(|e| map_database_error(e, "sqlite pool"))?;
-            let store =
-                EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim())
-                    .map_err(|e| map_embedding_error(e, "embedding store init"))?;
+                let db = Database::open(&params.db_path, &params.passphrase)
+                    .map_err(|e| map_database_error(e, "Open memory DB"))?;
+                let pool = db
+                    .sqlite_pool()
+                    .map_err(|e| map_database_error(e, "sqlite pool"))?;
+                let store =
+                    EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim())
+                        .map_err(|e| map_embedding_error(e, "embedding store init"))?;
 
-            let emb_a = store.get(&centroid_a_ref).map_err(|_| {
-                McpToolError::invalid_argument(format!(
-                    "Author '{}' not found. Run corpus_build_persona first.",
-                    params.author_a
-                ))
-            })?;
-            let emb_b = store.get(&centroid_b_ref).map_err(|_| {
-                McpToolError::invalid_argument(format!(
-                    "Author '{}' not found. Run corpus_build_persona first.",
-                    params.author_b
-                ))
-            })?;
+                let emb_a = store.get(&centroid_a_ref).map_err(|_| {
+                    McpToolError::invalid_argument(format!(
+                        "Author '{}' not found. Run corpus_build_persona first.",
+                        params.author_a
+                    ))
+                })?;
+                let emb_b = store.get(&centroid_b_ref).map_err(|_| {
+                    McpToolError::invalid_argument(format!(
+                        "Author '{}' not found. Run corpus_build_persona first.",
+                        params.author_b
+                    ))
+                })?;
 
-            let blended: Vec<f32> = emb_a
-                .vector
-                .iter()
-                .zip(emb_b.vector.iter())
-                .map(|(a, b)| a * (1.0 - blend as f32) + b * blend as f32)
-                .collect();
+                let blended: Vec<f32> = emb_a
+                    .vector
+                    .iter()
+                    .zip(emb_b.vector.iter())
+                    .map(|(a, b)| a * (1.0 - blend as f32) + b * blend as f32)
+                    .collect();
 
-            let dist_a = cosine_distance(&blended, &emb_a.vector);
-            let dist_b = cosine_distance(&blended, &emb_b.vector);
+                let dist_a = cosine_distance(&blended, &emb_a.vector);
+                let dist_b = cosine_distance(&blended, &emb_b.vector);
 
-            let model = embedding_model();
-            let gen_model = generation_model();
-            store
-                .store(&blended_ref, &blended, &model)
-                .map_err(|e| map_embedding_error(e, "store blended centroid"))?;
+                let model = embedding_model();
+                let gen_model = generation_model();
+                store
+                    .store(&blended_ref, &blended, &model)
+                    .map_err(|e| map_embedding_error(e, "store blended centroid"))?;
 
-            let inf_cfg = inference_config();
-            let config = crate::compose::CognitionConfig {
-                author: format!("mashup:{}:{}", params.author_a, params.author_b),
-                jinja2_template: None,
-                embedding: crate::compose::EmbeddingSection {
-                    model: model.clone(),
-                    dim: embedding_dim(),
-                    centroid_entity_ref: blended_ref.clone(),
-                    retrieval: Default::default(),
-                },
-                validation: crate::compose::ValidationSection {
-                    centroid_distance_max: 0.25,
-                },
-            };
+                let inf_cfg = inference_config();
+                let config = crate::compose::CognitionConfig {
+                    author: format!("mashup:{}:{}", params.author_a, params.author_b),
+                    jinja2_template: None,
+                    embedding: crate::compose::EmbeddingSection {
+                        model: model.clone(),
+                        dim: embedding_dim(),
+                        centroid_entity_ref: blended_ref.clone(),
+                        retrieval: Default::default(),
+                    },
+                    validation: crate::compose::ValidationSection {
+                        centroid_distance_max: 0.25,
+                    },
+                };
 
-            let inference_ctx = crate::inference_svc::InferenceContext::from_parts(
-                Some(self.inference_router.clone()),
-                &gen_model,
-                inf_cfg,
-            );
+                let inference_ctx = crate::inference_svc::InferenceContext::from_parts(
+                    Some(self.inference_router.clone()),
+                    &gen_model,
+                    inf_cfg,
+                );
 
-            let request = crate::compose::ComposeRequest {
-                prompt: params.prompt,
-                db_path: PathBuf::from(&params.db_path),
-                db_passphrase: params.passphrase,
-                cognition: config,
-                inference_ctx,
-                no_validate: false,
-            };
+                let request = crate::compose::ComposeRequest {
+                    prompt: params.prompt,
+                    db_path: PathBuf::from(&params.db_path),
+                    db_passphrase: params.passphrase,
+                    cognition: config,
+                    inference_ctx,
+                    no_validate: false,
+                };
 
-            let result = crate::compose::ComposeService::compose(request)
-                .await
-                .map_err(|e| map_service_error(e, "Mashup failed"))?;
+                let result = crate::compose::ComposeService::compose(request)
+                    .await
+                    .map_err(|e| map_service_error(e, "Mashup failed"))?;
 
-            let json_str = serde_json::to_string(&MashupResult {
-                prose: result.generated_prose,
-                exemplar_count: result.exemplar_count,
-                blend_ratio: blend,
-                blended_centroid_ref: blended_ref,
-                centroid_distance: result.validation.as_ref().map(|v| v.distance),
-                distance_a: dist_a,
-                distance_b: dist_b,
-            })
-            .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: serialize-own-struct
+                let json_str = serde_json::to_string(&MashupResult {
+                    prose: result.generated_prose,
+                    exemplar_count: result.exemplar_count,
+                    blend_ratio: blend,
+                    blended_centroid_ref: blended_ref,
+                    centroid_distance: result.validation.as_ref().map(|v| v.distance),
+                    distance_a: dist_a,
+                    distance_b: dist_b,
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: serialize-own-struct
 
-            let parsed: Value = serde_json::from_str(&json_str).unwrap_or(json!({}));
-            Ok(parsed)
-        })
+                let parsed: Value = serde_json::from_str(&json_str).unwrap_or(json!({}));
+                Ok(parsed)
+            },
+        )
         .await
     }
 

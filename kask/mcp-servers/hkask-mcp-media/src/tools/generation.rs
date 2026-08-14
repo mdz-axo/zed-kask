@@ -15,42 +15,47 @@ impl MediaServer {
             style,
         }): Parameters<GenerateImageRequest>,
     ) -> String {
-        execute_tool_semantic(self, "generate_image", Self::ontology_anchor("generate_image"), async {
-            if prompt.trim().is_empty() {
-                return Err(McpToolError::invalid_argument("prompt must not be empty"));
-            }
-            let size = image_size.clone();
-            let mut media_params = hkask_types::MediaGenerateParams {
-                prompt: Some(prompt.clone()),
-                size: size.clone(),
-                count: num_images,
-                ..Default::default()
-            };
-            if let Some(style_name) = &style
-                && let Some(preset) = crate::style::get_preset(style_name)
-            {
-                crate::style::apply_preset(&mut media_params, &preset);
-            }
-            self.charge_budget("generate_image", &media_params).await?;
-            let result = self
-                .vision_port
-                .media_generate("generate_image", &media_params)
-                .await
-                .map_err(|e| {
-                    McpToolError::unavailable(format!("Image generation failed: {}", e))
-                })?;
-            // Attach an OMC-tagged, provenance-carrying display hint so the
-            // media widget can dispatch the OMC-driven "Explain" affordance and
-            // compose-back the "I disagree" gesture.
-            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
-                "generate_image",
-                "image",
-                args,
-                None,
-            ))
-        })
+        execute_tool_semantic(
+            self,
+            "generate_image",
+            Self::ontology_anchor("generate_image"),
+            async {
+                if prompt.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument("prompt must not be empty"));
+                }
+                let size = image_size.clone();
+                let mut media_params = hkask_types::MediaGenerateParams {
+                    prompt: Some(prompt.clone()),
+                    size: size.clone(),
+                    count: num_images,
+                    ..Default::default()
+                };
+                if let Some(style_name) = &style
+                    && let Some(preset) = crate::style::get_preset(style_name)
+                {
+                    crate::style::apply_preset(&mut media_params, &preset);
+                }
+                self.charge_budget("generate_image", &media_params).await?;
+                let result = self
+                    .vision_port
+                    .media_generate("generate_image", &media_params)
+                    .await
+                    .map_err(|e| {
+                        McpToolError::unavailable(format!("Image generation failed: {}", e))
+                    })?;
+                // Attach an OMC-tagged, provenance-carrying display hint so the
+                // media widget can dispatch the OMC-driven "Explain" affordance and
+                // compose-back the "I disagree" gesture.
+                let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
+                Ok(crate::media_block::enrich_with_omc_and_provenance(
+                    result,
+                    "generate_image",
+                    "image",
+                    args,
+                    None,
+                ))
+            },
+        )
         .await
     }
 
@@ -66,41 +71,48 @@ impl MediaServer {
             style,
         }): Parameters<TransformImageRequest>,
     ) -> String {
-        execute_tool_semantic(self, "transform_image", Self::ontology_anchor("transform_image"), async {
-            validate_tool_url_with_dns(&image_url).await?;
-            if let Some(s) = strength
-                && !(0.0..=1.0).contains(&s)
-            {
-                return Err(McpToolError::invalid_argument(
-                    "strength must be between 0.0 and 1.0",
-                ));
-            }
-            let mut media_params = hkask_types::MediaGenerateParams {
-                image_url: Some(image_url.clone()),
-                prompt: Some(prompt.clone()),
-                strength,
-                ..Default::default()
-            };
-            if let Some(style_name) = &style
-                && let Some(preset) = crate::style::get_preset(style_name)
-            {
-                crate::style::apply_preset(&mut media_params, &preset);
-            }
-            self.charge_budget("image_to_image", &media_params).await?;
-            let result = self
-                .vision_port
-                .media_generate("image_to_image", &media_params)
-                .await
-                .map_err(|e| McpToolError::unavailable(format!("Image transform failed: {}", e)))?;
-            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
-                "transform_image",
-                "image",
-                args,
-                None,
-            ))
-        })
+        execute_tool_semantic(
+            self,
+            "transform_image",
+            Self::ontology_anchor("transform_image"),
+            async {
+                validate_tool_url_with_dns(&image_url).await?;
+                if let Some(s) = strength
+                    && !(0.0..=1.0).contains(&s)
+                {
+                    return Err(McpToolError::invalid_argument(
+                        "strength must be between 0.0 and 1.0",
+                    ));
+                }
+                let mut media_params = hkask_types::MediaGenerateParams {
+                    image_url: Some(image_url.clone()),
+                    prompt: Some(prompt.clone()),
+                    strength,
+                    ..Default::default()
+                };
+                if let Some(style_name) = &style
+                    && let Some(preset) = crate::style::get_preset(style_name)
+                {
+                    crate::style::apply_preset(&mut media_params, &preset);
+                }
+                self.charge_budget("image_to_image", &media_params).await?;
+                let result = self
+                    .vision_port
+                    .media_generate("image_to_image", &media_params)
+                    .await
+                    .map_err(|e| {
+                        McpToolError::unavailable(format!("Image transform failed: {}", e))
+                    })?;
+                let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
+                Ok(crate::media_block::enrich_with_omc_and_provenance(
+                    result,
+                    "transform_image",
+                    "image",
+                    args,
+                    None,
+                ))
+            },
+        )
         .await
     }
 
@@ -109,28 +121,33 @@ impl MediaServer {
         &self,
         Parameters(UpscaleImageRequest { image_url, scale }): Parameters<UpscaleImageRequest>,
     ) -> String {
-        execute_tool_semantic(self, "upscale_image", Self::ontology_anchor("upscale_image"), async {
-            validate_tool_url_with_dns(&image_url).await?;
-            let media_params = hkask_types::MediaGenerateParams {
-                image_url: Some(image_url.clone()),
-                scale,
-                ..Default::default()
-            };
-            self.charge_budget("upscale", &media_params).await?;
-            let result = self
-                .vision_port
-                .media_generate("upscale", &media_params)
-                .await
-                .map_err(|e| McpToolError::unavailable(format!("Upscale failed: {}", e)))?;
-            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
-                "upscale_image",
-                "image",
-                args,
-                None,
-            ))
-        })
+        execute_tool_semantic(
+            self,
+            "upscale_image",
+            Self::ontology_anchor("upscale_image"),
+            async {
+                validate_tool_url_with_dns(&image_url).await?;
+                let media_params = hkask_types::MediaGenerateParams {
+                    image_url: Some(image_url.clone()),
+                    scale,
+                    ..Default::default()
+                };
+                self.charge_budget("upscale", &media_params).await?;
+                let result = self
+                    .vision_port
+                    .media_generate("upscale", &media_params)
+                    .await
+                    .map_err(|e| McpToolError::unavailable(format!("Upscale failed: {}", e)))?;
+                let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
+                Ok(crate::media_block::enrich_with_omc_and_provenance(
+                    result,
+                    "upscale_image",
+                    "image",
+                    args,
+                    None,
+                ))
+            },
+        )
         .await
     }
 
@@ -145,37 +162,42 @@ impl MediaServer {
             style,
         }): Parameters<GenerateVideoRequest>,
     ) -> String {
-        execute_tool_semantic(self, "generate_video", Self::ontology_anchor("generate_video"), async {
-            if prompt.trim().is_empty() {
-                return Err(McpToolError::invalid_argument("prompt must not be empty"));
-            }
-            let mut media_params = hkask_types::MediaGenerateParams {
-                prompt: Some(prompt.clone()),
-                duration,
-                ..Default::default()
-            };
-            if let Some(style_name) = &style
-                && let Some(preset) = crate::style::get_preset(style_name)
-            {
-                crate::style::apply_preset(&mut media_params, &preset);
-            }
-            self.charge_budget("generate_video", &media_params).await?;
-            let result = self
-                .vision_port
-                .media_generate("generate_video", &media_params)
-                .await
-                .map_err(|e| {
-                    McpToolError::unavailable(format!("Video generation failed: {}", e))
-                })?;
-            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
-                "generate_video",
-                "video",
-                args,
-                None,
-            ))
-        })
+        execute_tool_semantic(
+            self,
+            "generate_video",
+            Self::ontology_anchor("generate_video"),
+            async {
+                if prompt.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument("prompt must not be empty"));
+                }
+                let mut media_params = hkask_types::MediaGenerateParams {
+                    prompt: Some(prompt.clone()),
+                    duration,
+                    ..Default::default()
+                };
+                if let Some(style_name) = &style
+                    && let Some(preset) = crate::style::get_preset(style_name)
+                {
+                    crate::style::apply_preset(&mut media_params, &preset);
+                }
+                self.charge_budget("generate_video", &media_params).await?;
+                let result = self
+                    .vision_port
+                    .media_generate("generate_video", &media_params)
+                    .await
+                    .map_err(|e| {
+                        McpToolError::unavailable(format!("Video generation failed: {}", e))
+                    })?;
+                let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
+                Ok(crate::media_block::enrich_with_omc_and_provenance(
+                    result,
+                    "generate_video",
+                    "video",
+                    args,
+                    None,
+                ))
+            },
+        )
         .await
     }
 

@@ -468,7 +468,7 @@ impl Sensor for TestCoverageSensor {
             Ok(path) => path?,
             Err(error) => {
                 tracing::warn!(
-                    target: "reg.sensor.coverage",
+                    target: "hkask.sensor.coverage",
                     error = %error,
                     "TestCoverageSensor: trace metrics unreadable — returning no signal (not 'no deviation')"
                 );
@@ -479,7 +479,7 @@ impl Sensor for TestCoverageSensor {
             Ok(contents) => contents,
             Err(error) => {
                 tracing::warn!(
-                    target: "reg.sensor.coverage",
+                    target: "hkask.sensor.coverage",
                     path = %path.display(),
                     error = %error,
                     "TestCoverageSensor: metrics.json unreadable — returning no signal (not 'no deviation')"
@@ -491,7 +491,7 @@ impl Sensor for TestCoverageSensor {
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(
-                    target: "reg.sensor.coverage",
+                    target: "hkask.sensor.coverage",
                     path = %path.display(),
                     error = %error,
                     "TestCoverageSensor: metrics.json unparseable — returning no signal (not 'no deviation')"
@@ -549,7 +549,7 @@ impl Sensor for MutationScoreSensor {
             Ok(path) => path?,
             Err(error) => {
                 tracing::warn!(
-                    target: "reg.sensor.mutation",
+                    target: "hkask.sensor.mutation",
                     error = %error,
                     "MutationScoreSensor: trace metrics unreadable — returning no signal (not 'no deviation')"
                 );
@@ -560,7 +560,7 @@ impl Sensor for MutationScoreSensor {
             Ok(contents) => contents,
             Err(error) => {
                 tracing::warn!(
-                    target: "reg.sensor.mutation",
+                    target: "hkask.sensor.mutation",
                     path = %path.display(),
                     error = %error,
                     "MutationScoreSensor: metrics.json unreadable — returning no signal (not 'no deviation')"
@@ -572,7 +572,7 @@ impl Sensor for MutationScoreSensor {
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(
-                    target: "reg.sensor.mutation",
+                    target: "hkask.sensor.mutation",
                     path = %path.display(),
                     error = %error,
                     "MutationScoreSensor: metrics.json unparseable — returning no signal (not 'no deviation')"

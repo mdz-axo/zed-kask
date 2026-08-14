@@ -24,36 +24,41 @@ impl SwarmServer {
         &self,
         parameters: Parameters<SearchKnowledgeLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_search_knowledge_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.agent_name.trim().is_empty() || req.query.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name and query must be non-empty".to_string(),
-                ));
-            }
-            let limit = req.limit.unwrap_or(10).clamp(1, 50);
-            match local_knowledge::search_agent_knowledge(
-                &self.local_memory,
-                &req.agent_name,
-                &req.query,
-                limit,
-            )
-            .await
-            {
-                Ok(fragments) => Ok(serde_json::json!({
-                    "fragments": fragments,
-                    "source": "local_semantic_memory",
-                    "agent_name": req.agent_name,
-                    "note": "",
-                })),
-                Err(reason) => Ok(serde_json::json!({
-                    "fragments": [],
-                    "source": "local_semantic_memory",
-                    "agent_name": req.agent_name,
-                    "note": format!("memory_unconfigured: {reason}"),
-                })),
-            }
-        })
+        execute_tool_semantic(
+            self,
+            "swarm_search_knowledge_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.agent_name.trim().is_empty() || req.query.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "agent_name and query must be non-empty".to_string(),
+                    ));
+                }
+                let limit = req.limit.unwrap_or(10).clamp(1, 50);
+                match local_knowledge::search_agent_knowledge(
+                    &self.local_memory,
+                    &req.agent_name,
+                    &req.query,
+                    limit,
+                )
+                .await
+                {
+                    Ok(fragments) => Ok(serde_json::json!({
+                        "fragments": fragments,
+                        "source": "local_semantic_memory",
+                        "agent_name": req.agent_name,
+                        "note": "",
+                    })),
+                    Err(reason) => Ok(serde_json::json!({
+                        "fragments": [],
+                        "source": "local_semantic_memory",
+                        "agent_name": req.agent_name,
+                        "note": format!("memory_unconfigured: {reason}"),
+                    })),
+                }
+            },
+        )
         .await
     }
 
@@ -68,52 +73,58 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GeneratePromptLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_generate_prompt_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.description.trim().is_empty() || req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "description and agent_name must be non-empty".to_string(),
-                ));
-            }
-            let runtime = self
-                .local_runtime
-                .get_or_init()
-                .await
-                .map_err(map_local_swarm_error)?;
-            let agent_type = req.agent_type.unwrap_or_else(|| "research".to_string());
-            let seed =
-                local_knowledge::agent_memory_seed(&self.local_memory, &req.agent_name, 20).await;
-            let seeded = !seed.is_empty();
-            let seed_block = if seeded {
-                format!("{seed}\n\n")
-            } else {
-                String::new()
-            };
-            let prompt = format!(
-                "You are authoring a system prompt for a new hKask local agent.\n\
+        execute_tool_semantic(
+            self,
+            "swarm_generate_prompt_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.description.trim().is_empty() || req.agent_name.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "description and agent_name must be non-empty".to_string(),
+                    ));
+                }
+                let runtime = self
+                    .local_runtime
+                    .get_or_init()
+                    .await
+                    .map_err(map_local_swarm_error)?;
+                let agent_type = req.agent_type.unwrap_or_else(|| "research".to_string());
+                let seed =
+                    local_knowledge::agent_memory_seed(&self.local_memory, &req.agent_name, 20)
+                        .await;
+                let seeded = !seed.is_empty();
+                let seed_block = if seeded {
+                    format!("{seed}\n\n")
+                } else {
+                    String::new()
+                };
+                let prompt = format!(
+                    "You are authoring a system prompt for a new hKask local agent.\n\
                  Agent name: {agent_name}\nAgent type: {agent_type}\n\
                  Description: {description}\n\n{seed_block}\
                  Write a complete, focused system prompt that defines the agent's role, \
                  inputs, outputs, and constraints. Return ONLY the system prompt text, \
                  no preamble or explanation.",
-                agent_name = req.agent_name,
-                agent_type = agent_type,
-                description = req.description,
-                seed_block = seed_block,
-            );
-            let inference = runtime.inference();
-            let text = local_knowledge::one_shot_generate(&inference, &prompt, 0.4)
-                .await
-                .map_err(map_local_swarm_error)?;
-            Ok(serde_json::json!({
-                "prompt": text,
-                "raw": serde_json::json!({
-                    "agent_name": req.agent_name,
-                    "agent_type": agent_type,
-                    "seeded": seeded,
-                }),
-            }))
-        })
+                    agent_name = req.agent_name,
+                    agent_type = agent_type,
+                    description = req.description,
+                    seed_block = seed_block,
+                );
+                let inference = runtime.inference();
+                let text = local_knowledge::one_shot_generate(&inference, &prompt, 0.4)
+                    .await
+                    .map_err(map_local_swarm_error)?;
+                Ok(serde_json::json!({
+                    "prompt": text,
+                    "raw": serde_json::json!({
+                        "agent_name": req.agent_name,
+                        "agent_type": agent_type,
+                        "seeded": seeded,
+                    }),
+                }))
+            },
+        )
         .await
     }
 

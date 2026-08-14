@@ -190,7 +190,8 @@ async fn classify_and_extract(
 
     // ── Extract semantic h_mems ──
     if !config.assertion_classifier.is_empty() {
-        let def = crate::runtime::load_classifier_config(&config.assertion_classifier, registry_dir)?;
+        let def =
+            crate::runtime::load_classifier_config(&config.assertion_classifier, registry_dir)?;
         let classifier_config = crate::runtime::ClassifierConfig::from_def(&def);
 
         let settings = HkaskSettings::load();

@@ -1467,10 +1467,15 @@ struct FaceSidecar {
 /// and face reference imports. Kept in sync with `gallery::state::DEFAULT_EXTENSIONS`.
 pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif"];
 
-/// Resolve the default face reference folder: `~/.hkask/faces/`.
-/// Returns `None` if `HOME` is not set.
+/// Resolve the default face reference folder: `{kask_data_dir}/mcp/media/faces/`.
+/// Returns `None` if the data dir cannot be resolved.
 fn default_face_folder() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".hkask").join("faces"))
+    let dir =
+        hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new("mcp/media/faces"));
+    if let Some(parent) = dir.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    Some(dir)
 }
 
 // ── Combined tool router (P5 Essentialism — modular tool groups) ──────────
@@ -1634,7 +1639,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             let media_budget = build_media_budget().map_err(|e| {
                 hkask_mcp_server::McpError::UnexpectedResponse {
                     context: "media budget init".into(),
-                    detail: e,
+                    detail: e.to_string(),
                 }
             })?;
             Ok(MediaServer::new(

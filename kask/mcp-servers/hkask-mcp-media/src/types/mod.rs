@@ -177,7 +177,7 @@ pub struct FaceRemoveRequest {
 pub struct FaceScanFolderRequest {
     /// Absolute path to the folder of reference face images. Each image must
     /// have a YAML sidecar (e.g. `alice.jpg.yaml`) with `first_name`,
-    /// `last_name`, and optional `notes`. Defaults to `~/.hkask/faces/`.
+    /// `last_name`, and optional `notes`. Defaults to `mcp/media/faces/`.
     pub folder_path: Option<String>,
     /// Skip validation and register each face directly as valid (default: false).
     /// Use when you know the images are good references but validation is overly strict.

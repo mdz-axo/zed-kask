@@ -913,15 +913,20 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ForecastGetRequest>,
     ) -> String {
-        execute_tool_semantic(self, "forecast_get", Self::ontology_anchor("forecast_get"), async {
-            let forecast = self
-                .get_persisted_forecast(req.forecast_id)
-                .await?
-                .ok_or_else(|| {
-                    McpToolError::invalid_argument("forecast not found for this owner")
-                })?;
-            Ok(serde_json::json!(forecast))
-        })
+        execute_tool_semantic(
+            self,
+            "forecast_get",
+            Self::ontology_anchor("forecast_get"),
+            async {
+                let forecast = self
+                    .get_persisted_forecast(req.forecast_id)
+                    .await?
+                    .ok_or_else(|| {
+                        McpToolError::invalid_argument("forecast not found for this owner")
+                    })?;
+                Ok(serde_json::json!(forecast))
+            },
+        )
         .await
     }
 
@@ -932,11 +937,16 @@ impl CompaniesServer {
         &self,
         Parameters(req): Parameters<types::ForecastListRequest>,
     ) -> String {
-        execute_tool_semantic(self, "forecast_list", Self::ontology_anchor("forecast_list"), async {
-            validate_symbol(&req.symbol)?;
-            let forecasts = self.list_persisted_forecasts(req.symbol.clone()).await?;
-            Ok(serde_json::json!({"symbol": req.symbol, "forecasts": forecasts}))
-        })
+        execute_tool_semantic(
+            self,
+            "forecast_list",
+            Self::ontology_anchor("forecast_list"),
+            async {
+                validate_symbol(&req.symbol)?;
+                let forecasts = self.list_persisted_forecasts(req.symbol.clone()).await?;
+                Ok(serde_json::json!({"symbol": req.symbol, "forecasts": forecasts}))
+            },
+        )
         .await
     }
 
@@ -1154,72 +1164,77 @@ impl CompaniesServer {
             provider,
         }): Parameters<types::ResultFeedbackRequest>,
     ) -> String {
-        execute_tool_semantic(self, "result_feedback", Self::ontology_anchor("result_feedback"), async {
-            // Validate score range if provided
-            if let Some(s) = score
-                && !(1..=5).contains(&s)
-            {
-                return Err(McpToolError::invalid_argument(format!(
-                    "score must be 1–5, got {s}"
-                )));
-            }
+        execute_tool_semantic(
+            self,
+            "result_feedback",
+            Self::ontology_anchor("result_feedback"),
+            async {
+                // Validate score range if provided
+                if let Some(s) = score
+                    && !(1..=5).contains(&s)
+                {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "score must be 1–5, got {s}"
+                    )));
+                }
 
-            // Accept empty feedback as an acknowledgment (no score, no comments = "I saw it")
-            let has_feedback = score.is_some() || !comments.is_empty();
+                // Accept empty feedback as an acknowledgment (no score, no comments = "I saw it")
+                let has_feedback = score.is_some() || !comments.is_empty();
 
-            // Record feedback as an experience linked to the original tool.
+                // Record feedback as an experience linked to the original tool.
 
-            // Kanban-style learning: feedback updates in-process state.
-            // Extracts symbol from query to track per-symbol provider quality.
-            if let Some(sym) = parse_symbol_from_query(&query)
-                && let Ok(mut state) = self.learning.lock()
-            {
-                let prov = if let Some(ref p) = provider {
-                    match p.to_ascii_lowercase().as_str() {
-                        "eodhd" => Provider::Eodhd,
-                        "fmp" => Provider::Fmp,
-                        _ => {
-                            // Unknown explicit provider: fall back to heuristic.
-                            if comments.contains("provider=eodhd") {
-                                Provider::Eodhd
-                            } else if comments.contains("provider=fmp") {
-                                Provider::Fmp
-                            } else if sym.contains('.') {
-                                Provider::Eodhd
-                            } else {
-                                Provider::Fmp
+                // Kanban-style learning: feedback updates in-process state.
+                // Extracts symbol from query to track per-symbol provider quality.
+                if let Some(sym) = parse_symbol_from_query(&query)
+                    && let Ok(mut state) = self.learning.lock()
+                {
+                    let prov = if let Some(ref p) = provider {
+                        match p.to_ascii_lowercase().as_str() {
+                            "eodhd" => Provider::Eodhd,
+                            "fmp" => Provider::Fmp,
+                            _ => {
+                                // Unknown explicit provider: fall back to heuristic.
+                                if comments.contains("provider=eodhd") {
+                                    Provider::Eodhd
+                                } else if comments.contains("provider=fmp") {
+                                    Provider::Fmp
+                                } else if sym.contains('.') {
+                                    Provider::Eodhd
+                                } else {
+                                    Provider::Fmp
+                                }
                             }
                         }
-                    }
-                } else if comments.contains("provider=eodhd") {
-                    Provider::Eodhd
-                } else if comments.contains("provider=fmp") {
-                    Provider::Fmp
-                } else if sym.contains('.') {
-                    Provider::Eodhd
-                } else {
-                    Provider::Fmp
-                };
-                state.record(&sym, prov, score);
-            }
-
-            let summary = if has_feedback {
-                if let Some(s) = score {
-                    format!("score {s}/5")
-                } else {
-                    "comments only".to_string()
+                    } else if comments.contains("provider=eodhd") {
+                        Provider::Eodhd
+                    } else if comments.contains("provider=fmp") {
+                        Provider::Fmp
+                    } else if sym.contains('.') {
+                        Provider::Eodhd
+                    } else {
+                        Provider::Fmp
+                    };
+                    state.record(&sym, prov, score);
                 }
-            } else {
-                "acknowledged".to_string()
-            };
 
-            Ok(serde_json::json!({
-                "status": "recorded",
-                "tool": tool,
-                "query": query,
-                "summary": summary,
-            }))
-        })
+                let summary = if has_feedback {
+                    if let Some(s) = score {
+                        format!("score {s}/5")
+                    } else {
+                        "comments only".to_string()
+                    }
+                } else {
+                    "acknowledged".to_string()
+                };
+
+                Ok(serde_json::json!({
+                    "status": "recorded",
+                    "tool": tool,
+                    "query": query,
+                    "summary": summary,
+                }))
+            },
+        )
         .await
     }
 }

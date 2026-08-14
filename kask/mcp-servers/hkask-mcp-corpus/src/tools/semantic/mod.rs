@@ -18,8 +18,8 @@ use crate::helpers::map_corpus_io_error;
 use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
     Arc, CorpusServer, LLMParameters, McpToolError, Mutex, Parameters, default_embedding_model,
-    default_owner, embedding_dim, execute_tool_semantic, extract_json_from_response, json, read_jsonl,
-    render_docproc_template, tool, tool_router,
+    default_owner, embedding_dim, execute_tool_semantic, extract_json_from_response, json,
+    read_jsonl, render_docproc_template, tool, tool_router,
 };
 use ontology_io::read_ontology_tags_annotated;
 use qa::{BatchQaPrompt, parse_qa_response, write_qa_result};
@@ -29,10 +29,10 @@ use std::io::Write;
 
 // Re-export helpers used by other tool modules (corpus.rs imports these) and
 // make them available within this module via the module path.
+pub(crate) use assertions::{assertion_confidence, predicate_to_dimension};
 pub(crate) use ontology_io::read_ontology_namespaces;
 pub(crate) use ontology_io::read_ontology_tags;
 pub(crate) use qa::configured_qa_model;
-pub(crate) use assertions::{assertion_confidence, predicate_to_dimension};
 
 #[tool_router(router = semantic_router, vis = "pub")]
 impl CorpusServer {
@@ -376,19 +376,24 @@ impl CorpusServer {
             concurrency,
         }): Parameters<ExtractAssertionsRequest>,
     ) -> String {
-        execute_tool_semantic(self, "corpus_extract_assertions", Self::ontology_anchor("corpus_extract_assertions"), async {
-            AssertionsService::new(Arc::clone(&self.inference_router))
-                .extract(AssertionsRequest {
-                    chunks_jsonl,
-                    tagged_jsonl,
-                    max_assertions,
-                    db_path,
-                    passphrase,
-                    owner,
-                    concurrency,
-                })
-                .await
-        })
+        execute_tool_semantic(
+            self,
+            "corpus_extract_assertions",
+            Self::ontology_anchor("corpus_extract_assertions"),
+            async {
+                AssertionsService::new(Arc::clone(&self.inference_router))
+                    .extract(AssertionsRequest {
+                        chunks_jsonl,
+                        tagged_jsonl,
+                        max_assertions,
+                        db_path,
+                        passphrase,
+                        owner,
+                        concurrency,
+                    })
+                    .await
+            },
+        )
         .await
     }
 
@@ -406,17 +411,22 @@ impl CorpusServer {
             batch_size,
         }): Parameters<EmbedRequest>,
     ) -> String {
-        execute_tool_semantic(self, "corpus_embed", Self::ontology_anchor("corpus_embed"), async {
-            self.embed_batch_from_jsonl(
-                &chunks_jsonl,
-                tagged_jsonl.as_deref(),
-                model,
-                &db_path,
-                &passphrase,
-                batch_size,
-            )
-            .await
-        })
+        execute_tool_semantic(
+            self,
+            "corpus_embed",
+            Self::ontology_anchor("corpus_embed"),
+            async {
+                self.embed_batch_from_jsonl(
+                    &chunks_jsonl,
+                    tagged_jsonl.as_deref(),
+                    model,
+                    &db_path,
+                    &passphrase,
+                    batch_size,
+                )
+                .await
+            },
+        )
         .await
     }
 

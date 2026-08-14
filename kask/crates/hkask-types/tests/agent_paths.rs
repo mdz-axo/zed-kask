@@ -211,7 +211,9 @@ fn mcp_server_db_paths_follow_standardized_layout() {
     let portfolio_relative = mcp_server_db("portfolio", "master");
     assert_eq!(
         portfolio_relative,
-        std::path::PathBuf::from("mcp").join("portfolio").join("master.db"),
+        std::path::PathBuf::from("mcp")
+            .join("portfolio")
+            .join("master.db"),
     );
 
     unsafe {

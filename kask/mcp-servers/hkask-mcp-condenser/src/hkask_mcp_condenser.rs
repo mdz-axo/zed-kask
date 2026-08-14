@@ -438,7 +438,7 @@ impl CondenserServer {
             );
 
             serde_json::to_value(&output).map_err(|e| {
-                McpToolError::internal(format!("ThreadSummaryOutput serialization failed: {e}"))
+                McpToolError::internal(format!("ThreadSummaryOutput serialization failed: {e}")) // rr0044-ok: serialize-own-struct
             })
         }).await
     }
@@ -615,13 +615,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-    // D28 — pins the default DB path.
-    #[test]
-    fn default_db_path_follows_standardized_layout() {
-        let relative = hkask_types::agent_paths::mcp_server_db("condenser", "condenser");
-        assert_eq!(
-            relative,
-            std::path::PathBuf::from("mcp").join("condenser").join("condenser.db"),
-            "condenser default DB path must follow mcp/condenser/condenser.db"
-        );
-    }
+// D28 — pins the default DB path.
+#[test]
+fn default_db_path_follows_standardized_layout() {
+    let relative = hkask_types::agent_paths::mcp_server_db("condenser", "condenser");
+    assert_eq!(
+        relative,
+        std::path::PathBuf::from("mcp")
+            .join("condenser")
+            .join("condenser.db"),
+        "condenser default DB path must follow mcp/condenser/condenser.db"
+    );
+}

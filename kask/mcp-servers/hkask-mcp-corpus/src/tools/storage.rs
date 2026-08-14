@@ -17,56 +17,61 @@ impl CorpusServer {
         &self,
         Parameters(CacheRequest { content, label }): Parameters<CacheRequest>,
     ) -> String {
-        execute_tool_semantic(self, "corpus_cache", Self::ontology_anchor("corpus_cache"), async {
-            if content.is_empty() {
-                return Err(McpToolError::invalid_argument("content must not be empty"));
-            }
-
-            if label.is_empty() {
-                return Err(McpToolError::invalid_argument("label must not be empty"));
-            }
-
-            // D28 — Standardized Artifact Storage. Cache directory lives at
-            // `mcp/corpus/cache/`.
-            let cache_dir = hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
-                "mcp/corpus/cache",
-            ));
-
-            if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                return Err(map_corpus_io_error(
-                    e,
-                    &format!("Failed to create cache directory '{}'", cache_dir.display()),
-                ));
-            }
-
-            // Sanitize label for filesystem
-            let safe_label: String = label
-                .chars()
-                .map(|c| {
-                    if c.is_alphanumeric() || c == '-' || c == '_' {
-                        c
-                    } else {
-                        '_'
-                    }
-                })
-                .collect();
-            let cache_path = cache_dir.join(format!("{}.md", safe_label));
-
-            match std::fs::write(&cache_path, &content) {
-                Ok(()) => {
-                    let result = json!({
-                        "label": label,
-                        "path": cache_path.display().to_string(),
-                        "size_bytes": content.len(),
-                    });
-                    Ok(result)
+        execute_tool_semantic(
+            self,
+            "corpus_cache",
+            Self::ontology_anchor("corpus_cache"),
+            async {
+                if content.is_empty() {
+                    return Err(McpToolError::invalid_argument("content must not be empty"));
                 }
-                Err(e) => Err(map_corpus_io_error(
-                    e,
-                    &format!("Failed to write cache file '{}'", cache_path.display()),
-                )),
-            }
-        })
+
+                if label.is_empty() {
+                    return Err(McpToolError::invalid_argument("label must not be empty"));
+                }
+
+                // D28 — Standardized Artifact Storage. Cache directory lives at
+                // `mcp/corpus/cache/`.
+                let cache_dir = hkask_types::agent_paths::resolve_under_data_dir(
+                    std::path::Path::new("mcp/corpus/cache"),
+                );
+
+                if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+                    return Err(map_corpus_io_error(
+                        e,
+                        &format!("Failed to create cache directory '{}'", cache_dir.display()),
+                    ));
+                }
+
+                // Sanitize label for filesystem
+                let safe_label: String = label
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '-' || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect();
+                let cache_path = cache_dir.join(format!("{}.md", safe_label));
+
+                match std::fs::write(&cache_path, &content) {
+                    Ok(()) => {
+                        let result = json!({
+                            "label": label,
+                            "path": cache_path.display().to_string(),
+                            "size_bytes": content.len(),
+                        });
+                        Ok(result)
+                    }
+                    Err(e) => Err(map_corpus_io_error(
+                        e,
+                        &format!("Failed to write cache file '{}'", cache_path.display()),
+                    )),
+                }
+            },
+        )
         .await
     }
 
@@ -236,22 +241,27 @@ impl CorpusServer {
         &self,
         Parameters(ClearIndexRequest { index_id: _ }): Parameters<ClearIndexRequest>,
     ) -> String {
-        execute_tool_semantic(self, "corpus_clear_index", Self::ontology_anchor("corpus_clear_index"), async {
-            let mut index = match self.index.lock() {
-                Ok(i) => i,
-                Err(poisoned) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.corpus",
-                        error = %poisoned,
-                        "index lock poisoned — recovering inner state"
-                    );
-                    poisoned.into_inner()
-                }
-            };
-            let cleared = index.len();
-            index.clear();
-            Ok(json!({"cleared": cleared}))
-        })
+        execute_tool_semantic(
+            self,
+            "corpus_clear_index",
+            Self::ontology_anchor("corpus_clear_index"),
+            async {
+                let mut index = match self.index.lock() {
+                    Ok(i) => i,
+                    Err(poisoned) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.corpus",
+                            error = %poisoned,
+                            "index lock poisoned — recovering inner state"
+                        );
+                        poisoned.into_inner()
+                    }
+                };
+                let cleared = index.len();
+                index.clear();
+                Ok(json!({"cleared": cleared}))
+            },
+        )
         .await
     }
 

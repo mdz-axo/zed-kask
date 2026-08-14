@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 use hkask_mcp_server::server::McpToolError;
 
+use crate::error::MediaError;
+
 /// Parse a `f64` from an env var, falling back to `default` on absence,
 /// parse failure, or a non-finite/negative value. Used for budget config
 /// resolved once at startup (not per call) so the gate is deterministic and
@@ -235,7 +237,7 @@ pub(super) async fn charge_budget_gate(
 /// (compute) cap is constructed inert — gas is enforced upstream at
 /// `McpRuntime::invoke` + `CyberneticsLoop`, and the media server never
 /// charges gas itself, so a gas cap here would be dead config.
-pub(super) fn build_media_budget() -> Result<MediaBudget, String> {
+pub(super) fn build_media_budget() -> Result<MediaBudget, MediaError> {
     let unit_costs = UnitCosts::from_env();
     let alert_threshold = env_f64("HKASK_MEDIA_RJOULE_ALERT_THRESHOLD", 0.8).clamp(0.0, 1.0);
     match std::env::var("HKASK_MEDIA_RJOULE_CAP") {
@@ -267,11 +269,11 @@ pub(super) fn build_media_budget() -> Result<MediaBudget, String> {
             // Malformed cap — fail closed. A typo in the cap must not silently
             // remove the spend ceiling. Return an error so `run()` surfaces it
             // to the operator rather than starting with enforcement off.
-            Err(_) => Err(format!(
+            Err(_) => Err(MediaError::BudgetConfig(format!(
                 "HKASK_MEDIA_RJOULE_CAP is set to '{raw}' but is not a valid u32 \
                  (expected a positive integer rJoule ceiling, e.g. 100). \
                  Fix the value or unset it to disable enforcement."
-            )),
+            ))),
         },
     }
 }

@@ -843,18 +843,20 @@ mod tests {
     }
 }
 
-    // D28 — pins the default DB path resolution. When HKASK_CODEGRAPH_DB is
-    // unset, the default path must be `mcp/codegraph/codegraph.db` under the
-    // kask data root.
-    #[test]
-    fn default_db_path_follows_standardized_layout() {
-        // The default path is constructed via:
-        //   resolve_under_data_dir(mcp_server_db("codegraph", "codegraph"))
-        // Verify the relative segment matches the standardized layout.
-        let relative = hkask_types::agent_paths::mcp_server_db("codegraph", "codegraph");
-        assert_eq!(
-            relative,
-            std::path::PathBuf::from("mcp").join("codegraph").join("codegraph.db"),
-            "codegraph default DB path must follow mcp/codegraph/codegraph.db"
-        );
-    }
+// D28 — pins the default DB path resolution. When HKASK_CODEGRAPH_DB is
+// unset, the default path must be `mcp/codegraph/codegraph.db` under the
+// kask data root.
+#[test]
+fn default_db_path_follows_standardized_layout() {
+    // The default path is constructed via:
+    //   resolve_under_data_dir(mcp_server_db("codegraph", "codegraph"))
+    // Verify the relative segment matches the standardized layout.
+    let relative = hkask_types::agent_paths::mcp_server_db("codegraph", "codegraph");
+    assert_eq!(
+        relative,
+        std::path::PathBuf::from("mcp")
+            .join("codegraph")
+            .join("codegraph.db"),
+        "codegraph default DB path must follow mcp/codegraph/codegraph.db"
+    );
+}

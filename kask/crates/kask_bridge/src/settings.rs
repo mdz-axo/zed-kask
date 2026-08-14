@@ -1861,6 +1861,11 @@ mod tests {
         settings.swarm.local_agents_dir = "/custom/agents/dir".to_string();
         settings.swarm.local_swarms_dir = "/custom/swarms/dir".to_string();
         settings.swarm.skills_dir = "/custom/skills/dir".to_string();
+        settings.swarm.default_agent_model = "claude-sonnet-4-6".to_string();
+        settings.swarm.a2a_http_enabled = true;
+        settings.swarm.memory_passphrase = "real-secret".to_string();
+        settings.swarm.memory_db_path = "/custom/memory.db".to_string();
+        settings.swarm.embedding_dim = 2048;
         let env = settings.mcp_env();
         assert_eq!(
             env.get("HKASK_SWARM_MODE").map(String::as_str),
@@ -1890,6 +1895,26 @@ mod tests {
         assert_eq!(
             env.get("HKASK_SKILLS_DIR").map(String::as_str),
             Some("/custom/skills/dir")
+        );
+        assert_eq!(
+            env.get("HKASK_ABW_DEFAULT_AGENT_MODEL").map(String::as_str),
+            Some("claude-sonnet-4-6")
+        );
+        assert_eq!(
+            env.get("HKASK_A2A_HTTP_ENABLE").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            env.get("HKASK_SWARM_MEMORY_PASSPHRASE").map(String::as_str),
+            Some("real-secret")
+        );
+        assert_eq!(
+            env.get("HKASK_SWARM_MEMORY_DB").map(String::as_str),
+            Some("/custom/memory.db")
+        );
+        assert_eq!(
+            env.get("HKASK_SWARM_EMBEDDING_DIM").map(String::as_str),
+            Some("2048")
         );
     }
 

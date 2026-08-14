@@ -17,7 +17,7 @@ use serde_json::json;
 use crate::batch::{MAX_RETRIES, retry_with_backoff};
 use crate::helpers::read_jsonl;
 use crate::tools::semantic::{
-    predicate_to_dimension, read_ontology_namespaces, read_ontology_tags, assertion_confidence,
+    assertion_confidence, predicate_to_dimension, read_ontology_namespaces, read_ontology_tags,
 };
 use crate::{embedding_dim, extract_json_from_response, owner_webid, render_docproc_template};
 
@@ -248,7 +248,10 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                 let mut stored = 0usize;
                 if let Some(arr) = h_mems.get("h_mems").and_then(|v| v.as_array()) {
                     for assertion in arr {
-                        let subject = assertion.get("subject").and_then(|v| v.as_str()).unwrap_or("");
+                        let subject = assertion
+                            .get("subject")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         let predicate = assertion
                             .get("predicate")
                             .and_then(|v| v.as_str())
