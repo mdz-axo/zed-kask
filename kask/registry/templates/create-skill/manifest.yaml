@@ -50,7 +50,7 @@ templates:
       (1) template manifest (kask/registry/templates/<name>/manifest.yaml)
       with crate metadata and template entries; (2) .j2 templates with
       [inference] frontmatter (template_type, contract
-      energy_cap, visibility, generates_spans); (3) process manifest
+      visibility, generates_spans); (3) process manifest
       (kask/registry/manifests/<name>.yaml) with canonical actions
       gas/rjoule/convergence blocks, capability declarations; (4) SKILL.md
       companion (.agents/skills/<name>/SKILL.md) derived from the registry

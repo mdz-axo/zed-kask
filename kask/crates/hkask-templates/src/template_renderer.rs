@@ -196,7 +196,7 @@ impl TemplateRenderer {
         let mut env = self.env.lock().unwrap_or_else(|e| e.into_inner());
 
         // Strip YAML front matter before rendering. hKask templates have a
-        // front matter block (metadata, contract, energy_cap) terminated by
+        // front matter block (metadata, contract) terminated by
         // `\n---\n`. Without stripping, the front matter is sent to the LLM
         // as literal prompt text — confusing the model and wasting tokens.
         let after_front_matter = strip_front_matter(template_content);
@@ -247,7 +247,7 @@ impl TemplateRenderer {
 /// Strip YAML front matter from a template file before rendering.
 ///
 /// hKask `.j2` templates have a front matter block at the top containing
-/// metadata (`[inference]`, `template_type`, `contract`, `energy_cap`,
+/// metadata (`[inference]`, `template_type`, `contract`
 /// `visibility`) terminated by a `\n---\n` separator. The body after the
 /// separator is the actual Jinja2 prompt template.
 ///

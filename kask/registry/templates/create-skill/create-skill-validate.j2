@@ -54,7 +54,6 @@ Validate:
 - R4: Template entry valid — each entry has `id`, `path`, `type`, `description`.
 - R5: template_type valid — each .j2 `template_type` in {WordAct, KnowAct, FlowDef}.
 - R6: Contract valid — each .j2 has `contract.input` and `contract.output` with typed fields.
-- R7: energy_cap in range — each .j2 `energy_cap` integer in [2048, 8192].
 - R8: Visibility valid — each .j2 `visibility` in {Private, Public, Shared}.
 - R9: .j2 file exists — each template entry's `path` resolves to an actual .j2 file.
 - R10: [inference] frontmatter valid — each .j2 starts with an `[inference]` block.

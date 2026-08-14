@@ -49,7 +49,7 @@ You are a skill translator. Convert a classified source skill into a hKask regis
    - Cognitive steps → KnowAct `.j2` with `[inference]` frontmatter, system prompt, `{{ variables }}`, JSON output schema.
    - Workflow steps → WordAct (transformation) or FlowDef (dispatch/routing) `.j2` with same structure.
    - Reference content → RenderAct `.j2` or `.yaml` (no inference).
-   - Guardrails → Encoded as `visibility`, `energy_cap`, and constraints in `.j2` body.
+   - Guardrails → Encoded as `visibility` and constraints in `.j2` body.
 3. **Process manifest** — Produce a `registry/manifests/<skill-name>.yaml` FlowDef cascade with:
    - `manifest.category: skill` (or `pipeline`/`runtime-config` for non-agent infrastructure)
    - `convergence:` block (threshold 0.05-0.30, max_iterations, min_iterations, convergence_field, on_not_reached)
@@ -60,7 +60,7 @@ You are a skill translator. Convert a classified source skill into a hKask regis
 5. **Consent model** — hKask uses capability matching. User-confirmation gates → `.j2` contract visibility.
 6. **Observability** — Map to Regulation span references in `.j2` body.
 7. **Domain references** — Substitute using the domain substitution table.
-8. **Validation** — template_type MUST be KnowAct/WordAct/FlowDef/RenderAct. visibility MUST be Private/Public/Shared. energy_cap MUST be 2048-8192.
+8. **Validation** — template_type MUST be KnowAct/WordAct/FlowDef/RenderAct. visibility MUST be Private/Public/Shared. 
 
 ### Source Action → Canonical Action Mapping
 
@@ -197,7 +197,6 @@ Respond with a JSON object:
 - The primary deliverable is the registry crate (manifest.yaml + .j2 templates) plus the process manifest (registry/manifests/<name>.yaml). SKILL.md is derived from them.
 - `template_type` must be KnowAct, WordAct, FlowDef, or RenderAct — never Cognition, Prompt, or Process.
 - `visibility` must be Private, Public, or Shared.
-- `energy_cap` must be in 2048–8192 range.
 - `template_type` must be one of KnowAct, WordAct, FlowDef, RenderAct.
 - `contract.input` and `contract.output` must be structured JSON types.
 - Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate).

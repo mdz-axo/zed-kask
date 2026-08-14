@@ -53,7 +53,7 @@ fn extract_contract_output(template_content: &str) -> Option<Value> {
     //   leading Jinja comments `{# ... #}` and a `[inference]` marker line)
     //   and ends at the first `---` separator.
     // - The frontmatter is YAML containing `template_type`,
-    //   `contract`, `energy_cap`, `visibility`, etc.
+    //   `contract`, `visibility`, etc.
     // - The body after `---` is the Jinja2 template.
     //
     // We find the `\n---\n` separator and parse everything before it as YAML.

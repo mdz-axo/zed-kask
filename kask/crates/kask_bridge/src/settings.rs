@@ -1067,6 +1067,9 @@ impl KaskSettings {
                 self.models.classifier_model.clone(),
             );
         }
+        if !self.models.ocr_model.is_empty() {
+            env.insert("HKASK_OCR_MODEL".to_string(), self.models.ocr_model.clone());
+        }
 
         // ── Curator email (non-secret) ──
         // The SMTP password is injected separately by `build_mcp_server_env`

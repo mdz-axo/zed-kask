@@ -89,7 +89,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `skill-maintenance-validate.j2` | KnowAct | Validate skills against registry format and quality checks. Check manifest structure, .j2 frontmatter (template_type, contract, visibility, energy_cap). SKILL.md is validated as secondary companion. |
+| `skill-maintenance-validate.j2` | KnowAct | Validate skills against registry format and quality checks. Check manifest structure, .j2 frontmatter (template_type, contract, visibility). SKILL.md is validated as secondary companion. |
 | `skill-maintenance-build.j2` | KnowAct | Scaffold a new registry crate from a user description. Generate manifest.yaml with crate metadata, template entries, and lexicon_terms. Generate companion SKILL.md from the registry crate. Validate and confirm before writing. |
 | `skill-maintenance-translate.j2` | KnowAct | Forward translation: convert a classified source skill into a hKask registry crate (manifest.yaml + *.j2 templates). Map source elements to hKask equivalents, drop concepts with no equivalent, produce validated output with translation summary. |
 | `skill-maintenance-reverse.j2` | KnowAct | Reverse translation: generate a SKILL.md companion from a registry crate. Read manifest.yaml for crate metadata, read .j2 templates for methodology, produce a markdown companion suitable for the Zed coding agent. |

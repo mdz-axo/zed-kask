@@ -99,6 +99,13 @@ impl<'a> ConvertService<'a> {
     }
 
     /// Resolve OCR model: explicit override > configured `ocr_model`.
+    ///
+    /// Verifies the model is a vision-capable model via the inference port's
+    /// model registry. When the inference port returns empty model lists
+    /// (the MediaRouter fallback when `HKASK_INFERENCE_SOCKET` is not set),
+    /// this returns an error rather than silently passing the model through —
+    /// a silent pass-through would let `do_ocr` fail later with a cryptic
+    /// "media_generate not supported" error from the MediaRouter.
     pub async fn resolve_ocr_model(
         &self,
         override_model: Option<&str>,
@@ -120,6 +127,21 @@ impl<'a> ConvertService<'a> {
                     "list_vision_models failed — inference port unavailable: {e}"
                 ))
             })?;
+
+        // Empty vision list means the inference port can't enumerate models —
+        // the IPC bridge is not configured (MediaRouter fallback). Fail early
+        // with a diagnostic error instead of letting do_ocr fail later.
+        if vision_models.is_empty() {
+            return Err(OcrError::InferenceFailed(
+                "No vision models available — the inference IPC bridge is not configured \
+                 (HKASK_INFERENCE_SOCKET not set). The corpus MCP server must be launched \
+                 by zed so it can route OCR through zed's LanguageModelRegistry. \
+                 If the server was started before the inference socket was available, \
+                 restart it via sync_kask_mcp_servers."
+                    .to_string(),
+            ));
+        }
+
         let is_vision = vision_models
             .iter()
             .any(|m| m.model == model || m.prefixed_name == model);
@@ -138,6 +160,21 @@ impl<'a> ConvertService<'a> {
                     model: model.clone(),
                 });
             }
+
+            // Model not found in any list — the inference port may be a
+            // MediaRouter with an empty registry, or the model name is wrong.
+            // Either way, fail with a diagnostic rather than silently passing.
+            return Err(OcrError::InferenceFailed(format!(
+                "OCR model '{model}' not found in the inference registry. \
+                 Available vision models: {}. \
+                 If the list is empty, the inference IPC bridge is not configured \
+                 (HKASK_INFERENCE_SOCKET not set).",
+                vision_models
+                    .iter()
+                    .map(|m| m.prefixed_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
         }
 
         Ok(model)

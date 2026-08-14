@@ -83,7 +83,7 @@ description: "<crate.description from manifest>"
 
 ## Constraints
 
-- <derived from .j2 contracts — visibility, energy_cap, safety rules>
+- <derived from .j2 contracts — visibility, safety rules>
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins
 ```
 
@@ -93,7 +93,7 @@ description: "<crate.description from manifest>"
 2. **When to Use**: Synthesize from template descriptions and the system prompt's activation conditions
 3. **Instructions**: Extract imperative steps from each .j2's system prompt body. Preserve imperative voice.
 4. **Registry Templates table**: One row per template entry in manifest, with type and description
-5. **Constraints**: Pull from .j2 contract fields (visibility, energy_cap) and any safety rules in system prompts
+5. **Constraints**: Pull from .j2 contract fields (visibility) and any safety rules in system prompts
 6. **Do not invent content**: Every instruction must trace to a manifest field or .j2 body
 
 ## Warnings

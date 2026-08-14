@@ -138,7 +138,7 @@ fn all_templates_have_adequate_max_tokens_for_output_schema() {
         let content = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
         // Strip YAML frontmatter first — the first [inference] block is the
-        // frontmatter-style block (template_type, contract, energy_cap). The
+        // frontmatter-style block (template_type, contract). The
         // second [inference] block (after frontmatter) holds the inference
         // parameters (temperature, max_tokens, thinking_budget).
         let after_fm = strip_front_matter(&content);
