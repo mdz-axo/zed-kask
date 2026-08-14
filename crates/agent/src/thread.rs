@@ -2286,7 +2286,7 @@ impl Thread {
                 Message::User(_) | Message::Agent(_) => {
                     let req = msg.to_request();
                     // Prepend to maintain chronological order.
-                    messages.splice(0..0, req.into_iter());
+                    messages.splice(0..0, req);
                 }
                 Message::Resume | Message::Compaction(_) => {
                     // Skip — not conversational turns.

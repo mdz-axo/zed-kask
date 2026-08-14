@@ -84,8 +84,8 @@ steps:
     timeout_seconds: 180
     input_mapping:
       behavior_description: "{{ step_1_result.behaviors_to_test[0].behavior | default(task_description) }}"
-      user_expectation: "{{ step_1_result.functional_requirements[0].user_expectation | default(task_description) }}"
-      goal_principle: "{{ step_1_result.functional_requirements[0].goal_principle | default({}) }}"
+      user_expectation: "{{ step_1_result.planned_entities[0].user_expectation | default(task_description) }}"
+      goal_principle: "{{ step_1_result.planned_entities[0].goal_principle | default({}) }}"
       constraining_principles: "{{ step_1_result.behaviors_to_test[0].constraining_principles | default([]) }}"
       seam: "{{ step_1_result.behaviors_to_test[0].seam | default('public API') }}"
       crate_scope: "{{ crate_scope }}"
@@ -155,7 +155,7 @@ steps:
     gas_cap: 4000
     timeout_seconds: 150
     input_mapping:
-      spec_requirements: "{{ step_1_result.functional_requirements | default([]) }}"
+      spec_requirements: "{{ step_1_result.planned_entities | default([]) }}"
       tested_behaviors: "{{ step_5_result.behavior_coverage | default([]) }}"
       crate_scope: "{{ crate_scope }}"
       collection_coherence: "{{ {} }}"

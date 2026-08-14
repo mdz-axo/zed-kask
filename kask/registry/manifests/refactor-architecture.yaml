@@ -113,7 +113,7 @@ steps:
     timeout_seconds: 180
     condition: "{{ (step_2_result.candidates | default([])) | length > 0 }}"
     input_mapping:
-      selected_candidate: "{{ step_2_result.selected_candidate | default(step_2_result.candidates[0] | default({})) }}"
+      selected_candidate: "{{ step_2_result.candidates[0] | default({}) }}"
       friction_points: "{{ step_1_result.friction_points | default([]) }}"
       focus_area: "{{ focus_area }}"
       known_adrs: "{{ known_adrs | default([]) }}"

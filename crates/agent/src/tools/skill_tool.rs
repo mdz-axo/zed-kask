@@ -44,7 +44,6 @@ fn neutralize_envelope_tags(input: &str) -> String {
 /// injected into prompts.
 pub fn render_skill_envelope(skill: &Skill, body: &str) -> String {
     let source = match &skill.source {
-        agent_skills::SkillSource::BuiltIn => "built-in",
         agent_skills::SkillSource::Global => "global",
         agent_skills::SkillSource::ProjectLocal { .. } => "project-local",
         // zed-kask: marketplace-installed skills are labeled with their
@@ -54,9 +53,7 @@ pub fn render_skill_envelope(skill: &Skill, body: &str) -> String {
         agent_skills::SkillSource::Public { .. } => "marketplace",
     };
     let worktree = match &skill.source {
-        agent_skills::SkillSource::BuiltIn
-        | agent_skills::SkillSource::Global
-        | agent_skills::SkillSource::Public { .. } => None,
+        agent_skills::SkillSource::Global | agent_skills::SkillSource::Public { .. } => None,
         agent_skills::SkillSource::ProjectLocal {
             worktree_root_name, ..
         } => Some(worktree_root_name.clone()),
@@ -503,8 +500,10 @@ impl AgentTool for SkillTool {
             // cascade context.
             let task = input.task.clone();
             let extra_context = input.context.clone();
-            let is_builtin = skill.source == agent_skills::SkillSource::BuiltIn;
-            if !is_builtin {
+            // Core skills are pre-authorized (trusted by default) since they
+            // are operator-controlled, uneditable, and always-on. User skills
+            // go through the normal authorization flow.
+            if !skill.core {
                 let authorize = cx.update(|cx| {
                     let context =
                         crate::ToolPermissionContext::new(Self::NAME, vec![skill_file_path]);
@@ -635,12 +634,22 @@ async fn gather_cascade_context(
     // Snapshot the thread's recent turns.
     let (thread_messages, agent_id, thread_id) = match event_stream.thread() {
         Some(thread_handle) => {
-            let thread_handle = thread_handle.clone();
+            // Read the short-term turns setting from the settings store.
+            let short_term_turns = cx.update(|cx| {
+                use gpui::ReadGlobal;
+                use settings::SettingsStore;
+                SettingsStore::global(cx)
+                    .get_content_for_file(settings::SettingsFile::User)
+                    .and_then(|c| c.kask.clone())
+                    .and_then(|c| c.memory)
+                    .and_then(|m| m.cascade_short_term_turns)
+                    .unwrap_or(6) as usize
+            });
             cx.update(|cx| {
                 thread_handle.upgrade().map(|thread_entity| {
                     let thread = thread_entity.read(cx);
                     (
-                        thread.recent_turn_messages(6),
+                        thread.recent_turn_messages(short_term_turns),
                         thread.agent_id().map(|id| id.to_string()),
                         thread.id().to_string(),
                     )
@@ -682,6 +691,26 @@ async fn gather_cascade_context(
         .collect();
 
     // Gather long-term memory via the cascade context provider (if wired).
+    // Read the cascade memory settings from the settings store so the
+    // saliency floor and max chunks are configurable via the settings UI.
+    let (saliency_floor, max_chunks) = cx.update(|cx| {
+        use gpui::ReadGlobal;
+        use settings::SettingsStore;
+        let kask_memory = SettingsStore::global(cx)
+            .get_content_for_file(settings::SettingsFile::User)
+            .and_then(|c| c.kask.clone())
+            .and_then(|c| c.memory);
+        (
+            kask_memory
+                .as_ref()
+                .and_then(|m| m.cascade_memory_saliency_floor)
+                .unwrap_or(0.3),
+            kask_memory
+                .as_ref()
+                .and_then(|m| m.cascade_memory_max_chunks)
+                .unwrap_or(5),
+        )
+    });
     let memory_snippets = match crate::cascade_context_provider() {
         Some(provider) => {
             let request = crate::CascadeContextRequest {
@@ -689,9 +718,15 @@ async fn gather_cascade_context(
                 task: task.to_string(),
                 agent_id,
                 swarm_id,
-                short_term_messages: Vec::new(), // provider doesn't use this
-                saliency_floor: 0.3,
-                max_chunks: 5,
+                // Pass the raw thread messages so the provider can build
+                // the saliency query from task + N turns (the "chat context").
+                // These are the same messages that become `prior_messages`
+                // below — passed twice (once for saliency, once for inference)
+                // because the provider needs them for recall ranking while
+                // the executor needs them for the message array.
+                short_term_messages: thread_messages.clone(),
+                saliency_floor,
+                max_chunks,
             };
             match provider.gather_context(&request).await {
                 Ok(context) => context.long_term_snippets,

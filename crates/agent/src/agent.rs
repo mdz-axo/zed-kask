@@ -4418,7 +4418,7 @@ pub fn skill_body_resolver_for_project(
                 read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
             })
         }
-        SkillSource::BuiltIn | SkillSource::Global | SkillSource::Public { .. } => {
+        SkillSource::Global | SkillSource::Public { .. } => {
             let fs = fs.clone();
             cx.background_spawn(async move {
                 agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
@@ -4443,9 +4443,7 @@ fn combine_skills(
     global: Vec<Result<Skill, SkillLoadError>>,
     project: impl Iterator<Item = Result<Skill, SkillLoadError>>,
 ) -> (Vec<Skill>, Vec<SkillLoadError>) {
-    // Built-in skills go first (lowest priority) so that global and
-    // project-local skills with the same name shadow them.
-    let mut skills = builtin_skills();
+    let mut skills = Vec::new();
     let mut errors = Vec::new();
     for result in global.into_iter().chain(project) {
         match result {
@@ -4562,6 +4560,7 @@ mod internal_tests {
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             embedded_body: None,
+            core: false,
         }
     }
 
@@ -4898,6 +4897,7 @@ mod internal_tests {
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             embedded_body: None,
+            core: false,
         }
     }
 
@@ -4905,7 +4905,7 @@ mod internal_tests {
         Skill {
             name: name.to_string(),
             description: description.to_string(),
-            source: SkillSource::BuiltIn,
+            source: SkillSource::Global,
             directory_path: PathBuf::from(format!("/builtin/{name}")),
             skill_file_path: PathBuf::from(format!("/builtin/{name}/SKILL.md")),
             load_warnings: Vec::new(),
@@ -4913,15 +4913,13 @@ mod internal_tests {
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             embedded_body: Some("built-in body"),
+            core: false,
         }
     }
 
     /// Filter to only user-defined (non-built-in) skills for test assertions.
     fn user_skills(skills: &[Skill]) -> Vec<&Skill> {
-        skills
-            .iter()
-            .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
-            .collect()
+        skills.iter().filter(|s| !s.core).collect()
     }
 
     /// Filter to only disk-loaded global skills (from the global skills dir).
@@ -5110,6 +5108,7 @@ mod internal_tests {
                 visibility: SkillVisibility::Private,
                 dependencies: Vec::new(),
                 embedded_body: None,
+                core: false,
             });
         }
 
@@ -5150,6 +5149,7 @@ mod internal_tests {
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             embedded_body: None,
+            core: false,
         };
         let second = Skill {
             name: "skill-02-overflows".to_string(),
@@ -5162,6 +5162,7 @@ mod internal_tests {
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             embedded_body: None,
+            core: false,
         };
         let third = Skill {
             name: "skill-03-would-fit".to_string(),
@@ -5174,6 +5175,7 @@ mod internal_tests {
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             embedded_body: None,
+            core: false,
         };
 
         let skills = vec![first.clone(), second.clone(), third.clone()];
@@ -5215,6 +5217,7 @@ mod internal_tests {
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             embedded_body: None,
+            core: false,
         };
         let visible = Skill {
             name: "visible".to_string(),
@@ -5227,6 +5230,7 @@ mod internal_tests {
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             embedded_body: None,
+            core: false,
         };
 
         let (kept, issues) = select_catalog_skills(&[hidden, visible]);

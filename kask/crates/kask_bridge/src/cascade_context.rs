@@ -351,12 +351,12 @@ mod tests {
     fn rank_and_filter_dedupes_by_prefix() {
         let snippets = vec![
             snippet(
-                "This is a long fact that appears in both stores...",
+                "This is a long fact that appears in both stores and is the same",
                 0.9,
                 0.8,
             ),
             snippet(
-                "This is a long fact that appears in both stores!!!",
+                "This is a long fact that appears in both stores and is the same",
                 0.8,
                 0.7,
             ),

@@ -13,6 +13,8 @@ contract:
     impact_analysis: object
     quality_findings: array
     synthesis: string
+    symbols: array
+    dependencies: array
 visibility: Public
 ---
 {# Template: graph-audit/code-analyze.j2 #}
@@ -152,6 +154,12 @@ Return JSON only:
       "fix_suggestion": "Specific recommended fix"
     }
   ],
-  "synthesis": "Concise narrative tying analysis to the userpod's goal"
+  "synthesis": "Concise narrative tying analysis to the userpod's goal",
+  "symbols": [
+    {"name": "qualified::symbol_name", "kind": "function | struct | trait | module", "file": "path.rs"}
+  ],
+  "dependencies": [
+    {"from": "caller::symbol", "to": "callee::symbol", "kind": "call | reference | implementation"}
+  ]
 }
 ```

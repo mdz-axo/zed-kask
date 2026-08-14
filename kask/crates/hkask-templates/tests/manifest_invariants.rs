@@ -25,6 +25,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Known compute_ref primitives — kept in sync with `compute.rs`.
+#[allow(dead_code)]
 const KNOWN_COMPUTE_REFS: &[&str] = &[
     "lisp.eval",
     "shell.exec",

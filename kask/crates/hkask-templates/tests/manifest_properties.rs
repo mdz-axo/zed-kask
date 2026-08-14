@@ -92,7 +92,7 @@ fn all_manifests_have_structural_integrity() {
             ));
         }
         for (i, step) in manifest.steps.iter().enumerate() {
-            let expected = (start_ordinal + i as u32);
+            let expected = start_ordinal + i as u32;
             if step.ordinal != expected {
                 errors.push(format!(
                     "{fname}: E10 — step at index {i} has ordinal {} (expected {expected})",

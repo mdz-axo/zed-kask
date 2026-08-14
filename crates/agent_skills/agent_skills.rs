@@ -18,6 +18,66 @@ pub const AGENTS_DIR_NAME: &str = ".agents";
 /// Second segment of the skills directory path: `skills`.
 pub const SKILLS_DIR_NAME: &str = "skills";
 
+/// The canonical list of core skill names. Core skills are always-on,
+/// re-seeded on every startup (overwriting user edits), locked against
+/// editing, and undisableable. They cannot be shadowed by project-local
+/// skills of the same name.
+///
+/// This list is the single source of truth for which skills are core. It is
+/// consumed by:
+/// - `seed_shipped_skills` — to decide whether to overwrite or seed-once.
+/// - `kask_bridge::seed_registry_to_disk` — same, for manifest.yaml + .j2
+///   templates.
+/// - `apply_skill_overrides` — to enforce unshadowability.
+/// - `skill_tool` — to skip the authorization prompt.
+/// - `settings_ui::skills_setup` — to render core skills with a distinct
+///   visual treatment and hide edit/delete/visibility controls.
+///
+/// A skill is core if it meets ALL of:
+/// 1. System-critical: the skill system, agent loop, curator, or an MCP
+///    server/panel depends on it being present and unmodified.
+/// 2. Called autonomously by code, or hard-delegated to by another core
+///    skill, or named in the Curator's static context as an anchored
+///    methodology.
+/// 3. All delegation targets (hard or optional) of a core skill must also
+///    be core — an editable delegate is a backdoor around consent/trust.
+pub const CORE_SKILL_NAMES: &[&str] = &[
+    // Skill-authoring + maintenance
+    "create-skill",
+    "skill-bundler",
+    "skill-discovery",
+    "skill-logic-audit",
+    "skill-maintenance",
+    "skill-router",
+    // Curator methodologies
+    "metacognition",
+    "pragmatic-cybernetics",
+    "pragmatic-semantics",
+    "superforecasting",
+    // Universal quality gates
+    "code-review",
+    "essentialist",
+    "refactor-architecture",
+    // Essentialist delegates
+    "deep-module",
+    "coding-guidelines",
+    // skill-router integration
+    "task-breakdown",
+    // MCP server / panel invocations
+    "swarm-compose-guide",
+    "swarm-intelligence",
+    "swarm-steering",
+    "kanban-task-management",
+    // code-review optional delegates (Q16: editable delegate = backdoor)
+    "kali-audit",
+    "bug-hunt",
+];
+
+/// Returns `true` if the given skill name is a core skill.
+pub fn is_core_skill(name: &str) -> bool {
+    CORE_SKILL_NAMES.contains(&name)
+}
+
 /// User-facing display form of the global skills directory path.
 ///
 /// zed-kask: D28 — global skills live under the kask data root
@@ -121,15 +181,15 @@ pub struct Skill {
     /// is retained for struct compatibility but is always `None` in production.
     #[allow(dead_code)]
     pub embedded_body: Option<&'static str>,
+    /// When `true`, this skill is a core skill: always-on, re-seeded on every
+    /// startup, locked against editing, undisableable, and unshadowable.
+    /// See `SkillMetadata::core` for the full contract.
+    pub core: bool,
 }
 
 /// Indicates where a skill was loaded from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkillSource {
-    /// Compiled into the Zed binary. These are always available and have
-    /// the lowest override priority (global and project-local skills can
-    /// shadow them).
-    BuiltIn,
     /// From the global skills directory (zed-kask D28: `{kask_data_dir}/skills/`).
     Global,
     /// From {project}/.agents/skills/
@@ -154,20 +214,18 @@ pub enum SkillSource {
 
 impl SkillSource {
     /// Precedence for resolving same-named skills. Higher values shadow
-    /// lower ones: `ProjectLocal` > `Global` > `Public` > `BuiltIn`. Two
-    /// sources returning equal precedence (e.g. two project-local skills
-    /// from different worktrees) leave the winner up to the caller, which by
+    /// lower ones: `ProjectLocal` > `Global` > `Public`. Two sources
+    /// returning equal precedence (e.g. two project-local skills from
+    /// different worktrees) leave the winner up to the caller, which by
     /// convention keeps the first one in iteration order.
     ///
     /// Adding a new `SkillSource` variant should be a one-line change
     /// here — every consumer routes through this method so the hierarchy
     /// stays in sync.
-    // zed-kask: `Public` (marketplace-installed) sits between `BuiltIn` and
-    // `Global` so a local skill of the same name wins. Pinned by
-    // `test_skill_source_public_precedence_between_built_in_and_global`.
+    // zed-kask: `Public` (marketplace-installed) sits below `Global` so a
+    // local skill of the same name wins.
     pub fn precedence(&self) -> u8 {
         match self {
-            Self::BuiltIn => 0,
             Self::Public { .. } => 1,
             Self::Global => 2,
             Self::ProjectLocal { .. } => 3,
@@ -194,7 +252,6 @@ impl SkillSource {
     // skills. Pinned by `test_skill_source_public_display_label_is_namespaced`.
     pub fn display_label(&self) -> &str {
         match self {
-            Self::BuiltIn => "built-in",
             Self::Global => "global",
             Self::ProjectLocal {
                 worktree_root_name, ..
@@ -207,7 +264,7 @@ impl SkillSource {
 
     pub fn scope_prefix(&self) -> &str {
         match self {
-            Self::BuiltIn | Self::Global | Self::Public { .. } => "",
+            Self::Global | Self::Public { .. } => "",
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => worktree_root_name.as_ref(),
@@ -229,7 +286,7 @@ impl SkillSource {
     // empty scope. Pinned by `test_skill_source_public_matches_empty_scope`.
     pub fn matches_scope(&self, scope: &str) -> bool {
         match self {
-            Self::BuiltIn | Self::Global | Self::Public { .. } => scope.is_empty(),
+            Self::Global | Self::Public { .. } => scope.is_empty(),
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => !scope.is_empty() && worktree_root_name.as_ref() == scope,
@@ -278,6 +335,13 @@ pub struct SkillMetadata {
     /// dependency, regardless of source.
     #[serde(default)]
     pub dependencies: Vec<String>,
+    /// When `true`, this skill is a core skill: always-on, re-seeded on every
+    /// startup (overwriting user edits), locked against editing, and
+    /// undisableable. Core skills cannot be shadowed by project-local skills
+    /// of the same name. The `core` flag is the zed-kask mechanism for
+    /// distinguishing system-critical kask-skills from user kask-skills.
+    #[serde(default)]
+    pub core: bool,
 }
 
 /// Minimal skill info for system prompt.
@@ -356,6 +420,7 @@ pub fn parse_skill_frontmatter(
         visibility: metadata.visibility,
         dependencies: metadata.dependencies,
         embedded_body: None,
+        core: metadata.core,
     })
 }
 
@@ -867,7 +932,7 @@ fn parse_builtin_skill(name: &str, content: &'static str) -> Result<Skill> {
     Ok(Skill {
         name: metadata.name,
         description: metadata.description,
-        source: SkillSource::BuiltIn,
+        source: SkillSource::Global,
         directory_path: synthetic_dir,
         skill_file_path: synthetic_path,
         load_warnings: Vec::new(),
@@ -875,6 +940,7 @@ fn parse_builtin_skill(name: &str, content: &'static str) -> Result<Skill> {
         visibility: metadata.visibility,
         dependencies: metadata.dependencies,
         embedded_body: Some(body.trim()),
+        core: metadata.core,
     })
 }
 

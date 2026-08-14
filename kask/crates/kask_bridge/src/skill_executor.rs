@@ -285,37 +285,22 @@ impl BridgeManifestExecutor {
 
         self.inject_model_defaults(&mut context);
 
-        // Inject short-term and long-term context as template fields so
-        // templates can reference `{{ session_history }}` and
-        // `{{ memory_context }}`. These are distinct from `prior_outcomes`
-        // (intra-cascade step results used for Brier scoring) — memory and
-        // context are fuzzy unstructured chunks that connect reasoning
-        // graphs; prior outcomes are structured analytical signals.
+        // NOTE: Short-term (prior_messages) and long-term (memory_snippets)
+        // context are injected structurally via `build_cascade_messages` in
+        // `step_actions.rs` — prepended as a system message to every
+        // `execute_select` inference call. They are NOT injected as template
+        // fields (`{{ session_history }}` / `{{ memory_context }}`).
         //
-        // `session_history` is the prior thread turns formatted as
-        // `role: content` lines. `memory_context` is the long-term memory
-        // snippets formatted as a bulleted list.
-        if !prior_messages.is_empty() {
-            let session_history = prior_messages
-                .iter()
-                .map(|m| format!("{}: {}", m.role, m.content))
-                .collect::<Vec<_>>()
-                .join("\n");
-            context.insert(
-                "session_history".to_string(),
-                Value::String(session_history),
-            );
-        }
-        if !memory_snippets.is_empty() {
-            let memory_context = memory_snippets
-                .iter()
-                .enumerate()
-                .map(|(i, s)| format!("{}. [{}] {}", i + 1, s.source, s.text))
-                .collect::<Vec<_>>()
-                .join("\n");
-            context.insert("memory_context".to_string(), Value::String(memory_context));
-        }
-
+        // Per the design requirement: memory context must be part of the
+        // system prompt or injected with every template call — not an
+        // optional template field that templates must opt into. The
+        // structural injection in `build_cascade_messages` ensures every
+        // template step sees the memory and prior turns, regardless of
+        // whether the template references them by name.
+        //
+        // `prior_outcomes` (intra-cascade step results for Brier scoring)
+        // remains a separate template field — it is NOT conflated with
+        // memory context.
         let executor = self.build_executor(progress, title, prior_messages, memory_snippets);
 
         let join_handle = self.tokio_handle.spawn({
