@@ -167,7 +167,7 @@ Known limit → resolved (2026-08-02): consent tokens previously lived in
 in-memory stores **per server process**, so the panel's hire flow and the
 Steer curator's spend flow (governed `McpRuntime` vs per-project
 `ContextServerStore`) could not share a token. The store is now a shared
-SQLite file by default (`~/.hkask/swarm_consent.db`, overridable via
+SQLite file by default (`mcp/swarm/consent.db`, overridable via
 `HKASK_SWARM_CONSENT_STORE`) opened by both processes, so a token minted by
 the panel is consumable by the Steer curator (and vice versa). Single-use is
 enforced atomically across processes (DELETE-affected-rows check — two

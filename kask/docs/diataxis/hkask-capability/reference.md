@@ -152,7 +152,7 @@ order:
 3. **Span emission** — persist a `reg.gas.settled` `RegulationRecord` (target
    `reg.mcp`) carrying server, tool, call count, and success/failure status,
    through the wired `RegulationSink` (`RegulationArchive` on the curator's
-   pod.db in zed-kask).
+   curator.db in zed-kask).
 
 There is no authorization step. The only way `invoke` returns an error before
 dispatch is `EnergyBudgetExceeded`.

@@ -85,7 +85,7 @@ Tool count verified against `#[tool(description = ...)]` annotations in
 
 | Tool | Description |
 |------|-------------|
-| `corpus_cache` | Cache processed document text keyed by label in the docproc cache directory (`~/.config/hkask/docproc-cache/`). |
+| `corpus_cache` | Cache processed document text keyed by label in the corpus cache directory (`mcp/corpus/cache/` under the kask data root). |
 | `corpus_query` | Query the in-memory vector index for passages relevant to a natural-language question: embeds the query, computes cosine similarity against indexed passages, returns top-k results, and can optionally generate an LLM-augmented answer (`tools/storage.rs:73-100`). |
 | `corpus_clear_index` | Clear the in-memory vector index; call when starting a new document set to avoid cross-document contamination. |
 | `corpus_purge_qa` | Purge QA embeddings and h_mems by entity-ref prefix (embeddings first, then matching h_mems); useful before re-ingesting old training data. |

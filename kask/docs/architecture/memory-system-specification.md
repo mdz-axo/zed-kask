@@ -95,7 +95,7 @@ flowchart TD
 ## 3. Storage schema
 
 Three tables in a single SQLCipher DB (`memory.db` per user,
-`agents/curator/pod.db` for the curator):
+`agents/curator/curator.db` for the curator):
 
 ### `hmems` (relational EAV)
 
@@ -159,10 +159,10 @@ When a thread turn completes, `Thread::run_turn` calls
 | Store                        | Entity                | Attribute | Visibility | Perspective     | Content                          |
 | ---------------------------- | --------------------- | --------- | ---------- | --------------- | -------------------------------- |
 | User `memory.db`             | `chat:thread:{id}`    | `chatted` | Private    | `user_webid`    | Turn JSON                        |
-| Curator `pod.db` (episodic)  | `chat:thread:{id}`    | `chatted` | Private    | `curator_webid` | Turn JSON                        |
-| Curator `pod.db` (semantic)  | `curator:thread:{id}` | `turn`    | Shared     | `curator_webid` | Turn JSON                        |
+| Curator `curator.db` (episodic)  | `chat:thread:{id}`    | `chatted` | Private    | `curator_webid` | Turn JSON                        |
+| Curator `curator.db` (semantic)  | `curator:thread:{id}` | `turn`    | Shared     | `curator_webid` | Turn JSON                        |
 | User `memory.db` (embedding) | `chat:thread:{id}`    | —         | —          | —               | 1024-dim vector of `user_input`  |
-| Curator `pod.db` (embedding) | `chat:thread:{id}`    | —         | —          | —               | Same vector (curator turns only) |
+| Curator `curator.db` (embedding) | `chat:thread:{id}`    | —         | —          | —               | Same vector (curator turns only) |
 
 ### Ingestion semaphore
 

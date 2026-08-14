@@ -107,4 +107,3 @@ Structural inventories and status snapshots.
 
 | Document                                                                 | Description                                                                                           |
 | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| [`status/public-seam-inventory.json`](status/public-seam-inventory.json) | Structural inventory of `kask/crates/` lib roots (20 crates). API-surface enumeration is a follow-up. |

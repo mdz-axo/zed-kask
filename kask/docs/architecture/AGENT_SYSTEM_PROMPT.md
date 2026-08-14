@@ -10,8 +10,7 @@ mds_categories: [composition, trust, domain]
 
 > **Scope:** the agent system prompt only. Verified against zed-kask `HEAD`
 > (`47e1c3b1d5`) and upstream Zed `upstream/main` (`6bd93fc319`). Every claim
-> here is traceable to a `file:line` or a named test; the analysis that produced
-> the divergences is in [`../../../prompt-comparative-analysis.md`](../../../prompt-comparative-analysis.md).
+> here is traceable to a `file:line` or a named test.
 
 ## 1. Purpose
 

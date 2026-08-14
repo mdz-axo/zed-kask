@@ -36,6 +36,26 @@ consistently regardless of launch context.
 
 ## 2. Artifact-class → path mapping
 
+```mermaid
+erDiagram
+    DATA_ROOT ||--o{ AGENTS : "agents/{name}/"
+    DATA_ROOT ||--o{ MCP : "mcp/{server_id}/"
+    DATA_ROOT ||--o{ SKILLS : "skills/{name}/"
+    DATA_ROOT ||--o{ THREADS : "threads/"
+    AGENTS ||--o{ USER_AGENT : "{username}/"
+    AGENTS ||--o{ CURATOR : "curator/"
+    USER_AGENT ||--|| USER_DB : "{username}.db"
+    USER_AGENT ||--|| USER_MEM : "memory.db"
+    CURATOR ||--|| CURATOR_DB : "curator.db"
+    MCP ||--o{ CODEGRAPH : "codegraph/codegraph.db"
+    MCP ||--o{ KATA_KANBAN : "kata-kanban/kanban.db"
+    MCP ||--o{ SWARM : "swarm/ledger.db"
+    MCP ||--o{ TRAINING : "training/training.db"
+    SKILLS ||--o{ SKILL_DIR : "{skill_name}/"
+    SKILLS ||--o{ REGISTRY : "registry/"
+    THREADS ||--|| THREADS_DB : "threads.db"
+```
+
 | Artifact class | Root | Subdir pattern | Naming rule | Programmatic contract |
 |---|---|---|---|---|
 | MCP servers | `{data_dir}` | `mcp/{server_id}/` | `server_id` matches `BUILT_IN_MCP_SERVERS[].id` (`kask/crates/kask_bridge/src/mcp_servers.rs:53`); files named `{purpose}.db` | `resolve_under_data_dir(Path::new("mcp/{server_id}/{purpose}.db"))` |

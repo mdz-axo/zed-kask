@@ -152,7 +152,7 @@ implementations:
 - `NoopEventSink` (`runtime.rs:848`) — for tests and pre-login bootstrap
   contexts where persistence is not needed (e.g. seam watcher unit tests).
 - `RegulationArchive` (`kask/crates/hkask-storage/src/regulation_store.rs:508`)
-  — the durable store on the curator's `pod.db` (the same DB the curator MCP
+  — the durable store on the curator's `curator.db` (the same DB the curator MCP
   server's `reg_query` / `curator_algedonic_log` tools read). `persist`
   delegates to `insert`; `persist_if_absent` to `insert_if_absent`
   (`regulation_store.rs:513`).

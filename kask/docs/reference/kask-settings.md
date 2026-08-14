@@ -192,7 +192,7 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 |-------|------|---------|-------|
 | `chronic_staleness_days` | `u32` | `0` | 0 = use hardcoded default (90); >0 = override |
 | `fermi_defaults` | `String` | `""` | JSON with `growth` + `margin` arrays; empty = hardcoded defaults |
-| `transactions_dir` | `String` | `""` | Portfolio transaction files; empty = `<kask_data_dir>/transactions/` |
+| `transactions_dir` | `String` | `""` | Portfolio transaction files; empty = `<kask_data_dir>/mcp/portfolio/transactions/` |
 
 ## Corpus (`KaskCorpusSettings`)
 
@@ -415,7 +415,7 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_CODEGRAPH_DB` | codegraph | `codegraph.db_path` |
 | `HKASK_CHRONIC_STALENESS_DAYS` | companies | `companies.chronic_staleness_days` |
 | `HKASK_FERMI_DEFAULTS` | companies | `companies.fermi_defaults` |
-| `HKASK_TRANSACTIONS_DIR` | companies | `companies.transactions_dir` |
+| `HKASK_TRANSACTIONS_DIR` | portfolio | `companies.transactions_dir` (emitted for portfolio server) |
 | `HKASK_CONDENSER_PERSONA_KEYWORDS` | condenser | `condenser.persona_keywords` |
 | `HKASK_CONDENSE_SALIENCY_WINDOW` | condenser | `condenser.saliency_window` |
 | `HKASK_OCR_CONCURRENCY` | corpus | `corpus.ocr_concurrency` |
@@ -447,6 +447,13 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_WEBID` | curator | mapped from `HKASK_CURATOR_WEBID` |
 | `HKASK_MCP_SERVER_IDS` | swarm | `BUILT_IN_MCP_SERVERS_IDS` joined (unconditional) |
 | `HKASK_CURATOR_DB` | curator | injected by deferred task |
+| `HKASK_KANBAN_DB` | kata-kanban | Operator override for kanban DB path (default `mcp/kata-kanban/kanban.db`) |
+| `HKASK_RSS_DB` | research | Operator override for RSS DB path (default `mcp/research/rss.db`) |
+| `HKASK_MEDIA_DB` | media | Operator override for gallery DB path (default `mcp/media/gallery.db`) |
+| `HKASK_TRAINING_DB` | training | Operator override for training DB path (default `mcp/training/training.db`) |
+| `HKASK_SWARM_LEDGER_PATH` | swarm | Operator override for swarm ledger path (default `mcp/swarm/ledger.db`) |
+| `HKASK_SWARM_CONSENT_STORE` | swarm | Operator override for consent store path (default `mcp/swarm/consent.db`) |
+| `HKASK_SKILLS_DIR` | swarm | `swarm.skills_dir` (default `{kask_data_dir}/skills/`) |
 
 The collab server is launched directly by zed-kask (not via `mcp_env()`), so
 there are no `collab.*`-derived env vars.

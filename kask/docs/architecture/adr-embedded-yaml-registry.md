@@ -68,8 +68,8 @@ The YAML/Jinja layer is:
 ### Trust model interaction
 
 - **Embedded seeds**: trusted by construction at build time, but they only run once seeded to disk — after seeding, the on-disk copy is what executes, and it is mutable.
-- **Marketplace manifests** (installed via `kask_extensions_ui`): Ed25519-signed, verified at download (`verify_manifest_signature` in `collab/src/api/kask_skills.rs`). Installed to `data_dir()/agents/skills/`.
-- **Local manifests** (user-authored, `data_dir()/agents/skills/`): unsigned, run with the same executor privileges as seeded and marketplace manifests.
+- **Marketplace manifests** (installed via `kask_extensions_ui`): Ed25519-signed, verified at download (`verify_manifest_signature` in `collab/src/api/kask_skills.rs`). Installed to `{kask_data_dir}/skills/`.
+- **Local manifests** (user-authored, `{kask_data_dir}/skills/`): unsigned, run with the same executor privileges as seeded and marketplace manifests.
 
 The executor emits a provenance signal: `BridgeManifestExecutor::execute_skill` logs `reg.skill.provenance` so an operator reading logs can distinguish seeded/registry skills from filesystem-sourced ones, and `tracing::warn!`s when high-risk actions (`flowdef` sub-cascades, `compute` primitives) execute from filesystem-provenance manifests. Blocking these actions on provenance is a future-wiring target. The `is_skill()` category check is enforced at `execute_skill` (the execution boundary) and at `resolve_manifest` (the `flowdef` sub-cascade binding path). The `on_capability_denied` error-handling policy is wired into the executor: `escalate` → return error with span, `abort` → break cascade with convergence span, default → propagate raw error.
 

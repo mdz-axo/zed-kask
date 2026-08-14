@@ -466,8 +466,8 @@ The following Mermaid diagrams were inlined from the former `docs/diagrams/` dir
 | Store                       | `visibility` | `perspective`         | Who can read?              |
 | --------------------------- | ------------ | --------------------- | -------------------------- |
 | Episodic (user `memory.db`) | `Private`    | `Some(user_webid)`    | Only owning user           |
-| Episodic (curator `pod.db`) | `Private`    | `Some(curator_webid)` | Only curator               |
-| Semantic (curator `pod.db`) | `Shared`     | `Some(curator_webid)` | Curator + user recall path |
+| Episodic (curator `curator.db`) | `Private`    | `Some(curator_webid)` | Only curator               |
+| Semantic (curator `curator.db`) | `Shared`     | `Some(curator_webid)` | Curator + user recall path |
 
 ### Consolidation Rules (current)
 

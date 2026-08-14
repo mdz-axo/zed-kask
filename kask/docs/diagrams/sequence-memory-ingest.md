@@ -27,7 +27,7 @@ sequenceDiagram
     participant Real as RealMemoryPort
     participant Sem as ingest_semaphore
     participant UserStore as user MemoryStore<br/>(memory.db)
-    participant CuratorStore as curator MemoryStore<br/>(pod.db)
+    participant CuratorStore as curator MemoryStore<br/>(curator.db)
     participant Tokio as tokio runtime
     participant EmbedPort as LanguageModelEmbeddingPort
     participant EmbedProvider as Embedding API<br/>(DeepInfra/Qwen3)
