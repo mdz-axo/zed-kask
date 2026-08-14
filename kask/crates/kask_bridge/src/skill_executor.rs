@@ -1419,4 +1419,62 @@ steps:
             );
         }
     }
+
+    /// `seed_registry_to_disk` must overwrite core-skill manifests and
+    /// templates on every call (so user edits to core artifacts are
+    /// discarded on restart) while preserving user-skill artifacts that
+    /// already exist. This pins the core-vs-user split for all four seed
+    /// loops (process manifests, template manifests, .j2 files, .yaml
+    /// files) — the contract that `agent_skills::seed_shipped_skills` pins
+    /// for SKILL.md, mirrored here for the registry.
+    #[gpui::test]
+    async fn test_seed_registry_to_disk_overwrites_core_preserves_user(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use fs::FakeFs;
+        use std::path::Path;
+
+        let fs = FakeFs::new(cx.executor());
+        let registry_root = Path::new("/registry");
+        fs.create_dir(registry_root).await.unwrap();
+
+        // Seed once — all shipped manifests and templates land on disk.
+        seed_registry_to_disk(fs.as_ref(), registry_root).await;
+
+        // A known core skill's process manifest must be present.
+        let core_manifest = registry_root.join("manifests/create-skill.yaml");
+        assert!(
+            fs.is_file(&core_manifest).await,
+            "core skill process manifest should be seeded"
+        );
+        let original_core = fs.load(&core_manifest).await.unwrap();
+
+        // Tamper with the core manifest (simulating a user edit or
+        // corruption). Re-seeding must overwrite it with the shipped copy.
+        fs.write(&core_manifest, b"TAMPERED").await.unwrap();
+        seed_registry_to_disk(fs.as_ref(), registry_root).await;
+        let after_core = fs.load(&core_manifest).await.unwrap();
+        assert_eq!(
+            after_core, original_core,
+            "core skill manifest must be overwritten on re-seed"
+        );
+
+        // A known user (non-core) skill's process manifest must be present
+        // after the first seed.
+        let user_manifest = registry_root.join("manifests/lora-training.yaml");
+        assert!(
+            fs.is_file(&user_manifest).await,
+            "user skill process manifest should be seeded"
+        );
+
+        // Overwrite the user manifest with a user edit. Re-seeding must
+        // PRESERVE the user edit (user skills are seed-once).
+        fs.write(&user_manifest, b"USER EDIT").await.unwrap();
+        seed_registry_to_disk(fs.as_ref(), registry_root).await;
+        let after_user = fs.load(&user_manifest).await.unwrap();
+        assert_eq!(
+            after_user, "USER EDIT",
+            "user skill manifest must be preserved on re-seed"
+        );
+    }
 }

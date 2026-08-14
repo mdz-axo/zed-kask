@@ -77,11 +77,17 @@ impl SwarmStore {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn availability(&self) -> bool {
         match self.store.read() {
             Ok(guard) => guard.is_some(),
             Err(_) => false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_for_tests(&self, store: Option<Arc<MemoryStore>>) {
+        if let Ok(mut guard) = self.store.write() {
+            *guard = store;
         }
     }
 

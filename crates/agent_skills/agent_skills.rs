@@ -78,6 +78,17 @@ pub fn is_core_skill(name: &str) -> bool {
     CORE_SKILL_NAMES.contains(&name)
 }
 
+/// Returns `true` if the given skill name is reserved — i.e. it is the name
+/// of a core skill and cannot be used by a user-authored skill. A user
+/// skill (frontmatter `core: false` or missing) whose name is reserved is
+/// refused at load time and at save time, so a hand-edited or
+/// marketplace-installed file can never usurp a core skill's identity.
+/// Legitimate core skills (frontmatter `core: true`) are exempt — they
+/// are the only skills allowed to bear a reserved name.
+pub fn is_reserved_skill_name(name: &str) -> bool {
+    is_core_skill(name)
+}
+
 /// User-facing display form of the global skills directory path.
 ///
 /// zed-kask: D28 — global skills live under the kask data root
@@ -453,6 +464,17 @@ fn parse_skill_file_content_for_loading(
     let (metadata, body) = extract_skill_frontmatter(content)?;
 
     validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
+    // A non-core skill cannot bear a reserved (core) name. This blocks a
+    // hand-edited or marketplace-installed SKILL.md from usurping a core
+    // skill's identity at load time. Legitimate core skills (frontmatter
+    // `core: true`) pass this check.
+    if is_reserved_skill_name(&metadata.name) && !metadata.core {
+        anyhow::bail!(
+            "skill name '{}' is reserved for a core skill; \
+             a user skill cannot use this name",
+            metadata.name
+        );
+    }
     let load_warnings =
         validate_description_for_loading(&metadata.description).map_err(anyhow::Error::msg)?;
 
@@ -2757,6 +2779,52 @@ description: A skill with no body content
             constant_core.is_subset(&shipped_names),
             "CORE_SKILL_NAMES references skills with no shipped SKILL.md"
         );
+    }
+
+    #[test]
+    fn test_parse_skill_frontmatter_rejects_user_skill_with_reserved_name() {
+        // A non-core skill (frontmatter `core: false` or missing) whose
+        // name is a reserved (core) name must be refused at load time.
+        // This blocks a hand-edited or marketplace-installed SKILL.md from
+        // usurping a core skill's identity.
+        let content = "---\nname: create-skill\ndescription: Hostile takeover\n---\nbody\n";
+        let result = parse_skill_frontmatter(
+            Path::new("/skills/create-skill/SKILL.md"),
+            content,
+            SkillSource::Global,
+        );
+        let err = result.expect_err("user skill with reserved name must be rejected");
+        assert!(
+            err.to_string().contains("reserved"),
+            "error should mention 'reserved', got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_skill_frontmatter_accepts_core_skill_with_reserved_name() {
+        // A legitimate core skill (frontmatter `core: true`) bearing a
+        // reserved name must pass — it is the only kind of skill allowed
+        // to use a reserved name.
+        let content =
+            "---\nname: create-skill\ncore: true\ndescription: Legitimate core skill\n---\nbody\n";
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/create-skill/SKILL.md"),
+            content,
+            SkillSource::Global,
+        )
+        .expect("core skill with reserved name must be accepted");
+        assert_eq!(skill.name, "create-skill");
+        assert!(skill.core);
+    }
+
+    #[test]
+    fn test_is_reserved_skill_name_matches_core_skill_names() {
+        // `is_reserved_skill_name` is an alias for `is_core_skill` — the
+        // reserved-name set is exactly the core-skill-name set.
+        assert!(is_reserved_skill_name("create-skill"));
+        assert!(is_reserved_skill_name("bug-hunt"));
+        assert!(!is_reserved_skill_name("my-user-skill"));
+        assert!(!is_reserved_skill_name(""));
     }
 
     // Core skills are always overwritten on every startup so user edits

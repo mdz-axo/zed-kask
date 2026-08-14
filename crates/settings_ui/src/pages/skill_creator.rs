@@ -1,7 +1,8 @@
 use agent_skills::{
     AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE, SKILL_FILE_NAME,
     SKILLS_DIR_NAME, SkillMetadata, SkillVisibility, SkillsUpdatedHook, global_skills_dir,
-    parse_skill_file_content, slugify_skill_name, validate_description, validate_name,
+    is_reserved_skill_name, parse_skill_file_content, slugify_skill_name, validate_description,
+    validate_name,
 };
 use anyhow::{Context as _, Result, anyhow};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
@@ -394,7 +395,13 @@ impl SkillCreatorPage {
 
     fn recompute_name_error(&mut self, cx: &mut Context<Self>) {
         let name = self.current_name(cx);
-        let error = validate_name(&name).err();
+        let error = validate_name(&name).err().or_else(|| {
+            if is_reserved_skill_name(&name) {
+                Some("This name is reserved for a core skill — pick a different name")
+            } else {
+                None
+            }
+        });
         self.name_error = error;
         self.name_editor
             .update(cx, |field, cx| field.set_error(error, cx));
@@ -419,7 +426,9 @@ impl SkillCreatorPage {
     }
 
     fn is_valid(&self, cx: &App) -> bool {
-        validate_name(&self.current_name(cx)).is_ok()
+        let name = self.current_name(cx);
+        validate_name(&name).is_ok()
+            && !is_reserved_skill_name(&name)
             && validate_description(&self.current_description(cx)).is_ok()
             && !self.current_body(cx).trim().is_empty()
     }
@@ -1202,6 +1211,17 @@ async fn write_skill_to_disk(
     body: &str,
     disable_model_invocation: bool,
 ) -> Result<PathBuf> {
+    // Reserved (core) skill names cannot be used by user-authored skills.
+    // This is a defensive check — the UI (`recompute_name_error`, `is_valid`)
+    // already blocks reserved names before save — but a direct caller
+    // (e.g. a future import path) must not be able to bypass it and write a
+    // file that would then be refused at load time by `parse_skill_frontmatter`.
+    if is_reserved_skill_name(name) {
+        anyhow::bail!(
+            "The name \"{name}\" is reserved for a core skill. \
+             Pick a different name."
+        );
+    }
     let skill_dir = skills_dir.join(name);
     match fs.metadata(&skill_dir).await {
         Ok(Some(metadata)) if metadata.is_dir => {
@@ -1728,6 +1748,29 @@ mod tests {
             err.to_string().contains("already exists"),
             "error message should mention the conflict, got: {err}"
         );
+    }
+
+    #[gpui::test]
+    async fn write_skill_to_disk_refuses_reserved_name(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/skills", serde_json::json!({})).await;
+
+        let err = write_skill_to_disk(
+            fs.as_ref(),
+            Path::new("/skills"),
+            "create-skill",
+            "Hostile takeover",
+            "Body of the skill.",
+            false,
+        )
+        .await
+        .expect_err("writing a skill with a reserved name must fail");
+        assert!(
+            err.to_string().contains("reserved"),
+            "error should mention 'reserved', got: {err}"
+        );
+        // Nothing should have been written.
+        assert!(!fs.is_file(Path::new("/skills/create-skill/SKILL.md")).await);
     }
 
     #[gpui::test]

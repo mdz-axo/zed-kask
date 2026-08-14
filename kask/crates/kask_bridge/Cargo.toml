@@ -66,6 +66,8 @@ tokio = { workspace = true, features = ["macros", "rt"] }
 proptest.workspace = true
 hkask-test-harness.workspace = true
 hkask-mcp-swarm = { workspace = true, features = ["test-utils"] }
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 
 [[test]]
 name = "bridge_gap_properties"

@@ -2216,24 +2216,42 @@ impl NativeAgent {
             let envelope = if let Some(executor) = crate::manifest_executor() {
                 let skill_name = skill.name.as_ref();
                 if executor.has_manifest(skill_name) {
+                    // Extract swarm_id before the context map is moved into
+                    // `context.extend`. Used by the cascade context provider
+                    // to determine whether to recall from the swarm store.
+                    let slash_swarm_id = slash_context
+                        .get("swarm_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+
                     let mut context = std::collections::HashMap::new();
                     context.extend(slash_context);
                     context.insert(
                         "task".to_string(),
-                        serde_json::Value::String(task_text),
+                        serde_json::Value::String(task_text.clone()),
                     );
-                    // The slash-command path has no thread message snapshot
-                    // (unlike the model-invoked `skill` tool, which has
-                    // `ToolCallEventStream::thread`). Slash commands run
-                    // isolated — prior_messages and memory_snippets are empty.
-                    // This is acceptable: slash commands are typically
-                    // one-shot invocations, not conversational.
+
+                    // Gather short-term (thread) and long-term (memory)
+                    // context for the cascade — same as the model-invoked
+                    // `skill` tool path. The slash-command path has the
+                    // thread entity directly (from the session), so we
+                    // snapshot recent turns and gather memory here rather
+                    // than going through `ToolCallEventStream`.
+                    let (prior_messages, memory_snippets) =
+                        crate::tools::gather_cascade_context_from_thread(
+                            &thread,
+                            &task_text,
+                            slash_swarm_id,
+                            cx,
+                        )
+                        .await;
+
                     match executor
                         .execute_skill(
                             skill_name,
                             context,
-                            Vec::new(),
-                            Vec::new(),
+                            prior_messages,
+                            memory_snippets,
                             None,
                             None,
                         )
@@ -4516,9 +4534,20 @@ fn apply_skill_overrides(skills: &[Skill]) -> Vec<Skill> {
     for skill in skills {
         match indices.get(skill.name.as_str()).copied() {
             Some(idx) => {
-                // Core skills are unshadowable — a non-core skill can
-                // never override a core skill, regardless of precedence.
+                // Core skills are unshadowable in BOTH directions:
+                // 1. A non-core skill can never override a core skill
+                //    already in the result, regardless of precedence.
+                // 2. A core skill arriving later must replace a non-core
+                //    skill of the same name regardless of precedence —
+                //    without this, a project-local user skill iterated
+                //    before a global core skill would win on precedence
+                //    (ProjectLocal=3 > Global=2) and silently shadow the
+                //    core skill, defeating the unshadowable guarantee.
                 if result[idx].core && !skill.core {
+                    continue;
+                }
+                if skill.core && !result[idx].core {
+                    result[idx] = skill.clone();
                     continue;
                 }
                 if skill.source.precedence() > result[idx].source.precedence() {
@@ -5001,6 +5030,42 @@ mod internal_tests {
         let user_global = make_global_skill("create-skill", "User override");
 
         let resolved = apply_skill_overrides(&[core, user_global]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Core version");
+        assert!(resolved[0].core);
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_core_skill_wins_when_iterated_after_user_skill() {
+        // The unshadowable guarantee must hold regardless of iteration
+        // order. If a non-core project-local skill (precedence 3) is
+        // iterated BEFORE a core global skill (precedence 2) of the same
+        // name, the core skill must still win — a naive precedence-only
+        // comparison would let the project skill shadow the core skill
+        // (3 > 2), defeating the guarantee. This is the reverse-order
+        // counterpart of `..._unshadowable_by_project_local`.
+        let project = make_project_skill("create-skill", "Project override", "my-project");
+        let mut core = make_global_skill("create-skill", "Core version");
+        core.core = true;
+
+        let resolved = apply_skill_overrides(&[project, core]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Core version");
+        assert!(resolved[0].core);
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_core_skill_wins_when_iterated_after_user_global() {
+        // Same as above but with a user global skill first — the core
+        // global skill arriving second must replace it despite equal
+        // precedence (both Global).
+        let user_global = make_global_skill("create-skill", "User override");
+        let mut core = make_global_skill("create-skill", "Core version");
+        core.core = true;
+
+        let resolved = apply_skill_overrides(&[user_global, core]);
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].description, "Core version");

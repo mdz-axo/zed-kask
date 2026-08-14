@@ -170,11 +170,24 @@ fn validate_embedded_skill_frontmatter(name: &str, content: &str) -> Result<(), 
         ));
     }
 
-    // Validate the `core` field if present. Must be `true` or `false`.
-    if let Some(core_val) = extract_yaml_scalar(frontmatter, "core") {
-        if core_val != "true" && core_val != "false" {
+    // Validate the `core` field if present. Must be a bare `true` or `false`
+    // (unquoted). `serde_yaml_ng` (used at runtime by
+    // `parse_skill_file_content_for_loading`) rejects quoted booleans like
+    // `core: "true"` with `invalid type: string, expected a boolean`, so
+    // the build-time check must reject them too — otherwise a build passes
+    // with a `core:` value that silently drops the skill from the catalog at
+    // runtime.
+    if let Some(raw_core) = extract_raw_yaml_scalar(frontmatter, "core") {
+        let trimmed = raw_core.trim();
+        if trimmed.starts_with('"') || trimmed.starts_with('\'') {
             return Err(format!(
-                "SKILL.md `core:` field must be `true` or `false` (got `{core_val}`)"
+                "SKILL.md `core:` field must be an unquoted boolean \
+                 (true or false), got quoted value `{trimmed}`"
+            ));
+        }
+        if trimmed != "true" && trimmed != "false" {
+            return Err(format!(
+                "SKILL.md `core:` field must be `true` or `false` (got `{trimmed}`)"
             ));
         }
     }
@@ -187,19 +200,28 @@ fn validate_embedded_skill_frontmatter(name: &str, content: &str) -> Result<(), 
 /// unescaping `\"` and `\\`. Does not handle block scalars — use
 /// `extract_yaml_description` for those.
 fn extract_yaml_scalar(frontmatter: &str, key: &str) -> Option<String> {
+    extract_raw_yaml_scalar(frontmatter, key).map(|raw| {
+        let value = raw.trim();
+        if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+            value[1..value.len() - 1]
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\")
+        } else {
+            value.to_string()
+        }
+    })
+}
+
+/// Extract the raw (unstripped, quote-preserving) value of a simple YAML
+/// scalar (`key: value`) from frontmatter. Used by validators that need to
+/// distinguish quoted from unquoted values (e.g. `core:` must be a bare
+/// boolean, not a quoted string).
+fn extract_raw_yaml_scalar(frontmatter: &str, key: &str) -> Option<String> {
     for line in frontmatter.lines() {
         let line = line.trim_start();
         let prefix = format!("{key}:");
         if line.starts_with(&prefix) {
-            let value = line[prefix.len()..].trim();
-            if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-                return Some(
-                    value[1..value.len() - 1]
-                        .replace("\\\"", "\"")
-                        .replace("\\\\", "\\"),
-                );
-            }
-            return Some(value.to_string());
+            return Some(line[prefix.len()..].trim().to_string());
         }
     }
     None

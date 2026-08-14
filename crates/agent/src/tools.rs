@@ -24,6 +24,7 @@ mod read_file_tool;
 mod rename_tool;
 mod skill_bundle_tool;
 mod skill_tool;
+pub(crate) use skill_tool::gather_cascade_context_from_thread;
 mod spawn_agent_tool;
 mod symbol_locator;
 mod terminal_tool;

@@ -195,10 +195,7 @@ jobs:
         run: cd kask && bash scripts/check-unsafe-forbid.sh
 
   # CI-05: pure-shell invariant gates that need no toolchain. Each script
-  # greps the kask tree for a specific contract violation. ci-contract-check.sh
-  # is intentionally omitted here — it shells out to cargo, so it belongs in
-  # a job with a Rust toolchain (it is currently run as part of the test job
-  # via kask/scripts/check-kali-regressions.sh's cargo-test-kind entries).
+  # greps the kask tree for a specific contract violation.
   invariants:
     runs-on: ubuntu-24.04
     steps:

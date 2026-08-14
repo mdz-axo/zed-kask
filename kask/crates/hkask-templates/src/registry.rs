@@ -22,67 +22,6 @@ use std::collections::HashMap;
 // Auto-generated per-skill template manifests (from build.rs).
 include!(concat!(env!("OUT_DIR"), "/manifest_skills.rs"));
 
-/// The canonical list of core skill names. Core skills are always-on,
-/// re-seeded on every startup (overwriting user edits), locked against
-/// editing, and undisableable. They cannot be shadowed by project-local
-/// skills of the same name.
-///
-/// This list is the single source of truth for which skills are core. It is
-/// consumed by:
-/// - `agent_skills::seed_shipped_skills` — to decide whether to overwrite
-///   or seed-once.
-/// - `kask_bridge::seed_registry_to_disk` — same, for manifest.yaml + .j2
-///   templates.
-/// - `agent_skills::apply_skill_overrides` — to enforce unshadowability.
-/// - `agent::skill_tool` — to skip the authorization prompt.
-/// - `settings_ui::skills_setup` — to render core skills with a distinct
-///   visual treatment and hide edit/delete/visibility controls.
-///
-/// A skill is core if it meets ALL of:
-/// 1. System-critical: the skill system, agent loop, curator, or an MCP
-///    server/panel depends on it being present and unmodified.
-/// 2. Called autonomously by code, or hard-delegated to by another core
-///    skill, or named in the Curator's static context as an anchored
-///    methodology.
-/// 3. All delegation targets (hard or optional) of a core skill must also
-///    be core — an editable delegate is a backdoor around consent/trust.
-pub const CORE_SKILL_NAMES: &[&str] = &[
-    // Skill-authoring + maintenance
-    "create-skill",
-    "skill-bundler",
-    "skill-discovery",
-    "skill-logic-audit",
-    "skill-maintenance",
-    "skill-router",
-    // Curator methodologies
-    "metacognition",
-    "pragmatic-cybernetics",
-    "pragmatic-semantics",
-    "superforecasting",
-    // Universal quality gates
-    "code-review",
-    "essentialist",
-    "refactor-architecture",
-    // Essentialist delegates
-    "deep-module",
-    "coding-guidelines",
-    // skill-router integration
-    "task-breakdown",
-    // MCP server / panel invocations
-    "swarm-compose-guide",
-    "swarm-intelligence",
-    "swarm-steering",
-    "kanban-task-management",
-    // code-review optional delegates (Q16: editable delegate = backdoor)
-    "kali-audit",
-    "bug-hunt",
-];
-
-/// Returns `true` if the given skill name is a core skill.
-pub fn is_core_skill(name: &str) -> bool {
-    CORE_SKILL_NAMES.contains(&name)
-}
-
 /// Look up the compiled-in process manifest (FlowDef cascade) for a skill.
 ///
 /// Process manifests are authored at `registry/manifests/<skill>.yaml` and

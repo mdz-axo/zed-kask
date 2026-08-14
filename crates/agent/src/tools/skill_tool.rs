@@ -611,17 +611,49 @@ impl AgentTool for SkillTool {
 /// Gather short-term (thread) and long-term (memory) context for a skill
 /// cascade invocation.
 ///
-/// Snapshots the last N turns from the invoking thread (via
-/// `Thread::recent_turn_messages`) and calls the `CascadeContextProvider`
-/// (if wired) to recall salient long-term memory from the participant
-/// stores.
-///
-/// Returns `(prior_messages, memory_snippets)` as `ChatMessage` and
-/// `MemorySnippet` vectors, ready to pass to `execute_skill`. Both are empty
-/// when the provider is not wired or the thread is not available — the
-/// cascade runs isolated (the pre-fix behavior).
+/// Thin wrapper around `gather_cascade_context_from_thread` that extracts
+/// the thread handle from the `ToolCallEventStream`. Used by the
+/// model-invoked `skill` tool path.
 async fn gather_cascade_context(
     event_stream: &ToolCallEventStream,
+    task: &str,
+    swarm_id: Option<String>,
+    cx: &mut gpui::AsyncApp,
+) -> (
+    Vec<crate::CascadeChatMessage>,
+    Vec<crate::MemorySnippetRecord>,
+) {
+    match event_stream.thread() {
+        Some(thread_handle) => {
+            let thread_entity = cx.update(|_cx| thread_handle.upgrade());
+            match thread_entity {
+                Some(thread) => {
+                    gather_cascade_context_from_thread(&thread, task, swarm_id, cx).await
+                }
+                None => (Vec::new(), Vec::new()),
+            }
+        }
+        None => (Vec::new(), Vec::new()),
+    }
+}
+
+/// Gather short-term (thread) and long-term (memory) context for a skill
+/// cascade invocation, given a thread entity directly.
+///
+/// This is the shared implementation used by both the model-invoked
+/// `skill` tool path (via `gather_cascade_context` → `ToolCallEventStream`)
+/// and the slash-command path (via `send_skill_invocation` → `Entity<Thread>`).
+///
+/// Snapshots the last N turns from the thread (via
+/// `Thread::recent_turn_messages`), condenses each turn to the configured
+/// token cap, and calls the `CascadeContextProvider` (if wired) to recall
+/// salient long-term memory from the participant stores.
+///
+/// Returns `(prior_messages, memory_snippets)`. Both are empty when the
+/// provider is not wired or the thread is not available — the cascade runs
+/// isolated (the pre-fix behavior).
+pub(crate) async fn gather_cascade_context_from_thread(
+    thread: &gpui::Entity<crate::Thread>,
     task: &str,
     swarm_id: Option<String>,
     cx: &mut gpui::AsyncApp,
@@ -632,32 +664,26 @@ async fn gather_cascade_context(
     use language_model::{MessageContent, Role};
 
     // Snapshot the thread's recent turns.
-    let (thread_messages, agent_id, thread_id) = match event_stream.thread() {
-        Some(thread_handle) => {
-            // Read the short-term turns setting from the settings store.
-            let short_term_turns = cx.update(|cx| {
-                use gpui::ReadGlobal;
-                use settings::SettingsStore;
-                SettingsStore::global(cx)
-                    .get_content_for_file(settings::SettingsFile::User)
-                    .and_then(|c| c.kask.clone())
-                    .and_then(|c| c.memory)
-                    .and_then(|m| m.cascade_short_term_turns)
-                    .unwrap_or(6) as usize
-            });
-            cx.update(|cx| {
-                thread_handle.upgrade().map(|thread_entity| {
-                    let thread = thread_entity.read(cx);
-                    (
-                        thread.recent_turn_messages(short_term_turns),
-                        thread.agent_id().map(|id| id.to_string()),
-                        thread.id().to_string(),
-                    )
-                })
-            })
-            .unwrap_or((Vec::new(), None, String::new()))
-        }
-        None => (Vec::new(), None, String::new()),
+    let (thread_messages, agent_id, thread_id) = {
+        // Read the short-term turns setting from the settings store.
+        let short_term_turns = cx.update(|cx| {
+            use gpui::ReadGlobal;
+            use settings::SettingsStore;
+            SettingsStore::global(cx)
+                .get_content_for_file(settings::SettingsFile::User)
+                .and_then(|c| c.kask.clone())
+                .and_then(|c| c.memory)
+                .and_then(|m| m.cascade_short_term_turns)
+                .unwrap_or(6) as usize
+        });
+        cx.update(|cx| {
+            let thread = thread.read(cx);
+            (
+                thread.recent_turn_messages(short_term_turns),
+                thread.agent_id().map(|id| id.to_string()),
+                thread.id().to_string(),
+            )
+        })
     };
 
     // Convert LanguageModelRequestMessage → CascadeChatMessage (text-only).
@@ -813,14 +839,23 @@ fn condense_turn_text(
 
     // Truncate at the char boundary closest to max_tokens * 4, then find
     // the last whitespace to avoid cutting mid-word.
-    let char_cap = max_tokens * 4;
-    if char_cap >= condensed.len() {
+    // Use `char_indices` to find a safe UTF-8 boundary at or before the
+    // byte cap — slicing at an arbitrary byte index panics if it falls
+    // inside a multi-byte character.
+    let byte_cap = max_tokens * 4;
+    if byte_cap >= condensed.len() {
         return condensed;
     }
-    let truncated = &condensed[..char_cap];
+    let safe_boundary = condensed
+        .char_indices()
+        .take_while(|(byte_idx, _)| *byte_idx <= byte_cap)
+        .last()
+        .map(|(byte_idx, _)| byte_idx)
+        .unwrap_or(0);
+    let truncated = &condensed[..safe_boundary];
     let last_space = truncated
         .rfind(|c: char| c.is_whitespace())
-        .unwrap_or(char_cap);
+        .unwrap_or(safe_boundary);
     format!("{}…[truncated]", &condensed[..last_space])
 }
 

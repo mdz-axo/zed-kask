@@ -1006,9 +1006,11 @@ impl RealMemoryPort {
     /// polling doesn't drive the re-open path.
     pub fn memory_health_json(&self) -> serde_json::Value {
         let curator_up = self.curator_store.availability();
+        let swarm_up = self.swarm_store.availability();
         serde_json::json!({
             "curator_store": curator_up,
-            "degraded": !curator_up,
+            "swarm_store": swarm_up,
+            "degraded": !curator_up || !swarm_up,
         })
     }
 
@@ -2458,18 +2460,60 @@ mod tests {
 
         let healthy = port.memory_health_json();
         assert_eq!(healthy["curator_store"], true);
-        assert_eq!(healthy["degraded"], false);
+        // The swarm store is `None` in the test port (for_tests(None)), so
+        // `degraded` is true even when the curator store is healthy — the
+        // swarm store is simply not configured in tests.
+        assert_eq!(healthy["swarm_store"], false);
+        assert_eq!(healthy["degraded"], true);
 
-        // Simulate an outage. Healing is disabled in test handles, so if the
-        // probe attempted a heal it would fail — the point is it must not
-        // attempt one at all.
+        // Simulate a curator outage. Healing is disabled in test handles, so
+        // if the probe attempted a heal it would fail — the point is it must
+        // not attempt one at all.
         port.curator_store.set_for_tests(None);
         let degraded = port.memory_health_json();
         assert_eq!(degraded["curator_store"], false);
+        assert_eq!(degraded["swarm_store"], false);
         assert_eq!(degraded["degraded"], true);
 
         // Store still down after the probe — the probe didn't heal.
         assert!(port.curator_store.get().is_none());
+    }
+
+    /// `memory_health_json` must reflect the swarm store's availability, not
+    /// just the curator store's. The down-state is covered by
+    /// `memory_health_json_reports_degraded_without_healing` (the test port
+    /// builds `SwarmStore::for_tests(None)`); this test pins the up-state by
+    /// installing a real in-memory `MemoryStore` via `set_for_tests` and
+    /// asserting `swarm_store` flips to true and `degraded` follows the
+    /// curator store (which is healthy here).
+    #[tokio::test]
+    async fn memory_health_json_reflects_swarm_store_availability() {
+        let port = in_memory_port();
+
+        // Baseline: curator up, swarm down (the test port's default).
+        let baseline = port.memory_health_json();
+        assert_eq!(baseline["curator_store"], true);
+        assert_eq!(baseline["swarm_store"], false);
+        assert_eq!(baseline["degraded"], true);
+
+        // Install a real in-memory swarm store — `availability()` must flip.
+        let swarm_driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
+        let swarm_store = Arc::new(MemoryStore::new(
+            HMemStore::from_driver(Arc::clone(&swarm_driver)).expect("swarm hmem init"),
+            EmbeddingStore::from_driver(swarm_driver, 1024).expect("swarm embedding init"),
+        ));
+        port.swarm_store.set_for_tests(Some(swarm_store));
+
+        let healthy = port.memory_health_json();
+        assert_eq!(healthy["curator_store"], true);
+        assert_eq!(healthy["swarm_store"], true);
+        assert_eq!(healthy["degraded"], false);
+
+        // Take the swarm store back down — `degraded` returns.
+        port.swarm_store.set_for_tests(None);
+        let degraded = port.memory_health_json();
+        assert_eq!(degraded["swarm_store"], false);
+        assert_eq!(degraded["degraded"], true);
     }
 
     /// Self-healing pin: when the curator store is down, `get()` returns
