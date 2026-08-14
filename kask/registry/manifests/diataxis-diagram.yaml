@@ -216,8 +216,8 @@ steps:
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
-      file_content: "{{ step_7_result.file_content }}"
-      file_path: "{{ step_7_result.file_path }}"
+      file_content: "{{ step_6_result.file_content }}"
+      file_path: "{{ step_6_result.file_path }}"
 
   - ordinal: 8
     action: loop

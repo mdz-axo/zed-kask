@@ -42,3 +42,19 @@ templates:
       Fallback goal verification with minimal evaluation. Produces a
       continue verdict and default confidence for lightweight judgment.
 
+  - id: goal-analysis/goal-activate
+    name: "Activate a goal for tracking"
+    path: goal-activate.j2
+    type: KnowAct
+    description: >
+      Activate a goal for tracking. Registers the goal with the goal
+      management system and returns an activation confirmation.
+
+  - id: goal-analysis/goal-resolve
+    name: "Resolve a goal as completed or blocked"
+    path: goal-resolve.j2
+    type: KnowAct
+    description: >
+      Resolve a goal as completed or blocked. Produces a final
+      resolution record with the verdict, confidence, and reason.
+

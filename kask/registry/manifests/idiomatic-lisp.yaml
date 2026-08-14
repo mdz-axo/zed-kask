@@ -29,7 +29,6 @@ manifest:
 
 convergence:
   convergence_mode: "cauchy"
-  target_artifacts_field: "step_3_result"
   cauchy_epsilon: 0.03
   cauchy_window: 3
   max_iterations: 10

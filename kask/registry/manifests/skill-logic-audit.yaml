@@ -65,7 +65,7 @@ steps:
     renderer: minijinja
     template_ref: skill-logic-audit/logic-load-goal
     gas_cap: 2048
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       target_path: "{{ target_path }}"
       target_content: "{{ target_content }}"
@@ -124,7 +124,7 @@ steps:
     renderer: minijinja
     template_ref: skill-logic-audit/logic-user-choice
     gas_cap: 2048
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       target_path: "{{ target_path }}"
       goal: "{{ step_1_result.goal }}"

@@ -167,7 +167,7 @@ steps:
     input_mapping:
       challenge: "{{ challenge }}"
       current_metrics: "{{ current_metrics | default({}) }}"
-      direction: "{{ step_7_result }}"
+      direction: "{{ step_6_result }}"
 
   - ordinal: 8
     action: select
@@ -179,7 +179,7 @@ steps:
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
-      current_condition: "{{ step_8_result }}"
+      current_condition: "{{ step_7_result }}"
 
   - ordinal: 9
     action: select
@@ -191,8 +191,8 @@ steps:
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
-      current_condition: "{{ step_8_result }}"
-      target_condition: "{{ step_9_result }}"
+      current_condition: "{{ step_7_result }}"
+      target_condition: "{{ step_8_result }}"
 
   - ordinal: 10
     action: compute

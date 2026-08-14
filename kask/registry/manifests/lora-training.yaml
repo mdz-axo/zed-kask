@@ -335,7 +335,6 @@ steps:
         convergence_metric: "{{ step_4_result }}"
         blockers: "{{ step_3_result.contract_gaps | default([]) }}"
         gate_results_summary: "{{ step_3_result.gate_results_summary | default({}) }}"
-        converged: "{{ step_5_result.converged | default(false) }}"
 
 error_handling:
   on_gas_exceeded: abort

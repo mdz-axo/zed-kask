@@ -244,7 +244,7 @@ steps:
       prior_iteration:
         lessons_learned: "{{ step_5_result.lessons_learned | default([]) }}"
         pattern_signatures: "{{ step_5_result.pattern_signatures | default([]) }}"
-        next_prior_focus: "{{ step_7_result.next_prior_focus | default('') }}"
+        next_prior_focus: "{{ step_5_result.next_prior_focus | default('') }}"
       convergence_signal: "{{ step_6_result }}"
 
 error_handling:

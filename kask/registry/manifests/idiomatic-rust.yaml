@@ -43,7 +43,6 @@ convergence:
   max_iterations: 10
   min_iterations: 2
   on_not_reached: escalate
-  target_artifacts_field: "step_3_result"
 
 gas:
   cap: 120000

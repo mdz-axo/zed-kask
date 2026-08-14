@@ -172,8 +172,8 @@ steps:
       current_manifest: "{{ step_3_result.candidates[0].composite_manifest }}"
       changed_skills: "{{ step_2_result.bundle_manifest.skills }}"
       goal_context: "{{ step_1_result }}"
-      goal_delta: "{{ step_6_result.goal_delta | default(1.0) }}"
-      convergence_failure_reason: "{{ step_6_result.rationale }}"
+      goal_delta: "{{ prev_step_6_result.goal_delta | default(1.0) }}"
+      convergence_failure_reason: "{{ prev_step_6_result.rationale | default('') }}"
 
   - ordinal: 7
     action: loop
