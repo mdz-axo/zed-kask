@@ -60,6 +60,13 @@ pub struct BundleManifestStep {
     pub renderer: Option<String>,
     pub template_ref: Option<String>,
     pub mcp: Option<String>,
+    /// Optional string identifier for the step. Used by pipeline manifests
+    /// that reference steps by name (e.g. `resume_from: "extract_text"`).
+    /// Skill manifests use `ordinal` exclusively; `id` is `None` for them.
+    /// When present, it supplements `ordinal` as a human-readable alias —
+    /// the executor still indexes by `StepId` (vector position).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// Canonical computation function to invoke for `action: compute` steps.
     /// Names a `hkask_forecast::*` primitive (e.g. "calibrate_from_fermi",
     /// "outside_view_adjustment", "bayesian_update", "apply_calibration_adjustment",
@@ -117,6 +124,35 @@ pub struct BundleManifestStep {
     /// Example: `profile: ask` (the built-in `ask` profile omits `terminal`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    /// Shell command for `action: gate` steps. The executor runs this via
+    /// `std::process::Command::new("sh").arg("-c").arg(command)`, captures
+    /// stdout/stderr, and checks the last non-empty line for `GATE_PASS` or
+    /// `GATE_FAIL`. A non-zero exit code is also a failure. The full stdout
+    /// is stored as the step result for downstream inspection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// Per-step failure handling. When present and the step fails (gate
+    /// failure, tool error, or timeout exhaustion), the executor applies
+    /// this instead of the manifest-level `error_handling` policy.
+    /// `action: halt` produces `Effect::Exit(ExitKind::Escalated)` with the
+    /// `resume` text; `action: escalate` is an alias.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_failure: Option<OnFailureConfig>,
+}
+
+/// Per-step failure handling configuration for pipeline manifests.
+/// Allows each step to declare its own failure behavior instead of relying
+/// solely on the manifest-level `error_handling` policy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OnFailureConfig {
+    /// What to do when the step fails: `halt` (stop the cascade, escalate)
+    /// or `escalate` (alias for `halt`).
+    pub action: String,
+    /// Human-readable instruction for how to resume from this failure.
+    /// Stored in the step result and surfaced to the operator.
+    #[serde(default)]
+    pub resume: String,
 }
 
 impl BundleManifestStep {

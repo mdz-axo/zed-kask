@@ -830,6 +830,120 @@ fn render_step_template_with_raw(
             ))
         }
     }
+
+    /// **Gate** — run a shell command and check its output for `GATE_PASS` or
+    /// `GATE_FAIL`. Used by pipeline manifests to verify disk artifacts and
+    /// invariants between tool steps. The command runs via `sh -c`, stdout
+    /// and stderr are captured, and the last non-empty line is checked for
+    /// the pass/fail marker. A non-zero exit code is also a failure.
+    ///
+    /// On pass: the full stdout is stored as the step result (for downstream
+    /// inspection and display) and execution falls through to the next step.
+    /// On fail: if the step has `on_failure`, the executor produces
+    /// `Effect::Exit(ExitKind::Escalated)` with the `resume` text and the
+    /// gate output. If no `on_failure` is declared, the error propagates as
+    /// a `TemplateError::Manifest`.
+    pub(crate) async fn execute_gate(
+        &mut self,
+        node: &crate::step_graph::StepNode,
+        _infra: &Infra,
+    ) -> Result<Effect> {
+        let command = node.command.as_deref().ok_or_else(|| {
+            TemplateError::Manifest(format!(
+                "Gate step {} has no `command` field",
+                node.ordinal
+            ))
+        })?;
+
+        let timeout_dur = effective_timeout(node.timeout_seconds);
+        let output = match tokio::time::timeout(
+            timeout_dur,
+            tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg(command)
+                .output(),
+        )
+        .await
+        {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => {
+                return Err(TemplateError::Manifest(format!(
+                    "Gate step {} failed to execute command: {e}",
+                    node.ordinal
+                )));
+            }
+            Err(_elapsed) => {
+                return Err(TemplateError::Timeout {
+                    step_ordinal: node.ordinal,
+                    elapsed_seconds: timeout_dur.as_secs(),
+                });
+            }
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = if stderr.is_empty() {
+            stdout.to_string()
+        } else {
+            format!("{stdout}\n--- stderr ---\n{stderr}")
+        };
+
+        // Check the last non-empty line for GATE_PASS or GATE_FAIL.
+        let last_line = combined
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("");
+
+        let passed = output.status.success() && last_line.contains("GATE_PASS");
+        let failed = !output.status.success() || last_line.contains("GATE_FAIL");
+
+        if passed && !failed {
+            tracing::info!(
+                target: "reg.skill.cascade.gate_passed",
+                step = node.ordinal,
+                "REG"
+            );
+            return Ok(Effect::Stored {
+                step_id: node.id,
+                value: serde_json::json!({
+                    "status": "passed",
+                    "output": combined,
+                }),
+            });
+        }
+
+        // Gate failed.
+        tracing::warn!(
+            target: "reg.skill.cascade.gate_failed",
+            step = node.ordinal,
+            exit_code = output.status.code(),
+            "REG"
+        );
+
+        let resume_text = node
+            .on_failure
+            .as_ref()
+            .map(|of| of.resume.as_str())
+            .unwrap_or("");
+
+        if let Some(ref on_failure) = node.on_failure {
+            match on_failure.action.as_str() {
+                "halt" | "escalate" => {
+                    return Ok(Effect::Exit(ExitKind::Escalated));
+                }
+                _ => {}
+            }
+        }
+
+        Err(TemplateError::Manifest(format!(
+            "Gate step {} failed. Exit code: {:?}.\n{}\nResume: {}",
+            node.ordinal,
+            output.status.code(),
+            combined,
+            resume_text,
+        )))
+    }
 }
 
 /// Convert a step's `timeout_seconds` into a `Duration`, treating 0 as

@@ -1,5 +1,4 @@
 use hkask_templates::{extract_contract_input_keys, load_manifest_from_yaml};
-use hkask_templates::bundle::manifest::BundleManifestStep;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -407,4 +406,3 @@ static STEP_RESULT_RE: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| {
         regex::Regex::new(r"step_(\d+)_result").unwrap()
     });
-}

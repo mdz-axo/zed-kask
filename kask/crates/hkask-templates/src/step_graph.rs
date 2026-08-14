@@ -95,6 +95,13 @@ pub struct StepNode {
     pub timeout_seconds: u32,
     pub phase: Arc<str>,
     pub on_complete: ControlFlow,
+    /// Optional string identifier (from `id:` field). `None` for skill
+    /// manifests that use `ordinal` only.
+    pub step_id_name: Option<Arc<str>>,
+    /// Shell command for `action: gate` steps.
+    pub command: Option<Arc<str>>,
+    /// Per-step failure handling.
+    pub on_failure: Option<Arc<crate::bundle::manifest::OnFailureConfig>>,
 }
 
 /// A validated, addressable step graph. Built once from a `BundleManifest`;
@@ -169,6 +176,9 @@ impl StepGraph {
                 timeout_seconds: step.timeout_seconds,
                 phase: Arc::from(step.phase_str()),
                 on_complete,
+                step_id_name: step.id.clone().map(Arc::from),
+                command: step.command.clone().map(Arc::from),
+                on_failure: step.on_failure.clone().map(Arc::new),
             });
         }
 

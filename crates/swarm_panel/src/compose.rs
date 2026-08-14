@@ -6,7 +6,10 @@
 
 use editor::Editor;
 use gpui::{Context, Entity, SharedString, Window};
-use ui::{Tooltip, prelude::*};
+use ui::{
+    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple,
+    Tooltip, prelude::*,
+};
 
 use crate::SwarmPanel;
 

@@ -204,15 +204,15 @@ steps:
       fields (obstacle, next_experiment, prediction, measurement_method,
       success_criterion, learning_commitment, when_to_check): 7 minus the
       number present. Lower = more converged (zero missing = well-defined
-      experiment). If step_10_result is null or a core field is absent, the
+      experiment). If step_9_result is null or a core field is absent, the
       form counts it as missing (no silent default that masks a broken
       experiment step).
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
-      form: "(- 7 (+ (if (is_null (assoc \"obstacle\" step_10_result)) 0 1) (if (is_null (assoc \"next_experiment\" step_10_result)) 0 1) (if (is_null (assoc \"prediction\" step_10_result)) 0 1) (if (is_null (assoc \"measurement_method\" step_10_result)) 0 1) (if (is_null (assoc \"success_criterion\" step_10_result)) 0 1) (if (is_null (assoc \"learning_commitment\" step_10_result)) 0 1) (if (is_null (assoc \"when_to_check\" step_10_result)) 0 1)))"
+      form: "(- 7 (+ (if (is_null (assoc \"obstacle\" step_9_result)) 0 1) (if (is_null (assoc \"next_experiment\" step_9_result)) 0 1) (if (is_null (assoc \"prediction\" step_9_result)) 0 1) (if (is_null (assoc \"measurement_method\" step_9_result)) 0 1) (if (is_null (assoc \"success_criterion\" step_9_result)) 0 1) (if (is_null (assoc \"learning_commitment\" step_9_result)) 0 1) (if (is_null (assoc \"when_to_check\" step_9_result)) 0 1)))"
       env:
-        step_10_result: "{{ step_10_result }}"
+        step_9_result: "{{ step_9_result }}"
 
   - ordinal: 11
     action: loop

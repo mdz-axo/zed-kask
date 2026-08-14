@@ -16,7 +16,6 @@ pub(crate) fn render_swarm_page(
         .and_then(|c| c.swarm)
         .map(Into::into)
         .unwrap_or_default();
-    let mode = swarm.mode;
     let api_url = swarm.api_url;
     let max_credits = swarm.max_credits_per_dispatch.to_string();
     let curator_consent_default = swarm.curator_consent_default;
@@ -430,8 +429,6 @@ pub(crate) fn render_swarm_page(
                     .color(Color::Muted),
                 ),
         )
-        .child(Divider::horizontal())
-        .child(mode_toggle)
         .child(Divider::horizontal())
         .child(abw_api_key_field)
         .child(Divider::horizontal())

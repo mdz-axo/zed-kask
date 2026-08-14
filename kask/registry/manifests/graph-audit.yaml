@@ -372,12 +372,12 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((blockers (assoc "blockers" step_15_result)))
+        (let ((blockers (assoc "blockers" step_14_result)))
           (let ((n (if (is_null blockers) 0 (length blockers))))
             (let ((raw (/ n 5)))
               (if (> raw 1.0) 1.0 raw))))
       env:
-        step_15_result: "{{ step_15_result }}"
+        step_14_result: "{{ step_14_result }}"
 
   # Dual mode: lisp.eval computes a structural score from the dual
   # semantic-report's blockers array length.

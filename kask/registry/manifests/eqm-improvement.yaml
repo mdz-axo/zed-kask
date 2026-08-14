@@ -380,7 +380,7 @@ steps:
                                               (let ((s (car ss)))
                                                 (if (string= (assoc "id" s) pred-marker)
                                                     (assoc "score" s)
-                                                    (find-score (cdr ss))))))))
+                                                    (find-score (cdr ss)))))))))
                                   (let ((actual-score (find-score rescore)))
                                     (if (< actual-score 0)
                                         1.0

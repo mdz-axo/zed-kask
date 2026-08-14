@@ -36,6 +36,7 @@ test-utils = []
 proptest = { workspace = true }
 walkdir.workspace = true
 hkask-test-harness = { workspace = true }
+regex = { workspace = true }
 
 [[test]]
 name = "manifest_fuzz"

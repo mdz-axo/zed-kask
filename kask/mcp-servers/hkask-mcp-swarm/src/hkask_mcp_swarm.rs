@@ -162,6 +162,7 @@ pub mod test_utils {
     pub use crate::config::{SwarmConfig, SwarmMode, resolve_local_agents_dir};
     pub use crate::consent::{ConsentStore, fnv1a, mint_token};
     pub use crate::error::SwarmError;
+    pub use crate::local_registry::LocalAgentDependencies;
     pub use crate::request_types::{
         CapabilityGate, CreateAgentRequest, McpServerAuthSpec, McpServerSpec, ModelLadderRung,
         ValenceInput,
@@ -172,18 +173,22 @@ pub mod test_utils {
 // ── Public local-swarm surface (reused by other kask MCP servers) ──────────
 //
 // Only the symbols `hkask-mcp-kata-kanban` actually imports are re-exported.
-// The ABW client, consent store, spend gate, non-lazy runtime, local swarm
-// registry, error type, and the `Dependencies`/`Valence` card sub-structs stay
-// crate-private — they have no external consumer (verified by grep across
-// `kask/` and `crates/` outside this crate's `src/` and `tests/`).
+// `LocalSwarmRuntime` is re-exported because `LazyLocalSwarmRuntime::get_or_init`
+// returns `&LocalSwarmRuntime` and kata-kanban calls `.delegate()` on it. The
+// ABW client, consent store, spend gate, local swarm registry, error type, and
+// the `Dependencies`/`Valence` card sub-structs stay crate-private — they have
+// no external consumer (verified by grep across `kask/` and `crates/` outside
+// this crate's `src/` and `tests/`).
 pub use crate::local_registry::{LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry};
 pub use crate::local_runtime::{
-    LazyLocalSwarmRuntime, LocalDelegateResult, TaskSuccessProvenance, TaskSuccessVerdict,
+    LazyLocalSwarmRuntime, LocalDelegateResult, LocalSwarmRuntime, TaskSuccessProvenance,
+    TaskSuccessVerdict,
 };
 
 use crate::abw_client::SwarmClient;
 use crate::config::SwarmConfig;
 use crate::consent::ConsentStore;
+use crate::local_swarms::LocalSwarmRegistry;
 
 // ── Server struct ──────────────────────────────────────────────────────────
 

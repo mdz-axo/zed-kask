@@ -56,7 +56,7 @@ use anyhow::Result;
 use editor::Editor;
 use fs::Fs;
 use gpui::{
-    App, Context, Entity, EventEmitter, Focusable, ReadGlobal as _, Render, Task,
+    App, Context, Entity, EventEmitter, Focusable, Render, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, uniform_list,
 };
 use hkask_types::tool_response::parse_tool_response;
@@ -2810,38 +2810,25 @@ mod tests {
         );
     }
 
-    // Pins the tool name strings the panel calls against the server's
-    // canonical `hkask_mcp_swarm::TOOL_NAMES` const. The Steer-mode
-    // prompt-token test (`steer_prompt_mentions_only_known_tools`) then catches
-    // any `swarm_*` name the prompt still mentions that isn't in the const, so
-    // a rename surfaces here rather than degrading to "tool not found" at
+    // Pins the tool name strings the panel calls. The single source of truth
+    // is `hkask_mcp_swarm::TOOL_NAMES`, re-exported as `parse::SWARM_TOOLS`.
+    // The server's own `tool_surface_is_exactly_53_registered_tools` test pins
+    // the count against the live `combined_router()` surface, and the Steer-mode
+    // prompt-token test (`steer_prompt_mentions_only_known_tools`) catches any
+    // `swarm_*` name the prompt mentions that isn't in the const — so a rename
+    // surfaces at the server test rather than degrading to "tool not found" at
     // runtime.
     #[test]
     fn panel_tool_names_match_server() {
-        // The server's `TOOL_NAMES` const is the single source of truth.
-        // The panel's `parse::SWARM_TOOLS` is a verified copy — this test
-        // catches any drift between the two so a rename in the server surfaces
-        // here rather than degrading to "tool not found" at runtime.
         assert_eq!(SWARM_SERVER, "swarm");
 
-        // The panel's list must match the server's canonical list exactly.
+        // `SWARM_TOOLS` is a re-export of `hkask_mcp_swarm::TOOL_NAMES`, so
+        // they are the same slice — no drift is possible. The server's own
+        // test pins the count against the live router surface.
         assert_eq!(
-            parse::SWARM_TOOLS.len(),
-            hkask_mcp_swarm::TOOL_NAMES.len(),
-            "SWARM_TOOLS count ({}) diverged from the server's TOOL_NAMES ({}) \
-             — update SWARM_TOOLS to match hkask_mcp_swarm::TOOL_NAMES",
-            parse::SWARM_TOOLS.len(),
-            hkask_mcp_swarm::TOOL_NAMES.len(),
-        );
-
-        let server: std::collections::HashSet<&str> =
-            hkask_mcp_swarm::TOOL_NAMES.iter().copied().collect();
-        let panel: std::collections::HashSet<&str> =
-            parse::SWARM_TOOLS.iter().copied().collect();
-        assert_eq!(
-            server, panel,
-            "SWARM_TOOLS diverged from the server's TOOL_NAMES — a rename or \
-             add/remove in hkask-mcp-swarm must be reflected in parse::SWARM_TOOLS"
+            parse::SWARM_TOOLS.as_ptr() as usize,
+            hkask_mcp_swarm::TOOL_NAMES.as_ptr() as usize,
+            "SWARM_TOOLS must be a re-export of TOOL_NAMES, not a copy"
         );
 
         for tool in parse::SWARM_TOOLS {
@@ -2851,8 +2838,9 @@ mod tests {
             );
         }
 
-        // No duplicates — a copy-paste error would silently mask a missing
-        // tool by doubling another.
+        // No duplicates — the server const is hand-maintained, so a
+        // copy-paste error could silently mask a missing tool by doubling
+        // another.
         let mut sorted = parse::SWARM_TOOLS.to_vec();
         sorted.sort();
         let before = sorted.len();
@@ -2860,7 +2848,7 @@ mod tests {
         assert_eq!(
             sorted.len(),
             before,
-            "duplicate tool names in SWARM_TOOLS list"
+            "duplicate tool names in TOOL_NAMES list"
         );
     }
 

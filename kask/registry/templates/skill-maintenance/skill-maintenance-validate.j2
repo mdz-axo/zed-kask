@@ -168,11 +168,11 @@ Respond with a JSON object:
 
 - Every check must be evaluated for every targeted skill — no omissions.
 - Registry checks (R1–R12) are mandatory. Companion checks (Z1–Z8) are secondary.
-- Executor compliance checks (E1–E11) are mandatory for process manifests.
+- Executor compliance checks (E1–E14) are mandatory for process manifests.
 - Fail results must include specific evidence.
 - Fix suggestions must be actionable.
 - Registry check failures (R1–R5) are always `critical`.
-- Executor compliance failures (E1, E2, E4, E5, E6, E7, E9) are always `critical`.
+- Executor compliance failures (E1, E2, E4, E5, E6, E7, E9, E11, E12) are always `critical`.
 - Safety check failures (Z5, Z6, Z7) are always `high`.
 - Missing SKILL.md (Z1 absent) is `info` — not a failure.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).

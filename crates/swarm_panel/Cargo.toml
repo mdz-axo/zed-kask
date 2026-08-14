@@ -31,6 +31,7 @@ fs.workspace = true
 gpui.workspace = true
 hkask-types.workspace = true
 hkask_tool_invoker.workspace = true
+hkask-mcp-swarm.workspace = true
 kask_bridge.workspace = true
 
 log.workspace = true
@@ -55,12 +56,6 @@ chrono.workspace = true
 # `remote/test-support` into the graph and break other crates' cfg-gated
 # matches.
 remote_connection.workspace = true
-# Test-only dep so `panel_tool_names_match_server` can verify `SWARM_TOOLS`
-# against the server's canonical `hkask_mcp_swarm::TOOL_NAMES` const. Already
-# in the build graph transitively via `kask_bridge` → `hkask-mcp-swarm`, so this
-# adds no new build cost. Not `use`d in non-test source — the runtime tool-name
-# list stays as the local `parse::SWARM_TOOLS` const.
-hkask-mcp-swarm.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["remote_connection"]

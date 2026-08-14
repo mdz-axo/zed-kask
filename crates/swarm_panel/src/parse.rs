@@ -166,83 +166,14 @@ pub(crate) struct LocalSwarmInfo {
 }
 
 /// The canonical list of tool names exposed by the `swarm` MCP server —
-/// The tool names the panel calls on the `swarm` MCP server. This is a
-/// verified copy of the server's canonical `hkask_mcp_swarm::TOOL_NAMES`
-/// const — `panel_tool_names_match_server` asserts the two match exactly, so a
-/// rename/add/remove in the server surfaces in that test rather than degrading
-/// to "tool not found" at runtime. The Steer-mode system prompt's backticked
-/// `swarm_*` mentions are `debug_assert!`ed against this list in
-/// `steer_system_prompt`, and asserted in `steer_prompt_mentions_only_known_tools`.
-/// When updating: run `panel_tool_names_match_server` to confirm the copy is
-/// in sync, then update any Steer prompt mentions caught by the prompt test.
-pub(crate) const SWARM_TOOLS: &[&str] = &[
-    // ABW (cloud) tools.
-    "swarm_list_agents",
-    "swarm_get_swarm",
-    "swarm_get_agent",
-    "swarm_list_apps",
-    "swarm_ontology_templates",
-    "swarm_execute_agent",
-    "swarm_hire_cost",
-    "swarm_request_consent",
-    "swarm_authorize_session",
-    "swarm_hire",
-    "swarm_delegate",
-    "swarm_delegate_and_wait",
-    "swarm_fanout",
-    "swarm_run_status",
-    "swarm_generate_prompt",
-    "swarm_generate_ontology",
-    "swarm_create_agent",
-    "swarm_create_swarm",
-    "swarm_xaman",
-    "swarm_create_app",
-    "swarm_search_knowledge",
-    "swarm_fork_agent",
-    "swarm_fire",
-    "swarm_delete_agent",
-    "swarm_delete_swarm",
-    "swarm_publish_checks",
-    "swarm_publish_agent",
-    // v2 §15 local tools (Slices 9 + 11).
-    "swarm_fund_local",
-    "swarm_balance_local",
-    "swarm_local_history",
-    "swarm_delegate_local",
-    "swarm_fanout_local",
-    "swarm_pipeline_local",
-    "swarm_list_local_agents",
-    "swarm_clone_to_local",
-    "swarm_remove_local",
-    "swarm_create_local_agent",
-    "swarm_reconfigure_local_agent",
-    "swarm_push_to_cloud",
-    "swarm_search_knowledge_local",
-    "swarm_generate_prompt_local",
-    "swarm_generate_ontology_local",
-    // Local swarms (the local replica of ABW workspaces).
-    "swarm_create_local_swarm",
-    "swarm_list_local_swarms",
-    "swarm_get_local_swarm",
-    "swarm_delete_local_swarm",
-    "swarm_add_agent_local",
-    "swarm_remove_agent_local",
-    // Agent2Agent protocol.
-    "swarm_a2a_send",
-    "swarm_a2a_card",
-    // AI Assist — model-backed form suggestions and validation (Author +
-    // Compose surfaces). Called from the panel's `ai_assist` method.
-    "swarm_ai_assist",
-    // Deterministic task-success evaluator — stamps a TaskSuccessVerdict
-    // with provenance: Deterministic onto a delegation result. The Curator
-    // calls this after swarm_delegate_local to close the C5/C6 fault-
-    // attribution loop.
-    "swarm_evaluate_local",
-    // Execute a swarm-intelligence plan: run delegations, evaluate results,
-    // return collected results with verdicts stamped. Closes the loop
-    // deterministically — works in chat, autonomous, or API contexts.
-    "swarm_execute_plan_local",
-];
+/// re-exported from `hkask_mcp_swarm::TOOL_NAMES`, the single source of truth.
+/// `panel_tool_names_match_server` asserts the panel's copy matches the
+/// server's live `combined_router()` surface, so a rename/add/remove in the
+/// server surfaces here rather than degrading to "tool not found" at runtime.
+/// The Steer-mode system prompt's backticked `swarm_*` mentions are
+/// `debug_assert!`ed against this list in `steer_system_prompt`, and asserted
+/// in `steer_prompt_mentions_only_known_tools`.
+pub(crate) use hkask_mcp_swarm::TOOL_NAMES as SWARM_TOOLS;
 
 /// The kanban MCP server's `#[tool]` fn names, mirrored from
 /// `hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs`. Keep in sync when
