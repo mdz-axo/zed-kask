@@ -39,9 +39,9 @@ use acp_thread::{
 use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
     AGENTS_DIR_NAME, ProjectSkillGroup, SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError,
-    SkillScopeId, SkillSource, SkillSummary, builtin_skills, global_skills_dir,
-    load_marketplace_skills, load_skills_from_directory, parse_skill_frontmatter,
-    project_skills_relative_path, seed_shipped_skills,
+    SkillScopeId, SkillSource, SkillSummary, global_skills_dir, load_marketplace_skills,
+    load_skills_from_directory, parse_skill_frontmatter, project_skills_relative_path,
+    seed_shipped_skills,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -4993,45 +4993,44 @@ mod internal_tests {
     }
 
     #[test]
-    fn test_apply_skill_overrides_global_wins_over_builtin() {
-        // A global skill with the same name as a built-in must shadow
-        // the built-in in the model-facing projection, regardless of
-        // iteration order.
-        let built_in = make_builtin_skill("create-skill", "Built-in version");
-        let global = make_global_skill("create-skill", "User override");
-
-        let resolved = apply_skill_overrides(&[built_in, global]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "User override");
-        assert!(matches!(resolved[0].source, SkillSource::Global));
-    }
-
-    #[test]
-    fn test_apply_skill_overrides_project_wins_over_builtin() {
-        let built_in = make_builtin_skill("create-skill", "Built-in version");
+    fn test_apply_skill_overrides_core_skill_unshadowable_by_project_local() {
+        // A core skill cannot be shadowed by a project-local skill of the
+        // same name — core skills are unshadowable to prevent a compromised
+        // project from bypassing consent/trust/quality controls.
+        let mut core = make_global_skill("create-skill", "Core version");
+        core.core = true;
         let project = make_project_skill("create-skill", "Project override", "my-project");
 
-        let resolved = apply_skill_overrides(&[built_in, project]);
+        let resolved = apply_skill_overrides(&[core, project]);
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "Project override");
-        assert!(matches!(
-            resolved[0].source,
-            SkillSource::ProjectLocal { .. }
-        ));
+        assert_eq!(resolved[0].description, "Core version");
+        assert!(resolved[0].core);
     }
 
     #[test]
-    fn test_apply_skill_overrides_project_wins_over_builtin_and_global() {
-        // All three sources present — the project-local must win and
-        // both lower-precedence entries must be dropped from the
-        // model-facing projection.
-        let built_in = make_builtin_skill("create-skill", "Built-in");
+    fn test_apply_skill_overrides_core_skill_unshadowable_by_user_global() {
+        // A core skill cannot be shadowed by a user (non-core) global skill
+        // of the same name.
+        let mut core = make_global_skill("create-skill", "Core version");
+        core.core = true;
+        let user_global = make_global_skill("create-skill", "User override");
+
+        let resolved = apply_skill_overrides(&[core, user_global]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Core version");
+        assert!(resolved[0].core);
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_project_wins_over_user_global() {
+        // Project-local still wins over user (non-core) global — the
+        // normal precedence order applies when no core skill is involved.
         let global = make_global_skill("create-skill", "Global");
         let project = make_project_skill("create-skill", "Project", "my-project");
 
-        let resolved = apply_skill_overrides(&[built_in, global, project]);
+        let resolved = apply_skill_overrides(&[global, project]);
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].description, "Project");

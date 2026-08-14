@@ -114,7 +114,6 @@ enum ExtensionFilter {
 // panel when the "Bundled skills" toggle is on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BundledSource {
-    BuiltIn,
     Shipped,
 }
 
@@ -413,19 +412,6 @@ impl KaskExtensionsPage {
                     shipped_packages.insert(
                         (*name).to_string(),
                         crate::publish::gather_shipped_skill_package(name, Some(content)),
-                    );
-                }
-                for skill in agent_skills::builtin_skills() {
-                    let md = agent_skills::builtin_skill_content(&skill.skill_file_path);
-                    entries.push(BundledSkillEntry {
-                        name: skill.name.clone().into(),
-                        description: skill.description.clone().into(),
-                        source: BundledSource::BuiltIn,
-                        modified: false,
-                    });
-                    shipped_packages.insert(
-                        skill.name.clone(),
-                        crate::publish::gather_shipped_skill_package(&skill.name, md),
                     );
                 }
                 entries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -917,7 +903,6 @@ impl KaskExtensionsPage {
     /// whose package hash differs from the shipped original.
     fn render_bundled_card(&self, entry: BundledSkillEntry) -> MarketplaceCard {
         let source_label: &'static str = match entry.source {
-            BundledSource::BuiltIn => "Built-in",
             BundledSource::Shipped => "Bundled",
         };
         let mut header = h_flex()

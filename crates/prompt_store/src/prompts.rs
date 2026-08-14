@@ -185,6 +185,7 @@ mod tests {
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             embedded_body: None,
+            core: false,
         };
         let summary = SkillSummary::from(&skill);
 

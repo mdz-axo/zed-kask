@@ -98,8 +98,7 @@ mod package_hash_tests {
 /// badges a bundled skill "Modified" when [`kask_skill_package_hash`] over
 /// these files differs from the on-disk copy ([`gather_disk_skill_package`]).
 ///
-/// `skill_md` is the shipped SKILL.md content (from `shipped_skill_seed` or
-/// `builtin_skill_content`); the registry files come from the
+/// `skill_md` is the shipped SKILL.md content (from `shipped_skill_seed`); the registry files come from the
 /// `hkask-templates` embedded seed. Canonical names (`SKILL.md`,
 /// `process.yaml`, `manifest.yaml`, `templates/<file>`) match
 /// [`gather_disk_skill_package`] so the two hashes are comparable. Missing

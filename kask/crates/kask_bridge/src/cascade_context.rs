@@ -52,6 +52,7 @@ impl BridgeCascadeContextProvider {
 /// literals to avoid a dependency on the `agent` crate (which would be
 /// circular: `agent` depends on `kask_bridge` for the manifest executor).
 /// The values are stable and pinned by tests in `agent.rs`.
+#[allow(dead_code)]
 const ZED_AGENT_ID: &str = "Zed Agent";
 const CURATOR_AGENT_ID: &str = "Curator";
 

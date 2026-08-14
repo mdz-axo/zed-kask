@@ -273,14 +273,6 @@ fn open_skill_file(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    // Built-in skills have synthetic paths with no on-disk file, so show their
-    // embedded content in a local buffer instead.
-    if let Some(content) = agent_skills::builtin_skill_content(&skill_file_path) {
-        let title = skill_content_buffer_title(&skill_file_path);
-        open_skill_content_buffer(workspace, title, content, window, cx);
-        return;
-    }
-
     workspace
         .open_abs_path(
             skill_file_path,

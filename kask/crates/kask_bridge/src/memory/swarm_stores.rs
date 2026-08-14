@@ -77,6 +77,7 @@ impl SwarmStore {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn availability(&self) -> bool {
         match self.store.read() {
             Ok(guard) => guard.is_some(),

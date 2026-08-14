@@ -144,10 +144,15 @@ fn render_skill_row(
         // shared, published, edited, or deleted.
         .when(is_core, |this| {
             this.child(
-                Icon::new(IconName::Shield)
-                    .size(IconSize::Small)
-                    .color(Color::Accent)
-                    .tooltip(Tooltip::text("Core skill — always on, not editable")),
+                IconButton::new(
+                    SharedString::from(format!("core-{}", skill.name)),
+                    IconName::BoltOutlined,
+                )
+                .tab_index(0_isize)
+                .shape(ui::IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Accent)
+                .tooltip(Tooltip::text("Core skill — always on, not editable")),
             )
         })
         // User skills: show share link + visibility toggle as before.
