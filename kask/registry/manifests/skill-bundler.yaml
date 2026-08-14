@@ -83,7 +83,7 @@ steps:
       skill_names: "{{ skill_names }}"
       existing_bundles: "{{ existing_bundles | default([]) }}"
       goal: "{{ step_1_result }}"
-      previous_manifest: "{{ step_7_result.evolved_manifest | default(none) }}"
+      previous_manifest: "{{ prev_step_7_result.evolved_manifest | default(none) }}"
 
   - ordinal: 3
     action: select

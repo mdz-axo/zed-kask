@@ -13,7 +13,7 @@ templates:
   - id: caveman/caveman-compress
     name: "Compress a draft response into caveman mode: drop articles, filler,…"
     path: caveman-compress.j2
-    type: WordAct
+    type: KnowAct
     description: >
       Compress a draft response into caveman mode: drop articles, filler,
       pleasantries, hedging. Preserve all technical substance. Insert

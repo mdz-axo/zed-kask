@@ -125,7 +125,7 @@ steps:
       # from the prior iteration — this closes the feedback loop (cybernetics
       # closure property). The `default([])` handles the first iteration where
       # step_2_result does not yet exist.
-      prior_defects: "{{ step_2_result | default([]) }}"
+      prior_defects: "{{ prev_step_2_result | default([]) }}"
 
   # ── Step 2: Lisp deterministic step — structural invariant check ──
   # This is the symbolic scaffolding. The Lisp form walks the hypothesis set

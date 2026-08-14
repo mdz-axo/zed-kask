@@ -9,6 +9,7 @@ contract:
     fail_count: number
     executor_compliance: object
     fix_suggestions: array
+    next_research_focus: string
 energy_cap: 4096
 visibility: Public
 ---
@@ -110,4 +111,4 @@ For any failures, produce actionable fix suggestions with:
 
 ## Output
 
-Produce a JSON object with: validation_results (per-check pass/fail with evidence), pass_count, fail_count, executor_compliance ({pass_count, fail_count}), fix_suggestions (array).
+Produce a JSON object with: validation_results (per-check pass/fail with evidence), pass_count, fail_count, executor_compliance ({pass_count, fail_count}), fix_suggestions (array), next_research_focus (one-sentence directive for the next iteration's research phase — e.g. 'find better ontological anchors for the convergence model' or '' if validation passed).

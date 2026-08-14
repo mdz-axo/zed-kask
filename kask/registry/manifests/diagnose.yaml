@@ -108,7 +108,9 @@ steps:
       domain: "bug diagnosis"
       context: "{{ code_context | default({}) }}"
       # Carry prior Lisp defects forward so the LLM repairs cumulatively.
-      prior_defects: "{{ step_4_result | default([]) }}"
+      # Use prev_step_4_result (previous iteration) — step_4_result is a forward
+      # reference that resolves to null on the first pass.
+      prior_defects: "{{ prev_step_4_result | default([]) }}"
 
   # ── Step 4: Lisp deterministic step — hypothesis structural invariant check ──
   # Same four-invariant check as falsifiability/lisp-scaffold-reasoning:

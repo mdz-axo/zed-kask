@@ -213,7 +213,7 @@ steps:
       loop_target: "{{ 1 }}"
       convergence_signal: "{{ step_5_result }}"
       prior_validation_failures:
-        next_research_focus: "{{ step_6_result.next_research_focus | default('') }}"
+        next_research_focus: "{{ step_4_result.next_research_focus | default('') }}"
         fix_suggestions: "{{ step_4_result.fix_suggestions | default([]) }}"
 
 error_handling:

@@ -35,11 +35,11 @@ fn pipeline_manifest_parses_with_general_executor() {
         "pipeline manifest must not be classified as a skill"
     );
 
-    // It must have 19 steps (9 tool calls + 10 gates).
+    // It must have 25 steps (13 tool calls + 12 gates).
     assert_eq!(
         manifest.steps.len(),
-        19,
-        "pipeline manifest must have 19 steps, got {}",
+        25,
+        "pipeline manifest must have 25 steps, got {}",
         manifest.steps.len()
     );
 
@@ -54,10 +54,10 @@ fn pipeline_manifest_parses_with_general_executor() {
         .iter()
         .filter(|s| s.action == "execute")
         .count();
-    assert_eq!(gate_count, 10, "expected 10 gate steps, got {gate_count}");
+    assert_eq!(gate_count, 12, "expected 12 gate steps, got {gate_count}");
     assert_eq!(
-        execute_count, 9,
-        "expected 9 execute steps, got {execute_count}"
+        execute_count, 13,
+        "expected 13 execute steps, got {execute_count}"
     );
 
     // Every gate step must have a command and on_failure.

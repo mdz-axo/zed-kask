@@ -259,7 +259,7 @@ steps:
       prior_iteration:
         capability_lessons: "{{ step_5_result.capability_lessons | default([]) }}"
         verdict_signatures: "{{ step_5_result.verdict_signatures | default([]) }}"
-        next_registry_focus: "{{ step_7_result.next_prior_focus | default('') }}"
+        next_registry_focus: "{{ step_5_result.next_registry_focus | default('') }}"
       convergence_signal: "{{ step_6_result }}"
 
 error_handling:

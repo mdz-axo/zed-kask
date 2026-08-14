@@ -97,7 +97,7 @@ steps:
       # Carry prior Lisp defects forward so the LLM repairs cumulatively across
       # loop iterations. step_3_result is the bare defect list from the Lisp
       # invariant check (not an object with a .defects field).
-      prior_defects: "{{ step_3_result | default([]) }}"
+      prior_defects: "{{ prev_step_3_result | default([]) }}"
 
   # ── Step 3: Lisp deterministic step — hypothesis structural invariant check ──
   # The LLM generates 3-7 hypotheses in step 2, but LLMs are unreliable at

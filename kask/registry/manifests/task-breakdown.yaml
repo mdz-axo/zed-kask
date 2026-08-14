@@ -197,7 +197,7 @@ steps:
       context_summary: "{{ step_1_result.context_summary | default('') }}"
       dependency_graph: "{{ step_1_result.dependency_graph | default([]) }}"
       risks: "{{ step_1_result.risks | default([]) }}"
-      refinement_directives: "{{ step_4_result.refinement_directives | default([]) }}"
+      refinement_directives: "{{ prev_step_4_result.refinement_directives | default([]) }}"
       parallelization_hint: "{{ parallelization_hint | default('') }}"
       skill_catalog: "{{ skill_catalog | default([]) }}"
 

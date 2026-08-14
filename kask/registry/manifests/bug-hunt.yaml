@@ -236,7 +236,7 @@ steps:
       prior_expedition:
         lessons_learned: "{{ step_5_result.lessons_learned | default([]) }}"
         pattern_signatures: "{{ step_5_result.pattern_signatures | default([]) }}"
-        next_charter_focus: "{{ step_7_result.next_charter_focus | default('') }}"
+        next_charter_focus: "{{ step_5_result.next_charter_focus | default('') }}"
       convergence_signal: "{{ step_6_result }}"
 
 error_handling:

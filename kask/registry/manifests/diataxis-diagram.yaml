@@ -129,7 +129,7 @@ steps:
       diagram_type: "{{ step_1_result.diagram_type }}"
       entities: "{{ step_2_result.entities | default([]) }}"
       relationships: "{{ step_2_result.relationships | default([]) }}"
-      refinement_directives: "{{ step_4_result.refinement_directives | default([]) }}"
+      refinement_directives: "{{ prev_step_4_result.refinement_directives | default([]) }}"
       extraction_notes: "{{ step_2_result.extraction_notes | default('') }}"
 
   - ordinal: 4

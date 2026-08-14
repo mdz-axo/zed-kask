@@ -84,7 +84,7 @@ steps:
       target_artifact: "{{ task | default(target_artifact) }}"
       # On iteration 1, step_5_result doesn't exist → default to [target_artifact].
       # On iteration 2+, sample from the frontier updated in the prior iteration.
-      frontier: "{{ step_5_result.frontier | default([]) }}"
+      frontier: "{{ prev_step_5_result.frontier | default([]) }}"
       seed_trajectories: "{{ seed_trajectories | default([]) }}"
 
   - ordinal: 2
@@ -115,7 +115,7 @@ steps:
       artifact_type: "{{ artifact_type }}"
       reflections: "{{ step_2_result }}"
       # Frontier from the prior iteration's step 5. On iteration 1, empty.
-      current_frontier: "{{ step_5_result.frontier | default([]) }}"
+      current_frontier: "{{ prev_step_5_result.frontier | default([]) }}"
       target_artifact: "{{ target_artifact }}"
 
   - ordinal: 4
@@ -145,7 +145,7 @@ steps:
     input_mapping:
       tested_variants: "{{ step_4_result }}"
       # Merge prior frontier with new tested variants. On iteration 1, empty.
-      current_frontier: "{{ step_5_result.frontier | default([]) }}"
+      current_frontier: "{{ prev_step_5_result.frontier | default([]) }}"
       objectives: "{{ objectives }}"
       frontier_size: "{{ frontier_size | default(8) }}"
 
