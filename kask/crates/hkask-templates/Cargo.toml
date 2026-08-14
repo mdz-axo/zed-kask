@@ -70,3 +70,18 @@ path = "tests/compute_properties.rs"
 name = "compute_gap_properties"
 path = "tests/compute_gap_properties.rs"
 required-features = ["test-utils"]
+
+[[test]]
+name = "condition_properties"
+path = "tests/condition_properties.rs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "input_mapping_properties"
+path = "tests/input_mapping_properties.rs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "step_graph_properties"
+path = "tests/step_graph_properties.rs"
+required-features = ["test-utils"]

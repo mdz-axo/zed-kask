@@ -17,7 +17,6 @@ manifest:
 
 convergence:
   convergence_mode: "cauchy"
-  target_artifacts_field: step_1_result.surviving_artifact
   cauchy_epsilon: 0.03
   cauchy_window: 3
   max_iterations: 10
@@ -61,13 +60,8 @@ steps:
       artifact: "{{ task | default(artifact) }}"
       code_context: "{{ code_context | default({}) }}"
       mode: "{{ mode | default('advisory') }}"
-      max_rounds: "{{ convergence.max_iterations | default(3) }}"
+      max_rounds: 10
       max_retries_per_gate: 3
-      # Cross-guard: total gate attempts ≤ max_rounds × gates (3 gates) × retries (3) = 27 max.
-      # Budget is enforced by gas cap (100000) and rjoule cap (2); no explicit cross-guard was present.
-      # Added: retry exhaustion on any gate triggers immediate escalation (see SKILL.md step 10).
-      budget_guard: "retry_exhaustion → escalate; zero_delta → abort"
-      scope: auto
 
   - ordinal: 2
     action: loop

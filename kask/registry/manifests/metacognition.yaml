@@ -182,7 +182,7 @@ steps:
   # - target_procedure: the complete procedure spec (what steps must be done)
   - ordinal: 2
     action: select
-    condition: "{{ target_artifacts | default('') | length == 0 }}"
+    condition: "{{ target_artifacts | default('') | length == 0 AND target_procedure | default('') | length == 0 }}"
     description: >
       ESTABLISH TARGET CONDITION: Declare the target metacognitive state —
       what "sufficient meta-knowledge and calibrated confidence" looks like

@@ -468,4 +468,26 @@ mod tests {
         let passages = chunk_structure(&structure, "doc", 1, 1000, ".!?");
         assert!(!passages.is_empty());
     }
+
+    #[test]
+    fn read_jsonl_stream_reads_file_line_by_line() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let path = cwd.join("hkask-stream-jsonl-test.jsonl");
+        std::fs::write(&path, "{\"n\":1}\n{\"n\":2}\n\n{\"n\":3}\n").expect("write fixture");
+        let path_str = path.to_str().expect("utf8 path");
+        let values: Vec<serde_json::Value> =
+            super::read_jsonl_stream(path_str, "test").expect("should read");
+        assert_eq!(values.len(), 3, "should parse 3 non-empty lines");
+        assert_eq!(values[0]["n"], 1);
+        assert_eq!(values[1]["n"], 2);
+        assert_eq!(values[2]["n"], 3);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_jsonl_stream_rejects_traversal_escape() {
+        let result: Result<Vec<serde_json::Value>, _> =
+            super::read_jsonl_stream("../../etc/passwd", "test");
+        assert!(result.is_err(), "traversal path must be rejected");
+    }
 }

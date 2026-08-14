@@ -465,7 +465,16 @@ impl InferencePort for LanguageModelInferencePort {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
-        let messages = vec![ChatMessage::user(prompt.to_string())];
+        // The rendered template is a system prompt (role definition, output
+        // format, constraints) — not a user message. Sending it as `system`
+        // gives it the semantic weight providers reserve for system-level
+        // directives (stronger instruction adherence, better tool-call
+        // compliance). The minimal user message triggers generation — some
+        // providers require at least one user message to produce output.
+        let messages = vec![
+            ChatMessage::system(prompt.to_string()),
+            ChatMessage::user("Execute the instructions above.".to_string()),
+        ];
         self.generate_with_messages(&messages, parameters, None, tools)
     }
 
@@ -478,7 +487,10 @@ impl InferencePort for LanguageModelInferencePort {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
-        let messages = vec![ChatMessage::user(prompt.to_string())];
+        let messages = vec![
+            ChatMessage::system(prompt.to_string()),
+            ChatMessage::user("Execute the instructions above.".to_string()),
+        ];
         self.generate_with_messages(&messages, parameters, model_override, tools)
     }
 
@@ -524,7 +536,10 @@ impl InferencePort for LanguageModelInferencePort {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
-        let messages = vec![ChatMessage::user(prompt.to_string())];
+        let messages = vec![
+            ChatMessage::system(prompt.to_string()),
+            ChatMessage::user("Execute the instructions above.".to_string()),
+        ];
         let request = self.build_request_with_images(&messages, images, parameters, None);
         let model_override = model_override.map(|s| s.to_string());
         let (tx_reply, rx_reply) = oneshot::channel();
@@ -565,7 +580,10 @@ impl InferencePort for LanguageModelInferencePort {
                 + '_,
         >,
     > {
-        let messages = vec![ChatMessage::user(prompt.to_string())];
+        let messages = vec![
+            ChatMessage::system(prompt.to_string()),
+            ChatMessage::user("Execute the instructions above.".to_string()),
+        ];
         let request = self.build_request(&messages, parameters, tools);
         let (tx_stream, rx_stream) =
             tokio::sync::mpsc::unbounded_channel::<Result<InferenceStreamChunk, InferenceError>>();
@@ -623,7 +641,10 @@ impl InferencePort for LanguageModelInferencePort {
         let Some(model_override) = model_override else {
             return self.generate_stream(prompt, parameters, tools);
         };
-        let messages = vec![ChatMessage::user(prompt.to_string())];
+        let messages = vec![
+            ChatMessage::system(prompt.to_string()),
+            ChatMessage::user("Execute the instructions above.".to_string()),
+        ];
         let request = self.build_request(&messages, parameters, tools);
         let model_override = model_override.to_string();
         let (tx_stream, rx_stream) =

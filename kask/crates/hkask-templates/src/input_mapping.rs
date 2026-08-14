@@ -19,7 +19,7 @@ use crate::template_renderer::TemplateRenderer;
 use serde_json::Value;
 
 /// Resolve a dot-path like "step_1_result.field" from the context.
-pub(crate) fn resolve_dot_path<C: ContextLookup>(path: &str, context: &C) -> Option<Value> {
+pub fn resolve_dot_path<C: ContextLookup>(path: &str, context: &C) -> Option<Value> {
     let parts: Vec<&str> = path.split('.').collect();
     if parts.is_empty() {
         return None;

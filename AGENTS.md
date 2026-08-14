@@ -12,6 +12,7 @@ In this repo, a skill is **not** a `SKILL.md` file. A skill is a PDCA loop execu
 
 - **Creating a skill** → activate `create-skill` (overrides Zed's built-in, which assumes `SKILL.md` is the skill — that model does not apply here).
 - **Validating / editing / installing / translating / pruning** → activate `skill-maintenance`.
+- **Auditing template logic against stated goals** → activate `skill-logic-audit`.
 - **Detecting capability gaps** → activate `skill-discovery`.
 
 Never author `SKILL.md` directly. Build the registry crate first, then derive the companion.

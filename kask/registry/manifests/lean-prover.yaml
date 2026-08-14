@@ -31,7 +31,6 @@ manifest:
 
 convergence:
   convergence_mode: "cauchy"
-  target_artifacts_field: "step_3_result"
   cauchy_epsilon: 0.03
   cauchy_window: 3
   max_iterations: 10
@@ -94,6 +93,7 @@ steps:
       proof_obligation: "{{ proof_obligation }}"
       anchor: "{{ step_1_result }}"
       proof_context: "{{ proof_context | default({}) }}"
+      refinement_directives: "{{ prev_step_3_result.refinement_directives | default([]) }}"
 
   - ordinal: 3
     action: select

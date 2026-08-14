@@ -59,4 +59,15 @@ pub mod test_utils {
     /// (swarm accumulators, second-order monitor, kata convergence, forecast
     /// primitives) directly without an `InferencePort`.
     pub use crate::compute::dispatch_compute;
+
+    /// Re-export the step-condition evaluator and choice-condition parser so
+    /// external proptest tests can drive the pure string-parsing and
+    /// boolean-evaluation surfaces directly. Both are total over arbitrary
+    /// condition strings and arbitrary context — the property tests pin that.
+    pub use crate::condition::{evaluate_step_condition, parse_choice_condition};
+
+    /// Re-export the dot-path resolver so external proptest tests can drive the
+    /// pure context-lookup surface directly. Total over arbitrary paths and
+    /// context — never panics, returns `Option<Value>`.
+    pub use crate::input_mapping::resolve_dot_path;
 }

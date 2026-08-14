@@ -17,7 +17,6 @@ manifest:
 
 convergence:
   convergence_mode: "cauchy"
-  target_artifacts_field: step_3_result.overall_assessment
   cauchy_epsilon: 0.03
   cauchy_window: 3
   max_iterations: 10
@@ -70,10 +69,10 @@ steps:
     input_mapping:
       topic: "{{ topic }}"
       current_level: "{{ step_1_result.new_level | default(start_level | default(1)) }}"
-      round_number: 1
+      round_number: "{{ prev_step_2_result.round_number | default(0) + 1 }}"
       mode: "interrogate"
-      previous_answers: "{{ [] }}"
-      assessment_so_far: "{{ {} }}"
+      previous_answers: "{{ prev_step_2_result.all_answers | default([]) }}"
+      assessment_so_far: "{{ prev_step_2_result.assessment | default({}) }}"
 
   # ── Step 3: Lisp deterministic step — question-level coverage check ──
   # The LLM generates questions across 5 difficulty levels (Recall, Mechanism,
@@ -148,9 +147,11 @@ steps:
     action: loop
     description: >
       Re-enter interrogation cycle if convergence is not met, recalibrating
-      difficulty from assessment. If the Lisp level-coverage check (step 3)
-      found insufficient coverage, the loop re-enters at step 2 (question
-      generation) so the LLM generates questions at the missing levels.
+      difficulty from assessment. The loop re-enters at step 1 (calibrate)
+      so the difficulty level is adjusted before generating the next round.
+      If the Lisp level-coverage check (step 3) found insufficient coverage,
+      the recalibrated level directs the LLM to generate questions at the
+      missing levels.
     input_mapping:
       loop_target: "{{ 1 }}"
       # Push the recommendation count into convergence_signal so the Cauchy

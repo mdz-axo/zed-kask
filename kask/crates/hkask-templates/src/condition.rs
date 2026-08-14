@@ -14,7 +14,7 @@ use tracing::warn;
 /// Evaluate a step condition expression against the context.
 /// Supported: "var_name" (truthy), "NOT var_name" (falsy),
 /// "a AND b" (both truthy), "a OR b" (either truthy).
-pub(crate) fn evaluate_step_condition<C: ContextLookup>(condition: &str, context: &C) -> bool {
+pub fn evaluate_step_condition<C: ContextLookup>(condition: &str, context: &C) -> bool {
     let condition = condition.trim();
 
     // Check for boolean operators
@@ -129,8 +129,16 @@ fn resolve_operand<C: ContextLookup>(s: &str, context: &C) -> Option<Value> {
     Some(Value::String(s.to_string()))
 }
 
-/// Evaluate a leaf comparison. Numeric for ordering ops; structural (==/!=) for
-/// equality. Falls back to string ordering for non-numeric <, <=, >, >=.
+/// Evaluate a leaf comparison. Numeric for ordering ops and numeric equality;
+/// structural (==/!=) for non-numeric equality. Falls back to string ordering
+/// for non-numeric <, <=, >, >=.
+///
+/// The `==`/`!=` arms use numeric comparison when both operands are numbers
+/// (via `as_f64()`), so `count == 0` holds whether the context value is an
+/// integer `0` or a float `0.0`. Without this, serde_json's structural
+/// `Value` equality distinguishes `Number(0)` from `Number(0.0)`, silently
+/// breaking integer-vs-float-literal condition gates. Non-numeric equality
+/// (strings, bools, arrays, objects, null) falls back to structural `==`.
 fn eval_step_comparison<C: ContextLookup>(lhs: &str, op: &str, rhs: &str, context: &C) -> bool {
     let l = match resolve_operand(lhs, context) {
         Some(v) => v,
@@ -141,8 +149,15 @@ fn eval_step_comparison<C: ContextLookup>(lhs: &str, op: &str, rhs: &str, contex
         None => return false,
     };
     match op {
-        "==" => l == r,
-        "!=" => l != r,
+        "==" | "!=" => {
+            let equal = match (l.as_f64(), r.as_f64()) {
+                // Both numeric: compare as f64 so integer 0 == float 0.0.
+                (Some(a), Some(b)) => a == b,
+                // Non-numeric (or mixed): structural equality.
+                _ => l == r,
+            };
+            if op == "==" { equal } else { !equal }
+        }
         "<" | "<=" | ">" | ">=" => match (l.as_f64(), r.as_f64()) {
             (Some(a), Some(b)) => match op {
                 "<" => a < b,
@@ -171,11 +186,14 @@ fn eval_step_comparison<C: ContextLookup>(lhs: &str, op: &str, rhs: &str, contex
     }
 }
 
-/// Parse a simple choice condition string like "composite < 0.15" or "findings == 0".
-/// Returns `Some((field, operator, value))` or `None` if unparseable.
-pub(crate) fn parse_choice_condition(condition: &str) -> Option<(&str, &str, &str)> {
+/// Parse a simple choice condition string like "composite < 0.15" or "findings == 0"
+/// or "score != 0". Returns `Some((field, operator, value))` or `None` if
+/// unparseable. Operators: `<=`, `>=`, `==`, `!=`, `<`, `>` (two-char checked
+/// before one-char to avoid prefix collisions). This matches the operator set
+/// supported by `parse_step_comparison` (used by `evaluate_step_condition`).
+pub fn parse_choice_condition(condition: &str) -> Option<(&str, &str, &str)> {
     let condition = condition.trim();
-    for op in &["<=", ">=", "==", "<", ">"] {
+    for op in &["<=", ">=", "==", "!=", "<", ">"] {
         if let Some(pos) = condition.find(op) {
             let field = condition[..pos].trim();
             let value = condition[pos + op.len()..].trim();

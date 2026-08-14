@@ -253,7 +253,7 @@ fn steer_system_prompt(
          then re-invoke `swarm-intelligence` with the returned `delegate_results`
          array so C5 (fault attribution) and C6 (reconfigure) can close the loop.
          In ABW mode, delegate to Xaman Ek via `swarm_xaman` with the plan as the
-         message. The operator can use the "Launch Plan" button to inject this
+         message. The operator can use the \"Launch Plan\" button to inject this
          instruction if you did not execute automatically.
 
          The consent gate (ABW mode only) is enforced by `swarm_request_consent` \
@@ -977,8 +977,7 @@ impl SwarmPanel {
         // message into its editor; the operator reviews and sends.
         if let Some(injector) = hkask_conversation_injector::shared_injector(cx) {
             let task = injector.inject(message, window, cx);
-            cx.spawn(async move |this, cx| {
-                let _ = this; // no panel state to update — just await the inject
+            cx.spawn(async move |_this, _cx| {
                 if let Err(error) = task.await {
                     log::warn!("swarm-panel: launch-plan inject failed: {error}");
                 }
@@ -2618,31 +2617,33 @@ impl Render for SwarmPanel {
                             // deserialized into Steer mode), render a
                             // placeholder — the operator can re-click Steer.
                             let has_workspace = self.selected_workspace.is_some();
-                            this.child(
-                                h_flex()
-                                    .w_full()
-                                    .gap_2()
-                                    .px_4()
-                                    .py_1()
-                                    .child(
-                                        Button::new("swarm-launch-plan", "Launch Plan")
-                                            .style(ButtonStyle::Subtle)
-                                            .label_size(LabelSize::Small)
-                                            .disabled(!has_workspace)
-                                            .tooltip(Tooltip::text(
-                                                "Execute the pending swarm-intelligence plan via \
-                                                 swarm_execute_plan_local and feed the results back. \
-                                                 The curator will run the plan, stamp task-success \
-                                                 verdicts, and re-invoke with delegate_results."
-                                            ))
-                                            .on_click(cx.listener(|this, _event, window, cx| {
-                                                this.launch_plan_in_steer(window, cx);
-                                            })),
-                                    ),
-                            );
+                            let launch_button = h_flex()
+                                .w_full()
+                                .gap_2()
+                                .px_4()
+                                .py_1()
+                                .child(
+                                    Button::new("swarm-launch-plan", "Launch Plan")
+                                        .style(ButtonStyle::Subtle)
+                                        .label_size(LabelSize::Small)
+                                        .disabled(!has_workspace)
+                                        .tooltip(Tooltip::text(
+                                            "Execute the pending swarm-intelligence plan via \
+                                             swarm_execute_plan_local and feed the results back. \
+                                             The curator will run the plan, stamp task-success \
+                                             verdicts, and re-invoke with delegate_results."
+                                        ))
+                                        .on_click(cx.listener(|this, _event, window, cx| {
+                                            this.launch_plan_in_steer(window, cx);
+                                        })),
+                                );
                             match &self.steer_conversation {
-                                Some(view) => this.child(view.clone()).into_any_element(),
+                                Some(view) => this
+                                    .child(launch_button)
+                                    .child(view.clone())
+                                    .into_any_element(),
                                 None => this
+                                    .child(launch_button)
                                     .child(
                                         h_flex()
                                             .flex_1()
