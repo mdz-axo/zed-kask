@@ -1,5 +1,6 @@
 ---
 name: coding-guidelines
+core: true
 visibility: public
 description: "Behavioral guardrails for LLM coding based on Karpathy's four principles: Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution. An Encoded Preference skill: constrains HOW the agent codes, not WHAT it codes."
 ---

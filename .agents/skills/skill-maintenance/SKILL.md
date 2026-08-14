@@ -1,5 +1,6 @@
 ---
 name: skill-maintenance
+core: true
 description: "Skill lifecycle management. Registry crate (manifest.yaml + *.j2) is the canonical source of truth; SKILL.md is a generated companion. Audit staleness, coverage gaps, and quality. List, build, validate, install, translate, and prune skills."
 ---
 

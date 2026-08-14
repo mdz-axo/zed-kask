@@ -305,9 +305,13 @@ pub fn handle_visibility_toggle(
     settings_window: &mut SettingsWindow,
     cx: &mut Context<SettingsWindow>,
 ) {
+    // Core skills cannot have their visibility toggled — they are always on
+    // and not publishable to the marketplace.
+    if skill.core {
+        return;
+    }
     // Only `SkillSource::Global` skills can be toggled (plan §2.2, Phase 2
-    // task 2). Built-ins are part of the binary; project-local skills defer
-    // to v2.
+    // task 2). Project-local skills defer to v2.
     if !matches!(skill.source, SkillSource::Global) {
         return;
     }

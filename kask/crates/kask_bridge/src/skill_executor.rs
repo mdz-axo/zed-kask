@@ -24,6 +24,11 @@ use hkask_types::InferencePort;
 use serde_json::Value;
 use std::path::Path;
 
+// zed-kask: core skill classification lives in `agent_skills::CORE_SKILL_NAMES`.
+// `kask_bridge` depends on `agent_skills` to access `is_core_skill` for the
+// registry seeder's core-vs-user split.
+use agent_skills::is_core_skill;
+
 /// Context keys the runtime injects itself (not user-supplied params), excluded
 /// from the unknown-key check in `validate_inputs`. `task` is injected by the
 /// `SkillTool`/slash-command path; the `*_model` keys are injected by
@@ -485,7 +490,9 @@ pub async fn seed_registry_to_disk(fs: &dyn Fs, registry_root: &Path) {
     let manifests_dir = registry_root.join("manifests");
     for (name, content) in hkask_templates::process_manifest_seed() {
         let path = manifests_dir.join(format!("{name}.yaml"));
-        if fs.is_file(&path).await {
+        let is_core = is_core_skill(name);
+        // Core skills are always overwritten; user skills are seed-once.
+        if fs.is_file(&path).await && !is_core {
             continue;
         }
         if let Err(e) = fs.create_dir(&manifests_dir).await {
@@ -505,7 +512,8 @@ pub async fn seed_registry_to_disk(fs: &dyn Fs, registry_root: &Path) {
     for (skill, content) in hkask_templates::template_manifest_seed() {
         let skill_dir = templates_dir.join(skill);
         let path = skill_dir.join("manifest.yaml");
-        if fs.is_file(&path).await {
+        let is_core = is_core_skill(skill);
+        if fs.is_file(&path).await && !is_core {
             continue;
         }
         let _ = fs.create_dir(&skill_dir).await;
@@ -516,7 +524,10 @@ pub async fn seed_registry_to_disk(fs: &dyn Fs, registry_root: &Path) {
     // Jinja2 templates (key is `<skill>/<file>.j2`).
     for (key, content) in hkask_templates::template_file_seed() {
         let path = templates_dir.join(key);
-        if fs.is_file(&path).await {
+        // Extract the skill name from the key (first path segment).
+        let skill_name = key.split('/').next().unwrap_or("");
+        let is_core = is_core_skill(skill_name);
+        if fs.is_file(&path).await && !is_core {
             continue;
         }
         if let Some(parent) = path.parent() {
@@ -529,7 +540,9 @@ pub async fn seed_registry_to_disk(fs: &dyn Fs, registry_root: &Path) {
     // YAML template files (key is `<skill>/<file>.yaml`, excluding manifest.yaml).
     for (key, content) in hkask_templates::template_yaml_file_seed() {
         let path = templates_dir.join(key);
-        if fs.is_file(&path).await {
+        let skill_name = key.split('/').next().unwrap_or("");
+        let is_core = is_core_skill(skill_name);
+        if fs.is_file(&path).await && !is_core {
             continue;
         }
         if let Some(parent) = path.parent() {

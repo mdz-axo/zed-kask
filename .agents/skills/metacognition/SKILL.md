@@ -1,5 +1,6 @@
 ---
 name: metacognition
+core: true
 description: "Master self-reflection skill following the Toyota Improvement Kata. Grasps the current metacognitive condition, establishes a target, predicts which calibration closes the gap, runs the experiment, then measures the gap and scores it via Brier."
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: pragmatic-cybernetics
+core: true
 description: Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loop analysis (5 properties), variety engineering (Ashby's Law), Good Regulator check, and spec drift as cybernetic signal.
 ---
 

@@ -1007,7 +1007,12 @@ pub async fn seed_shipped_skills(fs: &dyn Fs, skills_dir: &Path) {
     for (name, content) in shipped_skill_seed() {
         let skill_dir = skills_dir.join(name);
         let skill_file = skill_dir.join(SKILL_FILE_NAME);
-        if fs.is_file(&skill_file).await {
+        let is_core = is_core_skill(name);
+
+        // Core skills are always overwritten on every startup so user edits
+        // cannot break system-critical functionality. User skills are seeded
+        // only if missing — user edits are sovereign.
+        if fs.is_file(&skill_file).await && !is_core {
             continue;
         }
         if let Err(error) = fs.create_dir(&skill_dir).await {

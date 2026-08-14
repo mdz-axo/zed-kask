@@ -1,5 +1,6 @@
 ---
 name: pragmatic-semantics
+core: true
 description: "Epistemic discipline for classifying statements by certainty level, constraint force, and domain ontology anchoring. Distinguish IS from OUGHT, declarative from probabilistic from subjunctive. Resolve conflicts using OT ranking."
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: refactor-architecture
+core: true
 visibility: public
 description: "End-to-end architecture refactoring: discover friction, rank deepening candidates, walk the design tree, audit duplication, plan strangler-fig migration, and verify integrity. Composes tdd, coding-guidelines, graph-audit, deep-module, essentialist."
 ---

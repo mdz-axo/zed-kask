@@ -1,6 +1,6 @@
 use agent_skills::{Skill, SkillIndex, SkillSource, SkillVisibility, encode_skill_share_link};
 use fs::RemoveOptions;
-use gpui::{App, ClipboardItem, PromptLevel, ScrollHandle, SharedString, prelude::*};
+use gpui::{App, ClipboardItem, FontWeight, PromptLevel, ScrollHandle, SharedString, prelude::*};
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
@@ -117,6 +117,7 @@ fn render_skill_row(
     let skill_file_path = skill.skill_file_path.clone();
     let directory_path = skill.directory_path.clone();
     let skill_name = skill.name.clone();
+    let is_core = skill.core;
 
     let (skill_scope, shared_scope) = match &skill.source {
         SkillSource::ProjectLocal { .. } => ("project", "used in this project"),
@@ -138,88 +139,106 @@ fn render_skill_row(
     let title = h_flex()
         .ml(rems_from_px(-22.0_f32))
         .gap_1()
-        .child({
-            let share_skill_file_path = skill.skill_file_path.clone();
-            let share_directory_path = skill.directory_path.clone();
-            IconButton::new(
-                SharedString::from(format!("share-{}", skill.name)),
-                share_icon,
-            )
-            .tab_index(0_isize)
-            .shape(ui::IconButtonShape::Square)
-            .icon_size(IconSize::Small)
-            .icon_color(share_icon_color)
-            .tooltip(Tooltip::text("Copy Share Link"))
-            .visible_on_hover(&group)
-            .on_click(cx.listener(move |_settings_window, _event, _window, cx| {
-                let skill_file_path = share_skill_file_path.clone();
-                let directory_path = share_directory_path.clone();
-                let app_state = workspace::AppState::global(cx);
-                let fs = app_state.fs.clone();
-                cx.spawn(
-                    async move |settings_window, cx| match fs.load(&skill_file_path).await {
-                        Ok(content) => {
-                            let link = encode_skill_share_link(&content);
-                            settings_window
-                                .update(cx, |settings_window, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(link));
-                                    settings_window.last_copied_skill_directory_path =
-                                        Some(directory_path.clone());
-                                    cx.notify();
-                                })
-                                .ok();
-                        }
-                        Err(error) => {
-                            log::error!(
-                                "failed to read skill file {} for sharing: {error:#}",
-                                skill_file_path.display()
-                            );
-                        }
-                    },
-                )
-                .detach();
-            }))
-        })
-        // zed-kask: Marketplace visibility toggle. Only renders for
-        // `SkillSource::Global` skills — built-ins are part of the binary
-        // and can't be published; project-local skills defer to v2 (plan §2.2).
-        // `Lock` = Private (default), `LockOff` = Public (opt-in to publish).
-        // Pinned by `test_visibility_toggle_only_for_global_skills` (Phase 7).
-        .when(matches!(skill.source, SkillSource::Global), |this| {
-            let visibility = skill.visibility;
-            let (vis_icon, vis_tooltip, vis_color) = match visibility {
-                SkillVisibility::Private => (
-                    IconName::Lock,
-                    "Private — click to publish to marketplace",
-                    Color::Muted,
-                ),
-                SkillVisibility::Public => (
-                    IconName::LockOff,
-                    "Public — click to unpublish from marketplace",
-                    Color::Accent,
-                ),
-            };
-            // Clone the skill so the toggle handler can call
-            // `handle_visibility_toggle` without borrowing `skill`.
-            let toggle_skill = skill.clone();
+        // Core skills: show a shield icon with "Core skill" tooltip instead
+        // of the share link and visibility toggle. Core skills cannot be
+        // shared, published, edited, or deleted.
+        .when(is_core, |this| {
             this.child(
+                Icon::new(IconName::Shield)
+                    .size(IconSize::Small)
+                    .color(Color::Accent)
+                    .tooltip(Tooltip::text("Core skill — always on, not editable")),
+            )
+        })
+        // User skills: show share link + visibility toggle as before.
+        .when(!is_core, |this| {
+            this.child({
+                let share_skill_file_path = skill.skill_file_path.clone();
+                let share_directory_path = skill.directory_path.clone();
                 IconButton::new(
-                    SharedString::from(format!("visibility-{}", skill.name)),
-                    vis_icon,
+                    SharedString::from(format!("share-{}", skill.name)),
+                    share_icon,
                 )
                 .tab_index(0_isize)
                 .shape(ui::IconButtonShape::Square)
                 .icon_size(IconSize::Small)
-                .icon_color(vis_color)
-                .tooltip(Tooltip::text(vis_tooltip))
+                .icon_color(share_icon_color)
+                .tooltip(Tooltip::text("Copy Share Link"))
+                .visible_on_hover(&group)
                 .on_click(cx.listener(
-                    move |settings_window, _event, _window, cx| {
-                        crate::pages::handle_visibility_toggle(&toggle_skill, settings_window, cx);
+                    move |_settings_window, _event, _window, cx| {
+                        let skill_file_path = share_skill_file_path.clone();
+                        let directory_path = share_directory_path.clone();
+                        let app_state = workspace::AppState::global(cx);
+                        let fs = app_state.fs.clone();
+                        cx.spawn(async move |settings_window, cx| {
+                            match fs.load(&skill_file_path).await {
+                                Ok(content) => {
+                                    let link = encode_skill_share_link(&content);
+                                    settings_window
+                                        .update(cx, |settings_window, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(link));
+                                            settings_window.last_copied_skill_directory_path =
+                                                Some(directory_path.clone());
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                }
+                                Err(error) => {
+                                    log::error!(
+                                        "failed to read skill file {} for sharing: {error:#}",
+                                        skill_file_path.display()
+                                    );
+                                }
+                            }
+                        })
+                        .detach();
                     },
-                )),
-            )
+                ))
+            })
+            // zed-kask: Marketplace visibility toggle. Only renders for
+            // `SkillSource::Global` user skills. Core skills don't get this
+            // toggle — they are always on and not publishable.
+            .when(matches!(skill.source, SkillSource::Global), |this| {
+                let visibility = skill.visibility;
+                let (vis_icon, vis_tooltip, vis_color) = match visibility {
+                    SkillVisibility::Private => (
+                        IconName::Lock,
+                        "Private — click to publish to marketplace",
+                        Color::Muted,
+                    ),
+                    SkillVisibility::Public => (
+                        IconName::LockOff,
+                        "Public — click to unpublish from marketplace",
+                        Color::Accent,
+                    ),
+                };
+                let toggle_skill = skill.clone();
+                this.child(
+                    IconButton::new(
+                        SharedString::from(format!("visibility-{}", skill.name)),
+                        vis_icon,
+                    )
+                    .tab_index(0_isize)
+                    .shape(ui::IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .icon_color(vis_color)
+                    .tooltip(Tooltip::text(vis_tooltip))
+                    .on_click(cx.listener(
+                        move |settings_window, _event, _window, cx| {
+                            crate::pages::handle_visibility_toggle(
+                                &toggle_skill,
+                                settings_window,
+                                cx,
+                            );
+                        },
+                    )),
+                )
+            })
         })
-        .child(Label::new(skill.name.clone()))
+        .child(
+            Label::new(skill.name.clone()).when(is_core, |this| this.weight(FontWeight::SEMIBOLD)),
+        )
         .when_some(warning_message, |this, warning_message| {
             this.child(
                 h_flex()
@@ -251,123 +270,126 @@ fn render_skill_row(
         .child(
             h_flex()
                 .gap_2()
-                .child(
-                    IconButton::new(
-                        SharedString::from(format!("delete-{}", skill.name)),
-                        IconName::Trash,
-                    )
-                    .tab_index(0_isize)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Delete Skill"))
-                    .on_click(cx.listener(
-                        move |settings_window, _event, window, cx| {
-                            let directory_path = directory_path.clone();
-                            if settings_window
-                                .hidden_deleted_skill_directory_paths
-                                .contains(&directory_path)
-                            {
-                                return;
-                            }
-
-                            let prompt_message =
-                                format!("Delete the {skill_scope} skill \"{skill_name}\"?");
-                            let prompt_detail = format!(
-                                "This will move {} to the trash. This skill is shared with other \
-                                 agent tools {shared_scope}, so it will no longer be available to \
-                                 them either.",
-                                directory_path.compact().display(),
-                            );
-                            let answer = window.prompt(
-                                PromptLevel::Info,
-                                &prompt_message,
-                                Some(&prompt_detail),
-                                &["Delete", "Cancel"],
-                                cx,
-                            );
-
-                            let app_state = workspace::AppState::global(cx);
-                            let fs = app_state.fs.clone();
-                            cx.spawn(async move |settings_window, cx| {
-                                if answer.await != Ok(0) {
-                                    return;
-                                }
-
-                                let confirmed = settings_window
-                                    .update(cx, |settings_window, cx| {
-                                        let inserted = settings_window
-                                            .hidden_deleted_skill_directory_paths
-                                            .insert(directory_path.clone());
-                                        if inserted {
-                                            cx.notify();
-                                        }
-                                        inserted
-                                    })
-                                    .unwrap_or(false);
-                                if !confirmed {
-                                    return;
-                                }
-
-                                let trash_result = fs
-                                    .trash(
-                                        &directory_path,
-                                        RemoveOptions {
-                                            recursive: true,
-                                            ignore_if_not_exists: true,
-                                        },
-                                    )
-                                    .await;
-                                if let Err(error) = trash_result {
-                                    log::error!(
-                                        "failed to move skill directory {} to trash: {error:#}",
-                                        directory_path.display()
-                                    );
-                                    settings_window
-                                        .update(cx, |settings_window, cx| {
-                                            settings_window
-                                                .hidden_deleted_skill_directory_paths
-                                                .remove(&directory_path);
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                }
-                            })
-                            .detach();
-                        },
-                    )),
-                )
-                .child(
-                    Button::new(SharedString::from(format!("open-{}", skill.name)), "Open")
-                        .tab_index(0_isize)
-                        .style(ButtonStyle::OutlinedGhost)
-                        .size(ButtonSize::Medium)
-                        .end_icon(
-                            Icon::new(IconName::ArrowUpRight)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
+                // Core skills: no delete or open buttons — they are locked.
+                .when(!is_core, |this| {
+                    this.child(
+                        IconButton::new(
+                            SharedString::from(format!("delete-{}", skill.name)),
+                            IconName::Trash,
                         )
-                        .on_click(cx.listener(move |settings_window, _event, window, cx| {
-                            let skill_file_path = skill_file_path.clone();
-                            let Some(original_window) = settings_window.original_window else {
-                                return;
-                            };
-                            original_window
-                                .update(cx, |multi_workspace, original_window, cx| {
-                                    let workspace = multi_workspace.workspace().clone();
-                                    workspace.update(cx, |workspace, cx| {
-                                        workspace
-                                            .open_abs_path(
-                                                skill_file_path,
-                                                Default::default(),
-                                                original_window,
-                                                cx,
-                                            )
-                                            .detach_and_log_err(cx);
-                                    });
+                        .tab_index(0_isize)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Delete Skill"))
+                        .on_click(cx.listener(
+                            move |settings_window, _event, window, cx| {
+                                let directory_path = directory_path.clone();
+                                if settings_window
+                                    .hidden_deleted_skill_directory_paths
+                                    .contains(&directory_path)
+                                {
+                                    return;
+                                }
+
+                                let prompt_message =
+                                    format!("Delete the {skill_scope} skill \"{skill_name}\"?");
+                                let prompt_detail = format!(
+                                    "This will move {} to the trash. This skill is shared with other \
+                                     agent tools {shared_scope}, so it will no longer be available to \
+                                     them either.",
+                                    directory_path.compact().display(),
+                                );
+                                let answer = window.prompt(
+                                    PromptLevel::Info,
+                                    &prompt_message,
+                                    Some(&prompt_detail),
+                                    &["Delete", "Cancel"],
+                                    cx,
+                                );
+
+                                let app_state = workspace::AppState::global(cx);
+                                let fs = app_state.fs.clone();
+                                cx.spawn(async move |settings_window, cx| {
+                                    if answer.await != Ok(0) {
+                                        return;
+                                    }
+
+                                    let confirmed = settings_window
+                                        .update(cx, |settings_window, cx| {
+                                            let inserted = settings_window
+                                                .hidden_deleted_skill_directory_paths
+                                                .insert(directory_path.clone());
+                                            if inserted {
+                                                cx.notify();
+                                            }
+                                            inserted
+                                        })
+                                        .unwrap_or(false);
+                                    if !confirmed {
+                                        return;
+                                    }
+
+                                    let trash_result = fs
+                                        .trash(
+                                            &directory_path,
+                                            RemoveOptions {
+                                                recursive: true,
+                                                ignore_if_not_exists: true,
+                                            },
+                                        )
+                                        .await;
+                                    if let Err(error) = trash_result {
+                                        log::error!(
+                                            "failed to move skill directory {} to trash: {error:#}",
+                                            directory_path.display()
+                                        );
+                                        settings_window
+                                            .update(cx, |settings_window, cx| {
+                                                settings_window
+                                                    .hidden_deleted_skill_directory_paths
+                                                    .remove(&directory_path);
+                                                cx.notify();
+                                            })
+                                            .ok();
+                                    }
                                 })
-                                .log_err();
-                            window.remove_window();
-                        })),
-                ),
+                                .detach();
+                            },
+                        )),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("open-{}", skill.name)), "Open")
+                            .tab_index(0_isize)
+                            .style(ButtonStyle::OutlinedGhost)
+                            .size(ButtonSize::Medium)
+                            .end_icon(
+                                Icon::new(IconName::ArrowUpRight)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .on_click(cx.listener(move |settings_window, _event, window, cx| {
+                                let skill_file_path = skill_file_path.clone();
+                                let Some(original_window) = settings_window.original_window else {
+                                    return;
+                                };
+                                original_window
+                                    .update(cx, |multi_workspace, original_window, cx| {
+                                        let workspace = multi_workspace.workspace().clone();
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace
+                                                .open_abs_path(
+                                                    skill_file_path,
+                                                    Default::default(),
+                                                    original_window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                        });
+                                    })
+                                    .log_err();
+                                window.remove_window();
+                            })),
+                    )
+                })
         )
         .into_any_element()
 }

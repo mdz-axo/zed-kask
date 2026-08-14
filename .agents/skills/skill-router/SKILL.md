@@ -1,5 +1,6 @@
 ---
 name: skill-router
+core: true
 visibility: public
 description: "Route tasks to EXISTING installed skills. Given a task/slice description and the installed skill catalog, return ranked skill recommendations with fit scores, applicable templates, and invocation hints. Identifies uncovered capabilities (gap signals for skill-discovery). Distinct from skill-discovery (which acquires NEW skills)."
 ---

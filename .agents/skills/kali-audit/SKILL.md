@@ -1,5 +1,6 @@
 ---
 name: kali-audit
+core: true
 visibility: public
 description: "Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML manifests, supply chain, MCP surfaces, and LLM I/O boundaries for vulnerabilities. Forward-adaptable: consumes the security regression library at runtime."
 ---

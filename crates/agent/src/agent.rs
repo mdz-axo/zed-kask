@@ -1627,7 +1627,6 @@ impl NativeAgent {
         for state in self.projects.values() {
             for skill in state.skills.iter() {
                 match &skill.source {
-                    SkillSource::BuiltIn => {}
                     SkillSource::Global | SkillSource::Public { .. } => {
                         if !seen_global {
                             global_skills.push(skill.clone());
@@ -4498,6 +4497,11 @@ fn log_skill_conflicts(skills: &[Skill]) {
 /// source colliding (e.g. two globals or two project-locals) keep the
 /// first one to match the historical behavior.
 ///
+/// Core skills are unshadowable: a project-local skill with the same
+/// name as a core skill cannot override it. This prevents a compromised
+/// project from injecting instructions that bypass the consent/trust/
+/// quality controls that core skills enforce.
+///
 /// This is the projection of `state.skills` used by everything the
 /// model interacts with: the system-prompt catalog, the `SkillTool`'s
 /// name resolver, and slash-command invocation. The autocomplete popup
@@ -4512,6 +4516,11 @@ fn apply_skill_overrides(skills: &[Skill]) -> Vec<Skill> {
     for skill in skills {
         match indices.get(skill.name.as_str()).copied() {
             Some(idx) => {
+                // Core skills are unshadowable — a non-core skill can
+                // never override a core skill, regardless of precedence.
+                if result[idx].core && !skill.core {
+                    continue;
+                }
                 if skill.source.precedence() > result[idx].source.precedence() {
                     result[idx] = skill.clone();
                 }

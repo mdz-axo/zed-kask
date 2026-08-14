@@ -170,6 +170,15 @@ fn validate_embedded_skill_frontmatter(name: &str, content: &str) -> Result<(), 
         ));
     }
 
+    // Validate the `core` field if present. Must be `true` or `false`.
+    if let Some(core_val) = extract_yaml_scalar(frontmatter, "core") {
+        if core_val != "true" && core_val != "false" {
+            return Err(format!(
+                "SKILL.md `core:` field must be `true` or `false` (got `{core_val}`)"
+            ));
+        }
+    }
+
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 ---
 name: kanban-task-management
+core: true
 visibility: public
 description: "Unified kanban task management across the full task lifecycle. Decompose projects into INVEST-compliant tasks, delegate to subagents with spawn config and gas budgeting, monitor boards, coordinate agents, verify completion, and escalate."
 ---
