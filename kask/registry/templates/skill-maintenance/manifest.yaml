@@ -17,7 +17,7 @@ templates:
     type: KnowAct
     description: >
       Validate skills against registry format and quality checks. Check manifest
-      structure, .j2 frontmatter (template_type, contract, visibility, energy_cap).
+      structure, .j2 frontmatter (template_type, contract, visibility).
       SKILL.md is validated as secondary companion.
 
   - id: skill-maintenance/skill-maintenance-build

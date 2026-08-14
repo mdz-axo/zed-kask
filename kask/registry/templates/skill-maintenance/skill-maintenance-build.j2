@@ -10,7 +10,6 @@ contract:
     sk_name: string
     sk_description: string
     sk_body_outline: string
-energy_cap: 8192
 visibility: Private
 ---
 {# Template: skill-maintenance/skill-maintenance-build.j2 #}
@@ -70,7 +69,7 @@ vocabulary_terms:
 ```
 
 Generate at least one `.j2` template with:
-- `[inference]` frontmatter: template_type, contract (input/output typed fields, energy_cap, visibility)
+- `[inference]` frontmatter: template_type, contract (input/output typed fields, visibility)
 - Jinja2 body after `---`: system prompt with imperative instructions, {{ input_variable }} placeholders, JSON output schema
 
 Template types (Pattern A):
@@ -218,7 +217,7 @@ description: "<crate.description>"
 
 ## Constraints
 
-- <derived from .j2 contracts — visibility, energy_cap, safety rules>
+- <derived from .j2 contracts — visibility, safety rules>
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins
 ```
 

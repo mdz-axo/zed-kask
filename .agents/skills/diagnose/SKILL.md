@@ -47,7 +47,7 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility
-- Energy caps: spec-anchor (3072), loop (6144), instrument (4096), fix (6144); step 3 (hypothesize) is delegated to `falsifiability/falsifiability-hypothesize` (energy_cap 4096)
+- Step 3 (hypothesize) is delegated to falsifiability/falsifiability-hypothesize
 - Safety mode (when enabled): no file system access, no network calls, no environment variable access, strict Jinja2 sandbox enforcement
 - Do not execute arbitrary Python code in Jinja2 expressions — sandboxed execution only
 - Preserve original prompt structure and formatting; handle missing variables gracefully

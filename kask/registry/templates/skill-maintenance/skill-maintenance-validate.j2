@@ -8,7 +8,6 @@ contract:
     validation_results: array
     pass_fail_counts: object
     fix_suggestions: array
-energy_cap: 6144
 visibility: Public
 ---
 {# Template: skill-maintenance/skill-maintenance-validate.j2 #}
@@ -51,7 +50,7 @@ Validate **all skills** in the registry directory.
 | R4 | Template entry valid | Each entry has `id`, `path`, `type`, `description` |
 | R5 | template_type valid | Each .j2 `template_type` in {WordAct, KnowAct, FlowDef, RenderAct} |
 | R6 | Contract valid | Each .j2 has `contract.input` and `contract.output` with typed fields |
-| R7 | energy_cap in range | Each .j2 `energy_cap` integer in [2048, 8192] |
+| R7 | (removed) | energy_cap was removed — per-template token budget is controlled by `max_tokens` in the `[inference]` block, and per-step compute budget by `gas_cap` in the manifest |
 | R8 | Visibility valid | Each .j2 `visibility` in {Private, Public, Shared} |
 | R9 | .j2 file exists | Each template entry's `path` resolves to an actual .j2 file |
 | R10 | [inference] frontmatter valid | Each .j2 starts with `[inference]` block |

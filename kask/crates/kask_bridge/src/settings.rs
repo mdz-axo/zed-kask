@@ -644,6 +644,10 @@ pub struct KaskModelsSettings {
     /// Classifier model for guard/regulation classification tasks
     /// (provider-prefixed). When empty, falls back to the kask default.
     pub classifier_model: String,
+
+    /// OCR vision model for scanned document OCR (provider-prefixed).
+    /// When empty, falls back to the kask default.
+    pub ocr_model: String,
 }
 
 impl KaskModelsSettings {
@@ -664,6 +668,22 @@ impl KaskModelsSettings {
             Self::DEFAULT_INFERENCE_MODEL
         } else {
             &self.default_model
+        }
+    }
+
+    /// The kask default OCR model.
+    ///
+    /// Single source of truth: `hkask_inference::model_constants::DEFAULT_OCR_MODEL`.
+    pub const DEFAULT_OCR_MODEL: &'static str = hkask_inference::model_constants::DEFAULT_OCR_MODEL;
+
+    /// Resolve the effective OCR model, falling back to the kask default
+    /// when the setting is empty.
+    #[must_use]
+    pub fn effective_ocr_model(&self) -> &str {
+        if self.ocr_model.trim().is_empty() {
+            Self::DEFAULT_OCR_MODEL
+        } else {
+            &self.ocr_model
         }
     }
 }
@@ -1328,6 +1348,7 @@ impl From<KaskModelsSettingsContent> for KaskModelsSettings {
             default_model: c.default_model.unwrap_or(default.default_model),
             embedding_model: c.embedding_model.unwrap_or(default.embedding_model),
             classifier_model: c.classifier_model.unwrap_or(default.classifier_model),
+            ocr_model: c.ocr_model.unwrap_or(default.ocr_model),
         }
     }
 }

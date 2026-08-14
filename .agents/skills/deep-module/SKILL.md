@@ -70,7 +70,7 @@ The convergence check consumes `primary_result` (assess), `delete_result`, and `
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility.
-- Energy caps: assess, delete, and design templates have `energy_cap: 6144`.
+- Templates use KnowAct with Public visibility.
 - Count public items mechanically — do not guess. Estimate behavior conservatively, erring toward undercounting.
 - Apply both directions of the deletion test — never skip either.
 - No more than 7 public functions per module. If the design exceeds 7, split the module.

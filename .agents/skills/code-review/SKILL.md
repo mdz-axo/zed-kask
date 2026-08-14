@@ -102,7 +102,7 @@ The skill is steered by passing keys in the `context` map of the `skill` tool in
 
 ## Constraints
 
-- All templates are `KnowAct`, `Public`. `energy_cap`: scope 4096, perspectives 8192, adjudicate 6144, report 4096, implement 6144.
+- All templates are `KnowAct`, `Public`
 - `code-review-scope.j2`: compute the diff from real git output; never estimate from the spec. When `prior_review.next_review_focus` is present it MUST be consumed (silently ignoring prior feedback is a feedback-loop violation). Do not judge findings here — only model the change.
 - `code-review-perspectives.j2`: DETECTION ONLY — no verdicts, severity, confidence, or falsifiers. Every raw finding cites file:line + a verbatim evidence snippet; uncited observations are dropped, not recorded. Respect `focus` (security always gets a basic pass). Delegation adds depth but does not remove the inline basics pass.
 - `code-review-adjudicate.j2`: do NOT re-scan the code; adjudicate the `raw_findings` given. Every finding carries IS/OUGHT, epistemic mode, provenance, constraint force, confidence, a falsifier, a grill-me resolution, and a verbatim citation — missing any → reject (not silently drop). Severity is derived from constraint force; a taste finding is never a Blocker; subjunctive/assessment never exceeds Should-fix; confidence < 0.60 downgrades one tier. An empty `raw_findings` list yields all-zero counts (a clean pass is valid) — do not fabricate. Corroborated ≠ confirmed; use "upheld"/"withstood".

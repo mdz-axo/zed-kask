@@ -11,17 +11,6 @@ crate:
     dcterms:identifier tags, anti-horizontal-slicing,
     and minimal-implementation discipline. Five MDS categories: domain, composition,
     trust, lifecycle, curation.
-  contract_energy_budget:
-    description: >
-      Calibrated inference cost for enforcing extended v0.28.0 contract checks:
-      expectation parsing, principle alignment, constraining completeness. Based on
-      hkask-services::EnergyCost model.
-    baseline_energy_cap: 8192
-    per_check_costs:
-      expectation_parsing: 512
-      principle_alignment: 1024
-      constraining_completeness: 1024
-      expectation_quality_scoring: 512
 
 templates:
   - id: tdd/tdd-plan

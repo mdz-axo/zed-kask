@@ -1821,4 +1821,7 @@ pub struct KaskModelsSettingsContent {
     /// Classifier model for guard/regulation classification tasks
     /// (provider-prefixed). When empty, falls back to the kask default.
     pub classifier_model: Option<String>,
+    /// OCR vision model for scanned document OCR (provider-prefixed).
+    /// When empty, falls back to the kask default (`RunPod/kask-ocr`).
+    pub ocr_model: Option<String>,
 }

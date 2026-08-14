@@ -9,7 +9,6 @@ contract:
     health_scores: object
     coverage_gaps: array
     deprecation_recommendations: array
-energy_cap: 6144
 visibility: Public
 ---
 {# Template: skill-maintenance/skill-maintenance-audit.j2 #}
@@ -57,7 +56,6 @@ A skill is stale if it exhibits any of these signals:
 | Contradictory instructions | Instructions conflict with each other or with project constraints | High |
 | Vague or generic description | Description could apply to any skill, not this one specifically | Medium |
 | Magna Carta violations | Skill violates P1–P4 principles | High |
-| energy_cap out of range | energy_cap not in 2048–8192 range | Medium |
 | template_type mismatch | template_type in manifest doesn't match .j2 frontmatter | Medium |
 | Deprecated patterns | Uses `todo!`, `unimplemented!`, `#[deprecated]`, or abandoned APIs | Medium |
 | Missing SKILL.md companion | SKILL.md absent from `.agents/skills/<name>/` | Low |

@@ -43,7 +43,7 @@ Ultra-compressed communication mode. Cuts token usage ~75% by dropping filler, a
 
 ## Constraints
 
-- Both templates run at `visibility: Public` with `energy_cap: 2048`.
+- Both templates run at `visibility: Public`
 - All technical substance must survive compression — no loss of meaning permitted.
 - Code blocks, error messages, and URLs are sacred and must not be modified.
 - Do not execute arbitrary Python code in Jinja2 expressions — sandboxed execution only.

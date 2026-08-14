@@ -11,7 +11,7 @@ crate:
     which only produces SKILL.md files. The kask-native version produces
     the full registry-first structure: template manifest with
     KnowAct/WordAct/FlowDef/RenderAct types, .j2 templates with [inference]
-    frontmatter (contract, energy_cap, visibility
+    frontmatter (contract, visibility
     generates_spans), process manifest with canonical actions
     (select/populate/compute/execute/feedback/validate/retrieve/render/
     flowdef/loop/choice/abort/escalate), gas/rjoule budgets, convergence
@@ -67,7 +67,7 @@ templates:
       Delegates to skill-maintenance-validate (its check catalog is
       authoritative — this template mirrors it). Checks: R1-R12 (registry:
       manifest exists, crate metadata, templates non-empty, template entry
-      valid, template_type, contract, energy_cap range, visibility, .j2
+      valid, template_type, contract, visibility, .j2
       exists, [inference] frontmatter, jinja2 body); Z1-Z8 (companion:
       SKILL.md exists, frontmatter, name matches directory, description
       present, no Magna Carta violations, headless, no deprecated markers,

@@ -9,7 +9,6 @@ contract:
     manifest_paths: array
     dependency_graph: object
     regressions_checked: array
-energy_cap: 4096
 visibility: Public
 ---
 {# goal: Discover dependency manifest surfaces (Cargo.toml, deny.toml, lockfiles, package-lock.json, go.sum) within workspace (P4). Read security/regressions/ for existing supply-chain checks. Return concrete manifest_paths (verifiable file paths only — no synthetic files). Emit reg.supply_chain.select span (P9). Authenticated host mandatory (P12). Surface parameter: cargo|npm|python|deny|all. #}

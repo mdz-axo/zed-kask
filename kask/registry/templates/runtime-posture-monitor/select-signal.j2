@@ -8,7 +8,6 @@ contract:
   output:
     signal_sources: array
     regressions_checked: array
-energy_cap: 4096
 visibility: Public
 ---
 {# goal: Discover runtime signal sources (reg.* canonical spans, reg.outcome events) within the deployed userpod host (P4 runtime boundary — distinct from supply-chain-sentinel's manifest boundary). Read security/regressions/ for existing surface: runtime checks. Return concrete signal_sources (verifiable span targets only — no synthetic signals). Emit reg.runtime.select span (P9 — namespace registered in CANONICAL_NAMESPACES). Authenticated host mandatory (P12). Signal parameter: regulation | tool | inference | all. #}

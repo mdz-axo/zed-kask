@@ -43,7 +43,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 ### skill-maintenance-translate
 
 1. Convert the classified source skill into a hKask registry crate (manifest.yaml + .j2 templates) plus a process manifest (registry/manifests/<name>.yaml).
-2. Produce one .j2 file per classified step, mapping cognitive steps to KnowAct, workflow steps to WordAct or FlowDef, reference content to RenderAct, and guardrails to visibility, energy_cap, and constraints.
+2. Produce one .j2 file per classified step, mapping cognitive steps to KnowAct, workflow steps to WordAct or FlowDef, reference content to RenderActand guardrails to visibility and constraints.
 3. Map source actions to canonical hKask actions using the action mapping table (e.g., `call` → `execute`, `classify` → `select`, `run_command` → `execute`, `check` → `validate`).
 4. Generate gas/rjoule budgets based on the translated step count and inference usage (simple: gas 5K-10K/rjoule 1-2; multi-step: gas 50K-150K/rjoule 3-5; media: gas 100K+/rjoule 5+).
 5. Generate a convergence block with `convergence_mode: "cauchy"`, `cauchy_epsilon: 0.03`, `cauchy_window: 3`, `max_iterations: 10`, `min_iterations: 2`.
@@ -102,7 +102,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 
 - `skill-maintenance-validate.j2`: Public. R1-R12 mandatory; Z1-Z8 secondary; X1-X4 cross-artifact; E1-E11 executor compliance mandatory; E12 visual artifact surfacing mandatory. R1-R5 failures are critical; E1/E2/E4/E5/E6/E7/E9/E11 failures are critical; E12 failures are high (diagram silently dropped — user never sees visualization); Z5/Z6/Z7 failures are high; missing SKILL.md (Z1) is info, not failure.
 - `skill-maintenance-build.j2`: Public. Name must be lowercase, hyphenated, 2-40 chars, verb-noun or noun-noun, no reserved prefixes. Process manifest must have gas/rjoule/convergence blocks, canonical actions, and a `ledger:` block with `span_namespace: reg.skill.<manifest.id>` (no abolished `spans:` list).
-- `skill-maintenance-translate.j2`: Public. template_type must be KnowAct/WordAct/FlowDef/RenderAct; visibility must be Private/Public/Shared; energy_cap must be 2048-8192. Source actions must be mapped to canonical actions. Process manifest must have gas/rjoule/convergence blocks.
+- `skill-maintenance-translate.j2`: Public. template_type must be KnowAct/WordAct/FlowDef/RenderAct; visibility must be Private/Public/Shared Source actions must be mapped to canonical actions. Process manifest must have gas/rjoule/convergence blocks.
 - `skill-maintenance-reverse.j2`: Public. Every instruction must trace to a manifest field or .j2 body — do not invent content.
 - `skill-maintenance-prose.j2`: Public. Output raw markdown only — no JSON, code fences, frontmatter, or structural sections.
 - `skill-maintenance-audit.j2`: Public. Every finding must cite a FlowDef manifest field, .j2 contract/metadata, or grep-verifiable Rust code path. Recommendations based solely on SKILL.md must be marked confidence: Hypothesis (Speculative) at maximum.
