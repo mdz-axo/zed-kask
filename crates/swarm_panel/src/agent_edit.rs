@@ -211,6 +211,13 @@ impl SwarmPanel {
         };
         self.author.editing_id = Some(agent_id.clone());
         self.author.editing_source = Some(source.clone());
+        // Set the create target from the editing source so the form dispatches
+        // to the right backend (update local vs update cloud). A synced card
+        // edits the local copy (the cloud card is updated separately via push).
+        self.author.create_target = match source {
+            AgentSource::Cloud => super::CreateTarget::Cloud,
+            AgentSource::Local | AgentSource::Synced => super::CreateTarget::Local,
+        };
         self.author.status = Some("Loading agent details…".into());
         self.author.busy = false;
         self.author.name.update(cx, |e, _| e.set_read_only(true));
@@ -369,7 +376,7 @@ impl SwarmPanel {
             self.create_agent(cx);
             return;
         };
-        let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
+        let is_local = self.author.create_target == super::CreateTarget::Local;
         if !is_local {
             self.author.status = Some(
                 "ABW agents cannot be updated from this panel. Clone to Local \

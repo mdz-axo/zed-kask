@@ -1,17 +1,24 @@
 //! Inference provider descriptors and `openai_compatible` settings sync.
 //!
-//! Each inference provider (DeepInfra, OpenRouter,
-//! Cline, AtlasCloud) is exposed as a zed OpenAI-compatible provider. When the user enables
-//! a provider in the kask settings UI, the composition root calls
-//! `ensure_openai_compatible_entries` to write the corresponding
-//! `openai_compatible.<provider_id>` entry into settings.json. The existing
-//! `register_compatible_providers` machinery then registers the provider in the
-//! `LanguageModelRegistry`, making it appear in Settings → AI → LLM Providers
-//! and in the agent model picker.
+//! DeepInfra and AtlasCloud are exposed as zed OpenAI-compatible providers:
+//! when the user enables one in the kask settings UI, the composition root
+//! calls `ensure_openai_compatible_entries` to write an
+//! `openai_compatible.<provider_id>` entry into settings.json, and zed's
+//! `register_compatible_providers` machinery registers it in the
+//! `LanguageModelRegistry` (Settings → AI → LLM Providers + agent model
+//! picker).
 //!
-//! API keys are stored in the keychain under the provider's `api_url` (the same
-//! URL zed's OpenAI-compatible provider reads from), and mirrored to
-//! `kask://credentials/<env_var>` for MCP server env injection.
+//! OpenRouter is NOT registered here — zed already ships a built-in
+//! `OpenRouterLanguageModelProvider`. Its kask toggle only mirrors the API
+//! key to MCP servers via `credential_urls_for_mcp`.
+//!
+//! Removed providers (fal.ai, Cline, KiloCode, and stale OpenRouter entries
+//! from prior versions) are scrubbed from settings.json by
+//! `ensure_openai_compatible_entries`.
+//!
+//! API keys are stored in the keychain under the provider's `api_url` (the
+//! same URL zed's OpenAI-compatible provider reads) and mirrored to
+//! `kask://credentials/<credential_key>` for MCP server env injection.
 
 use std::sync::Arc;
 
@@ -40,7 +47,10 @@ pub struct InferenceProviderDescriptor {
     pub dashboard_url: &'static str,
 }
 
-/// The 7 inference providers surfaced in kask settings.
+/// The inference providers surfaced in kask settings.
+///
+/// OpenRouter is included for API-key mirroring to MCP servers, not for
+/// `openai_compatible` registration (see `ensure_openai_compatible_entries`).
 pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     InferenceProviderDescriptor {
         id: "DeepInfra",
@@ -430,48 +440,38 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
     urls
 }
 
-/// Ensure that `openai_compatible.<provider_id>` entries exist in settings.json
-/// for every enabled inference provider, and remove entries for disabled ones.
+/// Write `openai_compatible.<provider_id>` entries for enabled providers and
+/// remove entries for disabled or removed providers.
 ///
-/// This is called by the composition root after `KaskSettings` are loaded.
-/// The existing `register_compatible_providers` machinery in `language_models`
-/// watches the `openai_compatible` settings section and registers/unregisters
-/// providers in the `LanguageModelRegistry` automatically.
+/// Called by the composition root after `KaskSettings` are loaded. zed's
+/// `register_compatible_providers` watches the `openai_compatible` settings
+/// section and registers/unregisters providers in `LanguageModelRegistry`
+/// automatically.
 ///
-/// Each entry is written with an empty `available_models` list — the user
-/// adds models via the LLM Providers settings page, which writes to the same
-/// `openai_compatible.<provider_id>` key.
+/// OpenRouter is skipped: zed's built-in `OpenRouterLanguageModelProvider`
+/// already registers it, so a kask `openai_compatible.OpenRouter` entry would
+/// duplicate it in the LLM picker. OpenRouter's kask toggle still mirrors its
+/// key to MCP servers via `credential_urls_for_mcp` (which iterates
+/// `INFERENCE_PROVIDERS` directly, not this function).
 pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut App) {
-    // Extract the enabled states before the closure so we don't borrow
-    // `settings` inside the `move` closure.
-    //
-    // fal.ai, Cline, and KiloCode are deliberately absent: fal.ai is a media platform, not
-    // an OpenAI-compatible chat endpoint (its `/v1/chat/completions` returns 404
-    // and `/v1/models` uses `Authorization: Key`, not Bearer), and Cline and
-    // KiloCode were removed from the kask provider set. All three are cleaned up
-    // below so stale `openai_compatible` entries left in settings.json by prior
-    // versions stop firing bogus discovery 401/404 warnings on every startup.
-    let enabled_states: [(&'static str, bool); 3] = [
+    // Extract enabled states before the `move` closure to avoid borrowing
+    // `settings` inside it. OpenRouter is absent: it has a built-in zed provider.
+    let enabled_states: [(&'static str, bool); 2] = [
         ("DeepInfra", settings.inference_providers.deepinfra_enabled),
-        (
-            "OpenRouter",
-            settings.inference_providers.openrouter_enabled,
-        ),
         (
             "AtlasCloud",
             settings.inference_providers.atlascloud_enabled,
         ),
     ];
 
-    // Removed providers: `(id, known_api_url)`. If a stale `openai_compatible`
-    // entry with one of these ids matches the known api_url, drop it so zed's
-    // OpenAI-compatible machinery stops registering/discovering a provider that
-    // no longer belongs to the kask set. The api_url match guard avoids removing
-    // a user's custom provider that happens to share an id.
-    let removed_providers: [(&'static str, &str); 3] = [
+    // Stale `openai_compatible` entries to scrub. The api_url guard avoids
+    // removing a user's custom provider that happens to share an id.
+    // OpenRouter is included to clean up entries written by prior versions.
+    let removed_providers: [(&'static str, &str); 4] = [
         ("fal.ai", "https://api.fal.ai/v1"),
         ("Cline", "https://api.cline.bot/api/v1"),
         ("KiloCode", "https://api.kilo.ai/api/gateway"),
+        ("OpenRouter", "https://openrouter.ai/api/v1"),
     ];
 
     let fs = <dyn fs::Fs>::global(cx);
@@ -482,7 +482,7 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
             .openai_compatible
             .get_or_insert_default();
 
-        // Clean up stale entries for removed providers (fal.ai, Cline, KiloCode).
+        // Scrub stale entries for removed providers.
         for (id, known_api_url) in removed_providers {
             let id: std::sync::Arc<str> = std::sync::Arc::from(id);
             if let Some(existing) = openai_compatible.get(&id)
@@ -493,6 +493,10 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
         }
 
         for provider in INFERENCE_PROVIDERS {
+            if provider.credential_key == "openrouter" {
+                continue;
+            }
+
             let enabled = enabled_states
                 .iter()
                 .find(|(id, _)| *id == provider.id)
@@ -1161,5 +1165,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    // Pins the OpenRouter non-duplication contract: OpenRouter stays in
+    // `INFERENCE_PROVIDERS` (for key mirroring via `credential_urls_for_mcp`)
+    // but is skipped by `ensure_openai_compatible_entries` (zed's built-in
+    // `OpenRouterLanguageModelProvider` already registers it).
+    #[test]
+    fn openrouter_is_mirrored_but_not_registered_as_openai_compatible() {
+        let openrouter = INFERENCE_PROVIDERS
+            .iter()
+            .find(|p| p.credential_key == "openrouter")
+            .expect("OpenRouter must stay in INFERENCE_PROVIDERS for MCP key mirroring");
+        assert_eq!(openrouter.id, "OpenRouter");
+        assert_eq!(openrouter.env_var, "OPENROUTER_API_KEY");
+
+        // Replicate the skip filter from `ensure_openai_compatible_entries`.
+        let write_set: Vec<&str> = INFERENCE_PROVIDERS
+            .iter()
+            .filter(|p| p.credential_key != "openrouter")
+            .map(|p| p.id)
+            .collect();
+        assert!(
+            !write_set.contains(&"OpenRouter"),
+            "OpenRouter must not be in the openai_compatible write set"
+        );
+        assert!(write_set.contains(&"DeepInfra"));
+        assert!(write_set.contains(&"AtlasCloud"));
     }
 }

@@ -89,12 +89,79 @@ pub mod request_types;
 mod sanitize;
 mod spend_gate;
 
+// ── Canonical tool-name list ─────────────────────────────────────────────
+//
+// The single source of truth for the 53 tool names exposed by this server.
+// Consumers across the seam (e.g. `swarm_panel`) verify their own tool-name
+// lists against this const via a dev-dependency test, so a rename in the
+// server's `#[tool]` fns surfaces there rather than degrading to
+// "tool not found" at runtime. The `tool_surface_is_exactly_53_registered_tools`
+// test below asserts this const matches the live `combined_router()` surface.
+pub const TOOL_NAMES: &[&str] = &[
+    // ABW (27).
+    "swarm_list_agents",
+    "swarm_get_swarm",
+    "swarm_get_agent",
+    "swarm_list_apps",
+    "swarm_ontology_templates",
+    "swarm_execute_agent",
+    "swarm_hire_cost",
+    "swarm_request_consent",
+    "swarm_authorize_session",
+    "swarm_hire",
+    "swarm_delegate",
+    "swarm_delegate_and_wait",
+    "swarm_fanout",
+    "swarm_run_status",
+    "swarm_generate_prompt",
+    "swarm_generate_ontology",
+    "swarm_create_agent",
+    "swarm_create_swarm",
+    "swarm_xaman",
+    "swarm_create_app",
+    "swarm_fire",
+    "swarm_delete_agent",
+    "swarm_delete_swarm",
+    "swarm_search_knowledge",
+    "swarm_publish_checks",
+    "swarm_publish_agent",
+    "swarm_fork_agent",
+    // Local (26).
+    "swarm_fund_local",
+    "swarm_balance_local",
+    "swarm_local_history",
+    "swarm_delegate_local",
+    "swarm_fanout_local",
+    "swarm_pipeline_local",
+    "swarm_a2a_send",
+    "swarm_a2a_card",
+    "swarm_list_local_agents",
+    "swarm_clone_to_local",
+    "swarm_push_to_cloud",
+    "swarm_remove_local",
+    "swarm_create_local_agent",
+    "swarm_reconfigure_local_agent",
+    "swarm_create_local_swarm",
+    "swarm_list_local_swarms",
+    "swarm_get_local_swarm",
+    "swarm_delete_local_swarm",
+    "swarm_add_agent_local",
+    "swarm_remove_agent_local",
+    "swarm_search_knowledge_local",
+    "swarm_generate_prompt_local",
+    "swarm_generate_ontology_local",
+    "swarm_ai_assist",
+    "swarm_evaluate_local",
+    "swarm_execute_plan_local",
+];
+
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils {
     pub use crate::abw_util::*;
     pub use crate::cloud_tools::build_create_agent_card;
     pub use crate::config::{SwarmConfig, SwarmMode, resolve_local_agents_dir};
     pub use crate::consent::{ConsentStore, fnv1a, mint_token};
+    pub use crate::error::SwarmError;
     pub use crate::request_types::{
         CapabilityGate, CreateAgentRequest, McpServerAuthSpec, McpServerSpec, ModelLadderRung,
         ValenceInput,
@@ -104,19 +171,15 @@ pub mod test_utils {
 
 // ── Public local-swarm surface (reused by other kask MCP servers) ──────────
 //
-// The local-swarm runtime, agent registry, card types, and error type are
-// reused by `hkask-mcp-kata-kanban`'s `kanban_task_spawn` to delegate tasks to
-// local agents in-process. Only the local-mode execution surface is exposed;
-// the ABW client, consent store, and spend gate stay crate-private.
-pub use crate::error::SwarmError;
-pub use crate::local_registry::{
-    LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentRegistry,
-};
+// Only the symbols `hkask-mcp-kata-kanban` actually imports are re-exported.
+// The ABW client, consent store, spend gate, non-lazy runtime, local swarm
+// registry, error type, and the `Dependencies`/`Valence` card sub-structs stay
+// crate-private — they have no external consumer (verified by grep across
+// `kask/` and `crates/` outside this crate's `src/` and `tests/`).
+pub use crate::local_registry::{LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry};
 pub use crate::local_runtime::{
-    LazyLocalSwarmRuntime, LocalDelegateResult, LocalSwarmRuntime, TaskSuccessProvenance,
-    TaskSuccessVerdict,
+    LazyLocalSwarmRuntime, LocalDelegateResult, TaskSuccessProvenance, TaskSuccessVerdict,
 };
-pub use crate::local_swarms::{LocalSwarm, LocalSwarmRegistry};
 
 use crate::abw_client::SwarmClient;
 use crate::config::SwarmConfig;
@@ -372,66 +435,8 @@ mod tests {
             .map(|t| t.name.into_owned())
             .collect();
         names.sort();
-        let mut expected: Vec<String> = [
-            // ABW (27).
-            "swarm_list_agents",
-            "swarm_get_swarm",
-            "swarm_get_agent",
-            "swarm_list_apps",
-            "swarm_ontology_templates",
-            "swarm_execute_agent",
-            "swarm_hire_cost",
-            "swarm_request_consent",
-            "swarm_authorize_session",
-            "swarm_hire",
-            "swarm_delegate",
-            "swarm_delegate_and_wait",
-            "swarm_fanout",
-            "swarm_run_status",
-            "swarm_generate_prompt",
-            "swarm_generate_ontology",
-            "swarm_create_agent",
-            "swarm_create_swarm",
-            "swarm_xaman",
-            "swarm_create_app",
-            "swarm_fire",
-            "swarm_delete_agent",
-            "swarm_delete_swarm",
-            "swarm_search_knowledge",
-            "swarm_publish_checks",
-            "swarm_publish_agent",
-            "swarm_fork_agent",
-            // Local (24).
-            "swarm_fund_local",
-            "swarm_balance_local",
-            "swarm_local_history",
-            "swarm_delegate_local",
-            "swarm_fanout_local",
-            "swarm_pipeline_local",
-            "swarm_a2a_send",
-            "swarm_a2a_card",
-            "swarm_list_local_agents",
-            "swarm_clone_to_local",
-            "swarm_push_to_cloud",
-            "swarm_remove_local",
-            "swarm_create_local_agent",
-            "swarm_reconfigure_local_agent",
-            "swarm_create_local_swarm",
-            "swarm_list_local_swarms",
-            "swarm_get_local_swarm",
-            "swarm_delete_local_swarm",
-            "swarm_add_agent_local",
-            "swarm_remove_agent_local",
-            "swarm_search_knowledge_local",
-            "swarm_generate_prompt_local",
-            "swarm_generate_ontology_local",
-            "swarm_ai_assist",
-            "swarm_evaluate_local",
-            "swarm_execute_plan_local",
-        ]
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+        let mut expected: Vec<String> =
+            TOOL_NAMES.iter().map(|s| s.to_string()).collect();
         expected.sort();
         assert_eq!(
             names, expected,

@@ -27,6 +27,9 @@ pub(crate) struct ComposeForm {
     /// Agent names Xaman Ek recommended (extracted from a composition plan),
     /// offered as a one-click pre-fill of the agents field.
     pub(crate) xaman_suggested_agents: Vec<String>,
+    /// Which backend to create the swarm on (Cloud = ABW, Local = local
+    /// substrate). A per-form choice — not gated on `kask.swarm.mode`.
+    pub(crate) create_target: super::CreateTarget,
     pub(crate) xaman_busy: bool,
 }
 
@@ -58,6 +61,7 @@ impl ComposeForm {
             xaman_session: None,
             xaman_response: None,
             xaman_suggested_agents: Vec::new(),
+            create_target: super::CreateTarget::Cloud,
             xaman_busy: false,
         }
     }
@@ -69,7 +73,7 @@ impl SwarmPanel {
     /// backend (Local vs ABW) and its tooltip explains the cost/consent model.
     pub(crate) fn render_compose(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().colors().border;
-        let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
+        let is_local = self.compose.create_target == super::CreateTarget::Local;
         let create_label = if self.compose.busy {
             "Creating…"
         } else if is_local {
@@ -87,6 +91,53 @@ impl SwarmPanel {
             .gap_3()
             .p_4()
             .child(Headline::new("Compose a Swarm").size(HeadlineSize::Small))
+            // Cloud/Local target toggle — a per-form choice, not a global
+            // setting. Both backends are always available.
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                Label::new("Target:")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                div().child(
+                                    ToggleButtonGroup::single_row(
+                                        "compose-create-target",
+                                        [
+                                            ToggleButtonSimple::new(
+                                                "Cloud",
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.compose.create_target =
+                                                        super::CreateTarget::Cloud;
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                            ToggleButtonSimple::new(
+                                                "Local",
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.compose.create_target =
+                                                        super::CreateTarget::Local;
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                        ],
+                                    )
+                                    .style(ToggleButtonGroupStyle::Outlined)
+                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(24.0_f32)))
+                                    .label_size(LabelSize::XSmall)
+                                    .auto_width()
+                                    .selected_index(if is_local { 1 } else { 0 })
+                                    .into_any_element(),
+                                ),
+                            ),
+                    ),
+            )
             .child(
                 v_flex()
                     .gap_1()

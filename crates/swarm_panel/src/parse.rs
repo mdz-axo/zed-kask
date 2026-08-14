@@ -166,15 +166,15 @@ pub(crate) struct LocalSwarmInfo {
 }
 
 /// The canonical list of tool names exposed by the `swarm` MCP server —
-/// every `#[tool]` fn in `hkask-mcp-swarm/src/hkask_mcp_swarm.rs`. This is the
-/// single source of truth shared by `panel_tool_names_match_server` (which
-/// pins the count against the server so a rename/add/remove is caught) and the
-/// Steer-mode system prompt (whose backticked `swarm_*` mentions are
-/// `debug_assert!`ed against this list in `steer_system_prompt`, and asserted
-/// in `steer_prompt_mentions_only_known_tools`). A rename in `hkask-mcp-swarm`
-/// must update this list — the count test fails first, and any stale prompt
-/// mention is caught next, so a rename surfaces here rather than degrading to
-/// "tool not found" at runtime.
+/// The tool names the panel calls on the `swarm` MCP server. This is a
+/// verified copy of the server's canonical `hkask_mcp_swarm::TOOL_NAMES`
+/// const — `panel_tool_names_match_server` asserts the two match exactly, so a
+/// rename/add/remove in the server surfaces in that test rather than degrading
+/// to "tool not found" at runtime. The Steer-mode system prompt's backticked
+/// `swarm_*` mentions are `debug_assert!`ed against this list in
+/// `steer_system_prompt`, and asserted in `steer_prompt_mentions_only_known_tools`.
+/// When updating: run `panel_tool_names_match_server` to confirm the copy is
+/// in sync, then update any Steer prompt mentions caught by the prompt test.
 pub(crate) const SWARM_TOOLS: &[&str] = &[
     // ABW (cloud) tools.
     "swarm_list_agents",

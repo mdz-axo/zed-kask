@@ -49,7 +49,7 @@ Validate **all skills** in the registry directory.
 | R2 | Crate metadata valid | `crate.name`, `crate.version`, `crate.description` all present |
 | R3 | Templates list non-empty | At least one entry in `templates` array |
 | R4 | Template entry valid | Each entry has `id`, `path`, `type`, `description` |
-| R5 | template_type valid | Each .j2 `template_type` in {WordAct, KnowAct, FlowDef} |
+| R5 | template_type valid | Each .j2 `template_type` in {WordAct, KnowAct, FlowDef, RenderAct} |
 | R6 | Contract valid | Each .j2 has `contract.input` and `contract.output` with typed fields |
 | R7 | energy_cap in range | Each .j2 `energy_cap` integer in [2048, 8192] |
 | R8 | Visibility valid | Each .j2 `visibility` in {Private, Public, Shared} |

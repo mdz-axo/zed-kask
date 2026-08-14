@@ -41,6 +41,10 @@ pub(crate) struct AuthorForm {
     pub(crate) valence_primary_affect: Entity<Editor>,
     /// Comma-separated personality trait descriptors.
     pub(crate) valence_personality_traits: Entity<Editor>,
+    /// Which backend to create the agent on (Cloud = ABW, Local = local
+    /// substrate). A per-form choice — not gated on `kask.swarm.mode`.
+    /// When editing, this is derived from `editing_source`.
+    pub(crate) create_target: super::CreateTarget,
     /// Result of the last create attempt (success id or error).
     pub(crate) status: Option<SharedString>,
     pub(crate) busy: bool,
@@ -110,6 +114,7 @@ impl AuthorForm {
                 );
                 e
             }),
+            create_target: super::CreateTarget::Cloud,
             status: None,
             busy: false,
         }
@@ -122,7 +127,7 @@ impl SwarmPanel {
     /// has a nudge for what to enter and which backend it targets.
     pub(crate) fn render_author(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().colors().border;
-        let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
+        let is_local = self.author.create_target == super::CreateTarget::Local;
         let is_editing = self.author.editing_id.is_some();
         let editing_source = self.author.editing_source.clone();
         let delete_tooltip = match &editing_source {
@@ -166,6 +171,63 @@ impl SwarmPanel {
                     "Author an Agent"
                 })
                 .size(HeadlineSize::Small),
+            )
+            // Cloud/Local target toggle — a per-form choice, not a global
+            // setting. Both backends are always available; this selects which
+            // tool the create button dispatches (`swarm_create_agent` vs
+            // `swarm_create_local_agent`). Disabled when editing (the target is
+            // derived from the editing source).
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                Label::new("Target:")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                div().child(
+                                    ToggleButtonGroup::single_row(
+                                        "author-create-target",
+                                        [
+                                            ToggleButtonSimple::new(
+                                                "Cloud",
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.author.create_target =
+                                                        super::CreateTarget::Cloud;
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                            ToggleButtonSimple::new(
+                                                "Local",
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.author.create_target =
+                                                        super::CreateTarget::Local;
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                        ],
+                                    )
+                                    .style(ToggleButtonGroupStyle::Outlined)
+                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(24.0_f32)))
+                                    .label_size(LabelSize::XSmall)
+                                    .auto_width()
+                                    .selected_index(if is_local { 1 } else { 0 })
+                                    .into_any_element(),
+                                ),
+                            ),
+                    )
+                    .when(self.author.editing_id.is_some(), |this| {
+                        this.child(
+                            Label::new("Target is fixed to the editing source.")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    }),
             )
             .child(
                 v_flex()

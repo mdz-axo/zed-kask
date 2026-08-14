@@ -49,7 +49,7 @@ A skill is stale if it exhibits any of these signals:
 | Signal | Detection Method | Severity |
 |--------|-------------------|----------|
 | Missing registry crate | No `manifest.yaml` in `registry/manifests/<name>.yaml` (FlowDef) or `registry/templates/<name>/manifest.yaml` (crate catalog) | Critical |
-| Invalid template_type | template_type is not WordAct/KnowAct/FlowDef | Critical |
+| Invalid template_type | template_type is not WordAct/KnowAct/FlowDef/RenderAct | Critical |
 | Broken file references | Referenced path does not exist in workspace | Critical |
 | Outdated crate references | References `hkask-*` crate that has been renamed or removed | Critical |
 | Outdated architecture references | References architecture that has been superseded | High |

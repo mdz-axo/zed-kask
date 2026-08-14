@@ -33,7 +33,7 @@ use hkask_kanban_widget::block::{KanbanBlockBody, TaskActivityBody, TaskBody};
 use hkask_kanban_widget::view::KanbanWidget;
 use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
 use hkask_types::kanban_wire::KANBAN_SERVER_NAME;
-use hkask_types::tool_response::parse_tool_response;
+use hkask_types::tool_response::{parse_tool_error, parse_tool_response};
 use serde::Deserialize;
 use serde_json::json;
 use ui::{
@@ -181,6 +181,27 @@ fn refresh_target(has_board: bool) -> RefreshTarget {
         RefreshTarget::Tasks
     } else {
         RefreshTarget::Boards
+    }
+}
+
+/// Classify a kanban fetch failure (board list or task list) into an
+/// operator-facing message.
+///
+/// Shared by the `Err(_)` branch of `invoke_tool` (transport-level failure) and
+/// the `Ok(output)` branch when the server returned a tool error envelope
+/// `{"error": ..., "kind": ...}` (e.g. `failed_precondition` when the DB is
+/// not initialized, `unavailable` when the server is down). Before this helper
+/// existed, the envelope case fell through to `BoardListResponse`/
+/// `TaskListResponse` parsing and surfaced as the misleading
+/// "Failed to parse … response: {…}".
+///
+/// Kept as a pure function so the classification is unit-testable without a
+/// `Workspace`, mirroring `refresh_target` and `mutation_retry_delay`.
+fn classify_kanban_fetch_error(retryable: bool, message: &str) -> SharedString {
+    if retryable {
+        format!("Reconnecting to the kanban server… ({message})").into()
+    } else {
+        message.into()
     }
 }
 
@@ -578,6 +599,27 @@ impl KanbanPanel {
         let task = invoker.invoke_tool(KANBAN_SERVER, BOARD_LIST_TOOL, json!({}));
         cx.spawn(async move |this, cx| match task.await {
             Ok(output) => {
+                // The kanban server returns tool errors as an Ok string carrying
+                // the `{"error": ..., "kind": ...}` envelope (see
+                // `McpToolError::to_json_string`), not as an `Err` from
+                // `invoke_tool`. Without this check, a `failed_precondition`
+                // (e.g. DB not initialized) or `unavailable` would fall through
+                // to the `BoardListResponse` parse, fail (no `boards` field),
+                // and surface as the misleading "Failed to parse board list
+                // response: {…}". Route the envelope through the same
+                // classification the `Err(_)` branch uses below.
+                if let Some(err) = parse_tool_error(&output) {
+                    this.update(cx, |this, cx| {
+                        this.fetching = false;
+                        this.error = Some(classify_kanban_fetch_error(
+                            err.is_retryable(),
+                            &err.message,
+                        ));
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
                 let parsed = parse_tool_response(&output)
                     .and_then(|content| serde_json::from_value::<BoardListResponse>(content).ok());
                 this.update(cx, |this, cx| {
@@ -643,6 +685,21 @@ impl KanbanPanel {
         let task = invoker.invoke_tool(KANBAN_SERVER, TASK_LIST_TOOL, args);
         cx.spawn(async move |this, cx| match task.await {
             Ok(output) => {
+                // See `fetch_boards`: a server error envelope must be routed
+                // through the same classification as the `Err(_)` branch, not
+                // fall through to "Failed to parse task list response: {…}".
+                if let Some(err) = parse_tool_error(&output) {
+                    this.update(cx, |this, cx| {
+                        this.fetching = false;
+                        this.error = Some(classify_kanban_fetch_error(
+                            err.is_retryable(),
+                            &err.message,
+                        ));
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
                 let parsed = parse_tool_response(&output)
                     .and_then(|content| serde_json::from_value::<TaskListResponse>(content).ok());
                 this.update(cx, |this, cx| {
@@ -763,7 +820,27 @@ impl KanbanPanel {
             loop {
                 let outcome = invoker.invoke_tool(KANBAN_SERVER, tool, args.clone()).await;
                 match outcome {
-                    Ok(_) => {
+                    Ok(output) => {
+                        // The kanban server returns tool errors as an Ok string
+                        // carrying the `{"error": ..., "kind": ...}` envelope
+                        // (see `McpToolError::to_json_string`), not as an `Err`
+                        // from `invoke_tool`. Without this check, a mutation
+                        // that failed server-side (e.g. `invalid_argument`,
+                        // `not_found`) would silently look like success — the
+                        // `Ok(_)` arm cleared the error and refreshed, so the
+                        // operator saw no feedback that their action failed.
+                        // Route the envelope to the same failure path as an
+                        // `Err(InvokeError::Failed(_))`.
+                        if let Some(err) = parse_tool_error(&output) {
+                            this.update(cx, |this, cx| {
+                                this.error = Some(
+                                    format!("Failed to {label}: {}", err.message).into(),
+                                );
+                                cx.notify();
+                            })
+                            .log_err();
+                            return;
+                        }
                         this.update(cx, |this, cx| {
                             this.error = None;
                             if let Some(fixup) = before_refresh {
@@ -1937,8 +2014,8 @@ mod tests {
     use super::{
         ADVERTISED_KANBAN_TOOLS, BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, IDEMPOTENT_TOOLS,
         MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL, TASK_DELETE_TOOL, TASK_SPAWN_TOOL,
-        TASK_UPDATE_TOOL, attach_idempotency_key, is_idempotent_tool, mutation_retry_delay,
-        refresh_target, steer_system_prompt,
+        TASK_UPDATE_TOOL, attach_idempotency_key, classify_kanban_fetch_error,
+        is_idempotent_tool, mutation_retry_delay, refresh_target, steer_system_prompt,
     };
     use hkask_tool_invoker::InvokeError;
     use std::time::Duration;
@@ -2106,6 +2183,52 @@ mod tests {
             mutation_total <= Duration::from_secs(2),
             "a state-changing gesture must resolve or report within ~2s, got {mutation_total:?}"
         );
+    }
+
+    // The kanban server returns tool errors as an Ok string carrying the
+    // `{"error": ..., "kind": ...}` envelope (McpToolError::to_json_string),
+    // not as an Err from invoke_tool. Before the error-envelope seam, a
+    // `failed_precondition` (DB not initialized) or `unavailable` fell through
+    // to the BoardListResponse/TaskListResponse parse and surfaced as the
+    // misleading "Failed to parse … response: {…}". These tests pin the
+    // classification helper and the seam-level detector so a regression in
+    // either surfaces here.
+    #[test]
+    fn classify_kanban_fetch_error_retryable_reads_as_reconnecting() {
+        let msg = classify_kanban_fetch_error(true, "transport closed");
+        assert!(
+            msg.starts_with("Reconnecting to the kanban server…"),
+            "retryable errors read as a transient reconnect, got {msg}"
+        );
+    }
+
+    #[test]
+    fn classify_kanban_fetch_error_non_retryable_passes_message_through() {
+        // A non-retryable server error (e.g. failed_precondition) surfaces the
+        // server's message verbatim — the operator sees the real cause, not a
+        // generic "Failed to parse …".
+        let msg = classify_kanban_fetch_error(false, "kanban database not initialized");
+        assert_eq!(msg, "kanban database not initialized");
+    }
+
+    #[test]
+    fn fetch_paths_detect_server_error_envelope_before_typed_parse() {
+        // The exact wire format pinned by `error_wire_format_golden_strings`
+        // in hkask-mcp-server. A failed_precondition is the canonical kanban
+        // case (DB not initialized at first launch).
+        let out =
+            r#"{"error":"kanban database not initialized","kind":"failed_precondition"}"#;
+        let err = hkask_types::tool_response::parse_tool_error(out)
+            .expect("server error envelope must be detected");
+        assert_eq!(err.message, "kanban database not initialized");
+        assert_eq!(
+            err.kind,
+            Some(hkask_types::McpErrorKind::FailedPrecondition)
+        );
+        assert!(!err.is_retryable());
+        // A successful payload must NOT be misclassified as an error envelope.
+        let ok = r#"{"content":{"boards":[]}}"#;
+        assert!(hkask_types::tool_response::parse_tool_error(ok).is_none());
     }
 
     /// A mutation whose outcome is unknown must NOT be retried.

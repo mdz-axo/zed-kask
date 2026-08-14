@@ -1,21 +1,22 @@
 //! Inference Providers sub-page — API key entry + enable toggles for
-//! OpenAI-compatible providers (DeepInfra, OpenRouter,
-//! AtlasCloud). When enabled, an `openai_compatible.<provider_id>` entry
-//! is written to settings.json so the provider appears in the LLM provider
-//! picker. The API key is stored in the keychain under the provider's
-//! `api_url` (so zed's OpenAI-compatible provider finds it) and mirrored to
-//! `kask://credentials/<key>` for MCP server env injection.
+//! OpenAI-compatible providers (DeepInfra, OpenRouter, AtlasCloud). Toggling
+//! DeepInfra or AtlasCloud writes an `openai_compatible.<provider_id>` entry
+//! to settings.json so the provider appears in the LLM provider picker.
+//! OpenRouter has a built-in zed provider, so its toggle only mirrors the
+//! API key to MCP servers. Keys are stored in the keychain under the
+//! provider's `api_url` and mirrored to `kask://credentials/<key>` for MCP
+//! server env injection.
 
 use super::*;
 
 /// Render the Inference Providers sub-page.
 ///
-/// Each provider has an enable toggle and an API key input. When enabled,
-/// an `openai_compatible.<provider_id>` entry is written to settings.json so
-/// the provider appears in Settings → AI → LLM Providers. The API key is
-/// stored in the keychain under the provider's `api_url` (so zed's
-/// OpenAI-compatible provider finds it) and mirrored to
-/// `kask://credentials/<key>` for MCP server env injection.
+/// Each provider has an enable toggle and an API key input. DeepInfra and
+/// AtlasCloud toggles write an `openai_compatible.<provider_id>` entry to
+/// settings.json (appears in Settings → AI → LLM Providers). OpenRouter's
+/// toggle only mirrors the key to MCP servers (zed already ships a built-in
+/// OpenRouter provider). Keys are stored in the keychain under the
+/// provider's `api_url` and mirrored to `kask://credentials/<key>`.
 pub(crate) fn render_inference_providers_page(
     _settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,
@@ -72,8 +73,10 @@ pub(crate) fn render_inference_providers_page(
                 .child(
                     Label::new(
                         "API keys for OpenAI-compatible inference providers. \
-                         Toggle a provider to register it as an LLM provider in zed \
-                         (appears in Settings → AI → LLM Providers and the agent model picker). \
+                         Toggle DeepInfra or AtlasCloud to register them as LLM \
+                         providers in zed (Settings → AI → LLM Providers and the \
+                         agent model picker). OpenRouter has a built-in provider; \
+                         its toggle only mirrors the key to kask MCP servers. \
                          Keys are stored in the system keychain.",
                     )
                     .size(LabelSize::Small)
@@ -104,17 +107,27 @@ fn render_inference_provider_row(
     let env_var = desc.env_var;
 
     let toggle_id = format!("kask-inference-{provider_id}-enabled");
+    // OpenRouter has a built-in zed provider, so its toggle only mirrors the
+    // key to MCP servers — it does not write an `openai_compatible` entry.
+    let help_text = if provider_id == "OpenRouter" {
+        format!(
+            "Mirror the {provider_name} API key to MCP servers that read \
+             {env_var}. {provider_name} is registered as an LLM provider by zed's \
+             built-in OpenRouter provider (Settings → AI → LLM Providers), so this \
+             toggle does not register a separate provider — it only makes the key \
+             available to kask MCP servers. The API key is stored in the keychain."
+        )
+    } else {
+        format!(
+            "Enable {provider_name} as an OpenAI-compatible LLM provider. \
+             Writes an `openai_compatible.{provider_id}` entry to settings.json \
+             with api_url `{api_url}`. The API key is stored in the keychain."
+        )
+    };
     let enable_toggle = SwitchField::new(
         toggle_id,
         Some(provider_name),
-        Some(
-            format!(
-                "Enable {provider_name} as an OpenAI-compatible LLM provider. \
-                 Writes an `openai_compatible.{provider_id}` entry to settings.json \
-                 with api_url `{api_url}`. The API key is stored in the keychain."
-            )
-            .into(),
-        ),
+        Some(help_text.into()),
         if enabled {
             ToggleState::Selected
         } else {

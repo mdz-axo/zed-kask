@@ -380,6 +380,19 @@ enum SwarmFilter {
     Agents,
 }
 
+/// Which backend to target when creating an agent or swarm. This is a
+/// per-form choice, not a global setting — both cloud and local backends are
+/// always available (the swarm MCP server registers both tool sets in either
+/// mode; `kask.swarm.mode` only selects a startup warning, not a capability
+/// gate). The prior design gated this on `kask.swarm.mode`, which forced an
+/// either/or round-trip through settings + MCP server restart just to create a
+/// local agent while cloud was the default.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum CreateTarget {
+    Cloud,
+    Local,
+}
+
 /// The three surfaces of the panel: browsing existing agents/swarms, authoring
 /// a new agent, and composing agents into a swarm. Sharing (extensions) is
 /// represented by the browse surface's discovery role.
@@ -641,16 +654,13 @@ impl SwarmPanel {
                 input
             });
             let query_sub = cx.subscribe(&query_editor, Self::on_query_change);
-            // Re-filter the browse list whenever settings change. The backend
-            // mode toggle (`set_swarm_mode`) writes `kask.swarm.mode` via
-            // `update_settings_file`, which is async — `current_swarm_mode` is
-            // stale until the settings reload completes. This observer fires on
-            // that reload and re-runs `filter_entries` with the live mode, so
-            // the list reflects the new backend even though `set_swarm_mode`'s
-            // immediate filter call read a stale value. Mirrors
-            // `AgentRegistryPage`'s settings observer.
+            // Re-filter the browse list whenever settings change. The filter no
+            // longer depends on `kask.swarm.mode` (both backends are always
+            // shown), but settings changes can still affect the entry list
+            // indirectly (e.g. an MCP server restart re-fetches), so the
+            // observer stays as a re-render trigger.
             let settings_sub = cx.observe_global::<SettingsStore>(|this, cx| {
-                this.filter_entries(Self::current_swarm_mode(cx), cx);
+                this.filter_entries(cx);
             });
             let subscriptions = [query_sub, settings_sub];
 
@@ -815,7 +825,7 @@ impl SwarmPanel {
         } else {
             log::warn!("swarm-panel: could not fetch workspaces (agents-only mode): {message}");
         }
-        self.filter_entries(Self::current_swarm_mode(cx), cx);
+        self.filter_entries(cx);
     }
 
     fn set_mode(&mut self, mode: PanelMode, window: &mut Window, cx: &mut Context<Self>) {
@@ -845,6 +855,7 @@ impl SwarmPanel {
     fn reset_author_form_for_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.author.editing_id = None;
         self.author.editing_source = None;
+        self.author.create_target = CreateTarget::Cloud;
         self.author.status = None;
         self.author.name.update(cx, |e, _| e.set_read_only(false));
         // Clear the text fields so the operator starts fresh.
@@ -879,48 +890,6 @@ impl SwarmPanel {
     /// Used by the header mode toggle to show the active backend.
     fn current_swarm_mode(cx: &mut Context<Self>) -> kask_bridge::SwarmModeConfig {
         kask_bridge::KaskSettings::get_global(cx).swarm.mode.clone()
-    }
-
-    /// Set `kask.swarm.mode` in the user settings file. Persists via
-    /// `SettingsStore::update_settings_file`, which writes to `settings.json`
-    /// and triggers a global settings reload. The MCP server restarts with
-    /// the updated `HKASK_SWARM_MODE` env var (the `ContextServerStore`
-    /// observes the registry, which `sync_kask_mcp_servers` re-syncs on
-    /// settings change). This is the operator-facing toggle for v2 §15 —
-    /// flipping it re-routes the swarm server between ABW and the local
-    /// substrate without a code revert.
-    fn set_swarm_mode(&mut self, mode: kask_bridge::SwarmModeConfig, cx: &mut Context<Self>) {
-        let content_mode = match mode {
-            kask_bridge::SwarmModeConfig::Abw => settings_content::SwarmModeContent::Abw,
-            kask_bridge::SwarmModeConfig::Local => settings_content::SwarmModeContent::Local,
-        };
-        SettingsStore::global(cx).update_settings_file(<dyn Fs>::global(cx), move |settings, _| {
-            settings
-                .kask
-                .get_or_insert_default()
-                .swarm
-                .get_or_insert_default()
-                .mode = Some(content_mode);
-        });
-        // The Steer conversation bakes the backend mode into its system prompt
-        // at construction (`ensure_steer_conversation` reads `current_swarm_mode`
-        // once). A mode toggle after Steer is open would leave the curator
-        // reading a stale mode (and passing it as `context.mode` to the skill
-        // cascade). Drop the conversation so the next Steer selection rebuilds
-        // with the new backend.
-        if self.steer_conversation.take().is_some() {
-            log::info!(
-                "swarm-panel: backend mode toggled — Steer conversation rebuilt with the new mode"
-            );
-        }
-        // Re-filter the browse list so the toggle is visually connected to
-        // what is shown: ABW mode shows cloud agents/swarms, Local mode shows
-        // local agents/swarms. Pass the target `mode` directly —
-        // `update_settings_file` above is async, so `current_swarm_mode` is
-        // still stale at this point. A `SettingsStore` observer re-runs the
-        // filter with the live mode once the settings reload completes.
-        self.filter_entries(mode, cx);
-        cx.notify();
     }
 
     /// Lazily construct the `ConversationView` for Steer mode if it doesn't
@@ -996,8 +965,8 @@ impl SwarmPanel {
             cx.notify();
             return;
         }
-        let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
-        // Mode-aware slug pre-validation. ABW requires `^[a-z0-9_]{3,64}$` —
+        let is_local = self.author.create_target == CreateTarget::Local;
+        // Target-aware slug pre-validation. ABW requires `^[a-z0-9_]{3,64}$` —
         // a server-side rejection after the operator has filled every field
         // is a poor round-trip; validate up front so the error is
         // field-specific and immediate. Local mode allows alphanumeric plus
@@ -1171,7 +1140,7 @@ impl SwarmPanel {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
+        let is_local = self.compose.create_target == CreateTarget::Local;
 
         self.compose.busy = true;
         self.compose.status = None;
@@ -1511,7 +1480,7 @@ impl SwarmPanel {
             cx.notify();
             return;
         };
-        let mode = if Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local {
+        let mode = if self.author.create_target == CreateTarget::Local {
             "local"
         } else {
             "abw"
@@ -1685,13 +1654,14 @@ impl SwarmPanel {
         cx.notify();
     }
 
-    /// Filter the browse entries by the active `SwarmFilter` (All/Swarms/Agents),
-    /// the search query, and the backend mode. The mode is a parameter rather
-    /// than re-read from settings so `set_swarm_mode` can pass the target mode
-    /// for immediate feedback — `update_settings_file` is async, so
-    /// `current_swarm_mode` is stale until the settings reload completes. A
-    /// `SettingsStore` observer re-runs this with the live mode on reload.
-    fn filter_entries(&mut self, mode: kask_bridge::SwarmModeConfig, cx: &mut Context<Self>) {
+    /// Filter the browse entries by the active `SwarmFilter` (All/Swarms/Agents)
+    /// and the search query. Both cloud and local entries are always shown —
+    /// the swarm MCP server registers both tool sets in either mode, so the
+    /// backend is not a capability gate and should not filter the browse list.
+    /// The prior design filtered by `kask.swarm.mode`, which hid local agents
+    /// when the setting was `abw` and vice-versa, forcing an either/or
+    /// round-trip through settings just to see the other backend's entries.
+    fn filter_entries(&mut self, cx: &mut Context<Self>) {
         let filter = self.filter;
         let query = self.search_query(cx).map(|q| q.to_lowercase());
         let indices: Vec<usize> = self
@@ -1706,23 +1676,6 @@ impl SwarmPanel {
                     _ => false,
                 };
                 if !kind_matches {
-                    return false;
-                }
-                let source_matches = match entry {
-                    SwarmEntry::Agent(a) => match mode {
-                        kask_bridge::SwarmModeConfig::Abw => {
-                            a.source == AgentSource::Cloud || a.source == AgentSource::Synced
-                        }
-                        kask_bridge::SwarmModeConfig::Local => {
-                            a.source == AgentSource::Local || a.source == AgentSource::Synced
-                        }
-                    },
-                    SwarmEntry::Swarm(s) => match mode {
-                        kask_bridge::SwarmModeConfig::Abw => s.source == AgentSource::Cloud,
-                        kask_bridge::SwarmModeConfig::Local => s.source == AgentSource::Local,
-                    },
-                };
-                if !source_matches {
                     return false;
                 }
                 match &query {
@@ -1866,7 +1819,7 @@ impl SwarmPanel {
             };
 
             this.update(cx, |this, cx| {
-                this.filter_entries(Self::current_swarm_mode(cx), cx);
+                this.filter_entries(cx);
                 this.scroll_to_top(cx);
             })
             .ok();
@@ -1884,8 +1837,6 @@ impl SwarmPanel {
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
-        let mode = Self::current_swarm_mode(cx);
-        let is_local = mode == kask_bridge::SwarmModeConfig::Local;
 
         let message: SharedString = if self.is_fetching() {
             "Loading agents and swarms…".into()
@@ -1896,28 +1847,22 @@ impl SwarmPanel {
                 SwarmFilter::All => {
                     if has_search {
                         "No agents or swarms that match your search."
-                    } else if is_local {
-                        "No local agents or swarms. Create a local agent (Author) or clone a cloud agent to Local."
                     } else {
-                        "No agents or swarms. Set HKASK_ABW_API_KEY to see your swarms."
+                        "No agents or swarms. Create one (Author/Compose), or set HKASK_ABW_API_KEY to see your cloud swarms."
                     }
                 }
                 SwarmFilter::Swarms => {
                     if has_search {
                         "No swarms that match your search."
-                    } else if is_local {
-                        "No local swarms. Compose one (Compose) to group local agents."
                     } else {
-                        "No swarms. Set HKASK_ABW_API_KEY to see your workspaces."
+                        "No swarms. Compose one (Compose) to group agents, or set HKASK_ABW_API_KEY to see your cloud workspaces."
                     }
                 }
                 SwarmFilter::Agents => {
                     if has_search {
                         "No agents that match your search."
-                    } else if is_local {
-                        "No local agents. Create one (Author) or clone a cloud agent to Local."
                     } else {
-                        "No agents."
+                        "No agents. Create one (Author), or clone a cloud agent to Local."
                     }
                 }
             }
@@ -2420,78 +2365,21 @@ impl Render for SwarmPanel {
                                         }),
                                 )
                             })
-                            // v2 §15: in local mode the algedonic channel is the
-                            // local ledger balance (operator-funded). Shown only
-                            // when the backend mode is local; hidden when unknown
-                            // — never a fabricated zero.
-                            .when(
-                                Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local,
-                                |this| {
-                                    this.when_some(self.spend.local_balance, |this, balance| {
-                                        this.child(
-                                            Label::new(format!("■ {balance} local credits"))
-                                                .size(LabelSize::Small)
-                                                .color(if balance <= 0 {
-                                                    Color::Warning
-                                                } else {
-                                                    Color::Muted
-                                                }),
-                                        )
-                                    })
-                                },
-                            ),
-                    )
-                    // v2 §15: the mode toggle re-routes the swarm server
-                    // between ABW (v1) and the local substrate (v2). Writing
-                    // `kask.swarm.mode` persists to settings.json and restarts
-                    // the MCP server with the updated `HKASK_SWARM_MODE` env
-                    // var. The toggle is always visible so the operator can
-                    // switch backends without editing JSON.
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_2()
-                            .child(
-                                Label::new("Backend:")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                div().child(
-                                    ToggleButtonGroup::single_row(
-                                        "swarm-backend-mode",
-                                        [
-                                            ToggleButtonSimple::new(
-                                                "ABW",
-                                                cx.listener(|this, _event, _, cx| {
-                                                    this.set_swarm_mode(
-                                                        kask_bridge::SwarmModeConfig::Abw,
-                                                        cx,
-                                                    );
-                                                }),
-                                            ),
-                                            ToggleButtonSimple::new(
-                                                "Local",
-                                                cx.listener(|this, _event, _, cx| {
-                                                    this.set_swarm_mode(
-                                                        kask_bridge::SwarmModeConfig::Local,
-                                                        cx,
-                                                    );
-                                                }),
-                                            ),
-                                        ],
-                                    )
-                                    .style(ToggleButtonGroupStyle::Outlined)
-                                    .size(ToggleButtonGroupSize::Custom(rems_from_px(28.)))
-                                    .label_size(LabelSize::Small)
-                                    .auto_width()
-                                    .selected_index(match Self::current_swarm_mode(cx) {
-                                        kask_bridge::SwarmModeConfig::Abw => 0,
-                                        kask_bridge::SwarmModeConfig::Local => 1,
-                                    })
-                                    .into_any_element(),
-                                ),
-                            ),
+                            // The local ledger balance (operator-funded) is an
+                            // independent algedonic channel — shown whenever
+                            // known, alongside the ABW balance. Both backends
+                            // are always live, so neither is gated on the other.
+                            .when_some(self.spend.local_balance, |this, balance| {
+                                this.child(
+                                    Label::new(format!("■ {balance} local credits"))
+                                        .size(LabelSize::Small)
+                                        .color(if balance <= 0 {
+                                            Color::Warning
+                                        } else {
+                                            Color::Muted
+                                        }),
+                                )
+                            }),
                     )
                     .children(self.render_consent_banner(cx))
                     .children(self.render_publish_banner(cx))
@@ -2569,7 +2457,7 @@ impl Render for SwarmPanel {
                                 ],
                             )
                             .style(ToggleButtonGroupStyle::Outlined)
-                            .size(ToggleButtonGroupSize::Custom(rems_from_px(30.)))
+                            .size(ToggleButtonGroupSize::Custom(rems_from_px(30.0_f32)))
                             .label_size(LabelSize::Default)
                             .auto_width()
                             .selected_index(match self.mode {
@@ -2597,7 +2485,7 @@ impl Render for SwarmPanel {
                                                     "All",
                                                     cx.listener(|this, _event, _, cx| {
                                                         this.filter = SwarmFilter::All;
-                                                        this.filter_entries(Self::current_swarm_mode(cx), cx);
+                                                        this.filter_entries(cx);
                                                         this.scroll_to_top(cx);
                                                     }),
                                                 ),
@@ -2605,7 +2493,7 @@ impl Render for SwarmPanel {
                                                     "Swarms",
                                                     cx.listener(|this, _event, _, cx| {
                                                         this.filter = SwarmFilter::Swarms;
-                                                        this.filter_entries(Self::current_swarm_mode(cx), cx);
+                                                        this.filter_entries(cx);
                                                         this.scroll_to_top(cx);
                                                     }),
                                                 ),
@@ -2613,14 +2501,14 @@ impl Render for SwarmPanel {
                                                     "Agents",
                                                     cx.listener(|this, _event, _, cx| {
                                                         this.filter = SwarmFilter::Agents;
-                                                        this.filter_entries(Self::current_swarm_mode(cx), cx);
+                                                        this.filter_entries(cx);
                                                         this.scroll_to_top(cx);
                                                     }),
                                                 ),
                                             ],
                                         )
                                         .style(ToggleButtonGroupStyle::Outlined)
-                                        .size(ToggleButtonGroupSize::Custom(rems_from_px(30.)))
+                                        .size(ToggleButtonGroupSize::Custom(rems_from_px(30.0_f32)))
                                         .label_size(LabelSize::Default)
                                         .auto_width()
                                         .selected_index(match self.filter {
@@ -2922,37 +2810,38 @@ mod tests {
         );
     }
 
-    // Pins the tool name strings the panel calls. The single source of truth
-    // is `parse::SWARM_TOOLS` — a rename in `hkask-mcp-swarm` must update that
-    // const (the count assertion below catches a stale list). The Steer-mode
+    // Pins the tool name strings the panel calls against the server's
+    // canonical `hkask_mcp_swarm::TOOL_NAMES` const. The Steer-mode
     // prompt-token test (`steer_prompt_mentions_only_known_tools`) then catches
     // any `swarm_*` name the prompt still mentions that isn't in the const, so
     // a rename surfaces here rather than degrading to "tool not found" at
     // runtime.
-    //
-    // TODO: `hkask-mcp-swarm` does not export a canonical tool-name list
-    // (no `TOOL_NAMES` const or equivalent). When the rmcp `#[tool_router]`
-    // macro exposes a way to enumerate tool names at compile time, wire this
-    // test to that canonical list so a rename in the server is caught here
-    // rather than degrading to "tool not found" at runtime. Until then,
-    // `SWARM_TOOLS` must be kept in sync manually with the `#[tool]` fn names
-    // in `hkask-mcp-swarm/src/hkask_mcp_swarm.rs`.
     #[test]
     fn panel_tool_names_match_server() {
-        // `SWARM_TOOLS` must match the #[tool] fn names in
-        // `hkask-mcp-swarm/src/hkask_mcp_swarm.rs`. Keep it in sync when
-        // adding/removing a server tool — a rename in `hkask-mcp-swarm` must
-        // be reflected there so the panel's `invoke_tool` call sites don't
-        // silently degrade to "tool not found".
+        // The server's `TOOL_NAMES` const is the single source of truth.
+        // The panel's `parse::SWARM_TOOLS` is a verified copy — this test
+        // catches any drift between the two so a rename in the server surfaces
+        // here rather than degrading to "tool not found" at runtime.
         assert_eq!(SWARM_SERVER, "swarm");
 
-        // Pin the count so adding or removing a server tool without updating
-        // the const is caught — a count mismatch is the loudest signal short
-        // of importing the server's canonical list.
+        // The panel's list must match the server's canonical list exactly.
         assert_eq!(
             parse::SWARM_TOOLS.len(),
-            53,
-            "tool count changed — update SWARM_TOOLS to match hkask-mcp-swarm #[tool] fns"
+            hkask_mcp_swarm::TOOL_NAMES.len(),
+            "SWARM_TOOLS count ({}) diverged from the server's TOOL_NAMES ({}) \
+             — update SWARM_TOOLS to match hkask_mcp_swarm::TOOL_NAMES",
+            parse::SWARM_TOOLS.len(),
+            hkask_mcp_swarm::TOOL_NAMES.len(),
+        );
+
+        let server: std::collections::HashSet<&str> =
+            hkask_mcp_swarm::TOOL_NAMES.iter().copied().collect();
+        let panel: std::collections::HashSet<&str> =
+            parse::SWARM_TOOLS.iter().copied().collect();
+        assert_eq!(
+            server, panel,
+            "SWARM_TOOLS diverged from the server's TOOL_NAMES — a rename or \
+             add/remove in hkask-mcp-swarm must be reflected in parse::SWARM_TOOLS"
         );
 
         for tool in parse::SWARM_TOOLS {
@@ -3383,13 +3272,13 @@ mod tests {
     }
 
     // M5: the Steer-mode system prompt must not advertise any `swarm_*`
-    // tool that isn't in the canonical `SWARM_TOOLS` const. The const is the
-    // single source of truth shared with `panel_tool_names_match_server`;
-    // when a tool is renamed in `hkask-mcp-swarm`, the count test fails until
-    // the const is updated, and this test then catches any stale name the
-    // prompt still mentions — so a rename surfaces here rather than degrading
-    // to "tool not found" at runtime. The publish-checks and staleness-chip
-    // parsers are unit-tested in `parse::tests`.
+    // tool that isn't in the canonical `SWARM_TOOLS` const. The const is a
+    // verified copy of the server's `hkask_mcp_swarm::TOOL_NAMES` (asserted by
+    // `panel_tool_names_match_server`); when a tool is renamed in
+    // `hkask-mcp-swarm`, that test fails until the const is updated, and this
+    // test then catches any stale name the prompt still mentions — so a rename
+    // surfaces here rather than degrading to "tool not found" at runtime. The
+    // publish-checks and staleness-chip parsers are unit-tested in `parse::tests`.
     #[test]
     fn steer_prompt_mentions_only_known_tools() {
         let known: std::collections::HashSet<&str> = parse::SWARM_TOOLS.iter().copied().collect();

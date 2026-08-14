@@ -1,4 +1,5 @@
 use hkask_templates::{extract_contract_input_keys, load_manifest_from_yaml};
+use hkask_templates::bundle::manifest::BundleManifestStep;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -281,4 +282,129 @@ fn input_mapping_matches_template_contract() {
     //     "{} mapping-extra mismatches (potential typos)",
     //     mapping_extra.len()
     // );
+}
+
+/// E13: Every `{{ step_N_result ... }}` Jinja expression inside a `lisp.eval`
+/// step's `input_mapping.env` must reference an ordinal `N` strictly less than
+/// the current step's ordinal. Forward references (`step_5_result` in step 3)
+/// and self-references (`step_5_result` in step 5) are silent failures — the
+/// binding resolves to `null`/`undefined` with no error, and the Lisp form
+/// receives a missing value.
+///
+/// This test deterministically enforces the E13 check that `skill-maintenance-
+/// validate.j2` defines as an LLM-validated check. It scans the raw YAML for
+/// `step_N_result` patterns in `env:` blocks of `lisp.eval` steps.
+#[test]
+fn lisp_eval_step_result_references_are_backward() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("registry/manifests");
+    if !dir.exists() {
+        eprintln!("{} not found — skipping test", dir.display());
+        return;
+    }
+
+    let mut errors = Vec::new();
+    let mut checked = 0;
+
+    for entry in walkdir::WalkDir::new(&dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "yaml") {
+            continue;
+        }
+        let yaml = std::fs::read_to_string(path).unwrap();
+        if !yaml.contains("\nmanifest:") && !yaml.starts_with("manifest:") {
+            continue;
+        }
+        let manifest = match load_manifest_from_yaml(&yaml) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let fname = path.file_name().unwrap().to_string_lossy();
+
+        for step in &manifest.steps {
+            if step.action != "compute" {
+                continue;
+            }
+            let Some(ref compute_ref) = step.compute_ref else {
+                continue;
+            };
+            if compute_ref != "lisp.eval" {
+                continue;
+            }
+            // E12: form must be present and non-empty.
+            let Some(mapping) = &step.input_mapping else {
+                continue;
+            };
+            let Some(obj) = mapping.as_object() else {
+                continue;
+            };
+            let Some(form_val) = obj.get("form") else {
+                errors.push(format!(
+                    "{fname} step {}: lisp.eval step missing 'form' string (E12)",
+                    step.ordinal
+                ));
+                continue;
+            };
+            let form_str = form_val.as_str().unwrap_or("");
+            if form_str.trim().is_empty() {
+                errors.push(format!(
+                    "{fname} step {}: lisp.eval step has empty 'form' string (E12)",
+                    step.ordinal
+                ));
+                continue;
+            }
+            checked += 1;
+
+            // E14: form must parse as valid Lisp.
+            if let Err(e) = hkask_lisp::parse(form_str) {
+                errors.push(format!(
+                    "{fname} step {}: lisp.eval form fails to parse (E14): {e}",
+                    step.ordinal
+                ));
+            }
+
+            // E13: env step_N_result references must be backward.
+            if let Some(env_val) = obj.get("env") {
+                let env_str = env_val.to_string();
+                for cap in STEP_RESULT_RE.captures_iter(&env_str) {
+                    if let Some(n_str) = cap.get(1) {
+                        if let Ok(n) = n_str.as_str().parse::<u32>() {
+                            if n >= step.ordinal {
+                                errors.push(format!(
+                                    "{fname} step {}: lisp.eval env references step_{}_result which is not strictly less than current ordinal {} (E13 — forward/self reference, resolves to null at runtime)",
+                                    step.ordinal, n, step.ordinal
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    eprintln!(
+        "lisp.eval backward-reference check: {checked} lisp.eval steps checked — {} errors",
+        errors.len()
+    );
+    for err in &errors {
+        eprintln!("  ERR: {err}");
+    }
+    assert!(
+        errors.is_empty(),
+        "{} lisp.eval reference/syntax errors found:\n{}",
+        errors.len(),
+        errors.join("\n")
+    );
+}
+
+/// Regex to find `step_N_result` references in the env block's JSON
+/// serialization. Matches `step_` followed by digits followed by `_result`.
+static STEP_RESULT_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"step_(\d+)_result").unwrap()
+    });
 }

@@ -99,12 +99,12 @@ impl SwarmPanel {
                                     this.entries.extend(agents);
                                     this.agents_error = None;
                                     this.note_fetch_success();
-                                    this.filter_entries(Self::current_swarm_mode(cx), cx);
+                                    this.filter_entries(cx);
                                 }
                                 None => {
                                     this.agents_error =
                                         Some(format!("Failed to parse agents: {output}").into());
-                                    this.filter_entries(Self::current_swarm_mode(cx), cx);
+                                    this.filter_entries(cx);
                                 }
                             }
                         }
@@ -122,7 +122,7 @@ impl SwarmPanel {
                                 this.agents_error =
                                     Some(format!("Failed to list agents: {err}").into());
                             }
-                            this.filter_entries(Self::current_swarm_mode(cx), cx);
+                            this.filter_entries(cx);
                         }
                     }
                     cx.notify();
@@ -192,7 +192,7 @@ impl SwarmPanel {
                                         source: AgentSource::Local,
                                     }));
                                 }
-                                this.filter_entries(Self::current_swarm_mode(cx), cx);
+                                this.filter_entries(cx);
                             }
                         }
                         Err(err) => {
@@ -330,13 +330,13 @@ impl SwarmPanel {
                                     }
                                     this.swarms_error = None;
                                     this.note_fetch_success();
-                                    this.filter_entries(Self::current_swarm_mode(cx), cx);
+                                    this.filter_entries(cx);
                                 }
                                 None => {
                                     this.swarms_error = Some(
                                         format!("Failed to parse workspaces: {output}").into(),
                                     );
-                                    this.filter_entries(Self::current_swarm_mode(cx), cx);
+                                    this.filter_entries(cx);
                                 }
                             }
                         }
@@ -406,7 +406,7 @@ impl SwarmPanel {
                                     SwarmEntry::Swarm(s) => s.source != AgentSource::Local,
                                 });
                                 this.entries.extend(local_swarms);
-                                this.filter_entries(Self::current_swarm_mode(cx), cx);
+                                this.filter_entries(cx);
                             }
                         }
                         Err(err) => {

@@ -1,15 +1,13 @@
 [inference]
-template_type: WordAct
+template_type: KnowAct
 contract:
   input:
     target_path: string
     goal: string
+    proposal: string
     diff: string
     rationale: string
     confidence: float
-    loop_depth: integer
-    max_depth: integer
-    proposal: object
   output:
     user_choice: string
     reason: string
@@ -45,14 +43,10 @@ You are a review-choice parser. Present the audit proposal to the user and retur
 {{ diff }}
 ```
 
-## Loop status
-
-- Current depth: {{ loop_depth }} / {{ max_depth }}
-
 ## Instructions
 
-If loop_depth >= max_depth, the only allowed choices are `accept` or `reject`. Counter-proposal is disallowed because the bounded loop is exhausted.
-Otherwise, allowed choices are `accept`, `reject`, or `counter-proposal`.
+The allowed choices are `accept`, `reject`, or `counter-proposal`.
+If the user provides a counter-proposal, set `next_action` to `compose_counter_proposal`.
 
 ## Output Requirements
 

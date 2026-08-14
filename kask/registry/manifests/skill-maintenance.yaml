@@ -178,7 +178,7 @@ steps:
       target_path: "{{ target_path }}"
       target_content: "{{ target_content }}"
       template_type: "{{ template_type }}"
-      goal: "{{ step_5_result.goal }}"
+      goal: "{{ step_4_result.goal }}"
 
   - ordinal: 6
     action: select
@@ -191,8 +191,8 @@ steps:
     gas_cap: 2048
     timeout_seconds: 150
     input_mapping:
-      goal: "{{ step_5_result.goal }}"
-      prior_critique: "{{ step_6_result }}"
+      goal: "{{ step_4_result.goal }}"
+      prior_critique: "{{ step_5_result }}"
 
   - ordinal: 7
     action: select
@@ -207,9 +207,9 @@ steps:
     input_mapping:
       target_path: "{{ target_path }}"
       original_content: "{{ target_content }}"
-      goal: "{{ step_5_result.goal }}"
-      calibrated_verdict: "{{ step_7_result.calibrated_verdict }}"
-      valid_concerns: "{{ step_7_result.valid_concerns }}"
+      goal: "{{ step_4_result.goal }}"
+      calibrated_verdict: "{{ step_6_result.calibrated_verdict }}"
+      valid_concerns: "{{ step_6_result.valid_concerns }}"
 
   - ordinal: 8
     action: select
@@ -223,8 +223,11 @@ steps:
     timeout_seconds: 30
     input_mapping:
       target_path: "{{ target_path }}"
-      proposal: "{{ step_8_result.revised_content }}"
-      diff: "{{ step_8_result.diff }}"
+      goal: "{{ step_4_result.goal }}"
+      proposal: "{{ step_7_result.revised_content }}"
+      diff: "{{ step_7_result.diff }}"
+      rationale: "{{ step_7_result.rationale }}"
+      confidence: "{{ step_7_result.confidence }}"
 
   - ordinal: 9
     action: compute
@@ -240,10 +243,10 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((c (assoc "confidence" step_8_result)))
+        (let ((c (assoc "confidence" step_7_result)))
           (if (is_null c) 1.0 (- 1.0 c)))
       env:
-        step_8_result: "{{ step_8_result }}"
+        step_7_result: "{{ step_7_result }}"
 
   - ordinal: 10
     action: loop

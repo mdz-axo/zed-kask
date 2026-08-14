@@ -29,41 +29,82 @@ pub(crate) fn render_swarm_page(
     let memory_db_path = swarm.memory_db_path;
     let embedding_dim = swarm.embedding_dim.to_string();
 
-    // Mode toggle: Abw (remote) vs Local (zed-kask substrate).
-    let mode_is_local = mode == kask_bridge::SwarmModeConfig::Local;
-    let mode_toggle = SwitchField::new(
-        "kask-swarm-mode-local",
-        Some("Local Mode"),
-        Some(
-            "Route swarm dispatches to zed-kask's local substrate crates instead of the \
-             remote Agent Bestiary World service (v2 §15)."
-                .into(),
-        ),
-        if mode_is_local {
-            ToggleState::Selected
-        } else {
-            ToggleState::Unselected
-        },
-        move |state, _window, cx| {
-            let local = *state == ToggleState::Selected;
-            SettingsStore::global(cx).update_settings_file(
-                <dyn fs::Fs>::global(cx),
-                move |settings, _| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .swarm
-                        .get_or_insert_default()
-                        .mode = Some(if local {
-                        settings_content::SwarmModeContent::Local
-                    } else {
-                        settings_content::SwarmModeContent::Abw
-                    });
-                },
-            );
-        },
-    )
-    .tab_index(0);
+    // ABW API key — the core credential for ABW mode. Lives in the keychain
+    // under `kask://credentials/hkask_abw_api_key`, injected as
+    // `HKASK_ABW_API_KEY` at server launch. Unlike data-service keys, this one
+    // has no `ui_toggle` in `DATA_SERVICES` (it's not a data service — it's the
+    // swarm backend auth credential), so it has no Data Services page row.
+    // Without this field the operator had no UI path to configure it at all.
+    let credentials_provider = zed_credentials::global(cx);
+    let abw_credential_url =
+        format!("{KASK_CREDENTIAL_NAMESPACE}/hkask_abw_api_key");
+    let abw_key_configured = has_credential(
+        &credentials_provider,
+        &[&abw_credential_url],
+        "HKASK_ABW_API_KEY",
+    );
+    let abw_api_key_field = if abw_key_configured {
+        ConfiguredApiCard::new("kask-swarm-abw-api-key-reset", "ABW API Key Configured")
+            .button_label("Reset Key")
+            .button_tab_index(2)
+            .on_click({
+                let provider = credentials_provider.clone();
+                let url = abw_credential_url;
+                move |_, _, cx| {
+                    delete_credential(&provider, &url, cx).detach();
+                }
+            })
+            .into_any_element()
+    } else {
+        let provider = credentials_provider.clone();
+        let url = abw_credential_url;
+        v_flex()
+            .gap_1()
+            .child(Label::new("ABW API Key"))
+            .child(
+                Label::new(
+                    "Agent Bestiary World Pro-tier API key (Authorization: Bearer). \
+                     Required for authenticated tools (swarm_get_swarm, swarm_hire, \
+                     swarm_delegate, etc.). Without it, the swarm server runs in \
+                     catalogue-only mode. Stored in the keychain under \
+                     kask://credentials/hkask_abw_api_key. Or set the \
+                     HKASK_ABW_API_KEY env var and restart Zed.",
+                )
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            )
+            .child(
+                SettingsInputField::new("kask-swarm-abw-api-key-input")
+                    .tab_index(2)
+                    .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
+                    .aria_label("ABW API Key")
+                    .on_confirm(move |api_key, _window, cx| {
+                        if let Some(key_value) =
+                            api_key.filter(|key_value| !key_value.is_empty())
+                        {
+                            write_credential(
+                                &provider,
+                                &url,
+                                &key_value,
+                                cx,
+                            )
+                            .detach();
+                        }
+                    }),
+            )
+            .into_any_element()
+    };
+
+    // The `kask.swarm.mode` setting is intentionally NOT exposed as a toggle
+    // here. Both backends (cloud ABW + local substrate) are always available
+    // in the swarm panel — the panel shows both and the operator picks the
+    // target per action (Author/Compose forms have a Cloud/Local toggle).
+    // The setting only controls a server-side startup warning, so exposing
+    // it as a top-level toggle misleads operators into thinking it's an
+    // either/or capability gate (it is not — both tool sets are always
+    // registered). The setting remains in settings.json for the startup
+    // warning and for Steer-mode context; advanced operators can set it
+    // there if they want to suppress the ABW-key warning in local-only use.
 
     // Curator consent default toggle.
     let consent_toggle = SwitchField::new(
@@ -391,6 +432,8 @@ pub(crate) fn render_swarm_page(
         )
         .child(Divider::horizontal())
         .child(mode_toggle)
+        .child(Divider::horizontal())
+        .child(abw_api_key_field)
         .child(Divider::horizontal())
         .child(consent_toggle)
         .child(Divider::horizontal())
