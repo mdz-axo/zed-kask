@@ -1,7 +1,7 @@
 ---
 title: "Skills and Composition"
 audience: [developers, operators, users]
-last_updated: 2026-08-04
+last_updated: 2026-08-14
 version: "0.34.0"
 status: "Active"
 domain: "Skill System"
@@ -335,7 +335,7 @@ The agent panel routes this through the in-process `BridgeManifestExecutor` (D1,
 1. **Lookup** — Skill ID resolved against the loaded registry
 2. **Template rendering** — Jinja2 templates rendered with context variables
 3. **System prompt prepended** — Tool-awareness preamble added automatically
-4. **Inference** — Rendered template sent to the inference port via the guard layer (D4) (`temperature: 0.3`, `max_tokens: 2048`)
+4. **Inference** — Rendered template sent to the inference port (`temperature: 0.3`, `max_tokens: 2048`). (The former guard layer, D4, was removed 2026-08-10; provider-side safety and refusal fallbacks remain.)
 5. **Regulation span** — `reg.tool.skill_execute` emitted
 
 ---
@@ -393,7 +393,7 @@ When a skill is invoked in-process:
    or report the missing capability.
    ```
 
-5. **Inference** — The rendered template is sent to the inference port via the guard layer (D4) with `temperature: 0.3`, `max_tokens: 2048`.
+5. **Inference** — The rendered template is sent to the inference port with `temperature: 0.3`, `max_tokens: 2048`. (The former guard layer, D4, was removed 2026-08-10.)
 6. **Final-result extraction** — The `BridgeManifestExecutor` extracts the final step result via `extract_final_step_result()`, which parses the ordinal from `step_N_result` keys and picks the highest (HashMap iteration order is randomized, so `values().last()` would pick an arbitrary step).
 7. **Regulation span** — `reg.tool.skill_execute` is emitted with the skill ID and result.
 
@@ -1023,7 +1023,7 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is library-level/test-on
 
 ## Cross-Reference
 
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D23 integration seams (skill execution, Curator agent, MCP tool transport — child processes over stdio)
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D28 integration seams (skill execution, Curator agent, MCP tool transport — child processes over stdio)
 - [`PRINCIPLES.md` § P6 — Space for Per-User Data Directories](../architecture/core/PRINCIPLES.md#p6--space-for-per-user-data-directories)
 - [`kata.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata.rs) — `KataEngine::execute()` dispatch (L333-486)
 - [`kata/improvement.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs) — `run_improvement_from()` single-pass step loop (L20-121)
@@ -1072,7 +1072,7 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is library-level/test-on
 
 
 - [Kata PDCA lifecycle state machine](#kata-pdca-lifecycle-state-machine)
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D23 integration seams
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D28 integration seams
 
 ### Kanban Task Lifecycle State Machine
 

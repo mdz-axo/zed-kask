@@ -1,7 +1,7 @@
 # Upstream-Zed Removal Principles for the zed-kask Seam
 
 > **Status:** consolidated, testable principle set governing **what to remove
-> from upstream Zed** (everything outside `kask/` and outside the named D1–D24
+> from upstream Zed** (everything outside `kask/` and outside the named D1–D28
 > D-seams in `DIVERGENCE.md`) and **why**. Sibling to
 > `kask/docs/upstream-rebase-process.md`.
 >

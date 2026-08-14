@@ -268,4 +268,4 @@ strict provider.
 
 [^cockburn]: Cockburn, A. (2005). *Hexagonal Architecture.* <https://alistair.cockburn.us/hexagonal-architecture/>. The ports-and-adapters pattern: core logic depends on traits, infrastructure provides implementations, and the composition root wires them together.
 
-[^owasp-llm]: OWASP Foundation. (2025). *OWASP Top 10 for LLM Applications.* <https://owasp.org/www-project-top-10-for-large-language-model-applications/>. LLM01 (Prompt Injection) and LLM06 (Sensitive Information Disclosure) define the threats that the guard layer over `InferencePort` mitigates.
+[^owasp-llm]: OWASP Foundation. (2025). *OWASP Top 10 for LLM Applications.* <https://owasp.org/www-project-top-10-for-large-language-model-applications/>. LLM01 (Prompt Injection) and LLM06 (Sensitive Information Disclosure) define the threats the former `hkask-guard` layer over `InferencePort` was built to mitigate. That layer was removed 2026-08-10 (the `RoleOverride` scanner's bare `system:` substring match produced false positives that blocked legitimate skill cascade template rendering); provider-side safety and refusal fallbacks remain the active defense.

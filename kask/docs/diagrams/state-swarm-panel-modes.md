@@ -20,7 +20,7 @@ system prompt. A backend toggle (`set_swarm_mode`, `:1834`) drops any open
 Steer conversation so the next entry rebuilds it with the new mode — otherwise
 the curator would pass a stale `context.mode` to the skill cascade. The panel
 opens to `Browse` via the `Toggle` action (`:230`); `ToggleFocus` only focuses
-an existing item. See the [Swarm Systems How-to](../diataxis/swarm_system/how-to.md) and the [Swarm Cybernetics/Semantics Audit](../audits/swarm-cybernetics-semantics-audit.md).
+an existing item. See the [Swarm Systems How-to](../diataxis/swarm_system/how-to.md).
 
 ```mermaid
 stateDiagram-v2

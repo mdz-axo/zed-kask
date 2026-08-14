@@ -1,7 +1,7 @@
 ---
 title: "Companies MCP Server — Reference"
 audience: [developers, analysts, agents, operators]
-last_updated: 2026-08-05
+last_updated: 2026-08-14
 version: "0.32.2"
 status: "Active"
 domain: "Companies"
@@ -29,20 +29,21 @@ The framework-level `execute_tool` span (`reg.tool.companies.*`, tool name + out
 
 ## Tool routing and dispatch flow
 
-The diagram traces the dispatch seam shared by all 40 tools: `combined_router` sums seven sub-routers, every tool funnels through `execute_tool`, then branches into one of three sinks — provider-routed financial data, valuation engines that persist `StoredForecast` snapshots, or `PortfolioManager` ledger operations on `spawn_blocking`. The `result_feedback` tool feeds explicit user-scored updates back into `LearningState`. Verified against `mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs` and `src/tools/mod.rs`.[^mcp-spec-companies-ref]
+The diagram traces the dispatch seam shared by all 44 tools: `combined_router` sums eight sub-routers, every tool funnels through `execute_tool`, then branches into one of three sinks — provider-routed financial data, valuation engines that persist `StoredForecast` snapshots, or `PortfolioManager` ledger operations on `spawn_blocking`. The `result_feedback` tool feeds explicit user-scored updates back into `LearningState`. Verified against `mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs` and `src/tools/mod.rs`.[^mcp-spec-companies-ref]
 
 ```mermaid
 flowchart TD
     Boot["run<br/>hkask_mcp_server::run_server"]
     Boot --> Srv["CompaniesServer<br/>learning portfolio client"]
-    Srv --> Comb["combined_router<br/>sum of 7 sub-routers"]
+    Srv --> Comb["combined_router<br/>sum of 8 sub-routers"]
     Comb --> R1["financial_data_router<br/>8 tools"]
     Comb --> R2["analysis_router<br/>5 tools"]
-    Comb --> R3["valuation_router<br/>9 tools"]
-    Comb --> R4["portfolio_router<br/>12 tools"]
+    Comb --> R3["valuation_router<br/>10 tools"]
+    Comb --> R4["portfolio_router<br/>13 tools"]
     Comb --> R5["analytics_router<br/>5 tools"]
     Comb --> R6["economic_profit_router<br/>1 tool"]
     Comb --> R7["expectations_router<br/>1 tool"]
+    Comb --> R8["transcript_router<br/>1 tool"]
     R1 --> Seam["execute_tool name async<br/>Regulation span outcome record"]
     R2 --> Seam
     R3 --> Seam
@@ -50,6 +51,7 @@ flowchart TD
     R5 --> Seam
     R6 --> Seam
     R7 --> Seam
+    R8 --> Seam
     Seam --> SinkA["fetch<br/>providers companies_get"]
     Seam --> SinkB["valuation engines<br/>financial_model scenarios<br/>superforecast"]
     Seam --> SinkC["run_portfolio<br/>spawn_blocking"]
@@ -69,10 +71,10 @@ flowchart TD
 id: DIAG-RF-004
 verified_date: 2026-07-29
 verified_against: mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs (CompaniesServer struct via mcp_server!, combined_router, fetch, save_forecast, run_server entrypoint), mcp-servers/hkask-mcp-companies/src/tools/mod.rs (sub-router composition), mcp-servers/hkask-mcp-companies/src/providers.rs (companies_get, emit_provider_reg), mcp-servers/hkask-mcp-companies/src/portfolio.rs (PortfolioManager), mcp-servers/hkask-mcp-companies/src/learning.rs (LearningState.record), mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (result_feedback tool). No daemon, no DaemonClient, no record_experience, no record_fetch_outcome — those nodes were removed.
-status: VERIFIED (v5 — tool count corrected to 40 #[tool] methods via `grep -c 'Parameters<' src/tools/*.rs` on 2026-08-01: financial_data 8, analysis 5, valuation 8, portfolio 12, analytics 5, economic_profit 1, expectations 1; boot node corrected to hkask_mcp_server::run_server; fabricated record_fetch_outcome/record_experience node removed; result_feedback learning edge added; file paths corrected from lib.rs to hkask_mcp_companies.rs)
+status: VERIFIED (v6 — tool count corrected to 44 #[tool] methods via `tool_surface_is_exactly_44_registered_tools` on 2026-08-14: financial_data 8, analysis 5, valuation 10, portfolio 13, analytics 5, economic_profit 1, expectations 1, transcript 1; boot node corrected to hkask_mcp_server::run_server; fabricated record_fetch_outcome/record_experience node removed; result_feedback learning edge added; file paths corrected from lib.rs to hkask_mcp_companies.rs)
 -->
 
-## Tools (42)
+## Tools (44)
 
 ### Financial data (8)
 
@@ -216,7 +218,7 @@ The suite covers provider-error handling, EODHD normalization, valuation request
 
 ## Cross-links
 
-- [MCP Server Registry](README.md) — catalog of all 11 on-disk servers
+- [MCP Server Registry](README.md) — catalog of all 13 on-disk servers
 - [Companies User Guide](../../explanation/companies-mcp.md) — task-oriented procedures for valuation, forecasting, and portfolio operations
 - Companies Semantic Graph Audit — internal module dependency graph health
 - Companies MCP Code Review — adversarial code review of the companies server

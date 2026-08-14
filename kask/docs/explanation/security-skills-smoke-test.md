@@ -20,8 +20,9 @@ gates.
 1. zed-kask built and running (`cargo build --release` then launch the
    editor). hKask is compiled in-process; there is no `kask init` step.
 2. LLM inference configured through zed-kask's `CredentialsProvider`
-   (D9) — the guard layer (D4) routes inference requests to the
-   configured provider.
+   (D9) — inference requests route to the configured provider. (The former
+   guard layer, D4, was removed 2026-08-10; provider-side safety and refusal
+   fallbacks remain.)
 3. The Regulation layer runs in-process (`hkask-regulation`); the
    former `kask mcp start regulation` standalone CLI has been removed.
    Regulation spans are emitted and queried in-process.

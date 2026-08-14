@@ -161,10 +161,9 @@ Three boundaries shape the design:[^ocap-miller-trust]
 
 ## Cross-links
 
-- [Swarm MCP Server Reference](../reference/mcp-servers/swarm.md) — the 51 tools (27 ABW + 24 local), dual mode
+- [Swarm MCP Server Reference](../reference/mcp-servers/swarm.md) — the 53 tools (27 ABW + 26 local), dual mode
 - [Integration plan](../plans/abw-swarm-intelligence.md) — full design + API surface
 - [Cybernetic Swarm Plan](../plans/cybernetic-swarm-plan.md) — the swarm-intelligence skill design, C0–C8 components, steering modes
-- [Kali security audit](../audits/abw-swarm-kali-audit.md) — the 7-layer defense map
 
 ## Footnotes
 

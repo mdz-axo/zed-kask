@@ -25,17 +25,17 @@ mds_categories: [domain, composition]
 
 ---
 
-## Registry counts (verified 2026-08-12)
+## Registry counts (verified 2026-08-14)
 
 | Surface                                               | Count  | Notes                                                                                        |
 | ----------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------- |
-| FlowDef manifests (`kask/registry/manifests/*.yaml`)  | **63** | All `category: skill` — **1:1 with SKILL.md dirs**                                           |
-| Template crates (`kask/registry/templates/*/`)        | **66** | Includes crates consumed from Rust rather than a manifest (`docproc`, `training`, `heal`)    |
-| SKILL.md directories (`.agents/skills/*/`, repo root) | **63** | Every directory contains a `SKILL.md`                                                        |
+| FlowDef manifests (`kask/registry/manifests/*.yaml`)  | **64** | All `category: skill` — **1:1 with SKILL.md dirs**                                           |
+| Template crates (`kask/registry/templates/*/`)        | **68** | Includes crates consumed from Rust rather than a manifest (`docproc`, `training`, `heal`)    |
+| SKILL.md directories (`.agents/skills/*/`, repo root) | **64** | Every directory contains a `SKILL.md`                                                        |
 
 **Category rule:** only `category: skill` manifests exist in
 `registry/manifests/`, and each **must** have a matching
-`.agents/skills/<name>/SKILL.md` companion. The 63 manifests and 63 SKILL.md
+`.agents/skills/<name>/SKILL.md` companion. The 64 manifests and 64 SKILL.md
 directories are in exact 1:1 correspondence, enforced by
 `every_skill_md_has_a_process_manifest` and `every_skill_manifest_has_a_skill_md`
 (`hkask-templates/tests/skill_companion_consistency.rs`). Note: a naive
@@ -196,6 +196,6 @@ Reconciliation notes:
 | Specialized          | 17                                            | Skills                             |
 | **Catalogued here**  | **52 skills + 1 template**                    | **53 capabilities**                |
 
-> **Filesystem reality (verified 2026-08-12):** `kask/registry/manifests/` contains 63 FlowDef manifests, all `category: skill`; `.agents/skills/` (repo root) contains 63 SKILL.md directories, aligned 1:1 (test-enforced). The 41 infrastructure manifests were deleted — see "Infrastructure categories were removed" above. `skill-router` is template-crate-only (no FlowDef manifest, no SKILL.md); `swarm-compose-guide` is manifest + SKILL.md but shares the `swarm-intelligence` template crate. This catalogue section lists a subset of the 63 and is not itself count-enforced — trust the tests, not the table.
+> **Filesystem reality (verified 2026-08-14):** `kask/registry/manifests/` contains 64 FlowDef manifests, all `category: skill`; `.agents/skills/` (repo root) contains 64 SKILL.md directories, aligned 1:1 (test-enforced). The 41 infrastructure manifests were deleted — see "Infrastructure categories were removed" above. `skill-router` is template-crate-only (no FlowDef manifest, no SKILL.md); `swarm-compose-guide` is manifest + SKILL.md but shares the `swarm-intelligence` template crate. This catalogue section lists a subset of the 64 and is not itself count-enforced — trust the tests, not the table.
 >
 > **Consolidation history (2026-07-25):** Deleted `self-critique-revision` (superseded by metacognition), `pragmatic-laziness` (thin wrapper duplicating essentialist), `handoff` (session handoff — low value, replaced by native Zed session persistence), `qa-script-builder` (no consumers — dead code), `kata` bundle (dead code — `KataEngine::run_bundle` never called; `kata-coaching` and `kata-improvement` work independently). Deleted 8 `platform-*` infrastructure manifests + `platform-engineer` templates (aspirational Curator self-monitoring — compiled into registry but never invoked by any code). Folded `kata-starter` → `kata-improvement` (beginner_mode), `attack-taxonomy-mapper` → `kali-audit` (taxonomy_map phase), `skill-logic-audit` → `skill-maintenance` (validate sub-operation), `strangler-fig` → `refactor-service-layer` (migration-strategy phase), `zoom-out` → `graph-audit` (context-expansion mode). Merged `codegraph` + `semantic-graph-audit` → `graph-audit` (3-mode skill: code, semantic, dual). Merged `improve-codebase-architecture` + `refactor-service-layer` → `refactor-architecture` (end-to-end: discover → audit → strangle → verify). Archived `magna-carta-verifier` (deleted; recoverable from git history).

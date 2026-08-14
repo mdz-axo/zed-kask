@@ -1,8 +1,8 @@
 ---
 title: "Swarm Server Class Diagram"
 audience: [architects, developers]
-last_updated: 2026-08-05
-version: "1.0.1"
+last_updated: 2026-08-14
+version: "1.0.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust]
@@ -10,16 +10,17 @@ mds_categories: [domain, composition, trust]
 
 # Swarm Server Class Diagram
 
-The `hkask-mcp-swarm` server (`SwarmServer`) exposes 51 tools (27 ABW + 24
-local) selected by `kask.swarm.mode` — pinned by
-`tool_surface_is_exactly_51_registered_tools` (`hkask_mcp_swarm.rs:350`). `SwarmServer` composes four collaborators:
+The `hkask-mcp-swarm` server (`SwarmServer`) exposes 53 tools (27 ABW + 26
+local) — both sets always registered; `kask.swarm.mode` selects the substrate,
+not the surface — pinned by
+`tool_surface_is_exactly_53_registered_tools` (`hkask_mcp_swarm.rs`). `SwarmServer` composes four collaborators:
 the ABW REST client, the consent store (real-time spend gate with TTL), the
 local agent registry, and the lazily-initialized local runtime. The spend gate
 consumes consent grants before any debit; the local runtime owns the
-debit-before-scan invariant (it debits the ledger, then `AgentExecutor` scans
-the output so a guard-quarantined result still costs credits). The A2A layer
+debit-before-return invariant (it debits the ledger, then `AgentExecutor`
+returns the result so a failed delegation still costs credits). The A2A layer
 wraps the existing `delegate` in protocol-compliant types over the in-process
-transport (no HTTP server required). See the [Swarm Cybernetics/Semantics Audit](../audits/swarm-cybernetics-semantics-audit.md) and the [Swarm MCP Server Architecture](flowchart-swarm-architecture.md).
+transport (no HTTP server required). See the [Swarm MCP Server Architecture](flowchart-swarm-architecture.md).
 
 ```mermaid
 classDiagram
@@ -66,16 +67,13 @@ classDiagram
         -executor: AgentExecutor
         -operator_account: String
         +delegate(card,task,credits) LocalDelegateResult
-        debit before scan invariant
+        debit before return invariant
     }
     class AgentExecutor {
         -inference: InferencePort
         -tool_dispatch: ToolDispatchPort
         -skill_exec: SkillExecPort
-        -guard: ContentGuard
         +run(card,task) RawDelegateResult
-        +scan_input(text)
-        +scan_output(text)
         MAX_TOOL_ROUNDS 4
         MAX_SKILLS_PER_DELEGATION 3
     }
@@ -108,18 +106,18 @@ classDiagram
     spend_gate_module ..> ConsentStore : consumes grants
     SwarmServer ..> spend_gate_module : hire delegate fanout xaman
     LazyLocalSwarmRuntime ..> LocalSwarmRuntime : get_or_init
-    LocalSwarmRuntime --> AgentExecutor : run then scan
+    LocalSwarmRuntime --> AgentExecutor : run
     LocalSwarmRuntime ..> LocalDelegateResult : produces
     A2A ..> LocalSwarmRuntime : wraps delegate
     LocalAgentRegistry ..> LocalSwarmRuntime : reads cards
 
-    note for SwarmServer "51 tools = 27 ABW + 24 local\nBoth sets always registered\nkask.swarm.mode selects the substrate not the surface\nSpend mutating tools are consent gated\npinned by tool_surface_is_exactly_51_registered_tools"
+    note for SwarmServer "53 tools = 27 ABW + 26 local\nBoth sets always registered\nkask.swarm.mode selects the substrate not the surface\nSpend mutating tools are consent gated\npinned by tool_surface_is_exactly_53_registered_tools"
     note for LocalDelegateResult "Fed back as delegate_results\nto swarm-intelligence ORIENT\nactivates C5 fault attribution\nand C6 reconfigure"
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-006
-verified_date: 2026-08-05
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:115,126,350; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:56,77,150,184,227; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:44,169,317,368,443,483 (no pub struct SpendGate — crate-private authorize_*/complete_* fns only); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39,73; kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:33,38,55; kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs:24 kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39,73; kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:33,38,55; kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs:24
+verified_date: 2026-08-14
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (combined_router, tool_surface_is_exactly_53_registered_tools); kask/mcp-servers/hkask-mcp-swarm/src/consent.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs (crate-private authorize_*/complete_* fns, no pub struct SpendGate); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs; kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (AgentExecutor: inference, tool_dispatch, skill_exec — no guard field, no scan_input/scan_output); kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs
 status: VERIFIED
 -->

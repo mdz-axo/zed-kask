@@ -17,8 +17,7 @@ mds_categories: [composition, lifecycle]
 > the audit's cycle-free move) is void: the FIDES `ToolTaint` lattice was **deleted**
 > along with the inert `Source`→`Sink` gate that consumed it — both of the gate's
 > inputs were constants, so it could not deny
-> (`security/regressions/RR-0053.yaml`; rationale in
-> [`guard-taint-pipeline.md`](./guard-taint-pipeline.md)). There is no `tool_taint`
+> (`security/regressions/RR-0053.yaml`; rationale in `DIVERGENCE.md` D4). There is no `tool_taint`
 > module in `hkask-types` and no `tool_taint.rs` in `hkask-capability`, so that
 > bucket is gone rather than pending a move. The dated item counts below are left
 > as recorded and are now one bucket high; the rest of the analysis is unaffected.
@@ -132,7 +131,7 @@ This ADR does **not** decide the MCP server error consolidation. A separate anal
 
 ## References
 
-- `kask/docs/architecture/zed-host-architecture-plan.md` — D1–D23 seams, crate inventory.
+- `kask/docs/architecture/zed-host-architecture-plan.md` — D1–D28 seams, crate inventory.
 - `kask/crates/hkask-types/src/loops/mod.rs` — the "moved to break the circular dependency" note that motivates this ADR.
 - `kask/crates/hkask-types/Cargo.toml` — the `description` correction and the `hkask-capability` cycle guard.
 - 2026-08-02 type-system refactoring analysis (essentialist + graph-audit + refactor-architecture skills).

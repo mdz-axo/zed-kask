@@ -145,7 +145,8 @@ flow control) is absent by decision** — the same disposition Layer 3
 inert gate invites reliance on a protection that does not exist, and every
 downstream doc re-credits it. RR-0053 is now an absence check, and it states
 what a real IFC gate would have to prove. Rationale in full:
-[`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md).
+[`DIVERGENCE.md`](../../../DIVERGENCE.md) D4 (guard layer removal) and
+`kask/security/regressions/RR-0053.yaml` (taint gate removal).
 
 ## If a real trust boundary appears
 
@@ -189,8 +190,9 @@ without that proof — see `kask/security/regressions/RR-0056.yaml`.
 - [hkask-capability Reference](./reference.md): the current type surfaces and
   the invoke pipeline.
 - [hkask-capability Tutorial](./tutorial.md): dispatching through the seam.
-- [`kask/docs/architecture/guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md):
-  full rationale for the taint-gate deletion.
+- [`DIVERGENCE.md`](../../../DIVERGENCE.md) D4 and
+  `kask/security/regressions/RR-0053.yaml`: full rationale for the guard-layer
+  and taint-gate deletions.
 - `kask/security/regressions/RR-0053.yaml`, `RR-0056.yaml`, `RR-0057.yaml`.
 
 ---

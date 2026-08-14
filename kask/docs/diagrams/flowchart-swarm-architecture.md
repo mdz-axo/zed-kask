@@ -1,8 +1,8 @@
 ---
 title: "Swarm MCP Server Architecture"
 audience: [architects, developers]
-last_updated: 2026-08-05
-version: "1.0.1"
+last_updated: 2026-08-14
+version: "1.0.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition]
@@ -10,7 +10,7 @@ mds_categories: [domain, composition]
 
 # Swarm MCP Server Architecture
 
-The swarm server (`hkask-mcp-swarm`) exposes 51 tools (27 ABW + 24 local) across two substrates selected by `kask.swarm.mode`. It is launched by two independent paths — `McpRuntime` (app-global, governed dispatch for the skill cascade + kask panel) and `ContextServerStore` (per-project, for the agent tool picker) — both correct by design. The `swarm-intelligence` skill composes/steers swarms via a 10-step PDCA cascade; the `swarm-steering` skill codifies the local execute-and-feed-back loop for the Kask Curator. See the [Swarm MCP Server Reference](../reference/mcp-servers/swarm.md), the [Swarm Cybernetics/Semantics Audit](../audits/swarm-cybernetics-semantics-audit.md), and the [Cybernetic Swarm Plan](../plans/cybernetic-swarm-plan.md).
+The swarm server (`hkask-mcp-swarm`) exposes 53 tools (27 ABW + 26 local) across two substrates selected by `kask.swarm.mode`. It is launched by two independent paths — `McpRuntime` (app-global, governed dispatch for the skill cascade) and `ContextServerStore` (per-project, for the agent tool picker) — both correct by design. The `swarm-intelligence` skill composes/steers swarms via a 10-step PDCA cascade; the `swarm-steering` skill codifies the local execute-and-feed-back loop for the Kask Curator. See the [Swarm MCP Server Reference](../reference/mcp-servers/swarm.md) and the [Cybernetic Swarm Plan](../plans/cybernetic-swarm-plan.md).
 
 ```mermaid
 flowchart TD
@@ -18,7 +18,7 @@ flowchart TD
         MR[McpRuntime<br/>app-global, governed]
         CS[ContextServerStore<br/>per-project]
     end
-    SWARM[hkask-mcp-swarm<br/>51 tools: 27 ABW + 24 local]
+    SWARM[hkask-mcp-swarm<br/>53 tools: 27 ABW + 26 local]
     MR --> SWARM
     CS --> SWARM
 
@@ -30,14 +30,12 @@ flowchart TD
     subgraph local[Local Substrate v2 S15]
         INF[hkask-inference<br/>Ollama / cloud via IPC]
         LEDGER[hkask-ledger<br/>operator-funded SQLite]
-        GUARD[hkask-guard<br/>I/O scanning]
     end
 
     SWARM -->|abw mode| ABW_API
     SWARM -->|abw mode| XAMAN
     SWARM -->|local mode| INF
     SWARM -->|local mode| LEDGER
-    SWARM -->|local mode| GUARD
 
     subgraph ui[UI + Skills]
         PANEL[Swarm Panel<br/>crates/swarm_panel]
@@ -56,7 +54,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-001
-verified_date: 2026-08-05
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:350 (tool_surface_is_exactly_51_registered_tools pins 51 = 27 ABW + 24 local); crates/swarm_panel/src/swarm_panel.rs:1870; .agents/skills/swarm-intelligence/SKILL.md:62; .agents/skills/swarm-steering/SKILL.md:59
+verified_date: 2026-08-14
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (tool_surface_is_exactly_53_registered_tools pins 53 = 27 ABW + 26 local); crates/swarm_panel/src/swarm_panel.rs; .agents/skills/swarm-intelligence/SKILL.md; .agents/skills/swarm-steering/SKILL.md
 status: VERIFIED
 -->

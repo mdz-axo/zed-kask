@@ -250,7 +250,7 @@ runtime permission enforcement belongs outside the model's instructions, and tha
 vendors are explicit about where such enforcement does *not* apply[^augment-permissions].
 
 `:251` retains the no-manifest fallback. It is unreachable for shipped skills —
-the registry is 63 manifests ↔ 63 `SKILL.md` dirs, 1:1 and test-enforced — but
+the registry is 64 manifests ↔ 64 `SKILL.md` dirs, 1:1 and test-enforced — but
 still live for a user-authored or marketplace skill with no manifest
 (`skill_tool.rs:544`).
 
@@ -319,7 +319,7 @@ cargo test -p markdown --lib mermaid                         # 21 pass
 
 # The 1:1 skill/manifest invariant the fallback at :251 depends on
 cargo test -p hkask-templates --test skill_companion_consistency
-bash kask/scripts/check-skill-span-namespace.sh               # OK: 63 skill manifests
+bash kask/scripts/check-skill-span-namespace.sh               # OK: 64 skill manifests
 ```
 
 ## References

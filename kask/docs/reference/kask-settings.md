@@ -470,7 +470,7 @@ there are no `collab.*`-derived env vars.
     Cited for the OpenAI-compatible provider model that the inference provider toggles configure.
 
 [^owasp-llm-guard-settings]: OWASP. (2025). *OWASP Top 10 for Large Language Model Applications*. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/
-    Cited for the LLM-specific security model the guard layer (D4) wraps the skill cascade with.
+    Cited for the LLM-specific security model the former guard layer (D4, removed 2026-08-10) was built to wrap the skill cascade with; provider-side safety and refusal fallbacks remain the active defense.
 
 [^reynolds-swarm-settings]: Reynolds, C. W. (1987). Flocks, herds and schools: A distributed behavioral model. *ACM SIGGRAPH Computer Graphics*, 21(4), 25–34. https://doi.org/10.1145/37402.37406
     Cited for the swarm-coordination model the ABW swarm settings configure.

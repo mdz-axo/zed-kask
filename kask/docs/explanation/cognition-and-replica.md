@@ -1,7 +1,7 @@
 ---
 title: "Cognition and Replica — Scenario Forecasting, Nu-Event Semantics, Companies Server"
 audience: [architects, developers, operators, agents]
-last_updated: 2026-08-05
+last_updated: 2026-08-14
 version: "0.34.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -12,7 +12,7 @@ mds_categories: [domain, composition, lifecycle, curation]
 
 This document consolidates three topics that share a single theme: how hKask represents, processes, and forecasts cognitive artifacts inside zed-kask. The scenario forecasting pipeline integrates three research frameworks to build, forecast, and evaluate futures. The ν-event semantics define the atomic unit of observability that feeds the Regulation. The Companies MCP server provides the investment research tooling that operationalizes forecasting and valuation. Together, they form the cognition layer — the mechanisms by which hKask agents perceive, reason about, and predict the world.
 
-All three subsystems run inside zed-kask: the scenarios and companies MCP servers are registered as builtin context servers launched as child processes over stdio (D1–D3), and ν-events flow through the in-process `RegulationSink`. The standalone `kask` CLI, HTTP API server, and Matrix transport have been removed; the Curator is a native agent inside zed-kask (D2) that evaluates in-process agent events rather than Matrix messages. See the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for the D1–D23 integration seams.
+All three subsystems run inside zed-kask: the scenarios and companies MCP servers are registered as builtin context servers launched as child processes over stdio (D1–D3), and ν-events flow through the in-process `RegulationSink`. The standalone `kask` CLI, HTTP API server, and Matrix transport have been removed; the Curator is a native agent inside zed-kask (D2) that evaluates in-process agent events rather than Matrix messages. See the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) for the D1–D28 integration seams.
 
 ---
 
@@ -180,7 +180,7 @@ The `RegulationSpan` enum at `crates/hkask-types/src/regulation.rs` defines the 
 
 | Variant              | Namespace              | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP subsystems for the 11 on-disk servers (codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, swarm, training) plus legacy `ToolSubsystem` variants (`communication`, `filesystem`, `memory`, `registry`, `wallet`, `web_search`) retained in the enum for span-name stability. The deleted `communication`, `filesystem`, `memory`, `skill`, and `regulation` MCP servers no longer emit spans. `codegraph` routes through `ToolSubsystem::Other` (no dedicated variant). |
+| `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP subsystems for the 13 on-disk servers (codegraph, companies, condenser, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, swarm, training) plus legacy `ToolSubsystem` variants (`communication`, `filesystem`, `memory`, `registry`, `wallet`, `web_search`) retained in the enum for span-name stability. The deleted `communication`, `filesystem`, `memory`, `skill`, and `regulation` MCP servers no longer emit spans. `codegraph`, `portfolio`, and `prediction-markets` route through `ToolSubsystem::Other` (no dedicated variant). |
 | `Inference`          | `reg.inference`        | LLM request/response                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `Gas`                | `reg.gas`              | Energy consumption tracking                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `Curation`           | `reg.curation`         | Registry sync, pod sync, directive issuance                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -243,7 +243,7 @@ The ν-event design is the Good Regulator theorem applied to observability: the 
 
 ### Statement
 
-The `hkask-mcp-companies` server provides 41 tools for retrieving company data, calculating valuations, researching claims, maintaining durable forecast feedback, and managing a local investment ledger. It is the operational toolset that connects the scenario forecasting pipeline to real market data — the forecasting pipeline produces probabilities; the companies server provides the financial data that grounds those probabilities in reality.
+The `hkask-mcp-companies` server provides 44 tools for retrieving company data, calculating valuations, researching claims, maintaining durable forecast feedback, and managing a local investment ledger. It is the operational toolset that connects the scenario forecasting pipeline to real market data — the forecasting pipeline produces probabilities; the companies server provides the financial data that grounds those probabilities in reality.
 
 ### Evidence
 
@@ -754,46 +754,33 @@ _Inlined from `docs/diagrams/sequence-classify-to-memory.md`_
 
 # Classification-to-Memory Sequence
 
-Full flow from source text through single-model classification, guard scanning,
-integration, and shared memory storage. All guard checks are mandatory.
+Full flow from source text through single-model classification, semantic
+extraction, and shared memory storage. (The former `ContentGuard` input/output
+scanning steps were removed with the `hkask-guard` crate on 2026-08-10;
+provider-side safety and refusal fallbacks remain.)
 
 Related: `mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs`
 
 ```mermaid
 sequenceDiagram
     participant S as Source
-    participant G as ContentGuard
-    participant M as Model (Qwen3-235B)
+    participant M as Model (classifier)
     participant I as Integrator
     participant Regulation as Regulation Spans
     participant Memory as Shared Memory
 
-    S->>G: scan_input(text)
-    alt blocked
-        G-->>Regulation: reg.guard.violation (input_refused)
-        G-->>S: Refuse
-    else passed
-        M->>M: extract_triples_one(text)
-        M-->>I: TripleExtraction
-
-        I->>I: normalize (dedup, annotate)
-
-        I->>G: scan_output(merged)
-        alt secrets detected
-            G-->>Regulation: reg.guard.violation (output)
-            G-->>I: Sanitized output
-        else clean
-            G-->>I: Pass
-        end
-
-        I->>Memory: store_passage_h_mems()
-    end
+    S->>M: classify_batch(texts)
+    M-->>I: ClassifyResult (section_type)
+    Note over I: normalize (dedup, annotate)
+    I->>I: extract semantic h_mems
+    I->>Regulation: reg.tool span (cost posted to ledger)
+    I->>Memory: store_passage_h_mems()
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-008
-verified_date: 2026-07-12
-verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.rs
+verified_date: 2026-08-14
+verified_against: kask/mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs (classify_and_extract, classify_batch, store_passage_h_mems)
 status: VERIFIED
 -->
 
@@ -804,33 +791,25 @@ _Inlined from `docs/diagrams/flowchart-algo-classification.md`_
 # Classification Flow
 
 How classification operates as a single-model extraction: the model's JSON
-extraction is normalized (dedup, diverging fields annotated) before the guard
-output scan and storage.
+extraction is normalized (dedup, diverging fields annotated) before storage.
+(The former guard input/output scans were removed with `hkask-guard` on
+2026-08-10.)
 
 Related: `mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs`
 
 ```mermaid
 flowchart TD
     S([Source Text])
-    G{Guard Input Scan}
-    R[Refuse + Regulation Alert]
-    P[Model\nKC/qwen3-235b]
-    R1[Response (JSON)]
-    I[Normalize (dedup, annotate)]
-    GO{Guard Output Scan}
-    RS[Strip Secrets\n+ Regulation Alert]
+    P[Model classifier]
+    R1[Response JSON]
+    I[Normalize dedup annotate]
     ST[Store in Shared Memory]
     M[Memory]
 
-    S --> G
-    G -->|pass| P
-    G -->|block| R
+    S --> P
     P --> R1
     R1 --> I
-    I --> GO
-    GO -->|pass| ST
-    GO -->|violation| RS
-    RS --> ST
+    I --> ST
     ST --> M
 
     subgraph "Single-Model Extraction"
@@ -844,7 +823,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-009
-verified_date: 2026-07-12
-verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.rs
+verified_date: 2026-08-14
+verified_against: kask/mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs (classify_and_extract, store_passage_h_mems)
 status: VERIFIED
 -->

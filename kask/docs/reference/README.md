@@ -13,12 +13,12 @@ mds_categories: [domain]
 Neutral, complete, descriptive-only documentation of the hKask system as it is hosted inside
 zed-kask. No procedures, no opinions, no explanations of why — only what.
 
-hKask runs in-process inside zed-kask: 20 kask crates (19 `hkask-*` + `kask_bridge`) compiled
+hKask runs in-process inside zed-kask: 19 kask crates (18 `hkask-*` + `kask_bridge`) compiled
 into the editor and 13 MCP servers hosted on disk via zed's `context_server` infrastructure.
 The standalone `kask` CLI, HTTP API server, Matrix transport, daemon process, and REPL surfaces
 have been **deleted** and are not referenced here as current. See
 [`docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md)
-for the D1–D23 integration seams and the essentialist split.
+for the D1–D28 integration seams and the essentialist split.
 
 ## Skill & Template Registry
 
@@ -30,8 +30,8 @@ for the D1–D23 integration seams and the essentialist split.
 
 ## MCP Servers
 
-- [MCP Server Registry](mcp-servers/README.md) — All 11 on-disk MCP servers with tool tables and capability tiers
-- [Companies MCP Server](mcp-servers/companies.md) — 41 tools, dual-provider routing, forecast store, portfolio ledger
+- [MCP Server Registry](mcp-servers/README.md) — All 13 on-disk MCP servers with tool tables and capability tiers
+- [Companies MCP Server](mcp-servers/companies.md) — 44 tools, dual-provider routing, forecast store, portfolio ledger
 - [Condenser MCP Server](mcp-servers/condenser.md) — 4 tools, 3 compression algorithms, 2-phase condensation
 - [Corpus / DocProc MCP Server](mcp-servers/corpus.md) — Corpus gathering, document processing, QA generation, style replicas
 - [Scenarios MCP Server](mcp-servers/scenarios.md) — Event-tree forecasting pipeline

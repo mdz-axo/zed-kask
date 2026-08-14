@@ -14,7 +14,7 @@ mds_categories: [domain, lifecycle]
 
 Task-oriented procedures for company valuation, forecasting, and portfolio analysis with the companies MCP server. Each section answers "how do I achieve X?" with direct, imperative instructions. For the complete tool catalog and behavioral boundaries, see the [Companies MCP Server Reference](../reference/mcp-servers/companies.md).
 
-The server exposes **42 tools** (`#[tool]` functions under `kask/mcp-servers/hkask-mcp-companies/src/tools/`), grouped into seven tool modules:
+The server exposes **44 tools** (`#[tool]` functions under `kask/mcp-servers/hkask-mcp-companies/src/tools/`), grouped into eight tool modules:
 
 | Module | Tools | Count |
 |--------|-------|-------|
@@ -23,8 +23,9 @@ The server exposes **42 tools** (`#[tool]` functions under `kask/mcp-servers/hka
 | `tools/expectations.rs` | `expectations_gap` | 1 |
 | `tools/analytics.rs` | `portfolio_attribution`, `portfolio_characteristics`, `dcf_valuation`, `reverse_dcf`, `scenario_analysis` | 5 |
 | `tools/economic_profit.rs` | `ep_valuation` | 1 |
-| `tools/valuation.rs` | `comparable_analysis`, `sensitivity_analysis`, `equity_duration`, `monte_carlo_dcf`, `calibrate_forecast`, `forecast_get`, `forecast_list`, `forecast_record`, `result_feedback` | 9 |
+| `tools/valuation.rs` | `comparable_analysis`, `sensitivity_analysis`, `equity_duration`, `monte_carlo_dcf`, `scenario_impact_valuation`, `calibrate_forecast`, `forecast_get`, `forecast_list`, `forecast_record`, `result_feedback` | 10 |
 | `tools/portfolio.rs` | `portfolio_delete`, `portfolio_list`, `ledger_import`, `ledger_export`, `transaction_note_append`, `portfolio_comparison`, `portfolio_returns`, `note_add`, `note_list`, `note_delete`, `file_attach`, `file_list`, `file_delete` | 13 |
+| `tools/transcript.rs` | `company_transcript` | 1 |
 
 ## Prerequisites
 
@@ -396,7 +397,7 @@ Natural-language criteria map to FMP screener parameters (market cap, price, vol
 
 - [Companies MCP Server Reference](../reference/mcp-servers/companies.md) — full tool catalog, configuration, and behavioral boundaries
 - [Tool Routing and Dispatch Flow](../reference/mcp-servers/companies.md) — DIAG-RF-004 dispatch diagram (inline)
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D23 integration seams
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D28 integration seams
 - [Tool dispatch](../diataxis/hkask-capability/explanation.md) — where tool authority is enforced, and what `McpRuntime::invoke` actually does
 - [Superforecasting: Layered Model](forecasting-and-scenarios.md) — three-layer forecasting architecture
 - [Earnings Transcript Analysis Design](earnings-transcript-analysis-design.md) — FMP-sourced transcript analysis design exploration

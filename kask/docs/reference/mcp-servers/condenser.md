@@ -119,9 +119,9 @@ status: VERIFIED (v6 — learning subsystem + 4 MCP tools removed; BridgeThreadC
 
 ## Cross-links
 
-- [MCP Server Registry](README.md) — all 11 on-disk MCP servers
+- [MCP Server Registry](README.md) — all 13 on-disk MCP servers
 - [MCP Server Explanation](../../diataxis/hkask-mcp-server/explanation.md) — MCP bootstrap and tool dispatch sequence
-- [Zed Host Architecture Plan](../../architecture/zed-host-architecture-plan.md) — D1–D23 integration seams
+- [Zed Host Architecture Plan](../../architecture/zed-host-architecture-plan.md) — D1–D28 integration seams
 
 ## Footnotes
 

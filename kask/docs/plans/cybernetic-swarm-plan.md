@@ -23,18 +23,22 @@ mds_categories: [composition, trust]
 > — the components (§6) are proposals ranked by leverage, with implementation
 > sequencing in §8 governed by the dependency hierarchy (§3).
 >
-> **Superseded terminology note (2026-08-12):** where the D1 Reliability
+> **Superseded terminology note (2026-08-12, revised 2026-08-14):** where the D1 Reliability
 > discussion credits "OCAP" as part of the spend membrane, that component no
 > longer exists. The per-call capability gate at `McpRuntime::invoke` was removed
 > because all three production mint sites derived the token's `resource_id` from
 > the same tool name they passed to `invoke` — the check compared a
 > caller-supplied value against itself and denied nothing
-> (`security/regressions/RR-0056.yaml`). The other D1 elements stand: the consent
-> gate, the per-dispatch ceiling, the ledger balance check, and guard scanning.
-> Tool reach is bounded by the swarm card `mcp_tools` allowlist and the inference
-> IPC `tool_allowlist`, and the call ceiling is a runaway-loop breaker that is
-> fail-open on an unseeded agent (`RR-0057.yaml`). Read "OCAP" below as "tool
-> allowlist separation"; the cybernetic argument is unaffected.
+> (`security/regressions/RR-0056.yaml`). The D1 elements that still stand are
+> the consent gate, the per-dispatch ceiling, and the ledger balance check.
+> **Guard scanning is also gone**: the `hkask-guard` crate was deleted 2026-08-10
+> (the `RoleOverride` scanner's bare `system:` substring match blocked legitimate
+> skill cascade template rendering); provider-side safety and refusal fallbacks
+> remain. Tool reach is bounded by the swarm card `mcp_tools` allowlist and the
+> inference IPC `tool_allowlist`, and the call ceiling is a runaway-loop breaker
+> that is fail-open on an unseeded agent (`RR-0057.yaml`). Read "OCAP" below as
+> "tool allowlist separation" and "guard scanning" as "removed"; the cybernetic
+> argument is unaffected.
 
 ## Design constraints (this revision)
 
@@ -191,7 +195,7 @@ flowchart TD
   D1 -->|gates| D2
   D2 -->|gates| D3
 
-  D1H["hKask: 3-layer consent + ceiling<br/>+ gas + tool allowlists + guard scanning<br/>(EXCEEDS the paper)"]:::has
+  D1H["hKask: 3-layer consent + ceiling<br/>+ gas + tool allowlists<br/>(EXCEEDS the paper)"]:::has
   D2H["hKask: LocalAgentRegistry reload<br/>+ prior_iteration (1-step memory)<br/>+ thread_condenser; no cross-run<br/>skill promotion"]:::partial
   D3H["hKask: swarm-intelligence adjusts<br/>topology only; manifest templates<br/>are static; self-improvement skill<br/>exists separately, not wired in"]:::gap
 
@@ -442,7 +446,9 @@ S3/S4/S5/S7 and is presented first because it gates three of the components.
   3. Else if any agent's `executed_skills[].ok = false` (a declared skill
      cascade failed, L442–454), attribute to the **earliest such agent**.
   4. Else if a guard redaction occurred on an agent's tool output
-     (`scan_input` rejected, L550–557), attribute to that agent.
+     (the former `scan_input` rejection at L550–557 was removed with `hkask-guard`
+     on 2026-08-10; this attribution branch is no longer reachable — kept here as
+     a historical record of the C5 rule shape), attribute to that agent.
   5. Tie-break by delegation order (deterministic).
 - **Integration point:** ORIENT emits `agent_at_fault` (deterministic, per the
   rule above) for each failed task; CONVERGE aggregates
@@ -808,7 +814,8 @@ convergence-check template"):
 - `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs` —
   `LocalSwarmRuntime::delegate` (L366–638): the tool loop, the
   `executed_skills`/`tool_calls` trace (the deterministic attribution source
-  for C5), the 1cr/1000tok debit, guard scanning (L550–557).
+  for C5), the 1cr/1000tok debit. (The former guard scanning at L550–557 was
+  removed with `hkask-guard` on 2026-08-10.)
 - `kask/mcp-servers/hkask-mcp-swarm/src/local_registry.rs` — `LocalAgentCard`
   (typed `accepts`/`produces` ports, `dependencies`, `capabilities`); the
   reload-on-staleness `load` (L131) that C6's `reconfigure_agent` relies on.
@@ -907,9 +914,11 @@ Applying the skill-sharing model to agents and swarms:
     against the operator's governed server set (the existing clone-time filter
     in `swarm_clone_to_local`, `abw-swarm-intelligence.md` §15.3, applies).
   - **guard-scan the `system_prompt`** — a shared agent's `system_prompt` is
-    untrusted text; the existing `scan_input` guard (`local_runtime.rs` L418)
-    is the enforcement point. A crate whose `system_prompt` trips the guard is
-    rejected (safety 0 → reject, mirroring skill-discovery).
+    untrusted text. (The former `scan_input` guard at `local_runtime.rs` L418
+    was the enforcement point; it was removed with `hkask-guard` on 2026-08-10.
+    Provider-side safety and refusal fallbacks remain; a crate whose
+    `system_prompt` would have tripped the guard is no longer rejected at this
+    layer.)
   - **Magna Carta / Regulation span** — user sovereignty, affirmative consent,
     clear boundaries (the same checks skill-discovery runs).
   - Install → `agents/local/curated/<id>/` (or a new `agents/shared/` dir to

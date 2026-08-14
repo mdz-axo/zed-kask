@@ -278,7 +278,7 @@ is no `match` arm in the dispatch loop — dispatch is trait-based via
 - [hkask-templates Tutorial](./tutorial.md): your first skill manifest.
 - [hkask-templates How-to](./how-to.md): adding a PDCA step to an existing
   manifest.
-- [kask_bridge Explanation](../kask_bridge/explanation.md): the full D1–D23
+- [kask_bridge Explanation](../kask_bridge/explanation.md): the full D1–D28
   composition root wiring.
 - [`kask/docs/explanation/skills-and-composition.md`](../../explanation/skills-and-composition.md):
   cross-cutting skill anatomy and composition.

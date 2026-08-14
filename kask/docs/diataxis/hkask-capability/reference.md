@@ -216,7 +216,8 @@ no gate — it invites reliance on a protection that does not exist.
 Governing entry: `kask/security/regressions/RR-0053.yaml`, rewritten as an
 absence check that forbids re-adding the machinery in inert form and states the
 bar a real IFC gate must clear. Full rationale:
-[`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md).
+[`DIVERGENCE.md`](../../../DIVERGENCE.md) D4 and
+`kask/security/regressions/RR-0053.yaml`.
 
 ## CapabilityTier (sibling crate)
 

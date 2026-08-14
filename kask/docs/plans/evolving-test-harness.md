@@ -103,9 +103,8 @@ crate is a thin fixtures-and-generators library.
 > the `Source`→`Sink` block could not fire — and `ToolTaint` no longer exists to
 > label or generate. `NoopToolPort` retains `with_tool` (register a tool name) but
 > no taint builder. Defense Layer 5 is now absent by decision, as Layer 3 is under
-> RR-0010; see
-> [`guard-taint-pipeline.md`](../architecture/guard-taint-pipeline.md). Any
-> harness work this plan proposes against taint labels is void; a replacement
+> RR-0010; see `DIVERGENCE.md` D4 and `kask/security/regressions/RR-0053.yaml`.
+> Any harness work this plan proposes against taint labels is void; a replacement
 > would first have to meet RR-0053's bar for a real IFC gate.
 
 **Consumers:** `hkask-mcp` (2 test files), `hkask-templates` (3 test files), plus

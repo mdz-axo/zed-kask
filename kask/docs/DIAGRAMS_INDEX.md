@@ -1,7 +1,7 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [maintainers, agents]
-last_updated: 2026-08-05
+last_updated: 2026-08-14
 version: "0.32.1"
 status: "Active"
 domain: "documentation"
@@ -52,8 +52,6 @@ The Diataxis documentation set (`docs/diataxis/`) carries ~40 per-crate diagrams
 | DIAG-PL-MEMORY-RECALL | Memory Recall Flow — query → embed → KNN + keyword → inject (two-leg recall, entity_ref join)      | `diagrams/flowchart-memory-recall.md`                            | `crates/kask_bridge/src/memory.rs:1411`        | ✅ VERIFIED 2026-08-10                                                                                                 |
 | DIAG-PL-STORAGE       | hkask-storage ERD — core tables (hmems, embeddings, nu_events, audit_log, kata_history, pod_meta)  | `diataxis/hkask-storage/reference.md`                            | `crates/hkask-storage/src/core/sql/schema.sql` | ✅ SURVIVES 2026-08-03 (wallet/goals tables removed 2026-08-03)                                                        |
 | DIAG-PL-HMEM          | Bitemporal hMem state machine (Active → Superseded/Recalled)                                       | `diataxis/hkask-storage/explanation.md`                          | `crates/hkask-storage/src/hmem.rs`             | ✅ SURVIVES 2026-08-03 (diataxis)                                                                                      |
-| DIAG-PL-GALLERY       | Media Gallery Schema ERD — Gallery/Image/Tag/Metadata/Policy/DerivedWork                           | `research/media-research/design-schema.md` (T4)                  | `crates/hkask-storage/src/gallery.rs`          | ✅ SURVIVES 2026-08-03 (path confirmed)                                                                                |
-| DIAG-PL-MEDIALAND     | Media Tool Domain Landscape — ImageTool/VideoTool → Model → ProviderEndpoint, InputType/OutputType | `research/media-research/media-landscape.md` (T1)                | `mcp-servers/hkask-mcp-media/`                 | ✅ SURVIVES 2026-08-03 (path confirmed)                                                                                |
 
 ## 5. Framework & Methodology Diagrams
 
@@ -104,14 +102,12 @@ The swarm system (`hkask-mcp-swarm` + `crates/swarm_panel` + the `swarm-intellig
 
 | Diagram ID         | Type      | File                                         | Description                                                                                                                                                | Verified Against                                                                                       | Status                                                                            |
 | ------------------ | --------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| DIAG-DIA-SWARM-001 | flowchart | `diagrams/flowchart-swarm-architecture.md`   | Swarm MCP server architecture — two launch paths, two substrates, panel + skills + curator (51 tools: 27 ABW + 24 local)                                   | `hkask_mcp_swarm.rs` (`tool_surface_is_exactly_51_registered_tools`), `swarm_panel.rs`                 | ✅ VERIFIED 2026-08-05                                                            |
+| DIAG-DIA-SWARM-001 | flowchart | `diagrams/flowchart-swarm-architecture.md`   | Swarm MCP server architecture — two launch paths, two substrates, panel + skills + curator (53 tools: 27 ABW + 26 local)                                   | `hkask_mcp_swarm.rs` (`tool_surface_is_exactly_53_registered_tools`), `swarm_panel.rs`                 | ✅ VERIFIED 2026-08-14                                                            |
 | DIAG-DIA-SWARM-002 | flowchart | `diagrams/flowchart-swarm-pdca-cascade.md`   | swarm-intelligence 10-step PDCA cascade with deterministic compute steps                                                                                   | `swarm-intelligence/SKILL.md`                                                                          | ✅ VERIFIED                                                                       |
 | DIAG-DIA-SWARM-003 | sequence  | `diagrams/sequence-swarm-steering-loop.md`   | Steering loop — advisory vs steering execution, delegate_results feedback                                                                                  | `swarm-steering/SKILL.md`                                                                              | ✅ VERIFIED                                                                       |
-| DIAG-DIA-SWARM-006 | class     | `diagrams/class-swarm-server.md`             | SwarmServer collaborators — AbwClient, ConsentStore, spend_gate module (crate-private authorize/complete fns), runtime, executor, A2A, LocalDelegateResult | `hkask_mcp_swarm.rs`, `consent.rs`, `spend_gate.rs`, `local_runtime.rs`, `agent_executor.rs`, `a2a.rs` | ✅ VERIFIED 2026-08-05 (phantom `SpendGate` struct removed — module has fns only) |
+| DIAG-DIA-SWARM-006 | class     | `diagrams/class-swarm-server.md`             | SwarmServer collaborators — AbwClient, ConsentStore, spend_gate module (crate-private authorize/complete fns), runtime, executor, A2A, LocalDelegateResult | `hkask_mcp_swarm.rs`, `consent.rs`, `spend_gate.rs`, `local_runtime.rs`, `agent_executor.rs`, `a2a.rs` | ✅ VERIFIED 2026-08-14 (guard field removed from AgentExecutor; tool count 53) |
 | DIAG-DIA-SWARM-007 | state     | `diagrams/state-swarm-panel-modes.md`        | SwarmPanel PanelMode states (Browse/Author/Compose/Steer) + backend toggle                                                                                 | `swarm_panel.rs`                                                                                       | ✅ VERIFIED 2026-08-03                                                            |
 | DIAG-DIA-SWARM-008 | flowchart | `diagrams/flowchart-swarm-feedback-loops.md` | Four feedback loops with 5-property health + algedonic override + C4 latency deficit                                                                       | `swarm-intelligence/SKILL.md`, `consent.rs`, `swarm_panel.rs`                                          | ✅ VERIFIED 2026-08-03                                                            |
-
-**Companion audit:** [`audits/swarm-cybernetics-semantics-audit.md`](audits/swarm-cybernetics-semantics-audit.md) — pragmatic-semantics gap analysis + pragmatic-cybernetics per-property loop assessment + VSM map + Ashby variety check.
 
 ## 13. Plan & Design Diagrams (newly indexed)
 
@@ -164,7 +160,6 @@ The `docs/diataxis/` set carries one diagram per artifact across 10 crates (`hka
 | `docs/reference/regulation-spans.md`                                                                                 | 1       |
 | `docs/architecture/` (MDS ×4, DOCUMENTATION_STANDARDS ×1)                                                            | 5       |
 | `docs/plans/` (cybernetic-swarm ×3, evolving-test-harness)                                                           | 4       |
-| `docs/research/media-research/` (gallery ERD, media landscape)                                                       | 2       |
 | `docs/diataxis/` (10 crates × ~4)                                                                                    | ~40     |
 | **Total surviving**                                                                                                  | **~84** |
 

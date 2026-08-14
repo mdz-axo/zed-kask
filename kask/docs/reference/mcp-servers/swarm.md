@@ -26,9 +26,8 @@ composition, agent authoring, and governed spend:
   (`swarm_request_consent` mints single-use tokens; `swarm_hire`/`swarm_delegate`
   consume and re-verify them).
 - **Local** (v2 §15) — routes to zed-kask's local substrate: `hkask-inference`
-  (Ollama/cloud via the zed IPC bridge), `hkask-ledger` (operator-funded SQLite
-  credits), `hkask-guard` (I/O scanning). No ABW calls, no consent token — the
-  ledger balance check is the gate.
+  (Ollama/cloud via the zed IPC bridge) and `hkask-ledger` (operator-funded SQLite
+  credits). No ABW calls, no consent token — the ledger balance check is the gate.
 
 Both substrates dispatch through the kask MCP runtime (per-agent call metering,
 gas/rjoule budgeting, `hkask.mcp.swarm` telemetry targets; tool reach itself is
@@ -104,7 +103,7 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 ## Tool reference — Local (26 tools)
 
 Local-mode tools route to zed-kask's local substrate (`hkask-inference`,
-`hkask-ledger`, `hkask-guard`). They are **always exposed regardless of
+`hkask-ledger`). They are **always exposed regardless of
 `kask.swarm.mode`** — an operator in `abw` mode can still fund the local
 ledger, browse local agents, or push a local agent to the cloud. The mode
 only changes which substrate the _composition_ cascade uses by default.
@@ -121,7 +120,7 @@ only changes which substrate the _composition_ cascade uses by default.
 
 | Tool                   | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `swarm_delegate_local` | Run a local agent against a task. The execution path: **scan input** → **tool loop** (a tool call outside the card's declared `mcp_tools` allowlist is refused in `agent_executor`; allowed calls dispatch through `McpRuntime`, which meters them against the agent's per-tick call ceiling and emits the span — it does not re-authorize, RR-0056) → **guard scan output** → **ledger debit**. Declared `capabilities.skills` (capped at 3) execute against the task through the zed-side `ManifestExecutor` before the LLM call. Returns a `LocalDelegateResult` (see shape below). |
+| `swarm_delegate_local` | Run a local agent against a task. The execution path: **tool loop** (a tool call outside the card's declared `mcp_tools` allowlist is refused in `agent_executor`; allowed calls dispatch through `McpRuntime`, which meters them against the agent's per-tick call ceiling and emits the span — it does not re-authorize, RR-0056) → **ledger debit**. Declared `capabilities.skills` (capped at 3) execute against the task through the zed-side `ManifestExecutor` before the LLM call. Returns a `LocalDelegateResult` (see shape below). |
 | `swarm_fanout_local`   | Parallel multi-agent fan-out: dispatch N agents in one call and aggregate. Runs sequentially to avoid ledger TOCTOU. Capped at `MAX_FANOUT` (10) — the substrate-level primitive the `swarm-intelligence` CHECK step reads.                                                                                                                                                                                                           |
 | `swarm_pipeline_local` | Sequential local pipeline: run N agents in order with `{prev_output}` substitution (each step's task may reference the previous step's response). Capped at 10 steps.                                                                                                                                                                                                                                                                 |
 | `swarm_a2a_send`       | Send an A2A (Agent2Agent) protocol message to a local agent: wraps in A2A types (Message/Task/Artifact) and dispatches in-process. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in `mcp_tools` to communicate with each other.                                                                                                                                                                              |
@@ -155,8 +154,8 @@ Local agent cards live at `agents/local/curated/<id>/agent_card.json`
 | `swarm_reconfigure_local_agent` | Update an existing local agent's `system_prompt` in place (the C6 reconfigure step in the cybernetic swarm plan); preserves all other card fields.                                                                                                                                                                                          |
 | `swarm_clone_to_local`          | Clone an ABW agent card into the local registry with `min_provider_class: local`; sets `cloud_id` to mark it as synced (the cloud→local bridge). Requires the ABW API key.                                                                                                                                                                  |
 | `swarm_remove_local`            | Delete a local agent card (the local counterpart of firing). A synced card's ABW agent is NOT touched.                                                                                                                                                                                                                                      |
-| `swarm_generate_prompt_local`   | Generate a system prompt for a local agent from a description (local analog of `swarm_generate_prompt`). Uses the local `InferencePort`; optionally seeded with the agent's consolidated memory. Output guard-scanned.                                                                                                                      |
-| `swarm_generate_ontology_local` | Generate a seed ontology (Mermaid ER) for a knowledge domain (local analog of `swarm_generate_ontology`). Uses the local `InferencePort`; optionally seeded with an agent's semantic-memory graph. Output guard-scanned.                                                                                                                    |
+| `swarm_generate_prompt_local`   | Generate a system prompt for a local agent from a description (local analog of `swarm_generate_prompt`). Uses the local `InferencePort`; optionally seeded with the agent's consolidated memory.                                                                                                                      |
+| `swarm_generate_ontology_local` | Generate a seed ontology (Mermaid ER) for a knowledge domain (local analog of `swarm_generate_ontology`). Uses the local `InferencePort`; optionally seeded with an agent's semantic-memory graph.                                                                                                                    |
 | `swarm_search_knowledge_local`  | Search a local agent's prefix-scoped semantic memory (local analog of ABW `swarm_search_knowledge`); returns entity-attribute-value triples. Degrades to an empty result with a `memory_unconfigured` note when the store cannot be opened.                                                                                                 |
 | `swarm_ai_assist`               | AI assist for the swarm panel authoring forms: suggests completions for partial inputs or validates well-formedness. Runs the `swarm-compose-guide` skill cascade (Jinja2 guidance template) via the `SkillExecPort` — the template is the source of truth. The `mode` field (abw/local) tailors the guidance; no ABW calls in either mode. |
 
@@ -183,7 +182,7 @@ fabricated.
 ```json
 {
   "agent_id": "string",
-  "response": "string (guard-scanned)",
+  "response": "string",
   "model": "string (e.g. ollama/qwen3:32b)",
   "tokens_used": 1234,
   "cost": 2,
@@ -272,7 +271,6 @@ semantics match (e.g. `PaymentRequired` for an insufficient ledger balance).[^ow
 | `RateLimited`        | 429                                                                     | `rate_limited`                  |
 | `CuratorUnavailable` | Xaman Ek session create fails                                           | `unavailable`                   |
 | `ConsentDenied`      | missing/invalid/replayed/out-of-scope consent token (ABW only)          | `permission_denied`             |
-| `GuardBlocked`       | hkask-guard I/O scan rejected input or output (local only)              | `permission_denied`             |
 | `ApiVersionMismatch` | serde parse failure (possible API drift, S4)                            | `internal`                      |
 | `Unavailable`        | network/transport; local substrate offline                              | `unavailable`                   |
 
@@ -457,7 +455,6 @@ The server's defense-in-depth coverage (from the kali audit):[^owasp-swarm-secur
 
 **Local mode adds:**
 
-- **hkask-guard I/O scanning** — `scan_input` / `scan_output` runs on every `swarm_delegate_local` invocation (input before the tool loop, output before the response is returned).
 - **Ledger balance gate** — no consent token; a delegation refuses if `balance < cost`. The balance is the single gate, and a failed balance read is a stale signal, not a fabricated zero.
 - **`mcp_tools` allowlist** — a local agent's declared `mcp_tools` are the only tools dispatched through the governed `McpRuntime` during the tool loop. Undeclared tools are not reachable, even if the agent requests them.
 
@@ -478,8 +475,7 @@ plan's §14.
 - [Architecture diagram](../../diagrams/flowchart-swarm-architecture.md) — the swarm server topology
 - [PDCA cascade flowchart](../../diagrams/flowchart-swarm-pdca-cascade.md) — the 10-step loop
 - [Steering loop sequence](../../diagrams/sequence-swarm-steering-loop.md) — advisory vs steering execution
-- [Kali security audit](../../audits/abw-swarm-kali-audit.md) — 7-layer defense map
-- [MCP Server Registry](README.md) — fleet-wide patterns and the 11-server catalog
+- [MCP Server Registry](README.md) — fleet-wide patterns and the 13-server catalog
 
 ## Footnotes
 

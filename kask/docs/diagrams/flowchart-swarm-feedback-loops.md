@@ -20,7 +20,7 @@ the swarm-state distance `d` (the "never read as no deviation" invariant);
 annotates each loop with its 5-property health (polarity, delay, gain, closure,
 fidelity) and marks the two structural gaps found in the audit: Loop B's binary
 `ok` fidelity (no task-success sensing for open tasks) and the C4 latency
-sub-loop that is sensed but not regulated. See the [Swarm Cybernetics/Semantics Audit](../audits/swarm-cybernetics-semantics-audit.md) for the full per-property evidence and the [PDCA Cascade](flowchart-swarm-pdca-cascade.md) for the step decomposition.
+sub-loop that is sensed but not regulated. See the [PDCA Cascade](flowchart-swarm-pdca-cascade.md) for the step decomposition.
 
 ```mermaid
 flowchart TD

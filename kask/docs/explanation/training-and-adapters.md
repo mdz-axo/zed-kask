@@ -275,7 +275,7 @@ verified_against: corpus/chunks/chunks.jsonl; corpus/chunks/tagged_chunks.jsonl;
 status: VERIFIED
 -->
 
-The operational assessment and remediation sequence is documented in the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) (D1–D23 integration seams).
+The operational assessment and remediation sequence is documented in the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) (D1–D28 integration seams).
 
 
 ### Replica Pipeline Dispatch

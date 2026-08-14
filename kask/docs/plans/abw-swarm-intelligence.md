@@ -90,21 +90,16 @@ through the global `ToolInvoker` hook → `McpRuntime` (metered + span-emitting;
 capability-match this line originally credited was removed 2026-08-12 as vacuous,
 RR-0056), never ad-hoc HTTP from the UI.
 
-### 3.3 Tool surface (25 tools)
+### 3.3 Tool surface (53 tools)
 
-ABW tools (17): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
-`swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
-`swarm_hire_cost`, `swarm_request_consent`, `swarm_hire`, `swarm_delegate`,
-`swarm_run_status`, `swarm_generate_prompt`, `swarm_generate_ontology`,
-`swarm_create_agent`, `swarm_create_swarm`, `swarm_xaman`, `swarm_create_app`.
-Local tools (8): `swarm_fund_local`, `swarm_delegate_local`,
-`swarm_list_local_agents`, `swarm_balance_local`, `swarm_clone_to_local`,
-`swarm_push_to_cloud`, `swarm_local_history`, `swarm_remove_local`. Both tool
-sets are **always available in either mode** —
-the operator chooses the tool explicitly; there is no `Hybrid` routing layer
-(§15.1.8). `SwarmConfig.mode` only selects the startup warning; no server tool
-branches on it. The panel pins the tool-name contract in
-`panel_tool_names_match_server`.
+The swarm server exposes **53 tools** — 27 ABW + 26 local — **both sets always
+registered in either mode** (`kask.swarm.mode` selects the substrate, not the
+surface; pinned by `tool_surface_is_exactly_53_registered_tools`). The full
+tool-by-tool reference lives in
+[`reference/mcp-servers/swarm.md`](../reference/mcp-servers/swarm.md); the tool
+names are generated at build time from `pub(crate) async fn swarm_*`
+signatures (`build.rs`) so the surface cannot drift from the documented set.
+The panel pins the tool-name contract in `panel_tool_names_match_server`.
 
 ### 3.4 One error enum, one config struct
 
@@ -254,7 +249,8 @@ substrate; both tool sets remain registered.
   overrides). Reloaded on every list/get so operator-added cards appear
   without a server restart.
 - `LocalSwarmRuntime` — `hkask-ledger` (SQLite, operator-funded), `hkask-inference`
-  (zed IPC bridge or MediaRouter fallback), `hkask-guard` (mandatory scanners).
+  (zed IPC bridge or MediaRouter fallback). (The former `hkask-guard` mandatory
+  scanners were removed with the `hkask-guard` crate on 2026-08-10.)
   Lazily initialized (OnceCell) on first local tool call.
 - Ledger — operator-funded (`swarm_fund_local`); unfunded delegation returns
   `PaymentRequired`. No auto-replenishment: the corrective signal must be real.

@@ -37,7 +37,7 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-13 on-disk MCP servers, **305 tools** fleet-wide. Every count is pinned by a `tool_surface_is_exactly_N_registered_tools` test (2026-08-12 re-audit) that asserts the runtime router's `list_all().len()`. This catches silent registration drops — a `#[tool]` impl block without `#[tool_router]`, or a sub-router missing from `combined_router()`, registers nothing (`cargo check` passes on an unwired orphan; the `training` server was caught this way — it registered 0 tools before its sub-routers were merged).
+13 on-disk MCP servers, **308 tools** fleet-wide. Every count is pinned by a `tool_surface_is_exactly_N_registered_tools` test (2026-08-14 re-audit) that asserts the runtime router's `list_all().len()`. This catches silent registration drops — a `#[tool]` impl block without `#[tool_router]`, or a sub-router missing from `combined_router()`, registers nothing (`cargo check` passes on an unwired orphan; the `training` server was caught this way — it registered 0 tools before its sub-routers were merged).
 
 | Server | Crate | Purpose | Tools | Count source |
 |--------|-------|---------|------:|--------------|
@@ -47,10 +47,10 @@ mds_categories: [composition, domain]
 | [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 27 | `tool_surface_is_exactly_27_registered_tools` |
 | Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 9 | `tool_surface_is_exactly_9_registered_tools` |
 | Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 23 | `tool_surface_is_exactly_23_registered_tools` |
-| Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation (image, video, audio, gallery) | 40 | `tool_surface_is_exactly_40_registered_tools` |
+| Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation (image, video, audio, gallery) | 41 | `tool_surface_is_exactly_41_registered_tools` |
 | Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 14 | `tool_surface_is_exactly_14_registered_tools` |
 | [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves, residuals | 32 | `tool_surface_is_exactly_32_registered_tools` |
-| Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 21 | `tool_surface_is_exactly_21_registered_tools` |
+| Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 23 | `tool_surface_is_exactly_23_registered_tools` |
 | [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 21 | `tool_surface_is_exactly_21_registered_tools` |
 | [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 53 | `tool_surface_is_exactly_53_registered_tools` |
 | Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 8 | `tool_surface_is_exactly_8_registered_tools` |
@@ -75,12 +75,12 @@ Every MCP server MUST include **tool-behavior contract tests** that invoke tools
 
 ## Cross-links
 
-- [Companies MCP Server Reference](companies.md) — 42 tools, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
+- [Companies MCP Server Reference](companies.md) — 44 tools, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
 - [Condenser MCP Server Reference](condenser.md) — 4 tools, 3 compression algorithms, 2-phase condensation (DIAG-RF-006 inline)
 - [Corpus MCP Server Reference](corpus.md) — 27 tools: corpus gathering, document processing, QA generation, style replicas
-- [Prediction Markets MCP Server Reference](prediction-markets.md) — 12 tools: Polymarket/Kalshi base rates, calibration loop, CMP curves
+- [Prediction Markets MCP Server Reference](prediction-markets.md) — 32 tools: Polymarket/Kalshi base rates, calibration loop, CMP curves
 - [Scenario Forecasting Pipeline Diagram](scenarios.md) — 21 tools, scenarios tool flow (DIAG-RF-005 inline)
-- [Swarm MCP Server Reference](swarm.md) — 51 tools (27 ABW + 24 local), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
+- [Swarm MCP Server Reference](swarm.md) — 53 tools (27 ABW + 26 local), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
 - [Superforecasting: Layered Model](../../explanation/forecasting-and-scenarios.md) — three-layer architecture
 - [MCP Tool Dispatch Sequence](../../diataxis/hkask-mcp-server/explanation.md) — MCP dispatch and governance (replaces the deleted `explanation/architecture-patterns.md`)
 - CodeGraph Adversarial Review — adversarial code review of the codegraph server (17 findings, all fixed)

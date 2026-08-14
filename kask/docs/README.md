@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-04
-version: "0.3.0"
+last_updated: 2026-08-14
+version: "0.34.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -12,35 +12,44 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 > **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; the 13 MCP servers are launched as child processes over stdio by zed's `context_server` host.
 
-**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D23 integration plan, composition root, and current crate inventory (D21–D23 added 2026-08-05 through 2026-08-10; repo-root `DIVERGENCE.md` is authoritative for the seam list).
+**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D28 integration plan, composition root, and current crate inventory. The authoritative divergence surface is [`DIVERGENCE.md`](../../DIVERGENCE.md) at the repo root.
 
-**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) — Diataxis documentation set (tutorial, how-to, reference, explanation) for 10 crate sets (39 artifacts).
+**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) — Diataxis documentation set (tutorial, how-to, reference, explanation) for 11 cross-cutting crate sets (40 artifacts).
 
 ## Architecture
 
 | Document                                                                                | Description                                                                                                                                               |
 | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md)           | **Canonical architecture** — D1–D23 integration seams, composition root, crate inventory, deletion history.                                               |
+| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md)           | **Canonical architecture** — D1–D28 integration seams, composition root, crate inventory, deletion history.                                               |
+| [`standardized-artifact-storage.md`](architecture/standardized-artifact-storage.md)     | **D28** — the canonical path layout for all persistent kask artifacts (memory DBs, curator DBs, MCP server DBs, skills registry, archived threads).       |
 | [`memory-system-specification.md`](architecture/memory-system-specification.md)         | **Memory system spec** — vector + relational lookup, ingestion, recall, consolidation, decay, configuration.                                              |
 | [`salience-specification.md`](architecture/salience-specification.md)                   | Passage salience algorithm for `hkask-memory` (`compute_salience_batch`).                                                                                 |
+| [`AGENT_SYSTEM_PROMPT.md`](architecture/AGENT_SYSTEM_PROMPT.md)                         | The agent system prompt — structure and zed-kask divergence from upstream Zed.                                                                          |
+| [`test-harness-trace-schema.md`](architecture/test-harness-trace-schema.md)             | Trace filesystem schema for the proptest/bug-hunt/harness-optimize skill pipeline.                                                                        |
 | [`core/PRINCIPLES.md`](architecture/core/PRINCIPLES.md)                                 | Architecture principles P1–P12.                                                                                                                           |
 | [`core/magna-carta.md`](architecture/core/magna-carta.md)                               | The Magna Carta — 4 sovereignty principles (P1–P4).                                                                                                       |
+| [`core/MDS.md`](architecture/core/MDS.md)                                               | Minimal Domain Specification (5-category taxonomy).                                                                                                       |
 | [`core/scenarios-companies-bridge.md`](architecture/core/scenarios-companies-bridge.md) | Bridge tool between scenarios and companies MCP servers.                                                                                                  |
 | [`hkask-types-core-domain-split.md`](architecture/hkask-types-core-domain-split.md)     | **ADR (Draft)** — split `hkask-types` into core primitives vs domain types; options, trade-offs, audit gate.                                              |
 | [`adr-embedded-yaml-registry.md`](architecture/adr-embedded-yaml-registry.md)           | **ADR (Active)** — build-time `include_str!` embedding of all YAML/Jinja2 artifacts; dev-scoped evolution vs user-scoped freeze; trust model interaction. |
+| [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md)                 | Documentation standards (frontmatter, Mermaid-First, Sourced-Ideas, Writing Excellence).                                                                   |
 
 ## Reference
 
 | Document                                                                   | Description                                                             |
 | -------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | [`reference/regulation-spans.md`](reference/regulation-spans.md)           | Regulation span catalog.                                                |
-| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md)       | MCP server registry — 13 built-in servers (child processes over stdio). |
-| [`reference/mcp-servers/companies.md`](reference/mcp-servers/companies.md) | Companies server — valuation, forecasting, portfolio.                   |
+| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md)       | MCP server registry — 13 built-in servers, 308 tools fleet-wide.        |
+| [`reference/mcp-servers/companies.md`](reference/mcp-servers/companies.md) | Companies server — valuation, forecasting, portfolio (44 tools).        |
 | [`reference/mcp-servers/condenser.md`](reference/mcp-servers/condenser.md) | Condenser server — compression algorithms.                              |
 | [`reference/mcp-servers/corpus.md`](reference/mcp-servers/corpus.md)       | Corpus server — gather→process→output pipeline.                         |
+| [`reference/mcp-servers/portfolio.md`](reference/mcp-servers/portfolio.md) | Portfolio server — transaction-ledger portfolio store.                 |
+| [`reference/mcp-servers/prediction-markets.md`](reference/mcp-servers/prediction-markets.md) | Prediction-markets server — Polymarket/Kalshi calibration.        |
 | [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline.                           |
-| [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md)         | Swarm server — Agent Bestiary World agent swarms, Xaman Ek curator.     |
-| [`reference/skills/README.md`](reference/skills/README.md)                 | Skill registry.                                                         |
+| [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md)         | Swarm server — Agent Bestiary World agent swarms, Xaman Ek curator, local substrate (53 tools). |
+| [`reference/skills/README.md`](reference/skills/README.md)                 | Skill, template, and bundle registry — 64 skills, 1:1 with SKILL.md dirs. |
+| [`reference/kask-settings.md`](reference/kask-settings.md)                 | Kask settings reference.                                                 |
+| [`reference/ontology-bridge.md`](reference/ontology-bridge.md)             | Ontology bridge API reference.                                           |
 | [`reference/lora-training-catalog.md`](reference/lora-training-catalog.md) | LoRA training method/gate/harness catalog.                              |
 
 ## Explanation
@@ -49,29 +58,17 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
 | [`explanation/skills-and-composition.md`](explanation/skills-and-composition.md)           | Skill anatomy, invocation, composition.                                       |
 | [`explanation/memory-system.md`](explanation/memory-system.md)                             | **Memory system** — why vector + relational, the entity_ref bug, decay model. |
+| [`explanation/abw-swarm-orchestration.md`](explanation/abw-swarm-orchestration.md)         | Agent Bestiary World swarm orchestration design.                              |
 | [`explanation/cognition-and-replica.md`](explanation/cognition-and-replica.md)             | Scenario forecasting, ν-event semantics, Companies server.                    |
-| [`explanation/companies-mcp.md`](explanation/companies-mcp.md)                             | Companies MCP server design.                                                  |
+| [`explanation/companies-mcp.md`](explanation/companies-mcp.md)                             | Companies MCP server how-to.                                                  |
+| [`explanation/company-corpus-design.md`](explanation/company-corpus-design.md)             | Company corpus design (discovery → ontology-anchored KG → RAG).               |
+| [`explanation/corpus-ingestion-probe.md`](explanation/corpus-ingestion-probe.md)           | Corpus ingestion probe (slice 6).                                             |
+| [`explanation/earnings-transcript-analysis-design.md`](explanation/earnings-transcript-analysis-design.md) | Earnings-call transcript analysis design.                       |
 | [`explanation/forecasting-and-scenarios.md`](explanation/forecasting-and-scenarios.md)     | Forecasting across skill, library, and scenarios layers.                      |
 | [`explanation/ontology-anchored-embedding.md`](explanation/ontology-anchored-embedding.md) | Tag→embed corpus pipeline.                                                    |
 | [`explanation/training-and-adapters.md`](explanation/training-and-adapters.md)             | RunPod/Unsloth LoRA training path.                                            |
 | [`explanation/runpod-lora-training-guide.md`](explanation/runpod-lora-training-guide.md)   | RunPod LoRA training lessons.                                                 |
 | [`explanation/security-skills-smoke-test.md`](explanation/security-skills-smoke-test.md)   | Manual smoke-test procedure.                                                  |
-| [`explanation/abw-swarm-orchestration.md`](explanation/abw-swarm-orchestration.md)         | Agent Bestiary World swarm orchestration design.                              |
-
-## Research
-
-Historical research reports. Archived research has been removed from the active tree per `DOCUMENTATION_STANDARDS.md` §3 (lifecycle: Deprecated → Removed → git history is the archive of record). Recoverable via `git log --diff-filter=D -- kask/docs/research/archive/`.
-
-| Document                                                                                   | Description                                |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------ |
-| [`research/media-research/media-landscape.md`](research/media-research/media-landscape.md) | Media tools → models → provider endpoints. |
-| [`research/media-research/design-schema.md`](research/media-research/design-schema.md)     | Media MCP server gallery schema.           |
-
-## Other
-
-| Document                                 | Description                            |
-| ---------------------------------------- | -------------------------------------- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Mermaid diagram verification registry. |
 
 ## Plans
 
@@ -79,31 +76,20 @@ Build plans for major features. All plans in the active tree have `status: Activ
 
 | Document                                                             | Description                                                                                                                                                                             |
 | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server (51 tools: 27 ABW + 24 local) + `swarm_panel`. v1 feature-complete; v2 local mode implemented. |
+| [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server (53 tools: 27 ABW + 26 local) + `swarm_panel`. v1 feature-complete; v2 local mode implemented. |
 | [`plans/cybernetic-swarm-plan.md`](plans/cybernetic-swarm-plan.md)   | Cybernetic Swarm Plan — the `swarm-intelligence` skill design + implementation record. 10-step PDCA cascade, C0–C8 cybernetic components, steering modes, `delegate_results` contract.  |
 | [`plans/evolving-test-harness.md`](plans/evolving-test-harness.md)   | Evolving test harness plan — trace filesystem, oracle taxonomy, property-based testing infrastructure.                                                                                  |
 
-## QA
+## Other
 
-Quality assurance strategy and artifacts for the hKask MCP server fleet.
+| Document                                 | Description                            |
+| ---------------------------------------- | -------------------------------------- |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Mermaid diagram verification registry. |
+| [`upstream-rebase-process.md`](upstream-rebase-process.md) | Upstream rebase management process. |
+| [`upstream-removal-principles.md`](upstream-removal-principles.md) | Upstream-Zed removal principles for the seam. |
 
-| Document                                                                         | Description                                                                              |
-| -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| [`qa/mcp-server-qa-strategy.md`](qa/mcp-server-qa-strategy.md)                   | Per-tool QA routine for all tools across 13 MCP servers.                                 |
-| [`qa/per-tool-contracts.md`](qa/per-tool-contracts.md)                           | Per-tool 7-category contract tables (input struct, output shape, LLM I/O boundary).      |
-| [`qa/coverage-matrix.md`](qa/coverage-matrix.md)                                 | Coverage matrix generated by `scripts/qa-mcp-servers.sh`.                                |
-| [`qa/pre-release-final-summary-pass3.md`](qa/pre-release-final-summary-pass3.md) | Final pre-release QA summary — 5 open deferred/user-decision items (D2, D3, D6, D7, D8). |
-| [`qa/skill-bundle.yaml`](qa/skill-bundle.yaml)                                   | Skill-bundle manifest for the QA pass (consumed by `skill-bundler`).                     |
+## See also
 
-## Audits
-
-| Document                                                                                     | Description                                                                                        |
-| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| [`audits/swarm-cybernetics-semantics-audit.md`](audits/swarm-cybernetics-semantics-audit.md) | Swarm system pragmatic-semantics + pragmatic-cybernetics audit — 4 unresolved structural findings. |
-
-## Status
-
-Structural inventories and status snapshots.
-
-| Document                                                                 | Description                                                                                           |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+- [`DIVERGENCE.md`](../../DIVERGENCE.md) — the fork's divergence manifest and upstream-sync runbook (repo root).
+- [`diataxis/INDEX.md`](diataxis/INDEX.md) — per-crate Diataxis documentation set.
+- [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) — cross-cutting Mermaid diagram registry.

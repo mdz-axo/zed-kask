@@ -24,11 +24,11 @@ Zed-Kask adds three native editor surfaces that upstream Zed does not have. Each
 
 ### Skills
 
-**61 agent-facing skills** (PDCA loops), each composed of a [FlowDef manifest](./kask/registry/manifests/) plus a [template crate](./kask/registry/templates/), execute inside the agent panel via the manifest cascade (D1). A skill is a _process_, not a prompt: it composes Jinja2 templates into Plan-Do-Check-Act cycles with convergence thresholds, gas budgets, and escalation to the user — there is no autonomous agent loop by default. The shipped skills, manifests, and templates are seeded to disk at startup (seed-if-missing; user edits are never overwritten) and are editable at runtime. The 61 `SKILL.md` companions in [`.agents/skills/`](./.agents/skills/) are discovery-only (the catalog description the agent reads to pick a skill); the manifest is the source of truth. See [`kask/docs/reference/skills/README.md`](./kask/docs/reference/skills/README.md) for the registry and [`kask/docs/explanation/skills-and-composition.md`](./kask/docs/explanation/skills-and-composition.md) for the anatomy.
+**64 agent-facing skills** (PDCA loops), each composed of a [FlowDef manifest](./kask/registry/manifests/) plus a [template crate](./kask/registry/templates/), execute inside the agent panel via the manifest cascade (D1). A skill is a _process_, not a prompt: it composes Jinja2 templates into Plan-Do-Check-Act cycles with convergence thresholds, gas budgets, and escalation to the user — there is no autonomous agent loop by default. The shipped skills, manifests, and templates are seeded to disk at startup (seed-if-missing; user edits are never overwritten) and are editable at runtime. The 64 `SKILL.md` companions in [`.agents/skills/`](./.agents/skills/) are discovery-only (the catalog description the agent reads to pick a skill); the manifest is the source of truth. See [`kask/docs/reference/skills/README.md`](./kask/docs/reference/skills/README.md) for the registry and [`kask/docs/explanation/skills-and-composition.md`](./kask/docs/explanation/skills-and-composition.md) for the anatomy.
 
 ### MCP servers
 
-**13 built-in MCP servers** (305 tools fleet-wide) are launched as child processes over stdio by Zed's `context_server` host (D3) and exposed as agent tools through `rmcp`:
+**13 built-in MCP servers** (308 tools fleet-wide) are launched as child processes over stdio by Zed's `context_server` host (D3) and exposed as agent tools through `rmcp`:
 
 | Server | Surface |
 | --- | --- |
@@ -46,7 +46,7 @@ Zed-Kask adds three native editor surfaces that upstream Zed does not have. Each
 | `swarm` | Agent Bestiary World swarm orchestration |
 | `training` | LoRA/QLoRA training configuration and contracts |
 
-Two parallel launch paths serve different consumers: the app-global `McpRuntime` (governed dispatch with capability-match gate, gas budgeting, and `reg.tool.*` spans — serves the skill cascade) and the per-project `ContextServerStore` (serves the agent tool picker). Both are by design. See [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry.
+Two parallel launch paths serve different consumers: the app-global `McpRuntime` (governed dispatch with per-agent call metering, gas budgeting, and `reg.tool.*` spans — serves the skill cascade) and the per-project `ContextServerStore` (serves the agent tool picker). Both are by design. See [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry.
 
 ### Curator agent
 
@@ -64,7 +64,7 @@ Three things sit between the user and a model:
 2. **MCP servers** — built-in Model Context Protocol servers (research, memory, codegraph, media, filesystem, regulation, …) exposed as tools through `rmcp`.
 3. **Inference routing** — one router across multiple providers, with circuit breakers and per-call gas accounting.
 
-Everything else in Kask — the pod, wallet, ledger, regulation, keystore — exists to keep the user's local session **sovereign**: per-pod encrypted storage, OCAP dual gate, visibility gating.
+Everything else in Kask — the pod, wallet, ledger, regulation, keystore — exists to keep the user's local session **sovereign**: per-pod encrypted storage, per-server credential/env allowlists, tool-reach allowlists, and visibility gating.
 
 ### Federation is Zed's job
 
@@ -88,7 +88,7 @@ The full Kask documentation index (architecture, reference, explanation, researc
 
 Zed-Kask keeps Kask's hexagonal port surface and implements every adapter in one bridge crate, `kask/crates/kask_bridge`, so that Kask crates never depend on Zed crates — Zed-Kask depends on Kask, never the reverse. This is the governing invariant, enforced in CI by `kask/scripts/check-hkask-no-zed-deps.sh`.
 
-The seam between the two sides is small and documented: twenty-three named divergence points (D1–D23, one of which — D10, the Kask panel — has since been removed) cover every edit to Zed's tree outside `kask/`. The first ten (D1–D10) wire the core integration — skill execution, the Curator agent, in-process MCP tools, the guard layer, keychain access, thread→memory ingestion, app-identity rename, the bridge, settings/credentials, and the (since-removed) Kask panel. The next ten (D11–D20) are targeted upstream fixes that zed-kask carries until upstream lands them: a `time` deprecation allow (D11), an env-var-name fix for OpenAI-compatible providers (D12), an OpenRouter output-budget fix (D13), a streaming-reveal timer interval (D14), bounded cursor-blink timers (D15), an app-menu rename + update item (D16), a GitHub-backed zed-kask update feed (D17), media/graph/kanban/portfolio/scenarios block rendering in markdown (D18), an update-progress popup (D19), and observed per-call USD cost in `TokenUsage` (D20). The remaining three (D21–D23) are kask-extension seams: the widget→agent compose-back injector (D21), block-reachability pins in `main.rs` (D22), and the `AgentPanelSiblingHost` visibility + worktree spawn wiring (D23). See [`DIVERGENCE.md`](./DIVERGENCE.md) for the full table and [`kask/docs/architecture/zed-host-architecture-plan.md`](./kask/docs/architecture/zed-host-architecture-plan.md) for the composition-root wiring.
+The seam between the two sides is small and documented: twenty-eight named divergence points (D1–D28; D4 the guard layer and D10 the Kask panel have since been removed) cover every edit to Zed's tree outside `kask/`. The first ten (D1–D10) wire the core integration — skill execution, the Curator agent, in-process MCP tools, the (since-removed) guard layer, keychain access, thread→memory ingestion, app-identity rename, the bridge, settings/credentials, and the (since-removed) Kask panel. The next ten (D11–D20) are targeted upstream fixes that zed-kask carries until upstream lands them: a `time` deprecation allow (D11), an env-var-name fix for OpenAI-compatible providers (D12), an OpenRouter output-budget fix (D13), a streaming-reveal timer interval (D14), bounded cursor-blink timers (D15), an app-menu rename + update item (D16), a GitHub-backed zed-kask update feed (D17), media/graph/kanban/portfolio/scenarios block rendering in markdown (D18), an update-progress popup (D19), and observed per-call USD cost in `TokenUsage` (D20). The kask-extension seams (D21–D23) cover the widget→agent compose-back injector (D21), block-reachability pins in `main.rs` (D22), and the `AgentPanelSiblingHost` visibility + worktree spawn wiring (D23). The remaining five (D24–D28) are upstream model/UX/storage seams: edit predictions via `LanguageModelRegistry` (D24), a Chat Completions `finish_reason: "length"` → `MaxTokens` mapping (D25), tool-use warnings via static-context injection (D26), a sandboxed-terminal non-interactive shell (D27), and standardized artifact storage (D28). See [`DIVERGENCE.md`](./DIVERGENCE.md) for the full table and [`kask/docs/architecture/zed-host-architecture-plan.md`](./kask/docs/architecture/zed-host-architecture-plan.md) for the composition-root wiring.
 
 ---
 
@@ -157,7 +157,7 @@ The Kask side builds as part of the same workspace — the `kask/` crates are wo
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed. For Kask-specific contribution (skills, MCP servers, the architecture), start at [`kask/docs/README.md`](./kask/docs/README.md) and [`kask/docs/`](./kask/docs/).
 
-Per-crate documentation (tutorial, how-to, reference, explanation for each major crate) lives in the [Diataxis set](./kask/docs/diataxis/INDEX.md) — 43 artifacts across 11 cross-cutting crate sets.
+Per-crate documentation (tutorial, how-to, reference, explanation for each major crate) lives in the [Diataxis set](./kask/docs/diataxis/INDEX.md) — 40 artifacts across 11 cross-cutting crate sets.
 
 ---
 
