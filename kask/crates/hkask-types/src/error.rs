@@ -289,6 +289,31 @@ impl std::fmt::Display for McpErrorKind {
     }
 }
 
+impl McpErrorKind {
+    /// Parse a kind from its `Display` string — the inverse of `Display`.
+    ///
+    /// Used by `tool_response::parse_tool_error` to recover the typed kind
+    /// from the server's error envelope `{"error": ..., "kind": "..."}` so
+    /// consumers can call `is_retryable()` / `requires_intervention()` instead
+    /// of re-matching on the kind string locally. Returns `None` for an
+    /// unknown kind string rather than a catch-all so a future server variant
+    /// surfaces as an unclassified error rather than silently misclassifying.
+    #[must_use]
+    pub fn from_kind_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "internal" => Self::Internal,
+            "unavailable" => Self::Unavailable,
+            "timeout" => Self::Timeout,
+            "not_found" => Self::NotFound,
+            "invalid_argument" => Self::InvalidArgument,
+            "permission_denied" => Self::PermissionDenied,
+            "rate_limited" => Self::RateLimited,
+            "failed_precondition" => Self::FailedPrecondition,
+            _ => return None,
+        })
+    }
+}
+
 // Canonical domain error types — shared across all crates.
 
 /// A resource was not found. Canonical across 17+ crates.
@@ -385,5 +410,29 @@ mod tests {
             McpErrorKind::FailedPrecondition.to_string(),
             "failed_precondition"
         );
+    }
+
+    #[test]
+    fn mcperrorkind_from_kind_str_round_trips_every_variant() {
+        // `from_kind_str` is the inverse of `Display` — every display string
+        // must parse back to its variant. Used by `tool_response::parse_tool_error`
+        // to recover the typed kind from the server's error envelope.
+        for kind in [
+            McpErrorKind::Internal,
+            McpErrorKind::Unavailable,
+            McpErrorKind::Timeout,
+            McpErrorKind::NotFound,
+            McpErrorKind::InvalidArgument,
+            McpErrorKind::PermissionDenied,
+            McpErrorKind::RateLimited,
+            McpErrorKind::FailedPrecondition,
+        ] {
+            let s = kind.to_string();
+            assert_eq!(McpErrorKind::from_kind_str(&s), Some(kind));
+        }
+        // An unknown kind string returns `None` rather than a catch-all so a
+        // future server variant surfaces as an unclassified error.
+        assert_eq!(McpErrorKind::from_kind_str("not_a_real_kind"), None);
+        assert_eq!(McpErrorKind::from_kind_str(""), None);
     }
 }

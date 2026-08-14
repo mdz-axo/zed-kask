@@ -5,7 +5,7 @@
 //! same extraction pattern.
 
 use gpui::Context;
-use hkask_types::tool_response::parse_tool_response;
+use hkask_types::tool_response::{parse_tool_error, parse_tool_response};
 use serde_json::json;
 
 use crate::SWARM_SERVER;
@@ -258,6 +258,27 @@ impl SwarmPanel {
                             if let Some(b) = extract_wallet_balance(&output) {
                                 this.spend.wallet_balance = Some(b);
                             }
+                            // The server returns tool errors as an Ok string
+                            // carrying the `{"error": ..., "kind": ...}`
+                            // envelope (see `McpToolError::to_json_string`),
+                            // not as an `Err` from `invoke_tool`. Without this
+                            // check, a `permission_denied` ("no API key
+                            // configured") would fall through to the
+                            // `WorkspaceListResponse` parse, fail (no
+                            // `workspaces` field), and surface as the misleading
+                            // "Failed to parse workspaces: {…}". Route the
+                            // envelope through the same classification the
+                            // `Err(_)` branch uses below.
+                            if let Some(err) = parse_tool_error(&output) {
+                                this.handle_swarm_fetch_failure(
+                                    err.is_retryable(),
+                                    err.kind,
+                                    &err.message,
+                                    cx,
+                                );
+                                cx.notify();
+                                return;
+                            }
                             match parse_tool_response(&output).and_then(|c| {
                                 serde_json::from_value::<WorkspaceListResponse>(c).ok()
                             }) {
@@ -328,17 +349,12 @@ impl SwarmPanel {
                             // - The MCP transport closed: NOT expected, and silence
                             //   here is what made a routine server restart look like
                             //   a permanent empty panel. Surfaced and retried.
-                            if err.is_retryable() {
-                                this.swarms_error = Some(
-                                    format!("Reconnecting to the swarm server… ({err})").into(),
-                                );
-                                this.schedule_fetch_retry(cx);
-                            } else {
-                                log::warn!(
-                                    "swarm-panel: could not fetch workspaces (agents-only mode): {err}"
-                                );
-                            }
-                            this.filter_entries(Self::current_swarm_mode(cx), cx);
+                            this.handle_swarm_fetch_failure(
+                                err.is_retryable(),
+                                None,
+                                &err.to_string(),
+                                cx,
+                            );
                         }
                     }
                     cx.notify();

@@ -7,6 +7,7 @@ We standardized ontology tagging across the hKask MCP server fleet. The work is 
 ### What's done (committed + uncommitted working tree)
 
 **6 servers fully standardized** (all tests pass, clippy clean):
+
 - `hkask-mcp-prediction-markets` (32 tools) — SDMX for economic-data, Dublin Core for market tools
 - `hkask-mcp-companies` (44 tools) — FIBO per-tool, delegates to `fibo::tool_to_ontology`
 - `hkask-mcp-scenarios` (21 tools) — PKO for process tools, Dublin Core for computed outputs
@@ -15,15 +16,18 @@ We standardized ontology tagging across the hKask MCP server fleet. The work is 
 - `hkask-mcp-kata-kanban` (23 tools) — already had `kanban_type_to_pko` mapping
 
 **Bridge crate** (`hkask-bridge-ontology`):
+
 - New `sdmx` module (7 SDMX concept constants)
 - `OntologyNamespace::Sdmx` variant added to `axis.rs`
 - `explain_tool_for` dispatch covers `sdmx:` prefix
 - Dead `"dublin-core"` string-literal branch removed
 
 **Framework** (`hkask-mcp-server`):
+
 - `execute_tool_semantic` now emits `tracing::warn!` when ontology is `None` (algedonic channel)
 
 **Tests added to every standardized server:**
+
 - `tool_surface_is_exactly_N_registered_tools` (count pin)
 - `ontology_anchor_covers_all_registered_tools` (coverage test — iterates router, asserts `Some` for every tool)
 - `ontology_anchor_distinguishes_*` (stub-collapse regression — asserts distinct tool families get distinct concepts)
@@ -32,6 +36,7 @@ We standardized ontology tagging across the hKask MCP server fleet. The work is 
 ### What's in progress (codegraph migration started, not finished)
 
 The `hkask-mcp-codegraph` migration was started but not completed:
+
 - Import line changed: `execute_tool` → `execute_tool_semantic` (done)
 - `ontology_anchor` fn: NOT added yet
 - Call sites: NOT swapped yet (9 sites in `hkask_mcp_codegraph.rs`)
@@ -45,6 +50,7 @@ For each server:
 1. **Add `hkask-bridge-ontology.workspace = true` to `Cargo.toml`** `[dependencies]`.
 
 2. **Add an `ontology_anchor` fn** on the server's `impl` block (where `combined_router` lives):
+
 ```rust
 fn ontology_anchor(tool: &str) -> Option<&'static str> {
     use hkask_bridge_ontology::{dc_bibo, pko, /* etc */ };
@@ -59,6 +65,7 @@ fn ontology_anchor(tool: &str) -> Option<&'static str> {
 3. **Swap all call sites** from `execute_tool(self, "name", async {` to `execute_tool_semantic(self, "name", Self::ontology_anchor("name"), async {`. For multi-file servers, each `tools/*.rs` file's import must change from `execute_tool` to `execute_tool_semantic`.
 
 4. **Add two tests** to the `tool_surface_tests` module:
+
 ```rust
 #[test]
 fn ontology_anchor_covers_all_registered_tools() {
@@ -95,17 +102,17 @@ fn ontology_anchor_distinguishes_tool_families() {
 
 Tools and recommended SUMO anchors (codegraph is a code-structure tool — SUMO is the upper ontology for entities/relations/processes):
 
-| Tool | Anchor |
-|---|---|
-| `codegraph_query` | `sumo::ENTITY` |
-| `codegraph_traverse` | `sumo::RELATION` |
-| `codegraph_impact` | `sumo::RELATION` |
-| `codegraph_analysis` | `sumo::PROCESS` |
-| `codegraph_context` | `sumo::TEXT` (assembled context is a text representation) |
-| `codegraph_structure` | `sumo::ENTITY` |
-| `codegraph_stats` | `dc_bibo::DATASET` |
-| `codegraph_reindex` | `sumo::PROCESS` |
-| `codegraph_index_embeddings` | `sumo::REPRESENTATION` |
+| Tool                         | Anchor                                                    |
+| ---------------------------- | --------------------------------------------------------- |
+| `codegraph_query`            | `sumo::ENTITY`                                            |
+| `codegraph_traverse`         | `sumo::RELATION`                                          |
+| `codegraph_impact`           | `sumo::RELATION`                                          |
+| `codegraph_analysis`         | `sumo::PROCESS`                                           |
+| `codegraph_context`          | `sumo::TEXT` (assembled context is a text representation) |
+| `codegraph_structure`        | `sumo::ENTITY`                                            |
+| `codegraph_stats`            | `dc_bibo::DATASET`                                        |
+| `codegraph_reindex`          | `sumo::PROCESS`                                           |
+| `codegraph_index_embeddings` | `sumo::REPRESENTATION`                                    |
 
 The `ontology_anchor` fn goes on the `impl CodeGraphServer` block (around line 213, before the `#[tool_router]` attribute). The 9 call sites are all `execute_tool(self, "name", async {` — swap each to `execute_tool_semantic(self, "name", Self::ontology_anchor("name"), async {`.
 
@@ -117,12 +124,12 @@ The `ontology_anchor` fn goes on the `impl CodeGraphServer` block (around line 2
 
 Tools and recommended PKO anchors (condensation is a knowledge-production process):
 
-| Tool | Anchor |
-|---|---|
-| `condenser_ping` | `dc_bibo::DATASET` (liveness/status) |
-| `condenser_persist` | `pko::PROCEDURE_EXECUTION` |
-| `condenser_thread_summary` | `pko::PROCEDURE` |
-| `condenser_score_saliency` | `pko::PROCEDURE` |
+| Tool                       | Anchor                               |
+| -------------------------- | ------------------------------------ |
+| `condenser_ping`           | `dc_bibo::DATASET` (liveness/status) |
+| `condenser_persist`        | `pko::PROCEDURE_EXECUTION`           |
+| `condenser_thread_summary` | `pko::PROCEDURE`                     |
+| `condenser_score_saliency` | `pko::PROCEDURE`                     |
 
 ### 1c. `hkask-mcp-training` (8 tools, multi-file)
 
@@ -132,16 +139,16 @@ Tools and recommended PKO anchors (condensation is a knowledge-production proces
 
 Tools and recommended ML-Schema anchors:
 
-| Tool | File | Anchor |
-|---|---|---|
-| `training_cancel` | `tools/cancel.rs` | `mlschema::RUN` |
-| `training_ingest_qa` | `tools/dataset.rs` | `mlschema::DATA` |
-| `training_assemble_dataset` | `tools/dataset.rs` | `mlschema::DATA` |
-| `training_ingest_dataset` | `tools/dataset.rs` | `mlschema::DATA` |
-| `training_evaluate` | `tools/evaluate.rs` | `mlschema::MODEL` |
-| `training_status` | `tools/status.rs` | `mlschema::RUN` |
-| `training_submit` | `tools/submit.rs` | `mlschema::RUN` |
-| `training_validate_config` | `tools/validate.rs` | `mlschema::MODEL` |
+| Tool                        | File                | Anchor            |
+| --------------------------- | ------------------- | ----------------- |
+| `training_cancel`           | `tools/cancel.rs`   | `mlschema::RUN`   |
+| `training_ingest_qa`        | `tools/dataset.rs`  | `mlschema::DATA`  |
+| `training_assemble_dataset` | `tools/dataset.rs`  | `mlschema::DATA`  |
+| `training_ingest_dataset`   | `tools/dataset.rs`  | `mlschema::DATA`  |
+| `training_evaluate`         | `tools/evaluate.rs` | `mlschema::MODEL` |
+| `training_status`           | `tools/status.rs`   | `mlschema::RUN`   |
+| `training_submit`           | `tools/submit.rs`   | `mlschema::RUN`   |
+| `training_validate_config`  | `tools/validate.rs` | `mlschema::MODEL` |
 
 ML-Schema constants in `hkask-bridge-ontology/src/mlschema.rs`: `MODEL = "mls:Model"`, `RUN = "mls:Run"`, `DATA = "mls:Data"`.
 
@@ -166,12 +173,14 @@ We now have 10+ MCP servers each with an `ontology_anchor` fn mapping tool names
 The proposal should sketch:
 
 1. **A curator tool** (`curator_ontology_audit`) that reads `reg.tool` spans from the Regulation trace and reports:
+
    - Which ontology concepts are being used across the fleet
    - Which tools are unanchored (ontology field empty on the span)
    - Which `explain_tool_for` dispatch routes are firing vs falling through to the fallback
    - Per-server anchor coverage (how many tools have specific vs fallback anchors)
 
 2. **A curator tool** (`curator_ontology_drift`) that detects cross-crate drift:
+
    - A tool name that appears in multiple servers with different anchors
    - An `OntologyNamespace` variant without an `explain_tool_for` dispatch decision
    - A server whose `ontology_anchor` returns concepts that `explain_tool_for` routes to a different server's tools (cross-server dispatch)
@@ -182,6 +191,7 @@ The proposal should sketch:
    - Feed back to `ontology_anchor` fns: if a concept consistently routes to a tool that doesn't help, the anchor is wrong
 
 The proposal should reference the cybernetics review's findings (blocked algedonic channel, absent S4, open loop) and explain how the curator tools address each. It should cite the specific files and mechanisms:
+
 - `kask/crates/hkask-mcp-server/src/server/tool_span.rs` — the `reg.tool` span emission
 - `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs` — `explain_tool_for`
 - `kask/crates/hkask-bridge-ontology/src/axis.rs` — `OntologyNamespace`, `select_ontology_anchor`
@@ -200,6 +210,7 @@ These 3 servers are premature for full ontology-tagging migration because the on
 **Why premature:** The media generation ontology (OMC — MovieLabs Ontology for Media Creation) exists in the bridge crate, but the media workflows aren't built out. The remaining 23 tools don't have clear OMC mappings because the workflows they'd map to don't exist yet. Forcing anchors now would be speculative.
 
 **Scaffolding plan:** The OMC module (`omc.rs`) already has the right constants (`SCENE`, `ASSET`, `CREATIVE_WORK`, `VERSION`, `MEDIA_SOURCE`, `SEQUENCE`). The `tool_to_omc` fn is the right shape. The plan should:
+
 - Extend `tool_to_omc` to cover all 40 tools as the workflows are built out
 - Wire `tool_to_omc` as the server's `ontology_anchor` (same delegation pattern as companies uses `fibo::tool_to_ontology`)
 - Add the coverage test once all 40 tools are mapped
@@ -214,12 +225,14 @@ These 3 servers are premature for full ontology-tagging migration because the on
 **Why premature:** Ontology tagging lives in YAML in the corpus processing pipeline, not in Rust. The pipeline is still being debugged before being reified in Rust. The ontology concepts (document types, extraction stages, persona/narrative categories) are defined in the YAML config and consumed by the pipeline at runtime — they don't have Rust-side constants yet because the pipeline itself isn't reified.
 
 **Scaffolding plan:** The corpus server spans multiple ontologies:
+
 - Document processing → `dc_bibo::TEXT` / `pko::STEP` (document conversion and processing are text-producing steps)
 - Knowledge extraction → `eso::HAS_EVIDENCE` / `eso::HAS_HYPOTHESIS` (triple extraction is epistemic)
 - Persona/narrative → `golem::CREATIVE_WORK` / `golem::CHARACTER` (persona building is narrative)
 - Storage/query → `dc_bibo::DATASET` (stored chunks are datasets)
 
 The plan should:
+
 - Map the YAML pipeline stages to bridge-crate constants as the pipeline is reified in Rust
 - Add an `ontology_anchor` fn once the pipeline stages are stable
 - The corpus server's `tools/semantic/triples.rs` already imports `eso`, `fibo`, `golem` — these are the right ontologies for the extraction tools
@@ -230,23 +243,26 @@ The plan should:
 
 **Current state:** Does NOT depend on `hkask-bridge-ontology`. All 21 call sites use bare `execute_tool`. No ontology work done.
 
-**Why premature:** Research should use PKO (scientific process) and ESO (epistemic science ontology) for tagging search/extraction/synthesis tools. But the mapping from research workflow stages to PKO/ESO concepts hasn't been designed. The `pko::research_stage_to_pko` fn exists in `kask/crates/hkask-bridge-ontology/src/pko.rs` (lines 128-139) but maps *stage names* (hypothesis, search, extract, evaluate, synthesize, curate, cite), not *tool names*.
+**Why premature:** Research should use PKO (scientific process) and ESO (epistemic science ontology) for tagging search/extraction/synthesis tools. But the mapping from research workflow stages to PKO/ESO concepts hasn't been designed. The `pko::research_stage_to_pko` fn exists in `kask/crates/hkask-bridge-ontology/src/pko.rs` (lines 128-139) but maps _stage names_ (hypothesis, search, extract, evaluate, synthesize, curate, cite), not _tool names_.
 
 **Scaffolding plan:** The research server's tools fall into two groups:
+
 - Web search/browse tools (`web_search`, `web_find_similar`, `web_extract`, `web_browse`) → `eso::HAS_EVIDENCE` (search discovers evidence)
 - RSS/feed tools (`rss_subscribe`, `rss_fetch`, `rss_get_entries`, etc.) → `dc_bibo::DATASET` (feed management is dataset operations)
 - Synthesis tools (`rss_synthesize`, `rss_fetch_synthetic`) → `pko::PROCEDURE` (synthesis is a process)
 
 The plan should:
+
 - Add `hkask-bridge-ontology` dependency
 - Map research tool names to PKO/ESO concepts using the existing `pko::research_stage_to_pko` as a reference for stage-to-concept mapping
 - The research server's tools are the "action" surface of the scientific process — PKO's `ACTION` and `PROCEDURE` concepts are the natural anchors
 
-**Key reference:** `kask/crates/hkask-bridge-ontology/src/pko.rs` lines 128-139 — `research_stage_to_pko` maps research workflow stages to PKO concepts. This is the starting point for mapping research *tool names* to PKO concepts.
+**Key reference:** `kask/crates/hkask-bridge-ontology/src/pko.rs` lines 128-139 — `research_stage_to_pko` maps research workflow stages to PKO concepts. This is the starting point for mapping research _tool names_ to PKO concepts.
 
 ## Verification
 
 After completing Tasks 1a-1c, run:
+
 ```sh
 cargo test -p hkask-mcp-codegraph -p hkask-mcp-condenser -p hkask-mcp-training --lib
 ./script/clippy -p hkask-mcp-codegraph -p hkask-mcp-condenser -p hkask-mcp-training

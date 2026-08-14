@@ -777,6 +777,47 @@ impl SwarmPanel {
         self.retry_attempt = 0;
     }
 
+    /// Classify a swarm-list fetch failure and update `swarms_error`.
+    ///
+    /// Shared by the `Err(_)` branch of `invoke_tool` (transport-level failure)
+    /// and the `Ok(output)` branch when the server returned a tool error envelope
+    /// `{"error": ..., "kind": ...}` (e.g. `permission_denied` for "no API key
+    /// configured"). Before this helper existed, the envelope case fell through to
+    /// `WorkspaceListResponse` parsing and surfaced as the misleading
+    /// "Failed to parse workspaces: {…}".
+    ///
+    /// - Retryable (`Unavailable`/`Timeout`/`RateLimited`, or a retryable
+    ///   transport error): show the reconnect banner and schedule a retry.
+    /// - `PermissionDenied` (no API key, etc.): a quiet agents-only degradation is
+    ///   the right behavior, but the operator previously had no signal that the
+    ///   swarm list was empty *because* of auth rather than because they have no
+    ///   swarms. Surface a short, non-alarming status so the cause is visible
+    ///   without a retry loop (retrying with no key is pointless).
+    /// - Other non-retryable: log at warn and stay quiet (agents-only mode).
+    pub(crate) fn handle_swarm_fetch_failure(
+        &mut self,
+        retryable: bool,
+        kind: Option<hkask_types::McpErrorKind>,
+        message: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if retryable {
+            self.swarms_error =
+                Some(format!("Reconnecting to the swarm server… ({message})").into());
+            self.schedule_fetch_retry(cx);
+        } else if matches!(kind, Some(hkask_types::McpErrorKind::PermissionDenied)) {
+            // Auth failure is expected when no ABW key is configured — agents-only
+            // is the right degradation, and retrying is pointless until the
+            // operator configures a key. Surface the cause as a quiet status so
+            // an empty swarm list is not mistaken for "you have no swarms".
+            self.swarms_error = Some(format!("Swarm list unavailable: {message}").into());
+            log::warn!("swarm-panel: swarm list unavailable (agents-only mode): {message}");
+        } else {
+            log::warn!("swarm-panel: could not fetch workspaces (agents-only mode): {message}");
+        }
+        self.filter_entries(Self::current_swarm_mode(cx), cx);
+    }
+
     fn set_mode(&mut self, mode: PanelMode, window: &mut Window, cx: &mut Context<Self>) {
         self.mode = mode;
         // Move focus to the target mode's first field — otherwise focus stays
@@ -3005,6 +3046,30 @@ mod tests {
         assert_eq!(response.workspaces.len(), 1);
         assert_eq!(response.workspaces[0].id.as_deref(), Some("ws1"));
         assert_eq!(response.workspaces[0].agent_count, Some(3));
+    }
+
+    // The swarm server returns tool errors as an Ok string carrying the
+    // `{"error": ..., "kind": ...}` envelope (McpToolError::to_json_string),
+    // not as an Err from invoke_tool. The canonical case is `permission_denied`
+    // with message "no API key configured" when require_auth() fails. Before
+    // the error-envelope seam, this fell through to the WorkspaceListResponse
+    // parse (no `workspaces` field) and surfaced as the misleading
+    // "Failed to parse workspaces: {…}". The seam routes it through the same
+    // classification the Err(_) branch uses, so the operator sees the real
+    // cause. This test pins the detection at the seam so a regression in
+    // either the envelope shape or the kind mapping surfaces here.
+    #[test]
+    fn fetch_all_detects_server_error_envelope_before_workspace_parse() {
+        let out =
+            r#"{"error":"no API key configured","kind":"permission_denied"}"#;
+        let err = hkask_types::tool_response::parse_tool_error(out)
+            .expect("server error envelope must be detected");
+        assert_eq!(err.message, "no API key configured");
+        assert_eq!(err.kind, Some(hkask_types::McpErrorKind::PermissionDenied));
+        assert!(!err.is_retryable());
+        // A successful payload must NOT be misclassified as an error envelope.
+        let ok = r#"{"content":{"workspaces":[]}}"#;
+        assert!(hkask_types::tool_response::parse_tool_error(ok).is_none());
     }
 
     // Pin the consent-token response field name. The panel extracts

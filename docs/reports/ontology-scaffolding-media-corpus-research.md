@@ -5,6 +5,7 @@
 > span tagging, coverage tests, and stub-collapse regression tests. This
 > document is retained as the historical plan record. See the server source
 > for the current state:
+>
 > - `kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs` — 23 tools, 7 concepts
 > - `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs` — 27 tools, 7 concepts
 > - `kask/mcp-servers/hkask-mcp-media/src/omc.rs` — 41 tools, 8 concepts
@@ -139,12 +140,12 @@ create a second source of truth that drifts.
 
 The corpus server spans four ontology domains, one per tool family:
 
-| Tool family | Ontology | Concept | Why |
-|---|---|---|---|
-| Document processing (convert, chunk, OCR) | Dublin Core + PKO | `dc_bibo::TEXT` / `pko::STEP` | Document conversion produces text; processing stages are PKO steps |
-| Knowledge extraction (triples, entities) | ESO | `eso::HAS_EVIDENCE` / `eso::HAS_HYPOTHESIS` | Triple extraction is epistemic — it produces evidence and hypotheses |
-| Persona / narrative | GOLEM | `golem::CREATIVE_WORK` / `golem::CHARACTER` | Persona building is narrative construction |
-| Storage / query | Dublin Core | `dc_bibo::DATASET` | Stored chunks are datasets |
+| Tool family                               | Ontology          | Concept                                     | Why                                                                  |
+| ----------------------------------------- | ----------------- | ------------------------------------------- | -------------------------------------------------------------------- |
+| Document processing (convert, chunk, OCR) | Dublin Core + PKO | `dc_bibo::TEXT` / `pko::STEP`               | Document conversion produces text; processing stages are PKO steps   |
+| Knowledge extraction (triples, entities)  | ESO               | `eso::HAS_EVIDENCE` / `eso::HAS_HYPOTHESIS` | Triple extraction is epistemic — it produces evidence and hypotheses |
+| Persona / narrative                       | GOLEM             | `golem::CREATIVE_WORK` / `golem::CHARACTER` | Persona building is narrative construction                           |
+| Storage / query                           | Dublin Core       | `dc_bibo::DATASET`                          | Stored chunks are datasets                                           |
 
 The plan:
 
@@ -211,8 +212,8 @@ science ontology) for tagging search/extraction/synthesis tools. But the
 mapping from research workflow stages to PKO/ESO concepts has not been
 designed. The `pko::research_stage_to_pko` fn exists in
 `kask/crates/hkask-bridge-ontology/src/pko.rs` (lines 128-139) but maps
-*stage names* (`hypothesis`, `search`, `extract`, `evaluate`,
-`synthesize`, `curate`, `cite`), not *tool names*. The research server's
+_stage names_ (`hypothesis`, `search`, `extract`, `evaluate`,
+`synthesize`, `curate`, `cite`), not _tool names_. The research server's
 tools are the action surface of the scientific process, but the mapping
 from a tool name (`web_search`, `rss_synthesize`) to a stage name
 (`search`, `synthesize`) is not defined.
@@ -221,11 +222,11 @@ from a tool name (`web_search`, `rss_synthesize`) to a stage name
 
 The research server's tools fall into three groups:
 
-| Tool group | Tools | Ontology | Concept | Why |
-|---|---|---|---|---|
-| Web search / browse | `web_search`, `web_find_similar`, `web_extract`, `web_browse` | ESO | `eso::HAS_EVIDENCE` | Search discovers evidence |
-| RSS / feed management | `rss_subscribe`, `rss_fetch`, `rss_get_entries`, etc. | Dublin Core | `dc_bibo::DATASET` | Feed management is dataset operations |
-| Synthesis | `rss_synthesize`, `rss_fetch_synthetic` | PKO | `pko::PROCEDURE` | Synthesis is a process |
+| Tool group            | Tools                                                         | Ontology    | Concept             | Why                                   |
+| --------------------- | ------------------------------------------------------------- | ----------- | ------------------- | ------------------------------------- |
+| Web search / browse   | `web_search`, `web_find_similar`, `web_extract`, `web_browse` | ESO         | `eso::HAS_EVIDENCE` | Search discovers evidence             |
+| RSS / feed management | `rss_subscribe`, `rss_fetch`, `rss_get_entries`, etc.         | Dublin Core | `dc_bibo::DATASET`  | Feed management is dataset operations |
+| Synthesis             | `rss_synthesize`, `rss_fetch_synthetic`                       | PKO         | `pko::PROCEDURE`    | Synthesis is a process                |
 
 The plan:
 
@@ -235,6 +236,7 @@ The plan:
 2. **Map research tool names to PKO/ESO concepts.** Use the existing
    `pko::research_stage_to_pko` (lines 128-139) as a reference for the
    stage → concept mapping. The tool → stage mapping is the new work:
+
    - `web_search` / `web_find_similar` / `web_extract` / `web_browse` →
      stage `search` → `pko::ACTION` (or `eso::HAS_EVIDENCE` for the
      epistemic axis).
@@ -264,7 +266,7 @@ The plan:
 
 - `kask/crates/hkask-bridge-ontology/src/pko.rs:128-139` —
   `research_stage_to_pko`, the stage → PKO concept mapping. This is
-  the starting point for mapping research *tool names* to PKO concepts:
+  the starting point for mapping research _tool names_ to PKO concepts:
   first map tool → stage, then stage → concept (via this fn).
 - `kask/crates/hkask-bridge-ontology/src/eso.rs` — ESO constants
   (`HAS_EVIDENCE`, `HAS_HYPOTHESIS`) for the epistemic-axis tools.
@@ -282,11 +284,11 @@ research has no code-level blocker — only a design-level one.
 
 ## Summary
 
-| Server | Blocker | Trigger to unblock |
-|---|---|---|
-| `hkask-mcp-media` | Workflows not built out (23/40 tools have no OMC mapping) | Media workflows are built so every tool has a clear OMC concept |
-| `hkask-mcp-corpus` | Ontology lives in YAML, pipeline not reified in Rust | Corpus pipeline stages move from YAML to Rust with stable concepts |
-| `hkask-mcp-research` | Tool → stage mapping not designed | Design decision: map each of 21 tools to a research stage |
+| Server               | Blocker                                                   | Trigger to unblock                                                 |
+| -------------------- | --------------------------------------------------------- | ------------------------------------------------------------------ |
+| `hkask-mcp-media`    | Workflows not built out (23/40 tools have no OMC mapping) | Media workflows are built so every tool has a clear OMC concept    |
+| `hkask-mcp-corpus`   | Ontology lives in YAML, pipeline not reified in Rust      | Corpus pipeline stages move from YAML to Rust with stable concepts |
+| `hkask-mcp-research` | Tool → stage mapping not designed                         | Design decision: map each of 21 tools to a research stage          |
 
 None of these require new `OntologyNamespace` variants or new bridge-crate
 modules. The ontologies (OMC, ESO, PKO, Dublin Core, GOLEM) are

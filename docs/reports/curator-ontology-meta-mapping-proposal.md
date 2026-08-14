@@ -11,18 +11,18 @@ Ten MCP servers now carry an `ontology_anchor(tool: &str) -> Option<&'static str
 fn mapping every registered tool to a concept URI from
 `hkask-bridge-ontology`:
 
-| Server | Ontology | Anchor pattern |
-|---|---|---|
-| `hkask-mcp-prediction-markets` | SDMX + Dublin Core | inline match |
-| `hkask-mcp-companies` | FIBO | delegates to `fibo::tool_to_ontology` |
-| `hkask-mcp-scenarios` | PKO + Dublin Core | inline match |
-| `hkask-mcp-portfolio` | FIBO | inline match (reference impl) |
-| `hkask-mcp-swarm` | PKO | typed constant `pko::PROCEDURE` |
-| `hkask-mcp-kata-kanban` | PKO | `kanban_type_to_pko` mapping |
-| `hkask-mcp-codegraph` | SUMO + Dublin Core | inline match |
-| `hkask-mcp-condenser` | PKO + Dublin Core | inline match |
-| `hkask-mcp-training` | ML-Schema | inline match |
-| `hkask-mcp-media` | OMC (partial: 17/40) | `omc::tool_to_omc` (scaffolded) |
+| Server                         | Ontology             | Anchor pattern                        |
+| ------------------------------ | -------------------- | ------------------------------------- |
+| `hkask-mcp-prediction-markets` | SDMX + Dublin Core   | inline match                          |
+| `hkask-mcp-companies`          | FIBO                 | delegates to `fibo::tool_to_ontology` |
+| `hkask-mcp-scenarios`          | PKO + Dublin Core    | inline match                          |
+| `hkask-mcp-portfolio`          | FIBO                 | inline match (reference impl)         |
+| `hkask-mcp-swarm`              | PKO                  | typed constant `pko::PROCEDURE`       |
+| `hkask-mcp-kata-kanban`        | PKO                  | `kanban_type_to_pko` mapping          |
+| `hkask-mcp-codegraph`          | SUMO + Dublin Core   | inline match                          |
+| `hkask-mcp-condenser`          | PKO + Dublin Core    | inline match                          |
+| `hkask-mcp-training`           | ML-Schema            | inline match                          |
+| `hkask-mcp-media`              | OMC (partial: 17/40) | `omc::tool_to_omc` (scaffolded)       |
 
 Every server calls `execute_tool_semantic` (in
 `kask/crates/hkask-mcp-server/src/server/tool_span.rs`), which tags the
@@ -60,8 +60,7 @@ aggregates it. An operator cannot answer:
 - Which `explain_tool_for` dispatch routes are firing vs falling through
   to the `"research_search"` fallback?
 
-The `reg.tool` span (emitted by `ToolSpanGuard` in the same file, line
-147) carries the `ontology` field as a structured tracing field. The
+The `reg.tool` span (emitted by `ToolSpanGuard` in the same file, line 147) carries the `ontology` field as a structured tracing field. The
 curator's `reg_query` tool
 (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:694`)
 already reads `reg.*` spans from `RegulationArchive::replay_weighted`
@@ -77,7 +76,7 @@ the emission layer and stops there.
 ### 2. No maintenance (absent S4)
 
 When a server adds a new tool, the `ontology_anchor_covers_all_registered_tools`
-test catches the missing anchor *within that crate*. But there is no
+test catches the missing anchor _within that crate_. But there is no
 cross-crate view. The curator cannot detect:
 
 - A tool name that appears in multiple servers with different anchors
@@ -86,10 +85,10 @@ cross-crate view. The curator cannot detect:
 - An `OntologyNamespace` variant added to `axis.rs` without a
   corresponding `explain_tool_for` arm in `hkask_bridge_ontology.rs`.
   The bridge crate's `explain_tool_for_covers_all_ontology_namespaces`
-  test catches this *if* the test is updated; it does not catch a
+  test catches this _if_ the test is updated; it does not catch a
   variant added without the test case.
 - A server whose `ontology_anchor` returns concepts that
-  `explain_tool_for` routes to a *different* server's tools (cross-server
+  `explain_tool_for` routes to a _different_ server's tools (cross-server
   dispatch). E.g., if `hkask-mcp-codegraph` anchored on `fibo:Corporation`,
   `explain_tool_for` would route the "Explain" affordance to
   `research_search`, not to a codegraph tool — a silent misroute.
@@ -113,7 +112,7 @@ The tool invocation emits its own `reg.tool` span (via
 `execute_tool_semantic`), so the outcome is observable. But nothing
 joins the explain-dispatch to the explain-outcome. The loop is open:
 
-- No record that a `reg.tool` span was triggered *by* an explain
+- No record that a `reg.tool` span was triggered _by_ an explain
   dispatch (vs a direct user invocation).
 - No success/failure rate per concept.
 - No feedback to the `ontology_anchor` fns: if a concept consistently
@@ -130,7 +129,7 @@ right home for these capabilities. It already holds the Regulation
 archive (`RegulationArchive`), the escalation queue, and the
 `reg_query` tool. It is the fleet-level observability surface. The
 curator does not need its own `ontology_anchor` fn in the same sense
-as the others — its tools are *about* the fleet, not tagged by it.
+as the others — its tools are _about_ the fleet, not tagged by it.
 
 ### Tool 1: `curator_ontology_audit` — consumption
 
@@ -141,6 +140,7 @@ and reports fleet-level ontology usage.
 **Inputs:** time window (default 24h), optional server filter.
 
 **Outputs:**
+
 - **Concept usage**: per-concept invocation count, grouped by
   ontology namespace (`fibo:*`, `pko:*`, `sumo:*`, `mls:*`, `sdmx:*`,
   `omc:*`, `dcterms:*`). Answers "which ontologies are actually in
@@ -177,6 +177,7 @@ Detects cross-crate drift that the within-crate tests cannot see.
 **Inputs:** none (reads the static fleet state).
 
 **Outputs:**
+
 - **Tool-name collisions**: a tool name that appears in multiple
   servers' routers with different anchors. (E.g., if two servers both
   registered a `query` tool but anchored on different concepts.) This
@@ -192,7 +193,7 @@ Detects cross-crate drift that the within-crate tests cannot see.
   concept per namespace, asserting a non-fallback result for
   namespaces that have a domain-specific explain tool.
 - **Cross-server dispatch**: a server whose `ontology_anchor` returns
-  concepts that `explain_tool_for` routes to a *different* server's
+  concepts that `explain_tool_for` routes to a _different_ server's
   tools. E.g., `hkask-mcp-codegraph` anchoring on `fibo:Corporation`
   would route "Explain" to `research_search` (a research-server tool),
   not to a codegraph tool. This is a silent misroute: the widget
@@ -217,6 +218,7 @@ Closes the feedback from explain-dispatch to explain-outcome.
 **Inputs:** time window (default 7d), optional concept filter.
 
 **Outputs:**
+
 - **Per-concept explain success rate**: for each `reg.tool` span
   whose tool name is an `explain_tool_for` target, join to the
   originating widget's explain affordance and to the outcome of the
@@ -234,8 +236,8 @@ Closes the feedback from explain-dispatch to explain-outcome.
   the concepts are missing from `explain_tool_for`'s explicit arms.
 
 **Mechanism:** this requires joining two `reg.tool` spans: the
-widget's explain-affordance span (the *cause*) and the dispatched
-tool's invocation span (the *effect*). The join key is not currently
+widget's explain-affordance span (the _cause_) and the dispatched
+tool's invocation span (the _effect_). The join key is not currently
 emitted — the explain affordance and the tool invocation are not
 linked in the trace. **This is the one piece of new emission the
 proposal requires:** the widget's explain affordance should emit a
@@ -297,11 +299,11 @@ The cybernetics review (see `docs/reports/` cybernetics review, and
 the `pragmatic-cybernetics` skill) identified three failures in the
 ontology-tagging fleet:
 
-| Failure | Gap in this proposal | Curator tool that closes it |
-|---|---|---|
-| Blocked algedonic channel | The `tracing::warn!` fires but nothing aggregates it | `curator_ontology_audit` (consumption) |
-| Absent S4 (no cross-crate sensor) | Within-crate tests are local; no fleet view | `curator_ontology_drift` (maintenance) |
-| Open loop (action not joined to outcome) | Explain dispatch is not joined to explain outcome | `curator_ontology_evaluation` (evaluation) |
+| Failure                                  | Gap in this proposal                                 | Curator tool that closes it                |
+| ---------------------------------------- | ---------------------------------------------------- | ------------------------------------------ |
+| Blocked algedonic channel                | The `tracing::warn!` fires but nothing aggregates it | `curator_ontology_audit` (consumption)     |
+| Absent S4 (no cross-crate sensor)        | Within-crate tests are local; no fleet view          | `curator_ontology_drift` (maintenance)     |
+| Open loop (action not joined to outcome) | Explain dispatch is not joined to explain outcome    | `curator_ontology_evaluation` (evaluation) |
 
 Each tool is a sensor in the cybernetic sense: it observes a property
 of the system the operator could not otherwise see. The audit tool

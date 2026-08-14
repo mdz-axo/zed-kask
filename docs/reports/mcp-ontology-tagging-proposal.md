@@ -36,12 +36,12 @@ server, and one server calls the semantic API as theater.
 
 ### Current state
 
-| Server | `execute_tool_semantic`? | `ontology_anchor` fn? | Output-field enrichment? |
-|---|---|---|---|
-| `prediction-markets` | yes, all tools | yes — **stub**: returns `"dublin-core"` for every tool | no |
-| `scenarios` | yes, all tools | yes — real PKO/DC split per tool | yes (inline in some outputs) |
-| `portfolio` | yes, some tools | yes — real FIBO split per tool | no |
-| `companies` | **no** — bare `execute_tool` | **no** fn | yes — `fibo::enrich_with_ontology` inline |
+| Server               | `execute_tool_semantic`?     | `ontology_anchor` fn?                                  | Output-field enrichment?                  |
+| -------------------- | ---------------------------- | ------------------------------------------------------ | ----------------------------------------- |
+| `prediction-markets` | yes, all tools               | yes — **stub**: returns `"dublin-core"` for every tool | no                                        |
+| `scenarios`          | yes, all tools               | yes — real PKO/DC split per tool                       | yes (inline in some outputs)              |
+| `portfolio`          | yes, some tools              | yes — real FIBO split per tool                         | no                                        |
+| `companies`          | **no** — bare `execute_tool` | **no** fn                                              | yes — `fibo::enrich_with_ontology` inline |
 
 ### The theater case
 
@@ -91,6 +91,7 @@ pub const DATA_PROVIDER: SdmxConcept = "sdmx:DataProvider";
 ```
 
 Add `Sdmx` variant to `OntologyNamespace` in `axis.rs` with:
+
 - `dc_concept()` → `dc_bibo::DATASET` (statistical data is a dataset)
 - `pko_concept()` → `pko::PROCEDURE` (data retrieval is a procedure)
 - `FromStr` / `Display` for `"sdmx"`
@@ -193,7 +194,7 @@ Then migrate all ~44 call sites in `tools/*.rs` from `execute_tool(self, "name",
 to `execute_tool_semantic(self, "name", Self::ontology_anchor("name"), async {...})`.
 
 The existing `fibo::enrich_with_ontology` calls in `financial_data.rs` stay —
-they enrich the *output JSON* for widget consumption, which is the optional
+they enrich the _output JSON_ for widget consumption, which is the optional
 complement layer (decision 1).
 
 ### Step 4 — Scenarios: `&'static str` → `Option<&'static str>`

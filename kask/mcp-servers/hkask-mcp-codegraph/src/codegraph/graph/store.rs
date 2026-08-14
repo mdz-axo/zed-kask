@@ -67,7 +67,16 @@ impl GraphStore {
     }
 
     /// Open a store on a file-backed database.
+    ///
+    /// Creates the parent directory if it doesn't exist — SQLite's
+    /// `Connection::open` fails with "unable to open database file" when
+    /// the containing directory is missing, which caused the codegraph MCP
+    /// server to fail on first launch (the data dir is created lazily by
+    /// other servers, not by the path resolver).
     pub fn open(path: &str) -> Result<Self> {
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let conn = Connection::open(path)?;
         init_sqlite_vec_on(&conn)?;
         super::schema::initialize_schema(&conn)?;
