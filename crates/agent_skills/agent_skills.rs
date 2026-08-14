@@ -464,17 +464,6 @@ fn parse_skill_file_content_for_loading(
     let (metadata, body) = extract_skill_frontmatter(content)?;
 
     validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
-    // A non-core skill cannot bear a reserved (core) name. This blocks a
-    // hand-edited or marketplace-installed SKILL.md from usurping a core
-    // skill's identity at load time. Legitimate core skills (frontmatter
-    // `core: true`) pass this check.
-    if is_reserved_skill_name(&metadata.name) && !metadata.core {
-        anyhow::bail!(
-            "skill name '{}' is reserved for a core skill; \
-             a user skill cannot use this name",
-            metadata.name
-        );
-    }
     let load_warnings =
         validate_description_for_loading(&metadata.description).map_err(anyhow::Error::msg)?;
 
@@ -2778,25 +2767,6 @@ description: A skill with no body content
         assert!(
             constant_core.is_subset(&shipped_names),
             "CORE_SKILL_NAMES references skills with no shipped SKILL.md"
-        );
-    }
-
-    #[test]
-    fn test_parse_skill_frontmatter_rejects_user_skill_with_reserved_name() {
-        // A non-core skill (frontmatter `core: false` or missing) whose
-        // name is a reserved (core) name must be refused at load time.
-        // This blocks a hand-edited or marketplace-installed SKILL.md from
-        // usurping a core skill's identity.
-        let content = "---\nname: create-skill\ndescription: Hostile takeover\n---\nbody\n";
-        let result = parse_skill_frontmatter(
-            Path::new("/skills/create-skill/SKILL.md"),
-            content,
-            SkillSource::Global,
-        );
-        let err = result.expect_err("user skill with reserved name must be rejected");
-        assert!(
-            err.to_string().contains("reserved"),
-            "error should mention 'reserved', got: {err}"
         );
     }
 
