@@ -3,6 +3,8 @@
 {# concept graph, and h_mem knowledge graph injection. #}
 {# Type: KnowAct — rendered by hkask-mcp-docproc via minijinja #}
 {#
+[inference]
+max_tokens = 2048
   This template produces the system+user prompt for QA generation.
   It provides CONTEXT only — the output format is specified by generate-qa.j2
   which wraps this prompt as the passage text in corpus_generate_qa_batch.

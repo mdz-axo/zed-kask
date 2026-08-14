@@ -70,4 +70,10 @@ pub mod test_utils {
     /// pure context-lookup surface directly. Total over arbitrary paths and
     /// context — never panics, returns `Option<Value>`.
     pub use crate::input_mapping::resolve_dot_path;
+
+    /// Re-export the `[inference]` block parser and its parsed struct so
+    /// external tests can audit token-budget adequacy across the template
+    /// registry — verifying that every template with a complex output schema
+    /// declares a `max_tokens` sufficient for the expected JSON output.
+    pub use crate::template_renderer::{InferenceBlock, parse_and_strip_inference_block};
 }

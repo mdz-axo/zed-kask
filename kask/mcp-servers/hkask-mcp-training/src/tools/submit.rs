@@ -35,7 +35,7 @@ impl TrainingServer {
             skill_name,
             adapter_name,
             merged_output_path,
-            consent_token,
+            confirmed,
         }): Parameters<TrainSubmitRequest>,
     ) -> String {
         execute_tool_semantic(self, "training_submit", Self::ontology_anchor("training_submit"), async {
@@ -43,13 +43,11 @@ impl TrainingServer {
             // The historical pipeline runner enforced this but was lost when the
             // runner was removed. The manifest's `requires_consent: true` is
             // documentation; this is the enforcement point.
-            if consent_token.is_none() {
+            if !confirmed {
                 return Err(McpToolError::permission_denied(
                     "Consent required: training_submit spends real money on GPU time. \
-                     Obtain a consent token via swarm_request_consent \
-                     (action: \"training_submit\", target: \"training_submit\", \
-                     credits_authorized: <estimated GPU cost>) and pass it as \
-                     the consent_token parameter."
+                     The agent must present the estimated cost to the operator and \
+                     receive explicit approval before setting `confirmed: true`."
                 ));
             }
 

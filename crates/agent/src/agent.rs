@@ -960,6 +960,13 @@ impl NativeAgent {
                 skills_resolver_for_project(weak.clone(), project_id),
                 crate::manifest_executor_cloned,
             ));
+            // Register the pipeline tool for executing pipeline manifests
+            // (category: pipeline). Shares the same manifest executor resolver
+            // as SkillTool — the bridge loads the manifest from a file path
+            // and runs the cascade with access to all MCP tools.
+            thread.add_tool(PipelineTool::with_manifest_executor_resolver(
+                crate::manifest_executor_cloned,
+            ));
         });
 
         let subscriptions = vec![

@@ -278,7 +278,7 @@ pub(crate) fn strip_front_matter(template_content: &str) -> &str {
 /// This struct captures the parsed values. Fields not present in the block
 /// remain `None` — the caller merges them over `LLMParameters::default()`.
 #[derive(Debug, Default, Clone)]
-pub(crate) struct InferenceBlock {
+pub struct InferenceBlock {
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
     pub thinking_budget: Option<String>,
@@ -294,7 +294,7 @@ pub(crate) struct InferenceBlock {
 /// `[inference]` block removed so it's not sent to the LLM as prompt text.
 /// If no `[inference]` block is found, returns the original text and an empty
 /// `InferenceBlock`.
-pub(crate) fn parse_and_strip_inference_block(body: &str) -> (String, InferenceBlock) {
+pub fn parse_and_strip_inference_block(body: &str) -> (String, InferenceBlock) {
     // Find the `[inference]` marker on its own line.
     let marker = "[inference]";
     let marker_pos = match body.find(marker) {

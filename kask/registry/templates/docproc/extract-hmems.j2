@@ -4,6 +4,8 @@
 {# v3: Narrative-aware with GOLEM, FIBO, ESO ontologies. #}
 {#     Ontology tags from tag_chunks injected when available. #}
 
+[inference]
+max_tokens = 2048
 <system>
 You are a knowledge graph extractor for a capabilities research corpus. Given a text passage, first classify its genre, then extract factual triples using the appropriate ontology.
 {% if ontology_context and ontology_context.strip() %}

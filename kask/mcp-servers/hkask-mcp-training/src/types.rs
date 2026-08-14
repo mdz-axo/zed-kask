@@ -70,15 +70,15 @@ pub struct TrainSubmitRequest {
     /// Defaults to an auto-generated path in the cache dir.
     #[serde(default)]
     pub merged_output_path: Option<String>,
-    /// Consent token proving the operator authorized this GPU spend.
+    /// Operator confirmation that this GPU spend is authorized.
     /// Required for all training submissions — `training_submit` rejects
-    /// calls without a valid token. The token is obtained from
-    /// `swarm_request_consent` (action: "training_submit", target:
-    /// "training_submit", credits_authorized: <estimated GPU cost>).
+    /// calls where this is absent or false. This is a human-in-the-loop
+    /// gate: the agent must present the estimated cost to the operator
+    /// and receive explicit approval before setting this to `true`.
     /// This enforces the P2 consent gate that the historical pipeline
     /// runner enforced but was lost when the runner was removed.
     #[serde(default)]
-    pub consent_token: Option<String>,
+    pub confirmed: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

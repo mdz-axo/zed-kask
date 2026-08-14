@@ -85,3 +85,8 @@ required-features = ["test-utils"]
 name = "step_graph_properties"
 path = "tests/step_graph_properties.rs"
 required-features = ["test-utils"]
+
+[[test]]
+name = "token_budget_audit"
+path = "tests/token_budget_audit.rs"
+required-features = ["test-utils"]
