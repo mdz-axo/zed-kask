@@ -78,44 +78,4 @@ templates:
       what is covered, uncovered, and partial. Used by the FlowDef manifest
       as step 2 of the maintenance PDCA loop.
 
-  # -- Logic audit mode templates (folded from skill-logic-audit) --
-  - id: skill-maintenance/logic-load-goal
-    name: "Parse the annotated goal block from a .j2 or manifest.yaml file"
-    path: logic-load-goal.j2
-    type: WordAct
-    description: >
-      Parse the annotated goal: block from a .j2 or manifest.yaml file and
-      return it as a normalized string. Verify that a goal exists and is
-      non-empty.
 
-  - id: skill-maintenance/logic-critique-template
-    name: "Adversarial critique of a template body against its stated goal"
-    path: logic-critique-template.j2
-    type: KnowAct
-    description: >
-      Adversarial critique anchored to the extracted goal. For each flaw
-      provide the location, claim, anchor to goal, severity, and suggested fix.
-
-  - id: skill-maintenance/logic-critique-critique
-    name: "Soundness filter — separate valid concerns from spurious ones"
-    path: logic-critique-critique.j2
-    type: KnowAct
-    description: >
-      Review a critique for soundness and goal-anchoring. Separate valid
-      goal-anchored concerns from spurious ones.
-
-  - id: skill-maintenance/logic-compose-proposal
-    name: "Compose a concrete revised artifact and diff from calibrated concerns"
-    path: logic-compose-proposal.j2
-    type: KnowAct
-    description: >
-      Compose a concrete revised artifact and unified diff from the calibrated
-      concerns.
-
-  - id: skill-maintenance/logic-user-choice
-    name: "Present the proposal and capture accept/reject/counter-proposal"
-    path: logic-user-choice.j2
-    type: KnowAct
-    description: >
-      Present the proposal to the user and capture accept, reject, or
-      counter-proposal choice.

@@ -70,6 +70,15 @@ pub struct TrainSubmitRequest {
     /// Defaults to an auto-generated path in the cache dir.
     #[serde(default)]
     pub merged_output_path: Option<String>,
+    /// Consent token proving the operator authorized this GPU spend.
+    /// Required for all training submissions — `training_submit` rejects
+    /// calls without a valid token. The token is obtained from
+    /// `swarm_request_consent` (action: "training_submit", target:
+    /// "training_submit", credits_authorized: <estimated GPU cost>).
+    /// This enforces the P2 consent gate that the historical pipeline
+    /// runner enforced but was lost when the runner was removed.
+    #[serde(default)]
+    pub consent_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

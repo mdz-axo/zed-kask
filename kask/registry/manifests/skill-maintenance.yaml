@@ -1,10 +1,11 @@
 # Skill Maintenance Process Manifest
 # hKask v0.34.0 — Registry health maintenance as PDCA
 #
-# Two modes:
-#   maintenance (default) — audit staleness, coverage gaps, convergence
-#   logic_audit            — bounded dual-layer logic audit of .j2 templates
-#                           against stated goals (folded from skill-logic-audit)
+# Corpus-level maintenance: audit staleness, check coverage gaps, compute
+# convergence, iterate until critical maintenance blockers are reduced.
+# The logic_audit mode was unfolded into skill-logic-audit (2026-08-14)
+# because the two modes shared no steps, no data flow, and no convergence
+# logic — folding them caused systematic off-by-one step_N_result references.
 
 manifest:
   id: skill-maintenance
@@ -13,14 +14,12 @@ manifest:
   description: >
     Convergent maintenance process for the skill corpus. Audits staleness,
     checks coverage gaps, computes convergence, and iterates until critical
-    maintenance blockers are reduced below threshold. Includes logic_audit
-    mode (folded from skill-logic-audit): bounded dual-layer logic audit of
-    .j2 templates against stated goals — load goal, critique, filter for
-    soundness, compose revised artifact, drive user-review loop.
+    maintenance blockers are reduced below threshold.
   functional_role: flowdef
   version: "0.34.0"
   editor: curator-or-human-admin
   visibility: Public
+  enforce_inputs: true
 
 convergence:
   convergence_mode: "cauchy"
@@ -43,13 +42,6 @@ rjoule:
   hard_limit: true
 
 inputs:
-  - name: mode
-    type: string
-    required: false
-    default: "maintenance"
-    description: >
-      Mode: "maintenance" (default — staleness/coverage audit) or
-      "logic_audit" (bounded dual-layer logic audit of .j2 templates).
   - name: skill_name
     type: string
     description: "Optional specific skill to audit"
@@ -66,25 +58,10 @@ inputs:
     type: array
     description: "Task patterns to map against corpus"
     required: false
-  # ── logic_audit mode inputs ──
-  - name: target_path
-    type: string
-    required: false
-    description: "Path to the .j2 or manifest.yaml file to audit (logic_audit mode)."
-  - name: target_content
-    type: string
-    required: false
-    description: "Raw content of the target file (logic_audit mode)."
-  - name: template_type
-    type: string
-    required: false
-    description: "File type: j2 or manifest (logic_audit mode)."
 
 steps:
-  # === MAINTENANCE MODE (default) ===
   - ordinal: 1
     action: select
-    condition: "{{ mode | default('maintenance') == 'maintenance' }}"
     description: Run staleness and health audit for target scope.
     renderer: minijinja
     template_ref: skill-maintenance/skill-maintenance-audit
@@ -96,7 +73,6 @@ steps:
 
   - ordinal: 2
     action: select
-    condition: "{{ mode | default('maintenance') == 'maintenance' }}"
     description: Run corpus coverage analysis for uncovered/partial capabilities.
     renderer: minijinja
     template_ref: skill-maintenance/skill-maintenance-coverage
@@ -106,38 +82,14 @@ steps:
       skill_catalog: "{{ skill_catalog | default([]) }}"
       task_patterns: "{{ task_patterns | default([]) }}"
 
-  # ── Deterministic compute: lisp.eval is available for custom logic ──
-  #
-  # In addition to the built-in compute_refs (lisp.eval for signal computation,
-  # kata.object_gap, kata.process_gap, kata.hypotenuse, etc.), skill
-  # authors can use `compute_ref: lisp.eval` to write custom deterministic
-  # logic inline in the manifest — no Rust change needed. The sandboxed
-  # Lisp interpreter supports arithmetic, conditionals, list ops, and
-  # lambda. Supports infix: `a + b` = `(+ a b)`. Example:
-  #
-  #   - ordinal: N
-  #     action: compute
-  #     compute_ref: lisp.eval
-  #     input_mapping:
-  #       form: "(if (< gap 0.1) 1 0)"  # prefix; also supports infix: "gap < 0.1"
-  #       env:
-  #         gap: "{{ step_1_result.convergence_metric }}"
-  #       max_steps: 10000
-  #       max_depth: 32
-  #
-  # Use cases: custom convergence formulas, weighted scoring, data
-  # transformation between steps, filtering findings by threshold.
-  # Security: gated to category: skill manifests only (human-reviewed).
   - ordinal: 3
     action: compute
-    condition: "{{ mode | default('maintenance') == 'maintenance' }}"
     compute_ref: lisp.eval
     description: >
       Deterministic convergence score from the coverage step's actual output.
       The skill-maintenance-coverage template produces `uncovered_patterns`
       and `partial_coverage` arrays; the sum of their lengths is the distance
-      from full corpus coverage. Lower = more converged. Replaces the phantom
-      `convergence_metric` binding that silently defaulted to 1.0.
+      from full corpus coverage. Lower = more converged.
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
@@ -147,128 +99,15 @@ steps:
           (+ 0.0 (+ u p)))
       env:
         step_2_result: "{{ step_2_result }}"
+      max_steps: 10000
+      max_depth: 32
 
   - ordinal: 4
-    action: select
-    condition: "{{ mode == 'logic_audit' }}"
-    description: >
-      LOGIC LOAD-GOAL: Parse the annotated goal: block from the target .j2
-      or manifest.yaml file. Strip comment markers, preserve exact goal text.
-    renderer: minijinja
-    template_ref: skill-maintenance/logic-load-goal
-    gas_cap: 2048
-    timeout_seconds: 30
-    input_mapping:
-      target_path: "{{ target_path }}"
-      target_content: "{{ target_content }}"
-      template_type: "{{ template_type }}"
-
-  - ordinal: 5
-    action: select
-    condition: "{{ mode == 'logic_audit' }}"
-    description: >
-      LOGIC CRITIQUE: Adversarial critique of the template body against its
-      stated goal. For each flaw, provide location, claim, anchor to goal,
-      severity, and suggested fix.
-    renderer: minijinja
-    template_ref: skill-maintenance/logic-critique-template
-    gas_cap: 4096
-    timeout_seconds: 150
-    input_mapping:
-      target_path: "{{ target_path }}"
-      target_content: "{{ target_content }}"
-      template_type: "{{ template_type }}"
-      goal: "{{ step_4_result.goal }}"
-
-  - ordinal: 6
-    action: select
-    condition: "{{ mode == 'logic_audit' }}"
-    description: >
-      LOGIC SOUNDNESS FILTER: Review the critique for soundness — separate
-      valid, goal-anchored concerns from spurious ones.
-    renderer: minijinja
-    template_ref: skill-maintenance/logic-critique-critique
-    gas_cap: 2048
-    timeout_seconds: 150
-    input_mapping:
-      goal: "{{ step_4_result.goal }}"
-      prior_critique: "{{ step_5_result }}"
-
-  - ordinal: 7
-    action: select
-    condition: "{{ mode == 'logic_audit' }}"
-    description: >
-      LOGIC COMPOSE: Compose a concrete revised artifact and unified diff
-      from the calibrated concerns.
-    renderer: minijinja
-    template_ref: skill-maintenance/logic-compose-proposal
-    gas_cap: 4096
-    timeout_seconds: 150
-    input_mapping:
-      target_path: "{{ target_path }}"
-      original_content: "{{ target_content }}"
-      goal: "{{ step_4_result.goal }}"
-      calibrated_verdict: "{{ step_6_result.calibrated_verdict }}"
-      valid_concerns: "{{ step_6_result.valid_concerns }}"
-
-  - ordinal: 8
-    action: select
-    condition: "{{ mode == 'logic_audit' }}"
-    description: >
-      LOGIC USER-CHOICE: Present the proposal to the user and capture
-      accept/reject/counter-proposal.
-    renderer: minijinja
-    template_ref: skill-maintenance/logic-user-choice
-    gas_cap: 2048
-    timeout_seconds: 30
-    input_mapping:
-      target_path: "{{ target_path }}"
-      goal: "{{ step_4_result.goal }}"
-      proposal: "{{ step_7_result.revised_content }}"
-      diff: "{{ step_7_result.diff }}"
-      rationale: "{{ step_7_result.rationale }}"
-      confidence: "{{ step_7_result.confidence }}"
-
-  - ordinal: 9
-    action: compute
-    condition: "{{ mode == 'logic_audit' }}"
-    compute_ref: lisp.eval
-    description: >
-      Deterministic convergence score from the compose-proposal step's actual
-      output. The logic-compose-proposal template produces `confidence` (0–1,
-      higher = more confident in the revision). The score is 1 - confidence so
-      lower = more converged. Replaces the phantom `convergence_metric` binding
-      that silently defaulted to 1.0.
-    gas_cap: 100
-    timeout_seconds: 10
-    input_mapping:
-      form: >
-        (let ((c (assoc "confidence" step_7_result)))
-          (if (is_null c) 1.0 (- 1.0 c)))
-      env:
-        step_7_result: "{{ step_7_result }}"
-
-  - ordinal: 10
     action: loop
-    condition: "{{ mode | default('maintenance') == 'maintenance' }}"
     description: Re-enter maintenance cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the Lisp-computed convergence score (step 3) into convergence_signal
-      # so the Cauchy criterion can detect when the coverage gaps stop changing.
-      # No default — if step 3 failed, the error should surface.
       convergence_signal: "{{ step_3_result }}"
-
-  - ordinal: 11
-    action: loop
-    condition: "{{ mode == 'logic_audit' }}"
-    description: Re-enter logic audit cycle if convergence is not met.
-    input_mapping:
-      loop_target: "{{ 4 }}"
-      # Push the Lisp-computed convergence score (step 9) into convergence_signal
-      # so the Cauchy criterion can detect when the proposal confidence stops changing.
-      # No default — if step 9 failed, the error should surface.
-      convergence_signal: "{{ step_9_result }}"
 
 error_handling:
   on_gas_exceeded: abort

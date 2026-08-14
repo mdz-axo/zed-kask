@@ -296,6 +296,7 @@ members = [
     "crates/hkask-kanban-widget",
     "crates/hkask-portfolio-widget",
     "crates/hkask-scenarios-widget",
+    "crates/hkask-swarm-widget",
     "kask/crates/hkask-test-harness",
 
     #
@@ -399,6 +400,7 @@ hkask_graph_widget = { path = "crates/hkask-graph-widget", package = "hkask-grap
 hkask_kanban_widget = { path = "crates/hkask-kanban-widget", package = "hkask-kanban-widget" }
 hkask_portfolio_widget = { path = "crates/hkask-portfolio-widget", package = "hkask-portfolio-widget" }
 hkask_scenarios_widget = { path = "crates/hkask-scenarios-widget", package = "hkask-scenarios-widget" }
+hkask_swarm_widget = { path = "crates/hkask-swarm-widget", package = "hkask-swarm-widget" }
 diagnostics = { path = "crates/diagnostics" }
 dialoguer = { version = "0.12", default-features = false }
 editor = { path = "crates/editor" }

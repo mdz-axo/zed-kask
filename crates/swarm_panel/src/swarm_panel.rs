@@ -56,8 +56,8 @@ use anyhow::Result;
 use editor::Editor;
 use fs::Fs;
 use gpui::{
-    App, Context, Entity, EventEmitter, Focusable, Render, Task,
-    UniformListScrollHandle, WeakEntity, Window, actions, uniform_list,
+    App, Context, Entity, EventEmitter, Focusable, Render, Task, UniformListScrollHandle,
+    WeakEntity, Window, actions, uniform_list,
 };
 use hkask_types::tool_response::parse_tool_response;
 use marketplace_ui_common::{MarketplaceCard, marketplace_empty_state, marketplace_search_bar};
@@ -244,8 +244,18 @@ fn steer_system_prompt(
          `kask.swarm.mode` is `local`. When invoking via a slash command\n\
          (`/swarm-intelligence ...`), pass context as leading `key=value` pairs\n\
          before the task text — e.g. `/swarm-intelligence mode=local swarm_id=ws-1\n\
-         compose my swarm` sets mode, swarm_id, and task.\n\
-         \n\
+         compose my swarm` sets mode, swarm_id, and task.
+
+         **Execution mode: steering (default).** When the skill emits a plan
+         (emitted_calls), execute it immediately rather than leaving it for the
+         operator to run manually. In local mode, call `swarm_execute_plan_local`
+         with the emitted_calls as delegations (each with an optional evaluator),
+         then re-invoke `swarm-intelligence` with the returned `delegate_results`
+         array so C5 (fault attribution) and C6 (reconfigure) can close the loop.
+         In ABW mode, delegate to Xaman Ek via `swarm_xaman` with the plan as the
+         message. The operator can use the "Launch Plan" button to inject this
+         instruction if you did not execute automatically.
+
          The consent gate (ABW mode only) is enforced by `swarm_request_consent` \
          (mints a single-use, action+target-scoped token) and `swarm_hire`/\
          `swarm_delegate` (consume the token before spending). Do not hire or \
@@ -947,6 +957,38 @@ impl SwarmPanel {
         self.steer_conversation = Some(conversation_view);
     }
 
+    /// Launch the pending swarm-intelligence plan by injecting a message into
+    /// the Steer conversation that tells the curator to execute the plan via
+    /// `swarm_execute_plan_local` and feed the results back. Uses the D21
+    /// `ConversationInjector` seam — the same mechanism viz widgets use to
+    /// compose back into the thread. The operator reviews the injected message
+    /// and submits via the existing Send button so the turn-loop's
+    /// checkpoints/telemetry are preserved.
+    fn launch_plan_in_steer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.selected_workspace.clone().unwrap_or_default();
+        let message = format!(
+            "Execute the plan above using `swarm_execute_plan_local` with the \
+             swarm_id `{workspace}`. After the results return, feed the \
+             `delegate_results` array back into the `swarm-intelligence` skill \
+             so C5 (fault attribution) and C6 (reconfigure) can close the loop."
+        );
+        // The D21 injector is a process-global that the active ConversationView
+        // publishes. If the Steer conversation is active, this injects the
+        // message into its editor; the operator reviews and sends.
+        if let Some(injector) = hkask_conversation_injector::shared_injector(cx) {
+            let task = injector.inject(message, window, cx);
+            cx.spawn(async move |this, cx| {
+                let _ = this; // no panel state to update — just await the inject
+                if let Err(error) = task.await {
+                    log::warn!("swarm-panel: launch-plan inject failed: {error}");
+                }
+            })
+            .detach();
+        } else {
+            log::warn!("swarm-panel: no active conversation injector — is Steer mode active?");
+        }
+    }
+
     /// Create a new agent from the authoring form. Mode-aware: in Local mode
     /// the agent is created on the local substrate via `swarm_create_local_agent`
     /// (field `agent_id`, no cost, no consent); in ABW mode it is created in the
@@ -1162,13 +1204,25 @@ impl SwarmPanel {
                         }),
                     )
                     .await;
-                this.update(cx, |this, cx| {
+                this.update_in(cx, |this, window, cx| {
                     this.compose.busy = false;
                     match result {
-                        Ok(_) => {
+                        Ok(output) => {
+                            // Extract the swarm_id from the response so we can
+                            // select it and navigate to Steer.
+                            let swarm_id = parse_tool_response(&output)
+                                .and_then(|c| c.get("swarm_id").and_then(|v| v.as_str()).map(str::to_string));
                             this.compose.status =
                                 Some(format!("Local swarm '{}' created.", name.trim()).into());
                             this.fetch_all(cx);
+                            // Navigate to Steer with the new swarm selected.
+                            if let Some(id) = swarm_id {
+                                this.selected_workspace = Some(id);
+                                // Drop any existing Steer conversation so the
+                                // next construction bakes in the new swarm.
+                                this.steer_conversation = None;
+                                this.set_mode(PanelMode::Steer, window, cx);
+                            }
                         }
                         Err(err) => {
                             this.compose.status = Some(format!("Create failed: {err}").into());
@@ -1276,7 +1330,7 @@ impl SwarmPanel {
                     }),
                 )
                 .await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.compose.busy = false;
                 match result {
                     Ok(output) => {
@@ -1310,7 +1364,17 @@ impl SwarmPanel {
                                 failed.join(", ")
                             ).into());
                         }
+                        // Extract the workspace_id so we can select it and
+                        // navigate to Steer.
+                        let workspace_id = parse_tool_response(&output)
+                            .and_then(|c| c.get("workspace_id").and_then(|v| v.as_str()).map(str::to_string));
                         this.fetch_all(cx);
+                        // Navigate to Steer with the new swarm selected.
+                        if let Some(id) = workspace_id {
+                            this.selected_workspace = Some(id);
+                            this.steer_conversation = None;
+                            this.set_mode(PanelMode::Steer, window, cx);
+                        }
                     }
                     Err(err) => {
                         this.compose.status = Some(format!("Create failed: {err}").into());
@@ -2553,6 +2617,29 @@ impl Render for SwarmPanel {
                             // it's somehow absent (e.g. the panel was
                             // deserialized into Steer mode), render a
                             // placeholder — the operator can re-click Steer.
+                            let has_workspace = self.selected_workspace.is_some();
+                            this.child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .px_4()
+                                    .py_1()
+                                    .child(
+                                        Button::new("swarm-launch-plan", "Launch Plan")
+                                            .style(ButtonStyle::Subtle)
+                                            .label_size(LabelSize::Small)
+                                            .disabled(!has_workspace)
+                                            .tooltip(Tooltip::text(
+                                                "Execute the pending swarm-intelligence plan via \
+                                                 swarm_execute_plan_local and feed the results back. \
+                                                 The curator will run the plan, stamp task-success \
+                                                 verdicts, and re-invoke with delegate_results."
+                                            ))
+                                            .on_click(cx.listener(|this, _event, window, cx| {
+                                                this.launch_plan_in_steer(window, cx);
+                                            })),
+                                    ),
+                            );
                             match &self.steer_conversation {
                                 Some(view) => this.child(view.clone()).into_any_element(),
                                 None => this
@@ -2937,8 +3024,7 @@ mod tests {
     // either the envelope shape or the kind mapping surfaces here.
     #[test]
     fn fetch_all_detects_server_error_envelope_before_workspace_parse() {
-        let out =
-            r#"{"error":"no API key configured","kind":"permission_denied"}"#;
+        let out = r#"{"error":"no API key configured","kind":"permission_denied"}"#;
         let err = hkask_types::tool_response::parse_tool_error(out)
             .expect("server error envelope must be detected");
         assert_eq!(err.message, "no API key configured");

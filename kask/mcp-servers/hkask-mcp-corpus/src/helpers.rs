@@ -113,6 +113,47 @@ pub(crate) fn read_text_capped(path: &str, label: &str) -> Result<String, McpToo
     })
 }
 
+/// Stream a JSONL file line-by-line, parsing each non-empty line into `T`.
+///
+/// Unlike [`read_jsonl`], this does NOT read the entire file into memory —
+/// it opens the file with `BufReader` and reads line-by-line, making it
+/// suitable for files that exceed `MAX_READ_BYTES` (e.g. 71.8 MB
+/// `chunks.jsonl`). Path containment is still enforced via
+/// `contain_for_read`, but the `MAX_READ_BYTES` cap is NOT applied — the
+/// file can be arbitrarily large. The caller is responsible for batching
+/// the returned iterator if memory is a concern.
+///
+/// Lines are trimmed and empty lines are skipped. Parse errors are
+/// propagated with the 1-based file line number.
+pub(crate) fn read_jsonl_stream<T: DeserializeOwned>(
+    path: &str,
+    label: &str,
+) -> Result<Vec<T>, McpToolError> {
+    let resolved = crate::path_safety::contain_for_read(path)?;
+    let file = std::fs::File::open(&resolved).map_err(|e| {
+        McpToolError::invalid_argument(format!("{label} '{path}' cannot be opened: {e}"))
+    })?;
+    let reader = std::io::BufReader::new(file);
+    let mut out = Vec::new();
+    for (i, line_result) in std::io::BufRead::lines(reader).enumerate() {
+        let line = line_result.map_err(|e| {
+            McpToolError::invalid_argument(format!(
+                "{label} '{path}' line {} read error: {e}",
+                i + 1
+            ))
+        })?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: T = serde_json::from_str(line).map_err(|e| {
+            McpToolError::invalid_argument(format!("{label} line {} is not valid JSON: {e}", i + 1))
+        })?;
+        out.push(v);
+    }
+    Ok(out)
+}
+
 /// Read a JSONL file and parse each non-empty line into `T`.
 ///
 /// Path containment and the `MAX_READ_BYTES` size cap are enforced here (via

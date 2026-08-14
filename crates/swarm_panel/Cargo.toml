@@ -30,6 +30,7 @@ editor.workspace = true
 fs.workspace = true
 gpui.workspace = true
 hkask-types.workspace = true
+hkask_conversation_injector.workspace = true
 hkask_tool_invoker.workspace = true
 hkask-mcp-swarm.workspace = true
 kask_bridge.workspace = true

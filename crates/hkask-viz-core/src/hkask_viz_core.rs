@@ -61,6 +61,8 @@ use hkask_portfolio_widget::PortfolioWidget;
 use hkask_portfolio_widget::block::{PortfolioBlockBody, parse_portfolio_body};
 use hkask_scenarios_widget::ScenariosWidget;
 use hkask_scenarios_widget::block::{ScenariosBlockBody, parse_scenarios_body};
+use hkask_swarm_widget::SwarmWidget;
+use hkask_swarm_widget::block::{SwarmBlockBody, parse_swarm_body};
 
 /// The composed block renderer: tries each registered renderer in order and
 /// returns the first `Some(element)`. Structurally identical to
@@ -165,6 +167,21 @@ impl VizWidget for ScenariosWidget {
     }
 }
 
+impl VizWidget for SwarmWidget {
+    type Block = SwarmBlockBody;
+    const VIZ_TAG: &str = "swarm_delegate_results";
+    const LOG_PREFIX: &str = "hkask-swarm-widget";
+    fn parse_body(body: &str) -> anyhow::Result<Self::Block> {
+        parse_swarm_body(body)
+    }
+    fn viz_of(block: &Self::Block) -> Option<&str> {
+        block.viz.as_deref()
+    }
+    fn new_widget(block: Self::Block, cx: &mut Context<Self>) -> Self {
+        SwarmWidget::new(block, cx)
+    }
+}
+
 /// A cached viz widget entity, type-erased to a render closure. The cache
 /// holds strong references so entities survive across renders (preserving
 /// playback position, pan/zoom, evidence state).
@@ -227,6 +244,7 @@ fn viz_factories() -> &'static [VizFactory] {
         try_create::<KanbanWidget>,
         try_create::<PortfolioWidget>,
         try_create::<ScenariosWidget>,
+        try_create::<SwarmWidget>,
     ]
 }
 
@@ -333,12 +351,12 @@ mod tests {
         assert_ne!(cache_key("hello"), cache_key("world"));
     }
 
-    // Pins that the registry covers exactly the four `viz`-discriminated
+    // Pins that the registry covers exactly the five `viz`-discriminated
     // widgets and that their tags are disjoint (a body is claimed by at most
     // one factory). The media widget is deliberately outside the registry.
     #[test]
-    fn viz_factories_cover_four_widgets() {
-        assert_eq!(viz_factories().len(), 4);
+    fn viz_factories_cover_five_widgets() {
+        assert_eq!(viz_factories().len(), 5);
     }
 
     // S4 sensor consistency: every viz widget's block body must parse the
@@ -368,5 +386,11 @@ mod tests {
         let scenarios = parse_scenarios_body(r#"{"viz":"scenarios","ontology":"pko:Procedure"}"#)
             .expect("scenarios body parses");
         assert_eq!(scenarios.ontology.as_deref(), Some("pko:Procedure"));
+
+        // Swarm widget
+        let swarm =
+            parse_swarm_body(r#"{"viz":"swarm_delegate_results","ontology":"pko:Procedure"}"#)
+                .expect("swarm body parses");
+        assert_eq!(swarm.ontology.as_deref(), Some("pko:Procedure"));
     }
 }

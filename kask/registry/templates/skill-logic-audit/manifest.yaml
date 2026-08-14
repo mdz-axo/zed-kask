@@ -1,0 +1,53 @@
+# Template crate manifest for skill-logic-audit skill
+# hKask v0.34.0
+
+crate:
+  name: skill-logic-audit
+  version: "0.34.0"
+  description: >
+    Bounded dual-layer logic audit of .j2 templates and manifest.yaml files
+    against their stated goals. Loads the annotated goal block, generates
+    adversarial critique, filters for soundness, composes a revised artifact
+    with unified diff, and drives a user-review loop.
+
+templates:
+  - id: skill-logic-audit/logic-load-goal
+    name: "Parse the annotated goal block from a .j2 or manifest.yaml file"
+    path: logic-load-goal.j2
+    type: WordAct
+    description: >
+      Parse the annotated goal: block from a .j2 or manifest.yaml file and
+      return it as a normalized string. Verify that a goal exists and is
+      non-empty.
+
+  - id: skill-logic-audit/logic-critique-template
+    name: "Adversarial critique of a template body against its stated goal"
+    path: logic-critique-template.j2
+    type: KnowAct
+    description: >
+      Adversarial critique anchored to the extracted goal. For each flaw
+      provide the location, claim, anchor to goal, severity, and suggested fix.
+
+  - id: skill-logic-audit/logic-critique-critique
+    name: "Soundness filter — separate valid concerns from spurious ones"
+    path: logic-critique-critique.j2
+    type: KnowAct
+    description: >
+      Review a critique for soundness and goal-anchoring. Separate valid
+      goal-anchored concerns from spurious ones.
+
+  - id: skill-logic-audit/logic-compose-proposal
+    name: "Compose a concrete revised artifact and diff from calibrated concerns"
+    path: logic-compose-proposal.j2
+    type: KnowAct
+    description: >
+      Compose a concrete revised artifact and unified diff from the calibrated
+      concerns.
+
+  - id: skill-logic-audit/logic-user-choice
+    name: "Present the proposal and capture accept/reject/counter-proposal"
+    path: logic-user-choice.j2
+    type: KnowAct
+    description: >
+      Present the proposal to the user and capture accept, reject, or
+      counter-proposal choice.

@@ -282,6 +282,27 @@ pub trait SkillManifestExecutor: Send + Sync {
     /// return the no-manifest envelope (body injection is disabled in
     /// zed-kask — the SKILL.md body is never injected).
     fn has_manifest(&self, skill_name: &str) -> bool;
+
+    /// Execute a pipeline manifest (category: pipeline) by file path.
+    ///
+    /// Unlike `execute_skill`, this loads a manifest from an explicit file
+    /// path (not a skill name lookup), skips the `is_skill()` guard
+    /// (pipeline manifests are not skills), and runs the `ManifestExecutor`
+    /// cascade. The manifest must declare `category: pipeline`.
+    ///
+    /// `manifest_path` is a project-root-relative path to the pipeline YAML.
+    /// `resume_from` is an optional step `id` to resume from (skips all
+    /// prior steps). `dry_run` parses and validates without executing.
+    ///
+    /// Returns the cascade's final output as text, or an error message.
+    async fn execute_pipeline(
+        &self,
+        manifest_path: &str,
+        resume_from: Option<String>,
+        dry_run: bool,
+        progress: Option<CascadeProgress>,
+        title: Option<CascadeProgress>,
+    ) -> Result<String, String>;
 }
 
 /// The result of composing and executing a skill bundle.
@@ -1216,6 +1237,17 @@ mod tests {
                 composed_skill_names,
                 goal_context: serde_json::Value::Null,
             })
+        }
+
+        async fn execute_pipeline(
+            &self,
+            _manifest_path: &str,
+            _resume_from: Option<String>,
+            _dry_run: bool,
+            _progress: Option<CascadeProgress>,
+            _title: Option<CascadeProgress>,
+        ) -> Result<String, String> {
+            Ok(self.output.clone())
         }
     }
 

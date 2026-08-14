@@ -46,7 +46,7 @@ pub(crate) use template::render_docproc_template;
 // Re-export helpers used by tool modules.
 pub(crate) use helpers::{
     chunk_structure, chunk_word_bounds, cosine_distance, cosine_similarity, read_jsonl,
-    read_jsonl_lenient, serialize_passages, tokens_to_words,
+    read_jsonl_lenient, read_jsonl_stream, serialize_passages, tokens_to_words,
 };
 // Re-export OCR config and text-cleaning helpers from their semantic homes.
 pub(crate) use convert::sanitize_links;

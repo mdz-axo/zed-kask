@@ -905,6 +905,90 @@ steps:
             goal_context: serde_json::Value::Null,
         })
     }
+
+    /// Execute a pipeline manifest by file path. Unlike `execute_skill`,
+    /// this loads the manifest from an explicit path (not a skill name
+    /// lookup), skips the `is_skill()` guard, and runs the cascade.
+    /// The manifest must declare `category: pipeline`.
+    async fn execute_pipeline(
+        &self,
+        manifest_path: &str,
+        resume_from: Option<String>,
+        dry_run: bool,
+        progress: Option<agent::CascadeProgress>,
+        title: Option<agent::CascadeProgress>,
+    ) -> Result<String, String> {
+        // Contain the manifest path under the project root.
+        let resolved_path = std::path::Path::new(manifest_path)
+            .canonicalize()
+            .map_err(|e| format!("Pipeline manifest not found at '{manifest_path}': {e}"))?;
+
+        let yaml = std::fs::read_to_string(&resolved_path).map_err(|e| {
+            format!(
+                "Failed to read pipeline manifest at {}: {e}",
+                resolved_path.display()
+            )
+        })?;
+
+        let manifest = load_manifest_from_yaml(&yaml)
+            .map_err(|e| format!("Failed to parse pipeline manifest: {e:?}"))?;
+
+        // Verify it's a pipeline manifest, not a skill.
+        if manifest.is_skill() {
+            return Err(format!(
+                "Manifest '{}' is category 'skill' — use the skill tool for skill manifests. \
+                 execute_pipeline is for category: pipeline manifests.",
+                manifest.id
+            ));
+        }
+
+        if dry_run {
+            return Ok(format!(
+                "Dry run: manifest '{}' parsed successfully. {} steps, category: {:?}.",
+                manifest.id,
+                manifest.steps.len(),
+                manifest.category
+            ));
+        }
+
+        // If resume_from is specified, skip steps before the named step.
+        // We do this by building a reduced manifest with only the steps
+        // from the resume point onward.
+        let manifest = if let Some(ref resume_id) = resume_from {
+            let resume_ordinal = manifest
+                .steps
+                .iter()
+                .find(|s| s.id.as_deref() == Some(resume_id.as_str()))
+                .map(|s| s.ordinal)
+                .ok_or_else(|| format!("resume_from: step '{resume_id}' not found in manifest"))?;
+            let mut reduced = manifest.clone();
+            reduced.steps.retain(|s| s.ordinal >= resume_ordinal);
+            reduced
+        } else {
+            manifest
+        };
+
+        let mut context = HashMap::new();
+        self.inject_model_defaults(&mut context);
+
+        let executor = self.build_executor(progress, title);
+
+        let join_handle = self.tokio_handle.spawn({
+            let manifest = manifest.clone();
+            async move {
+                executor
+                    .execute_manifest_into(manifest, context)
+                    .await
+                    .map_err(|e| format!("Pipeline execution failed: {e}"))
+            }
+        });
+
+        let result = join_handle
+            .await
+            .map_err(|e| format!("Pipeline execution task failed: {e}"))??;
+
+        Ok(extract_final_step_result(&result))
+    }
 }
 
 /// Extract the cascade's final result as a string, reusing the canonical

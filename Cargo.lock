@@ -9838,6 +9838,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-swarm-widget"
+version = "0.34.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "serde",
+ "serde_json",
+ "theme",
+ "tracing",
+ "ui",
+]
+
+[[package]]
 name = "hkask-templates"
 version = "0.34.0"
 dependencies = [
@@ -9913,6 +9926,7 @@ dependencies = [
  "hkask-media-widget",
  "hkask-portfolio-widget",
  "hkask-scenarios-widget",
+ "hkask-swarm-widget",
  "log",
  "serde",
 ]
@@ -20302,6 +20316,7 @@ dependencies = [
  "editor",
  "fs",
  "gpui",
+ "hkask-conversation-injector",
  "hkask-mcp-swarm",
  "hkask-tool-invoker",
  "hkask-types",
