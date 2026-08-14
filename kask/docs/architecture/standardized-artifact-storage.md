@@ -49,6 +49,34 @@ An artifact lives under the class subdir of the entity that owns it.
 Ownership is determined by: **which agent or MCP server produces and
 consumes this artifact?**
 
+### Agent model
+
+The system has three agent classes:
+
+1. **User agent** — the human user. Provisioned by `provision_agent`.
+   Has `agents/{username}/` with `{username}.db` (sovereign DB) and
+   `memory.db` (episodic + semantic memory). The user is the sovereign
+   party — all kask artifacts ultimately serve the user's agency.
+
+2. **Curator agent** — the system's cybernetic regulator. Hardcoded name
+   `"curator"`. Has `agents/curator/curator.db` (memory + regulation +
+   escalation). The curator is an in-process agent (`Agent::Curator`,
+   D2) that escalates *to the user* rather than acting autonomously.
+
+3. **Replica agents** — static memory built from a corpus of text
+   materials using the corpus MCP server. Replicas are *not* provisioned
+   agents — they have no `agents/` directory. Their memory DBs are
+   opened from agent-provided paths (tool parameters), not from the
+   `agents/` tree. If replicas gain a canonical home in the future, they
+   would live under `mcp/corpus/replicas/{replica_name}/` (server-scoped,
+   not agent-scoped), since the corpus server owns them.
+
+The `agent_db(name)` function produces `{name}.db` — for the user, that's
+`{username}.db`; for the curator, that's `curator.db`. The name always
+matches the agent, making the DB identifiable at a glance.
+
+### Ownership rules
+
 - If the artifact is owned by an **agent** (user-scoped, identity-bound),
   it lives under `agents/{agent_name}/`.
 - If the artifact is owned by an **MCP server** (server-scoped, not

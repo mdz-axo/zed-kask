@@ -809,10 +809,11 @@ mod tests {
              provider-agnostic; add a credential only with a read site in \
              hkask-mcp-portfolio"
         );
-        // Read sites: none beyond HKASK_WEBID (identity, not config).
+        // D28 — HKASK_TRANSACTIONS_DIR is read in `run()` to resolve the
+        // transactions directory (default `mcp/portfolio/transactions/`).
         assert_eq!(
             s.config_env.unwrap().to_vec(),
-            Vec::<&str>::new(),
+            vec!["HKASK_TRANSACTIONS_DIR"],
             "portfolio config_env allowlist drifted — add an entry only with \
              a read site in hkask-mcp-portfolio"
         );

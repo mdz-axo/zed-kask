@@ -118,7 +118,7 @@ pub fn corpus_stage_to_pko_step(stage: &str) -> Option<PkoConcept> {
         "chunk" | "split" => Some(FUNCTION),
         "embed" | "vectorize" => Some(FUNCTION),
         "generate_qa" | "qa" => Some(ACTION),
-        "extract_triples" | "h_mems" => Some(ACTION),
+        "extract_assertions" | "h_mems" => Some(ACTION),
         "query" | "search" => Some(ACTION),
         _ => None,
     }

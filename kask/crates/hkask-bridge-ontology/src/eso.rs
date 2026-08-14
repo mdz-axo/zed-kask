@@ -2,7 +2,7 @@
 //!
 //! Canonical predicate URIs for epistemic and scientific reasoning concepts —
 //! hypotheses, evidence, theories, models, falsification, uncertainty, and
-//! inferential relationships. Used by docproc extract_triples for expository
+//! inferential relationships. Used by docproc extract_assertions for expository
 //! passages on science, systems thinking, forecasting, complexity, and
 //! research methodology.
 //!

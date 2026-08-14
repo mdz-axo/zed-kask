@@ -671,6 +671,19 @@ mod tool_surface_tests {
 
 /// Run the portfolio MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
+    // D28 — Standardized Artifact Storage. Read the transactions directory
+    // (default `mcp/portfolio/transactions/`). The portfolio dashboard
+    // auto-loads new transaction files from this directory.
+    let _transactions_dir = std::env::var("HKASK_TRANSACTIONS_DIR")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+                "mcp/portfolio/transactions",
+            ))
+            .to_string_lossy()
+            .to_string()
+        });
     hkask_mcp_server::run_server(
         "hkask-mcp-portfolio",
         env!("CARGO_PKG_VERSION"),

@@ -1,9 +1,13 @@
 # Ontology scaffolding — media, corpus, research
 
-> Status: **Scaffolding plans, not migrations.** These three servers are
-> premature for full ontology-tagging migration. This document records
-> the plan for each so the migration can be picked up when the
-> prerequisite work lands.
+> Status: **Migrations complete.** All three servers now have full
+> ontology-tagging migration: `ontology_anchor` fns, `execute_tool_semantic`
+> span tagging, coverage tests, and stub-collapse regression tests. This
+> document is retained as the historical plan record. See the server source
+> for the current state:
+> - `kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs` — 23 tools, 7 concepts
+> - `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs` — 27 tools, 7 concepts
+> - `kask/mcp-servers/hkask-mcp-media/src/omc.rs` — 41 tools, 8 concepts
 
 ## Why these three are deferred
 

@@ -1510,6 +1510,57 @@ mod tool_surface_tests {
         let n = MediaServer::combined_router().list_all().len();
         assert_eq!(n, 41, "media registered tool surface changed; got {n}");
     }
+
+    // Coverage: every registered tool must have a non-None ontology anchor.
+    // Catches the silent-drop failure mode where a new tool is added to the
+    // router without a corresponding arm in omc::tool_to_omc.
+    #[test]
+    fn ontology_anchor_covers_all_registered_tools() {
+        let router = MediaServer::combined_router();
+        for tool in router.list_all() {
+            assert!(
+                MediaServer::ontology_anchor(&tool.name).is_some(),
+                "ontology_anchor returned None for registered tool '{}'; \
+                 add an explicit arm in omc::tool_to_omc",
+                tool.name
+            );
+        }
+    }
+
+    // Regression: distinct tool families must anchor on distinct concepts.
+    #[test]
+    fn ontology_anchor_distinguishes_tool_families() {
+        let creative = MediaServer::ontology_anchor("generate_image");
+        let version = MediaServer::ontology_anchor("transform_image");
+        let scene = MediaServer::ontology_anchor("describe_image");
+        let asset = MediaServer::ontology_anchor("gallery_organize");
+        let source = MediaServer::ontology_anchor("generate_speech");
+        let sequence = MediaServer::ontology_anchor("video_clip");
+        let shot = MediaServer::ontology_anchor("video_extract_frames");
+        let task = MediaServer::ontology_anchor("gallery_record_generation");
+        // Eight distinct concepts across eight tool families.
+        let concepts = [
+            creative, version, scene, asset, source, sequence, shot, task,
+        ];
+        for (i, a) in concepts.iter().enumerate() {
+            for (j, b) in concepts.iter().enumerate() {
+                if i != j {
+                    assert_ne!(
+                        a, b,
+                        "tool families {i} and {j} must anchor on distinct concepts"
+                    );
+                }
+            }
+        }
+        assert_eq!(creative, Some("omc:CreativeWork"));
+        assert_eq!(version, Some("omc:Version"));
+        assert_eq!(scene, Some("omc:Scene"));
+        assert_eq!(asset, Some("omc:Asset"));
+        assert_eq!(source, Some("omc:MediaSource"));
+        assert_eq!(sequence, Some("omc:Sequence"));
+        assert_eq!(shot, Some("omc:Shot"));
+        assert_eq!(task, Some("omc:Task"));
+    }
 }
 
 /// Run the media MCP server (used by binary target).

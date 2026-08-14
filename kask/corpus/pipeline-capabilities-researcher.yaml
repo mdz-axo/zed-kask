@@ -6,7 +6,7 @@
 # Target: Bloom-balanced QAs for EVA LoRA training via Axolotl
 #
 # Models:
-#   Classifier/Tagging/Triples: OpenRouter/deepseek/deepseek-v4-flash (HKASK_CLASSIFIER_MODEL)
+#   Classifier/Tagging/Assertions: OpenRouter/deepseek/deepseek-v4-flash (HKASK_CLASSIFIER_MODEL)
 #   QA generation:              OpenRouter/z-ai/glm-5.2 (HKASK_DEFAULT_MODEL)
 #   Embedding:                  DeepInfra/Qwen/Qwen3-Embedding-0.6B (HKASK_EMBEDDING_MODEL)
 #
@@ -16,7 +16,7 @@
 #   1. Chunk extracted text into passages
 #   2a. Tag chunks with ontology annotations
 #   2b. Embed chunks with ontology-anchored vectors
-#   2c. Extract RDF triples as h_mems (ontology-anchored: dc_type=dcterms:Assertion)
+#   2c. Extract assertions as h_mems (ontology-anchored: dc_type=dcterms:Assertion)
 #   3. Dedup near-identical chunks
 #   4. Consolidate related chunks via LLM synthesis
 #   5. Build Bloom taxonomy QA prompts
@@ -32,7 +32,7 @@
 #   A failed gate halts the pipeline. Gates do NOT check tool response
 #   fields — the disk artifact is the sole source of truth.
 #
-#   Ontology-aware gates (triples, QA ingest) also verify the h_mem
+#   Ontology-aware gates (assertions, QA ingest) also verify the h_mem
 #   ontology column via json_extract: dc_type, dimensions, dc_source,
 #   and pko_procedure must be populated and match the service contract.
 #   This catches silent ontology-column failures that would blind
@@ -57,7 +57,7 @@ energy_budget:
 description: >
   Full corpus pipeline for the Capabilities Researcher persona.
   138 source files → extracted text → chunks → ontology tags → embeddings →
-  triples → dedup → consolidate → Bloom prompts → QA pairs → training JSONL →
+  assertions → dedup → consolidate → Bloom prompts → QA pairs → training JSONL →
   ChatML → LoRA training. Each phase has a blocking gate that verifies
   actual disk artifacts and presents stats to the user before proceeding.
 
@@ -387,7 +387,7 @@ steps:
     description: >
       Verify DB vector entity_refs exactly match chunk entity_refs — no missing,
       stale, or duplicate vectors. Present embedding coverage stats to the user
-      before proceeding to triple extraction. Requires sqlcipher CLI.
+      before proceeding to assertion extraction. Requires sqlcipher CLI.
     command: |
       command -v sqlcipher >/dev/null || { echo "sqlcipher CLI is required"; exit 2; }
       PASSPHRASE="${HKASK_DB_PASSPHRASE:-hkask-default-passphrase-2024}"
@@ -424,33 +424,33 @@ steps:
       resume: "repair embeddings, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 2c: Extract RDF triples as h_mems in DB
+  # Phase 2c: Extract assertions as h_mems in DB
   # ═══════════════════════════════════════════════════════════════════════
-  - id: extract_triples
+  - id: extract_assertions
     description: >
-      Extract RDF triples from each chunk with the canonical classifier model.
-      Stores triples as h_mems with entity=chunk_ref, attribute=predicate,
+      Extract assertions from each chunk with the canonical classifier model.
+      Stores assertions as h_mems with entity=chunk_ref, attribute=predicate,
       value={subject, object}, and a dual-axis ontology blob (dc_type=
       dcterms:Assertion, dc_source=chunk_ref, 5W1H dimension from predicate,
       optional ontology_tags for tagged namespaces). owner=john-brooks.
-    tool: corpus_extract_triples
+    tool: corpus_extract_assertions
     params:
       chunks_jsonl: "corpus/chunks/chunks.jsonl"
       tagged_jsonl: "corpus/chunks/tagged_ontology.jsonl"
       db_path: "corpus/memory/john-brooks.db"
       owner: "john-brooks"
-      max_triples: 15
+      max_assertions: 15
       concurrency: 64
 
-  - id: gate_triples_complete
+  - id: gate_assertions_complete
     type: gate
     blocking: true
     description: >
       Verify the DB contains a non-trivial, distributed knowledge graph with
-      triple coverage across at least 80% of chunks. Verify the ontology column
-      is populated and well-formed for every triple h_mem: dc_type must be
+      assertion coverage across at least 80% of chunks. Verify the ontology column
+      is populated and well-formed for every assertion h_mem: dc_type must be
       dcterms:Assertion, dimensions must be non-empty, dc_source must match
-      the chunk entity_ref. Present triple distribution, coverage, and ontology
+      the chunk entity_ref. Present assertion distribution, coverage, and ontology
       stats to the user before proceeding to dedup. Requires sqlcipher.
     command: |
       command -v sqlcipher >/dev/null || { echo "sqlcipher CLI is required"; exit 2; }
@@ -498,15 +498,15 @@ steps:
       print(json.dumps(stats, indent=2))
       assert total >= chunks, f"only {total} h_mems for {chunks} chunks"
       assert coverage >= 0.80, f"coverage {coverage:.3f} below 0.80"
-      assert null_ont == 0, f"{null_ont} triple h_mems have null ontology column"
-      assert wrong_dc == 0, f"{wrong_dc} triple h_mems have dc_type != dcterms:Assertion"
-      assert empty_dims == 0, f"{empty_dims} triple h_mems have empty dimensions"
-      assert missing_src == 0, f"{missing_src} triple h_mems have missing dc_source"
+      assert null_ont == 0, f"{null_ont} assertion h_mems have null ontology column"
+      assert wrong_dc == 0, f"{wrong_dc} assertion h_mems have dc_type != dcterms:Assertion"
+      assert empty_dims == 0, f"{empty_dims} assertion h_mems have empty dimensions"
+      assert missing_src == 0, f"{missing_src} assertion h_mems have missing dc_source"
       print("GATE_PASS triples_complete")
       PY
     on_failure:
       action: halt
-      resume: "repair triple extraction or ontology anchoring, rerun this gate, present stats to user"
+      resume: "repair assertion extraction or ontology anchoring, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 3: Dedup near-identical chunks (cosine > 0.85)

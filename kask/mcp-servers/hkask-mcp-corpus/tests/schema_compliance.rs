@@ -123,7 +123,7 @@ schema_clean_test!(
     hkask_mcp_corpus::tools::persona::RegistryRequest
 );
 
-// tools::semantic — generate_qa, generate_qa_batch, extract_triples, embed.
+// tools::semantic — generate_qa, generate_qa_batch, extract_assertions, embed.
 schema_clean_test!(
     generate_qa_request_schema,
     hkask_mcp_corpus::tools::semantic::GenerateQaRequest

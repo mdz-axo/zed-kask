@@ -32,7 +32,7 @@ services/
 tools/
   gather/             — corpus_discover, corpus_cache_work
   document.rs         — corpus_convert, corpus_ocr, corpus_chunk (thin wrappers → ConvertService)
-  semantic/           — corpus_generate_qa, corpus_generate_qa_batch, corpus_extract_triples,
+  semantic/           — corpus_generate_qa, corpus_generate_qa_batch, corpus_extract_assertions,
                         corpus_embed (thin wrappers → TriplesService)
   corpus/             — corpus_dedup_chunks, corpus_consolidate_chunks, corpus_build_prompts,
                         corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa
@@ -82,7 +82,7 @@ runtime/              — Section classifier + provider intelligence + adaptive 
 | `corpus_chunk` | Chunk text into passages at configurable token granularity. Accepts raw text or file path. Supports single-tier and multi-tier (coarse/medium/fine). Auto-indexing into in-memory vector store. |
 | `corpus_tag_chunks` | Tag chunks with multi-dimensional ontology annotations: 5W1H interrogatory dimensions, Dublin Core metadata, PKO/FIBO/GOLEM domain concepts, and expertise level. Uses LLM-based extraction via Jinja2 template with `validate_ontology_tags` schema enforcement. Computes graph-centrality salience. Input guard is always-on (non-disableable). |
 | `corpus_embed` | Generate embedding vectors via the configured embedding model (`HKASK_EMBEDDING_MODEL` or `~/.config/hkask/settings.json`). Ontology tags prepended as annotation prefixes (INSTRUCTOR method). Reports `degraded` outcome on >10% failure rate. |
-| `corpus_extract_triples` | Extract RDF triples with confidence scores. Uses registry template `docproc/extract-hmems.j2` (falls back to inline prompt). Hallucination guard cross-checks predicate namespace against chunk ontology_tags. |
+| `corpus_extract_assertions` | Extract assertions with confidence scores. Uses registry template `docproc/extract-hmems.j2` (falls back to inline prompt). Hallucination guard cross-checks predicate namespace against chunk ontology_tags. |
 | `corpus_dedup_chunks` | Deduplicate chunks by semantic embedding similarity (cosine > 0.85 default). Clusters within each source file, keeps highest-salience chunk per cluster. |
 | `corpus_consolidate_chunks` | Consolidate semantically related chunks via LLM synthesis. Clusters by cosine > 0.75, synthesizes each multi-chunk cluster into a single passage, re-embeds. Merges ontology tags with normalization. |
 

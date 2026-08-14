@@ -1,4 +1,4 @@
-//! Triple extraction helper — RDF predicate → 5W1H dimension mapping.
+//! Assertion extraction helper — RDF predicate → 5W1H dimension mapping.
 //!
 //! Used by `corpus_extract_assertions` in `mod.rs`.
 
@@ -71,18 +71,18 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
     }
 }
 
-/// Hallucination guard for LLM-extracted triples (RR-0018).
+/// Hallucination guard for LLM-extracted assertions (RR-0018).
 ///
-/// Returns the confidence to store for a triple: the LLM-reported confidence,
-/// or 0.5 (capped) when the triple fails verification. Verification:
+/// Returns the confidence to store for an assertion: the LLM-reported confidence,
+/// or 0.5 (capped) when the assertion fails verification. Verification:
 ///
 /// - Abstract-namespace predicates (golem/eso/fibo/pko/epistemic/omc/other)
 ///   bypass the subject/object-in-text check ONLY if the predicate's
 ///   namespace was actually tagged for this chunk. Without that cross-check,
 ///   the LLM could emit any `golem:`/`eso:` predicate to bypass the guard
 ///   for chunks where that ontology was never detected — admitting
-///   hallucinated triples at full LLM-reported confidence (the M4 fix).
-/// - All other triples: subject and object strings must appear in the chunk
+///   hallucinated assertions at full LLM-reported confidence (the M4 fix).
+/// - All other assertions: subject and object strings must appear in the chunk
 ///   text, or confidence is capped at 0.5 (not 0.3 — too aggressive).
 pub(crate) fn assertion_confidence(
     subject: &str,
@@ -126,7 +126,7 @@ mod tests {
 
     /// RR-0018: an abstract-namespace predicate must NOT bypass the guard
     /// when the chunk was never tagged with that namespace — the LLM cannot
-    /// launder hallucinated triples through `golem:` prefixes.
+    /// launder hallucinated assertions through `golem:` prefixes.
     #[test]
     fn abstract_namespace_without_chunk_tag_is_capped() {
         let confidence = assertion_confidence(
@@ -154,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn concrete_triple_missing_from_text_is_capped() {
+    fn concrete_assertion_missing_from_text_is_capped() {
         let confidence = assertion_confidence(
             "doc:zebra",
             "schema:author",
@@ -167,7 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn concrete_triple_present_in_text_keeps_confidence() {
+    fn concrete_assertion_present_in_text_keeps_confidence() {
         let confidence = assertion_confidence(
             "doc:zebra",
             "schema:author",

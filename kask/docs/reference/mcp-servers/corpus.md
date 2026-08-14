@@ -26,7 +26,7 @@ gather → process → output
 | Gather | `tools/gather/` | `corpus_discover`, `corpus_cache_work` |
 | Process | `tools/document.rs` | `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk` |
 | Process | `tools/tagging/` | `corpus_tag_chunks` |
-| Process | `tools/semantic/` | `corpus_embed`, `corpus_extract_triples` |
+| Process | `tools/semantic/` | `corpus_embed`, `corpus_extract_assertions` |
 | Process | `tools/corpus/` | `corpus_dedup_chunks`, `corpus_consolidate_chunks` |
 | QA Output | `tools/semantic/` | `corpus_generate_qa`, `corpus_generate_qa_batch` |
 | QA Output | `tools/corpus/` | `corpus_build_prompts`, `corpus_ingest_qa`, `corpus_prepare_training_dataset` |
@@ -55,7 +55,7 @@ Tool count verified against `#[tool(description = ...)]` annotations in
 | `corpus_chunk` | Chunk text into passages at configurable token granularity; raw text or file path (PDF/MD/HTML/TXT with OCR fallback); single-tier or multi-tier (coarse/medium/fine). |
 | `corpus_tag_chunks` | Tag chunks with multi-dimensional ontology annotations: 5W1H, Dublin Core, PKO process concepts, FIBO/GOLEM domain concepts, expertise level; LLM-based extraction with graph-centrality salience. |
 | `corpus_embed` | Generate ontology-anchored embedding vectors for corpus chunks; optional INSTRUCTOR-style tag prepending (Su et al. 2023); batch-embeds and stores vectors in the memory DB. |
-| `corpus_extract_triples` | Extract RDF h_mems (subject, predicate, object) from text via the classifier model with 3-attempt retry; tagged chunks guide predicate selection (GOLEM for narrative, schema.org for expository). |
+| `corpus_extract_assertions` | Extract RDF h_mems (subject, predicate, object) from text via the classifier model with 3-attempt retry; tagged chunks guide predicate selection (GOLEM for narrative, schema.org for expository). |
 | `corpus_dedup_chunks` | Deduplicate chunks by semantic embedding similarity: cosine clusters per source file above threshold (default 0.85), keeping the highest-salience chunk per cluster. |
 | `corpus_consolidate_chunks` | Consolidate semantically related chunks via LLM synthesis (cosine clusters above threshold, default 0.75); re-embeds consolidated text with provenance. |
 

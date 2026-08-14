@@ -2,7 +2,7 @@
 //!
 //! Canonical predicate URIs for narrative concepts — characters, events,
 //! themes, literary devices, and interpretive relationships. Used by
-//! docproc extract_triples for narrative passages (prose, fiction, memoir,
+//! docproc extract_assertions for narrative passages (prose, fiction, memoir,
 //! biography, narrative nonfiction) and by replica tools for persona/style
 //! ontology mapping.
 //!
