@@ -114,6 +114,10 @@ fn swarm_settings_default_round_trips_through_env_to_server_default() {
         "server memory_passphrase default changed — update the docs.",
     );
     assert_eq!(
+        server_default.memory_db_path, "swarm_memory.db",
+        "server memory_db_path default changed — update the docs.",
+    );
+    assert_eq!(
         server_default.embedding_dim, 1024,
         "server embedding_dim default changed — update the docs.",
     );

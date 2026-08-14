@@ -166,6 +166,13 @@ Local agent cards live at `agents/local/curated/<id>/agent_card.json`
 | --------------------- | ---------------------------------------------------------------------------------- |
 | `swarm_push_to_cloud` | Push a local agent card to ABW (the local→cloud bridge). Requires the ABW API key. |
 
+### Swarm-intelligence support
+
+| Tool                       | Purpose                                                                                                                                                                                                              |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `swarm_evaluate_local`     | Run a deterministic evaluator against a delegation response and return a `TaskSuccessVerdict` (pass/fail + detail). The evaluator name + spec are caller-supplied; the verdict feeds the swarm-intelligence ORIENT step. |
+| `swarm_execute_plan_local` | Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected `LocalDelegateResult` array with `task_success` verdicts stamped. Capped at 10 delegations. |
+
 ### `LocalDelegateResult` shape
 
 Every `swarm_delegate_local` and `swarm_fanout_local` entry returns this shape.
@@ -179,18 +186,28 @@ fabricated.
   "response": "string (guard-scanned)",
   "model": "string (e.g. ollama/qwen3:32b)",
   "tokens_used": 1234,
-  "cost": 0.0012,
-  "balance": 49.9988,
+  "cost": 2,
+  "cost_uncapped": 2,
+  "balance": 48,
   "latency_ms": 4200,
   "tool_calls": [{ "tool": "string", "ok": true, "error": null }],
-  "executed_skills": [{ "skill": "string", "ok": true, "error": null }]
+  "executed_skills": [{ "skill": "string", "ok": true, "error": null }],
+  "task_success": { "pass": true, "score": null, "detail": "evaluator=...", "provenance": "deterministic" }
 }
 ```
 
 - `latency_ms` is the C4 latency signal `T_q`.
 - `tool_calls[].ok` and `executed_skills[].ok` are the C5 fault-attribution
   inputs — `false` increments `fault_count` for the blamed agent.
+- `cost` is capped at `credits_authorized`; `cost_uncapped` is the real spend.
+  When `cost_uncapped > cost`, the ledger under-states real spend by the
+  difference (the cap's understatement is visible, not silent).
 - `balance` is the post-debit ledger balance (the local algedonic channel).
+  `null` means **not measured** (the balance read failed), never "zero".
+- `task_success` is absent when the executor has not stamped a verdict; present
+  when `swarm_execute_plan_local` or the Curator has run a deterministic
+  evaluator. `provenance` is `deterministic` (trusted) or `llm_judged`
+  (ORIENT warns, not trusts).
 
 ## The consent gate (the ABW load-bearing invariant)
 
