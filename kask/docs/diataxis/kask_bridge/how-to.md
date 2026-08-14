@@ -1,115 +1,157 @@
 ---
-title: "kask_bridge — How-to: Wire a New Kask Hook"
-audience: [developers]
-last_updated: 2026-08-04
-version: "0.3.0"
+title: "kask_bridge — How-to: Add a Built-in MCP Server"
+audience: [developers extending the kask MCP surface]
+last_updated: 2026-08-13
+version: "1.0.0"
 status: "Active"
 domain: "Integration"
-mds_categories: [composition, lifecycle]
+mds_categories: [composition]
 ---
 
-# kask_bridge — How-to: Wire a New Kask Hook
+# kask_bridge — How-to: Add a Built-in MCP Server
 
-This guide shows how to add a new process-global hook using the `set_*`
-OnceLock pattern. The pattern is used by `set_manifest_executor`,
-`set_memory_port`, `set_thread_condenser`, and the swarm_panel
-`set_tool_invoker` hook. A new hook follows the same structure: define the
-trait, add the `OnceLock`, add the `set_*` and getter functions, and wire in
-the deferred task.
+This guide shows how to register a new built-in kask MCP server so it loads
+at startup, receives only the credentials and config it needs, and shows up
+in the settings UI. The canonical registry is `BUILT_IN_MCP_SERVERS` in
+`mcp_servers.rs`; adding a server means adding one entry to that array and
+three companion slices, then aligning the allowlists with what the server
+crate actually reads.
+
+The registry is the single source of truth for the server ID → binary →
+description mapping. Previously this list was duplicated in three places with
+drift between them; the consolidation is documented at
+`mcp_servers.rs:1-9`.
 
 ## Source citations
 
 | Symbol | Location |
 |--------|----------|
-| `set_manifest_executor` | `crates/agent/src/agent.rs:2829` |
-| `set_memory_port` | `crates/agent/src/agent.rs:2908` |
-| `set_thread_condenser` | `crates/agent/src/agent.rs:3070` |
-| `set_tool_invoker` (panel) | `crates/swarm_panel/src/tool_invoker.rs:33` |
-| Deferred-task wiring | `crates/zed/src/main.rs:1778` |
-| `.rules` hook trap | `zed-kask/.rules` (zed-kask integration traps) |
+| `BuiltinMcpServer` struct | `kask/crates/kask_bridge/src/mcp_servers.rs:24-48` |
+| `BUILT_IN_MCP_SERVERS` registry | `kask/crates/kask_bridge/src/mcp_servers.rs:53-394` |
+| `BUILT_IN_MCP_SERVERS_IDS` | `kask/crates/kask_bridge/src/mcp_servers.rs:398-412` |
+| `BUILT_IN_MCP_SERVERS_PAIRS` | `kask/crates/kask_bridge/src/mcp_servers.rs:416-451` |
+| `find_server` | `kask/crates/kask_bridge/src/mcp_servers.rs:455-457` |
+| `filter_credentials_for_server` | `kask/crates/kask_bridge/src/mcp_servers.rs:469-490` |
+| `filter_config_env_for_server` | `kask/crates/kask_bridge/src/mcp_servers.rs:571-592` |
+| `build_mcp_server_env` (canonical path) | `kask/crates/kask_bridge/src/mcp_servers.rs:514-559` |
+| `mcp_env` (config half) | `kask/crates/kask_bridge/src/settings.rs:717-1046` |
+| Allowlist-alignment test pattern | `kask/crates/kask_bridge/src/mcp_servers.rs:691-718` |
 
 ## Procedure
 
 ```mermaid
 flowchart TD
-    A[Define trait in hkask-types] --> B[Add OnceLock + set/get in agent.rs]
-    B --> C[Add log::warn in failure branch]
-    C --> D[Construct adapter in kask_bridge]
-    D --> E[Wire in deferred task in main.rs]
-    E --> F[Add settings key to KaskSettings]
-    F --> G[Add tests]
+    A[1. Add entry to BUILT_IN_MCP_SERVERS] --> B[2. Add id to _IDS slice]
+    B --> C[3. Add id,description pair to _PAIRS slice]
+    C --> D[4. Set credentials allowlist]
+    D --> E[5. Set config_env allowlist]
+    E --> F[6. Emit any new env vars from mcp_env]
+    F --> G[7. Add allowlist-alignment test]
+    G --> H[8. Run ./script/clippy]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
-id: DIAG-DIA-BRIDGE-003
-verified_date: 2026-07-29
-verified_against: crates/agent/src/agent.rs:2829,2908,3070; crates/swarm_panel/src/tool_invoker.rs:33; crates/zed/src/main.rs:1778
+id: DIAG-BRIDGE-002
+verified_date: 2026-08-13
+verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:53-394,398-412,416-451,469-490,571-592,514-559; kask/crates/kask_bridge/src/settings.rs:717-1046
 status: VERIFIED
 -->
 
-### Step 1: Define the trait
+### Step 1 — Add the entry to `BUILT_IN_MCP_SERVERS`
 
-Define the port trait in `hkask-types/src/ports/`. The trait must be
-`Send + Sync` and return pinned boxed futures for async methods.
+Add a `BuiltinMcpServer { ... }` entry to the array at `mcp_servers.rs:53`.
+Order is stable and meaningful — the kask panel uses index-based selection
+(`mcp_servers.rs:51-52`). Set:
 
-### Step 2: Add the OnceLock and set/get functions
+- `id` — the server ID used in `kask.mcp.overrides` and as the
+  `ContextServerId`. Must be unique (enforced by `all_servers_have_unique_ids`
+  at `mcp_servers.rs:599-605`).
+- `binary` — the executable name without path, following the
+  `hkask-mcp-<id>` naming convention (enforced by
+  `all_binaries_follow_naming_convention` at `mcp_servers.rs:608-616`).
+- `description` — human-readable, shown in the settings UI.
 
-In `crates/agent/src/agent.rs`, add a `static ONCE_LOCK: OnceLock<Option<Arc<dyn NewTrait>>>`
-and two functions: `set_new_hook(value: Option<Arc<dyn NewTrait>>)` and
-`new_hook() -> Option<Arc<dyn NewTrait>>`. Follow the pattern of
-`set_manifest_executor` at `agent.rs:2829`.
+### Step 2 — Add the id to `BUILT_IN_MCP_SERVERS_IDS`
 
-Note that `set_memory_port` (`agent.rs:2908`) uses a `Mutex` rather than a
-`OnceLock` — it is the one hook that is intentionally re-settable, because
-the composition root leaves the hook `None` at startup (no
-`LoggingMemoryPort` — deleted in the 2026-07-31 simplification pass) and
-upgrades it to a `BridgeMemoryPort` wrapping `RealMemoryPort` once the zed
-user resolves (see `main.rs:1153`). Choose `Mutex` only when you need this
-upgrade-in-place behavior; otherwise prefer `OnceLock`.
+Append the same `id` string to the `BUILT_IN_MCP_SERVERS_IDS` slice at
+`mcp_servers.rs:398`. This slice is consumed by `mcp_env()` to emit
+`HKASK_MCP_SERVER_IDS` (`settings.rs:750-753`), which the swarm server uses
+as the provenance boundary for third-party ABW cards. The slice order must
+match the main registry (enforced by `ids_slice_matches_main_registry` at
+`mcp_servers.rs:631-638`).
 
-### Step 3: Add log::warn in the failure branch
+### Step 3 — Add the `(id, description)` pair to `BUILT_IN_MCP_SERVERS_PAIRS`
 
-When the hook is wired conditionally, add a `log::warn!` in the `else`
-branch. Name the hook, the failure reason, and the remediation. This is
-the `.rules` trap: operators reading logs cannot distinguish "not
-configured" from "configured but broken" without the warning. When a
-deferred task wires multiple `set_*` hooks inside a single `if` block, the
-`else` branch warn must name ALL hooks left unwired, not just one.
+Append the same pair to `BUILT_IN_MCP_SERVERS_PAIRS` at `mcp_servers.rs:416`.
+This is the convenience view the settings UI renders. Order must match the
+main registry (enforced by `pairs_slice_matches_main_registry` at
+`mcp_servers.rs:641-651`).
 
-### Step 4: Construct the adapter in kask_bridge
+### Step 4 — Set the `credentials` allowlist
 
-Create a bridge adapter struct in `kask/crates/kask_bridge/src/` that
-implements the new trait against zed types. Follow the pattern of
-`BridgeMemoryPort` at `memory.rs:1615`.
+`credentials` is the list of keychain-secret env vars the server may receive.
+Per the `.rules` trap "MCP server credentials/config are scoped per-server via
+allowlists. New servers use `Some(&[])` for both, never `None`."
 
-### Step 5: Wire in the deferred task
+- `Some(&[])` — the server receives no credentials. Use this for servers
+  with no secret reads (e.g. `portfolio`, `scenarios`).
+- `Some(&["KEY_A", "KEY_B"])` — only the listed keys are injected. Every
+  entry must have a read site in the server crate; the
+  `*_allowlist_matches_actual_reads` tests (e.g. `mcp_servers.rs:691-718`)
+  grep the crate for `std::env::var` and `ctx.credentials.get` reads and
+  assert the allowlist matches exactly.
+- `None` — backward-compatible "receives all credentials." Do not use for
+  new servers.
 
-In `crates/zed/src/main.rs`, inside the deferred task (around line 1778,
-where `set_manifest_executor` is called), construct the adapter and call
-`agent::set_new_hook(Some(adapter))`. The wiring must happen inside the
-deferred task because it depends on
-`LanguageModelRegistry::default_model()` being populated. At startup,
-before user authentication, `default_model()` returns `None`; wiring
-synchronously at startup leaves the hook unwired for the entire session
-when no model is configured at startup.
+`filter_credentials_for_server` (`mcp_servers.rs:469-490`) applies this
+allowlist at child-process launch. An unknown server id fails closed and
+receives no credentials (`mcp_servers.rs:473-481`).
 
-### Step 6: Add settings key
+### Step 5 — Set the `config_env` allowlist
 
-Add a field to `KaskSettings` or a sub-struct in
-`kask/crates/kask_bridge/src/settings.rs` so users can configure the hook
-in `settings.json`. Per the `.rules` "Kask settings defaults" trap, set
-the default in the `Default` impl — the single source of truth. Do not
-encode defaults in `#[serde(default = "...")]` attributes (dead code — the
-settings system deserializes `SettingsContent`, not `KaskSettings`), in
-`From<Content>` literals, or in `mcp_env()` comparison literals.
+`config_env` is the list of non-secret config env vars (from `mcp_env()`)
+the server may receive. The same `Some(&[])` / `Some(&[...])` / `None`
+rules apply. `filter_config_env_for_server` (`mcp_servers.rs:571-592`)
+applies it.
 
-## See also
+The two allowlists apply to **disjoint key sets** — config vars live in
+`config_env`, secrets live in `credentials`. The canonical composition path
+`build_mcp_server_env` (`mcp_servers.rs:514-559`) filters config first, then
+resolves credentials and merges them into the already-filtered map. Reversing
+this order drops every credential (the config allowlist does not list
+credential keys). This regression existed in the previous two-path design;
+do not reintroduce it (`mcp_servers.rs:11-22`).
 
-- [kask_bridge Reference](./reference.md): class diagram of settings and
-  adapters.
-- [kask_bridge Explanation](./explanation.md): the composition root sequence.
-- [kask_bridge Tutorial](./tutorial.md): your first kask hook.
+### Step 6 — Emit any new env vars from `mcp_env`
 
----
+If your server reads a config var that is not already emitted by
+`KaskSettings::mcp_env` (`settings.rs:717-1046`), add the emission there.
+Follow the existing pattern: read from the relevant `Kask*Settings`
+sub-struct, compare against the sub-struct's `Default` impl (the single
+source of truth), and only emit non-default values. Inlining magic numbers
+instead of comparing against `Default` is the drift class that silently
+disabled all kask MCP servers once before (`settings.rs:755-760`).
 
-[^once-lock]: Rust Community. (2024). *std::sync::OnceLock.* <https://doc.rust-lang.org/std/sync/struct.OnceLock.html>. The synchronization primitive used for process-global hooks.
+D28 example: `HKASK_TRANSACTIONS_DIR` is always emitted (default
+`mcp/portfolio/transactions/` under the kask data root) so the portfolio
+server can auto-load transaction files (`settings.rs:804-816`).
+
+### Step 7 — Add an allowlist-alignment test
+
+Add a test named `<server>_allowlist_matches_actual_reads` in the
+`mcp_servers.rs` test module. Follow the pattern at `mcp_servers.rs:691-718`
+for `companies`: grep the server crate for `std::env::var("...")` and
+`ctx.credentials.get("...")` reads, collect the read env-var names, and
+assert the allowlist in the registry entry matches exactly. This is the test
+class that catches the "key never arrives" bugs documented in the inline
+comments (e.g. `mcp_servers.rs:91-96` for the `HKASK_SERPAPI_API_KEY`
+normalization).
+
+Also add a `*_config_env_*` test if your server reads config vars, following
+the pattern at `mcp_servers.rs:887-919` for codegraph.
+
+### Step 8 — Run clippy
+
+Run `./script/clippy` (per the `.rules` build instruction — not
+`cargo clippy`). The allowlist-alignment tests run as part of the test
+suite; confirm they pass before merging.

@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-08-04
-version: "0.3.0"
+last_updated: 2026-08-13
+version: "1.0.0"
 status: "Active"
 domain: "Integration"
 mds_categories: [trust, curation]
@@ -10,150 +10,290 @@ mds_categories: [trust, curation]
 
 # kask_bridge — Explanation
 
-The composition root is the single place where zed and hKask are wired
-together. It runs in two phases inside `crates/zed/src/main.rs`: an early
-block that wires the regulation system and metacognition provider before
-any thread can complete a turn, and a deferred task that runs after the zed
-user resolves and a default language model becomes available. The
-model-dependent hooks (`set_manifest_executor`, `set_thread_condenser`,
-`set_tool_invoker`, `set_memory_port`) are wired in the deferred task.
-At startup, the `set_memory_port` hook is `None` — turn ingest no-ops until
-the deferred task wires `BridgeMemoryPort(RealMemoryPort)` after the zed user
-resolves. The design centralizes the integration so that the seams are
-visible in one file rather than scattered across the codebase.
+`kask_bridge` exists because zed-kask and hKask have opposite dependency
+directions. hKask is a standalone system that defines port traits
+(`InferencePort`, `MemoryPort`, `ToolPort`, etc.) in `hkask-types` and
+implements them over its own substrates. zed-kask is a fork of the Zed
+editor that owns the user-facing runtime — the `LanguageModel` registry,
+the settings system, the keychain, the foreground executor. The bridge is
+the only crate that depends on both sides, so it is the only place where
+the two worlds meet at runtime.
+
+The governing invariant is at `kask/crates/kask_bridge/src/kask_bridge.rs:9-10`:
+hKask crates never depend on zed crates; zed-kask depends on hKask. This
+keeps hKask buildable and testable in isolation, and confines every
+integration concern to one crate whose diff is reviewable as a unit.
 
 ## Source citations
 
 | Symbol | Location |
 |--------|----------|
-| Regulation + metacognition wiring (early) | `crates/zed/src/main.rs:674,749` |
-| Deferred-task memory upgrade | `crates/zed/src/main.rs:1153` |
-| Deferred-task metacognition re-set | `crates/zed/src/main.rs:1173` |
-| Deferred-task context injector | `crates/zed/src/main.rs:1230` |
-| Deferred-task tool router | `crates/zed/src/main.rs:1280` |
-| Deferred-task panel tool invoker | `crates/zed/src/main.rs:1621` |
-| Deferred-task thread condenser | `crates/zed/src/main.rs:1635` |
-| Deferred-task manifest executor | `crates/zed/src/main.rs:1778` |
-| `set_tool_invoker` (panel) | `crates/swarm_panel/src/tool_invoker.rs:33` |
-| `BridgeManifestExecutor` | `kask/crates/kask_bridge/src/skill_executor.rs:30` |
-| `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1615` |
-| `RealMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:42` |
+| Governing invariant | `kask/crates/kask_bridge/src/kask_bridge.rs:9-10` |
+| `BridgeContextInjector` | `kask/crates/kask_bridge/src/context_injector.rs:144-160` |
+| `LanguageModelInferencePort` channel split | `kask/crates/kask_bridge/src/inference.rs:179-216` |
+| `BridgeManifestExecutor` (D1 seam) | `kask/crates/kask_bridge/src/skill_executor.rs:88-109` |
+| `BridgeManifestExecutor::new` | `kask/crates/kask_bridge/src/skill_executor.rs:118-134` |
+| `seed_registry_to_disk` (D28) | `kask/crates/kask_bridge/src/skill_executor.rs:457-531` |
+| `RealMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:65-119` |
+| `RealMemoryPort::new` | `kask/crates/kask_bridge/src/memory.rs:128-253` |
+| `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1359-1361` |
+| `CuratorStore` self-healing | `kask/crates/kask_bridge/src/memory/curator_stores.rs:52-161` |
+| `curator_db_path` | `kask/crates/kask_bridge/src/memory/curator_stores.rs:20-29` |
+| `BUILT_IN_MCP_SERVERS` | `kask/crates/kask_bridge/src/mcp_servers.rs:53-394` |
+| `build_mcp_server_env` | `kask/crates/kask_bridge/src/mcp_servers.rs:514-559` |
+| `provision_agent` | `kask/crates/kask_bridge/src/identity.rs:217-257` |
+| `KaskSettings::mcp_env` | `kask/crates/kask_bridge/src/settings.rs:717-1046` |
+| `HKASK_TRANSACTIONS_DIR` emission (D28) | `kask/crates/kask_bridge/src/settings.rs:804-816` |
 
-## Composition root sequence
+## Why a single seam
 
-The sequence below shows the two-phase wiring. The early block runs at
-startup (before user auth) and wires the regulation system + metacognition
-provider; the deferred task runs after the zed user resolves and wires the
-model-dependent hooks (memory, manifest executor, panel). `set_memory_port`
-and `set_metacognition_provider` use `Mutex` (re-settable); the manifest
-executor and context injectors use `OnceLock` (set once).
+Before the bridge was consolidated, the zed↔hKask wiring was scattered
+across `zed/src/main.rs`, the settings UI, and a now-removed panel crate.
+The MCP server list alone was duplicated in three places with drift between
+them (`mcp_servers.rs:1-9`). The consolidation moves every integration
+concern into one crate so that:
+
+- The diff for any integration change is reviewable as a unit.
+- hKask remains buildable without zed (its crates never depend on zed).
+- The settings → env → MCP-server contract is enforced in one place
+  (`mcp_env` + `build_mcp_server_env`).
+- The allowlist blast-radius discipline (per-server credentials/config) has
+  a single enforcement point.
+
+The cost is that the bridge crate is wide: it touches settings, identity,
+memory, inference, skills, condensation, context injection, metacognition,
+directives, and the IPC server. The depth is justified by the alternative —
+scattered seams that drift.
+
+## Two-phase composition
+
+The composition root in `crates/zed/src/main.rs` runs the bridge in two
+phases. The split exists because some hooks need a resolved language model
+and a provisioned agent, which only exist after the zed user logs in. The
+early phase wires everything that can run before auth; the deferred phase
+wires everything that depends on the user identity and the model registry.
 
 ```mermaid
 sequenceDiagram
     participant Main as main.rs
     participant Bridge as kask_bridge
-    participant Agent as agent.rs
-    participant Panel as swarm_panel
+    participant Agent as agent crate
+    participant Settings as KaskSettings
 
-    Note over Main: Early block (startup)
+    Note over Main: Early phase (startup, pre-auth)
     Main->>Bridge: construct McpRuntime + CyberneticsLoop
-    Main->>Bridge: BridgeMetacognitionProvider
+    Main->>Bridge: BridgeMetacognitionProvider(loop)
     Main->>Agent: set_metacognition_provider
-    Main->>Main: spawn CyberneticsLoop tick + MetacognitionLoop
+    Main->>Settings: KaskSettings::from_settings
+    Main->>Bridge: build_mcp_server_env for each server
+    Main->>Main: spawn MCP servers + CyberneticsLoop
 
-    Note over Main: Deferred task (post-login)
-    Main->>Bridge: provision_agent + RealMemoryPort
+    Note over Main: Deferred phase (post-login)
+    Main->>Bridge: provision_agent(username)
+    Main->>Bridge: RealMemoryPort::new(db_path, passphrase, ...)
     Main->>Bridge: wrap in BridgeMemoryPort
     Main->>Agent: set_memory_port(real)
     Main->>Bridge: re-set metacognition provider with memory probe
     Main->>Bridge: BridgeContextInjector + BridgeCuratorContextInjector
     Main->>Agent: set_context_injector + set_curator_context_injector
-    Main->>Agent: set_tool_router (LazyToolRouter)
-    Main->>Bridge: construct PanelToolInvoker
-    Main->>Panel: set_tool_invoker(invoker)
+    Main->>Bridge: LanguageModelInferencePort + EmbeddingPort
+    Main->>Bridge: BridgeManifestExecutor + seed_registry_to_disk
+    Main->>Agent: set_manifest_executor
     Main->>Bridge: BridgeThreadCondenser
-    Main->>Agent: set_thread_condenser(condenser)
-    Main->>Bridge: LanguageModelInferencePort + GuardedInferencePort
-    Main->>Bridge: BridgeManifestExecutor
-    Main->>Agent: set_manifest_executor(executor)
+    Main->>Agent: set_thread_condenser
 ```
 
 <!-- DIAGRAM_ALIGNMENT
-id: DIAG-DIA-BRIDGE-002
-verified_date: 2026-08-01
-verified_against: crates/zed/src/main.rs:672 (McpRuntime::with_governance), 749 (set_metacognition_provider), 1153 (set_memory_port), 1230 (set_context_injector), 1280 (set_tool_router), 1621 (set_tool_invoker), 1635 (set_thread_condenser), 1778 (set_manifest_executor); crates/swarm_panel/src/tool_invoker.rs:33
+id: DIAG-BRIDGE-006
+verified_date: 2026-08-13
+verified_against: kask/crates/kask_bridge/src/kask_bridge.rs:9-10; kask/crates/kask_bridge/src/metacognition_bridge.rs:16-24; kask/crates/kask_bridge/src/identity.rs:217-257; kask/crates/kask_bridge/src/memory.rs:128-253,1359-1361; kask/crates/kask_bridge/src/context_injector.rs:168-204; kask/crates/kask_bridge/src/inference.rs:189-216; kask/crates/kask_bridge/src/skill_executor.rs:118-134,457-531; kask/crates/kask_bridge/src/condenser_bridge.rs:22-25
 status: VERIFIED
 -->
 
-## Why deferred wiring
+`set_memory_port` and `set_metacognition_provider` use `Mutex` (re-settable)
+because the early phase leaves them `None` and the deferred phase upgrades
+them. The manifest executor and context injectors use `OnceLock` (set once).
+This is the `.rules` "Failure signals" pattern: a hook wired conditionally
+must `log::warn!` on failure so operators can distinguish "not configured"
+from "configured but broken."
 
-The model-dependent hooks depend on
-`LanguageModelRegistry::default_model()` being populated. At startup,
-before user authentication, `default_model()` returns `None`. Wiring the
-hooks synchronously at startup would leave them unwired for the entire
-session when no model is configured at startup. The deferred task runs
-after the zed user resolves, ensuring the model is available.
+## Why the inference adapter uses channels
 
-If the deferred task fails to find a model, the hooks remain `None` and the
-`skill` tool returns a no-op envelope. This fail-closed behavior is
-intentional. A missing model should not silently produce broken skill
-output.
+`LanguageModelInferencePort` (`inference.rs:179-182`) does not call
+`LanguageModel::stream_completion` directly from the trait method. Instead
+it sends an `InferenceRequest` over an mpsc channel to a task running on
+the GPUI foreground executor, which owns the `AsyncApp` and performs the
+streaming completion (`inference.rs:189-216`).
 
-## Why OnceLock hooks (and one Mutex)
+The reason is a GPUI constraint: `AsyncApp` is not `Send` (the foreground
+executor holds `Rc`-based state). The hKask `InferencePort` trait methods are
+called from tokio workers (MCP servers, the skill cascade), which are
+`Send + Sync`. A direct call would require moving the `AsyncApp` across
+threads, which Rust's type system forbids. The channel split lets the
+`Send + Sync` adapter hold only senders while the non-`Send` receiver task
+stays pinned to the foreground executor.
 
-The `set_*` functions use `static ONCE_LOCK: OnceLock<Option<Arc<dyn Trait>>>`.
-The `OnceLock` ensures the hook is set exactly once per process. The
-`Option` allows the hook to be absent (fail-closed). The `Arc` allows the
-hook to be shared across threads.
+This is the same constraint that forces `cx.background_spawn` to panic on
+tokio-dependent futures and requires `gpui_tokio::Tokio::spawn` instead
+(see `.rules` "GPUI traps"). The bridge is the boundary where the two
+executors meet, and channels are the only safe crossing.
 
-`set_memory_port` (`agent.rs:2908`) is the exception: it uses a `Mutex`
-rather than a `OnceLock`, because the hook is `None` at startup (the
-`LoggingMemoryPort` that previously occupied this slot was deleted in the
-2026-07-31 simplification pass) and is upgraded to
-`BridgeMemoryPort(RealMemoryPort)` once the zed user resolves. The `Mutex`
-allows the `set_memory_port` call in the deferred task to replace the `None`
-value in place.
+## Why MCP server env has one canonical path
 
-This pattern has a trap: if the condition for wiring fails silently, the
-hook is left `None` with no signal. The `.rules` file documents this:
-every `set_*` hook that is wired conditionally must `log::warn!` when the
-condition fails, so operators can distinguish "not configured" from
-"configured but broken." When a deferred task wires multiple `set_*` hooks
-inside a single `if` block, the `else` branch warn must name ALL hooks
-left unwired, not just one.
+`build_mcp_server_env` (`mcp_servers.rs:514-559`) is the single place that
+assembles a kask MCP server child-process env. It composes two filters in
+load-bearing order: config first, then credentials, then the inference
+socket last.
 
-## The GPUI/tokio cybernetic boundary
+The order matters because the two filters apply to disjoint key sets.
+Config vars live in `BuiltinMcpServer::config_env`; credentials live in
+`BuiltinMcpServer::credentials`. If the config filter ran over a map that
+already contained credentials, it would drop every credential (the config
+allowlist does not list credential keys). This is exactly the regression
+the previous two-path design had: one path leaked the full unfiltered
+`mcp_env()` map, the other dropped every credential. Both bugs were
+invisible because the allowlist-alignment tests exercised the filter helpers
+in isolation, never the composed path (`mcp_servers.rs:11-22`).
 
-The bridge is where two feedback loops cross. GPUI runs on a single
-foreground thread (not `Send`); hKask's `ManifestExecutor` and `ToolPort`
-run on tokio (`Send + Sync`). The `LanguageModelInferencePort`
-(`inference.rs:46`) solves this with a `tokio::sync::mpsc` channel: the
-adapter holds only an `UnboundedSender` (which is `Send + Sync`), and a
-GPUI-side spawned task owns the `AsyncApp` and the receiver. The two
-halves never cross threads. This is the `.rules` "Cross-thread GPUI
-communication uses channels, not `AsyncApp` handles" trap — `AsyncApp` is
-not `Send`, so any `Send + Sync` trait implemented over GPUI state must
-use a channel, not capture `AsyncApp`.
+The single-path design makes the composition testable:
+`build_mcp_server_env_composition_respects_allowlists`
+(`mcp_servers.rs:1452-1510`) exercises the composed path and would catch
+either regression.
 
-The `BridgeManifestExecutor` (`skill_executor.rs:30`) holds a
-`tokio::runtime::Handle` that is entered around manifest execution so that
-`tokio::time::timeout` and other tokio APIs inside `ManifestExecutor` have
-a reactor. The `SkillTool` runs on GPUI's foreground executor (not tokio),
-so without this guard, any skill with a manifest would panic with "there is
-no reactor running."
+## Why the curator has a sovereign database
 
-## See also
+`RealMemoryPort` writes each completed turn to two databases: the user's
+`memory.db` (episodic, first-person) and the curator's `curator.db`
+(semantic, shared). The curator DB path is resolved by `curator_db_path`
+(`memory/curator_stores.rs:20-29`) to `agents/curator/curator.db` under the
+hKask data dir.
 
-- [kask_bridge Reference](./reference.md): class diagram of settings and
-  bridge adapters.
-- [kask_bridge How-to](./how-to.md): wiring a new kask hook.
-- [hkask-types Explanation](../hkask-types/explanation.md): the port trait
-  mediation that this crate implements.
-- [`kask/docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md):
-  the D1–D23 integration seams.
+The split exists for two reasons:
 
----
+1. **Perspective separation.** The user's first-person record is private;
+   the curator's copy is shared. Storing them in separate SQLCipher
+   databases lets each have its own encryption key and access policy. The
+   `HMemOntology` blob on each h_mem distinguishes them, so no second store
+   struct is needed (`memory/curator_stores.rs:42-46`).
 
-[^cockburn]: Cockburn, A. (2005). *Hexagonal Architecture.* <https://alistair.cockburn.us/hexagonal-architecture/>. The composition root pattern: a single place where ports and adapters are wired.
+2. **Curator MCP server reads.** The curator MCP server's
+   `curator_memory_recall` and `curator_semantic_search` tools read from
+   the same `curator.db` the agent writes to. If the curator's copy lived
+   in the user's `memory.db`, the curator server would need the user's DB
+   passphrase — a wider secret surface. The sovereign DB keeps the
+   curator's reads scoped to its own passphrase.
 
-[^once-lock]: Rust Community. (2024). *std::sync::OnceLock.* <https://doc.rust-lang.org/std/sync/struct.OnceLock.html>. The synchronization primitive used for process-global hooks.
+The `CuratorStore` handle (`memory/curator_stores.rs:52-161`) is
+self-healing because the curator DB can be transiently unavailable at
+startup (locked by a previous MCP server instance, I/O error). When the
+initial open fails, the store is `None` and every access re-attempts the
+open. A successful re-open restores curator memory mid-session without an
+app restart; persistent failure is signaled with a warn-once per healing
+attempt, never silently. This is the `.rules` "Advertised invariants need
+enforcement points" pattern — the self-healing claim points at
+`CuratorStore::try_heal` (`memory/curator_stores.rs:118-160`).
+
+## Why skill manifests live on disk
+
+`BridgeManifestExecutor` resolves a skill name to a YAML manifest on disk
+under `kask/registry/manifests/<name>.yaml` (`skill_executor.rs:155-170`).
+There is no compiled-in fallback at runtime. The shipped manifests are
+seeded to disk at startup by `seed_registry_to_disk`
+(`skill_executor.rs:457-531`), which writes to `{kask_data_dir}/skills/registry/`
+(D28) and never overwrites existing files.
+
+The disk-is-source design has three motivations:
+
+1. **Editability.** YAML/J2 edits take effect immediately without
+   recompilation. A user iterating on a skill manifest does not need to
+   rebuild the binary.
+2. **User sovereignty.** Existing files are never overwritten — a user who
+   deletes a shipped manifest will see it re-seeded on the next startup, but
+   a user who edits one keeps their edits (`skill_executor.rs:447-449`).
+3. **Single runtime path.** `BridgeManifestExecutor::manifest_yaml` and
+   `TemplateRenderer::load` read exclusively from disk. There is no
+   "compiled-in fallback" path that could drift from the disk path.
+
+The compiled seed payload exists solely so a self-contained binary can
+populate the registry on a fresh install with no source tree
+(`skill_executor.rs:440-445`).
+
+## Why settings defaults live in `Default` impls
+
+Per the `.rules` "Kask settings defaults" trap, `Default` impls are the
+single source of truth for kask settings defaults — not `#[serde(default)]`
+attributes, not `From<Content>` literals, not `mcp_env()` comparison
+literals. `From<Content>` reads from `Default` via `unwrap_or(default.field)`
+(e.g. `settings.rs:686-695` for `KaskToolRouterSettings`), and `mcp_env()`
+compares against `Default` to decide whether to emit a var
+(`settings.rs:755-760`).
+
+The trap is real: inlining magic numbers instead of comparing against
+`Default` is the drift class that silently disabled all 10 kask MCP servers
+when `KaskMcpSettings::default()` disagreed with the serde default. The
+`Default`-as-source rule means changing `Default` automatically updates
+both the `From<Content>` path and the `mcp_env()` emission decision — there
+is one place to edit.
+
+## Bridge port state
+
+Each bridge port has a lifecycle state determined by whether its hook is
+wired. The diagram below shows the states and the transitions the
+composition root drives.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unwired: startup
+    Unwired --> Wired: deferred task succeeds
+    Unwired --> Failed: deferred task errors
+    Wired --> Degraded: dependency outage (e.g. curator DB locked)
+    Degraded --> Wired: self-heal succeeds
+    Degraded --> Failed: persistent outage
+    Failed --> [*]
+    Wired --> [*]: app shutdown
+
+    note right of Unwired
+        Hook is None; trait call no-ops
+        (e.g. memory ingest pre-login)
+    end note
+    note right of Degraded
+        CuratorStore.try_heal re-attempts
+        open on every access
+    end note
+```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-BRIDGE-007
+verified_date: 2026-08-13
+verified_against: kask/crates/kask_bridge/src/memory.rs:65-119; kask/crates/kask_bridge/src/memory/curator_stores.rs:97-160; kask/crates/kask_bridge/src/kask_bridge.rs:9-10
+status: VERIFIED
+-->
+
+The `Unwired` state is intentional for `set_memory_port` and
+`set_metacognition_provider`: the early phase leaves them `None` so turn
+ingest no-ops until the deferred task wires `BridgeMemoryPort` after the
+zed user resolves. The `Degraded` state is specific to the curator store:
+a transient open failure does not fail the port — it enters self-healing,
+where every access re-attempts the open. Only persistent outage transitions
+to `Failed`.
+
+## D28 changes
+
+The D28 divergence surface touches this crate in five places:
+
+1. **Threads DB override hook** — `HKASK_CURATOR_DB` is read by
+   `curator_db_path` (`memory/curator_stores.rs:20-29`) to override the
+   curator DB location.
+2. **Skills dir override hook** — `HKASK_SKILLS_DIR` is emitted from
+   `mcp_env` when `swarm.skills_dir` is set (`settings.rs:953-958`) and
+   allowlisted for the swarm server (`mcp_servers.rs:332-337`).
+3. **`HKASK_TRANSACTIONS_DIR` emission** — always emitted, default
+   `mcp/portfolio/transactions/` under the kask data root
+   (`settings.rs:804-816`); allowlisted for the portfolio server
+   (`mcp_servers.rs:78`).
+4. **MCP server DB paths under `mcp/{server_id}/`** — the transactions dir
+   follows the `mcp/<server>/` convention; the curator DB lives at
+   `agents/curator/curator.db` (renamed from the former `pod.db`).
+5. **Registry at `skills/registry/`** — `seed_registry_to_disk` writes to
+   `{kask_data_dir}/skills/registry/` (`skill_executor.rs:451-456`), not the
+   former `agents/registry/` path.

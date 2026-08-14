@@ -90,7 +90,8 @@ pub mod test_utils {
     pub use crate::config::{SwarmConfig, SwarmMode, resolve_local_agents_dir};
     pub use crate::consent::{ConsentStore, fnv1a, mint_token};
     pub use crate::request_types::{
-        CreateAgentRequest, McpServerAuthSpec, McpServerSpec, ValenceInput,
+        CapabilityGate, CreateAgentRequest, McpServerAuthSpec, McpServerSpec, ModelLadderRung,
+        ValenceInput,
     };
     pub use crate::sanitize::*;
 }

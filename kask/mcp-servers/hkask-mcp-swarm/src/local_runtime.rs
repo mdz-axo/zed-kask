@@ -9,7 +9,7 @@
 use std::time::Instant;
 
 use crate::agent_executor::{AgentExecutor, RawDelegateResult};
-use crate::error::{LocalSwarmError, SwarmError};
+use crate::error::LocalSwarmError;
 use crate::local_registry::LocalAgentCard;
 use crate::sanitize::strip_leading_mentions;
 
@@ -365,14 +365,14 @@ impl LocalSwarmRuntime {
         task: &str,
         credits_authorized: u32,
         max_credits_per_dispatch: u32,
-    ) -> Result<LocalDelegateResult, SwarmError> {
+    ) -> Result<LocalDelegateResult, LocalSwarmError> {
         let started = Instant::now();
         // Strip leading @mentions (defense-in-depth, mirrors ABW delegate).
         let task_clean = strip_leading_mentions(task);
 
         // Check the per-dispatch ceiling.
         if credits_authorized > max_credits_per_dispatch {
-            return Err(SwarmError::PaymentRequired(format!(
+            return Err(LocalSwarmError::InvalidInput(format!(
                 "credits_authorized {credits_authorized} exceeds per-dispatch ceiling \
                  {max_credits_per_dispatch} (raise HKASK_ABW_MAX_CREDITS to authorize)"
             )));
@@ -546,6 +546,46 @@ pub struct LocalDelegateResult {
     /// response shape is unchanged for callers that ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_success: Option<TaskSuccessVerdict>,
+}
+
+impl LocalDelegateResult {
+    /// Shape this delegation result as the per-entry JSON object used by
+    /// `swarm_fanout_local`, `swarm_pipeline_local`, and
+    /// `swarm_execute_plan_local`. The three tools previously duplicated
+    /// this JSON construction inline (with minor field differences); this
+    /// method is the single source of truth for the per-delegation result
+    /// shape.
+    ///
+    /// `include_details` controls whether `tool_calls` and `executed_skills`
+    /// are included — fanout surfaces them, pipeline omits them (the pipeline
+    /// caller cares about the output chain, not the tool trace).
+    pub(crate) fn to_result_json(&self, include_details: bool) -> serde_json::Value {
+        let mut entry = serde_json::json!({
+            "agent_name": self.agent_id,
+            "ok": true,
+            "response": self.response,
+            "model": self.model,
+            "tokens_used": self.tokens_used,
+            "cost": self.cost,
+            "cost_uncapped": self.cost_uncapped,
+            "latency_ms": self.latency_ms,
+        });
+        if include_details {
+            entry["tool_calls"] = serde_json::Value::Array(self.tool_calls.clone());
+            entry["executed_skills"] = serde_json::Value::Array(self.executed_skills.clone());
+        }
+        entry
+    }
+
+    /// Shape a failed delegation as the per-entry JSON object. Used by
+    /// fanout/pipeline/execute_plan when `delegate` returns `Err`.
+    pub(crate) fn error_json(agent_name: &str, error: &str) -> serde_json::Value {
+        serde_json::json!({
+            "agent_name": agent_name,
+            "ok": false,
+            "error": error,
+        })
+    }
 }
 
 /// How a [`TaskSuccessVerdict`] was produced. The determinism constraint

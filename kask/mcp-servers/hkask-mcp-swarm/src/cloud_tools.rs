@@ -111,6 +111,11 @@ impl SwarmServer {
                             // `swarm_hire_cost` (`GET /agents/{id}/dependencies`).
                             // Forwarded as null for schema stability.
                             "dependencies": a.get("dependencies"),
+                            // fermi ADR-011 fields (model_ladder, capability_gates)
+                            // are surfaced so the panel and the curator can reason
+                            // about per-tier model resolution and tool gating.
+                            "model_ladder": a.get("model_ladder"),
+                            "capability_gates": a.get("capability_gates"),
                             // `agents.updated_at` exists in fermi's DB (mig-166) but
                             // `build_agent_json` does not expose it in the list
                             // response. Forwarded as null for schema stability;

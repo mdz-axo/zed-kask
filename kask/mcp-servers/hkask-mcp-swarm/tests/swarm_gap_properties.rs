@@ -657,6 +657,8 @@ fn arb_create_agent_request() -> impl Strategy<Value = CreateAgentRequest> {
                         personality_traits,
                     }
                 }),
+                model_ladder: None,
+                capability_gates: None,
             }
         },
     )
@@ -721,6 +723,8 @@ proptest! {
             skills: None,
             visibility: None,
             valence: None,
+            model_ladder: None,
+            capability_gates: None,
         };
         let card = build_create_agent_card(&req, "claude-haiku-4-5-20251001");
         let caps = card.get("capabilities").expect("capabilities present");
@@ -841,6 +845,8 @@ proptest! {
             skills: None,
             visibility: None,
             valence: None,
+            model_ladder: None,
+            capability_gates: None,
         };
         let card = build_create_agent_card(&req, "claude-haiku-4-5-20251001");
         let caps = card.get("capabilities").expect("capabilities present");

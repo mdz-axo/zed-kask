@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use crate::error::SwarmError;
+use crate::error::LocalSwarmError;
 use crate::local_registry::LocalAgentCard;
 
 /// Maximum tool-call rounds per delegation. Each round is a full inference
@@ -177,7 +177,7 @@ impl AgentExecutor {
         &self,
         agent: &LocalAgentCard,
         task_clean: &str,
-    ) -> Result<RawDelegateResult, SwarmError> {
+    ) -> Result<RawDelegateResult, LocalSwarmError> {
         // Build the prompt: system prompt + task.
         // Inject the skill catalog (name + description for declared skills)
         // into the system prompt when `skills_dir` is configured, so the
@@ -286,9 +286,8 @@ impl AgentExecutor {
                 .inference
                 .generate_with_messages(&messages, &params, model_override.as_deref(), tools_slice)
                 .await
-                .map_err(|e| SwarmError::UpstreamModelError {
-                    provider: "local".to_string(),
-                    message: format!("inference failed: {e}"),
+                .map_err(|e| {
+                    LocalSwarmError::Unavailable(format!("local inference failed: {e}"))
                 })?;
             total_tokens += i64::from(result.usage.total_tokens);
             final_model = result.model.clone();

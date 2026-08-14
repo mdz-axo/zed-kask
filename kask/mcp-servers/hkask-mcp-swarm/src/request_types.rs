@@ -11,6 +11,36 @@ use serde::{Deserialize, Serialize};
 
 // ── Request types ──────────────────────────────────────────────────────────
 
+/// A single rung on a model ladder — a (tier → model, provider) mapping.
+/// fermi's ADR-011 cognition-tier system resolves the highest rung at or
+/// below the creature's tier when executing an agent. When `model_ladder`
+/// is `None` on the card, fermi uses the card's single `model` field for
+/// all tiers (the pre-ADR-011 behavior).
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, JsonSchema, Serialize)]
+pub struct ModelLadderRung {
+    /// Cognition tier for this rung: `"free"`, `"standard"`, or `"premium"`.
+    pub tier: String,
+    /// Model id for this tier (e.g. `"claude-haiku-4-5-20251001"`).
+    pub model: String,
+    /// Provider: `"anthropic"`, `"openai"`, `"openrouter"`, `"ollama"`.
+    pub provider: String,
+    /// Optional note explaining why this model is at this tier.
+    pub note: Option<String>,
+}
+
+/// Per-tool cognition-tier gates. Maps a tool name (the qualified
+/// `server/tool` from `mcp_tools`) to the minimum tier required to invoke
+/// it. fermi enforces this at execution time — a creature below the tier
+/// cannot invoke the tool. When `None` on the card, no per-tool gates apply
+/// (all tools available at all tiers).
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, JsonSchema, Serialize)]
+pub struct CapabilityGate {
+    /// The tool name this gate applies to (qualified `server/tool`).
+    pub tool: String,
+    /// Minimum cognition tier: `"free"`, `"standard"`, or `"premium"`.
+    pub min_tier: String,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListAgentsRequest {
     /// Filter by agent type (e.g. "research", "creative", "meta"). Optional.
@@ -280,6 +310,14 @@ pub struct CreateAgentRequest {
     /// ABW agent card. Drives valence-homophily detection in Xaman Ek
     /// composition sessions.
     pub valence: Option<ValenceInput>,
+    /// Per-tier model ladder (fermi ADR-011). When `None`, the card uses the
+    /// single `model` field for all tiers. When `Some`, fermi resolves the
+    /// highest rung at or below the creature's cognition tier.
+    pub model_ladder: Option<Vec<ModelLadderRung>>,
+    /// Per-tool cognition-tier gates (fermi ADR-011). When `None`, no
+    /// per-tool gates apply. When `Some`, each entry maps a tool name to its
+    /// minimum required tier.
+    pub capability_gates: Option<Vec<CapabilityGate>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -1,8 +1,8 @@
 ---
 title: "hkask-regulation — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-06
-version: "0.3.1"
+last_updated: 2026-08-13
+version: "1.0.0"
 status: "Active"
 domain: "Regulation"
 mds_categories: [domain, lifecycle]
@@ -10,78 +10,141 @@ mds_categories: [domain, lifecycle]
 
 # hkask-regulation — Reference
 
-`hkask-regulation` implements the Regulation nervous system for hKask. It
-provides the cybernetic loop that monitors agent behavior, bounds governed
-tool calls via a per-agent call cap, detects variety deficits, and escalates
-algedonic alerts. The crate defines the `RegulationLedger`, `CyberneticsLoop`,
-`MetacognitionLoop`, `CallCapManager`, and the span enums that emit `reg.*`
-observable events.
+`hkask-regulation` is hKask's cybernetic nervous system. It implements the
+homeostatic self-regulation loop (sense→compare→compute→act→verify), the
+per-agent call cap, the algedonic alert path, and the metacognition loop
+that observes the regulator itself. Per Ashby's Law of Requisite Variety,
+the regulator's variety must match the system's variety.
+
+The crate lives at `kask/crates/hkask-regulation/`. Its public surface is
+re-exported from `kask/crates/hkask-regulation/src/hkask_regulation.rs`.
 
 ## Source citations
 
-| Symbol                                      | Location                                                  |
-| ------------------------------------------- | --------------------------------------------------------- |
-| `RegulationLedger` struct                   | `kask/crates/hkask-regulation/src/runtime.rs:418`         |
-| `RegulationCycleEntry` struct               | `kask/crates/hkask-regulation/src/runtime.rs:359`         |
-| `VarietyMonitor` struct                     | `kask/crates/hkask-regulation/src/runtime.rs:273`         |
-| `StoredSkillSpan` struct                    | `kask/crates/hkask-regulation/src/runtime.rs:54`          |
-| `NoopEventSink`                             | `kask/crates/hkask-regulation/src/runtime.rs:848`         |
-| `RegulationArchive` (`RegulationSink` impl) | `kask/crates/hkask-storage/src/regulation_store.rs:508`   |
-| `MetacognitionLoop` struct                  | `kask/crates/hkask-regulation/src/metacognition.rs:150`   |
-| `MetacognitionConfig`                       | `kask/crates/hkask-regulation/src/metacognition.rs:121`   |
-| `HealthSnapshot`                            | `kask/crates/hkask-regulation/src/metacognition.rs:88`    |
-| `EscalationAlert`                           | `kask/crates/hkask-regulation/src/metacognition.rs:103`   |
-| `EscalationTrigger` enum                    | `kask/crates/hkask-regulation/src/metacognition.rs:113`   |
-| `AlertSink` trait                           | `kask/crates/hkask-regulation/src/metacognition.rs:78`    |
-| `AlertEvent`                                | `kask/crates/hkask-regulation/src/metacognition.rs:61`    |
-| `EscalationSeverity` enum                   | `kask/crates/hkask-types/src/curator.rs:68`               |
-| `CyberneticsLoop` struct                    | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:72` |
-| `ProposedAction` struct                     | `kask/crates/hkask-regulation/src/regulation_policy.rs`   |
-| `CallCapManager`                            | `kask/crates/hkask-regulation/src/energy.rs`              |
-| `CallCap`                                   | `kask/crates/hkask-regulation/src/energy.rs`              |
-| `AgentCallCapStatus`                        | `kask/crates/hkask-regulation/src/energy.rs`              |
-| `RuntimeAlert`                              | `kask/crates/hkask-regulation/src/algedonic.rs:37`        |
-| `AlertSeverity` enum                        | `kask/crates/hkask-regulation/src/algedonic.rs:26`        |
-| `AlertEmailSink` trait                      | `kask/crates/hkask-regulation/src/algedonic.rs:54`        |
-| `ToolStats`                                 | `kask/crates/hkask-regulation/src/tool_stats.rs:73`       |
-| `CostDistribution`                          | `kask/crates/hkask-regulation/src/tool_stats.rs:50`       |
-| `ToolReliabilityAlert`                      | `kask/crates/hkask-regulation/src/tool_stats.rs:61`       |
-| `QaSpan` enum                               | `kask/crates/hkask-regulation/src/qa_span.rs:13`          |
-| `CANONICAL_NAMESPACES`                      | `kask/crates/hkask-types/src/event.rs`                    |
+| Symbol | Location |
+|--------|----------|
+| `CyberneticsLoop` struct | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:72` |
+| `CyberneticsLoop::tick` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:1343` |
+| `CyberneticsLoop::build` (sensor wiring) | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:130` |
+| `RegulationLedger` struct | `kask/crates/hkask-regulation/src/runtime.rs:418` |
+| `RegulationCycleEntry` struct | `kask/crates/hkask-regulation/src/runtime.rs:359` |
+| `VarietyMonitor` struct | `kask/crates/hkask-regulation/src/runtime.rs:273` |
+| `VarietyTracker` struct | `kask/crates/hkask-regulation/src/runtime.rs:111` |
+| `OutcomeTracker` struct | `kask/crates/hkask-regulation/src/runtime.rs:193` |
+| `StoredSkillSpan` struct | `kask/crates/hkask-regulation/src/runtime.rs:54` |
+| `SkillSpanStore` struct | `kask/crates/hkask-regulation/src/runtime.rs:70` |
+| `NoopEventSink` | `kask/crates/hkask-regulation/src/runtime.rs:848` |
+| `CallCapManager` | `kask/crates/hkask-regulation/src/energy.rs:163` |
+| `CallCap` struct | `kask/crates/hkask-regulation/src/energy.rs:50` |
+| `AgentCallCapStatus` | `kask/crates/hkask-regulation/src/energy.rs:124` |
+| `CallMeterOutcome` enum | `kask/crates/hkask-regulation/src/energy.rs:35` |
+| `CallCapError` enum | `kask/crates/hkask-regulation/src/energy.rs:141` |
+| `DEFAULT_RUNAWAY_CALL_CEILING` | `kask/crates/hkask-regulation/src/energy.rs:31` |
+| `DEFAULT_CALL_CAP_ALERT_THRESHOLD` | `kask/crates/hkask-regulation/src/energy.rs:21` |
+| `Dampener` struct | `kask/crates/hkask-regulation/src/dampener.rs:91` |
+| `StagnationDetector` struct | `kask/crates/hkask-regulation/src/dampener.rs:222` |
+| `DEFAULT_DAMPEN_WINDOW` | `kask/crates/hkask-regulation/src/dampener.rs:43` |
+| `DEFAULT_OVERRIDE_COOLDOWN` | `kask/crates/hkask-regulation/src/dampener.rs:58` |
+| `RuntimeAlert` struct | `kask/crates/hkask-regulation/src/algedonic.rs:37` |
+| `AlertSeverity` enum | `kask/crates/hkask-regulation/src/algedonic.rs:26` |
+| `AlertEscalationSink` trait | `kask/crates/hkask-regulation/src/algedonic.rs:80` |
+| `AlertEmailSink` trait | `kask/crates/hkask-regulation/src/algedonic.rs:54` |
+| `AlgedonicManager` struct | `kask/crates/hkask-regulation/src/algedonic.rs:187` |
+| `MetacognitionLoop` struct | `kask/crates/hkask-regulation/src/metacognition.rs:150` |
+| `MetacognitionConfig` | `kask/crates/hkask-regulation/src/metacognition.rs:121` |
+| `HealthSnapshot` | `kask/crates/hkask-regulation/src/metacognition.rs:88` |
+| `EscalationAlert` | `kask/crates/hkask-regulation/src/metacognition.rs:103` |
+| `EscalationTrigger` enum | `kask/crates/hkask-regulation/src/metacognition.rs:113` |
+| `AlertSink` trait | `kask/crates/hkask-regulation/src/metacognition.rs:78` |
+| `AlertEvent` | `kask/crates/hkask-regulation/src/metacognition.rs:61` |
+| `Sensor` trait | `kask/crates/hkask-regulation/src/sensor_provider.rs:37` |
+| `SensorBus` | `kask/crates/hkask-regulation/src/sensor_provider.rs:69` |
+| `SensorRegistry` | `kask/crates/hkask-regulation/src/sensor_provider.rs:151` |
+| `EnergyBudgetSensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:251` |
+| `VarietySensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:293` |
+| `ToolReliabilitySensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:331` |
+| `TestCoverageSensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:454` |
+| `MutationScoreSensor` | `kask/crates/hkask-regulation/src/sensor_provider.rs:530` |
+| `ToolStats` struct | `kask/crates/hkask-regulation/src/tool_stats.rs:73` |
+| `CostDistribution` | `kask/crates/hkask-regulation/src/tool_stats.rs:50` |
+| `ToolReliabilityAlert` | `kask/crates/hkask-regulation/src/tool_stats.rs:61` |
+| `StrategyEvaluator` | `kask/crates/hkask-regulation/src/strategy_evaluator.rs:71` |
+| `MovingAverageExtrapolator` | `kask/crates/hkask-regulation/src/system_simulator.rs:29` |
+| `MetricPrediction` | `kask/crates/hkask-regulation/src/system_simulator.rs:16` |
+| `SetPoints` struct | `kask/crates/hkask-regulation/src/set_points.rs:138` |
+| `SetPointsConfig` | `kask/crates/hkask-regulation/src/set_points.rs:217` |
+| `InferenceThrottleMode` enum | `kask/crates/hkask-regulation/src/set_points.rs:60` |
+| `load_set_points` | `kask/crates/hkask-regulation/src/set_points.rs:407` |
+| `RegulationPolicy` | `kask/crates/hkask-regulation/src/regulation_policy.rs:118` |
+| `ProposedAction` | `kask/crates/hkask-regulation/src/regulation_policy.rs:96` |
+| `RegulationReason` enum | `kask/crates/hkask-regulation/src/regulation_policy.rs:18` |
+| `RegulationRule` | `kask/crates/hkask-regulation/src/regulation_policy.rs:104` |
+| `classify_decision` | `kask/crates/hkask-regulation/src/regulation_policy.rs:466` |
+| `default_substitution_ladder` | `kask/crates/hkask-regulation/src/regulation_policy.rs:489` |
+| `LoopId` enum | `kask/crates/hkask-regulation/src/types/loops/core.rs:24` |
+| `LoopMetrics` | `kask/crates/hkask-regulation/src/types/loops/core.rs:182` |
+| `ImpactReport` | `kask/crates/hkask-regulation/src/types/loops/core.rs:73` |
+| `ActionDecision` enum | `kask/crates/hkask-regulation/src/types/loops/core.rs:166` |
+| `TriggerOrigin` enum | `kask/crates/hkask-regulation/src/types/loops/core.rs:50` |
+| `SignalMetric` enum | `kask/crates/hkask-regulation/src/types/loops/signals.rs:14` |
+| `Signal` struct | `kask/crates/hkask-regulation/src/types/loops/signals.rs:144` |
+| `Deviation` struct | `kask/crates/hkask-regulation/src/types/loops/signals.rs:166` |
+| `DeviationDirection` enum | `kask/crates/hkask-regulation/src/types/loops/signals.rs:192` |
+| `RegulatoryAction` | `kask/crates/hkask-regulation/src/types/loops/actions.rs:201` |
+| `RegulatoryActionParams` | `kask/crates/hkask-regulation/src/types/loops/actions.rs:133` |
+| `RegulationData` enum | `kask/crates/hkask-regulation/src/types/loops/actions.rs:19` |
+| `ActionType` enum | `kask/crates/hkask-regulation/src/types/loops/actions.rs:243` |
+| `BudgetOption` | `kask/crates/hkask-regulation/src/types/loops/actions.rs:7` |
+| `CurationInput` enum | `kask/crates/hkask-regulation/src/types/loops/channels.rs:95` |
+| `ToolConsumptionEvent` | `kask/crates/hkask-regulation/src/types/loops/channels.rs:21` |
+| `GoalTransitionEvent` | `kask/crates/hkask-regulation/src/types/loops/channels.rs:35` |
+| `CommunicationEvent` | `kask/crates/hkask-regulation/src/types/loops/channels.rs:78` |
+| `QaSpan` enum | `kask/crates/hkask-regulation/src/qa_span.rs:13` |
+| `SkillFeedbackSpan` enum | `kask/crates/hkask-regulation/src/skill_span.rs:34` |
+| `InfraSpan` enum | `kask/crates/hkask-regulation/src/infra_span.rs:5` |
 
-## Regulation architecture
+## Class diagram
 
-The crate has five responsibility clusters: the ledger, the cybernetic loop,
-the metacognition loop, the per-agent call cap, and the algedonic alert path.
-The class diagram below shows the key types and their relationships.
+The crate has six responsibility clusters: the cybernetic loop, the
+regulation ledger, the per-agent call cap, the algedonic alert path, the
+metacognition loop, and the sensor registry. The class diagram below
+shows the key types and their relationships.
 
 ```mermaid
 classDiagram
+    class CyberneticsLoop {
+        +ledger: Arc~RwLock~RegulationLedger~~
+        +call_cap_manager: Arc~RwLock~CallCapManager~~
+        +set_points: SetPoints
+        +dampener: Arc~Dampener~
+        +event_sink: Option~Arc~RegulationSink~~
+        +alert_escalation_sink: Option~Arc~AlertEscalationSink~~
+        +alerts_tx: Option~Sender~CurationInput~~
+        +sensor_registry: Arc~SensorBus~
+        +stagnation_detector: Arc~StagnationDetector~
+        +tool_stats: Option~Arc~ToolStats~~
+        +strategy_evaluator: Mutex~StrategyEvaluator~
+        +simulator: MovingAverageExtrapolator~
+        +tick()
+        +loop_quality() LoopMetrics
+    }
     class RegulationLedger {
-        +state: Arc~RwLock~RegState~~
+        +state: Arc~RwLock~RegState~
         +record_regulation_cycle(entry)
         +record_skill_span(skill_id, phase, payload)
+        +record_outcome(domain, success, error_kind)
         +variety_for_domain(domain) u64
         +health() LedgerHealth
-    }
-    class CyberneticsLoop {
-        +event_sink: Option~Arc~RegulationSink~~
-        +with_event_sink(sink)
-        +set_event_sink(sink)
-        +tick()
-        +verify_impact()
-    }
-    class MetacognitionLoop {
-        +config: MetacognitionConfig
-        +tick()
-        +run()
-        +compare(snapshot) Vec~EscalationAlert~
+        +regulation_health() RegulationHealth
+        +calibrate_threshold(domain, new_threshold)
     }
     class CallCapManager {
-        +caps: HashMap~WebID, CallCap~
+        +caps: Arc~RwLock~HashMap~WebID, CallCap~~
+        +overrides: Arc~RwLock~HashMap~WebID, OverrideRecord~~
         +register_call_cap(agent, ceiling)
-        +can_proceed(agent) bool
-        +charge(agent) Result
+        +charge_metered(agent) CallMeterOutcome
+        +apply_override(agent, ceiling)
+        +clear_override(agent)
         +reset_all()
     }
     class CallCap {
@@ -89,6 +152,23 @@ classDiagram
         +remaining: u32
         +charge() bool
         +reset()
+        +usage_ratio() f64
+    }
+    class Dampener {
+        +state: Mutex~DampenerState~
+        +should_dampen_directive(d) bool
+    }
+    class StagnationDetector {
+        +history: Mutex~HashMap~
+        +record_and_check(metric, action, accepted) bool
+        +ineffective_count(metric, action) u32
+    }
+    class AlgedonicManager {
+        +threshold: u64
+        +expected_variety: HashMap~String, u64~
+        +alerts: Vec~RuntimeAlert~
+        +check(counter, domain) Option~RuntimeAlert~
+        +check_outcome(domain, rate, total) Option~RuntimeAlert~
     }
     class RuntimeAlert {
         +domain: String
@@ -96,270 +176,228 @@ classDiagram
         +threshold: u64
         +severity: AlertSeverity
         +escalated: bool
+        +message: String
     }
-    class AlertSeverity {
-        <<enumeration>>
-        Info
-        Warning
-        Critical
+    class MetacognitionLoop {
+        +ledger: Arc~RwLock~RegulationLedger~
+        +config: MetacognitionConfig
+        +alert_rx: Option~Mutex~Receiver~~
+        +alert_sink: Option~Arc~AlertSink~~
+        +run()
+        +tick()
     }
-
-    class RegulationSink {
-        <<interface>>
-        +persist(event) Result
-        +persist_if_absent(source_event_id, event) Result~bool~
+    class SensorBus {
+        +providers: Mutex~Vec~Arc~Sensor~~~
+        +register(provider)
+        +sense_all(source) Vec~Signal~
     }
     class ToolStats {
-        +reliability_threshold: f64
-        +reserve_estimate(tool) Option
-        +reliability_alerts() Vec
+        +state: RwLock~HashMap~String, ToolState~~
+        +record(tool, cost, success)
+        +reserve_estimate(tool) CostDistribution
     }
-
-    CyberneticsLoop --> RegulationLedger : reads/writes
-    MetacognitionLoop --> RegulationLedger : senses
-    CyberneticsLoop ..> ProposedAction : consumes
-    CyberneticsLoop --> RegulationSink : persists spans + alerts
-    MetacognitionLoop --> EscalationAlert : emits
-    RuntimeAlert --> AlertSeverity
-    CallCapManager --> CallCap : manages
-    CyberneticsLoop --> CallCapManager : governs tool-call ceiling
+    CyberneticsLoop --> RegulationLedger
+    CyberneticsLoop --> CallCapManager
+    CyberneticsLoop --> Dampener
+    CyberneticsLoop --> StagnationDetector
+    CyberneticsLoop --> SensorBus
+    CyberneticsLoop --> ToolStats
+    CallCapManager --> CallCap
+    RegulationLedger --> AlgedonicManager : RegState.algedonic
+    AlgedonicManager --> RuntimeAlert
+    MetacognitionLoop --> RegulationLedger
 ```
 
 <!-- DIAGRAM_ALIGNMENT
-id: DIAG-DIA-REG-001
-verified_date: 2026-08-05
-verified_against: kask/crates/hkask-regulation/src/runtime.rs; kask/crates/hkask-regulation/src/metacognition.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs; kask/crates/hkask-regulation/src/regulation_policy.rs; kask/crates/hkask-regulation/src/energy.rs; kask/crates/hkask-regulation/src/algedonic.rs; kask/crates/hkask-regulation/src/tool_stats.rs; kask/crates/hkask-types/src/curator.rs
+id: DIAG-REG-003
+verified_date: 2026-08-13
+verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:72; kask/crates/hkask-regulation/src/runtime.rs:418; kask/crates/hkask-regulation/src/energy.rs:163,50; kask/crates/hkask-regulation/src/dampener.rs:91,222; kask/crates/hkask-regulation/src/algedonic.rs:187,37; kask/crates/hkask-regulation/src/metacognition.rs:150; kask/crates/hkask-regulation/src/sensor_provider.rs:69; kask/crates/hkask-regulation/src/tool_stats.rs:73
 status: VERIFIED
 -->
 
-## Ledger and event sink
+## Loop type system
 
-The `RegulationLedger` (`runtime.rs:418`) is the central in-memory record
-store — a cheaply clonable `Arc<RwLock<RegState>>` (`runtime.rs:419`) holding
-the `VarietyMonitor` (`runtime.rs:273`), the
-`regulation_history: VecDeque<RegulationCycleEntry>` (`runtime.rs:383`), the
-`ToolStats`, and the `SkillSpanStore`. It is write-only state: there is no
-`subscribe`/`subscribe_async` observer API and no `publish_event` fan-out
-(`LedgerObserver` does not exist in `hkask-types`). Consumers read the ledger
-through direct async accessors: `health()` (`runtime.rs:459`),
-`variety_for_domain()` (`runtime.rs:621`), `record_regulation_cycle()`
-(`runtime.rs:483`), and `record_skill_span()` (`runtime.rs:670`).
+The loop type system lives in `types/loops/` and is re-exported from
+`hkask_regulation.rs`. The `LoopId` enum (`types/loops/core.rs:24`)
+identifies the five loops; there is no Loop 3 (Control is absorbed into
+Cybernetics) and no Loop 4 (VSM S4 = Curation).
 
-Durability is separate from the ledger. Regulation events are persisted
-through the `RegulationSink` trait (`hkask-types`), which has two
-implementations:
+```mermaid
+classDiagram
+    class LoopId {
+        <<enumeration>>
+        Inference
+        Episodic
+        Semantic
+        Curation
+        Cybernetics
+    }
+    class SignalMetric {
+        <<enumeration>>
+        EnergyRemaining
+        VarietyDeficit
+        ErrorRate
+        ConnectorLatency
+        +30 more
+    }
+    class Signal {
+        +source: LoopId
+        +metric: SignalMetric
+        +value: f64
+        +set_point: f64
+        +timestamp: DateTime
+    }
+    class Deviation {
+        +signal: Signal
+        +magnitude: f64
+        +direction: DeviationDirection
+    }
+    class DeviationDirection {
+        <<enumeration>>
+        AboveSetPoint
+        BelowSetPoint
+    }
+    class RegulatoryAction {
+        +target: LoopId
+        +action_type: ActionType
+        +parameters: RegulatoryActionParams
+        +metric_name: Option~String~
+    }
+    class ActionType {
+        <<enumeration>>
+        Throttle
+        Escalate
+        Calibrate
+        CircuitBreak
+        AdjustEnergyBudget
+        OverrideEnergyBudget
+        ReplenishBudget
+        Notify
+        Prune
+    }
+    class RegulationData {
+        <<enumeration>>
+        EnergyBudgetLow
+        BudgetGuardEscalation
+        VarietyDeficitExceeded
+        ErrorRateExceeded
+        +10 more
+        NoData
+    }
+    class ImpactReport {
+        +action_type: ActionType
+        +metric: SignalMetric
+        +before: f64
+        +after: f64
+        +delta: f64
+        +improved: bool
+        +decision: ActionDecision
+        +prediction: Option~f64~
+        +prediction_error: Option~f64~
+    }
+    class ActionDecision {
+        <<enumeration>>
+        Accept
+        Stage
+        Block
+    }
+    Signal --> LoopId
+    Signal --> SignalMetric
+    Deviation --> Signal
+    Deviation --> DeviationDirection
+    RegulatoryAction --> LoopId
+    RegulatoryAction --> ActionType
+    RegulatoryAction --> RegulatoryActionParams
+    RegulatoryActionParams --> RegulationData
+    ImpactReport --> ActionType
+    ImpactReport --> SignalMetric
+    ImpactReport --> ActionDecision
+```
 
-- `NoopEventSink` (`runtime.rs:848`) — for tests and pre-login bootstrap
-  contexts where persistence is not needed (e.g. seam watcher unit tests).
-- `RegulationArchive` (`kask/crates/hkask-storage/src/regulation_store.rs:508`)
-  — the durable store on the curator's `curator.db` (the same DB the curator MCP
-  server's `reg_query` / `curator_algedonic_log` tools read). `persist`
-  delegates to `insert`; `persist_if_absent` to `insert_if_absent`
-  (`regulation_store.rs:513`).
-
-The sink is wired on the `CyberneticsLoop`, not the ledger:
-`CyberneticsLoop::with_event_sink` (`cybernetics_loop.rs:190`) and
-`set_event_sink` (`cybernetics_loop.rs:236`) attach it. Every
-`emit_regulation_span` (`cybernetics_loop.rs:387`) persists through the sink
-when present and `tracing::warn!`s "Regulation span dropped — no event_sink
-configured" (`cybernetics_loop.rs:400`) when absent — the `.rules`
-startup-failure-signal pattern. The same sink is the algedonic fallback: when
-the live `CurationInput::Alert` channel has no receiver, the alert is
-persisted to the archive (`cybernetics_loop.rs:921`); if neither live channel
-nor sink nor email sink delivers, an error is logged
-(`cybernetics_loop.rs:960` — "Algedonic alert LOST").
-
-The composition root (`crates/zed/src/main.rs`) starts with `NoopEventSink`
-and upgrades to `RegulationArchive` in the post-login deferred task, because
-the archive needs the curator DB passphrase, which only resolves after the
-user logs in (`main.rs:663`, `main.rs:1166`). `McpRuntime::set_event_sink`
-(`kask/crates/hkask-mcp/src/runtime.rs:196`) performs the same upgrade for
-the governed MCP dispatch path.
-
-The `ToolStats` (`tool_stats.rs:73`) tracks per-tool cost distributions and
-reliability via a Beta posterior over success/failure outcomes. The
-`CostDistribution` (`tool_stats.rs:50`) holds the p90 reserve point and
-observation count. The `ToolReliabilityAlert` (`tool_stats.rs:61`) fires when
-a tool's success probability falls below `reliability_threshold`.
-
-## Removed: the per-tool-invocation runtime policy
-
-A `runtime_policy` module (`DefaultPolicy`, `PolicyVerdict`, `PolicyConfig`) once
-sat in this crate and decided whether an individual tool call was allowed,
-blocked, escalated to a human, or logged. The whole module was **deleted on
-2026-08-12**: its `Source`→`Sink` prohibition read two constants — every tool was
-labelled `Pure` at its only construction site, and the untrusted-input flag read
-cascade-context markers the write path had stopped emitting — so it could not deny
-anything. The FIDES taint labels it consumed were deleted with it, and the
-`hkask-capability` dependency this crate carried solely for them was dropped from
-`Cargo.toml`.
-
-Defense **Layer 5 (information flow control) is therefore absent by decision**,
-in the same register as Layer 3 (instruction hierarchy, RR-0010). The governing
-entry is `kask/security/regressions/RR-0053.yaml`, rewritten as an absence check
-that forbids re-introducing an inert gate; it also states the bar a real one must
-clear. Rationale:
-[`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md).
-
-## Cybernetics and metacognition loops
-
-The `CyberneticsLoop` (`cybernetics_loop.rs:72`) drives the five-phase
-sense→compare→compute→act→verify cycle. It implements the `RegulationLoop`
-trait and consumes `ProposedAction` records (`regulation_policy.rs`)
-produced by matching `RegulationRule`s against `Deviation`s. Each phase
-produces data that the `RegulationCycleEntry` (`runtime.rs:359`) captures:
-afferent signal count, deviation count, action count, verified count, and
-decision counts (`accepted`/`staged`/`blocked`).
-
-The `MetacognitionLoop` (`metacognition.rs:150`) is a separate, slower loop
-that senses `HealthSnapshot`s from the ledger, compares them against
-`MetacognitionConfig` thresholds, and emits `EscalationAlert`s
-(`metacognition.rs:103`). The `EscalationTrigger` enum
-(`metacognition.rs:113`) has three variants: `VarietyDeficit`,
-`CriticalAlerts`, and `LowEffectiveness`. The loop uses an `AlertSink` trait
-(`metacognition.rs:78`) for user-facing dispatch; only `Critical`-severity
-alerts are forwarded to the sink.
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-REG-004
+verified_date: 2026-08-13
+verified_against: kask/crates/hkask-regulation/src/types/loops/core.rs:24,73,166; kask/crates/hkask-regulation/src/types/loops/signals.rs:14,144,166,192; kask/crates/hkask-regulation/src/types/loops/actions.rs:19,133,201,243
+status: VERIFIED
+-->
 
 ## Efferent action dispatch
 
-The `CyberneticsLoop::act()` method converts computed `RegulatoryAction`s
-into `Escalate` alerts routed to the Curator/human via the existing
-three-tier alert path (live channel → archive → email). The loop is a
-**sensor+advisor**, not an actuator.
+The Cybernetics Loop is a sensor+advisor, not an actuator. Every computed
+`RegulatoryAction` is converted to an `Escalate` alert by
+`route_action_as_alert` (`cybernetics_loop.rs:1009`) and routed through a
+three-tier path. This preserves user sovereignty: the human (via the
+Curator) decides whether to apply the recommended action; the loop does
+not act autonomously.
 
-### Design rationale
+The `efferent_action` field in the alert's `error_context` JSON carries
+the original `ActionType` (e.g., `Throttle`, `CircuitBreak`) so the
+Curator sees what the loop would have done. Native `Escalate` actions
+(variety deficit, wallet balance) carry `efferent_action: None`.
 
-The loop computes actions of type `Throttle`, `CircuitBreak`,
-`AdjustEnergyBudget`, `OverrideEnergyBudget`, `ReplenishBudget`, `Prune`,
-and `Calibrate` in addition to `Escalate` and `Notify`. These are _efferent
-signals_ — they would modify system behavior if dispatched (reduce inference
-rate, stop a loop, change a gas cap, etc.). The design decision is that the
-loop does not dispatch them autonomously. Instead:
+`Notify` actions are skipped — they are observational ("no action
+required, positive signal" per `ActionType::Notify`'s doc at
+`types/loops/actions.rs:268`). Converting them to Critical alerts would
+be a variety inversion.
 
-1. Efferent actions (all types except `Escalate` and `Notify`) are converted
-   to a `RuntimeAlert` with `AlertSeverity::Critical`.
-2. `Notify` actions are **skipped** — they are observational ("no action
-   required, positive signal" per `ActionType::Notify`'s doc). Converting
-   them to Critical alerts would be a variety inversion (positive signal →
-   critical alert) and would pollute the escalation queue with non-actionable
-   noise.
-3. Actions that would have been direct efferent signals carry an
-   `efferent_action` field in the persisted alert data (the `ActionType::as_str()`
-   of the original action, e.g. `"Throttle"`, `"CircuitBreak"`). This field
-   is included in both the primary escalation queue (`persist_alert_to_queue`)
-   and the archive fallback JSON, so the Curator's `curator_escalations` tool
-   sees the recommended action as structured data.
-4. The alert's `domain` is set to `efferent:{action_type}` for converted
-   actions (empty string for native `Escalate` actions, preserving the
-   prior behavior).
-5. The alert's `message` explains what the loop would have done and why:
-   `"Efferent action Throttle (target: Inference) recommended but not wired —
-reason: energy_budget_low"`.
-6. The alert flows through the standard three-tier path: live channel
-   (`alerts_tx` → `MetacognitionLoop` → `ToastAlertSink`), archive
-   (`RegulationSink::persist`), and email (`AlertEmailSink`).
+## Set-points
 
-### Why not wire the actuators?
+`SetPoints` (`set_points.rs:138`) holds the homeostatic reference values.
+Defaults are declared once as `DEFAULT_*` constants
+(`set_points.rs:13`–`130`) and reused in the `Default` impl
+(`set_points.rs:256`), `SetPointsConfig` (`set_points.rs:217`), and
+`from_config` (`set_points.rs:286`). `validate()` (`set_points.rs:350`)
+checks range and ordering invariants.
 
-Two reasons:
+`load_set_points()` (`set_points.rs:407`) reads `HKASK_REG_CONFIG` env
+var, parses the YAML file, validates, and falls back to defaults on any
+error with a `tracing::warn!`.
 
-1. **User sovereignty.** The cybernetics loop runs on a 30-second tick and
-   computes actions from pattern-based sensors. Giving it actuator power over
-   inference rate, circuit breakers, and gas caps would allow a rapidly
-   evolving piece of remote infrastructure to silently throttle or shut down
-   the user's agent. The user is the final filter on their own system. The
-   loop advises; the human decides.
+`InferenceThrottleMode` (`set_points.rs:60`) controls how low energy
+budget is handled: `Off` (user manages), `Autonomous` (direct throttle),
+or `CuratorMediated { curator_timeout_secs }` (escalate with fallback).
 
-2. **The Curator already has the authority.** `CuratorDirective::OverrideEnergyBudget`,
-   `ClearOverride`, `ReplenishBudget`, and `CalibrateThreshold` are the
-   Curator's actuator methods (`apply_directive` in `cybernetics_loop.rs`).
-   The Curator (human-in-the-loop) can apply any efferent action the loop
-   recommends, with full visibility and consent. Wiring the loop directly to
-   the actuators would bypass the Curator's authority DAG
-   (Curation → Cybernetics → {Inference, Episodic, Semantic}).
+## Dampener and stagnation
 
-### Impact on `verify_impact`
+`Dampener` (`dampener.rs:91`) prevents feedback oscillation in the
+Curation→Cybernetics→Curation cycle. Two layers:
 
-`verify_impact()` classifies each action as Accept/Stage/Block based on
-whether the target metric improved. Since efferent actions are not executed
-(the actuator is not wired), the metric does not change.
+1. **Per-fingerprint dedup** — same (variant, target) within the standard
+   window (default 60s, `DEFAULT_DAMPEN_WINDOW` at `dampener.rs:43`) is
+   suppressed.
+2. **Override cooldown** — after any metacognitive override passes dedup,
+   ALL subsequent overrides are suppressed for `override_cooldown` (default
+   120s, `DEFAULT_OVERRIDE_COOLDOWN` at `dampener.rs:58`).
 
-**Important:** `verify_impact` only handles four `RegulationData` variants
-(`EnergyBudgetLow`, `BudgetGuardEscalation`, `EnergyDepletionAutoAdjust`,
-`VarietyDeficitExceeded`). All other variants hit `_ => continue` and are
-**not classified** — they don't feed the `StagnationDetector` or
-`StrategyEvaluator`. This is a pre-existing gap, not introduced by the
-efferent dispatch refactor.
+`StagnationDetector` (`dampener.rs:222`) tracks (metric, action) pairs.
+When the same pair is rejected for `substitution_after` cycles (default
+2), `try_substitute` walks the substitution ladder. When it hits the
+per-metric stagnation threshold (default 5, `DEFAULT_STAGNATION_THRESHOLD`
+at `set_points.rs:99`), a `RegulatoryPlateau` alert fires.
 
-For the four handled variants: a non-executed action produces zero metric
-change, which `classify_decision` treats as **Accept** (zero worsening is in
-the Accept band, not Stage/Block — those require worsening above
-`stage_worsening_ratio`). This means the loop records the non-action as
-"effective," and `try_substitute` does **not** fire for zero-worsening
-cases. Substitution only triggers when the underlying metric **worsens**
-despite the non-action — at which point the ladder cycles through
-alternative action types, each producing a new efferent alert. This can
-produce multiple Critical alerts for a persistent deviation (alert flood
-risk). The `StagnationDetector`'s `RegulatoryPlateauDetected` span is the
-signal that the loop has exhausted its substitution ladder.
+## Alert sinks
 
-### Future: wiring the actuators
+Three sinks, wired by the composition root:
 
-If the operator decides to wire specific efferent actions (e.g.
-`AdjustEnergyBudget` — which has a clear mechanism via
-`CallCapManager::apply_override`), the dispatch point is `act()` in
-`cybernetics_loop.rs`. The conversion to Escalate is the current behavior;
-adding an `apply_*` method for a specific action type and dispatching it
-before the Escalate conversion would close that specific loop. The
-`apply_directive` pattern (used for Curator-initiated directives) is the
-template: each `apply_*` method modifies state directly and emits a
-`reg.cybernetics` span recording the change.
+| Sink | Trait | Purpose |
+|------|-------|---------|
+| Escalation queue | `AlertEscalationSink` (`algedonic.rs:80`) | Primary durable path — `EscalationQueue` on `curator.db` |
+| Regulation archive | `RegulationSink` (in `hkask-types`) | Secondary fallback — `RegulationArchive` on `curator.db` |
+| Email | `AlertEmailSink` (`algedonic.rs:54`) | Last resort — fires when live channel is down |
 
-## Algedonic alert path
-
-The `RuntimeAlert` (`algedonic.rs:37`) carries a `domain`, `deficit`,
-`threshold`, `severity`, `escalated` flag, and `message`. The `AlertSeverity`
-enum (`algedonic.rs:26`) has three levels: `Info`, `Warning`, and `Critical`.
-Severity is computed by binary thresholds: `deficit > threshold` → `Critical`,
-`deficit > threshold/2` → `Warning`, otherwise `Info`. The `AlertEmailSink`
-trait (`algedonic.rs:54`) forwards critical alerts to an email recipient.
-
-The `EscalationSeverity` enum (re-exported from `hkask_types::curator`,
-`kask/crates/hkask-types/src/curator.rs:68`) is used by `EscalationAlert` and
-also has three levels: `Info`, `Warning`, `Critical`.
-
-## Per-agent call cap
-
-The `CallCapManager` (in `energy.rs`) is the honest replacement for the former
-gas hold-settle ritual. Each agent has a hard `CallCap` ceiling on governed tool
-calls per regulation tick; `McpRuntime::invoke` charges one call per invocation
-via `can_proceed` + `charge`, and the cap resets to its ceiling each tick
-(`reset_all`). The `EnergyBudgetSensor` reads the worst remaining ratio across
-agents and emits an `EnergyRemaining` signal, which the regulation policy turns
-into an `EnergyBudgetLow` throttle action when it drops below
-`SetPoints.gas_min_remaining`.
-
-Curation can override an agent's ceiling (`CuratorDirective::OverrideEnergyBudget`),
-clear the override (`ClearOverride`, restoring the original ceiling), or credit
-calls (`ReplenishBudget`). Overrides survive per-tick resets until explicitly
-cleared. Agents without a registered cap are denied fail-closed — the composition
-root seeds a cap for every agent that makes governed tool calls (e.g. the
-`swarm-panel` persona in `crates/zed/src/main.rs`).
+All sinks are best-effort: a failing or missing sink never breaks the
+regulation loop. The escalation queue is the primary review path; the
+Curator/user reviews pending alerts via the `curator_escalations` MCP
+tool and resolves/dismisses them with an audit trail.
 
 ## See also
 
-- [hkask-regulation Explanation](./explanation.md): state diagram of the
-  homeostatic loop.
-- [hkask-types Reference](../hkask-types/reference.md): the
-  `RegulationSink` trait this crate consumes, and the `EscalationSeverity` type from `hkask-types`.
-- [guard-taint-pipeline](../../architecture/guard-taint-pipeline.md): the removed
-  FIDES taint pipeline, why it was deleted rather than repaired, and the bar a
-  replacement must clear.
-- [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
-  P9 (feedback loops) and P12 (authenticated host mandate).
+- [hkask-regulation Tutorial](./tutorial.md): reading a regulation cycle.
+- [hkask-regulation How-to](./how-to.md): adding a new sensor.
+- [hkask-regulation Explanation](./explanation.md): why the loop is a
+  sensor+advisor.
 
 ---
 
-[^conant-ashby]: Conant, R. C., & Ashby, W. R. (1970). _Every good regulator of a control system must be a model of that system._ International Journal of Systems Science, 1(2), 89-97. <https://www.tandfonline.com/doi/abs/10.1080/00207727008902020>. The Good Regulator theorem: the Regulation system must model the system it regulates.
-
-[^beer-vsm]: Beer, S. (1979). _The Heart of Enterprise._ John Wiley & Sons. The Viable System Model (S1–S5) that the metacognition loop and algedonic path implement.
+[^ashby]: Ashby, W. R. (1956). *An Introduction to Cybernetics.* Chapman & Hall. <https://archive.org/details/introductiontocy00ashb>.
+[^conant-ashby]: Conant, R. C., & Ashby, W. R. (1970). *Every good regulator of a control system must be a model of that system.* International Journal of Systems Science, 1(2), 89–97. <https://www.tandfonline.com/doi/abs/10.1080/00207727008902020>.

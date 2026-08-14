@@ -17,6 +17,33 @@ use a2a::{
     TaskStatus, new_artifact_id, new_context_id, new_task_id,
 };
 
+/// Fallback description for an agent with an empty description field.
+/// Shared by `to_a2a_card` (per-agent card) and `build_gateway_card`
+/// (the HTTP gateway card) so the two don't drift on the fallback shape.
+pub(crate) fn description_or_fallback(card: &LocalAgentCard) -> String {
+    if card.description.is_empty() {
+        format!("Local agent: {}", card.agent_id)
+    } else {
+        card.description.clone()
+    }
+}
+
+/// Build an A2A `AgentSkill` from a local agent card. Shared by
+/// `to_a2a_card` (which builds skills from `accepts`) and
+/// `build_gateway_card` (which builds one skill per agent).
+pub(crate) fn to_a2a_skill(card: &LocalAgentCard) -> AgentSkill {
+    AgentSkill {
+        id: card.agent_id.clone(),
+        name: card.agent_id.clone(),
+        description: description_or_fallback(card),
+        tags: vec![card.agent_type.clone()],
+        examples: None,
+        input_modes: None,
+        output_modes: None,
+        security_requirements: None,
+    }
+}
+
 /// Convert a `LocalAgentCard` to an A2A `AgentCard`. The `url` field in
 /// `supported_interfaces` is set to a placeholder (the in-process transport
 /// doesn't use HTTP) — when an HTTP binding is added, this becomes the
@@ -29,7 +56,7 @@ pub(crate) fn to_a2a_card(card: &LocalAgentCard, base_url: &str) -> AgentCard {
         .map(|(i, _accept)| AgentSkill {
             id: format!("{}-{}", card.agent_id, i),
             name: format!("{} capability", card.agent_type),
-            description: card.description.clone(),
+            description: description_or_fallback(card),
             tags: vec![card.agent_type.clone()],
             examples: None,
             input_modes: None,
@@ -40,11 +67,7 @@ pub(crate) fn to_a2a_card(card: &LocalAgentCard, base_url: &str) -> AgentCard {
 
     AgentCard {
         name: card.agent_id.clone(),
-        description: if card.description.is_empty() {
-            format!("Local agent: {}", card.agent_id)
-        } else {
-            card.description.clone()
-        },
+        description: description_or_fallback(card),
         version: "1.0.0".to_string(),
         supported_interfaces: vec![a2a::AgentInterface {
             url: format!("{}/{}", base_url.trim_end_matches('/'), card.agent_id),

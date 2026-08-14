@@ -1259,7 +1259,11 @@ impl KanbanServer {
         let result = runtime
             .delegate(agent, &task_text, credits_authorized, ceiling)
             .await
-            .map_err(hkask_mcp_swarm::SwarmError::into_tool_error)?;
+            .map_err(|e| {
+                hkask_mcp_server::server::McpToolError::unavailable(format!(
+                    "local swarm delegation failed: {e}"
+                ))
+            })?;
 
         let verdict = result.task_success.clone();
         if let Err(error) =
@@ -1664,13 +1668,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-    // D28 — pins the default DB path resolution.
-    #[test]
-    fn default_db_path_follows_standardized_layout() {
-        let relative = hkask_types::agent_paths::mcp_server_db("kata-kanban", "kanban");
-        assert_eq!(
-            relative,
-            std::path::PathBuf::from("mcp").join("kata-kanban").join("kanban.db"),
-            "kata-kanban default DB path must follow mcp/kata-kanban/kanban.db"
-        );
-    }
+// D28 — pins the default DB path resolution.
+#[test]
+fn default_db_path_follows_standardized_layout() {
+    let relative = hkask_types::agent_paths::mcp_server_db("kata-kanban", "kanban");
+    assert_eq!(
+        relative,
+        std::path::PathBuf::from("mcp")
+            .join("kata-kanban")
+            .join("kanban.db"),
+        "kata-kanban default DB path must follow mcp/kata-kanban/kanban.db"
+    );
+}

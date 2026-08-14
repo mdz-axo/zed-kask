@@ -28,7 +28,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::LocalSwarmError;
-use crate::error::SwarmError;
 use crate::local_registry::LocalAgentRegistry;
 use crate::local_runtime::LazyLocalSwarmRuntime;
 
@@ -199,20 +198,7 @@ fn build_gateway_card(registry: &LocalAgentRegistry, base_url: &str) -> AgentCar
 
     let skills: Vec<AgentSkill> = agents
         .iter()
-        .map(|card| AgentSkill {
-            id: card.agent_id.clone(),
-            name: card.agent_id.clone(),
-            description: if card.description.is_empty() {
-                format!("Local agent: {}", card.agent_id)
-            } else {
-                card.description.clone()
-            },
-            tags: vec![card.agent_type.clone()],
-            examples: None,
-            input_modes: None,
-            output_modes: None,
-            security_requirements: None,
-        })
+        .map(|card| crate::a2a::to_a2a_skill(card))
         .collect();
 
     AgentCard {
@@ -326,10 +312,7 @@ fn handle_jsonrpc(
             }
             let context_id = sm_req.message.context_id;
             let result = tokio_handle.block_on(async {
-                let runtime = runtime
-                    .get_or_init()
-                    .await
-                    .map_err(|e| SwarmError::Unavailable(e.to_string()))?;
+                let runtime = runtime.get_or_init().await?;
                 runtime
                     .delegate(&agent, &text, A2A_HTTP_CREDITS, max_credits_per_dispatch)
                     .await

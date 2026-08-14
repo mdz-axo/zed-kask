@@ -72,6 +72,19 @@ pub fn build_create_agent_card(
             "optional": req.dependencies_optional.clone().unwrap_or_default(),
         });
     }
+    // Model ladder (fermi ADR-011): per-tier model resolution. Injected only
+    // when the caller supplies a value — `None` omits the field so fermi
+    // falls back to the single `model` field.
+    if let Some(ladder) = &req.model_ladder {
+        card["model_ladder"] =
+            serde_json::to_value(ladder).unwrap_or_else(|_| serde_json::json!([]));
+    }
+    // Capability gates (fermi ADR-011): per-tool minimum tier. Injected only
+    // when the caller supplies a value.
+    if let Some(gates) = &req.capability_gates {
+        card["capability_gates"] =
+            serde_json::to_value(gates).unwrap_or_else(|_| serde_json::json!({}));
+    }
     card
 }
 
@@ -262,7 +275,21 @@ mod tests {
              dependencies_optional in prop::option::of(prop::collection::vec(any::<String>(), 0..4)),
              mcp_tools in prop::option::of(prop::collection::vec(any::<String>(), 0..4)),
              skills in prop::option::of(prop::collection::vec(any::<String>(), 0..4)),
-             visibility in prop::option::of(any::<String>()))
+             visibility in prop::option::of(any::<String>()),
+             model_ladder in prop::option::of(prop::collection::vec(
+                 (any::<String>(), any::<String>(), any::<String>(), prop::option::of(any::<String>()))
+                 .prop_map(|(tier, model, provider, note)| {
+                     crate::request_types::ModelLadderRung { tier, model, provider, note }
+                 }),
+                 0..3
+             )),
+             capability_gates in prop::option::of(prop::collection::vec(
+                 (any::<String>(), any::<String>())
+                 .prop_map(|(tool, min_tier)| {
+                     crate::request_types::CapabilityGate { tool, min_tier }
+                 }),
+                 0..3
+             )))
             -> CreateAgentRequest {
             CreateAgentRequest {
                 agent_name,
@@ -280,6 +307,8 @@ mod tests {
                 skills,
                 visibility,
                 valence: None,
+                model_ladder,
+                capability_gates,
             }
         }
     }

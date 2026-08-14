@@ -75,6 +75,72 @@ struct SqliteConsentStore {
 /// unspendable.
 pub(crate) const CONSENT_TTL_SECS: i64 = 3600;
 
+/// Check whether a consent grant has expired. Shared by both backends so the
+/// TTL logic doesn't drift between the Memory and Sqlite paths.
+fn is_expired(created_at: chrono::DateTime<chrono::Utc>) -> bool {
+    chrono::Utc::now()
+        .signed_duration_since(created_at)
+        .num_seconds()
+        > CONSENT_TTL_SECS
+}
+
+/// Validate a consent grant against the requested action, target, and cost.
+/// Returns the authorized ceiling on success. Shared by both backends so the
+/// scope and over-spend checks don't drift between the Memory and Sqlite
+/// paths.
+///
+/// This does NOT remove the grant — the caller (backend-specific) handles
+/// single-use removal atomically.
+fn validate_grant(
+    grant: &ConsentGrant,
+    created_at: chrono::DateTime<chrono::Utc>,
+    action: &str,
+    target: &str,
+    cost: u32,
+) -> Result<u32, SwarmError> {
+    if is_expired(created_at) {
+        return Err(SwarmError::ConsentDenied("consent token expired".into()));
+    }
+    if grant.action != action || grant.target != target {
+        return Err(SwarmError::ConsentDenied(format!(
+            "consent token scope mismatch: token is for {} on '{}', not {} on '{}'",
+            grant.action, grant.target, action, target
+        )));
+    }
+    if cost > grant.credits_authorized {
+        return Err(SwarmError::ConsentDenied(format!(
+            "cost {cost} exceeds authorized ceiling {}",
+            grant.credits_authorized
+        )));
+    }
+    Ok(grant.credits_authorized)
+}
+
+/// Validate a session grant against the requested action and cost. Returns
+/// the remaining credits after deduction on success. Shared by both backends
+/// so the session action and over-budget checks don't drift.
+///
+/// This does NOT deduct — the caller (backend-specific) handles the atomic
+/// deduction.
+fn validate_session(grant: &SessionGrant, action: &str, cost: u32) -> Result<u32, SwarmError> {
+    if is_expired(grant.created_at) {
+        return Err(SwarmError::ConsentDenied("session expired".into()));
+    }
+    let action_ok = grant.actions.is_empty() || grant.actions.iter().any(|a| a == action);
+    if !action_ok {
+        return Err(SwarmError::ConsentDenied(format!(
+            "session does not authorize action '{action}'"
+        )));
+    }
+    if cost > grant.remaining_credits {
+        return Err(SwarmError::ConsentDenied(format!(
+            "cost {cost} exceeds session remaining {}",
+            grant.remaining_credits
+        )));
+    }
+    Ok(grant.remaining_credits - cost)
+}
+
 impl Default for ConsentStore {
     fn default() -> Self {
         Self {
@@ -199,21 +265,11 @@ impl ConsentStore {
                 let grant = grants.get(token).ok_or_else(|| {
                     SwarmError::ConsentDenied("unknown or already-used consent token".into())
                 })?;
-
-                if grant.action != action || grant.target != target {
-                    return Err(SwarmError::ConsentDenied(format!(
-                        "consent token scope mismatch: token is for {} on '{}', not {} on '{}'",
-                        grant.action, grant.target, action, target
-                    )));
-                }
-                if cost > grant.credits_authorized {
-                    return Err(SwarmError::ConsentDenied(format!(
-                        "cost {cost} exceeds authorized ceiling {}",
-                        grant.credits_authorized
-                    )));
-                }
+                // The Memory backend doesn't persist `created_at` on the grant
+                // (the grant is session-scoped). Use `now` as a non-expired
+                // sentinel — the TTL check in `validate_grant` passes.
+                let authorized = validate_grant(grant, chrono::Utc::now(), action, target, cost)?;
                 // Remove only on success — the token is consumed.
-                let authorized = grant.credits_authorized;
                 grants.remove(token);
                 Ok(authorized)
             }
@@ -292,30 +348,7 @@ impl ConsentStore {
                 let grant = sessions.get(token).ok_or_else(|| {
                     SwarmError::ConsentDenied("unknown or expired session token".into())
                 })?;
-                let expired = chrono::Utc::now()
-                    .signed_duration_since(grant.created_at)
-                    .num_seconds()
-                    > CONSENT_TTL_SECS;
-                let action_ok =
-                    grant.actions.is_empty() || grant.actions.iter().any(|a| a == action);
-                let remaining_credits = grant.remaining_credits;
-                // Borrow of `grant` ends here (last use) — NLL releases it.
-
-                if expired {
-                    sessions.remove(token);
-                    return Err(SwarmError::ConsentDenied("session expired".into()));
-                }
-                if !action_ok {
-                    return Err(SwarmError::ConsentDenied(format!(
-                        "session does not authorize action '{action}'"
-                    )));
-                }
-                if cost > remaining_credits {
-                    return Err(SwarmError::ConsentDenied(format!(
-                        "cost {cost} exceeds session remaining {remaining_credits}"
-                    )));
-                }
-                let new_remaining = remaining_credits - cost;
+                let new_remaining = validate_session(grant, action, cost)?;
                 if let Some(grant) = sessions.get_mut(token) {
                     grant.remaining_credits = new_remaining;
                 }
@@ -332,11 +365,7 @@ impl ConsentStore {
             ConsentInner::Memory(_) => {
                 let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
                 let grant = sessions.get(token)?;
-                if chrono::Utc::now()
-                    .signed_duration_since(grant.created_at)
-                    .num_seconds()
-                    > CONSENT_TTL_SECS
-                {
+                if is_expired(grant.created_at) {
                     return None;
                 }
                 Some(grant.remaining_credits)
@@ -408,12 +437,8 @@ impl SqliteConsentStore {
             .map_err(|e| {
                 SwarmError::Unavailable(format!("consent store corrupt created_at: {e}"))
             })?;
-        if chrono::Utc::now()
-            .signed_duration_since(created)
-            .num_seconds()
-            > CONSENT_TTL_SECS
-        {
-            // Expired — remove and treat as unknown (never spendable).
+        // Expired — remove and treat as unknown (never spendable).
+        if is_expired(created) {
             let _ = self.driver.execute(
                 "DELETE FROM consent_grants WHERE token = ?1",
                 &[DbValue::Text(token.to_string())],
@@ -426,17 +451,14 @@ impl SqliteConsentStore {
             u32::try_from(row.get_int(2).map_err(consent_store_err)?).map_err(|_| {
                 SwarmError::Unavailable("consent store corrupt credits_authorized".into())
             })?;
-        if grant_action != action || grant_target != target {
-            return Err(SwarmError::ConsentDenied(format!(
-                "consent token scope mismatch: token is for {grant_action} on '{grant_target}', \
-                 not {action} on '{target}'"
-            )));
-        }
-        if cost > grant_credits {
-            return Err(SwarmError::ConsentDenied(format!(
-                "cost {cost} exceeds authorized ceiling {grant_credits}"
-            )));
-        }
+        let grant = ConsentGrant {
+            action: grant_action,
+            target: grant_target,
+            credits_authorized: grant_credits,
+            token: token.to_string(),
+        };
+        // Validate scope and cost using the shared helper.
+        let authorized = validate_grant(&grant, created, action, target, cost)?;
         // Single-use, atomic across processes: the DELETE returns the affected
         // row count; a concurrent consume of the same token wins the DELETE and
         // this one sees 0 rows → treated as a replay.
@@ -452,7 +474,7 @@ impl SqliteConsentStore {
                 "unknown or already-used consent token".into(),
             ));
         }
-        Ok(grant_credits)
+        Ok(authorized)
     }
 
     fn refund(&self, grant: ConsentGrant) {
@@ -529,11 +551,7 @@ impl SqliteConsentStore {
             .map_err(|e| {
                 SwarmError::Unavailable(format!("consent store corrupt created_at: {e}"))
             })?;
-        if chrono::Utc::now()
-            .signed_duration_since(created)
-            .num_seconds()
-            > CONSENT_TTL_SECS
-        {
+        if is_expired(created) {
             let _ = self.driver.execute(
                 "DELETE FROM consent_sessions WHERE token = ?1",
                 &[DbValue::Text(token.to_string())],
@@ -632,11 +650,7 @@ impl SqliteConsentStore {
         let created = chrono::DateTime::parse_from_rfc3339(created)
             .map(|d| d.with_timezone(&chrono::Utc))
             .ok()?;
-        if chrono::Utc::now()
-            .signed_duration_since(created)
-            .num_seconds()
-            > CONSENT_TTL_SECS
-        {
+        if is_expired(created) {
             return None;
         }
         u32::try_from(row.get_int(0).ok()?).ok()

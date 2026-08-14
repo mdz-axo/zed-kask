@@ -10,7 +10,7 @@ use crate::local_knowledge;
 use crate::local_registry::{
     LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentValence,
 };
-use crate::local_runtime::MAX_FANOUT;
+use crate::local_runtime::{LocalDelegateResult, MAX_FANOUT};
 use crate::request_types::*;
 use crate::sanitize::{
     filter_declared_skills, filter_mcp_tools, sanitize_abw_text, sanitize_agent_id,
@@ -85,7 +85,7 @@ impl SwarmServer {
             let result = runtime
                 .delegate(&agent, &req.task, req.credits_authorized, ceiling)
                 .await
-                .map_err(SwarmError::into_tool_error)?;
+                .map_err(map_local_swarm_error)?;
             // Stigmergy (ACO pheromone trail): record the delegation's
             // performance annotation to the agent's prefix-scoped semantic
             // memory. The SENSE phase can read these via
@@ -120,94 +120,90 @@ impl SwarmServer {
         &self,
         parameters: Parameters<FanoutLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_fanout_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.delegations.is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "delegations must be non-empty".to_string(),
-                ));
-            }
-            if req.delegations.len() > MAX_FANOUT {
-                return Err(McpToolError::invalid_argument(format!(
-                    "fanout cap is {MAX_FANOUT} agents, got {}",
-                    req.delegations.len()
-                )));
-            }
-            let runtime = self.local_runtime.get_or_init().await.map_err(map_local_swarm_error)?;
-            let ceiling = self.client.config().max_credits_per_dispatch;
-            let mut results = Vec::new();
-            let mut failed = 0usize;
-            let mut total_cost = 0i64;
-            // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
-            // capped costs, so it inherits their understatement. Reporting both
-            // keeps the aggregate reconciliation surface honest.
-            let mut total_cost_uncapped = 0i64;
-            let mut total_tokens = 0i64;
-            let mut total_latency_ms = 0u64;
-            for entry in &req.delegations {
-                let agent = self.local_registry.get(&entry.agent_name);
-                let Some(agent) = agent else {
-                    failed += 1;
-                    results.push(serde_json::json!({
-                        "agent_name": entry.agent_name,
-                        "ok": false,
-                        "error": format!("agent '{}' not found in local registry", entry.agent_name),
-                    }));
-                    continue;
-                };
-                match runtime
-                    .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
+        execute_tool_semantic(
+            self,
+            "swarm_fanout_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.delegations.is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "delegations must be non-empty".to_string(),
+                    ));
+                }
+                if req.delegations.len() > MAX_FANOUT {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "fanout cap is {MAX_FANOUT} agents, got {}",
+                        req.delegations.len()
+                    )));
+                }
+                let runtime = self
+                    .local_runtime
+                    .get_or_init()
                     .await
-                {
-                    Ok(r) => {
-                        total_cost += r.cost;
-                        total_cost_uncapped += r.cost_uncapped;
-                        total_tokens += r.tokens_used;
-                        total_latency_ms = total_latency_ms.saturating_add(r.latency_ms);
-                        results.push(serde_json::json!({
-                            "agent_name": entry.agent_name,
-                            "ok": true,
-                            "response": r.response,
-                            "model": r.model,
-                            "tokens_used": r.tokens_used,
-                            "cost": r.cost,
-                            "cost_uncapped": r.cost_uncapped,
-                            "latency_ms": r.latency_ms,
-                            "tool_calls": r.tool_calls,
-                            "executed_skills": r.executed_skills,
-                        }));
-                    }
-                    Err(e) => {
+                    .map_err(map_local_swarm_error)?;
+                let ceiling = self.client.config().max_credits_per_dispatch;
+                let mut results = Vec::new();
+                let mut failed = 0usize;
+                let mut total_cost = 0i64;
+                // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
+                // capped costs, so it inherits their understatement. Reporting both
+                // keeps the aggregate reconciliation surface honest.
+                let mut total_cost_uncapped = 0i64;
+                let mut total_tokens = 0i64;
+                let mut total_latency_ms = 0u64;
+                for entry in &req.delegations {
+                    let agent = self.local_registry.get(&entry.agent_name);
+                    let Some(agent) = agent else {
                         failed += 1;
-                        results.push(serde_json::json!({
-                            "agent_name": entry.agent_name,
-                            "ok": false,
-                            "error": e.to_string(),
-                        }));
+                        results.push(LocalDelegateResult::error_json(
+                            &entry.agent_name,
+                            &format!("agent '{}' not found in local registry", entry.agent_name),
+                        ));
+                        continue;
+                    };
+                    match runtime
+                        .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
+                        .await
+                    {
+                        Ok(r) => {
+                            total_cost += r.cost;
+                            total_cost_uncapped += r.cost_uncapped;
+                            total_tokens += r.tokens_used;
+                            total_latency_ms = total_latency_ms.saturating_add(r.latency_ms);
+                            results.push(r.to_result_json(true));
+                        }
+                        Err(e) => {
+                            failed += 1;
+                            results.push(LocalDelegateResult::error_json(
+                                &entry.agent_name,
+                                &e.to_string(),
+                            ));
+                        }
                     }
                 }
-            }
-            // The aggregate balance is best-effort: each delegation already
-            // returned its own post-debit `balance` in `LocalDelegateResult`,
-            // so this field is a convenience read after the loop. A failed
-            // ledger query is surfaced as `null` — NOT fabricated as `0`
-            // (the `.rules` trap: a failed measurement must be distinguishable
-            // from a measured zero; `swarm_balance_local` already returns an
-            // error on `None`, and the fan-out cannot error without discarding
-            // the per-delegation results that succeeded). `Option<i64>`
-            // serializes to `null` on `None`.
-            let balance: Option<i64> = runtime.balance();
-            Ok(serde_json::json!({
-                "results": results,
-                "total_cost": total_cost,
-                "total_cost_uncapped": total_cost_uncapped,
-                "total_tokens": total_tokens,
-                "total_latency_ms": total_latency_ms,
-                "balance": balance,
-                "failed": failed,
-                "succeeded": req.delegations.len() - failed,
-            }))
-        })
+                // The aggregate balance is best-effort: each delegation already
+                // returned its own post-debit `balance` in `LocalDelegateResult`,
+                // so this field is a convenience read after the loop. A failed
+                // ledger query is surfaced as `null` — NOT fabricated as `0`
+                // (the `.rules` trap: a failed measurement must be distinguishable
+                // from a measured zero; `swarm_balance_local` already returns an
+                // error on `None`, and the fan-out cannot error without discarding
+                // the per-delegation results that succeeded). `Option<i64>`
+                // serializes to `null` on `None`.
+                let balance: Option<i64> = runtime.balance();
+                Ok(serde_json::json!({
+                    "results": results,
+                    "total_cost": total_cost,
+                    "total_cost_uncapped": total_cost_uncapped,
+                    "total_tokens": total_tokens,
+                    "total_latency_ms": total_latency_ms,
+                    "balance": balance,
+                    "failed": failed,
+                    "succeeded": req.delegations.len() - failed,
+                }))
+            },
+        )
         .await
     }
 
@@ -221,97 +217,92 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PipelineLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_pipeline_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.steps.is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "steps must be non-empty".to_string(),
-                ));
-            }
-            const MAX_PIPELINE_STEPS: usize = 10;
-            if req.steps.len() > MAX_PIPELINE_STEPS {
-                return Err(McpToolError::invalid_argument(format!(
-                    "pipeline cap is {MAX_PIPELINE_STEPS} steps, got {}",
-                    req.steps.len()
-                )));
-            }
-            let runtime = self
-                .local_runtime
-                .get_or_init()
-                .await
-                .map_err(map_local_swarm_error)?;
-            let ceiling = self.client.config().max_credits_per_dispatch;
-            let mut results = Vec::new();
-            let mut prev_output = String::new();
-            let mut total_cost = 0i64;
-            // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
-            // capped costs, so it inherits their understatement. Reporting both
-            // keeps the aggregate reconciliation surface honest.
-            let mut total_cost_uncapped = 0i64;
-            let mut total_tokens = 0i64;
-            for (i, step) in req.steps.iter().enumerate() {
-                // Substitute {prev_output} with the previous step's response.
-                let task = if i == 0 {
-                    step.task.clone()
-                } else {
-                    step.task.replace("{prev_output}", &prev_output)
-                };
-                let agent = self.local_registry.get(&step.agent_name);
-                let Some(agent) = agent else {
-                    results.push(serde_json::json!({
-                        "step": i,
-                        "agent_name": step.agent_name,
-                        "ok": false,
-                        "error": format!(
-                            "agent '{}' not found in local registry",
-                            step.agent_name
-                        ),
-                    }));
-                    break; // pipeline stops on agent-not-found
-                };
-                match runtime
-                    .delegate(&agent, &task, step.credits_authorized, ceiling)
+        execute_tool_semantic(
+            self,
+            "swarm_pipeline_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.steps.is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "steps must be non-empty".to_string(),
+                    ));
+                }
+                const MAX_PIPELINE_STEPS: usize = 10;
+                if req.steps.len() > MAX_PIPELINE_STEPS {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "pipeline cap is {MAX_PIPELINE_STEPS} steps, got {}",
+                        req.steps.len()
+                    )));
+                }
+                let runtime = self
+                    .local_runtime
+                    .get_or_init()
                     .await
-                {
-                    Ok(r) => {
-                        prev_output = r.response.clone();
-                        total_cost += r.cost;
-                        total_cost_uncapped += r.cost_uncapped;
-                        total_tokens += r.tokens_used;
-                        results.push(serde_json::json!({
-                            "step": i,
-                            "agent_name": step.agent_name,
-                            "ok": true,
-                            "response": r.response,
-                            "model": r.model,
-                            "tokens_used": r.tokens_used,
-                            "cost": r.cost,
-                            "cost_uncapped": r.cost_uncapped,
-                            "latency_ms": r.latency_ms,
-                        }));
-                    }
-                    Err(e) => {
+                    .map_err(map_local_swarm_error)?;
+                let ceiling = self.client.config().max_credits_per_dispatch;
+                let mut results = Vec::new();
+                let mut prev_output = String::new();
+                let mut total_cost = 0i64;
+                // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
+                // capped costs, so it inherits their understatement. Reporting both
+                // keeps the aggregate reconciliation surface honest.
+                let mut total_cost_uncapped = 0i64;
+                let mut total_tokens = 0i64;
+                for (i, step) in req.steps.iter().enumerate() {
+                    // Substitute {prev_output} with the previous step's response.
+                    let task = if i == 0 {
+                        step.task.clone()
+                    } else {
+                        step.task.replace("{prev_output}", &prev_output)
+                    };
+                    let agent = self.local_registry.get(&step.agent_name);
+                    let Some(agent) = agent else {
                         results.push(serde_json::json!({
                             "step": i,
                             "agent_name": step.agent_name,
                             "ok": false,
-                            "error": e.to_string(),
+                            "error": format!(
+                                "agent '{}' not found in local registry",
+                                step.agent_name
+                            ),
                         }));
-                        break; // pipeline stops on failure
+                        break; // pipeline stops on agent-not-found
+                    };
+                    match runtime
+                        .delegate(&agent, &task, step.credits_authorized, ceiling)
+                        .await
+                    {
+                        Ok(r) => {
+                            prev_output = r.response.clone();
+                            total_cost += r.cost;
+                            total_cost_uncapped += r.cost_uncapped;
+                            total_tokens += r.tokens_used;
+                            let mut entry = r.to_result_json(false);
+                            entry["step"] = serde_json::json!(i);
+                            results.push(entry);
+                        }
+                        Err(e) => {
+                            let mut entry =
+                                LocalDelegateResult::error_json(&step.agent_name, &e.to_string());
+                            entry["step"] = serde_json::json!(i);
+                            results.push(entry);
+                            break; // pipeline stops on failure
+                        }
                     }
                 }
-            }
-            let balance: Option<i64> = runtime.balance();
-            Ok(serde_json::json!({
-                "steps_completed": results.len(),
-                "results": results,
-                "total_cost": total_cost,
-                "total_cost_uncapped": total_cost_uncapped,
-                "total_tokens": total_tokens,
-                "final_output": prev_output,
-                "balance": balance,
-            }))
-        })
+                let balance: Option<i64> = runtime.balance();
+                Ok(serde_json::json!({
+                    "steps_completed": results.len(),
+                    "results": results,
+                    "total_cost": total_cost,
+                    "total_cost_uncapped": total_cost_uncapped,
+                    "total_tokens": total_tokens,
+                    "final_output": prev_output,
+                    "balance": balance,
+                }))
+            },
+        )
         .await
     }
 
@@ -329,23 +320,28 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ListLocalAgentsRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_list_local_agents", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            let limit = req.limit.unwrap_or(200) as usize;
-            let mut agents = self.local_registry.list();
-            // Optional type filter.
-            if let Some(agent_type) = req.agent_type
-                && !agent_type.trim().is_empty()
-            {
-                agents.retain(|a| a.agent_type == agent_type);
-            }
-            agents.truncate(limit);
-            let count = agents.len();
-            Ok(serde_json::json!({
-                "agents": agents,
-                "total": count,
-            }))
-        })
+        execute_tool_semantic(
+            self,
+            "swarm_list_local_agents",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                let limit = req.limit.unwrap_or(200) as usize;
+                let mut agents = self.local_registry.list();
+                // Optional type filter.
+                if let Some(agent_type) = req.agent_type
+                    && !agent_type.trim().is_empty()
+                {
+                    agents.retain(|a| a.agent_type == agent_type);
+                }
+                agents.truncate(limit);
+                let count = agents.len();
+                Ok(serde_json::json!({
+                    "agents": agents,
+                    "total": count,
+                }))
+            },
+        )
         .await
     }
 
@@ -363,163 +359,168 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CloneToLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_clone_to_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
-            // Fetch the agent card from ABW.
-            let abw_card = self
-                .client
-                .get(&format!("/agents/{}", url_encode_segment(&req.agent_name)))
-                .await
-                .map_err(SwarmError::into_tool_error)?;
-            // Build the local card from the ABW card.
-            let agent_id = abw_card
-                .get("agent_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&req.agent_name)
-                .to_string();
-            // Sanitize the agent_id for filesystem use — the ABW response is
-            // third-party data and could contain path traversal sequences
-            // (e.g. "../../etc"). Only allow alphanumerics, dash, underscore,
-            // and dot. If the sanitized id is empty, fall back to the
-            // operator-supplied agent_name (also sanitized).
-            let safe_agent_id = sanitize_agent_id(&agent_id)
-                .or_else(|| sanitize_agent_id(&req.agent_name))
-                .ok_or_else(|| {
-                    McpToolError::invalid_argument(
-                        "agent_id from ABW contains no safe characters".to_string(),
-                    )
-                })?;
-            let agent_type = abw_card
-                .get("agent_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("research")
-                .to_string();
-            let description = abw_card
-                .get("metadata")
-                .and_then(|m| m.get("description"))
-                .and_then(|d| d.as_str())
-                .unwrap_or("")
-                .to_string();
-            let accepts = abw_card
-                .get("accepts")
-                .and_then(|a| a.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let produces = abw_card
-                .get("produces")
-                .and_then(|p| p.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let deps = abw_card
-                .get("dependencies")
-                .and_then(|d| d.as_object())
-                .map(|obj| LocalAgentDependencies {
-                    required: obj
-                        .get("required")
-                        .and_then(|r| r.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    optional: obj
-                        .get("optional")
-                        .and_then(|o| o.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                })
-                .unwrap_or_default();
-            let model = abw_card
-                .get("capabilities")
-                .and_then(|c| c.get("model"))
-                .and_then(|m| m.as_str())
-                .unwrap_or("")
-                .to_string();
-            let system_prompt = abw_card
-                .get("system_prompt")
-                .and_then(|s| s.as_str())
-                .map(sanitize_abw_text);
-            let string_list = |v: Option<&serde_json::Value>| {
-                v.and_then(|x| x.as_array())
+        execute_tool_semantic(
+            self,
+            "swarm_clone_to_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.agent_name.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "agent_name must be non-empty".to_string(),
+                    ));
+                }
+                // Fetch the agent card from ABW.
+                let abw_card = self
+                    .client
+                    .get(&format!("/agents/{}", url_encode_segment(&req.agent_name)))
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                // Build the local card from the ABW card.
+                let agent_id = abw_card
+                    .get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&req.agent_name)
+                    .to_string();
+                // Sanitize the agent_id for filesystem use — the ABW response is
+                // third-party data and could contain path traversal sequences
+                // (e.g. "../../etc"). Only allow alphanumerics, dash, underscore,
+                // and dot. If the sanitized id is empty, fall back to the
+                // operator-supplied agent_name (also sanitized).
+                let safe_agent_id = sanitize_agent_id(&agent_id)
+                    .or_else(|| sanitize_agent_id(&req.agent_name))
+                    .ok_or_else(|| {
+                        McpToolError::invalid_argument(
+                            "agent_id from ABW contains no safe characters".to_string(),
+                        )
+                    })?;
+                let agent_type = abw_card
+                    .get("agent_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("research")
+                    .to_string();
+                let description = abw_card
+                    .get("metadata")
+                    .and_then(|m| m.get("description"))
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let accepts = abw_card
+                    .get("accepts")
+                    .and_then(|a| a.as_array())
                     .map(|arr| {
                         arr.iter()
-                            .filter_map(|x| x.as_str().map(String::from))
-                            .collect::<Vec<_>>()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
                     })
-                    .unwrap_or_default()
-            };
-            let abw_caps = abw_card.get("capabilities");
-            let mcp_tools = filter_mcp_tools(
-                string_list(abw_caps.and_then(|c| c.get("mcp_tools"))),
-                self.client.config().allowed_tool_servers.as_deref(),
-            );
-            let skills =
-                filter_declared_skills(string_list(abw_caps.and_then(|c| c.get("skills"))));
-            let local_card = LocalAgentCard {
-                agent_id: safe_agent_id.clone(),
-                agent_type,
-                description,
-                accepts,
-                produces,
-                dependencies: deps,
-                capabilities: LocalAgentCapabilities {
-                    model,
-                    min_provider_class: "local".to_string(),
-                    system_prompt,
-                    mcp_tools,
-                    skills,
-                },
-                cloud_id: Some(req.agent_name.clone()),
-                tags: Vec::new(),
-                visibility: String::new(),
-                valence: None,
-            };
-            // Write the card to the local registry directory.
-            let dir = self.client.config().local_agents_dir.clone();
-            let card_dir = std::path::Path::new(&dir).join(&safe_agent_id);
-            std::fs::create_dir_all(&card_dir).map_err(|e| {
-                hkask_mcp_server::map_io_error(
-                    e,
-                    &format!("failed to create local agent dir {}", card_dir.display()),
-                )
-            })?;
-            let card_path = card_dir.join("agent_card.json");
-            let json = serde_json::to_string_pretty(&local_card).map_err(|e| {
-                McpToolError::internal(format!("failed to serialize local card: {e}")) // rr0044-ok: serde serialization of own struct
-            })?;
-            std::fs::write(&card_path, json).map_err(|e| {
-                hkask_mcp_server::map_io_error(
-                    e,
-                    &format!("failed to write {}", card_path.display()),
-                )
-            })?;
-            // Reload the registry so the new card is visible.
-            self.local_registry.load().map_err(map_local_swarm_error)?;
-            Ok(serde_json::json!({
-                "cloned": safe_agent_id,
-                "cloud_id": req.agent_name,
-                "path": card_path.to_string_lossy(),
-                "synced": true,
-            }))
-        })
+                    .unwrap_or_default();
+                let produces = abw_card
+                    .get("produces")
+                    .and_then(|p| p.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let deps = abw_card
+                    .get("dependencies")
+                    .and_then(|d| d.as_object())
+                    .map(|obj| LocalAgentDependencies {
+                        required: obj
+                            .get("required")
+                            .and_then(|r| r.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        optional: obj
+                            .get("optional")
+                            .and_then(|o| o.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    })
+                    .unwrap_or_default();
+                let model = abw_card
+                    .get("capabilities")
+                    .and_then(|c| c.get("model"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let system_prompt = abw_card
+                    .get("system_prompt")
+                    .and_then(|s| s.as_str())
+                    .map(sanitize_abw_text);
+                let string_list = |v: Option<&serde_json::Value>| {
+                    v.and_then(|x| x.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|x| x.as_str().map(String::from))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
+                };
+                let abw_caps = abw_card.get("capabilities");
+                let mcp_tools = filter_mcp_tools(
+                    string_list(abw_caps.and_then(|c| c.get("mcp_tools"))),
+                    self.client.config().allowed_tool_servers.as_deref(),
+                );
+                let skills =
+                    filter_declared_skills(string_list(abw_caps.and_then(|c| c.get("skills"))));
+                let local_card = LocalAgentCard {
+                    agent_id: safe_agent_id.clone(),
+                    agent_type,
+                    description,
+                    accepts,
+                    produces,
+                    dependencies: deps,
+                    capabilities: LocalAgentCapabilities {
+                        model,
+                        min_provider_class: "local".to_string(),
+                        system_prompt,
+                        mcp_tools,
+                        skills,
+                    },
+                    cloud_id: Some(req.agent_name.clone()),
+                    tags: Vec::new(),
+                    visibility: String::new(),
+                    valence: None,
+                };
+                // Write the card to the local registry directory.
+                let dir = self.client.config().local_agents_dir.clone();
+                let card_dir = std::path::Path::new(&dir).join(&safe_agent_id);
+                std::fs::create_dir_all(&card_dir).map_err(|e| {
+                    hkask_mcp_server::map_io_error(
+                        e,
+                        &format!("failed to create local agent dir {}", card_dir.display()),
+                    )
+                })?;
+                let card_path = card_dir.join("agent_card.json");
+                let json = serde_json::to_string_pretty(&local_card).map_err(|e| {
+                    McpToolError::internal(format!("failed to serialize local card: {e}")) // rr0044-ok: serde serialization of own struct
+                })?;
+                std::fs::write(&card_path, json).map_err(|e| {
+                    hkask_mcp_server::map_io_error(
+                        e,
+                        &format!("failed to write {}", card_path.display()),
+                    )
+                })?;
+                // Reload the registry so the new card is visible.
+                self.local_registry.load().map_err(map_local_swarm_error)?;
+                Ok(serde_json::json!({
+                    "cloned": safe_agent_id,
+                    "cloud_id": req.agent_name,
+                    "path": card_path.to_string_lossy(),
+                    "synced": true,
+                }))
+            },
+        )
         .await
     }
 
@@ -535,81 +536,86 @@ impl SwarmServer {
         &self,
         parameters: Parameters<PushToCloudRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_push_to_cloud", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
-            let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
-            // Look up the local card.
-            let local_card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
-                McpToolError::not_found(format!(
-                    "agent '{}' not found in local registry",
-                    req.agent_name
-                ))
-            })?;
-            // Build the ABW create/update payload from the local card.
-            let payload = serde_json::json!({
-                "agent_id": local_card.agent_id,
-                "agent_type": local_card.agent_type,
-                "description": local_card.description,
-                "accepts": local_card.accepts,
-                "produces": local_card.produces,
-                "dependencies": local_card.dependencies,
-                "model": local_card.capabilities.model,
-                "system_prompt": local_card.capabilities.system_prompt,
-                "mcp_tools": local_card.capabilities.mcp_tools,
-                "skills": local_card.capabilities.skills,
-            });
-            // POST to ABW. If the agent already exists (cloud_id is set),
-            // ABW updates it; otherwise a new agent is created.
-            let result = self
-                .client
-                .post("/agents", &payload)
-                .await
-                .map_err(SwarmError::into_tool_error)?;
-            // Update the local card's cloud_id to mark it as synced.
-            let cloud_id = result
-                .get("agent_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&local_card.agent_id)
-                .to_string();
-            let mut updated_card = local_card.clone();
-            updated_card.cloud_id = Some(cloud_id.clone());
-            // Write the updated card back to the local registry. Sanitize
-            // the agent_id for filesystem use (defense-in-depth — the card
-            // came from disk, but a manually-placed malicious card could
-            // carry a path-traversal id).
-            let dir = self.client.config().local_agents_dir.clone();
-            let safe_id = sanitize_agent_id(&local_card.agent_id).ok_or_else(|| {
-                McpToolError::invalid_argument(format!(
-                    "agent_id '{}' contains no safe characters",
-                    local_card.agent_id
-                ))
-            })?;
-            let card_path = std::path::Path::new(&dir)
-                .join(&safe_id)
-                .join("agent_card.json");
-            let json = serde_json::to_string_pretty(&updated_card)
-                .map_err(|e| McpToolError::internal(format!("failed to serialize: {e}")))?; // rr0044-ok: serde serialization of own struct
-            std::fs::write(&card_path, json).map_err(|e| {
-                hkask_mcp_server::map_io_error(
-                    e,
-                    &format!("failed to write {}", card_path.display()),
-                )
-            })?;
-            self.local_registry.load().map_err(map_local_swarm_error)?;
-            Ok(serde_json::json!({
-                "pushed": local_card.agent_id,
-                "cloud_id": cloud_id,
-                "synced": true,
-                "result": result,
-            }))
-        })
+        execute_tool_semantic(
+            self,
+            "swarm_push_to_cloud",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                self.client
+                    .require_auth()
+                    .map_err(SwarmError::into_tool_error)?;
+                let req = parameters.0;
+                if req.agent_name.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "agent_name must be non-empty".to_string(),
+                    ));
+                }
+                // Look up the local card.
+                let local_card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                    McpToolError::not_found(format!(
+                        "agent '{}' not found in local registry",
+                        req.agent_name
+                    ))
+                })?;
+                // Build the ABW create/update payload from the local card.
+                let payload = serde_json::json!({
+                    "agent_id": local_card.agent_id,
+                    "agent_type": local_card.agent_type,
+                    "description": local_card.description,
+                    "accepts": local_card.accepts,
+                    "produces": local_card.produces,
+                    "dependencies": local_card.dependencies,
+                    "model": local_card.capabilities.model,
+                    "system_prompt": local_card.capabilities.system_prompt,
+                    "mcp_tools": local_card.capabilities.mcp_tools,
+                    "skills": local_card.capabilities.skills,
+                });
+                // POST to ABW. If the agent already exists (cloud_id is set),
+                // ABW updates it; otherwise a new agent is created.
+                let result = self
+                    .client
+                    .post("/agents", &payload)
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                // Update the local card's cloud_id to mark it as synced.
+                let cloud_id = result
+                    .get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&local_card.agent_id)
+                    .to_string();
+                let mut updated_card = local_card.clone();
+                updated_card.cloud_id = Some(cloud_id.clone());
+                // Write the updated card back to the local registry. Sanitize
+                // the agent_id for filesystem use (defense-in-depth — the card
+                // came from disk, but a manually-placed malicious card could
+                // carry a path-traversal id).
+                let dir = self.client.config().local_agents_dir.clone();
+                let safe_id = sanitize_agent_id(&local_card.agent_id).ok_or_else(|| {
+                    McpToolError::invalid_argument(format!(
+                        "agent_id '{}' contains no safe characters",
+                        local_card.agent_id
+                    ))
+                })?;
+                let card_path = std::path::Path::new(&dir)
+                    .join(&safe_id)
+                    .join("agent_card.json");
+                let json = serde_json::to_string_pretty(&updated_card)
+                    .map_err(|e| McpToolError::internal(format!("failed to serialize: {e}")))?; // rr0044-ok: serde serialization of own struct
+                std::fs::write(&card_path, json).map_err(|e| {
+                    hkask_mcp_server::map_io_error(
+                        e,
+                        &format!("failed to write {}", card_path.display()),
+                    )
+                })?;
+                self.local_registry.load().map_err(map_local_swarm_error)?;
+                Ok(serde_json::json!({
+                    "pushed": local_card.agent_id,
+                    "cloud_id": cloud_id,
+                    "synced": true,
+                    "result": result,
+                }))
+            },
+        )
         .await
     }
 
@@ -627,62 +633,67 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RemoveLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_remove_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
-            // Must exist locally (list/get reload from disk, so a freshly
-            // added card is seen).
-            let card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
-                McpToolError::not_found(format!(
-                    "agent '{}' not found in local registry",
-                    req.agent_name
-                ))
-            })?;
-            let safe_id = sanitize_agent_id(&card.agent_id).ok_or_else(|| {
-                McpToolError::invalid_argument(format!(
-                    "agent_id '{}' contains no safe characters",
-                    card.agent_id
-                ))
-            })?;
-            let dir = self.client.config().local_agents_dir.clone();
-            let registry_root = std::fs::canonicalize(&dir).map_err(|e| {
-                hkask_mcp_server::map_io_error(
-                    e,
-                    &format!("failed to resolve local agents dir {}", dir),
-                )
-            })?;
-            let card_dir = registry_root.join(&safe_id);
-            // Defense-in-depth: refuse to remove anything outside the registry
-            // root (the id is sanitized, but a canonicalized check costs
-            // nothing and pins the invariant).
-            let target = match std::fs::canonicalize(&card_dir) {
-                Ok(t) => t,
-                Err(_) => card_dir,
-            };
-            if !target.starts_with(&registry_root) {
-                return Err(McpToolError::invalid_argument(
-                    "refusing to remove a path outside the local agents dir".to_string(),
-                ));
-            }
-            if target.exists() {
-                std::fs::remove_dir_all(&target).map_err(|e| {
+        execute_tool_semantic(
+            self,
+            "swarm_remove_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.agent_name.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "agent_name must be non-empty".to_string(),
+                    ));
+                }
+                // Must exist locally (list/get reload from disk, so a freshly
+                // added card is seen).
+                let card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                    McpToolError::not_found(format!(
+                        "agent '{}' not found in local registry",
+                        req.agent_name
+                    ))
+                })?;
+                let safe_id = sanitize_agent_id(&card.agent_id).ok_or_else(|| {
+                    McpToolError::invalid_argument(format!(
+                        "agent_id '{}' contains no safe characters",
+                        card.agent_id
+                    ))
+                })?;
+                let dir = self.client.config().local_agents_dir.clone();
+                let registry_root = std::fs::canonicalize(&dir).map_err(|e| {
                     hkask_mcp_server::map_io_error(
                         e,
-                        &format!("failed to remove local agent dir {}", target.display()),
+                        &format!("failed to resolve local agents dir {}", dir),
                     )
                 })?;
-            }
-            self.local_registry.load().map_err(map_local_swarm_error)?;
-            Ok(serde_json::json!({
-                "removed": card.agent_id,
-                "cloud_id": card.cloud_id,
-                "synced": card.cloud_id.is_some(),
-            }))
-        })
+                let card_dir = registry_root.join(&safe_id);
+                // Defense-in-depth: refuse to remove anything outside the registry
+                // root (the id is sanitized, but a canonicalized check costs
+                // nothing and pins the invariant).
+                let target = match std::fs::canonicalize(&card_dir) {
+                    Ok(t) => t,
+                    Err(_) => card_dir,
+                };
+                if !target.starts_with(&registry_root) {
+                    return Err(McpToolError::invalid_argument(
+                        "refusing to remove a path outside the local agents dir".to_string(),
+                    ));
+                }
+                if target.exists() {
+                    std::fs::remove_dir_all(&target).map_err(|e| {
+                        hkask_mcp_server::map_io_error(
+                            e,
+                            &format!("failed to remove local agent dir {}", target.display()),
+                        )
+                    })?;
+                }
+                self.local_registry.load().map_err(map_local_swarm_error)?;
+                Ok(serde_json::json!({
+                    "removed": card.agent_id,
+                    "cloud_id": card.cloud_id,
+                    "synced": card.cloud_id.is_some(),
+                }))
+            },
+        )
         .await
     }
 
@@ -700,94 +711,100 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateLocalAgentRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_create_local_agent", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.agent_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_id must be non-empty".to_string(),
-                ));
-            }
-            if req.agent_type.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_type must be non-empty".to_string(),
-                ));
-            }
-            if req.system_prompt.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "system_prompt must be non-empty".to_string(),
-                ));
-            }
-            let safe_id = sanitize_agent_id(&req.agent_id).ok_or_else(|| {
-                McpToolError::invalid_argument(
-                    "agent_id must contain only alphanumerics, dash, underscore, or dot"
-                        .to_string(),
-                )
-            })?;
-            let model = if req.model.trim().is_empty() {
-                self.client.config().default_agent_model.clone()
-            } else {
-                req.model.clone()
-            };
-            let card = LocalAgentCard {
-                agent_id: safe_id.clone(),
-                agent_type: req.agent_type,
-                description: req.description,
-                accepts: req.accepts,
-                produces: req.produces,
-                dependencies: LocalAgentDependencies::default(),
-                capabilities: LocalAgentCapabilities {
-                    model,
-                    min_provider_class: "local".to_string(),
-                    system_prompt: Some(req.system_prompt),
-                    mcp_tools: filter_mcp_tools(
-                        req.mcp_tools,
-                        self.client.config().allowed_tool_servers.as_deref(),
-                    ),
-                    skills: filter_declared_skills(req.skills),
-                },
-                cloud_id: None,
-                tags: req.tags,
-                visibility: if req.visibility.trim().is_empty() {
-                    "private".to_string()
+        execute_tool_semantic(
+            self,
+            "swarm_create_local_agent",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.agent_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "agent_id must be non-empty".to_string(),
+                    ));
+                }
+                if req.agent_type.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "agent_type must be non-empty".to_string(),
+                    ));
+                }
+                if req.system_prompt.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "system_prompt must be non-empty".to_string(),
+                    ));
+                }
+                let safe_id = sanitize_agent_id(&req.agent_id).ok_or_else(|| {
+                    McpToolError::invalid_argument(
+                        "agent_id must contain only alphanumerics, dash, underscore, or dot"
+                            .to_string(),
+                    )
+                })?;
+                let model = if req.model.trim().is_empty() {
+                    self.client.config().default_agent_model.clone()
                 } else {
-                    req.visibility
-                },
-                valence: req.valence.map(|v| LocalAgentValence {
-                    arousal: v.arousal,
-                    valence: v.valence,
-                    primary_affect: v.primary_affect,
-                    personality_traits: v.personality_traits.unwrap_or_default(),
-                }),
-            };
-            let dir = self.client.config().local_agents_dir.clone();
-            let registry_root = std::fs::canonicalize(&dir).map_err(|e| {
-                hkask_mcp_server::map_io_error(
-                    e,
-                    &format!("failed to resolve local agents dir {}", dir),
-                )
-            })?;
-            let card_dir = registry_root.join(&safe_id);
-            // Defense-in-depth: refuse to write outside the registry root (the
-            // id is sanitized, but a canonicalized check costs nothing and pins
-            // the invariant — same pattern as swarm_remove_local).
-            if !card_dir.starts_with(&registry_root) {
-                return Err(McpToolError::invalid_argument(
-                    "refusing to write a path outside the local agents dir".to_string(),
-                ));
-            }
-            std::fs::create_dir_all(&card_dir)
-                .map_err(|e| hkask_mcp_server::map_io_error(e, "failed to create agent dir"))?;
-            let card_path = card_dir.join("agent_card.json");
-            let json = serde_json::to_string_pretty(&card)
-                .map_err(|e| McpToolError::internal(format!("failed to serialize card: {e}")))?; // rr0044-ok: serde serialization of own struct
-            std::fs::write(&card_path, &json)
-                .map_err(|e| hkask_mcp_server::map_io_error(e, "failed to write card"))?;
-            self.local_registry.load().map_err(map_local_swarm_error)?;
-            Ok(serde_json::json!({
-                "created": safe_id,
-                "path": card_path.to_string_lossy(),
-            }))
-        })
+                    req.model.clone()
+                };
+                let card = LocalAgentCard {
+                    agent_id: safe_id.clone(),
+                    agent_type: req.agent_type,
+                    description: req.description,
+                    accepts: req.accepts,
+                    produces: req.produces,
+                    dependencies: LocalAgentDependencies::default(),
+                    capabilities: LocalAgentCapabilities {
+                        model,
+                        min_provider_class: "local".to_string(),
+                        system_prompt: Some(req.system_prompt),
+                        mcp_tools: filter_mcp_tools(
+                            req.mcp_tools,
+                            self.client.config().allowed_tool_servers.as_deref(),
+                        ),
+                        skills: filter_declared_skills(req.skills),
+                    },
+                    cloud_id: None,
+                    tags: req.tags,
+                    visibility: if req.visibility.trim().is_empty() {
+                        "private".to_string()
+                    } else {
+                        req.visibility
+                    },
+                    valence: req.valence.map(|v| LocalAgentValence {
+                        arousal: v.arousal,
+                        valence: v.valence,
+                        primary_affect: v.primary_affect,
+                        personality_traits: v.personality_traits.unwrap_or_default(),
+                    }),
+                };
+                let dir = self.client.config().local_agents_dir.clone();
+                let registry_root = std::fs::canonicalize(&dir).map_err(|e| {
+                    hkask_mcp_server::map_io_error(
+                        e,
+                        &format!("failed to resolve local agents dir {}", dir),
+                    )
+                })?;
+                let card_dir = registry_root.join(&safe_id);
+                // Defense-in-depth: refuse to write outside the registry root (the
+                // id is sanitized, but a canonicalized check costs nothing and pins
+                // the invariant — same pattern as swarm_remove_local).
+                if !card_dir.starts_with(&registry_root) {
+                    return Err(McpToolError::invalid_argument(
+                        "refusing to write a path outside the local agents dir".to_string(),
+                    ));
+                }
+                std::fs::create_dir_all(&card_dir)
+                    .map_err(|e| hkask_mcp_server::map_io_error(e, "failed to create agent dir"))?;
+                let card_path = card_dir.join("agent_card.json");
+                let json = serde_json::to_string_pretty(&card).map_err(|e| {
+                    McpToolError::internal(format!("failed to serialize card: {e}"))
+                })?; // rr0044-ok: serde serialization of own struct
+                std::fs::write(&card_path, &json)
+                    .map_err(|e| hkask_mcp_server::map_io_error(e, "failed to write card"))?;
+                self.local_registry.load().map_err(map_local_swarm_error)?;
+                Ok(serde_json::json!({
+                    "created": safe_id,
+                    "path": card_path.to_string_lossy(),
+                }))
+            },
+        )
         .await
     }
 
@@ -872,21 +889,26 @@ impl SwarmServer {
         &self,
         parameters: Parameters<CreateLocalSwarmRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_create_local_swarm", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "name must be non-empty".to_string(),
-                ));
-            }
-            let swarm = self
-                .local_swarms
-                .create(&req.name, &req.mission, req.agents)
-                .map_err(map_local_swarm_error)?;
-            Ok(serde_json::to_value(&swarm).unwrap_or_else(
-                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
-            ))
-        })
+        execute_tool_semantic(
+            self,
+            "swarm_create_local_swarm",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.name.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "name must be non-empty".to_string(),
+                    ));
+                }
+                let swarm = self
+                    .local_swarms
+                    .create(&req.name, &req.mission, req.agents)
+                    .map_err(map_local_swarm_error)?;
+                Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                    |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+                ))
+            },
+        )
         .await
     }
 
@@ -899,13 +921,18 @@ impl SwarmServer {
         &self,
         _parameters: Parameters<ListLocalSwarmsRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_list_local_swarms", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let swarms = self.local_swarms.list();
-            Ok(serde_json::json!({
-                "count": swarms.len(),
-                "swarms": swarms,
-            }))
-        })
+        execute_tool_semantic(
+            self,
+            "swarm_list_local_swarms",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let swarms = self.local_swarms.list();
+                Ok(serde_json::json!({
+                    "count": swarms.len(),
+                    "swarms": swarms,
+                }))
+            },
+        )
         .await
     }
 
@@ -917,20 +944,25 @@ impl SwarmServer {
         &self,
         parameters: Parameters<GetLocalSwarmRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_get_local_swarm", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.swarm_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "swarm_id must be non-empty".to_string(),
-                ));
-            }
-            let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
-                McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
-            })?;
-            Ok(serde_json::to_value(&swarm).unwrap_or_else(
-                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
-            ))
-        })
+        execute_tool_semantic(
+            self,
+            "swarm_get_local_swarm",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.swarm_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "swarm_id must be non-empty".to_string(),
+                    ));
+                }
+                let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
+                    McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
+                })?;
+                Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                    |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+                ))
+            },
+        )
         .await
     }
 
@@ -944,18 +976,23 @@ impl SwarmServer {
         &self,
         parameters: Parameters<DeleteLocalSwarmRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_delete_local_swarm", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.swarm_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "swarm_id must be non-empty".to_string(),
-                ));
-            }
-            self.local_swarms
-                .delete(&req.swarm_id)
-                .map_err(map_local_swarm_error)?;
-            Ok(serde_json::json!({ "deleted": req.swarm_id }))
-        })
+        execute_tool_semantic(
+            self,
+            "swarm_delete_local_swarm",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.swarm_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "swarm_id must be non-empty".to_string(),
+                    ));
+                }
+                self.local_swarms
+                    .delete(&req.swarm_id)
+                    .map_err(map_local_swarm_error)?;
+                Ok(serde_json::json!({ "deleted": req.swarm_id }))
+            },
+        )
         .await
     }
 
@@ -971,21 +1008,26 @@ impl SwarmServer {
         &self,
         parameters: Parameters<AddAgentToLocalSwarmRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_add_agent_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "swarm_id and agent_name must be non-empty".to_string(),
-                ));
-            }
-            let swarm = self
-                .local_swarms
-                .add_member(&req.swarm_id, &req.agent_name)
-                .map_err(map_local_swarm_error)?;
-            Ok(serde_json::to_value(&swarm).unwrap_or_else(
-                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
-            ))
-        })
+        execute_tool_semantic(
+            self,
+            "swarm_add_agent_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "swarm_id and agent_name must be non-empty".to_string(),
+                    ));
+                }
+                let swarm = self
+                    .local_swarms
+                    .add_member(&req.swarm_id, &req.agent_name)
+                    .map_err(map_local_swarm_error)?;
+                Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                    |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
+                ))
+            },
+        )
         .await
     }
 
@@ -999,21 +1041,26 @@ impl SwarmServer {
         &self,
         parameters: Parameters<RemoveAgentFromLocalSwarmRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_remove_agent_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "swarm_id and agent_name must be non-empty".to_string(),
-                ));
-            }
-            let swarm = self
-                .local_swarms
-                .remove_member(&req.swarm_id, &req.agent_name)
-                .map_err(map_local_swarm_error)?;
-            Ok(serde_json::to_value(&swarm).unwrap_or_else(
-                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
-            ))
-        })
+        execute_tool_semantic(
+            self,
+            "swarm_remove_agent_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "swarm_id and agent_name must be non-empty".to_string(),
+                    ));
+                }
+                let swarm = self
+                    .local_swarms
+                    .remove_member(&req.swarm_id, &req.agent_name)
+                    .map_err(map_local_swarm_error)?;
+                Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                    |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
+                ))
+            },
+        )
         .await
     }
 
@@ -1198,29 +1245,35 @@ impl SwarmServer {
         &self,
         parameters: Parameters<EvaluateLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_evaluate_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.response.trim().is_empty() || req.spec.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "response and spec must be non-empty".to_string(),
-                ));
-            }
-            let pass = run_evaluator(&req.response, &req.evaluator, &req.spec)?;
-            let detail = format!(
-                "evaluator={}, spec_len={}, pass={}",
-                req.evaluator,
-                req.spec.len(),
-                pass
-            );
-            let verdict = crate::local_runtime::TaskSuccessVerdict {
-                pass,
-                score: None,
-                detail: Some(detail),
-                provenance: crate::local_runtime::TaskSuccessProvenance::Deterministic,
-            };
-            Ok(serde_json::to_value(&verdict)
-                .unwrap_or_else(|_| serde_json::json!({ "error": "failed to serialize verdict" })))
-        })
+        execute_tool_semantic(
+            self,
+            "swarm_evaluate_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.response.trim().is_empty() || req.spec.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "response and spec must be non-empty".to_string(),
+                    ));
+                }
+                let pass = run_evaluator(&req.response, &req.evaluator, &req.spec)?;
+                let detail = format!(
+                    "evaluator={}, spec_len={}, pass={}",
+                    req.evaluator,
+                    req.spec.len(),
+                    pass
+                );
+                let verdict = crate::local_runtime::TaskSuccessVerdict {
+                    pass,
+                    score: None,
+                    detail: Some(detail),
+                    provenance: crate::local_runtime::TaskSuccessProvenance::Deterministic,
+                };
+                Ok(serde_json::to_value(&verdict).unwrap_or_else(
+                    |_| serde_json::json!({ "error": "failed to serialize verdict" }),
+                ))
+            },
+        )
         .await
     }
 
@@ -1239,57 +1292,59 @@ impl SwarmServer {
         &self,
         parameters: Parameters<ExecutePlanLocalRequest>,
     ) -> String {
-        execute_tool_semantic(self, "swarm_execute_plan_local", Some(hkask_bridge_ontology::pko::PROCEDURE), async {
-            let req = parameters.0;
-            if req.delegations.is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "delegations must be non-empty".to_string(),
-                ));
-            }
-            if req.delegations.len() > MAX_FANOUT {
-                return Err(McpToolError::invalid_argument(format!(
-                    "plan cap is {MAX_FANOUT} delegations, got {}",
-                    req.delegations.len()
-                )));
-            }
-            let runtime = self.local_runtime.get_or_init().await.map_err(map_local_swarm_error)?;
-            let ceiling = self.client.config().max_credits_per_dispatch;
-            let mut results = Vec::new();
-            let mut failed = 0usize;
-            let mut total_cost = 0i64;
-            // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
-            // capped costs, so it inherits their understatement. Reporting both
-            // keeps the aggregate reconciliation surface honest.
-            let mut total_cost_uncapped = 0i64;
-            let mut total_tokens = 0i64;
-            for entry in &req.delegations {
-                let agent = self.local_registry.get(&entry.agent_name);
-                let Some(agent) = agent else {
-                    failed += 1;
-                    results.push(serde_json::json!({
-                        "agent_id": entry.agent_name,
-                        "ok": false,
-                        "error": format!("agent '{}' not found in local registry", entry.agent_name),
-                    }));
-                    continue;
-                };
-                match runtime
-                    .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
+        execute_tool_semantic(
+            self,
+            "swarm_execute_plan_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.delegations.is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "delegations must be non-empty".to_string(),
+                    ));
+                }
+                if req.delegations.len() > MAX_FANOUT {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "plan cap is {MAX_FANOUT} delegations, got {}",
+                        req.delegations.len()
+                    )));
+                }
+                let runtime = self
+                    .local_runtime
+                    .get_or_init()
                     .await
-                {
-                    Ok(mut r) => {
-                        total_cost += r.cost;
-                        total_cost_uncapped += r.cost_uncapped;
-                        total_tokens += r.tokens_used;
-                        // Stamp the deterministic verdict when an evaluator is provided.
-                        if let Some(ev) = &entry.evaluator {
-                            let pass = run_evaluator(
-                                &r.response,
-                                &ev.evaluator,
-                                &ev.spec,
-                            )?;
-                            r.task_success = Some(
-                                crate::local_runtime::TaskSuccessVerdict {
+                    .map_err(map_local_swarm_error)?;
+                let ceiling = self.client.config().max_credits_per_dispatch;
+                let mut results = Vec::new();
+                let mut failed = 0usize;
+                let mut total_cost = 0i64;
+                // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
+                // capped costs, so it inherits their understatement. Reporting both
+                // keeps the aggregate reconciliation surface honest.
+                let mut total_cost_uncapped = 0i64;
+                let mut total_tokens = 0i64;
+                for entry in &req.delegations {
+                    let agent = self.local_registry.get(&entry.agent_name);
+                    let Some(agent) = agent else {
+                        failed += 1;
+                        results.push(LocalDelegateResult::error_json(
+                            &entry.agent_name,
+                            &format!("agent '{}' not found in local registry", entry.agent_name),
+                        ));
+                        continue;
+                    };
+                    match runtime
+                        .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
+                        .await
+                    {
+                        Ok(mut r) => {
+                            total_cost += r.cost;
+                            total_cost_uncapped += r.cost_uncapped;
+                            total_tokens += r.tokens_used;
+                            // Stamp the deterministic verdict when an evaluator is provided.
+                            if let Some(ev) = &entry.evaluator {
+                                let pass = run_evaluator(&r.response, &ev.evaluator, &ev.spec)?;
+                                r.task_success = Some(crate::local_runtime::TaskSuccessVerdict {
                                     pass,
                                     score: None,
                                     detail: Some(format!(
@@ -1300,42 +1355,41 @@ impl SwarmServer {
                                     )),
                                     provenance:
                                         crate::local_runtime::TaskSuccessProvenance::Deterministic,
-                                },
-                            );
+                                });
+                            }
+                            // Record stigmergy (same as swarm_delegate_local).
+                            local_knowledge::record_delegation(
+                                &self.local_memory,
+                                &entry.agent_name,
+                                r.latency_ms,
+                                r.task_success.as_ref().map(|t| t.pass),
+                            )
+                            .await;
+                            results.push(serde_json::to_value(&r).unwrap_or_else(
+                                |_| serde_json::json!({ "error": "failed to serialize result" }),
+                            ));
                         }
-                        // Record stigmergy (same as swarm_delegate_local).
-                        local_knowledge::record_delegation(
-                            &self.local_memory,
-                            &entry.agent_name,
-                            r.latency_ms,
-                            r.task_success.as_ref().map(|t| t.pass),
-                        )
-                        .await;
-                        results.push(serde_json::to_value(&r).unwrap_or_else(|_| {
-                            serde_json::json!({ "error": "failed to serialize result" })
-                        }));
-                    }
-                    Err(e) => {
-                        failed += 1;
-                        results.push(serde_json::json!({
-                            "agent_id": entry.agent_name,
-                            "ok": false,
-                            "error": e.to_string(),
-                        }));
+                        Err(e) => {
+                            failed += 1;
+                            results.push(LocalDelegateResult::error_json(
+                                &entry.agent_name,
+                                &e.to_string(),
+                            ));
+                        }
                     }
                 }
-            }
-            let balance: Option<i64> = runtime.balance();
-            Ok(serde_json::json!({
-                "results": results,
-                "total_cost": total_cost,
-                "total_cost_uncapped": total_cost_uncapped,
-                "total_tokens": total_tokens,
-                "balance": balance,
-                "failed": failed,
-                "succeeded": req.delegations.len() - failed,
-            }))
-        })
+                let balance: Option<i64> = runtime.balance();
+                Ok(serde_json::json!({
+                    "results": results,
+                    "total_cost": total_cost,
+                    "total_cost_uncapped": total_cost_uncapped,
+                    "total_tokens": total_tokens,
+                    "balance": balance,
+                    "failed": failed,
+                    "succeeded": req.delegations.len() - failed,
+                }))
+            },
+        )
         .await
     }
 }
