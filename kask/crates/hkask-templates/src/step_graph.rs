@@ -250,6 +250,9 @@ mod tests {
             branching: None,
             branching_field: None,
             profile: None,
+            id: None,
+            command: None,
+            on_failure: None,
         }
     }
 

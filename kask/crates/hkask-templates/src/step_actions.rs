@@ -754,82 +754,6 @@ impl StepMachine {
             value: joined,
         })
     }
-}
-
-// ── Helper functions ──────────────────────────────────────────────────────
-
-/// Render a step's template and return the rendered string.
-fn render_step_template(
-    node: &crate::step_graph::StepNode,
-    ctx: &StepContext,
-    infra: &Infra,
-) -> Result<String> {
-    let (rendered, _, _) = render_step_template_with_raw(node, ctx, infra)?;
-    Ok(rendered)
-}
-
-/// Render a step's template and return the rendered prompt, the raw template
-/// content (for output-schema extraction), and the parsed `[inference]` config
-/// block (for LLM parameter overrides).
-fn render_step_template_with_raw(
-    node: &crate::step_graph::StepNode,
-    ctx: &StepContext,
-    infra: &Infra,
-) -> Result<(String, String, crate::template_renderer::InferenceBlock)> {
-    use crate::template_renderer::{parse_and_strip_inference_block, strip_front_matter};
-
-    let renderer = node.renderer.as_deref().unwrap_or("");
-
-    match renderer {
-        "minijinja" => {
-            let template_ref_raw = node.template_ref.as_deref().ok_or_else(|| {
-                TemplateError::Manifest(format!(
-                    "Step {} has renderer='minijinja' but no template_ref",
-                    node.ordinal
-                ))
-            })?;
-            let template_ref =
-                crate::template_renderer::TemplateRenderer::render_inline(template_ref_raw, ctx);
-
-            let template_content = infra.template_renderer.load(&template_ref, node.ordinal)?;
-
-            tracing::info!(
-                target: "reg.spec.executor",
-                step = node.ordinal,
-                template = %template_ref,
-                "Rendering minijinja template"
-            );
-
-            // Parse the `[inference]` block from the template body (after front
-            // matter stripping) to extract per-step LLM parameters.
-            let after_front_matter = strip_front_matter(&template_content);
-            let (_stripped_body, inference_block) =
-                parse_and_strip_inference_block(after_front_matter);
-
-            let prompt = infra.template_renderer.render(&template_content, ctx)?;
-            Ok((prompt, template_content, inference_block))
-        }
-        _ => {
-            let template_content = node
-                .template_ref
-                .as_deref()
-                .or(node.renderer.as_deref())
-                .ok_or_else(|| {
-                    TemplateError::Manifest(format!(
-                        "Step {} has no template_ref or renderer",
-                        node.ordinal
-                    ))
-                })?;
-
-            let rendered =
-                crate::template_renderer::TemplateRenderer::render_inline(template_content, ctx);
-            Ok((
-                rendered,
-                template_content.to_string(),
-                InferenceBlock::default(),
-            ))
-        }
-    }
 
     /// **Gate** — run a shell command and check its output for `GATE_PASS` or
     /// `GATE_FAIL`. Used by pipeline manifests to verify disk artifacts and
@@ -943,6 +867,82 @@ fn render_step_template_with_raw(
             combined,
             resume_text,
         )))
+    }
+}
+
+// ── Helper functions ──────────────────────────────────────────────────────
+
+/// Render a step's template and return the rendered string.
+fn render_step_template(
+    node: &crate::step_graph::StepNode,
+    ctx: &StepContext,
+    infra: &Infra,
+) -> Result<String> {
+    let (rendered, _, _) = render_step_template_with_raw(node, ctx, infra)?;
+    Ok(rendered)
+}
+
+/// Render a step's template and return the rendered prompt, the raw template
+/// content (for output-schema extraction), and the parsed `[inference]` config
+/// block (for LLM parameter overrides).
+fn render_step_template_with_raw(
+    node: &crate::step_graph::StepNode,
+    ctx: &StepContext,
+    infra: &Infra,
+) -> Result<(String, String, crate::template_renderer::InferenceBlock)> {
+    use crate::template_renderer::{parse_and_strip_inference_block, strip_front_matter};
+
+    let renderer = node.renderer.as_deref().unwrap_or("");
+
+    match renderer {
+        "minijinja" => {
+            let template_ref_raw = node.template_ref.as_deref().ok_or_else(|| {
+                TemplateError::Manifest(format!(
+                    "Step {} has renderer='minijinja' but no template_ref",
+                    node.ordinal
+                ))
+            })?;
+            let template_ref =
+                crate::template_renderer::TemplateRenderer::render_inline(template_ref_raw, ctx);
+
+            let template_content = infra.template_renderer.load(&template_ref, node.ordinal)?;
+
+            tracing::info!(
+                target: "reg.spec.executor",
+                step = node.ordinal,
+                template = %template_ref,
+                "Rendering minijinja template"
+            );
+
+            // Parse the `[inference]` block from the template body (after front
+            // matter stripping) to extract per-step LLM parameters.
+            let after_front_matter = strip_front_matter(&template_content);
+            let (_stripped_body, inference_block) =
+                parse_and_strip_inference_block(after_front_matter);
+
+            let prompt = infra.template_renderer.render(&template_content, ctx)?;
+            Ok((prompt, template_content, inference_block))
+        }
+        _ => {
+            let template_content = node
+                .template_ref
+                .as_deref()
+                .or(node.renderer.as_deref())
+                .ok_or_else(|| {
+                    TemplateError::Manifest(format!(
+                        "Step {} has no template_ref or renderer",
+                        node.ordinal
+                    ))
+                })?;
+
+            let rendered =
+                crate::template_renderer::TemplateRenderer::render_inline(template_content, ctx);
+            Ok((
+                rendered,
+                template_content.to_string(),
+                InferenceBlock::default(),
+            ))
+        }
     }
 }
 

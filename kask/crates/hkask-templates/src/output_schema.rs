@@ -363,6 +363,9 @@ mod tests {
             branching: None,
             branching_field: None,
             profile: None,
+            id: None,
+            command: None,
+            on_failure: None,
         };
         let template_content =
             "[inference]\ncontract:\n  output:\n    from_manifest: string\n---\nbody\n";
@@ -405,6 +408,9 @@ mod tests {
             branching: None,
             branching_field: None,
             profile: None,
+            id: None,
+            command: None,
+            on_failure: None,
         };
         let template_content = "[inference]\ncontract:\n  output:\n    from_template: string\n    score: number\n---\nbody\n";
         let schema = resolve_output_schema(step.output_schema.as_ref(), template_content)
@@ -448,6 +454,9 @@ mod tests {
             branching: None,
             branching_field: None,
             profile: None,
+            id: None,
+            command: None,
+            on_failure: None,
         };
         let template_content = "No frontmatter here.";
         assert!(resolve_output_schema(step.output_schema.as_ref(), template_content).is_none());

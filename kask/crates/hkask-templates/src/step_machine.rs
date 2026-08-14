@@ -353,7 +353,7 @@ impl StepMachine {
             }
             "flowdef" => self.execute_flowdef(node, infra).await,
             "parallel" => self.execute_parallel(node, infra).await,
-            // "gate" => self.execute_gate(node, infra).await, // uncommitted WIP
+            "gate" => self.execute_gate(node, infra).await,
             other => Err(crate::ports::TemplateError::Manifest(format!(
                 "Unknown manifest step action: '{other}'"
             ))),
