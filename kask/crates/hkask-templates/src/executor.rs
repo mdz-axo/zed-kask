@@ -74,6 +74,12 @@ pub struct ManifestExecutor {
     terminal_check: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    /// Short-term context: prior turns from the invoking thread. Injected
+    /// into `Infra` for `execute_select` to prepend to inference calls.
+    prior_messages: Vec<hkask_types::ports::inference_types::ChatMessage>,
+    /// Long-term memory snippets. Injected into `Infra` for `execute_select`
+    /// to prepend as a system message.
+    memory_snippets: Vec<hkask_types::ports::memory_port::MemorySnippet>,
 }
 
 impl ManifestExecutor {
@@ -93,6 +99,8 @@ impl ManifestExecutor {
             terminal_check: None,
             progress: None,
             title: None,
+            prior_messages: Vec::new(),
+            memory_snippets: Vec::new(),
         }
     }
 
@@ -122,6 +130,22 @@ impl ManifestExecutor {
     #[must_use]
     pub fn with_template_base_path(mut self, path: std::path::PathBuf) -> Self {
         self.template_renderer = TemplateRenderer::new(path);
+        self
+    }
+
+    /// Wire short-term (prior thread messages) and long-term (memory
+    /// snippets) context for the cascade. These are injected into `Infra`
+    /// and prepended to each `execute_select` inference call so the model
+    /// sees the conversation the skill was invoked from, plus salient
+    /// long-term memory.
+    #[must_use]
+    pub fn with_cascade_context(
+        mut self,
+        prior_messages: Vec<hkask_types::ports::inference_types::ChatMessage>,
+        memory_snippets: Vec<hkask_types::ports::memory_port::MemorySnippet>,
+    ) -> Self {
+        self.prior_messages = prior_messages;
+        self.memory_snippets = memory_snippets;
         self
     }
 
@@ -181,6 +205,8 @@ impl ManifestExecutor {
             terminal_check: self.terminal_check.clone(),
             progress: self.progress.clone(),
             title: self.title.clone(),
+            prior_messages: self.prior_messages.clone(),
+            memory_snippets: self.memory_snippets.clone(),
         };
 
         let machine = StepMachine::new(

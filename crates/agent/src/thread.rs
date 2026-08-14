@@ -2258,6 +2258,44 @@ impl Thread {
         self.agent_id.as_ref()
     }
 
+    /// Snapshot the last `n` turns as `LanguageModelRequestMessage`s, for
+    /// cascade context injection. Only user and assistant messages are
+    /// included (system, tool, and summary-compaction messages are skipped —
+    /// they are not part of the conversational context that memory should be
+    /// salient to). Returns an empty vec when `n` is 0 or the thread has no
+    /// qualifying messages.
+    ///
+    /// Used by `SkillTool::run` to snapshot recent turns for the cascade
+    /// context provider, so skill templates see the conversation they were
+    /// invoked from.
+    pub fn recent_turn_messages(
+        &self,
+        n: usize,
+    ) -> Vec<language_model::LanguageModelRequestMessage> {
+        if n == 0 {
+            return Vec::new();
+        }
+        let mut messages = Vec::new();
+        // Walk backwards through the message list, collecting user and
+        // assistant messages until we have `n` turns or run out.
+        for msg in self.messages.iter().rev() {
+            if messages.len() >= n {
+                break;
+            }
+            match msg.as_ref() {
+                Message::User(_) | Message::Agent(_) => {
+                    let req = msg.to_request();
+                    // Prepend to maintain chronological order.
+                    messages.splice(0..0, req.into_iter());
+                }
+                Message::Resume | Message::Compaction(_) => {
+                    // Skip — not conversational turns.
+                }
+            }
+        }
+        messages
+    }
+
     /// Restrict this thread's context-server (MCP) tools to a single server.
     ///
     /// Used by the kask panel's per-tab scoping: each tab's thread exposes
@@ -6756,6 +6794,14 @@ pub struct ToolCallEventStream {
 }
 
 impl ToolCallEventStream {
+    /// Get the owning thread, if any. Used by tools that need to snapshot
+    /// the thread's message history (e.g. `SkillTool` snapshots recent
+    /// turns for cascade context injection). Returns `None` in tests and
+    /// for streams not tied to a live thread.
+    pub fn thread(&self) -> Option<gpui::WeakEntity<Thread>> {
+        self.thread.clone()
+    }
+
     /// Enqueue a deferred tool result on the parent thread. The receiver
     /// will be polled on each outer-loop iteration; when it completes, the
     /// result is injected into the original agent message's `tool_results`

@@ -316,9 +316,9 @@ steps:
       Convergence check. The active phase is complete when its final step
       produces a non-skipped result. If the phase skipped or produced
       errors, re-enter at the triage step with the error context.
-    compute_ref: kata.convergence_check
     input_mapping:
-      current_artifacts: "{{ step_13_result | default(step_7_result | default(step_5_result | default({}))) }}"
+      loop_target: "{{ 1 }}"
+      convergence_signal: "{{ step_13_result | default(step_7_result | default(step_5_result | default({}))) | length }}"
       prior_artifacts: "{{ step_13_result | default({}) }}"
 
 ledger:

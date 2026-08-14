@@ -38,6 +38,13 @@ mod curator_stores;
 pub(crate) use curator_stores::{CuratorStore, build_curator_consolidation};
 pub use curator_stores::{curator_db_path, open_curator_regulation_archive};
 
+// ── Swarm store infrastructure — extracted to `memory/swarm_stores.rs` ───
+// Mirrors `curator_stores` for the swarm's sovereign `swarm_memory.db`.
+// Opened directly in the bridge process so `recall_context_swarm` can read
+// swarm memory without an IPC round-trip to the swarm MCP server.
+mod swarm_stores;
+pub(crate) use swarm_stores::SwarmStore;
+
 // ── Alert escalation — extracted to `memory/alert_escalation.rs` ──────────
 // Deep-module split (bridge-audit BD-04): the algedonic alert path implements a
 // *different* port (`AlertEscalationSink`) with zero coupling to the memory
@@ -72,6 +79,14 @@ pub struct RealMemoryPort {
     /// failure is signaled with a warn-once per healing attempt, never
     /// silently.
     curator_store: Arc<CuratorStore>,
+    /// The swarm's sovereign store (`swarm_memory.db`) behind a self-healing
+    /// handle — mirrors `curator_store`. Opened directly in the bridge process
+    /// so `recall_context_swarm` can read swarm memory without an IPC
+    /// round-trip. `None`-valued (self-heals to `Some`) when the swarm DB
+    /// cannot be opened (not configured, locked, passphrase mismatch).
+    /// Swarm recall degrades to empty — the cascade runs without swarm
+    /// memory instead of erroring.
+    swarm_store: Arc<SwarmStore>,
     embedding_port: LanguageModelEmbeddingPort,
     embedding_model: String,
     user_webid: WebID,
@@ -214,6 +229,30 @@ impl RealMemoryPort {
         // Curator store behind the self-healing handle — see the field docs.
         let curator_store = Arc::new(CuratorStore::new(passphrase, embedding_dim));
 
+        // Swarm store behind a self-healing handle — mirrors `curator_store`.
+        // Opened from `HKASK_SWARM_MEMORY_DB` + `HKASK_SWARM_MEMORY_PASSPHRASE`
+        // (same env vars the swarm MCP server reads). When the swarm DB is
+        // not configured (passphrase empty / DB missing), the store is `None`
+        // and swarm recall degrades to empty — the cascade runs without swarm
+        // memory instead of erroring. This is the correct default: swarm
+        // memory is only relevant when a swarm agent is participating, and
+        // not every deployment runs swarms.
+        let swarm_passphrase = std::env::var("HKASK_SWARM_MEMORY_PASSPHRASE")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| {
+                // The swarm server's compiled-in default (config.rs) is
+                // "allostery" — use the same default so the bridge opens the
+                // same DB the swarm MCP server opens.
+                "allostery".to_string()
+            });
+        let swarm_embedding_dim = std::env::var("HKASK_SWARM_EMBEDDING_DIM")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .filter(|d: &usize| *d > 0)
+            .unwrap_or(embedding_dim);
+        let swarm_store = Arc::new(SwarmStore::new(&swarm_passphrase, swarm_embedding_dim));
+
         // Consolidation service — perspective-bound → shared promotion.
         // Only constructed when the cadence is non-zero; a zero cadence disables
         // the trigger entirely (the operator can still fire consolidation
@@ -232,6 +271,7 @@ impl RealMemoryPort {
         Ok(Self {
             store,
             curator_store,
+            swarm_store,
             embedding_port,
             embedding_model,
             user_webid,
@@ -1032,6 +1072,33 @@ impl RealMemoryPort {
         })
     }
 
+    /// Recall memory snippets from the **swarm's** sovereign store
+    /// (`swarm_memory.db`). Mirrors `recall_context_curator` but reads from
+    /// the swarm's `MemoryStore`, opened directly in the bridge process.
+    ///
+    /// Used by the cascade context provider when a swarm agent is
+    /// participating in the thread. Returns `Ok(vec![])` when the swarm
+    /// store is not available (graceful degradation — the cascade runs
+    /// without swarm memory instead of erroring).
+    pub fn recall_context_swarm<'a>(
+        &'a self,
+        query: &'a str,
+        limit: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
+        Box::pin(async move {
+            let Some(ref swarm_store) = self.swarm_store.get() else {
+                return Ok(Vec::new());
+            };
+            // The swarm store uses a single shared WebID
+            // (`swarm_delegate_local`) for all swarm agents — there is no
+            // per-agent perspective scoping in the swarm store. `None`
+            // skips the episodic perspective filter and recalls across all
+            // swarm agents' episodic records.
+            self.recall_from(swarm_store, None, query, limit, "recall_context_swarm")
+                .await
+        })
+    }
+
     /// Shared recall implementation for both the user and curator stores.
     ///
     /// `episodic_perspective` scopes the episodic keyword search to the owning
@@ -1421,6 +1488,7 @@ pub(crate) fn in_memory_port_for_tests() -> RealMemoryPort {
     RealMemoryPort {
         store,
         curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
+        swarm_store: Arc::new(SwarmStore::for_tests(None)),
         embedding_port,
         embedding_model: "test-model".to_string(),
         user_webid: WebID::new(),
@@ -1492,6 +1560,7 @@ mod tests {
         RealMemoryPort {
             store,
             curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
+            swarm_store: Arc::new(SwarmStore::for_tests(None)),
             embedding_port,
             embedding_model: "test-model".to_string(),
             user_webid: test_webid(),
@@ -1540,6 +1609,7 @@ mod tests {
         RealMemoryPort {
             store,
             curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
+            swarm_store: Arc::new(SwarmStore::for_tests(None)),
             embedding_port,
             embedding_model: "test-model".to_string(),
             user_webid: test_webid(),

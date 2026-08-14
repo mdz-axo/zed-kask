@@ -242,7 +242,10 @@ impl BridgeManifestExecutor {
         // Inject model defaults (same as execute_skill).
         self.inject_model_defaults(&mut context);
 
-        let executor = self.build_executor(progress, title);
+        // Sub-cascade path (run_manifest_cascade resolves by name) — no
+        // thread context. Prior messages and memory snippets are only
+        // injected at the top-level skill invocation site.
+        let executor = self.build_executor(progress, title, Vec::new(), Vec::new());
 
         let join_handle = self.tokio_handle.spawn(async move {
             executor
@@ -263,6 +266,8 @@ impl BridgeManifestExecutor {
         &self,
         manifest: &hkask_templates::BundleManifest,
         mut context: HashMap<String, Value>,
+        prior_messages: Vec<hkask_types::ports::inference_types::ChatMessage>,
+        memory_snippets: Vec<hkask_types::ports::memory_port::MemorySnippet>,
         progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
         title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     ) -> Result<CascadeOutcome, String> {
@@ -280,7 +285,38 @@ impl BridgeManifestExecutor {
 
         self.inject_model_defaults(&mut context);
 
-        let executor = self.build_executor(progress, title);
+        // Inject short-term and long-term context as template fields so
+        // templates can reference `{{ session_history }}` and
+        // `{{ memory_context }}`. These are distinct from `prior_outcomes`
+        // (intra-cascade step results used for Brier scoring) — memory and
+        // context are fuzzy unstructured chunks that connect reasoning
+        // graphs; prior outcomes are structured analytical signals.
+        //
+        // `session_history` is the prior thread turns formatted as
+        // `role: content` lines. `memory_context` is the long-term memory
+        // snippets formatted as a bulleted list.
+        if !prior_messages.is_empty() {
+            let session_history = prior_messages
+                .iter()
+                .map(|m| format!("{}: {}", m.role, m.content))
+                .collect::<Vec<_>>()
+                .join("\n");
+            context.insert(
+                "session_history".to_string(),
+                Value::String(session_history),
+            );
+        }
+        if !memory_snippets.is_empty() {
+            let memory_context = memory_snippets
+                .iter()
+                .enumerate()
+                .map(|(i, s)| format!("{}. [{}] {}", i + 1, s.source, s.text))
+                .collect::<Vec<_>>()
+                .join("\n");
+            context.insert("memory_context".to_string(), Value::String(memory_context));
+        }
+
+        let executor = self.build_executor(progress, title, prior_messages, memory_snippets);
 
         let join_handle = self.tokio_handle.spawn({
             let manifest = manifest.clone();
@@ -309,7 +345,9 @@ impl BridgeManifestExecutor {
     ) -> Result<String, String> {
         self.inject_model_defaults(&mut context);
 
-        let executor = self.build_executor(progress, title);
+        // Composed bundle path — no thread context (the bundle is composed
+        // from the skill-bundler cascade, not from the invoking thread).
+        let executor = self.build_executor(progress, title, Vec::new(), Vec::new());
 
         let join_handle = self.tokio_handle.spawn({
             let manifest = manifest.clone();
@@ -405,6 +443,8 @@ impl BridgeManifestExecutor {
         &self,
         progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
         title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+        prior_messages: Vec<hkask_types::ports::inference_types::ChatMessage>,
+        memory_snippets: Vec<hkask_types::ports::memory_port::MemorySnippet>,
     ) -> ManifestExecutor {
         let executor = ManifestExecutor::new(
             self.inference.clone(),
@@ -428,11 +468,13 @@ impl BridgeManifestExecutor {
             executor
         };
 
-        if let Some(title) = title {
+        let executor = if let Some(title) = title {
             executor.with_title(title)
         } else {
             executor
-        }
+        };
+
+        executor.with_cascade_context(prior_messages, memory_snippets)
     }
 }
 
@@ -543,6 +585,8 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         &self,
         skill_name: &str,
         context: HashMap<String, Value>,
+        prior_messages: Vec<agent::CascadeChatMessage>,
+        memory_snippets: Vec<agent::MemorySnippetRecord>,
         progress: Option<agent::CascadeProgress>,
         title: Option<agent::CascadeProgress>,
     ) -> Result<String, String> {
@@ -606,8 +650,35 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // executor construction, and tokio spawning are handled there.
         // This eliminates the duplicated spawn block that was previously
         // inline in this method.
+        // Convert the agent crate's local types to hkask_types types for
+        // the executor. The agent crate cannot depend on hkask_types
+        // (circular dependency), so the conversion happens here at the seam.
+        let prior_messages = prior_messages
+            .into_iter()
+            .map(|m| hkask_types::ports::inference_types::ChatMessage {
+                role: m.role,
+                content: m.content,
+            })
+            .collect::<Vec<_>>();
+        let memory_snippets = memory_snippets
+            .into_iter()
+            .map(|s| hkask_types::ports::memory_port::MemorySnippet {
+                text: s.text,
+                source: s.source,
+                confidence: s.confidence,
+                relevance_score: s.relevance_score,
+            })
+            .collect::<Vec<_>>();
+
         let result = self
-            .run_manifest_cascade_with_manifest(&manifest, context, progress, title)
+            .run_manifest_cascade_with_manifest(
+                &manifest,
+                context,
+                prior_messages,
+                memory_snippets,
+                progress,
+                title,
+            )
             .await?;
 
         // (K5) `extract_final_step_result` selects `last_result_step`'s
@@ -860,7 +931,14 @@ steps:
             .map_err(|e| format!("Failed to load refine manifest: {e}"))?;
 
         let refine_result = self
-            .run_manifest_cascade_with_manifest(&refine_manifest, evolve_context, None, None)
+            .run_manifest_cascade_with_manifest(
+                &refine_manifest,
+                evolve_context,
+                Vec::new(),
+                Vec::new(),
+                None,
+                None,
+            )
             .await?;
 
         // Extract the evolved manifest from step_1_result.evolved_manifest.
@@ -966,7 +1044,9 @@ steps:
         let mut context = HashMap::new();
         self.inject_model_defaults(&mut context);
 
-        let executor = self.build_executor(progress, title);
+        // Pipeline path — no thread context (pipelines are invoked via the
+        // pipeline tool, not from a chat thread).
+        let executor = self.build_executor(progress, title, Vec::new(), Vec::new());
 
         let join_handle = self.tokio_handle.spawn({
             let manifest = manifest.clone();

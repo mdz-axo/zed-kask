@@ -4,6 +4,7 @@
 //! Port traits enable crates to depend on abstractions rather than
 //! concrete implementations.
 
+pub mod cascade_context;
 pub mod embedding;
 pub mod inference_port;
 pub mod inference_types;
@@ -11,6 +12,9 @@ pub mod memory_port;
 pub mod registry;
 pub mod regulation;
 
+pub use cascade_context::{
+    CascadeContext, CascadeContextError, CascadeContextProvider, CascadeContextRequest,
+};
 pub use embedding::EmbeddingGenerationError;
 pub use inference_port::{
     EmbedFuture, InferencePort, InferenceStreamChunk, MediaFuture, MediaGenerateParams, ModelEntry,

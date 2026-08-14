@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, CascadeChatMessage, MemorySnippetRecord, ToolCallEventStream, ToolInput};
 
 /// XML-escape a string so a malicious skill author cannot break out of the
 /// `<skill_content>` envelope (or the `<available_skills>` catalog) by
@@ -211,6 +211,8 @@ pub trait SkillManifestExecutor: Send + Sync {
         &self,
         skill_name: &str,
         context: std::collections::HashMap<String, serde_json::Value>,
+        prior_messages: Vec<CascadeChatMessage>,
+        memory_snippets: Vec<MemorySnippetRecord>,
         progress: Option<CascadeProgress>,
         title: Option<CascadeProgress>,
     ) -> Result<String, String>;
@@ -528,6 +530,14 @@ impl AgentTool for SkillTool {
                 // envelope (body injection is disabled in zed-kask).
                 let skill_name = skill.name.as_ref();
                 if executor.has_manifest(skill_name) {
+                    // Extract swarm_id before the context map is moved into
+                    // `context.extend`. Used by the cascade context provider
+                    // to determine whether to recall from the swarm store.
+                    let swarm_id = extra_context
+                        .get("swarm_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+
                     // Inject the user's task into the cascade context so templates
                     // can reference `{{ task }}`. Without this, the cascade runs
                     // blind — templates get model defaults but never the actual
@@ -540,6 +550,18 @@ impl AgentTool for SkillTool {
                         "task".to_string(),
                         serde_json::Value::String(task.clone()),
                     );
+
+                    // Gather short-term (thread) and long-term (memory)
+                    // context for the cascade. This closes the isolation gap
+                    // where template steps were submitted as single-prompt
+                    // calls with no conversational context and no memory.
+                    //
+                    // The cascade context provider applies the participant
+                    // matrix: user store, curator store, or swarm store,
+                    // depending on who is present in the thread.
+                    let (prior_messages, memory_snippets) =
+                        gather_cascade_context(&event_stream, &task, swarm_id, cx).await;
+
                     // Create a thinking-trace sender from the event stream so
                     // the user sees the LLM's live reasoning during the cascade.
                     // Without this, the cascade runs silently and the user
@@ -548,7 +570,14 @@ impl AgentTool for SkillTool {
                     // Create a title sender for step-label updates (short labels
                     // like "Step 2/5: scope" in the tool call header).
                     let title = event_stream.title_sender();
-                    match executor.execute_skill(skill_name, context, Some(progress), Some(title)).await {
+                    match executor.execute_skill(
+                        skill_name,
+                        context,
+                        prior_messages,
+                        memory_snippets,
+                        Some(progress),
+                        Some(title),
+                    ).await {
                         Ok(result_text) => render_skill_envelope(&skill, &result_text),
                         Err(e) => {
                             return Err(SkillToolOutput::Error {
@@ -578,6 +607,104 @@ impl AgentTool for SkillTool {
             Ok(SkillToolOutput::Found { rendered })
         })
     }
+}
+
+/// Gather short-term (thread) and long-term (memory) context for a skill
+/// cascade invocation.
+///
+/// Snapshots the last N turns from the invoking thread (via
+/// `Thread::recent_turn_messages`) and calls the `CascadeContextProvider`
+/// (if wired) to recall salient long-term memory from the participant
+/// stores.
+///
+/// Returns `(prior_messages, memory_snippets)` as `ChatMessage` and
+/// `MemorySnippet` vectors, ready to pass to `execute_skill`. Both are empty
+/// when the provider is not wired or the thread is not available — the
+/// cascade runs isolated (the pre-fix behavior).
+async fn gather_cascade_context(
+    event_stream: &ToolCallEventStream,
+    task: &str,
+    swarm_id: Option<String>,
+    cx: &mut gpui::AsyncApp,
+) -> (
+    Vec<crate::CascadeChatMessage>,
+    Vec<crate::MemorySnippetRecord>,
+) {
+    use language_model::{MessageContent, Role};
+
+    // Snapshot the thread's recent turns.
+    let (thread_messages, agent_id, thread_id) = match event_stream.thread() {
+        Some(thread_handle) => {
+            let thread_handle = thread_handle.clone();
+            cx.update(|cx| {
+                thread_handle.upgrade().map(|thread_entity| {
+                    let thread = thread_entity.read(cx);
+                    (
+                        thread.recent_turn_messages(6),
+                        thread.agent_id().map(|id| id.to_string()),
+                        thread.id().to_string(),
+                    )
+                })
+            })
+            .unwrap_or((Vec::new(), None, String::new()))
+        }
+        None => (Vec::new(), None, String::new()),
+    };
+
+    // Convert LanguageModelRequestMessage → CascadeChatMessage (text-only).
+    let prior_messages: Vec<crate::CascadeChatMessage> = thread_messages
+        .iter()
+        .filter_map(|msg| {
+            let role = match msg.role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+                Role::System => "system",
+            };
+            // Extract text content, skip non-text parts.
+            let content: String = msg
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    MessageContent::Text(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if content.is_empty() {
+                None
+            } else {
+                Some(crate::CascadeChatMessage {
+                    role: role.to_string(),
+                    content,
+                })
+            }
+        })
+        .collect();
+
+    // Gather long-term memory via the cascade context provider (if wired).
+    let memory_snippets = match crate::cascade_context_provider() {
+        Some(provider) => {
+            let request = crate::CascadeContextRequest {
+                thread_id,
+                task: task.to_string(),
+                agent_id,
+                swarm_id,
+                short_term_messages: Vec::new(), // provider doesn't use this
+                saliency_floor: 0.3,
+                max_chunks: 5,
+            };
+            match provider.gather_context(&request).await {
+                Ok(context) => context.long_term_snippets,
+                Err(e) => {
+                    log::warn!("Cascade context gathering failed — running without memory: {e}");
+                    Vec::new()
+                }
+            }
+        }
+        None => Vec::new(),
+    };
+
+    (prior_messages, memory_snippets)
 }
 
 #[cfg(test)]
@@ -1157,6 +1284,8 @@ mod tests {
             &self,
             skill_name: &str,
             context: std::collections::HashMap<String, serde_json::Value>,
+            _prior_messages: Vec<crate::CascadeChatMessage>,
+            _memory_snippets: Vec<crate::MemorySnippetRecord>,
             _progress: Option<CascadeProgress>,
             _title: Option<CascadeProgress>,
         ) -> Result<String, String> {

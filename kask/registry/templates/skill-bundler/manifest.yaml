@@ -18,6 +18,15 @@ templates:
     description: >
       Analyze a set of skills for conflicts, complementarities, and optimal
       ordering. Classify each skill by polarity (generative/evaluative/
+
+  - id: skill-bundler/bundler-synthesize
+    name: "Synthesize a composite manifest from analyzed skills"
+    path: bundler-synthesize.j2
+    type: KnowAct
+    description: >
+      Synthesize a composite BundleManifest from the analyzed skills,
+      producing a governed cascade with ordered steps, shared context,
+      and convergence config.
       regulative/procedural), assign cascade phase, and produce a structured
       bundle manifest.
 

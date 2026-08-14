@@ -24,6 +24,8 @@ use crate::step_graph::{ControlFlow, ENTRY, ExitKind, StepGraph, StepId};
 use crate::template_renderer::TemplateRenderer;
 use hkask_capability::ToolPort;
 use hkask_types::ports::inference_port::InferencePort;
+use hkask_types::ports::inference_types::ChatMessage;
+use hkask_types::ports::memory_port::MemorySnippet;
 use hkask_types::template::LLMParameters;
 use std::sync::Arc;
 
@@ -39,6 +41,17 @@ pub struct Infra {
     pub terminal_check: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     pub progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     pub title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    /// Short-term context: prior turns from the invoking thread, role-tagged.
+    /// Prepended to each `execute_select` inference call so the model sees
+    /// the conversation the skill was invoked from. Empty when the cascade
+    /// is invoked outside a thread (CLI) or when `cascade_short_term_turns`
+    /// is 0.
+    pub prior_messages: Vec<ChatMessage>,
+    /// Long-term memory snippets, gathered by the `CascadeContextProvider`.
+    /// Injected as a system message prepended to each `execute_select`
+    /// inference call. Empty when no stores are available or no chunks
+    /// exceed the saliency floor.
+    pub memory_snippets: Vec<MemorySnippet>,
 }
 
 /// The deterministic step machine. Created per cascade run.

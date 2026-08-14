@@ -28,7 +28,7 @@ convergence:
   # target_artifacts_field removed — no compute step to consume it
 
 gas:
-  cap: 150000
+  cap: 250000
   cost_per_iteration: 500
   alert_threshold: 0.8
   hard_limit: true

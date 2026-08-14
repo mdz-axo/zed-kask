@@ -236,6 +236,7 @@ steps:
       snapshots prev_step_N_result values for refinement.
     input_mapping:
       loop_target: "{{ 1 }}"
+      convergence_signal: "{{ step_7_result.hypotenuse }}"
 
 error_handling:
   on_gas_exceeded: abort

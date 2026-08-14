@@ -81,3 +81,12 @@ templates:
     description: >
       Reference: three-pass variance calibration with agreement matrix and
       final taxonomy of core, secondary, and candidate shapes.
+
+  - id: metacognition/ellipsis-analysis
+    name: "Ellipsis analysis for gap detection"
+    path: ellipsis-analysis.j2
+    type: KnowAct
+    description: >
+      Apply Bloom's five-step method to detect gaps in context, classify them
+      as ellipsis (deliberate) or leak (unintentional), and surface what is
+      not inferable. Used by the experiment step for ellipsis perspective.

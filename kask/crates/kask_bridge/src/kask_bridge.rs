@@ -9,6 +9,7 @@
 //! Governing invariant: hKask crates NEVER depend on zed crates; zed-kask
 //! depends on hKask. This bridge is the only crate that depends on both sides.
 
+mod cascade_context;
 mod condenser_bridge;
 mod context_injector;
 
@@ -22,6 +23,7 @@ mod model_resolution;
 mod settings;
 mod skill_executor;
 
+pub use cascade_context::{AgentCascadeContextProviderAdapter, BridgeCascadeContextProvider};
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
 

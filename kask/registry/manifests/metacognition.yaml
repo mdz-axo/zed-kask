@@ -335,6 +335,7 @@ steps:
       them (Self-Refine pattern) rather than regenerating from scratch.
     input_mapping:
       loop_target: "{{ 1 }}"
+      convergence_signal: "{{ step_7_result.hypotenuse }}"
 
 error_handling:
   on_gas_exceeded: abort

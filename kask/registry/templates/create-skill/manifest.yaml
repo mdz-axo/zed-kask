@@ -23,6 +23,15 @@ crate:
     may invoke this skill.
 
 templates:
+  - id: create-skill/create-skill-research
+    name: "Research academic/industry ontological anchors"
+    path: create-skill-research.j2
+    type: KnowAct
+    description: >
+      Search academic/industry literature for the skill's domain. Find
+      ontological anchors (process ontologies, quality criteria, entity types).
+      Derive the PDCA shape from the anchors.
+
   - id: create-skill/create-skill-describe
     name: "Capture skill purpose, name, PDCA phases, delegates, span namespace"
     path: create-skill-describe.j2

@@ -1504,7 +1504,7 @@ fn main() {
                                 // the asymmetry this block fixes.
                                 let curator_injector = std::sync::Arc::new(
                                     kask_bridge::BridgeContextInjector::new_curator(
-                                        real_memory_typed,
+                                        real_memory_typed.clone(),
                                         kask_settings.memory.recall_limit,
                                         kask_settings.memory.recall_min_confidence,
                                         auto_inject,
@@ -1548,6 +1548,23 @@ fn main() {
                                     ),
                                 )));
                                 log::info!("hKask lazy tool router wired");
+
+                                // Wire the cascade context provider so skill
+                                // cascades receive short-term thread context +
+                                // long-term memory from participant stores.
+                                // Without this, skill templates run isolated
+                                // (the pre-fix behavior).
+                                let cascade_provider = std::sync::Arc::new(
+                                    kask_bridge::AgentCascadeContextProviderAdapter::new(
+                                        real_memory_typed.clone(),
+                                    ),
+                                );
+                                agent::set_cascade_context_provider(Some(cascade_provider));
+                                log::info!(
+                                    "hKask cascade context provider wired \
+                                     (agent: {agent_name}) — skill cascades will receive \
+                                     thread context + participant memory"
+                                );
                             }
                             Err(e) => {
                                 log::warn!(
@@ -3463,7 +3480,7 @@ impl hkask_types::SkillExecPort for AgentSkillExec {
             // `From<String>` conversion (into `SkillExecError::Failed`) bridges
             // that into the typed `SkillExecError` without an upstream change.
             executor
-                .execute_skill(&name, context, None, None)
+                .execute_skill(&name, context, Vec::new(), Vec::new(), None, None)
                 .await
                 .map_err(Into::into)
         })

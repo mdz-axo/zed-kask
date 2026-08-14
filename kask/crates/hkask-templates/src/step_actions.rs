@@ -17,6 +17,8 @@ use futures_util::stream;
 use hkask_capability::ToolPort;
 use hkask_types::ChatToolDefinition;
 use hkask_types::ports::inference_port::InferencePort;
+use hkask_types::ports::inference_types::ChatMessage;
+use hkask_types::ports::memory_port::MemorySnippet;
 use hkask_types::template::LLMParameters;
 use serde_json::Value;
 use std::sync::Arc;
@@ -258,16 +260,26 @@ impl StepMachine {
 
         let timeout_dur = effective_timeout(node.timeout_seconds);
 
-        let (result_text, tool_calls, cost_usd, finish_reason) = call_inference_stream(
-            &infra.inference,
-            &prompt,
-            &params,
-            tools,
-            timeout_dur,
-            node.ordinal,
-            infra.progress.as_deref(),
-        )
-        .await?;
+        // Build the message array: [memory_system?, ...prior_messages, system=template, user=trigger]
+        // This gives the provider the real conversation as proper role-tagged
+        // messages — the same shape `agent_executor.rs` uses for swarm agents.
+        // Without this, each template step is an isolated single-prompt call
+        // with no conversational context, confusing the model (the original
+        // bug this fixes).
+        let messages =
+            build_cascade_messages(&infra.prior_messages, &infra.memory_snippets, &prompt);
+
+        let (result_text, tool_calls, cost_usd, finish_reason) =
+            call_inference_stream_with_messages(
+                &infra.inference,
+                &messages,
+                &params,
+                tools,
+                timeout_dur,
+                node.ordinal,
+                infra.progress.as_deref(),
+            )
+            .await?;
 
         // Charge rJoule (USD cost).
         if let Some(cost) = cost_usd {
@@ -962,6 +974,170 @@ fn effective_timeout(timeout_seconds: u32) -> std::time::Duration {
     }
 }
 
+/// Build the message array for a cascade step's inference call.
+///
+/// The message array is:
+/// `[system: memory_context?, ...prior_messages, system: rendered_template, user: trigger]`
+///
+/// - `memory_context` (system): long-term memory snippets, formatted as a
+///   single system message. Omitted when empty.
+/// - `prior_messages`: short-term thread context (user/assistant turns from
+///   the invoking thread). Empty when the cascade is invoked outside a thread.
+/// - `rendered_template` (system): the actual Jinja2-rendered step prompt.
+///   Sent as `system` to give it the semantic weight providers reserve for
+///   system-level directives (stronger instruction adherence).
+/// - `trigger` (user): "Execute the instructions above." — some providers
+///   require at least one user message to produce output.
+///
+/// This matches the shape `agent_executor.rs` uses for swarm agents and the
+/// shape `LanguageModelInferencePort::generate` already produces internally —
+/// just with the prior-messages and memory arrays actually populated instead
+/// of empty.
+fn build_cascade_messages(
+    prior_messages: &[ChatMessage],
+    memory_snippets: &[MemorySnippet],
+    rendered_template: &str,
+) -> Vec<ChatMessage> {
+    let mut messages = Vec::with_capacity(2 + prior_messages.len() + 1);
+
+    // Long-term memory as a system message (if non-empty).
+    if !memory_snippets.is_empty() {
+        let memory_text = format_cascade_memory_context(memory_snippets);
+        messages.push(ChatMessage {
+            role: "system".to_string(),
+            content: memory_text,
+        });
+    }
+
+    // Short-term thread context.
+    messages.extend(prior_messages.iter().cloned());
+
+    // The rendered template as a system prompt.
+    messages.push(ChatMessage {
+        role: "system".to_string(),
+        content: rendered_template.to_string(),
+    });
+
+    // Trigger user message.
+    messages.push(ChatMessage {
+        role: "user".to_string(),
+        content: "Execute the instructions above.".to_string(),
+    });
+
+    messages
+}
+
+/// Format long-term memory snippets as a system message.
+///
+/// Uses a simple bulleted format with source tags — distinct from the
+/// `format_recall_context` helper in the bridge (which uses data-boundary
+/// markers for the chat path). The cascade path does not need the data
+/// boundary because the memory is prepended as a separate system message,
+/// not interleaved with user content.
+fn format_cascade_memory_context(snippets: &[MemorySnippet]) -> String {
+    let mut text = String::from(
+        "Relevant long-term memory (from prior sessions and consolidated experiences):\n",
+    );
+    for (i, snippet) in snippets.iter().enumerate() {
+        text.push_str(&format!(
+            "\n{}. [{}] {}\n",
+            i + 1,
+            snippet.source,
+            snippet.text
+        ));
+    }
+    text
+}
+
+/// Call inference with streaming, timeout, and reasoning-delta forwarding,
+/// using the message-array API (`generate_stream_with_messages`).
+///
+/// This is the cascade-aware variant of `call_inference_stream` — it takes a
+/// `&[ChatMessage]` instead of a single `&str` prompt, so the provider sees
+/// the full conversation (memory + prior turns + template) as proper
+/// role-tagged messages.
+async fn call_inference_stream_with_messages(
+    inference: &Arc<dyn InferencePort>,
+    messages: &[ChatMessage],
+    params: &LLMParameters,
+    tools: Option<&[ChatToolDefinition]>,
+    timeout: std::time::Duration,
+    step_ordinal: u32,
+    progress: Option<&(dyn Fn(&str) + Send + Sync)>,
+) -> Result<(
+    String,
+    Vec<hkask_types::StructuredToolCall>,
+    Option<f64>,
+    Option<String>,
+)> {
+    // Defense in depth: if a caller passes Duration::ZERO, substitute 300s.
+    let timeout = if timeout == std::time::Duration::ZERO {
+        tracing::warn!(
+            target: "hkask.templates.call_inference_stream",
+            "timeout is Duration::ZERO — substituting 300s fallback"
+        );
+        std::time::Duration::from_secs(300)
+    } else {
+        timeout
+    };
+
+    let stream = inference.generate_stream_with_messages(messages, params, None, tools);
+
+    let (full_text, tool_calls, cost_usd, finish_reason) =
+        match tokio::time::timeout(timeout, async {
+            let mut full_text = String::new();
+            let mut accumulated_tool_calls = Vec::new();
+            let mut accumulated_cost_usd: Option<f64> = None;
+            let mut accumulated_finish_reason: Option<String> = None;
+            let mut stream = stream;
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        if !chunk.reasoning_delta.is_empty() {
+                            if let Some(progress) = progress {
+                                progress(&chunk.reasoning_delta);
+                            }
+                        }
+                        if !chunk.text_delta.is_empty() {
+                            full_text.push_str(&chunk.text_delta);
+                        }
+                        if !chunk.tool_calls.is_empty() {
+                            accumulated_tool_calls.extend(chunk.tool_calls);
+                        }
+                        if chunk.cost_usd.is_some() {
+                            accumulated_cost_usd = chunk.cost_usd;
+                        }
+                        if chunk.finish_reason.is_some() {
+                            accumulated_finish_reason = chunk.finish_reason;
+                        }
+                    }
+                    Err(e) => return Err(TemplateError::Inference(e)),
+                }
+            }
+            Ok::<_, TemplateError>((
+                full_text,
+                accumulated_tool_calls,
+                accumulated_cost_usd,
+                accumulated_finish_reason,
+            ))
+        })
+        .await
+        {
+            Ok(Ok((text, tool_calls, cost_usd, finish_reason))) => {
+                (text, tool_calls, cost_usd, finish_reason)
+            }
+            Ok(Err(e)) => return Err(e),
+            Err(_elapsed) => {
+                return Err(TemplateError::Timeout {
+                    step_ordinal,
+                    elapsed_seconds: timeout.as_secs(),
+                });
+            }
+        };
+
+    Ok((full_text, tool_calls, cost_usd, finish_reason))
+}
+
 /// Call inference with streaming, timeout, and reasoning-delta forwarding.
 /// Returns (text, tool_calls, cost_usd, finish_reason).
 ///
@@ -974,6 +1150,12 @@ fn effective_timeout(timeout_seconds: u32) -> std::time::Duration {
 /// `cost_usd` is accumulated from streaming chunks (carried by the
 /// provider's `UsageUpdate` event) and returned so the budget tracker can
 /// charge rJoules.
+///
+/// Retained for the D25 truncation test (`call_inference_stream_threads_
+/// finish_reason_length`), which pins the finish_reason propagation behavior.
+/// Production code uses `call_inference_stream_with_messages` (the cascade-
+/// aware variant that carries prior-turn + memory context).
+#[allow(dead_code)]
 async fn call_inference_stream(
     inference: &Arc<dyn InferencePort>,
     prompt: &str,

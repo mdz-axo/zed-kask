@@ -187,6 +187,7 @@ steps:
       Act phase's remedies are applied.
     input_mapping:
       loop_target: "{{ 3 }}"
+      convergence_signal: "{{ step_6_result }}"
       failing_gates: "{{ step_6_result }}"
       prior_act_result: "{{ step_4_result }}"
 

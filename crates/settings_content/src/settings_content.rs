@@ -1665,6 +1665,16 @@ pub struct KaskMemorySettingsContent {
     pub recall_limit: Option<u32>,
     pub recall_min_confidence: Option<f64>,
     pub auto_inject: Option<bool>,
+    /// Number of recent turns from the invoking thread to include as
+    /// short-term context for skill cascades. 0 disables short-term
+    /// injection.
+    pub cascade_short_term_turns: Option<u32>,
+    /// Saliency floor for cascade memory recall. A memory chunk is injected
+    /// only if `relevance_score * confidence >= saliency_floor`.
+    pub cascade_memory_saliency_floor: Option<f64>,
+    /// Maximum memory chunks to inject into a skill cascade, after merging
+    /// across all participant stores (user, curator, swarm).
+    pub cascade_memory_max_chunks: Option<u32>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

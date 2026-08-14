@@ -2223,7 +2223,23 @@ impl NativeAgent {
                         "task".to_string(),
                         serde_json::Value::String(task_text),
                     );
-                    match executor.execute_skill(skill_name, context, None, None).await {
+                    // The slash-command path has no thread message snapshot
+                    // (unlike the model-invoked `skill` tool, which has
+                    // `ToolCallEventStream::thread`). Slash commands run
+                    // isolated — prior_messages and memory_snippets are empty.
+                    // This is acceptable: slash commands are typically
+                    // one-shot invocations, not conversational.
+                    match executor
+                        .execute_skill(
+                            skill_name,
+                            context,
+                            Vec::new(),
+                            Vec::new(),
+                            None,
+                            None,
+                        )
+                        .await
+                    {
                         Ok(result_text) => {
                             crate::tools::render_skill_envelope(&skill, &result_text)
                         }
@@ -3119,6 +3135,90 @@ pub(crate) fn context_injector_for(
         // memory instead of its own.
     }
     context_injector()
+}
+
+// ── D11: Cascade context provider — memory + short-term context for skills ─
+
+/// A request for cascade context gathering. The `agent` crate's local mirror
+/// of `hkask_types::CascadeContextRequest`. The bridge adapts between the two.
+pub struct CascadeContextRequest {
+    pub thread_id: String,
+    pub task: String,
+    pub agent_id: Option<String>,
+    pub swarm_id: Option<String>,
+    pub short_term_messages: Vec<language_model::LanguageModelRequestMessage>,
+    pub saliency_floor: f64,
+    pub max_chunks: u32,
+}
+
+/// The gathered context for a skill cascade invocation. The `agent` crate's
+/// local mirror of `hkask_types::CascadeContext`.
+pub struct CascadeContext {
+    pub short_term_messages: Vec<language_model::LanguageModelRequestMessage>,
+    /// Long-term memory snippets as serialized JSON (text + source +
+    /// confidence + relevance_score). The bridge converts these to
+    /// `hkask_types::MemorySnippet` when threading through to the executor.
+    pub long_term_snippets: Vec<MemorySnippetRecord>,
+}
+
+/// A recalled memory snippet — the `agent` crate's local mirror of
+/// `hkask_types::MemorySnippet`.
+#[derive(Debug, Clone)]
+pub struct MemorySnippetRecord {
+    pub text: String,
+    pub source: String,
+    pub confidence: f64,
+    pub relevance_score: f64,
+}
+
+/// A chat message for cascade context injection — the `agent` crate's local
+/// mirror of `hkask_types::ChatMessage`. The bridge converts these to
+/// `hkask_types::ChatMessage` when threading through to the executor.
+#[derive(Debug, Clone)]
+pub struct CascadeChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+/// Port for gathering cascade context (short-term thread messages +
+/// long-term memory from participant stores).
+///
+/// The bridge provides the implementation (`BridgeCascadeContextProvider`),
+/// which holds an `Arc<RealMemoryPort>` and applies the participant matrix
+/// to select recall sources. When no implementation is injected, skill
+/// cascades run without thread context or memory (the pre-fix behavior).
+pub trait CascadeContextProvider: Send + Sync {
+    fn gather_context<'a>(
+        &'a self,
+        request: &'a CascadeContextRequest,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<CascadeContext, String>> + Send + 'a>,
+    >;
+}
+
+/// Global hook for the cascade context provider.
+///
+/// Set by the zed-kask composition root at startup alongside
+/// `set_context_injector`. When set, skill cascades receive short-term
+/// thread context + long-term memory. When `None`, cascades run isolated
+/// (the pre-fix behavior).
+static CASCADE_CONTEXT_PROVIDER: std::sync::OnceLock<Option<Arc<dyn CascadeContextProvider>>> =
+    std::sync::OnceLock::new();
+
+/// Set the global cascade context provider (composition root).
+pub fn set_cascade_context_provider(provider: Option<Arc<dyn CascadeContextProvider>>) {
+    if let Err(_prev) = CASCADE_CONTEXT_PROVIDER.set(provider) {
+        log::warn!(
+            "set_cascade_context_provider: hook already set — second wiring attempt dropped. \
+             The previously-wired provider remains active. \
+             Remediation: restart the app to re-wire from a clean process."
+        );
+    }
+}
+
+/// Get the global cascade context provider, if set.
+pub(crate) fn cascade_context_provider() -> Option<&'static Arc<dyn CascadeContextProvider>> {
+    CASCADE_CONTEXT_PROVIDER.get().and_then(|opt| opt.as_ref())
 }
 
 /// Thread condenser — compresses tool results before they enter the message

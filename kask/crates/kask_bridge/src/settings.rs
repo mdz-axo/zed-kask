@@ -311,6 +311,20 @@ pub struct KaskMemorySettings {
 
     /// Whether to automatically inject recalled memories into prompts.
     pub auto_inject: bool,
+
+    /// Number of recent turns from the invoking thread to include as
+    /// short-term context for skill cascades. 0 disables short-term
+    /// injection (cascades run isolated, as before). Default: 6.
+    pub cascade_short_term_turns: u32,
+
+    /// Saliency floor for cascade memory recall. A memory chunk is injected
+    /// only if `relevance_score * confidence >= saliency_floor`. Default:
+    /// 0.3 (same as `recall_min_confidence`).
+    pub cascade_memory_saliency_floor: f64,
+
+    /// Maximum memory chunks to inject into a skill cascade, after merging
+    /// across all participant stores (user, curator, swarm). Default: 5.
+    pub cascade_memory_max_chunks: u32,
 }
 
 impl Default for KaskMemorySettings {
@@ -321,6 +335,9 @@ impl Default for KaskMemorySettings {
             recall_limit: 5,
             recall_min_confidence: 0.3,
             auto_inject: true,
+            cascade_short_term_turns: 6,
+            cascade_memory_saliency_floor: 0.3,
+            cascade_memory_max_chunks: 5,
         }
     }
 }
@@ -1200,6 +1217,15 @@ impl From<KaskMemorySettingsContent> for KaskMemorySettings {
                 .recall_min_confidence
                 .unwrap_or(default.recall_min_confidence),
             auto_inject: c.auto_inject.unwrap_or(default.auto_inject),
+            cascade_short_term_turns: c
+                .cascade_short_term_turns
+                .unwrap_or(default.cascade_short_term_turns),
+            cascade_memory_saliency_floor: c
+                .cascade_memory_saliency_floor
+                .unwrap_or(default.cascade_memory_saliency_floor),
+            cascade_memory_max_chunks: c
+                .cascade_memory_max_chunks
+                .unwrap_or(default.cascade_memory_max_chunks),
         }
     }
 }
@@ -1659,6 +1685,9 @@ mod tests {
                 recall_limit: None,
                 recall_min_confidence: None,
                 auto_inject: None,
+                cascade_short_term_turns: None,
+                cascade_memory_saliency_floor: None,
+                cascade_memory_max_chunks: None,
             }),
             ..Default::default()
         };
