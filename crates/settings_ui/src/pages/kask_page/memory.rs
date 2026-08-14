@@ -23,6 +23,7 @@ pub(crate) fn render_memory_page(
     let cascade_short_term_turns = memory.cascade_short_term_turns.to_string();
     let cascade_memory_saliency_floor = memory.cascade_memory_saliency_floor.to_string();
     let cascade_memory_max_chunks = memory.cascade_memory_max_chunks.to_string();
+    let cascade_turn_token_cap = memory.cascade_turn_token_cap.to_string();
 
     let cadence_input = SettingsInputField::new("kask-memory-consolidation-cadence")
         .tab_index(0)
@@ -347,6 +348,48 @@ pub(crate) fn render_memory_page(
                                                 .memory
                                                 .get_or_insert_default()
                                                 .cascade_memory_max_chunks = Some(parsed);
+                                        },
+                                    );
+                                }
+                            }
+                        }),
+                ),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Cascade Turn Token Cap"))
+                .child(
+                    Label::new(
+                        "Maximum tokens per turn for cascade short-term context. \
+                         Turns exceeding this budget are condensed via the local \
+                         algorithmic condenser (TF-IDF word-rank), then truncated \
+                         if still over. 0 disables condensation (raw turn text \
+                         is passed verbatim).",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(
+                    SettingsInputField::new("kask-memory-cascade-turn-token-cap")
+                        .tab_index(0)
+                        .with_initial_text(cascade_turn_token_cap)
+                        .with_placeholder("512")
+                        .aria_label("Cascade Turn Token Cap")
+                        .confirm_on_focus_out()
+                        .on_confirm(move |value, _window, cx| {
+                            if let Some(text) = value {
+                                if let Ok(parsed) = text.parse::<u32>() {
+                                    SettingsStore::global(cx).update_settings_file(
+                                        <dyn fs::Fs>::global(cx),
+                                        move |settings, _| {
+                                            settings
+                                                .kask
+                                                .get_or_insert_default()
+                                                .memory
+                                                .get_or_insert_default()
+                                                .cascade_turn_token_cap = Some(parsed);
                                         },
                                     );
                                 }

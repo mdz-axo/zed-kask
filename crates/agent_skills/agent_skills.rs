@@ -2660,7 +2660,9 @@ description: A skill with no body content
     // Seeding materialises the shipped SKILL.md files to disk so the catalog
     // is built from disk (editable, no compiled-in runtime source). Pins:
     // - a missing skill is written;
-    // - an existing file is never overwritten (user edits are sovereign).
+    // - an existing USER (non-core) skill is never overwritten (user edits are
+    //   sovereign). Core skills are always overwritten — that contract is
+    //   pinned by `test_seed_shipped_skills_overwrites_core_skills`.
     #[gpui::test]
     async fn test_seed_shipped_skills_writes_missing_and_preserves_existing(
         cx: &mut TestAppContext,
@@ -2670,26 +2672,130 @@ description: A skill with no body content
 
         seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
 
-        // A known shipped skill must be present on disk after seeding.
-        let bug_hunt = Path::new("/skills/bug-hunt/SKILL.md");
+        // A known shipped USER (non-core) skill must be present on disk after
+        // seeding. `lora-training` is non-core, so user edits to it are
+        // sovereign and must survive re-seeding.
+        let lora_training = Path::new("/skills/lora-training/SKILL.md");
         assert!(
-            fs.is_file(bug_hunt).await,
-            "shipped skill 'bug-hunt' should be seeded to disk"
+            fs.is_file(lora_training).await,
+            "shipped skill 'lora-training' should be seeded to disk"
         );
 
         // Overwrite the seeded file with a user edit, then re-seed. The
         // user edit must survive — seeding never clobbers existing files.
         fs.write(
-            bug_hunt,
-            b"---\nname: bug-hunt\ndescription: My custom edit\n---\n",
+            lora_training,
+            b"---\nname: lora-training\ndescription: My custom edit\n---\n",
         )
         .await
         .unwrap();
         seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
-        let content = fs.load(bug_hunt).await.unwrap();
+        let content = fs.load(lora_training).await.unwrap();
         assert!(
             content.contains("My custom edit"),
-            "user edit to a shipped skill must survive re-seeding; got: {content}"
+            "user edit to a shipped user skill must survive re-seeding; got: {content}"
+        );
+    }
+
+    // The `CORE_SKILL_NAMES` constant is the single source of truth for which
+    // skills are core. Every shipped SKILL.md with `core: true` in its
+    // frontmatter must appear in `CORE_SKILL_NAMES`, and every name in
+    // `CORE_SKILL_NAMES` must have a shipped SKILL.md marked `core: true`.
+    // A drift in either direction is a contract violation: a frontmatter
+    // `core: true` not in the constant would be seeded-once (editable) instead
+    // of always-overwritten, and a constant entry without frontmatter would
+    // be overwritten on every startup against the user's will.
+    #[test]
+    fn test_core_skill_names_constant_matches_shipped_core_frontmatter() {
+        let seed = shipped_skill_seed();
+
+        // Skills whose shipped SKILL.md frontmatter has `core: true`.
+        let frontmatter_core: std::collections::HashSet<&str> = seed
+            .iter()
+            .filter_map(|(name, content)| {
+                let (metadata, _body) = extract_frontmatter(content)
+                    .unwrap_or_else(|e| panic!("shipped skill '{name}' failed to parse: {e}"));
+                if metadata.core { Some(*name) } else { None }
+            })
+            .collect();
+
+        let constant_core: std::collections::HashSet<&str> =
+            CORE_SKILL_NAMES.iter().copied().collect();
+
+        // Every frontmatter-core skill must be in the constant.
+        let missing_from_constant: Vec<&str> = frontmatter_core
+            .difference(&constant_core)
+            .copied()
+            .collect();
+        assert!(
+            missing_from_constant.is_empty(),
+            "skills with `core: true` frontmatter but absent from CORE_SKILL_NAMES: \
+             {missing_from_constant:?} — add them to CORE_SKILL_NAMES or remove the \
+             frontmatter flag"
+        );
+
+        // Every constant entry must have a shipped SKILL.md marked core.
+        let missing_from_frontmatter: Vec<&str> = constant_core
+            .difference(&frontmatter_core)
+            .copied()
+            .collect();
+        assert!(
+            missing_from_frontmatter.is_empty(),
+            "CORE_SKILL_NAMES entries with no shipped SKILL.md marked `core: true`: \
+             {missing_from_frontmatter:?} — add `core: true` to the SKILL.md frontmatter \
+             or remove the name from CORE_SKILL_NAMES"
+        );
+
+        // Sanity: the core set is non-empty and a strict subset of shipped.
+        assert!(
+            !constant_core.is_empty(),
+            "CORE_SKILL_NAMES must not be empty"
+        );
+        let shipped_names: std::collections::HashSet<&str> =
+            seed.iter().map(|(name, _)| *name).collect();
+        assert!(
+            constant_core.is_subset(&shipped_names),
+            "CORE_SKILL_NAMES references skills with no shipped SKILL.md"
+        );
+    }
+
+    // Core skills are always overwritten on every startup so user edits
+    // cannot break system-critical functionality. This pins the overwrite
+    // half of the seeder contract (the preserve-existing half is pinned by
+    // `test_seed_shipped_skills_writes_missing_and_preserves_existing`).
+    #[gpui::test]
+    async fn test_seed_shipped_skills_overwrites_core_skills(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new("/skills")).await.unwrap();
+
+        // Seed once — the core skill lands on disk.
+        seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
+        let create_skill = Path::new("/skills/create-skill/SKILL.md");
+        assert!(
+            fs.is_file(create_skill).await,
+            "core skill 'create-skill' should be seeded to disk"
+        );
+        let original = fs.load(create_skill).await.unwrap();
+
+        // A user edit (or corruption) is written over the core skill.
+        fs.write(
+            create_skill,
+            b"---\nname: create-skill\ndescription: TAMPERED\n---\n",
+        )
+        .await
+        .unwrap();
+
+        // Re-seed — the core skill must be overwritten with the shipped copy.
+        seed_shipped_skills(fs.as_ref(), Path::new("/skills")).await;
+        let after = fs.load(create_skill).await.unwrap();
+        assert_eq!(
+            after, original,
+            "core skill must be overwritten on re-seed; user edits are not sovereign \
+             for core skills. Got tampered content."
+        );
+        assert!(
+            !after.contains("TAMPERED"),
+            "tampered content survived re-seed — core overwrite is broken: {after}"
         );
     }
 }

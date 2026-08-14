@@ -325,6 +325,13 @@ pub struct KaskMemorySettings {
     /// Maximum memory chunks to inject into a skill cascade, after merging
     /// across all participant stores (user, curator, swarm). Default: 5.
     pub cascade_memory_max_chunks: u32,
+
+    /// Maximum tokens per turn for cascade short-term context. Each turn
+    /// exceeding this budget is condensed via the local algorithmic
+    /// condenser (TF-IDF word-rank for conversation, flashrank for other
+    /// content), then truncated to the token cap if still over. 0 disables
+    /// condensation (raw turn text is passed verbatim). Default: 512.
+    pub cascade_turn_token_cap: u32,
 }
 
 impl Default for KaskMemorySettings {
@@ -338,6 +345,7 @@ impl Default for KaskMemorySettings {
             cascade_short_term_turns: 6,
             cascade_memory_saliency_floor: 0.3,
             cascade_memory_max_chunks: 5,
+            cascade_turn_token_cap: 512,
         }
     }
 }
@@ -1226,6 +1234,9 @@ impl From<KaskMemorySettingsContent> for KaskMemorySettings {
             cascade_memory_max_chunks: c
                 .cascade_memory_max_chunks
                 .unwrap_or(default.cascade_memory_max_chunks),
+            cascade_turn_token_cap: c
+                .cascade_turn_token_cap
+                .unwrap_or(default.cascade_turn_token_cap),
         }
     }
 }
@@ -1688,6 +1699,7 @@ mod tests {
                 cascade_short_term_turns: None,
                 cascade_memory_saliency_floor: None,
                 cascade_memory_max_chunks: None,
+                cascade_turn_token_cap: None,
             }),
             ..Default::default()
         };

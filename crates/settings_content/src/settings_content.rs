@@ -1675,6 +1675,11 @@ pub struct KaskMemorySettingsContent {
     /// Maximum memory chunks to inject into a skill cascade, after merging
     /// across all participant stores (user, curator, swarm).
     pub cascade_memory_max_chunks: Option<u32>,
+    /// Maximum tokens per turn for cascade short-term context. Turns
+    /// exceeding this budget are condensed via the local algorithmic
+    /// condenser, then truncated to the token cap if still over. 0 disables
+    /// condensation.
+    pub cascade_turn_token_cap: Option<u32>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

@@ -1258,6 +1258,7 @@ fn format_skill_file(
         disable_model_invocation,
         visibility: SkillVisibility::Private,
         dependencies: Vec::new(),
+        core: false,
     };
     let frontmatter = serde_yaml_ng::to_string(&metadata)
         .context("failed to serialize skill frontmatter as YAML")?;

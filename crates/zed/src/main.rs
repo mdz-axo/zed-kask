@@ -1556,7 +1556,7 @@ fn main() {
                                 // (the pre-fix behavior).
                                 let cascade_provider = std::sync::Arc::new(
                                     kask_bridge::AgentCascadeContextProviderAdapter::new(
-                                        real_memory_typed.clone(),
+                                        real_memory_typed,
                                     ),
                                 );
                                 agent::set_cascade_context_provider(Some(cascade_provider));

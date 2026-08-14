@@ -4910,23 +4910,7 @@ mod internal_tests {
         }
     }
 
-    fn make_builtin_skill(name: &str, description: &str) -> Skill {
-        Skill {
-            name: name.to_string(),
-            description: description.to_string(),
-            source: SkillSource::Global,
-            directory_path: PathBuf::from(format!("/builtin/{name}")),
-            skill_file_path: PathBuf::from(format!("/builtin/{name}/SKILL.md")),
-            load_warnings: Vec::new(),
-            disable_model_invocation: false,
-            visibility: SkillVisibility::Private,
-            dependencies: Vec::new(),
-            embedded_body: Some("built-in body"),
-            core: false,
-        }
-    }
-
-    /// Filter to only user-defined (non-built-in) skills for test assertions.
+    /// Filter to only user-defined (non-core) skills for test assertions.
     fn user_skills(skills: &[Skill]) -> Vec<&Skill> {
         skills.iter().filter(|s| !s.core).collect()
     }

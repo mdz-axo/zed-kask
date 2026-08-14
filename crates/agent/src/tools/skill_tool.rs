@@ -661,6 +661,22 @@ async fn gather_cascade_context(
     };
 
     // Convert LanguageModelRequestMessage → CascadeChatMessage (text-only).
+    // Each turn is condensed to the configured token cap via the local
+    // algorithmic condenser (WordRank for conversation, Flashrank for other
+    // content). This prevents a single verbose turn (large file read,
+    // terminal output) from blowing the context budget for every subsequent
+    // template step.
+    let turn_token_cap = cx.update(|cx| {
+        use gpui::ReadGlobal;
+        use settings::SettingsStore;
+        SettingsStore::global(cx)
+            .get_content_for_file(settings::SettingsFile::User)
+            .and_then(|c| c.kask.clone())
+            .and_then(|c| c.memory)
+            .and_then(|m| m.cascade_turn_token_cap)
+            .unwrap_or(512) as usize
+    });
+    let condenser = crate::thread_condenser();
     let prior_messages: Vec<crate::CascadeChatMessage> = thread_messages
         .iter()
         .filter_map(|msg| {
@@ -682,9 +698,10 @@ async fn gather_cascade_context(
             if content.is_empty() {
                 None
             } else {
+                let condensed = condense_turn_text(&content, turn_token_cap, condenser.as_deref());
                 Some(crate::CascadeChatMessage {
                     role: role.to_string(),
-                    content,
+                    content: condensed,
                 })
             }
         })
@@ -740,6 +757,71 @@ async fn gather_cascade_context(
     };
 
     (prior_messages, memory_snippets)
+}
+
+/// Condense a turn's text content to a maximum token budget using the
+/// local algorithmic condenser.
+///
+/// Turns under the budget pass through unchanged. Turns over the budget
+/// are compressed via the `ThreadCondenser` (which dispatches to
+/// `WordRankAlgorithm` for conversation content — TF-IDF line selection
+/// with structural bonuses), then truncated to the token cap if the
+/// compressed result is still over.
+///
+/// The condenser is line-level (retention percentage), not token-level.
+/// This function adds the token cap as a second pass: compress first (to
+/// remove low-saliency lines), then truncate to the token budget (to
+/// enforce a hard cap).
+///
+/// Token estimation uses the standard 4-chars-per-token heuristic. This
+/// is imprecise (actual tokenizers vary) but conservative and sufficient
+/// for context budgeting — the cost of overestimating is slightly more
+/// truncation, not a correctness issue.
+///
+/// When `condenser` is `None` (not wired) or `max_tokens` is 0, the raw
+/// text is returned unchanged.
+fn condense_turn_text(
+    text: &str,
+    max_tokens: usize,
+    condenser: Option<&dyn crate::ThreadCondenser>,
+) -> String {
+    if max_tokens == 0 {
+        return text.to_string();
+    }
+
+    // Rough token estimate: 1 token ≈ 4 chars.
+    let estimated_tokens = text.len() / 4;
+
+    if estimated_tokens <= max_tokens {
+        return text.to_string();
+    }
+
+    // Pass 1: condense via the thread condenser. The tool name
+    // "conversation" maps to `ContextCategory::ConversationHistory` in the
+    // condenser's `classify_tool`, which selects `WordRankAlgorithm` —
+    // TF-IDF bag-of-words compression that preserves high-saliency lines.
+    let condensed = match condenser {
+        Some(c) => c.compress_tool_result("conversation", text),
+        None => text.to_string(),
+    };
+
+    // Pass 2: truncate to the token budget if still over.
+    let condensed_tokens = condensed.len() / 4;
+    if condensed_tokens <= max_tokens {
+        return condensed;
+    }
+
+    // Truncate at the char boundary closest to max_tokens * 4, then find
+    // the last whitespace to avoid cutting mid-word.
+    let char_cap = max_tokens * 4;
+    if char_cap >= condensed.len() {
+        return condensed;
+    }
+    let truncated = &condensed[..char_cap];
+    let last_space = truncated
+        .rfind(|c: char| c.is_whitespace())
+        .unwrap_or(char_cap);
+    format!("{}…[truncated]", &condensed[..last_space])
 }
 
 #[cfg(test)]
@@ -1727,6 +1809,7 @@ mod tests {
             visibility: agent_skills::SkillVisibility::Private,
             dependencies: Vec::new(),
             embedded_body: None,
+            core: false,
         };
         let rendered = render_skill_envelope(&skill, "body content");
         assert!(

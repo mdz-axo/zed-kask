@@ -524,6 +524,7 @@ mod tests {
                 visibility: SkillVisibility::Private,
                 dependencies: Vec::new(),
                 embedded_body: None,
+                core: false,
             });
             cx.set_global(index);
         });
@@ -561,6 +562,7 @@ mod tests {
                 visibility: SkillVisibility::Private,
                 dependencies: Vec::new(),
                 embedded_body: None,
+                core: false,
             });
             cx.set_global(index);
         });
