@@ -635,6 +635,7 @@ steps:
       communication: "{{ step_18_result }}"
       kata: "{{ step_22_result | default({}) }}"
       calibration_gap: "{{ step_21_result | default({}) }}"
+      semantic_tags: "{{ step_5_result | default({}) }}"
       market_outside_view: "{{ step_23_result }}"
       evidence_audit: "{{ step_24_result }}"
 

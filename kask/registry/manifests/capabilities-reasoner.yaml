@@ -83,15 +83,18 @@ inputs:
     description: >
       The system whose capabilities are being reasoned about. Includes
       model identifier, agent configuration, tool set, or other scoping
-      identifiers.
+      identifiers. For skill composition evaluation, this is the skill
+      manifest path or registry directory.
   - name: capability_definition
     type: string
     required: true
     description: >
       Which of the five capability definitions is in use for this query:
       task-performance | latent-variable | hierarchical-structural |
-      emergence-threshold | elicitation. Different definitions produce
-      different verdicts — the choice must be deliberate.
+      emergence-threshold | elicitation. For skill composition evaluation,
+      use 'elicitation' (capability is what the skill CAN do when properly
+      elicited, not what it DOES do under default execution). Different
+      definitions produce different verdicts — the choice must be deliberate.
   - name: registry_seed
     type: object
     required: false
@@ -109,6 +112,14 @@ inputs:
       prior_iteration.verdict_signatures to refine the registry, and
       consumes prior_iteration.next_registry_focus (emitted by the
       convergence check when not converged) to direct the next iteration.
+  - name: skill_manifests
+    type: array
+    required: false
+    description: >
+      Array of skill manifest paths to evaluate for composition quality
+      (skill composition domain only). When provided, the register phase
+      loads the skill composition capability registry and the elicit phase
+      analyzes each manifest against the five composition principles.
 
 ledger:
   span_namespace: reg.skill.capabilities-reasoner
@@ -135,6 +146,7 @@ steps:
       capability_definition: "{{ capability_definition }}"
       registry_seed: "{{ registry_seed | default({}) }}"
       prior_iteration: "{{ prior_iteration | default({}) }}"
+      skill_manifests: "{{ skill_manifests | default([]) }}"
 
   - ordinal: 2
     action: select
