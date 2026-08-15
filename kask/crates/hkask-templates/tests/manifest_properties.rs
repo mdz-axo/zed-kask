@@ -734,10 +734,22 @@ fn bare_step_result_passing_is_annotated() {
                     .and_then(|obj| {
                         obj.iter().find_map(|(k, val)| {
                             let val_str = val.to_string();
-                            if BARE_STEP_RESULT_RE
+                            // Check if this value contains a bare step_N_result
+                            // (no .field path) for the current ref_ordinal.
+                            let has_bare_ref = BARE_STEP_RESULT_RE
                                 .captures_iter(&val_str)
-                                .any(|c| c.get(1).and_then(|m| m.as_str().parse::<u32>().ok()) == Some(*ref_ordinal))
-                            {
+                                .any(|c| {
+                                    let full = c.get(0).unwrap().as_str();
+                                    if full.starts_with("prev_") {
+                                        return false;
+                                    }
+                                    let end = c.get(0).unwrap().end();
+                                    let next_char = val_str[end..].chars().next();
+                                    next_char != Some('.')
+                                        && c.get(1).and_then(|m| m.as_str().parse::<u32>().ok())
+                                            == Some(*ref_ordinal)
+                                });
+                            if has_bare_ref {
                                 Some(k.clone())
                             } else {
                                 None
@@ -860,6 +872,14 @@ fn default_fallback_produces_full_replacement() {
                 let (Some(n), Some(field), Some(m)) = (n, field, m) else {
                     continue;
                 };
+
+                // Skip self-referential fallbacks (step_N_result.field | default(step_N_result)).
+                // This is a different pattern: "use .field if present, else use the full
+                // result." It's not a cross-step replacement and the partial-overlay
+                // concern doesn't apply.
+                if n == m {
+                    continue;
+                }
 
                 // Load the producer template (step N).
                 let producer_step = match find_step_by_ordinal(&manifest, n) {

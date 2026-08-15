@@ -959,11 +959,9 @@ impl CompaniesServer {
     ) -> String {
         execute_tool_semantic(self, "forecast_persist", Self::ontology_anchor("forecast_persist"), async {
             validate_symbol(&req.symbol)?;
-            for (name, value) in [
-                ("forecast_multiple", req.forecast_multiple),
-                ("forecast_price_change", req.forecast_price_change),
-            ] {
-                validate_finite(name, value)?;
+            validate_finite("forecast_price_change", req.forecast_price_change)?;
+            if let Some(value) = req.forecast_multiple {
+                validate_finite("forecast_multiple", value)?;
             }
             if let Some(ref revision_of) = req.revision_of {
                 let revision_of = revision_of.clone();

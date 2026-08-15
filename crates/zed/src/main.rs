@@ -2980,6 +2980,7 @@ async fn try_wire_manifest_executor(
     tool_port: &std::sync::Arc<dyn hkask_capability::ToolPort>,
     registry_manifests_dir: &std::path::Path,
     registry_templates_dir: &std::path::Path,
+    regulation_ledger: &std::sync::Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>,
     cx: &mut gpui::AsyncApp,
 ) -> Result<(), anyhow::Error> {
     // Already wired — no-op.

@@ -641,8 +641,18 @@ steps:
       symbol: "{{ ticker }}"
       forecast_date: "{{ now | default('') }}"
       horizon: "1yr"
-      forecast_multiple: "{{ step_16_result.pt_12m | default(0) }}"
-      forecast_price_change: "{{ step_16_result.expected_return | default(0) }}"
+      # Compute the forecast price change from the PT and the current market
+      # price emitted by the valuation synthesis (step 16). Guard against
+      # a zero market price — if the template didn't emit one, default to 0
+      # (the tool's validate_finite will reject NaN, and on_failure: report
+      # surfaces the issue rather than silently persisting a broken PT).
+      forecast_price_change: >-
+        {% set mp = step_16_result.pt_components.market_price | default(0) -%}
+        {% if mp > 0 -%}
+          {{ (step_16_result.pt_12m - mp) / mp }}
+        {% else -%}
+          0
+        {% endif -%}
 
 error_handling:
   on_gas_exceeded: abort
