@@ -143,10 +143,10 @@ steps:
   - ordinal: 5
     action: execute
     description: >
-      COMPANY — fetch IR page content via fetch MCP tool for Self-View
+      COMPANY — fetch IR page content via web_extract MCP tool for Self-View
       verbatim company description. Deterministic. Result lands in
       step_5_result. Conditioned on web_search returning a URL.
-    mcp: fetch
+    mcp: web_extract
     condition: "step_4_result"
     gas_cap: 3000
     timeout_seconds: 90

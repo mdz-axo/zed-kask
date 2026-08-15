@@ -747,4 +747,66 @@ mod tests {
         );
         assert_eq!(urlencoding("test&foo=bar"), "test%26foo%3Dbar");
     }
+
+    // P1 regression: `search_fundamental` must surface a credential gap as
+    // `permission_denied` rather than silently returning empty results. An
+    // operator seeing an empty `Vec` cannot tell "no matches" from "no
+    // credentials" — the guard makes the missing-credentials case loud and
+    // actionable. A future refactor that drops the guard would re-introduce
+    // the broken feedback loop (the regulation layer reads empty results as
+    // "no deviation").
+    //
+    // The guard runs before any HTTP call, so this is a pure unit test —
+    // no network, no provider construction. We pass `None` for all three
+    // provider keys and assert the error kind.
+    #[tokio::test]
+    async fn search_fundamental_returns_permission_denied_when_all_keys_missing() {
+        let client = reqwest::Client::new();
+        let err = search_fundamental(
+            &client,
+            "AAPL",
+            "Apple Inc.",
+            "revenue guidance",
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect_err("all-None keys must return Err before any HTTP call");
+        assert_eq!(
+            err.kind,
+            hkask_types::McpErrorKind::PermissionDenied,
+            "missing-credentials case must classify as permission_denied, not \
+             silently return empty results; got: {}",
+            err.message,
+        );
+    }
+
+    // P1 regression companion: an empty-string key is equivalent to a missing
+    // key (the env-var read returns "" when the var is set but empty). The
+    // guard treats `Some("")` the same as `None` — both must surface
+    // `permission_denied`. Without this, an operator who sets
+    // `HKASK_EXA_API_KEY=""` would get a silent empty-result loop.
+    #[tokio::test]
+    async fn search_fundamental_returns_permission_denied_when_all_keys_empty() {
+        let client = reqwest::Client::new();
+        let err = search_fundamental(
+            &client,
+            "AAPL",
+            "Apple Inc.",
+            "revenue guidance",
+            Some(""),
+            Some(""),
+            Some(""),
+        )
+        .await
+        .expect_err("all-empty keys must return Err before any HTTP call");
+        assert_eq!(
+            err.kind,
+            hkask_types::McpErrorKind::PermissionDenied,
+            "empty-string keys must classify as permission_denied, same as None; \
+             got: {}",
+            err.message,
+        );
+    }
 }
