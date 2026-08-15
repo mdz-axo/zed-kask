@@ -1269,6 +1269,22 @@ fn main() {
                     kask_bridge::provision_agent(&username_for_provision)
                 }).await;
 
+                // Mirror the provisioned DB passphrase from the hkask-keystore
+                // keychain (`hkask-db-passphrase`, written by `provision_agent`)
+                // into zed's `CredentialsProvider` under
+                // `kask://credentials/hkask_db_passphrase` so `build_mcp_server_env`
+                // picks it up via the primary `ctx.credentials` tier. This must
+                // complete before the governed MCP servers launch below — they
+                // read the passphrase at launch via `build_mcp_server_env`, so we
+                // `.await` the mirror rather than detaching it. On failure the
+                // mirror warns and returns; MCP servers then fall back to the
+                // keystore tier of `resolve_db_passphrase`.
+                let db_passphrase_mirror_task = cx.update(|cx| {
+                    let credentials_provider = zed_credentials_provider::global(cx);
+                    kask_bridge::mirror_provisioned_db_passphrase(&credentials_provider, cx)
+                });
+                db_passphrase_mirror_task.await;
+
                 // Hoisted to the outer scope so the IPC server (started later
                 // in the `cx.update` block) can access it. Set inside the
                 // `match provision_result` below.

@@ -19,9 +19,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fs::Fs;
-use hkask_templates::{
-    CascadeOutcome, ExitKind, ManifestExecutor, load_manifest_from_yaml, validate_inputs,
-};
+use hkask_templates::{CascadeOutcome, ManifestExecutor, load_manifest_from_yaml, validate_inputs};
 use hkask_types::InferencePort;
 use serde_json::Value;
 use std::path::Path;

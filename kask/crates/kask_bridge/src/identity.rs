@@ -22,6 +22,10 @@
 //!    English word if none exists — the user can change it later)
 //! 3. Return the resolved DB path and passphrase for `RealMemoryPort::new()`
 
+use std::sync::Arc;
+
+use credentials_provider::CredentialsProvider;
+use gpui::{App, Task};
 use hkask_keystore::Keychain;
 use hkask_keystore::keychain_keys::KEY_DB_PASSPHRASE;
 use hkask_types::{WebID, agent_paths::sanitize_name};
@@ -253,6 +257,77 @@ pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, ProvisionErro
         db_path,
         passphrase,
         webid,
+    })
+}
+
+/// Mirror the provisioned DB passphrase from the hkask-keystore keychain
+/// (`hkask-db-passphrase`, written by `provision_agent`) into zed's
+/// `CredentialsProvider` under `kask://credentials/hkask_db_passphrase`.
+///
+/// `build_mcp_server_env` reads the passphrase via the primary
+/// `ctx.credentials` tier of `resolve_db_passphrase`, which looks up this URL.
+/// Without the mirror, first-run provisioning only writes to the keystore
+/// keychain, so MCP servers reach the passphrase only via the fallback tier
+/// (`resolve_credential` → `hkask-db-passphrase`) — and `nudge_mcp_servers`
+/// never fires because `provision_agent` bypasses `write_credential`.
+///
+/// This bridges the two keychain backends at write time, reusing the
+/// canonical write path so the ordering dependency (provision before server
+/// launch) is explicit rather than implicit.
+///
+/// Failure modes (per the `.rules` trap on startup-failure signals):
+/// - Passphrase read fails → `tracing::warn!` naming the error; MCP servers
+///   fall back to the keystore tier of `resolve_db_passphrase`.
+/// - CredentialsProvider write fails → `tracing::warn!` naming the URL and
+///   error; same fallback applies.
+///
+/// The returned `Task` must be awaited (or detached) by the caller. It does
+/// NOT fire `nudge_mcp_servers` — at the call site in the deferred post-login
+/// task, the governed MCP servers have not launched yet, so they pick up the
+/// mirrored credential at launch via `build_mcp_server_env`.
+pub fn mirror_provisioned_db_passphrase(
+    credentials_provider: &Arc<dyn CredentialsProvider>,
+    cx: &mut App,
+) -> Task<()> {
+    // Read the provisioned passphrase from the keystore chain (env → keychain
+    // `hkask-db-passphrase`). `provision_agent` has already run by the time
+    // this is called, so the keychain entry exists on first run.
+    let passphrase = match hkask_keystore::keychain::resolve_db_passphrase_string() {
+        Ok(passphrase) => passphrase,
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.identity",
+                %error,
+                "Could not read provisioned DB passphrase for mirror — \
+                 MCP servers will rely on the fallback tier of resolve_db_passphrase"
+            );
+            return Task::ready(());
+        }
+    };
+
+    let credentials_provider = credentials_provider.clone();
+    cx.spawn(async move |cx| {
+        // Write to zed's CredentialsProvider so `build_mcp_server_env` finds
+        // the passphrase via the primary `ctx.credentials` tier.
+        let url = format!("{}/hkask_db_passphrase", crate::KASK_CREDENTIAL_NAMESPACE);
+        match credentials_provider
+            .write_credentials(&url, "kask", passphrase.as_bytes(), cx)
+            .await
+        {
+            Ok(()) => tracing::info!(
+                target: "hkask.identity",
+                credential_url = %url,
+                "Mirrored provisioned DB passphrase to CredentialsProvider \
+                 so build_mcp_server_env picks it up via the primary ctx.credentials tier"
+            ),
+            Err(error) => tracing::warn!(
+                target: "hkask.identity",
+                %error,
+                credential_url = %url,
+                "Failed to mirror provisioned DB passphrase to CredentialsProvider — \
+                 MCP servers will rely on the fallback tier of resolve_db_passphrase"
+            ),
+        }
     })
 }
 
