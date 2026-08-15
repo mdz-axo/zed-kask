@@ -74,9 +74,16 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 
 ### lens-five-frameworks
 
-1. Apply the five intellectual frameworks: The Loop (economic potential, variant expectations, valuation anchor), Superforecasting (granular probabilities, outside view via market_match), Dunning-Kruger (process_confidence vs final_confidence gap), Hidden Champions (Simon 8 characteristics), Kauffman (ergodic vs nonergodic, adjacent possible).
+1. Apply the five intellectual frameworks: The Loop (economic potential, variant expectations, valuation anchor), Superforecasting (granular probabilities, outside view via market_match, certainty-level drift via semantic_tags), Dunning-Kruger (process_confidence vs final_confidence gap, calibration_gap from kata-calibration-measure), Hidden Champions (Simon 8 characteristics), Kauffman (ergodic vs nonergodic, adjacent possible).
 2. Reason over market_match (step 10) and evaluate_evidence (step 11) outputs plus all prior pipeline outputs.
 3. Emit overall_verdict (CONSISTENT / PARTIAL / INCONSISTENT — the convergence signal), key_tensions, pm_memo (200 words). Never blocks publication.
+
+### kata-calibration-measure
+
+1. Close the open kata loop — step 22 (kata-improvement-step1-direction) sets the direction but never measures the gap.
+2. Measure the analyst's calibration gap using the market_calibration Brier score (step 20) and resolved_outcomes (step 19).
+3. Emit calibration_gap (0.0 calibrated → 1.0 maximum gap). No prediction recorded = 1.0 (broken feedback loop, not neutral).
+4. LENS consumes calibration_gap as a 6th axis alongside the existing five frameworks.
 
 ## Convergence
 
