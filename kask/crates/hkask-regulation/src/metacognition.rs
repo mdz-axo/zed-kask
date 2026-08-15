@@ -35,7 +35,7 @@ use parking_lot::RwLock;
 use tokio::sync::RwLock as TokioRwLock;
 use tokio::sync::mpsc;
 
-use crate::runtime::RegulationLedger;
+use crate::runtime::{RegulationLedger, StoredSkillSpan};
 use crate::types::loops::CurationInput;
 
 /// Default tick interval for the metacognition loop (30 seconds).
@@ -145,6 +145,9 @@ impl Default for MetacognitionConfig {
             variety_deficit_threshold: DEFAULT_VARIETY_DEFICIT_THRESHOLD,
             critical_alert_threshold: DEFAULT_CRITICAL_ALERT_THRESHOLD,
             effectiveness_floor: DEFAULT_EFFECTIVENESS_FLOOR,
+            feedback_drift_min_samples: 10,
+            feedback_drift_window: 10,
+            feedback_drift_decline_ratio: 0.8,
         }
     }
 }
@@ -240,6 +243,7 @@ impl MetacognitionLoop {
         let ledger = self.ledger.read().await;
         let ledger_health = ledger.health().await;
         let regulation_health = ledger.regulation_health().await;
+        let drift_alerts = self.sense_feedback_drift(&ledger).await;
         drop(ledger); // release the read lock before acting
 
         let mut snapshot = HealthSnapshot {
@@ -254,7 +258,8 @@ impl MetacognitionLoop {
         };
 
         // ── Compare + Compute ──────────────────────────────────────────
-        let alerts = self.compare(&snapshot);
+        let mut alerts = self.compare(&snapshot);
+        alerts.extend(drift_alerts);
         snapshot.escalation_count = alerts.len();
 
         // ── Act ────────────────────────────────────────────────────────
@@ -262,6 +267,67 @@ impl MetacognitionLoop {
 
         // Store the snapshot for external queries.
         *self.last_snapshot.write() = Some(snapshot);
+    }
+
+    /// Sense feedback drift by trending outcome span success rates per
+    /// skill. For each skill with enough outcome spans, splits the recent
+    /// history into a current window and a prior window, computes the
+    /// success rate for each, and emits a `FeedbackDrift` alert if the
+    /// current rate has declined below the configured ratio of the prior
+    /// rate.
+    ///
+    /// This is the automated drift detection layer (Compiled AI gap 2).
+    /// It uses the `reg.skill.<id>.outcome` spans emitted by
+    /// `BridgeManifestExecutor::execute_skill` (Step 0 of the revised plan).
+    async fn sense_feedback_drift(
+        &self,
+        ledger: &RegulationLedger,
+    ) -> Vec<EscalationAlert> {
+        let skill_ids = ledger.skill_ids_with_feedback("outcome").await;
+        let mut alerts = Vec::new();
+
+        for skill_id in skill_ids {
+            let spans = ledger.query_skill_feedback(&skill_id, "outcome").await;
+            if spans.len() < self.config.feedback_drift_min_samples {
+                continue;
+            }
+
+            let window = self.config.feedback_drift_window;
+            if spans.len() < window * 2 {
+                continue;
+            }
+
+            // Most recent `window` spans = current; the `window` before that = prior.
+            let split = spans.len() - window;
+            let prior_spans = &spans[split - window..split];
+            let current_spans = &spans[split..];
+
+            let prior_rate = success_rate(prior_spans);
+            let current_rate = success_rate(current_spans);
+
+            // Alert when current rate drops below decline_ratio * prior rate.
+            // Guard against prior_rate == 0 (all failures) — no decline to detect.
+            if prior_rate > 0.0
+                && current_rate < prior_rate * self.config.feedback_drift_decline_ratio
+            {
+                alerts.push(EscalationAlert {
+                    trigger: EscalationTrigger::FeedbackDrift {
+                        skill_id: skill_id.clone(),
+                    },
+                    severity: EscalationSeverity::Warning,
+                    value: current_rate,
+                    threshold: prior_rate * self.config.feedback_drift_decline_ratio,
+                    message: format!(
+                        "Skill '{skill_id}' outcome success rate declined from \
+                         {:.0}% to {:.0}% (prior window → current window)",
+                        prior_rate * 100.0,
+                        current_rate * 100.0
+                    ),
+                });
+            }
+        }
+
+        alerts
     }
 
     /// Compare the snapshot against thresholds and produce alerts.
@@ -425,6 +491,20 @@ impl MetacognitionLoop {
     pub fn last_snapshot_blocking(&self) -> Option<HealthSnapshot> {
         self.last_snapshot.read().clone()
     }
+}
+
+/// Compute the success rate from a slice of outcome spans. Each span's
+/// payload is `{"success": bool, ...}` — the `success` field is the
+/// signal. Returns 0.0–1.0. Empty input returns 0.0.
+fn success_rate(spans: &[StoredSkillSpan]) -> f64 {
+    if spans.is_empty() {
+        return 0.0;
+    }
+    let successes = spans
+        .iter()
+        .filter(|s| s.payload.get("success").and_then(|v| v.as_bool()).unwrap_or(false))
+        .count();
+    successes as f64 / spans.len() as f64
 }
 
 #[cfg(test)]

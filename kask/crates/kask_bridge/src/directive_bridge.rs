@@ -91,6 +91,42 @@ fn convert(req: CuratorDirectiveRequest) -> CuratorDirective {
             severity: parse_severity(&severity),
             evidence,
         },
+        CuratorDirectiveRequest::EvolveMcpToolSchema {
+            server_name,
+            tool_name,
+            evolution_type,
+            field_name,
+            new_type,
+            rationale,
+            evidence,
+        } => CuratorDirective::EvolveMcpToolSchema {
+            server_name,
+            tool_name,
+            evolution_type: convert_evolution_type(evolution_type),
+            field_name,
+            new_type,
+            rationale,
+            evidence,
+        },
+    }
+}
+
+fn convert_evolution_type(
+    ty: agent::SchemaEvolutionType,
+) -> hkask_types::curator::SchemaEvolutionType {
+    match ty {
+        agent::SchemaEvolutionType::AddField => {
+            hkask_types::curator::SchemaEvolutionType::AddField
+        }
+        agent::SchemaEvolutionType::RemoveField => {
+            hkask_types::curator::SchemaEvolutionType::RemoveField
+        }
+        agent::SchemaEvolutionType::RenameField => {
+            hkask_types::curator::SchemaEvolutionType::RenameField
+        }
+        agent::SchemaEvolutionType::ChangeType => {
+            hkask_types::curator::SchemaEvolutionType::ChangeType
+        }
     }
 }
 
@@ -217,5 +253,42 @@ mod tests {
             agent: "curator".to_string(),
         });
         assert!(result.is_err(), "send to closed channel should fail");
+    }
+
+    #[test]
+    fn evolve_mcp_tool_schema_round_trips() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CuratorDirective>();
+        let sink = BridgeCuratorDirectiveSink::new(tx);
+        sink.send_directive(CuratorDirectiveRequest::EvolveMcpToolSchema {
+            server_name: "hkask-mcp-companies".to_string(),
+            tool_name: "dcf_valuation".to_string(),
+            evolution_type: agent::SchemaEvolutionType::AddField,
+            field_name: "wacc_override".to_string(),
+            new_type: Some("Option<f64>".to_string()),
+            rationale: "superforecasting step 12 needs to pass the forensic-adjusted WACC, but the tool schema doesn't have the field".to_string(),
+            evidence: "skill_use_issue:superforecasting step 12 failed with 'missing field wacc_override'".to_string(),
+        })
+        .unwrap();
+        let directive = rx.try_recv().unwrap();
+        match directive {
+            CuratorDirective::EvolveMcpToolSchema {
+                server_name,
+                tool_name,
+                evolution_type,
+                field_name,
+                new_type,
+                rationale,
+                evidence,
+            } => {
+                assert_eq!(server_name, "hkask-mcp-companies");
+                assert_eq!(tool_name, "dcf_valuation");
+                assert_eq!(evolution_type, hkask_types::curator::SchemaEvolutionType::AddField);
+                assert_eq!(field_name, "wacc_override");
+                assert_eq!(new_type.as_deref(), Some("Option<f64>"));
+                assert!(rationale.contains("forensic-adjusted WACC"));
+                assert!(evidence.contains("skill_use_issue"));
+            }
+            other => panic!("expected EvolveMcpToolSchema, got {other:?}"),
+        }
     }
 }
