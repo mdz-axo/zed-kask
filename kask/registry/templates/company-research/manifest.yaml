@@ -4,10 +4,10 @@
 #
 # 14 templates mapping the 13 EFRA-AI agents (07 CATALOG eliminated — it is a
 # classification utility not in pipeline.ts) plus two v0.35.0 additions:
-# falstaffian-competitive-rotation (step 6b) and economic-trajectory (step 9b).
+# falstaffian-competitive-rotation (step 7) and economic-trajectory (step 11).
 # The crate backs two flowdef manifests: company-research-flash (SCOUT → ... →
-# LENS) and company-research-deep (COMPANY → FALSTAFFIAN → GORILLA → IMAGINE
-# → THESIS).
+# LENS) and company-research-deep (COMPANY → FALSTAFFIAN → GORILLA →
+# ECONOMIC TRAJECTORY → IMAGINE → THESIS).
 #
 # Three templates are DEEPEN agents (INTEL, VALUATION, COMPANY): they
 # orchestrate native `action: execute` MCP tool calls in the flowdef and only
@@ -19,8 +19,8 @@
 # (step 3) and `kata-improvement/improvement-step1-direction` (step 9c) via
 # `template_ref` — the same pattern superforecasting uses for
 # `falsifiability/falsifiability-hypothesize`. The deep flowdef reuses
-# `goal-analysis/judge` (step 12) and the falstaffian-competitive-rotation /
-# economic-trajectory templates (steps 6b, 9b) which are cross-skill
+# `goal-analysis/judge` (step 14) and the falstaffian-competitive-rotation /
+# economic-trajectory templates (steps 7, 11) which are cross-skill
 # compositions anchored to the metacognition/falstaffian reference documents.
 
 crate:

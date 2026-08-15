@@ -9,6 +9,7 @@
 //! - `service_impl` — KanbanService + submodules: comments, decompose, dejam, kata, phases, spawn, verification
 
 mod service_impl;
+pub(crate) mod mermaid;
 pub mod types;
 
 // Common imports for submodule files that use `use super::*`

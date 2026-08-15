@@ -509,3 +509,64 @@ pub struct TaskUpdateResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }
+
+// ── Board export / import (mermaid) ─────────────────────────────────────────
+
+/// Request for `kanban_board_export` — render a board as mermaid kanban
+/// markdown (structure only: columns, task titles, task IDs).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BoardExportRequest {
+    pub board_id: String,
+}
+
+/// Response for `kanban_board_export` — the mermaid kanban markdown plus a
+/// small summary so callers can confirm the export captured the expected
+/// shape without re-parsing the markdown.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BoardExportResponse {
+    /// The mermaid kanban markdown. Render with `mermaid` directive `kanban`.
+    pub markdown: String,
+    pub board_id: String,
+    pub board_name: String,
+    /// Number of columns rendered.
+    pub column_count: usize,
+    /// Number of tasks rendered.
+    pub task_count: usize,
+    /// Ontology concept: <https://w3id.org/pko#Procedure>
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ontology: Option<String>,
+}
+
+/// Request for `kanban_board_import` — parse mermaid kanban markdown and
+/// create a new board with tasks in the parsed columns.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BoardImportRequest {
+    /// Mermaid kanban markdown (the output of `kanban_board_export`).
+    pub markdown: String,
+    /// Optional override for the board name. When `None`, the name parsed
+    /// from the `%% kanban board: <name>` comment is used; when the markdown
+    /// has no name comment either, the board is named `"Imported Board"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board_name: Option<String>,
+    /// Opaque client-generated key making this import replay-safe. A caller
+    /// that retries after a lost connection sends the *same* key, and the
+    /// server returns the original response instead of creating a second
+    /// board. See `crate::idempotency`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+}
+
+/// Response for `kanban_board_import` — the new board id and a summary of
+/// what was created.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BoardImportResponse {
+    pub board_id: String,
+    pub board_name: String,
+    /// Number of columns created on the new board.
+    pub column_count: usize,
+    /// Number of tasks created across all columns.
+    pub task_count: usize,
+    /// Ontology concept: <https://w3id.org/pko#Procedure>
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ontology: Option<String>,
+}

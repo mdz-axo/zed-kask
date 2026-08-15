@@ -4,6 +4,7 @@ contract:
   input:
     ticker: string
     company_board: object
+    prior_rotated_board: object|null
   output:
     rotated_board: object
     shapes_applied: array
@@ -44,6 +45,19 @@ Your role is Falstaffian: you challenge authority (the analyst consensus), you s
 ```json
 {{ company_board | tojson }}
 ```
+
+{% if prior_rotated_board %}
+## Prior Rotated Board (from previous PDCA iteration — advisory)
+
+```json
+{{ prior_rotated_board | tojson }}
+```
+
+This is the rotated board from the previous loop iteration. Use it to detect whether the COMPANY revision addressed the framing gaps:
+- If the current Company Board's `business_franchise.competitive_position` still encodes the same framing errors the prior rotation corrected, the COMPANY revision did NOT address the framing gap — flag this in `rationale` and increase the rotation's `confidence` to "high" (the framing error is persistent, not transient).
+- If the current Company Board has incorporated the prior rotation's corrections, the framing gap is closing — acknowledge this in `rationale`.
+- Do NOT copy the prior rotation's output. Perform a fresh rotation on the current Company Board. The prior rotation is advisory context, not a shortcut.
+{% endif %}
 
 ## Analytical Basis
 
@@ -129,10 +143,15 @@ Enumerate the specific framing errors in the Company Board's competitive analysi
 
 ## Output
 
+The `rotated_board` MUST be a FULL Company Board — all sections from the input Company Board, with `business_franchise` replaced by the rotated version. Do NOT emit a partial board containing only `business_franchise`. Downstream steps (GORILLA) score all 4 dimensions against the full board; a partial board would lose Self-View, Management Skill, Financial Profile, Invisible Layer, Turd Blossom, and the other sections they need.
+
 ```json
 {
   "rotated_board": {
+    "self_view": "echo back from input Company Board — unchanged by rotation",
     "business_franchise": {
+      "identity": "echo back from input if present",
+      "geography": "echo back from input if present",
       "competitive_position": "the rotated competitive position",
       "moat": "the rotated moat assessment, if the rotation changed it",
       "competitor_complement_landscape": [
@@ -145,7 +164,13 @@ Enumerate the specific framing errors in the Company Board's competitive analysi
           "asymmetry": "ASTS needs SpaceX's launch costs to fall; SpaceX does not need ASTS — ASTS serves terrestrial telcos who are SpaceX/Starlink's competitors"
         }
       ]
-    }
+    },
+    "management_skill": "echo back from input Company Board — unchanged by rotation",
+    "financial_profile": "echo back from input Company Board — unchanged by rotation",
+    "invisible_layer": "echo back from input Company Board — unchanged by rotation",
+    "turd_blossom": "echo back from input Company Board — unchanged by rotation",
+    "value_gorilla_elevator_pitch": "echo back from input Company Board — unchanged by rotation",
+    "investment_thesis_statement": "echo back from input Company Board — unchanged by rotation"
   },
   "shapes_applied": [
     {
@@ -193,3 +218,4 @@ Enumerate the specific framing errors in the Company Board's competitive analysi
 - If the rotation does not change the competitive framing (the analyst narrative was already correct), say so honestly. A null rotation is a valid result — it means the framing was frame-invariant. But verify this carefully: a null rotation must pass all five shapes without producing a rotated framing.
 - The Wardley stage classification must be justified with evidence from the Company Board or the industry context. Do not fabricate classifications.
 - Per the Falstaffian tension verification: if the rotation produces either bitterness or naivety, flag it in `rationale` and emit `confidence: "low"`.
+- The `rotated_board` MUST be a FULL Company Board, not a partial overlay. Echo back every section from the input Company Board unchanged, replacing only `business_franchise` with the rotated version. If the input Company Board has sections you don't see in the output schema above (e.g., additional fields beyond the 8 standard sections), echo those back too. Downstream steps (GORILLA) need the full board to score all 4 dimensions — a partial board with only `business_franchise` would silently drop 6 of 8 sections and corrupt the scoring.

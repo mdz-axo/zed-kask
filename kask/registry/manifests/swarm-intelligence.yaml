@@ -505,7 +505,7 @@ steps:
     action: loop
     description: >
       Re-enter the swarm-intelligence cycle if convergence is not met. Routes
-      the prior CHECK's lessons_learned and next_focus back to step 3 as
+      the prior CHECK's lessons_learned and next_focus back to step 1 as
       prior_iteration, AND threads the deterministic accumulators (C1/C3/C7)
       and the second-order monitor's recommendation back so the next
       iteration's DECIDE can apply the failed-edit and influence guards and
@@ -513,7 +513,7 @@ steps:
       execute steps (1-2, 8-9) re-run on each iteration — the swarm state is
       fresh on every SENSE and CHECK pass.
     input_mapping:
-      loop_target: "{{ 3 }}"
+      loop_target: "{{ 1 }}"
       prior_iteration:
         lessons_learned: "{{ step_10_result.lessons_learned | default([]) }}"
         next_focus: "{{ step_10_result.next_focus | default('') }}"

@@ -596,6 +596,7 @@ impl StepMachine {
             sub_budget,
             sub_convergence,
             sub_manifest.error_handling.clone(),
+            format!("{}::flowdef", self.manifest_id),
         );
         sub_machine.depth = self.depth + 1;
 
@@ -681,6 +682,7 @@ impl StepMachine {
         let gas_cap = self.budget.gas_cap();
         let rjoule_remaining = self.budget.remaining_rjoule();
         let context_template = self.context.clone();
+        let parent_manifest_id = self.manifest_id.clone();
 
         let branch_futs = branches.into_iter().enumerate().map(|(branch_id, spec)| {
             let shared_gas = Arc::clone(&shared_gas);
@@ -689,6 +691,7 @@ impl StepMachine {
             // each `async move` owns its own.
             let infra = infra.clone();
             let context_template = context_template.clone();
+            let branch_manifest_id = parent_manifest_id.clone();
             let template_ref = spec
                 .get("template_ref")
                 .and_then(|v| v.as_str())
@@ -743,12 +746,14 @@ impl StepMachine {
                     &sub_manifest.steps,
                     sub_manifest.convergence.max_iterations,
                 );
+                let sub_manifest_id = parent_manifest_id.clone();
                 let sub_machine = StepMachine::new(
                     sub_graph,
                     context_template.clone(),
                     sub_budget,
                     sub_convergence,
                     sub_manifest.error_handling.clone(),
+                    format!("{}::parallel", sub_manifest_id),
                 );
                 let outcome = sub_machine.run(infra).await?;
                 Ok::<(usize, CascadeOutcome), TemplateError>((branch_id, outcome))
@@ -1285,7 +1290,7 @@ async fn call_inference_stream(
 /// site, and the untrusted-input flag read taint markers the context write side
 /// had stopped emitting — so the block could never fire. Restoring the gate
 /// means first giving tools real taint labels and propagating taint on write.
-async fn invoke_tool(tools: &Arc<dyn ToolPort>, tool_name: &str, input: Value) -> Result<Value> {
+pub(crate) pub(crate) pub(crate) async fn invoke_tool(tools: &Arc<dyn ToolPort>, tool_name: &str, input: Value) -> Result<Value> {
     let tool_info = tools.get_tool_info(tool_name).await.ok_or_else(|| {
         TemplateError::NotFound(hkask_types::NotFound {
             entity_type: "tool".to_string(),

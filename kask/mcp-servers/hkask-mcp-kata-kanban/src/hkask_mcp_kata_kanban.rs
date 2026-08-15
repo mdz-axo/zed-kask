@@ -11,6 +11,7 @@
 pub mod idempotency;
 pub mod kanban;
 pub mod kata;
+pub mod mermaid;
 pub mod pko;
 pub mod types;
 
@@ -224,7 +225,7 @@ mod tool_surface_tests {
     fn tool_surface_is_exactly_23_registered_tools() {
         let n = KanbanServer::tool_router().list_all().len();
         assert_eq!(
-            n, 23,
+            n, 25,
             "kata-kanban registered tool surface changed; got {n}"
         );
     }

@@ -64,6 +64,9 @@ pub struct StepMachine {
     /// retry_backoff_seconds). Read by `run_pass` to decide whether a
     /// `TemplateError::Timeout` is retried or propagated.
     pub(crate) error_handling: crate::bundle::config::ErrorHandlingConfig,
+    /// The manifest ID (skill name). Used by `on_failure: report` to identify
+    /// the skill in curator skill-use-issue reports.
+    pub(crate) manifest_id: String,
     /// Program counter — which step we're executing.
     pub(crate) pc: StepId,
     /// Iteration counter — how many times we've re-entered the cascade.
@@ -92,6 +95,7 @@ impl StepMachine {
         budget: BudgetTracker,
         convergence: ConvergenceTracker,
         error_handling: crate::bundle::config::ErrorHandlingConfig,
+        manifest_id: String,
     ) -> Self {
         Self {
             graph,
@@ -99,6 +103,7 @@ impl StepMachine {
             budget,
             convergence,
             error_handling,
+            manifest_id,
             pc: ENTRY,
             iteration: 0,
             last_result_step: None,
@@ -421,6 +426,7 @@ impl StepMachine {
                         max_retries,
                         elapsed_seconds,
                         backoff_seconds = self.error_handling.retry_backoff_seconds,
+                        failure_mode = "timeout",
                         "Step {} timed out after {}s — retrying (attempt {}/{}) after {}s backoff",
                         step_ordinal,
                         elapsed_seconds,
@@ -449,6 +455,7 @@ impl StepMachine {
                         max_retries,
                         backoff_seconds = self.error_handling.retry_backoff_seconds,
                         error = %msg,
+                        failure_mode = "parse_failure",
                         "Step {} parse failure — retrying (attempt {}/{}) after {}s backoff",
                         node.ordinal,
                         attempt,
@@ -464,12 +471,56 @@ impl StepMachine {
                     continue;
                 }
                 Err(e) => {
-                    // Per-step on_failure: check for halt/escalate after
+                    // Per-step on_failure: check for halt/escalate/report after
                     // retries are exhausted. This is the enforcement point
                     // for OnFailureConfig on execute/select/compute steps —
                     // previously only gates checked it.
                     if let Some(ref on_failure) = node.on_failure {
                         match on_failure.action.as_str() {
+                            "report" => {
+                                // Co-evolution Phase 2, Loop 2: report the
+                                // failure to the curator before escalating.
+                                // The report is best-effort — if the curator
+                                // MCP server is down, the escalation still
+                                // proceeds (the resume text is logged).
+                                let tool_name = node.mcp.as_deref().unwrap_or("");
+                                let report_input = serde_json::json!({
+                                    "skill_name": self.manifest_id,
+                                    "tool_name": tool_name,
+                                    "step_ordinal": node.ordinal,
+                                    "error": format!("{e}"),
+                                    "tool_input": null,
+                                    "failure_type": null,
+                                });
+                                // Best-effort: log if the report fails.
+                                if let Err(report_err) =
+                                    crate::step_actions::invoke_tool(
+                                        &infra.tools,
+                                        "curator_report_skill_use_issue",
+                                        report_input,
+                                    )
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        target: "reg.skill.cascade.skill_use_issue_report_failed",
+                                        step = node.ordinal,
+                                        error = %report_err,
+                                        "Failed to report skill-use issue to curator — escalation proceeds without report",
+                                    );
+                                }
+                                tracing::warn!(
+                                    target: "reg.skill.cascade.step_failed",
+                                    step = node.ordinal,
+                                    action = %on_failure.action,
+                                    error = %e,
+                                    resume = %on_failure.resume,
+                                    "Step {} failed — on_failure report+escalate",
+                                    node.ordinal
+                                );
+                                return Ok(crate::step_actions::Effect::Exit(
+                                    crate::step_graph::ExitKind::Escalated,
+                                ));
+                            }
                             "halt" | "escalate" => {
                                 tracing::warn!(
                                     target: "reg.skill.cascade.step_failed",
@@ -631,4 +682,31 @@ fn is_parse_failure(msg: &str) -> bool {
     msg.contains("Failed to parse JSON response")
         || msg.contains("returned empty output")
         || msg.contains("truncated at max_tokens")
+}
+
+/// Classify a `TemplateError` into a `failure_mode` string for tracing.
+/// This enables operators to filter and aggregate skill failures by mode
+/// (e.g. `failure_mode=timeout`, `failure_mode=parse_failure`,
+/// `failure_mode=tool_not_found`) in log analysis tools.
+fn classify_failure_mode(error: &crate::ports::TemplateError) -> &'static str {
+    match error {
+        crate::ports::TemplateError::Timeout { .. } => "timeout",
+        crate::ports::TemplateError::NotFound(_) => "tool_not_found",
+        crate::ports::TemplateError::Manifest(msg) => {
+            if is_parse_failure(msg) {
+                "parse_failure"
+            } else {
+                "manifest_error"
+            }
+        }
+        crate::ports::TemplateError::Mcp(_) => "mcp_error",
+        crate::ports::TemplateError::Render(_) => "render_error",
+        crate::ports::TemplateError::Inference(_) => "inference_error",
+        crate::ports::TemplateError::Database(_) => "database_error",
+        crate::ports::TemplateError::Validation(_) => "validation_error",
+        crate::ports::TemplateError::PathTraversal(_) => "path_traversal",
+        crate::ports::TemplateError::SandboxViolation(_) => "sandbox_violation",
+        crate::ports::TemplateError::SkillLoad { .. } => "skill_load_error",
+        crate::ports::TemplateError::Frontmatter { .. } => "frontmatter_error",
+    }
 }
