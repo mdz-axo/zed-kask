@@ -1,0 +1,366 @@
+# Company Research — Deep Pipeline Process Manifest
+# ℏKask v0.34.0 — EFRA-AI research pipeline (agents 10–13) as convergent flowdef
+#
+# Design: kask/docs/plans/efra-ai-to-kask-company-research-skill.md
+#
+# Sequential pipeline mirroring EFRA-AI's research pipeline:
+#   COMPANY → GORILLA → IMAGINE → THESIS → convergence → loop
+#
+# Each agent feeds the next, building a comprehensive investment thesis.
+# COMPANY is a DEEPEN agent — it consumes company_transcript, dcf_valuation,
+# comparable_analysis, web_search, fetch MCP tool outputs (native execute
+# steps) and does LLM synthesis over them. IMAGINE consumes scenario_build.
+# THESIS's investment_grade / needs_work / incomplete verdict is the
+# convergence signal; needs_work loops back to COMPANY with THESIS gaps
+# injected. Per .rules (LLM-improves-against-LLM-scored-target trap): the
+# THESIS quality gate uses goal-analysis semantic evaluation (cross-skill
+# select step), not self-assessment inside the thesis template.
+
+manifest:
+  id: company-research-deep
+  category: skill
+  name: Company Research — Deep Pipeline
+  description: >
+    Equity research deep pipeline converted from EFRA-AI (Replicant-
+    Partners). Sequential flowdef: COMPANY deep 8-part analysis (5 native
+    MCP tool calls + LLM synthesis) → GORILLA 4-dimension framework (fixed
+    weights, lisp.eval scoring) → IMAGINE 5/10/20Y scenarios + digital stage
+    (scenario_build MCP tool call + LLM synthesis) → THESIS three-pillar
+    synthesis (cross-skill goal-analysis quality gate) → convergence check →
+    loop on needs_work. MCP tool calls are native `action: execute` steps;
+    templates do LLM synthesis over their outputs. Converges on THESIS
+    investment_grade verdict.
+  functional_role: flowdef
+  version: "0.34.0"
+  editor: curator-or-human-admin
+  visibility: Public
+  enforce_inputs: true
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.05
+  cauchy_window: 2
+  max_iterations: 3
+  min_iterations: 1
+  on_not_reached: escalate
+  target_artifacts_field: "thesis_verdict"
+
+gas:
+  cap: 250000
+  cost_per_iteration: 250
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 10
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: ticker
+    type: string
+    required: true
+    description: Equity ticker symbol.
+  - name: analyst_id
+    type: string
+    required: true
+    description: >
+      Analyst identifier for forecast-ledger attribution. Persisted with
+      IMAGINE's 3–5 falsifiable predictions (tagged by 5/10/20Y horizon) for
+      later Brier scoring — the IMAGINE kata loop.
+  - name: flash_pipeline_output
+    type: object
+    required: false
+    description: >
+      Optional output of the flash pipeline (company-research-flash) for the
+      same ticker. When present, the deep pipeline reuses SCOUT, INTEL,
+      FORENSIC, CRITICAL FACTOR, VALUATION outputs rather than re-fetching.
+      When absent, the deep pipeline runs standalone (COMPANY fetches its
+      own context).
+  - name: prior_outcomes
+    type: object
+    required: false
+    description: >
+      Prior forecast-ledger outcomes for this ticker + analyst. Feeds the
+      IMAGINE kata loop (falsifiable predictions scored against realized
+      outcomes).
+
+ledger:
+  span_namespace: reg.skill.company-research-deep
+
+steps:
+  # ── Step 1: COMPANY — deep 8-part analysis (DEEPEN) ──
+  # Five native execute steps (1a–1e) + LLM synthesis (1f).
+  - ordinal: 1a
+    action: execute
+    description: >
+      COMPANY — fetch earnings transcript via company_transcript MCP tool
+      for Self-View (how the company describes itself) and Management Skill
+      (CEO/CFO scorecards). Deterministic. Result lands in step_1a_result.
+    mcp: company_transcript
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      symbol: "{{ ticker }}"
+      mode: "corpus"
+      max_results: 8
+
+  - ordinal: 1b
+    action: execute
+    description: >
+      COMPANY — DCF via dcf_valuation MCP tool for Financial Profile
+      (3-stage valuation). Deterministic. Result lands in step_1b_result.
+    mcp: dcf_valuation
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      symbol: "{{ ticker }}"
+
+  - ordinal: 1c
+    action: execute
+    description: >
+      COMPANY — peer comparables via comparable_analysis MCP tool for
+      Financial Profile. Deterministic. Result lands in step_1c_result.
+    mcp: comparable_analysis
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      symbol: "{{ ticker }}"
+
+  - ordinal: 1d
+    action: execute
+    description: >
+      COMPANY — fetch IR pages / self-description via web_search MCP tool
+      for Self-View (Part 1). Deterministic. Result lands in step_1d_result.
+    mcp: web_search
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      query: "{{ ticker }} investor relations about company business"
+      num_results: 10
+
+  - ordinal: 1e
+    action: execute
+    description: >
+      COMPANY — fetch IR page content via fetch MCP tool for Self-View
+      verbatim company description. Deterministic. Result lands in
+      step_1e_result. Conditioned on web_search returning a URL.
+    mcp: fetch
+    condition: "{{ step_1d_result.results[0].url is defined and step_1d_result.results[0].url | length > 0 }}"
+    gas_cap: 3000
+    timeout_seconds: 90
+    input_mapping:
+      url: "{{ step_1d_result.results[0].url }}"
+
+  - ordinal: 1f
+    action: select
+    description: >
+      COMPANY 8-part synthesis: Self-View, Business Franchise, Management
+      Skill (CEO long-term + CFO working capital scorecards), Financial
+      Profile (signposts + 3-stage valuation), Invisible Layer, Turd
+      Blossom, Value Gorilla Elevator Pitch, Investment Thesis Statement.
+      Reasons over company_transcript (1a), dcf_valuation (1b),
+      comparable_analysis (1c), web_search (1d), fetch (1e) outputs plus
+      flash_pipeline_output if present. Emits CompanyBoard with all 8
+      sections, data_gaps. Per .rules: failed MCP tools surface as
+      data_gaps entries, never collapse to None.
+    renderer: minijinja
+    template_ref: company-research/company-8part
+    gas_cap: 12000
+    timeout_seconds: 300
+    input_mapping:
+      ticker: "{{ ticker }}"
+      transcript_result: "{{ step_1a_result }}"
+      dcf_result: "{{ step_1b_result }}"
+      comparables_result: "{{ step_1c_result }}"
+      web_search_result: "{{ step_1d_result }}"
+      fetch_result: "{{ step_1e_result }}"
+      flash_pipeline_output: "{{ flash_pipeline_output | default({}) }}"
+
+  # ── Step 2: GORILLA — 4-dimension framework ──
+  # Fixed weights (25/30/25/20) — mcda rejected (essentialist Surface gate:
+  # adds ceremony for fixed weights). Scoring is a lisp.eval compute step
+  # (2b), not an mcda call.
+  - ordinal: 2a
+    action: select
+    description: >
+      GORILLA — assess the 4 dimensions (Obvious Problem, Invisible Gorilla,
+      Combinatorial Solution, Choke Point) against the COMPANY analysis.
+      Emits per-dimension qualitative assessments (0–100) that the lisp.eval
+      step (2b) weights to the final gorilla_score.
+    renderer: minijinja
+    template_ref: company-research/gorilla-4dim
+    gas_cap: 6000
+    timeout_seconds: 150
+    input_mapping:
+      ticker: "{{ ticker }}"
+      company_board: "{{ step_1f_result }}"
+
+  - ordinal: 2b
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      GORILLA — deterministic weighted score. Fixed methodology weights
+      (Obvious Problem 25% / Invisible Gorilla 30% / Combinatorial Solution
+      25% / Choke Point 20%). Verdict: GORILLA ≥75 / SMALL_ANIMAL 50-74 /
+      PEDESTRIAN <50. No unwrap_or(0) — missing dimension scores surface as
+      nil and the form guards explicitly.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((op (assoc "obvious_problem" step_2a_result))
+              (ig (assoc "invisible_gorilla" step_2a_result))
+              (cs (assoc "combinatorial_solution" step_2a_result))
+              (cp (assoc "choke_point" step_2a_result)))
+          (let ((op-v (if (numberp op) op 0.0))
+                (ig-v (if (numberp ig) ig 0.0))
+                (cs-v (if (numberp cs) cs 0.0))
+                (cp-v (if (numberp cp) cp 0.0)))
+            (let ((score (+ (* op-v 0.25) (* ig-v 0.30) (* cs-v 0.25) (* cp-v 0.20))))
+              (let ((verdict (if (>= score 75) "GORILLA"
+                                (if (>= score 50) "SMALL_ANIMAL" "PEDESTRIAN"))))
+                (list (cons "gorilla_score" score)
+                      (cons "verdict" verdict)
+                      (cons "obvious_problem" op-v)
+                      (cons "invisible_gorilla" ig-v)
+                      (cons "combinatorial_solution" cs-v)
+                      (cons "choke_point" cp-v))))))
+      env:
+        step_2a_result: "{{ step_2a_result | default({}) }}"
+
+  # ── Step 3: IMAGINE — 5/10/20Y scenarios + digital stage ──
+  # Consumes scenario_build MCP tool output (3a) for structured scenarios.
+  - ordinal: 3a
+    action: execute
+    description: >
+      IMAGINE — generate 5/10/20Y scenario tree via scenario_build MCP tool.
+      Deterministic. Result lands in step_3a_result and feeds IMAGINE
+      synthesis (3b).
+    mcp: scenario_build
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      subject: "{{ ticker }} 5 10 20 year future scenarios digital transformation"
+      time_horizon: "20 years"
+      context: "{{ step_1f_result.business_franchise | default('') }}"
+
+  - ordinal: 3b
+    action: select
+    description: >
+      IMAGINE — project the business at 5, 10, 20 years and walk it back
+      analytically. Digital Transformation Stages (MODEL / SHADOW / TWIN /
+      SOURCE), Growth Driver Classification (innovation / demographic /
+      both / neither). Reasons over scenario_build output (3a). Emits
+      ImagineBoard with digital stage, growth driver, 3 scenarios, 3–5
+      falsifiable predictions (tagged by 5/10/20Y horizon for the forecast-
+      ledger), what's not on the page, what's not in the price.
+    renderer: minijinja
+    template_ref: company-research/imagine-longrange
+    gas_cap: 10000
+    timeout_seconds: 240
+    input_mapping:
+      ticker: "{{ ticker }}"
+      company_board: "{{ step_1f_result }}"
+      gorilla_verdict: "{{ step_2b_result }}"
+      scenario_build_result: "{{ step_3a_result }}"
+      prior_outcomes: "{{ prior_outcomes | default({}) }}"
+
+  # ── Step 4: THESIS — three-pillar synthesis ──
+  - ordinal: 4
+    action: select
+    description: >
+      THESIS — synthesize all prior research into a formal investment thesis
+      covering the three pillars: Business Franchise (moat strength, value
+      creation, durability), Management Quality (capital allocation,
+      leadership), Valuation (3-stage: consensus → normalization →
+      terminal). Emits thesis with the three pillars, but NOT the quality
+      gate verdict — the verdict comes from the cross-skill goal-analysis
+      step (5) to avoid the LLM-improves-against-LLM-scored-target trap per
+      .rules.
+    renderer: minijinja
+    template_ref: company-research/thesis-three-pillars
+    gas_cap: 10000
+    timeout_seconds: 240
+    input_mapping:
+      ticker: "{{ ticker }}"
+      company_board: "{{ step_1f_result }}"
+      gorilla_verdict: "{{ step_2b_result }}"
+      imagine_board: "{{ step_3b_result }}"
+
+  # ── Step 5: THESIS quality gate — cross-skill goal-analysis ──
+  # Per .rules: LLM-improves-against-LLM-scored-target loops must be grounded
+  # in real sources. The quality gate uses goal-analysis semantic evaluation
+  # (cross-skill select), not self-assessment inside the thesis template.
+  - ordinal: 5
+    action: select
+    description: >
+      THESIS quality gate — cross-skill goal-analysis semantic evaluation.
+      Evaluates the thesis against the three-pillar investment_grade
+      criteria using goal-analysis/judge (semantic evaluator), not LLM self-
+      assessment. Emits investment_grade / needs_work / incomplete verdict
+      plus gap analysis. This is the deep pipeline convergence signal.
+    renderer: minijinja
+    template_ref: goal-analysis/judge
+    gas_cap: 6000
+    timeout_seconds: 150
+    input_mapping:
+      goal_text: "Three-pillar investment thesis for {{ ticker }}: Business Franchise (moat strength, value creation, durability), Management Quality (capital allocation, leadership), Valuation (3-stage: consensus → normalization → terminal). Verdict: investment_grade / needs_work / incomplete."
+      criteria:
+        - "Business Franchise pillar covers moat source, value creation mechanism, and durability (10Y+ / 5-10Y / < 5Y)"
+        - "Management Quality pillar covers capital allocation verdict (created/destroyed/mixed) and leadership assessment with evidence"
+        - "Valuation pillar covers all 3 stages (consensus, normalization, terminal) with the terminal stage cross-referencing the IMAGINE 20Y scenario"
+        - "Thesis statement is durable, timeless, and covers all three pillars"
+      outcome_summary: "{{ step_4_result.thesis_statement }}"
+      artifacts:
+        - "{{ step_4_result.business_franchise }}"
+        - "{{ step_4_result.management_quality }}"
+        - "{{ step_4_result.valuation }}"
+
+  # ── Step 6: Convergence check — THESIS verdict ──
+  # investment_grade=0.0 (converged), needs_work=0.5 (loop), incomplete=1.0
+  # (escalate). No unwrap_or(0) — missing verdict surfaces as 1.0.
+  - ordinal: 6
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Convergence check — THESIS quality gate verdict. investment_grade=0.0
+      (fully converged), needs_work=0.5 (re-enter COMPANY with gaps),
+      incomplete=1.0 (escalate). Missing verdict surfaces as 1.0 (worst
+      case), not silently converged — per .rules no unwrap_or(0) on
+      regulation signals.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((v (assoc "verdict" step_5_result)))
+          (cond
+            ((eq v "investment_grade") 0.0)
+            ((eq v "needs_work") 0.5)
+            ((eq v "incomplete") 1.0)
+            (t 1.0)))
+      env:
+        step_5_result: "{{ step_5_result | default({}) }}"
+
+  # ── Step 7: Loop back to COMPANY if THESIS flags needs_work ──
+  # Re-runs COMPANY (1f) with THESIS gaps injected. incomplete (1.0) does
+  # not loop — it escalates via on_not_reached. max_iterations: 3 bounds.
+  - ordinal: 7
+    action: loop
+    description: >
+      Re-enter COMPANY synthesis (step 1f) if THESIS flags needs_work (0.5).
+      THESIS gap analysis is injected into the next COMPANY pass via the
+      loop's input_mapping. incomplete (1.0) does not loop — it escalates
+      via on_not_reached. max_iterations: 3 bounds the loop.
+    condition: "{{ step_6_result > 0.0 and step_6_result < 1.0 }}"
+    input_mapping:
+      loop_target: "{{ 1f }}"
+      thesis_gaps: "{{ step_5_result.gap_analysis | default([]) }}"
+      convergence_signal: "{{ step_6_result }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort

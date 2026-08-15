@@ -1,0 +1,594 @@
+# Company Research — Flash Pipeline Process Manifest
+# ℏKask v0.34.0 — EFRA-AI main pipeline (agents 01–09) as convergent flowdef
+#
+# Design: kask/docs/plans/efra-ai-to-kask-company-research-skill.md
+# MCP integration: kask/docs/explanation/skill-mcp-integration.md
+#
+# Sequential pipeline mirroring EFRA-AI's main pipeline:
+#   SCOUT → INTEL → FORENSIC(pre) → CRITICAL FACTOR → FORENSIC(full) →
+#   VALUATION(7a–7e) → COMMUNICATION → KATA(9a–9c) → LENS(10–12) →
+#   convergence(13) → loop(14)
+#
+# MCP tool calls are native `action: execute` steps (deterministic, governed,
+# testable). LLM synthesis is `action: select` with `template_ref`. Early-
+# exit gates (DROP / HALT / BLOCK) are `condition:` on downstream steps.
+# Convergence is LENS verdict consistency (CONSISTENT=0.0, PARTIAL=0.5,
+# INCONSISTENT=1.0); PARTIAL loops back to VALUATION synthesis (7e) with LENS
+# tensions injected.
+#
+# Cross-skill composition:
+#   - step 3 reuses `listening/apply-template` (MAIA v3 earnings-call listening)
+#   - step 9c reuses `kata-improvement/improvement-step1-direction` (PDCA)
+# Same pattern as superforecasting reusing `falsifiability/*` templates.
+
+manifest:
+  id: company-research-flash
+  category: skill
+  name: Company Research — Flash Pipeline
+  description: >
+    Equity research flash pipeline converted from EFRA-AI (Replicant-
+    Partners). Sequential 14-step flowdef: SCOUT alpha score → INTEL
+    business context + earnings listening → FORENSIC pre-screen → CRITICAL
+    FACTOR Bull/Base/Bear → FORENSIC full audit → VALUATION 8-step (4 native
+    MCP tool calls + LLM synthesis) → COMMUNICATION ENTER gate + CASCADE
+    note → KATA PDCA (2 native MCP tool calls + cross-skill reuse) → LENS
+    five-framework audit (2 native MCP tool calls + LLM synthesis) →
+    convergence check → loop on PARTIAL. MCP tool calls are native
+    `action: execute` steps; templates do LLM synthesis over their outputs.
+    Early-exit gates (DROP / HALT / BLOCK) are `condition:` on downstream
+    steps. Converges on LENS verdict consistency.
+  functional_role: flowdef
+  version: "0.34.0"
+  editor: curator-or-human-admin
+  visibility: Public
+  enforce_inputs: true
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.05
+  cauchy_window: 2
+  max_iterations: 3
+  min_iterations: 1
+  on_not_reached: escalate
+  target_artifacts_field: "lens_verdict"
+
+gas:
+  cap: 200000
+  cost_per_iteration: 200
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 8
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: ticker
+    type: string
+    required: true
+    description: Equity ticker symbol (e.g. "AAPL", "MSFT").
+  - name: analyst_id
+    type: string
+    required: true
+    description: >
+      Analyst identifier for forecast-ledger attribution and KATA PDCA
+      tracking. Persisted with every forecast PT / probability / IMAGINE
+      prediction for later Brier scoring.
+  - name: catalyst
+    type: string
+    required: false
+    description: >
+      Optional catalyst note (e.g. "earnings next week", "FDA decision Q3").
+      Feeds SCOUT's timeliness scoring and COMMUNICATION's ENTER T criterion.
+  - name: idea_source_tag
+    type: string
+    required: false
+    description: >
+      Optional tag identifying the idea source (screener / client request /
+      news / KATA obstacle). Feeds SCOUT's coverage-gap scoring.
+  - name: in_excellence_universe
+    type: boolean
+    required: false
+    description: >
+      If true, SCOUT applies the 11-criterion excellence universe (S1–S11)
+      deterministic screen. If false or absent, SCOUT uses the alpha-score
+      formula only.
+  - name: downstream_mode_override
+    type: string
+    required: false
+    description: >
+      Force valentine / gunn / dual output mode. Else SCOUT decides based on
+      alpha score and horizon fit.
+  - name: prior_outcomes
+    type: object
+    required: false
+    description: >
+      Prior forecast-ledger outcomes for this ticker + analyst (resolved PTs
+      and prediction-market resolutions with Brier scores). Feeds KATA step
+      9c PDCA "check" — the forecast-to-outcome calibration loop. Absent on
+      first analysis of a ticker.
+
+ledger:
+  span_namespace: reg.skill.company-research-flash
+
+steps:
+  # ── Step 1: SCOUT — alpha score + excellence universe ──
+  - ordinal: 1
+    action: select
+    description: >
+      SCOUT: compute alpha score (coverage gap × 0.30 + market cap fit × 0.20
+      + sector relevance × 0.25 + valuation anomaly × 0.25, + EM GDP /
+      Bessembinder / low-coverage bonuses up to +25) and apply the 11-
+      criterion excellence universe (S1–S11) if in_excellence_universe. Emits
+      decision (MUST_COVER / REVIEW_ZONE / DROP — DROP is terminal).
+    renderer: minijinja
+    template_ref: company-research/scout-alpha-score
+    gas_cap: 4000
+    timeout_seconds: 120
+    input_mapping:
+      ticker: "{{ ticker }}"
+      catalyst: "{{ catalyst | default('') }}"
+      idea_source_tag: "{{ idea_source_tag | default('') }}"
+      in_excellence_universe: "{{ in_excellence_universe | default(false) }}"
+      downstream_mode_override: "{{ downstream_mode_override | default('') }}"
+
+  # ── Step 2: INTEL — business context + information mosaic ──
+  # DEEPEN agent: consumes research_search + web_search MCP tool outputs
+  # (bound via input_mapping) and the listening verdict (step 3 result).
+  # Note: in this flowdef the research_search / web_search execute steps
+  # are co-located with INTEL — see steps 2a/2b below. The select step 2c
+  # does the LLM synthesis.
+  - ordinal: 2a
+    action: execute
+    description: >
+      INTEL — fetch fundamental research via research_search MCP tool.
+      Deterministic, governed, no LLM round-trip. Result lands in
+      step_2a_result and feeds INTEL synthesis (step 2c).
+    mcp: research_search
+    condition: "{{ step_1_result.decision != 'DROP' }}"
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      symbol: "{{ ticker }}"
+      query: "{{ step_1_result.research_query | default(ticker ~ ' business model competitive position') }}"
+
+  - ordinal: 2b
+    action: execute
+    description: >
+      INTEL — fetch news mosaic via web_search MCP tool. Deterministic.
+      Result lands in step_2b_result and feeds INTEL synthesis (step 2c).
+    mcp: web_search
+    condition: "{{ step_1_result.decision != 'DROP' }}"
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      query: "{{ ticker }} {{ catalyst | default('') }} news"
+      strategy: "news"
+      num_results: 20
+
+  - ordinal: 2c
+    action: select
+    description: >
+      INTEL — business context 8-step + information mosaic synthesis.
+      Reasons over research_search (2a) and web_search (2b) outputs. Emits
+      mosaic_clear (false = MNPI HALT terminal gate), business_model,
+      news_items, hypotheses (PENDING / VALIDATED / UNRESOLVABLE lifecycle),
+      data_gaps. Per .rules: failed MCP tools surface as data_gaps entries,
+      never collapse to None.
+    renderer: minijinja
+    template_ref: company-research/intel-mosaic
+    condition: "{{ step_1_result.decision != 'DROP' }}"
+    gas_cap: 8000
+    timeout_seconds: 180
+    input_mapping:
+      ticker: "{{ ticker }}"
+      horizon_tag: "{{ step_1_result.horizon_tag }}"
+      downstream_mode: "{{ step_1_result.downstream_mode }}"
+      research_search_result: "{{ step_2a_result }}"
+      web_search_result: "{{ step_2b_result }}"
+
+  # ── Step 3: INTEL — earnings transcript via listening skill (cross-skill) ──
+  # Step 3a fetches the transcript via company_transcript MCP tool (native
+  # execute). Step 3b applies the listening/apply-template (MAIA v3 no-
+  # fabrication) over the fetched chunks. Cross-skill template_ref — same
+  # pattern as superforecasting step 6 reusing falsifiability/* templates.
+  - ordinal: 3a
+    action: execute
+    description: >
+      INTEL — fetch earnings transcript via company_transcript MCP tool for
+      the listening skill. Deterministic. Result lands in step_3a_result
+      and feeds the listening template (step 3b).
+    mcp: company_transcript
+    condition: "{{ step_1_result.decision != 'DROP' }}"
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      symbol: "{{ ticker }}"
+      mode: "earnings"
+      max_results: 4
+
+  - ordinal: 3b
+    action: select
+    description: >
+      INTEL — earnings-call listening via the listening skill (MAIA v3
+      template, no-fabrication invariant). Cross-skill template_ref. Consumes
+      the company_transcript output (3a). Result feeds INTEL business context
+      and FORENSIC full management profile.
+    renderer: minijinja
+    template_ref: listening/apply-template
+    condition: "{{ step_1_result.decision != 'DROP' }}"
+    gas_cap: 8000
+    timeout_seconds: 180
+    input_mapping:
+      company_symbol: "{{ ticker }}"
+      transcript_chunks: "{{ step_3a_result.chunks | default([]) }}"
+      prior_transcript_chunks: "{{ prior_outcomes.prior_transcript_chunks | default([]) }}"
+
+  # ── Step 4: FORENSIC pre-screen ──
+  # Condition: INTEL mosaic_clear (false = MNPI HALT terminal gate).
+  - ordinal: 4
+    action: select
+    description: >
+      FORENSIC pre-screen: quick risk scan across accounting red flags,
+      governance, going-concern. Emits severity (SEV-1..5), recommendation
+      (CLEAR+adj / CONDITIONAL / BLOCK — BLOCK is terminal). FORENSIC cannot
+      be skipped (EFRA-AI invariant).
+    renderer: minijinja
+    template_ref: company-research/forensic-pre-screen
+    condition: "{{ step_2c_result.mosaic_clear }}"
+    gas_cap: 5000
+    timeout_seconds: 150
+    input_mapping:
+      ticker: "{{ ticker }}"
+      intel_bundle: "{{ step_2c_result }}"
+
+  # ── Step 5: CRITICAL FACTOR — Bull/Base/Bear thesis engine ──
+  # Consumes scenario_build MCP tool output (step 5a) for structured scenarios.
+  - ordinal: 5a
+    action: execute
+    description: >
+      CRITICAL FACTOR — generate Bull/Base/Bear scenario tree via
+      scenario_build MCP tool. Deterministic. Result lands in step_5a_result
+      and feeds CRITICAL FACTOR synthesis (step 5b).
+    mcp: scenario_build
+    condition: "{{ step_4_result.recommendation != 'BLOCK' }}"
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      subject: "{{ ticker }} critical factors Bull Base Bear"
+      scenario_type: "equity_thesis"
+      context: "{{ step_2c_result.business_model | default('') }}"
+
+  - ordinal: 5b
+    action: select
+    description: >
+      CRITICAL FACTOR: identify 3–5 critical factors and construct Bull/Base/
+      Bear scenarios with EPS impact. Reasons over scenario_build output
+      (5a). Emits factors (empty = DROP terminal gate), scenarios with
+      probabilities and EPS impact, eps_impact_pct. Cross-references
+      superforecasting/stage_3_probability_estimate methodology for granular
+      (0.35) vs round (0.50) probabilities.
+    renderer: minijinja
+    template_ref: company-research/critical-factor
+    condition: "{{ step_4_result.recommendation != 'BLOCK' }}"
+    gas_cap: 8000
+    timeout_seconds: 180
+    input_mapping:
+      ticker: "{{ ticker }}"
+      intel_bundle: "{{ step_2c_result }}"
+      forensic_profile: "{{ step_4_result }}"
+      downstream_mode: "{{ step_1_result.downstream_mode }}"
+      horizon_tag: "{{ step_1_result.horizon_tag }}"
+      scenario_build_result: "{{ step_5a_result }}"
+
+  # ── Step 6: FORENSIC full audit ──
+  # Condition: CRITICAL FACTOR produced factors (empty = DROP terminal).
+  # Consumes company_transcript MCP tool output (step 6a) for mgmt quotes.
+  - ordinal: 6a
+    action: execute
+    description: >
+      FORENSIC full — fetch earnings transcript via company_transcript MCP
+      tool for management profile (owner-operator, capital allocation track
+      record). Deterministic. Result lands in step_6a_result.
+    mcp: company_transcript
+    condition: "{{ step_5b_result.factors | length > 0 }}"
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      symbol: "{{ ticker }}"
+      mode: "earnings"
+      max_results: 4
+
+  - ordinal: 6b
+    action: select
+    description: >
+      FORENSIC full audit: accruals quality, governance (board independence,
+      COB/CEO separation), management profile. Reasons over company_transcript
+      output (6a) and the listening verdict (step 3). Emits severity,
+      recommendation (BLOCK terminal gate), management_quality,
+      governance_score, accruals_score. FORENSIC cannot be skipped.
+    renderer: minijinja
+    template_ref: company-research/forensic-full
+    condition: "{{ step_5b_result.factors | length > 0 }}"
+    gas_cap: 8000
+    timeout_seconds: 180
+    input_mapping:
+      ticker: "{{ ticker }}"
+      intel_bundle: "{{ step_2c_result }}"
+      listening_verdict: "{{ step_3b_result }}"
+      transcript_result: "{{ step_6a_result }}"
+
+  # ── Step 7: VALUATION — 8-step price target (DEEPEN) ──
+  # Four native execute steps (7a–7d) + LLM synthesis (7e).
+  # Condition: FORENSIC full did not BLOCK.
+  - ordinal: 7a
+    action: execute
+    description: >
+      VALUATION — DCF via dcf_valuation MCP tool. Deterministic, no LLM
+      round-trip. Result lands in step_7a_result and feeds VALUATION
+      synthesis (7e).
+    mcp: dcf_valuation
+    condition: "{{ step_6b_result.recommendation != 'BLOCK' }}"
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      symbol: "{{ ticker }}"
+
+  - ordinal: 7b
+    action: execute
+    description: >
+      VALUATION — peer comparables via comparable_analysis MCP tool.
+      Deterministic. Result lands in step_7b_result.
+    mcp: comparable_analysis
+    condition: "{{ step_6b_result.recommendation != 'BLOCK' }}"
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      symbol: "{{ ticker }}"
+
+  - ordinal: 7c
+    action: execute
+    description: >
+      VALUATION — expectations gap (Mauboussin expectations investing) via
+      expectations_gap MCP tool. Deterministic. Result lands in step_7c_result.
+    mcp: expectations_gap
+    condition: "{{ step_6b_result.recommendation != 'BLOCK' }}"
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      symbol: "{{ ticker }}"
+
+  - ordinal: 7d
+    action: execute
+    description: >
+      VALUATION — scenario-weighted price target via scenario_impact_valuation
+      MCP tool. Deterministic. Consumes the scenario event tree from
+      scenario_build (5a) and the per-node EPS impact mappings from
+      CRITICAL FACTOR (5b). Result lands in step_7d_result.
+    mcp: scenario_impact_valuation
+    condition: "{{ step_6b_result.recommendation != 'BLOCK' }}"
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      symbol: "{{ ticker }}"
+      scenario_tree: "{{ step_5a_result | tojson }}"
+      impact_mappings: "{{ step_5b_result.impact_mappings | tojson | default('[]') }}"
+
+  - ordinal: 7e
+    action: select
+    description: >
+      VALUATION 8-step synthesis: LLM reasons over the four MCP tool outputs
+      (7a–7d). Emits pt_12m, rr_ratio, rating (BUY/HOLD/UNDERPERFORM), FaVeS
+      (variant expectations score), confidence, data_gaps (names any failed
+      MCP tool with LLM-derived fallback estimate + confidence penalty per
+      EFRA-AI L1/L2 fallback hierarchy). RR < 2:1 + UNDERPERFORM = DROP
+      terminal gate.
+    renderer: minijinja
+    template_ref: company-research/valuation-8step
+    condition: "{{ step_6b_result.recommendation != 'BLOCK' }}"
+    gas_cap: 10000
+    timeout_seconds: 240
+    input_mapping:
+      ticker: "{{ ticker }}"
+      forensic_profile: "{{ step_6b_result }}"
+      cf_scenarios: "{{ step_5b_result.scenarios }}"
+      intel_bundle: "{{ step_2c_result }}"
+      downstream_mode: "{{ step_1_result.downstream_mode }}"
+      dcf_result: "{{ step_7a_result }}"
+      comparables_result: "{{ step_7b_result }}"
+      expectations_result: "{{ step_7c_result }}"
+      scenario_pt_result: "{{ step_7d_result }}"
+
+  # ── Step 8: COMMUNICATION — ENTER gate + CASCADE note ──
+  # Condition: VALUATION did not DROP (RR >= 2:1 or rating != UNDERPERFORM).
+  - ordinal: 8
+    action: select
+    description: >
+      COMMUNICATION: ENTER gate (Edge / New / Timely / Examples / Revealing —
+      5/5 = PUBLISH, 4/5 = ALERT, ≤3/5 = DROP) and CASCADE-format research
+      note (Conclusion → Action → Scenarios → Catalysts → Data). Emits
+      publication_possible, enter_score, cascade_note, final_confidence.
+      Confidence < 0.50 = NO_PUBLISH (EFRA-AI invariant).
+    renderer: minijinja
+    template_ref: company-research/communication-enter
+    condition: "{{ step_7e_result.rr_ratio >= 2.0 or step_7e_result.rating != 'UNDERPERFORM' }}"
+    gas_cap: 8000
+    timeout_seconds: 180
+    input_mapping:
+      ticker: "{{ ticker }}"
+      valuation_model: "{{ step_7e_result }}"
+      forensic_profile: "{{ step_6b_result }}"
+      cf_output: "{{ step_5b_result }}"
+      intel_bundle: "{{ step_2c_result }}"
+      downstream_mode: "{{ step_1_result.downstream_mode }}"
+
+  # ── Step 9: KATA — PDCA process audit (cross-skill reuse) ──
+  # Two native execute steps (9a/9b) for forecast-to-outcome calibration loop
+  # + cross-skill reuse of kata-improvement (9c).
+  # Condition: COMMUNICATION publication_possible.
+  - ordinal: 9a
+    action: execute
+    description: >
+      KATA — fetch resolved prediction-market outcomes for PDCA "check" via
+      market_check_resolutions MCP tool. This is the highest-value cybernetic
+      integration: closes the forecast-to-outcome calibration loop that
+      EFRA-AI's KATA agent describes but cannot close (no outcome data).
+      Deterministic. Result lands in step_9a_result.
+    mcp: market_check_resolutions
+    condition: "{{ step_8_result.publication_possible }}"
+    gas_cap: 3000
+    timeout_seconds: 90
+    input_mapping:
+      series: "{{ ticker }}"
+      limit: 50
+
+  - ordinal: 9b
+    action: execute
+    description: >
+      KATA — fetch calibration Brier score via market_calibration MCP tool.
+      Strengthens the calibration loop: market_calibration Brier score →
+      KATA process_confidence adjustment. Deterministic. Result lands in
+      step_9b_result.
+    mcp: market_calibration
+    condition: "{{ step_8_result.publication_possible }}"
+    gas_cap: 3000
+    timeout_seconds: 90
+    input_mapping:
+      bucket: "{{ ticker }}"
+
+  - ordinal: 9c
+    action: select
+    description: >
+      KATA — cross-skill reuse of kata-improvement/improvement-step1-direction
+      (Toyota Improvement Kata step 1: Understand Direction). Audits the
+      research process: knowledge gaps, untested assumptions, next PDCA
+      experiment. Consumes resolved outcomes (9a) and calibration Brier (9b)
+      plus prior_outcomes input. Emits KataBoard with process_confidence,
+      next_review_date. Never blocks publication.
+    renderer: minijinja
+    template_ref: kata-improvement/improvement-step1-direction
+    condition: "{{ step_8_result.publication_possible }}"
+    gas_cap: 5000
+    timeout_seconds: 150
+    input_mapping:
+      challenge: "Audit the research process for {{ ticker }}: identify knowledge gaps, untested assumptions, and the next PDCA experiment that would move research to higher confidence."
+      context:
+        ticker: "{{ ticker }}"
+        resolved_outcomes: "{{ step_9a_result }}"
+        calibration_brier: "{{ step_9b_result }}"
+        prior_outcomes: "{{ prior_outcomes | default({}) }}"
+        valuation: "{{ step_7e_result }}"
+        communication: "{{ step_8_result }}"
+
+  # ── Step 10–11: LENS — outside view + evidence quality (native execute) ──
+  # Condition: COMMUNICATION publication_possible (KATA and LENS skip if not
+  # published — graceful: pipeline completes with a "not published" verdict).
+  - ordinal: 10
+    action: execute
+    description: >
+      LENS Lens 2 — find prediction markets about {{ ticker }} via the
+      market_match MCP tool (entity resolution from a forecasting question
+      to candidate markets about the same underlying event). Provides the
+      outside-view market-implied probabilities for the Tetlock
+      superforecasting lens. Deterministic. Result lands in step_10_result
+      and feeds LENS synthesis (step 12).
+    mcp: market_match
+    condition: "{{ step_8_result.publication_possible }}"
+    gas_cap: 3000
+    timeout_seconds: 90
+    input_mapping:
+      question: "Will {{ ticker }} outperform the market over the next 12 months?"
+      limit: 10
+
+  - ordinal: 11
+    action: execute
+    description: >
+      LENS — evaluate evidence quality via evaluate_evidence MCP tool.
+      Structured evidence quality audit against the investment thesis
+      question. Deterministic. Result lands in step_11_result and feeds LENS
+      synthesis (step 12).
+    mcp: evaluate_evidence
+    condition: "{{ step_8_result.publication_possible }}"
+    gas_cap: 4000
+    timeout_seconds: 120
+    input_mapping:
+      question: "Is the investment thesis for {{ ticker }} supported by the evidence?"
+      artifacts: "{{ step_2c_result.news_items | default([]) }}"
+
+  # ── Step 12: LENS — five-framework audit (LLM synthesis) ──
+  - ordinal: 12
+    action: select
+    description: >
+      LENS five-framework consistency audit: The Loop, Superforecasting,
+      Dunning-Kruger, Hidden Champions, Kauffman. Reasons over market_cmp
+      (10) and evaluate_evidence (11) outputs plus all prior pipeline
+      outputs. Emits overall_verdict (CONSISTENT / PARTIAL / INCONSISTENT),
+      key_tensions, pm_memo (200 words). Never blocks publication.
+    renderer: minijinja
+    template_ref: company-research/lens-five-frameworks
+    condition: "{{ step_8_result.publication_possible }}"
+    gas_cap: 10000
+    timeout_seconds: 240
+    input_mapping:
+      ticker: "{{ ticker }}"
+      downstream_mode: "{{ step_1_result.downstream_mode }}"
+      scout: "{{ step_1_result }}"
+      intel: "{{ step_2c_result }}"
+      forensic: "{{ step_6b_result }}"
+      cf: "{{ step_5b_result }}"
+      valuation: "{{ step_7e_result }}"
+      communication: "{{ step_8_result }}"
+      kata: "{{ step_9c_result | default({}) }}"
+      market_outside_view: "{{ step_10_result }}"
+      evidence_audit: "{{ step_11_result }}"
+
+  # ── Step 13: Convergence check — LENS verdict consistency ──
+  # Deterministic lisp.eval: CONSISTENT=0.0, PARTIAL=0.5, INCONSISTENT=1.0.
+  # No unwrap_or(0) on regulation signals — missing verdict surfaces as 1.0
+  # (worst case), not silently "converged."
+  - ordinal: 13
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Convergence check — LENS verdict consistency. CONSISTENT=0.0 (fully
+      converged), PARTIAL=0.5 (re-enter VALUATION with tensions), 
+      INCONSISTENT=1.0 (escalate). Missing verdict surfaces as 1.0 (worst
+      case), not silently converged — per .rules no unwrap_or(0) on
+      regulation signals.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((v (assoc "overall_verdict" step_12_result)))
+          (cond
+            ((eq v "CONSISTENT") 0.0)
+            ((eq v "PARTIAL") 0.5)
+            ((eq v "INCONSISTENT") 1.0)
+            (t 1.0)))
+      env:
+        step_12_result: "{{ step_12_result | default({}) }}"
+
+  # ── Step 14: Loop back to VALUATION synthesis if LENS flags PARTIAL ──
+  # Re-runs valuation (7e) with LENS tensions injected. INCONSISTENT (1.0)
+  # does not loop — it escalates via on_not_reached. max_iterations: 3
+  # bounds the loop.
+  - ordinal: 14
+    action: loop
+    description: >
+      Re-enter VALUATION synthesis (step 7e) if LENS flags PARTIAL (0.5).
+      LENS key_tensions are injected into the next VALUATION pass via the
+      loop's input_mapping. INCONSISTENT (1.0) does not loop — it escalates
+      via on_not_reached. max_iterations: 3 bounds the loop.
+    condition: "{{ step_13_result > 0.0 and step_13_result < 1.0 }}"
+    input_mapping:
+      loop_target: "{{ 7e }}"
+      lens_tensions: "{{ step_12_result.key_tensions | default([]) }}"
+      convergence_signal: "{{ step_13_result }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
