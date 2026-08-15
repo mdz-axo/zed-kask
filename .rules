@@ -77,6 +77,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Model-name constants must reference `hkask_inference::model_constants::DEFAULT_*_MODEL`, not re-declare literals across crates.
 * MCP server credentials/config are scoped per-server via allowlists. New servers use `Some(&[])` for both, never `None`. Allowlists must align with actual env-var reads.
 * After `INFERENCE_SOCKET_PATH` is set, call `sync_kask_mcp_servers` again so servers restart with updated env.
+* `kask_bridge::identity::mirror_provisioned_db_passphrase` must `.await` to completion in the deferred post-login task **before** governed MCP server launch. Reordering the deferred task breaks first-run provisioning — the primary `ctx.credentials` tier reads the mirrored `kask://credentials/hkask_db_passphrase` entry, and a missing mirror falls back to the env/keychain tier silently (broken feedback loop).
 
 ## MCP server patterns
 
@@ -86,6 +87,8 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Live-mutation probe suites must run with `--test-threads=1` and keep probes self-contained.
 * Missing credentials must surface as `McpToolError::permission_denied` with the env var named in the message, not as `unavailable`, `invalid_argument`, `failed_precondition`, or a silent fallback. Canonical pattern: read credential from `ctx.credentials.get("ENV_VAR")` → if `None`, return a typed error → map to `permission_denied` at the tool boundary. See `hkask-mcp-swarm/src/abw_client.rs:require_auth` for the reference implementation. A missing credential is an authorization failure, not a transient unavailability or a bad argument. Silent fallbacks (empty results, in-memory DB, skipped env injection) are broken feedback loops — the operator cannot distinguish "not configured" from "no results" or "provider down."
 * The canonical `HKASK_DB_PASSPHRASE` resolution helper is `hkask_mcp_server::server::resolve_db_passphrase(&ctx.credentials)` — a 2-tier chain (ctx.credentials → resolve_credential which does env → keychain). All MCP servers that consume `HKASK_DB_PASSPHRASE` must use this helper, not inline re-implementations. See `hkask-mcp-kata-kanban` for the reference pattern.
+* `write_credential` / `delete_credential` for `kask://credentials/...` URLs must call `nudge_mcp_servers(cx)` after the keychain write — without it the running server keeps the old key until next launch. The nudge re-writes `kask.mcp.load_default` to itself to fire the `SettingsStore` observer → `sync_kask_mcp_runtime_servers` → env diff → restart. Only `kask://credentials/...` URLs need it; inference-provider `api_url` writes go through zed's provider registry reload.
+* `hkask_templates::ExitKind` is re-exported at the crate root (`pub use step_graph::ExitKind` in `hkask_templates.rs:38`). Downstream crates must match on `hkask_templates::ExitKind`, not `hkask_templates::step_graph::ExitKind` — the submodule path is not part of the stable surface and a future module rename would silently break callers that import the long path.
 
 ## Dead code patterns
 

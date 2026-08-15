@@ -708,6 +708,26 @@ error mis-classifies `NotFound`/`Unavailable`/auth variants as `Internal`. Use a
 `map_<domain>_error(e) -> McpToolError` fn that classifies per variant (see
 `map_media_error`, `map_portfolio_error`, `hkask-mcp-training/src/tools/error_mapping.rs`).
 
+## Missing credentials must surface as `permission_denied`, not `unavailable`/`invalid_argument`/silent fallback
+
+A missing credential is an authorization failure, not a transient unavailability or a bad argument. All kask MCP servers must classify a missing credential as `McpToolError::permission_denied` with the env var named in the message, not `unavailable`, `invalid_argument`, `failed_precondition`, or a silent fallback (empty `Vec`, in-memory DB, skipped env injection). Canonical pattern: read credential from `ctx.credentials.get("ENV_VAR")` → if `None`, return a typed domain error → map to `permission_denied` at the tool boundary. Reference: `hkask-mcp-swarm/src/abw_client.rs:require_auth`. Silent fallbacks are broken feedback loops — the operator cannot distinguish "not configured" from "no results" or "provider down." Intentional exceptions: prediction-markets live context (curated static defaults), research `web_search` (free providers always available), kata-kanban (ephemeral in-memory boards by design), curator SMTP (fire-and-forget alert sink). Typed variants (`InferenceError::NotConfigured(String)`, `HostProviderError::NotConfigured(String)`, `WebError::NoProviderConfigured(String)`, `HostProviderError::MissingPrecondition(String)`) replace string-matching where the upstream error type is owned by kask.
+
+## Canonical `HKASK_DB_PASSPHRASE` resolution helper
+
+All MCP servers that consume `HKASK_DB_PASSPHRASE` must use `hkask_mcp_server::server::resolve_db_passphrase(&ctx.credentials)` — a 2-tier chain (ctx.credentials → `resolve_credential` which does env → keychain) — not inline re-implementations. `ServerContext::resolve_db_credential` delegates to it. Reference pattern: `hkask-mcp-kata-kanban`. Corpus cannot read `ctx.credentials` from serde-default call sites, so it captures the resolved passphrase at server construction into `static CORPUS_DB_PASSPHRASE: OnceLock<Option<String>>` (`semantic/mod.rs`) via `set_corpus_db_passphrase`; `default_corpus_passphrase()` reads the `OnceLock` first, falls back to `resolve_credential`, giving the full 3-tier chain without changing serde-default signatures. First-run provisioning: `kask_bridge::identity::mirror_provisioned_db_passphrase` mirrors the `provision_agent`-written `hkask-db-passphrase` keychain entry into `kask://credentials/hkask_db_passphrase`; the mirror is `.await`ed in the deferred post-login task before governed MCP server launch, so the primary `ctx.credentials` tier works on first run.
+
+## `nudge_mcp_servers` restart trigger after keychain writes
+
+`write_credential` / `delete_credential` in `crates/settings_ui/src/pages/kask_page.rs` call `nudge_mcp_servers(cx)` after a `kask://credentials/...` keychain write/delete. The nudge re-writes `kask.mcp.load_default` to itself via `update_settings_file`, firing the `SettingsStore` observer → `sync_kask_mcp_runtime_servers` → env diff → server restart with fresh keychain read. The nudge fires inside the async spawn, after the keychain write completes, so the restart reads the new key. Only fires for `kask://credentials/...` URLs, not for inference-provider `api_url` writes. Without this, a keychain write doesn't trigger a server restart and the server keeps reading the old key until next launch.
+
+## `mirror_provisioned_db_passphrase` ordering dependency
+
+`kask_bridge::identity::mirror_provisioned_db_passphrase` must `.await` to completion in the deferred post-login task **before** governed MCP server launch. The mirror copies the `provision_agent`-written `hkask-db-passphrase` keychain entry into `kask://credentials/hkask_db_passphrase` via `CredentialsProvider::write_credentials`. If the deferred task is reordered so server launch precedes the mirror, the primary `ctx.credentials` tier misses on first run and silently falls back to the env/keychain tier — a broken feedback loop (the operator cannot distinguish "not provisioned" from "mirror not yet run"). The ordering is currently enforced by `.await`ing the mirror in `crates/zed/src/main.rs` before launching governed MCP servers.
+
+## `ExitKind` re-export is the stable surface
+
+`hkask_templates::ExitKind` is re-exported at the crate root (`pub use step_graph::ExitKind` at `kask/crates/hkask-templates/src/hkask_templates.rs:38`). Downstream crates must match on `hkask_templates::ExitKind`, not `hkask_templates::step_graph::ExitKind` — the submodule path is not part of the stable surface and a future module rename would silently break callers that import the long path.
+
 ## Live-mutation probe suites must run serialized
 
 A probe that asserts "no `zed-kask-verify-*` artifacts remain" (the

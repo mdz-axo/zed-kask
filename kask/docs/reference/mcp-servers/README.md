@@ -37,7 +37,7 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-13 on-disk MCP servers, **308 tools** fleet-wide. Every count is pinned by a `tool_surface_is_exactly_N_registered_tools` test (2026-08-14 re-audit) that asserts the runtime router's `list_all().len()`. This catches silent registration drops — a `#[tool]` impl block without `#[tool_router]`, or a sub-router missing from `combined_router()`, registers nothing (`cargo check` passes on an unwired orphan; the `training` server was caught this way — it registered 0 tools before its sub-routers were merged).
+13 on-disk MCP servers, **311 tools** fleet-wide. Every count is pinned by a `tool_surface_is_exactly_N_registered_tools` test (2026-08-15 re-audit) that asserts the runtime router's `list_all().len()`. This catches silent registration drops — a `#[tool]` impl block without `#[tool_router]`, or a sub-router missing from `combined_router()`, registers nothing (`cargo check` passes on an unwired orphan; the `training` server was caught this way — it registered 0 tools before its sub-routers were merged).
 
 | Server | Crate | Purpose | Tools | Count source |
 |--------|-------|---------|------:|--------------|
@@ -45,7 +45,7 @@ mds_categories: [composition, domain]
 | [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, portfolio ledger | 44 | `tool_surface_is_exactly_44_registered_tools` |
 | [Condenser](condenser.md) | `mcp-servers/hkask-mcp-condenser` | Context condensation (thread summarization, persistence, saliency) | 4 | `tool_surface_is_exactly_4_registered_tools` |
 | [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 27 | `tool_surface_is_exactly_27_registered_tools` |
-| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 9 | `tool_surface_is_exactly_9_registered_tools` |
+| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 10 | `tool_surface_is_exactly_10_registered_tools` |
 | Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 25 | `tool_surface_is_exactly_25_registered_tools` |
 | Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation (image, video, audio, gallery) | 41 | `tool_surface_is_exactly_41_registered_tools` |
 | Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 14 | `tool_surface_is_exactly_14_registered_tools` |
@@ -94,6 +94,8 @@ Every MCP server MUST include **tool-behavior contract tests** that invoke tools
 
 The `hkask-mcp-kata-kanban` MCP server (`KanbanServer`, a child process over stdio) is a thin tri-surface wrapper that delegates every tool call to `KanbanService`. The service owns an `HMemStore` (board/task persistence) and exposes kanban board/task tools plus kata prompt generation (`task_coaching_prompt` / `task_improvement_prompt` / `task_practice_prompt`), which render prompt text only — they do not execute a kata loop. Live kata execution (the PDCA loop) runs **in-process** via the `ManifestExecutor` (D1) executing the `kata-improvement` / `kata-coaching` skill manifests (`kask/registry/manifests/kata-*.yaml`) with their Jinja2 templates — this is the production kata path. `KataEngine` (this crate, `src/kata.rs`) is a library-level kata engine exercised only by tests (`tests/gas_feedback_loop.rs`); it is **not** wired into any production execution path — not by the agent loop, not by the kata-kanban MCP server, not by `ManifestExecutor`. The deleted `kask kata start` CLI has no direct successor.
 
+`kanban_board_export` / `kanban_board_import` round-trip a board (columns, phases, tasks, comments, deliverables) as Mermaid `kanban`-diagram text. The mermaid serialization lives in `src/kanban/mermaid.rs` (`export_board_to_mermaid` / `parse_mermaid_to_board`); round-trip parity is pinned by integration tests. Only the board owner can export (P12). The kanban panel surfaces clipboard-based Export/Import buttons that call these tools.
+
 The `--task <id>` binding (previously a CLI flag) is a library-level parameter that binds a `TaskGasAccountant` to `KataEngine` (exercised in `tests/gas_feedback_loop.rs`), closing the per-task gas feedback loop: each inference call's actual token usage is deducted from the bound kanban task's `gas_remaining` budget via `task_consume_gas`. In production, kata-skill gas is governed by the `ManifestExecutor`'s `BudgetTracker`, not this binding.
 
 ```mermaid
@@ -120,6 +122,8 @@ classDiagram
         +kanban_task_kata_improvement() String
         +kanban_task_kata_practice() String
         +kanban_task_spawn() String
+        +kanban_board_export() String
+        +kanban_board_import() String
         +contract_propose_expect() String
     }
 
@@ -273,5 +277,5 @@ classDiagram
 id: DIAG-IC-017
 verified_date: 2026-07-29
 verified_against: mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs (KanbanServer struct — generated by `mcp_server!` macro with only `webid` + `service: KanbanService`; no `userpod`/`daemon` field — daemon deleted in 2026-07-25 cleanup, macro no longer generates those fields), mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs (KanbanService struct — kata_bridge field deleted, pod_manager removed post-pivot), mcp-servers/hkask-mcp-kata-kanban/src/kata.rs (KataEngine struct), crates/hkask-storage/src/hmem.rs (HMemStore struct), mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/task.rs (Task struct), mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/status.rs (TaskStatus enum), mcp-servers/hkask-mcp-kata-kanban/src/kanban/socratic.rs (SocraticRole enum); KataEngine is library-level/test-only (`KataEngine::new` called only in `tests/gas_feedback_loop.rs`; no production construction) — production kata execution is via `ManifestExecutor` (D1) + the `kata-improvement`/`kata-coaching` skill manifests (deleted `kask kata start` CLI surface)
-status: VERIFIED (v5 — line numbers removed from verified_against to avoid drift; tool count updated to 23)
+status: VERIFIED (v6 — line numbers removed from verified_against to avoid drift; tool count updated to 25 to reflect `kanban_board_export` / `kanban_board_import` added 2026-08-15)
 -->

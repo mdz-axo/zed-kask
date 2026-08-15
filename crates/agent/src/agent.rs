@@ -977,6 +977,11 @@ impl NativeAgent {
             thread.add_tool(RecordSkillFeedbackTool::with_manifest_executor_resolver(
                 crate::manifest_executor_cloned,
             ));
+            // Register the validate_golden_outputs tool for maintenance-time
+            // validation of skills with deterministic-ish output contracts.
+            thread.add_tool(ValidateGoldenOutputsTool::with_manifest_executor_resolver(
+                crate::manifest_executor_cloned,
+            ));
         });
 
         let subscriptions = vec![

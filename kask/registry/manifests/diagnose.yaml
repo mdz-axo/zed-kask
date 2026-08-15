@@ -86,7 +86,7 @@ steps:
         codegraph_impact failed — blast radius analysis is not available.
         The diagnosis proceeds without impact scope context.
     input_mapping:
-      symbol: "{{ symptom | default(bug_description | default('')) }}"
+      symbol: "{{ code_context.symbol | default(code_context.function | default('')) }}"
       max_depth: 3
 
   - ordinal: 1

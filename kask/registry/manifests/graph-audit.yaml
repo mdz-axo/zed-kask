@@ -82,10 +82,10 @@ inputs:
   - name: context_budget
     type: string
     required: false
-    default: "medium"
+    default: "standard"
     description: >
-      Token budget for context assembly in code/dual mode. small (2048),
-      medium (4096), large (8192).
+      Token budget for context assembly in code/dual mode. minimal (512),
+      focused (2048), standard (4096), full (8192).
   - name: requires_context
     type: boolean
     required: false
@@ -186,7 +186,6 @@ steps:
         The code-query step proceeds without structured query results.
     input_mapping:
       query: "{{ goal | default('') }}"
-      name: "{{ step_3_result.entry_symbols[0].name | default('') }}"
       limit: 20
 
   - ordinal: 5
@@ -296,7 +295,7 @@ steps:
       goal: "{{ goal }}"
       context_result: "{{ step_9_result | default({}) }}"
       analysis_result: "{{ step_8_result }}"
-      budget: "{{ context_budget | default('medium') }}"
+      budget: "{{ context_budget | default('standard') }}"
 
   # === SEMANTIC MODE (steps 11-14) ===
   - ordinal: 11

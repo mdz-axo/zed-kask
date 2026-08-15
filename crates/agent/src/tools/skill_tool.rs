@@ -258,6 +258,103 @@ impl AgentTool for RecordSkillFeedbackTool {
     }
 }
 
+/// Validate a skill's golden-output fixtures. Runs the skill against each
+/// declared fixture and compares the output exactly. Only meaningful for
+/// skills with `golden_outputs` in their manifest.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ValidateGoldenOutputsInput {
+    /// The name of the skill to validate.
+    pub skill_name: String,
+}
+
+/// Tool output for `ValidateGoldenOutputsTool`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ValidateGoldenOutputsOutput {
+    Ok { results: String },
+    Error { error: String },
+}
+
+/// Built-in agent tool for validating golden-output fixtures.
+pub struct ValidateGoldenOutputsTool {
+    manifest_executor_resolver:
+        Arc<dyn Fn() -> Option<Arc<dyn SkillManifestExecutor>> + Send + Sync>,
+}
+
+impl ValidateGoldenOutputsTool {
+    pub fn with_manifest_executor_resolver<
+        R: Fn() -> Option<Arc<dyn SkillManifestExecutor>> + Send + Sync + 'static,
+    >(
+        manifest_executor_resolver: R,
+    ) -> Self {
+        Self {
+            manifest_executor_resolver: Arc::new(manifest_executor_resolver),
+        }
+    }
+}
+
+impl AgentTool for ValidateGoldenOutputsTool {
+    type Input = ValidateGoldenOutputsInput;
+    type Output = ValidateGoldenOutputsOutput;
+
+    const NAME: &'static str = "validate_golden_outputs";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        match input {
+            Ok(input) => format!("Validate golden outputs: {}", input.skill_name).into(),
+            Err(_) => "Validate golden outputs".into(),
+        }
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        let resolver = self.manifest_executor_resolver.clone();
+        cx.spawn(async move |_cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|_| ValidateGoldenOutputsOutput::Error {
+                    error: "error: invalid input".to_string(),
+                })?;
+
+            let executor = (resolver)().ok_or_else(|| ValidateGoldenOutputsOutput::Error {
+                error: "Skill manifest executor not configured.".to_string(),
+            })?;
+
+            executor
+                .validate_golden_outputs(&input.skill_name)
+                .await
+                .map(|results| ValidateGoldenOutputsOutput::Ok { results })
+                .map_err(|e| ValidateGoldenOutputsOutput::Error { error: e })
+        })
+    }
+}
+
+impl From<ValidateGoldenOutputsOutput> for LanguageModelToolResultContent {
+    fn from(output: ValidateGoldenOutputsOutput) -> Self {
+        match output {
+            ValidateGoldenOutputsOutput::Ok { results } => {
+                LanguageModelToolResultContent::Text(results.into())
+            }
+            ValidateGoldenOutputsOutput::Error { error } => {
+                LanguageModelToolResultContent::Text(error.into())
+            }
+        }
+    }
+}
+
 /// Retrieves the content and resources of a skill by name. Use this when a user's request matches a skill's description.
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SkillToolInput {
@@ -498,6 +595,11 @@ pub trait SkillManifestExecutor: Send + Sync {
         disposition: &str,
         comments: Option<&str>,
     ) -> Result<(), String>;
+
+    /// Validate a skill's golden-output fixtures (if declared in the
+    /// manifest). Returns a JSON report of pass/fail per fixture. Skills
+    /// without `golden_outputs` return an empty array.
+    async fn validate_golden_outputs(&self, skill_name: &str) -> Result<String, String>;
 }
 
 /// The result of composing and executing a skill bundle.
@@ -1738,6 +1840,10 @@ mod tests {
             _comments: Option<&str>,
         ) -> Result<(), String> {
             Ok(())
+        }
+
+        async fn validate_golden_outputs(&self, _skill_name: &str) -> Result<String, String> {
+            Ok("[]".to_string())
         }
     }
 

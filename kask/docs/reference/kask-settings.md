@@ -296,6 +296,47 @@ keys from zed's keychain and injects them as env vars into the child process.
 MCP servers then find the keys via `std::env::var` or their own keychain
 fallback.
 
+### Restart-on-keychain-write
+
+A keychain write through the settings UI (`write_credential` / `delete_credential`
+in `crates/settings_ui/src/pages/kask_page.rs`) does **not** by itself restart
+running MCP servers — they have already captured the env at spawn time. To close
+this gap, those handlers call `nudge_mcp_servers(cx)` after a `kask://credentials/...`
+write/delete. The nudge re-writes `kask.mcp.load_default` to itself via
+`update_settings_file`, firing the `SettingsStore` observer →
+`sync_kask_mcp_runtime_servers` → env diff → server restart with a fresh keychain
+read. The nudge fires inside the async spawn, after the keychain write completes,
+so the restart reads the new key. It only fires for `kask://credentials/...` URLs,
+not for inference-provider `api_url` writes (those go through zed's provider
+registry, which has its own reload path).
+
+### `HKASK_DB_PASSPHRASE` resolution
+
+The SQLCipher passphrase is resolved through a canonical 2-tier helper,
+`hkask_mcp_server::server::resolve_db_passphrase(&ctx.credentials)`:
+`ctx.credentials.get("HKASK_DB_PASSPHRASE")` → `resolve_credential("HKASK_DB_PASSPHRASE")`
+(env → hKask keychain). All six DB-passphrase-consuming servers (kata-kanban,
+training, research, curator, condenser, corpus) use this helper, not inline
+re-implementations; `ServerContext::resolve_db_credential` delegates to it. A miss
+returns `McpToolError::permission_denied` naming the env var.
+
+Corpus cannot read `ctx.credentials` from serde-default call sites, so it captures
+the resolved passphrase at server construction into `static CORPUS_DB_PASSPHRASE:
+OnceLock<Option<String>>` (`semantic/mod.rs`) via `set_corpus_db_passphrase`;
+`default_corpus_passphrase()` reads the `OnceLock` first, falls back to
+`resolve_credential`, giving the full 3-tier chain (creds → env → keychain)
+without changing serde-default signatures.
+
+### First-run provisioning
+
+`provision_agent` writes the passphrase to the hKask keychain entry
+`hkask-db-passphrase`. `kask_bridge::identity::mirror_provisioned_db_passphrase`
+mirrors it to `kask://credentials/hkask_db_passphrase` via
+`CredentialsProvider::write_credentials`. The mirror is `.await`ed in the
+deferred post-login task before governed MCP server launch, so the primary
+`ctx.credentials` tier works on first run (no longer relies on the env/keychain
+fallback). The ordering dependency is explicit.
+
 ## Storage Backend
 
 hKask supports two storage backends, selected at startup via environment
