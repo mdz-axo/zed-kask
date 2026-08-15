@@ -459,12 +459,19 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         .to_string()
                     });
 
-                // Resolve passphrase: credentials → keystore resolve_credential chain
-                let passphrase = ctx
-                    .credentials
-                    .get("HKASK_DB_PASSPHRASE")
-                    .cloned()
-                    .or_else(|| hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE").ok());
+                // Resolve passphrase via the canonical 2-tier chain
+                // (ctx.credentials → resolve_credential which does env → keychain).
+                let passphrase = match hkask_mcp_server::resolve_db_passphrase(&ctx.credentials) {
+                    Ok(passphrase) => Some(passphrase),
+                    Err(error) => {
+                        tracing::warn!(
+                            target = "hkask.training.init",
+                            %error,
+                            "Falling back to in-memory DB; job/adapter state will not persist across restarts."
+                        );
+                        None
+                    }
+                };
 
                 let (store, adapter_store, job_store) = match passphrase {
                     Some(passphrase) => {
@@ -503,10 +510,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     None => {
                         // No passphrase configured — fall back to an in-memory driver
                         // so the server still runs (no persistence across restarts).
-                        tracing::warn!(
-                            target = "hkask.training.init",
-                            "HKASK_DB_PASSPHRASE not resolved — falling back to in-memory DB; job/adapter state will NOT persist across restarts. Set HKASK_DB_PASSPHRASE via keychain (kask keystore load) or env var."
-                        );
+                        // The resolution helper already emitted a `warn!` above.
                         let pool = hkask_storage::database::sqlite::SqliteDriver::in_memory_pool()
                             .map_err(|e| anyhow::anyhow!("in-memory pool: {e}"))?;
                         let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::credentials::resolve_credential;
+use super::credentials::resolve_db_passphrase;
 use super::error::McpError;
 
 /// A credential that an MCP server requires to function.
@@ -142,16 +142,13 @@ pub struct ServerContext {
 }
 
 impl ServerContext {
-    /// Resolve the DB passphrase from the credentials map or the hkask keystore chain.
+    /// Resolve the DB passphrase using the canonical 2-tier chain.
     ///
-    /// Tries the pre-resolved credentials map first, then falls back to
-    /// `resolve_credential` which routes through the proper hkask keystore
-    /// chain (env var → keychain `hkask-db-passphrase`).
+    /// Delegates to [`super::credentials::resolve_db_passphrase`] which checks
+    /// `ctx.credentials` first, then `resolve_credential("HKASK_DB_PASSPHRASE")`
+    /// (env var → keychain `hkask-db-passphrase`).
     fn resolve_db_credential(&self) -> Result<String, McpError> {
-        if let Some(passphrase) = self.credentials.get("HKASK_DB_PASSPHRASE") {
-            return Ok(passphrase.clone());
-        }
-        resolve_credential("HKASK_DB_PASSPHRASE").map_err(|e| {
+        resolve_db_passphrase(&self.credentials).map_err(|e| {
             McpError::DatabasePassphrase(format!("Failed to resolve DB passphrase: {e}"))
         })
     }

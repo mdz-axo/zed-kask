@@ -50,6 +50,7 @@ use crate::types::loops::{BudgetOption, RegulationData};
 
 use hkask_types::CuratorDirective;
 use hkask_types::WebID;
+use hkask_types::curator::SchemaEvolutionType;
 use hkask_types::event::{CyclePhase, RegulationRecord, RegulationSink, Span, SpanKind};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -720,6 +721,26 @@ impl CyberneticsLoop {
             } => {
                 tracing::info!(target: "reg.cybernetics", context = %context, channel = %channel, confidence = %confidence, "Applied SeekMoreEvidence directive from Curation (metacognition loop triggered)")
             }
+            CuratorDirective::EvolveMcpToolSchema {
+                server_name,
+                tool_name,
+                evolution_type,
+                &field_name,
+                new_type,
+                ref rationale,
+                ref evidence,
+            } => {
+                self.apply_evolve_mcp_tool_schema(
+                    &server_name,
+                    &tool_name,
+                    &evolution_type,
+                    &field_name,
+                    new_type.as_deref(),
+                    rationale,
+                    evidence,
+                )
+                .await;
+            }
             _ => {}
         }
     }
@@ -763,6 +784,69 @@ impl CyberneticsLoop {
             .await
             .credit(&agent, amount as u32)
             .await;
+    }
+
+    /// Phase 3 co-evolution: record an MCP tool schema evolution request.
+    ///
+    /// The directive does not directly modify the tool's schema (MCP tool
+    /// schemas are compiled Rust structs). It persists the evolution request
+    /// to the regulation ledger as a `CurationDirectiveAcknowledged` span
+    /// with the full evolution payload, so a developer or automated
+    /// migration agent can read the ledger and act on the request.
+    async fn apply_evolve_mcp_tool_schema(
+        &self,
+        server_name: &str,
+        tool_name: &str,
+        evolution_type: &SchemaEvolutionType,
+        field_name: &str,
+        new_type: Option<&str>,
+        rationale: &str,
+        evidence: &str,
+    ) {
+        let evolution_type_str = match evolution_type {
+            SchemaEvolutionType::AddField => "add_field",
+            SchemaEvolutionType::RemoveField => "remove_field",
+            SchemaEvolutionType::RenameField => "rename_field",
+            SchemaEvolutionType::ChangeType => "change_type",
+        };
+        tracing::info!(
+            target: "reg.cybernetics",
+            server = %server_name,
+            tool = %tool_name,
+            evolution_type = %evolution_type_str,
+            field = %field_name,
+            new_type = ?new_type,
+            "Applied EvolveMcpToolSchema directive from Curation (schema evolution request recorded)",
+        );
+        // Persist the full evolution request to the regulation ledger so
+        // developers and migration agents can read it. The payload carries
+        // all the information needed to implement the schema change.
+        if let Some(ref sink) = self.event_sink {
+            let record = RegulationRecord::new(
+                WebID::from_persona(b"regulation"),
+                Span::from_kind(SpanKind::CurationDirectiveAcknowledged),
+                CyclePhase::Act,
+                serde_json::json!({
+                    "directive_type": "evolve_mcp_tool_schema",
+                    "outcome": "recorded",
+                    "server_name": server_name,
+                    "tool_name": tool_name,
+                    "evolution_type": evolution_type_str,
+                    "field_name": field_name,
+                    "new_type": new_type,
+                    "rationale": rationale,
+                    "evidence": evidence,
+                }),
+                0,
+            );
+            if let Err(e) = sink.persist(&record) {
+                tracing::warn!(
+                    target: "reg.cybernetics",
+                    error = %e,
+                    "Failed to persist EvolveMcpToolSchema directive",
+                );
+            }
+        }
     }
 
     fn persist_directive_acknowledgment(&self, directive_type: &str) {

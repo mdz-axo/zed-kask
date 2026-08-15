@@ -26,7 +26,7 @@ pub use kata::{
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
-use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool_semantic, resolve_credential};
+use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool_semantic, resolve_db_passphrase};
 use hkask_mcp_swarm::{
     LazyLocalSwarmRuntime, LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry,
 };
@@ -1675,47 +1675,20 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         );
                         default_path.to_string_lossy().to_string()
                     });
-                // Resolve the DB passphrase through the full keystore chain:
-                //   1. `ctx.credentials` — populated by `build_mcp_server_env`
-                //      from `kask://credentials/hkask_db_passphrase` (governed
-                //      launch path).
-                //   2. `std::env::var` — direct env override (matches the
-                //      condenser's fallback at hkask_mcp_condenser.rs).
-                //   3. `resolve_credential` — bridges to the keychain key
-                //      `hkask-db-passphrase` that `provision_agent` writes to
-                //      (identity.rs). Without this third leg, governed launch
-                //      where `build_mcp_server_env` never populates
-                //      `ctx.credentials` (keychain entry
-                //      `kask://credentials/hkask_db_passphrase` absent because
-                //      `provision_agent` writes under a different key) silently
-                //      falls back to in-memory and loses all boards on restart.
-                let passphrase = ctx
-                    .credentials
-                    .get("HKASK_DB_PASSPHRASE")
-                    .cloned()
-                    .or_else(|| {
-                        std::env::var("HKASK_DB_PASSPHRASE")
-                            .ok()
-                            .filter(|value| !value.is_empty())
-                    })
-                    .or_else(|| {
-                        match resolve_credential("HKASK_DB_PASSPHRASE") {
-                            Ok(value) if !value.is_empty() => Some(value),
-                            Ok(_) => None,
-                            Err(error) => {
-                                tracing::warn!(
-                                    target: "hkask.mcp.kata_kanban",
-                                    %error,
-                                    "HKASK_DB_PASSPHRASE not found in credentials map, env, \
-                                     or keychain — falling back to in-memory mode. \
-                                     Kanban data will not persist across server restarts. \
-                                     Set HKASK_DB_PASSPHRASE or run provision_agent \
-                                     for encrypted persistent storage."
-                                );
-                                None
-                            }
-                        }
-                    });
+                // Resolve the DB passphrase through the canonical 2-tier chain
+                // (ctx.credentials → resolve_credential which does env → keychain).
+                // See `hkask_mcp_server::server::resolve_db_passphrase`.
+                let passphrase = match resolve_db_passphrase(&ctx.credentials) {
+                    Ok(passphrase) => Some(passphrase),
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.kata_kanban",
+                            %error,
+                            "Falling back to in-memory mode. Kanban data will not persist across restarts."
+                        );
+                        None
+                    }
+                };
                 let db = if let Some(passphrase) = passphrase {
                     hkask_storage::open_or_repair(&kanban_db_path, &passphrase)
                         .map_err(|e| anyhow::anyhow!("{e}"))?

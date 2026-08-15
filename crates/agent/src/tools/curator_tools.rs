@@ -341,6 +341,48 @@ pub enum CuratorDirectiveRequest {
         /// Human-readable evidence summary.
         evidence: String,
     },
+    /// Evolve an MCP tool's input schema based on skill-use feedback.
+    ///
+    /// This is the Phase 3 co-evolution directive. The Curator analyzes
+    /// skill-use reports and issues a directive to evolve a tool's schema.
+    /// The directive is recorded in the regulation ledger for a developer
+    /// or automated migration agent to act on — it does not directly modify
+    /// the compiled Rust struct.
+    EvolveMcpToolSchema {
+        /// MCP server name (e.g., "hkask-mcp-companies").
+        server_name: String,
+        /// Tool name on that server (e.g., "dcf_valuation").
+        tool_name: String,
+        /// Type of schema evolution requested.
+        evolution_type: SchemaEvolutionType,
+        /// Field name to add/remove/rename/change.
+        field_name: String,
+        /// New field type (for add_field/change_type), or new field name (for
+        /// rename_field). Omitted for remove_field.
+        #[serde(default)]
+        new_type: Option<String>,
+        /// Why this evolution is needed — grounded in skill-use reports.
+        rationale: String,
+        /// Evidence summary (which skill, which step, what failure).
+        evidence: String,
+    },
+}
+
+/// Type of MCP tool schema evolution requested by the Curator.
+/// Mirrors `hkask_types::curator::SchemaEvolutionType` — the agent crate
+/// does not depend on `hkask-types`, so the type is duplicated here and
+/// converted in the bridge.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SchemaEvolutionType {
+    /// Add a new input field to the tool's schema.
+    AddField,
+    /// Remove an existing input field.
+    RemoveField,
+    /// Rename an existing input field.
+    RenameField,
+    /// Change the type of an existing input field.
+    ChangeType,
 }
 
 /// Issue a CuratorDirective to the cybernetics regulation loop.
@@ -449,6 +491,7 @@ impl CuratorDirectiveRequest {
             Self::ReplenishBudget { .. } => "replenish_budget",
             Self::ClearOverride { .. } => "clear_override",
             Self::EscalateDomain { .. } => "escalate_domain",
+            Self::EvolveMcpToolSchema { .. } => "evolve_mcp_tool_schema",
         }
     }
 }
