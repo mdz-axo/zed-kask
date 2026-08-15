@@ -11,6 +11,8 @@ contract:
     goldilocks_zone: boolean
     proceed_recommendation: boolean
     rationale: string
+    scenario_type: string
+    time_horizon: string
 visibility: Public
 ---
 {# hKask v0.31.0 — A Minimal Viable Container for UserPods #}
@@ -53,3 +55,9 @@ Respond with a JSON object containing:
 - goldilocks_zone: boolean (true if difficulty_level is "goldilocks")
 - proceed_recommendation: boolean (recommend proceeding if in goldilocks zone)
 - rationale: Brief explanation of the classification decision
+- scenario_type: One of "company_update", "company_analysis", "emerging_economic", or "economic_potential". Classify the question:
+  - "company_update" for quarterly earnings, product launches, or periodic company events
+  - "company_analysis" for investment thesis construction about a specific company
+  - "emerging_economic" for near-term disruption or sector-level economic shifts
+  - "economic_potential" for long-term domain-level economic driver analysis
+- time_horizon: One of "tactical" (12-18 months), "strategic" (3-5 years), or "long_term" (7-10 years). Match the horizon to the question's natural resolution timeframe.

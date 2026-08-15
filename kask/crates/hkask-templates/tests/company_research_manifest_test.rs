@@ -116,11 +116,12 @@ fn company_research_flash_has_expected_step_count() {
     // 0 (forecast_list) + 1 (SCOUT) + 2/3/4 (INTEL) + 5/6 (listening) +
     // 7 (FORENSIC pre) + 8/9 (CRITICAL FACTOR) + 10/11 (FORENSIC full) +
     // 12/13/14/15/16 (VALUATION) + 17 (COMM) + 18/19/20 (KATA) + 21/22
-    // (LENS MCP) + 23 (LENS) + 24 (convergence) + 25 (loop) = 26 steps.
+    // (LENS MCP) + 23 (LENS) + 24 (convergence) + 25 (loop) +
+    // 26 (forecast_persist) = 27 steps.
     assert_eq!(
         manifest.steps.len(),
-        26,
-        "company-research-flash must have 26 steps (25 + forecast_list step 0), got {}",
+        27,
+        "company-research-flash must have 27 steps (26 + forecast_persist step 26), got {}",
         manifest.steps.len()
     );
 }
@@ -137,12 +138,12 @@ fn company_research_flash_execute_steps_have_mcp_fields() {
     // 5 (company_transcript) + 8 (scenario_build) + 10 (company_transcript) +
     // 12 (dcf_valuation) + 13 (comparable_analysis) + 14 (expectations_gap) +
     // 15 (scenario_impact_valuation) + 18 (market_check_resolutions) +
-    // 19 (market_calibration) + 21 (market_match) + 22 (evaluate_evidence)
-    // = 14 execute steps.
+    // 19 (market_calibration) + 21 (market_match) + 22 (evaluate_evidence) +
+    // 26 (forecast_persist) = 15 execute steps.
     assert_eq!(
         execute_steps.len(),
-        14,
-        "expected 14 execute steps (13 + forecast_list step 0), got {}",
+        15,
+        "expected 15 execute steps (14 + forecast_persist step 26), got {}",
         execute_steps.len()
     );
     for step in &execute_steps {

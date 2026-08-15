@@ -430,15 +430,21 @@ pub struct ForecastPersistRequest {
     pub horizon: Horizon,
     /// Forecast price change over the horizon (e.g., 0.10 = 10% return).
     /// The primary Brier signal — forecast_record scores this against the
-    /// actual price change within a 20% tolerance band.
-    pub forecast_price_change: f64,
-    /// Optional forecast valuation multiple (e.g., P/E or EV/FCF).
-    /// Pre-computed PTs from flowdef valuation synthesis may not carry a
-    /// multiple — the price target is an absolute price, not a multiple.
-    /// When omitted, the multiple-direction Brier score is null (it is
-    /// already null in forecast_record — the multiple probability is not
-    /// modeled).
+    /// actual price change within a 20% tolerance band. When omitted, the
+    /// tool computes it from `forecast_price` and `current_price`.
+    pub forecast_price_change: Option<f64>,
+    /// Forecast valuation multiple (e.g., P/E or EV/FCF). Optional —
+    /// pre-computed PTs from flowdef valuation synthesis may not carry a
+    /// multiple. When omitted, the multiple-direction Brier score is null.
     pub forecast_multiple: Option<f64>,
+    /// Forecast price target (absolute price). When provided with
+    /// `current_price`, the tool computes `forecast_price_change` if that
+    /// field is omitted.
+    pub forecast_price: Option<f64>,
+    /// Current market price at forecast date. When provided with
+    /// `forecast_price`, the tool computes `forecast_price_change` if that
+    /// field is omitted.
+    pub current_price: Option<f64>,
     /// Optional parent forecast ID for a same-symbol revision.
     pub revision_of: Option<String>,
     /// Optional caller-supplied forecast ID. When omitted, the server

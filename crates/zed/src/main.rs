@@ -1211,6 +1211,7 @@ fn main() {
         // the username.
         let tool_port_for_model_task: std::sync::Arc<dyn hkask_capability::ToolPort> =
             tool_port.clone();
+        let regulation_ledger_for_model_task = regulation_ledger.clone();
         {
             let user_store = app_state.user_store.clone();
             let mcp_runtime_for_deferred = mcp_runtime_for_startup;
@@ -2359,6 +2360,7 @@ fn main() {
                         &tool_port_for_model_task,
                         &registry_manifests_dir,
                         &registry_templates_dir,
+                        &regulation_ledger_for_model_task,
                         cx,
                     )
                     .await
@@ -2408,6 +2410,7 @@ fn main() {
                                 let templates_dir = templates_dir_for_sub.clone();
                                 let ep_wired = ep_wired_for_sub.clone();
                                 let http_client = http_client_for_sub.clone();
+                                let regulation_ledger = regulation_ledger_for_sub.clone();
                                 cx.spawn(async move |cx| {
                                     if let Err(e) = try_wire_manifest_executor(
                                         &wired,
@@ -2415,6 +2418,7 @@ fn main() {
                                         &tool_port,
                                         &manifests_dir,
                                         &templates_dir,
+                                        &regulation_ledger,
                                         cx,
                                     )
                                     .await
