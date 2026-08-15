@@ -19,11 +19,11 @@
 //!    already closed, covering the window before the keeper task is scheduled.
 //! 3. **Reconnect on demand** — `start_server_with_env` records each server's
 //!    launch spec, so `call_tool_inner` can re-spawn a dead server once (subject
-//!    to [`RECONNECT_COOLDOWN`]) and retry the call rather than failing until the
+//!    to the reconnect cooldown]) and retry the call rather than failing until the
 //!    next settings change.
 //! 4. **Health supervisor** — a per-server background task that periodically
 //!    checks transport liveness and proactively removes dead connections before
-//!    the next tool call discovers them. After [`MAX_CONSECUTIVE_HEALTH_FAILURES`]
+//!    the next tool call discovers them. After the max consecutive health failures
 //!    consecutive failures it logs an operator-actionable error and stops.
 //!
 //! Without these, `start_server_with_env`'s presence-based idempotency check
@@ -1192,7 +1192,7 @@ impl McpRuntime {
     ///
     /// Heals a lost connection rather than reporting it: when the server has no
     /// live peer, or the dispatch itself fails because the transport closed under
-    /// it, this reconnects once (bounded by [`RECONNECT_COOLDOWN`]) and retries.
+    /// it, this reconnects once (bounded by the reconnect cooldown) and retries.
     /// Exactly one retry — a second transport failure is reported, because a
     /// server that dies immediately after a successful handshake is broken, not
     /// transiently unavailable, and retrying would spin.

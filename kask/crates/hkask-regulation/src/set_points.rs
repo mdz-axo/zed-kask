@@ -129,6 +129,18 @@ pub const DEFAULT_COVERAGE_FLOOR: f64 = 0.70;
 /// Cybernetics Loop's `MutationScoreSensor` produces a signal.
 pub const DEFAULT_MUTATION_SCORE_FLOOR: f64 = 0.50;
 
+/// Default maximum regulation cycles retained for history queries.
+///
+/// Bounds memory growth in long-running sessions. An operator running a
+/// long autonomous swarm may want more history; one on a memory-constrained
+/// box may want less.
+pub const DEFAULT_MAX_REGULATION_HISTORY: usize = 100;
+
+/// Default maximum skill feedback spans retained per skill+phase.
+///
+/// Bounds memory growth for skill self-improvement signal storage.
+pub const DEFAULT_MAX_SKILL_SPAN_HISTORY: usize = 50;
+
 /// Homeostatic set-points for the Cybernetics Loop.
 ///
 /// These define the reference values against which sensed signals
@@ -203,6 +215,13 @@ pub struct SetPoints {
     /// Read from the latest trace run's `metrics.json` `mutation_score`.
     /// Default: 0.50.
     pub mutation_score_floor: f64,
+    // ── History retention (v0.33.0) ──
+    /// Maximum regulation cycles retained for history queries.
+    /// Default: 100.
+    pub max_regulation_history: usize,
+    /// Maximum skill feedback spans retained per skill+phase.
+    /// Default: 50.
+    pub max_skill_span_history: usize,
 }
 
 /// Configurable thresholds for Curation decisions (spec coherence, drift).
@@ -235,6 +254,8 @@ pub struct SetPointsConfig {
     pub inference_throttle_mode: Option<InferenceThrottleMode>,
     pub coverage_floor: Option<f64>,
     pub mutation_score_floor: Option<f64>,
+    pub max_regulation_history: Option<usize>,
+    pub max_skill_span_history: Option<usize>,
 }
 
 impl SetPointsConfig {
@@ -276,6 +297,8 @@ impl Default for SetPoints {
             inference_throttle_mode: InferenceThrottleMode::Off,
             coverage_floor: DEFAULT_COVERAGE_FLOOR,
             mutation_score_floor: DEFAULT_MUTATION_SCORE_FLOOR,
+            max_regulation_history: DEFAULT_MAX_REGULATION_HISTORY,
+            max_skill_span_history: DEFAULT_MAX_SKILL_SPAN_HISTORY,
         }
     }
 }
@@ -342,6 +365,12 @@ impl SetPoints {
             mutation_score_floor: config
                 .mutation_score_floor
                 .unwrap_or(defaults.mutation_score_floor),
+            max_regulation_history: config
+                .max_regulation_history
+                .unwrap_or(defaults.max_regulation_history),
+            max_skill_span_history: config
+                .max_skill_span_history
+                .unwrap_or(defaults.max_skill_span_history),
         }
     }
 

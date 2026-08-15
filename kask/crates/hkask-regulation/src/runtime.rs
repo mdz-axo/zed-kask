@@ -30,10 +30,9 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-/// Maximum number of regulation cycles retained for history queries.
-const MAX_REGULATION_HISTORY: usize = 100;
-/// Maximum number of skill feedback spans retained per skill+phase.
-const MAX_SKILL_SPAN_HISTORY: usize = 50;
+// MAX_REGULATION_HISTORY and MAX_SKILL_SPAN_HISTORY moved to
+// set_points::DEFAULT_MAX_*_HISTORY. Test-compatibility alias below.
+const MAX_SKILL_SPAN_HISTORY: usize = crate::set_points::DEFAULT_MAX_SKILL_SPAN_HISTORY;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing;
@@ -65,10 +64,20 @@ pub struct StoredSkillSpan {
 }
 
 /// Bounded storage for skill feedback spans, keyed by (skill_id, phase).
-/// Retains the last `MAX_SKILL_SPAN_HISTORY` spans per key.
-#[derive(Debug, Default)]
+/// Retains the last `max_history` spans per key.
+#[derive(Debug)]
 pub(crate) struct SkillSpanStore {
     spans: HashMap<String, VecDeque<StoredSkillSpan>>,
+    max_history: usize,
+}
+
+impl Default for SkillSpanStore {
+    fn default() -> Self {
+        Self {
+            spans: HashMap::new(),
+            max_history: crate::set_points::DEFAULT_MAX_SKILL_SPAN_HISTORY,
+        }
+    }
 }
 
 impl SkillSpanStore {
@@ -76,10 +85,17 @@ impl SkillSpanStore {
         format!("{skill_id}:{phase}")
     }
 
+    pub(crate) fn with_capacity(max_history: usize) -> Self {
+        Self {
+            spans: HashMap::new(),
+            max_history,
+        }
+    }
+
     pub(crate) fn record(&mut self, span: StoredSkillSpan) {
         let key = Self::key(&span.skill_id, &span.phase);
         let deque = self.spans.entry(key).or_default();
-        if deque.len() >= MAX_SKILL_SPAN_HISTORY {
+        if deque.len() >= self.max_history {
             deque.pop_front();
         }
         deque.push_back(span);
@@ -100,7 +116,9 @@ impl SkillSpanStore {
         self.spans
             .keys()
             .filter_map(|key| {
-                key.split_once(':').filter(|(_, p)| *p == phase).map(|(id, _)| id.to_string())
+                key.split_once(':')
+                    .filter(|(_, p)| *p == phase)
+                    .map(|(id, _)| id.to_string())
             })
             .collect()
     }
@@ -393,12 +411,25 @@ struct RegState {
     outcome: HashMap<String, OutcomeTracker>,
     regulation_health: RegulationHealth,
     regulation_history: VecDeque<RegulationCycleEntry>,
+    max_regulation_history: usize,
     tool_stats: Arc<ToolStats>,
     skill_spans: SkillSpanStore,
 }
 
 impl RegState {
     fn new(threshold: u64) -> Self {
+        Self::with_history_caps(
+            threshold,
+            crate::set_points::DEFAULT_MAX_REGULATION_HISTORY,
+            crate::set_points::DEFAULT_MAX_SKILL_SPAN_HISTORY,
+        )
+    }
+
+    fn with_history_caps(
+        threshold: u64,
+        max_regulation_history: usize,
+        max_skill_span_history: usize,
+    ) -> Self {
         let algedonic = Arc::new(ParkingRwLock::new(AlgedonicManager::new(
             threshold,
             DEFAULT_EXPECTED_VARIETY,
@@ -406,15 +437,16 @@ impl RegState {
         let tracker = VarietyMonitor::new();
         let outcome = HashMap::new();
         let regulation_health = RegulationHealth::default();
-        let regulation_history = VecDeque::with_capacity(MAX_REGULATION_HISTORY);
+        let regulation_history = VecDeque::with_capacity(max_regulation_history);
         let tool_stats = Arc::new(ToolStats::new());
-        let skill_spans = SkillSpanStore::default();
+        let skill_spans = SkillSpanStore::with_capacity(max_skill_span_history);
         Self {
             algedonic,
             tracker,
             outcome,
             regulation_health,
             regulation_history,
+            max_regulation_history,
             tool_stats,
             skill_spans,
         }
@@ -442,6 +474,20 @@ impl RegulationLedger {
     pub fn with_threshold(threshold: u64) -> Self {
         Self {
             state: Arc::new(RwLock::new(RegState::new(threshold))),
+        }
+    }
+
+    /// Create a Regulation runtime with history caps from `SetPoints`.
+    ///
+    /// Allows operators to tune how many regulation cycles and skill spans
+    /// are retained for history queries, via YAML config or env vars.
+    pub fn with_set_points(threshold: u64, set_points: &crate::set_points::SetPoints) -> Self {
+        Self {
+            state: Arc::new(RwLock::new(RegState::with_history_caps(
+                threshold,
+                set_points.max_regulation_history,
+                set_points.max_skill_span_history,
+            ))),
         }
     }
 
@@ -501,7 +547,7 @@ impl RegulationLedger {
         state.regulation_health.staged += entry.staged;
         state.regulation_health.blocked += entry.blocked;
         state.regulation_history.push_back(entry);
-        if state.regulation_history.len() > MAX_REGULATION_HISTORY {
+        if state.regulation_history.len() > state.max_regulation_history {
             state.regulation_history.pop_front();
         }
     }
@@ -527,7 +573,7 @@ impl RegulationLedger {
     /// expect: "The system provides observability into Regulation regulation state"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — history enables trend analysis for loop tuning
     /// \[P8\] Constraining: Semantic Grounding — pure measurement, no transformation
-    /// post: returns up to n entries, newest first; never exceeds MAX_REGULATION_HISTORY
+    /// post: returns up to n entries, newest first; never exceeds the configured history cap
     pub async fn regulation_history(&self, n: usize) -> Vec<RegulationCycleEntry> {
         let state = self.state.read().await;
         state
@@ -680,7 +726,7 @@ impl RegulationLedger {
     /// the structured payload in the ledger.
     ///
     /// pre:  skill_id is non-empty; phase is "outcome" or "operator_feedback"
-    /// post: span stored in SkillSpanStore, bounded to MAX_SKILL_SPAN_HISTORY per key
+    /// post: span stored in SkillSpanStore, bounded to the configured max_skill_span_history per key
     pub async fn record_skill_span(&self, skill_id: &str, phase: &str, payload: serde_json::Value) {
         let span = StoredSkillSpan {
             namespace: format!("reg.skill.{skill_id}.{phase}"),
