@@ -349,7 +349,8 @@ fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
          You are operating in the Kanban panel's Steer mode, scoped to the \
          `{KANBAN_SERVER}` MCP server. You have access to all kanban tools:\n\
          \n\
-         **Board tools**: `kanban_board_create`, `kanban_board_list`, `kanban_board_delete`.\n\
+         **Board tools**: `kanban_board_create`, `kanban_board_list`, `kanban_board_delete`, \
+         `kanban_board_export` (mermaid markdown), `kanban_board_import` (mermaid markdown).\n\
          **Task tools**: `kanban_task_create`, `kanban_task_list`, `kanban_task_move`, \
          `kanban_task_assign`, `kanban_task_unassign`, `kanban_task_update`, `kanban_task_delete`, \
          `kanban_task_verify`, `kanban_task_reopen`.\n\
@@ -364,7 +365,7 @@ fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
          spawned task.{board_clause}\n\
          \n\
          Pass the swarm id to `kanban_task_spawn` (the `swarm_id` arg) whenever the task is \
-         scoped to a swarm — this stamps the durable `Task.swarm_id` link."
+         scoped to a swarm — this stamps the durable `Task.swarm_id` link.",
     );
     // Mirrors the swarm panel's `steer_system_prompt` guard: a `kanban_*` name
     // in the prompt that the server does not expose degrades to "tool not
@@ -2168,11 +2169,11 @@ impl SerializableItem for KanbanPanel {
 #[cfg(test)]
 mod tests {
     use super::{
-        ADVERTISED_KANBAN_TOOLS, BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_EXPORT_TOOL,
-        BOARD_IMPORT_TOOL, IDEMPOTENT_TOOLS, MAX_MUTATION_RETRIES, RefreshTarget,
-        TASK_CREATE_TOOL, TASK_DELETE_TOOL, TASK_SPAWN_TOOL, TASK_UPDATE_TOOL,
-        attach_idempotency_key, classify_kanban_fetch_error, is_idempotent_tool,
-        mutation_retry_delay, refresh_target, steer_system_prompt,
+        ADVERTISED_KANBAN_TOOLS, BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_IMPORT_TOOL,
+        IDEMPOTENT_TOOLS, MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL,
+        TASK_DELETE_TOOL, TASK_SPAWN_TOOL, TASK_UPDATE_TOOL, attach_idempotency_key,
+        classify_kanban_fetch_error, is_idempotent_tool, mutation_retry_delay,
+        refresh_target, steer_system_prompt,
     };
     use hkask_tool_invoker::InvokeError;
     use std::time::Duration;

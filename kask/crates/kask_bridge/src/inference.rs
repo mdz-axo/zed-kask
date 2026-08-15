@@ -252,6 +252,34 @@ impl LanguageModelInferencePort {
         }
     }
 
+    /// F12: Upgrade `tool_choice` from `Auto` to `Any` when the model
+    /// supports it and tools are present.
+    ///
+    /// `build_request` sets `Auto` (model-agnostic — it doesn't have the
+    /// model handle). With `Auto`, the model may skip the structured-output
+    /// tool and emit prose or nothing, which then fails JSON parsing. With
+    /// `Any`/`Required`, the provider forces a tool call. This is the
+    /// LangGraph/Swarm pattern: enforce the output contract at the inference
+    /// API layer, not the prompt layer.
+    ///
+    /// Called from `handle_non_streaming` and `handle_streaming` where the
+    /// resolved model is available for the capability check. If the model
+    /// doesn't support `Any`, `Auto` is retained (the A2 empty-output guard
+    /// catches that fallback case).
+    fn upgrade_tool_choice(
+        request: &mut LanguageModelRequest,
+        model: &Arc<dyn LanguageModel>,
+    ) {
+        if request.tools.is_empty() {
+            return;
+        }
+        if request.tool_choice == Some(LanguageModelToolChoice::Auto)
+            && model.supports_tool_choice(LanguageModelToolChoice::Any)
+        {
+            request.tool_choice = Some(LanguageModelToolChoice::Any);
+        }
+    }
+
     /// Handle a non-streaming inference request — collects the full stream
     /// into a single `InferenceResult` before replying.
     async fn handle_non_streaming(
@@ -261,9 +289,12 @@ impl LanguageModelInferencePort {
     ) {
         let model = Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await;
         let cx = cx.clone();
+        // F12: upgrade tool_choice from Auto to Any when the model supports it.
+        let mut request = req.request;
+        Self::upgrade_tool_choice(&mut request, &model);
         let result = async move {
             let stream_result = model
-                .stream_completion(req.request, &cx)
+                .stream_completion(request, &cx)
                 .await
                 .map_err(|e| InferenceError::Connection(e.to_string()));
 
@@ -299,11 +330,14 @@ impl LanguageModelInferencePort {
     ) {
         let model = Self::resolve_model(model_for_task, req.model_override.as_deref(), cx).await;
         let cx = cx.clone();
+        // F12: upgrade tool_choice from Auto to Any when the model supports it.
+        let mut request = req.request;
+        Self::upgrade_tool_choice(&mut request, &model);
         let reply = req.reply;
 
         async move {
             let stream_result = model
-                .stream_completion(req.request, &cx)
+                .stream_completion(request, &cx)
                 .await
                 .map_err(|e| InferenceError::Connection(e.to_string()));
 
@@ -653,6 +687,59 @@ impl InferencePort for LanguageModelInferencePort {
         let send_result = stream_tx.send(StreamInferenceRequest {
             request,
             model_override: Some(model_override),
+            reply: tx_stream,
+        });
+        if send_result.is_err() {
+            return Box::pin(futures_util::stream::once(async {
+                Err(InferenceError::Connection(
+                    "inference stream channel closed".to_string(),
+                ))
+            }));
+        }
+        Box::pin(futures_util::stream::unfold(
+            rx_stream,
+            |mut rx| async move {
+                match rx.recv().await {
+                    Some(chunk) => Some((chunk, rx)),
+                    None => None,
+                }
+            },
+        ))
+    }
+
+    /// F11: Streaming variant of `generate_with_messages`.
+    ///
+    /// The cascade calls `generate_stream_with_messages` (not
+    /// `generate_stream`) to pass the full message array — prior turns,
+    /// memory snippets, and the rendered template as a system message.
+    /// Without this override, the default trait impl wraps
+    /// `generate_with_messages` in `stream::once`, collecting the full
+    /// response before emitting any chunk. That loses the live thinking
+    /// trace the cascade relies on for user feedback and steering.
+    ///
+    /// This override routes through the same streaming channel as
+    /// `generate_stream` and `generate_stream_with_model`.
+    fn generate_stream_with_messages(
+        &self,
+        messages: &[ChatMessage],
+        parameters: &LLMParameters,
+        model_override: Option<&str>,
+        tools: Option<&[ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn futures_util::Stream<Item = Result<InferenceStreamChunk, InferenceError>>
+                + Send
+                + '_,
+        >,
+    > {
+        let request = self.build_request(messages, parameters, tools);
+        let model_override = model_override.map(|s| s.to_string());
+        let (tx_stream, rx_stream) =
+            tokio::sync::mpsc::unbounded_channel::<Result<InferenceStreamChunk, InferenceError>>();
+        let stream_tx = self.stream_tx.clone();
+        let send_result = stream_tx.send(StreamInferenceRequest {
+            request,
+            model_override,
             reply: tx_stream,
         });
         if send_result.is_err() {

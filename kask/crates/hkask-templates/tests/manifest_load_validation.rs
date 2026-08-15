@@ -89,7 +89,7 @@ const KNOWN_MCP_TOOLS: &[&str] = &[
     "comparable_analysis", "expectations_gap", "scenario_analysis", "sensitivity_analysis",
     "monte_carlo_dcf", "ep_valuation", "equity_duration", "moat_check",
     "management_scorecard", "working_capital_cycle", "calibrate_forecast",
-    "forecast_list", "forecast_get", "forecast_record",
+    "forecast_list", "forecast_get", "forecast_record", "forecast_persist",
     "research_search", "note_add", "note_list", "note_delete", "file_attach",
     "file_list", "file_delete", "ledger_apply", "ledger_read",
     "companies_ledger_export", "companies_ledger_import", "companies_portfolio_list",

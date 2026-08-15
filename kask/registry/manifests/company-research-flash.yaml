@@ -611,6 +611,39 @@ steps:
       lens_tensions: "{{ step_23_result.key_tensions | default([]) }}"
       convergence_signal: "{{ step_24_result }}"
 
+  # ── Step 26: Persist the price target for Brier calibration ──
+  # Runs after the convergence loop exits (CONSISTENT or INCONSISTENT) and
+  # only when the research was published. Persists the pre-computed PT from
+  # the valuation synthesis (step 16) via forecast_persist — stores it without
+  # an outcome so forecast_record can close the Brier loop when the horizon
+  # passes. Closes the calibration gap identified in follow-up question #1:
+  # calibrate_forecast runs its own Fermi model; forecast_record requires the
+  # outcome; forecast_persist accepts a pre-computed PT from the flowdef.
+  # Conditioned on publication_possible so unpublished research (DROP / HALT /
+  # BLOCK) doesn't pollute the forecast store.
+  - ordinal: 26
+    action: execute
+    description: >
+      PERSIST — store the valuation price target via forecast_persist MCP
+      tool for later Brier scoring. Deterministic. Consumes the valuation
+      synthesis PT (step 16) and the communication gate (step 17). The
+      stored forecast_id can be passed to forecast_record when the 12-month
+      horizon passes to close the calibration loop. Result lands in
+      step_26_result.
+    mcp: forecast_persist
+    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
+    on_failure:
+      action: report
+      resume: "forecast_persist failed — the price target was not stored for Brier calibration. The research note is still published; calibration will not run for this PT."
+    gas_cap: 2000
+    timeout_seconds: 60
+    input_mapping:
+      symbol: "{{ ticker }}"
+      forecast_date: "{{ now | default('') }}"
+      horizon: "1yr"
+      forecast_multiple: "{{ step_16_result.pt_12m | default(0) }}"
+      forecast_price_change: "{{ step_16_result.expected_return | default(0) }}"
+
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry

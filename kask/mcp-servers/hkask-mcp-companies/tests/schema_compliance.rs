@@ -17,7 +17,7 @@ use hkask_mcp_companies::types::{
     AttributionRequest, CalibrateForecastRequest, CharacteristicsRequest, CompanyTranscriptRequest,
     ComparableAnalysisRequest, DcfValuationRequest, EpValuationRequest, EquityDurationRequest,
     ExpectationsGapRequest, FileAttachRequest, FileDeleteRequest, FileListRequest,
-    ForecastGetRequest, ForecastListRequest, ForecastRecordRequest, HistoricalRequest,
+    ForecastGetRequest, ForecastListRequest, ForecastPersistRequest, ForecastRecordRequest, HistoricalRequest,
     LedgerExportRequest, LedgerImportRequest, MonteCarloDcfRequest, NoteAddRequest,
     NoteDeleteRequest, NoteListRequest, PortfolioCompareRequest, PortfolioNameRequest,
     PortfolioReturnsRequest, ResearchSearchRequest, ResultFeedbackRequest, ReverseDcfRequest,
@@ -70,6 +70,7 @@ schema_clean_test!(calibrate_forecast_request_schema, CalibrateForecastRequest);
 schema_clean_test!(forecast_get_request_schema, ForecastGetRequest);
 schema_clean_test!(forecast_list_request_schema, ForecastListRequest);
 schema_clean_test!(forecast_record_request_schema, ForecastRecordRequest);
+schema_clean_test!(forecast_persist_request_schema, ForecastPersistRequest);
 schema_clean_test!(
     sensitivity_analysis_request_schema,
     SensitivityAnalysisRequest
