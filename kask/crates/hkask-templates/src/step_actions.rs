@@ -746,7 +746,7 @@ impl StepMachine {
                     &sub_manifest.steps,
                     sub_manifest.convergence.max_iterations,
                 );
-                let sub_manifest_id = parent_manifest_id.clone();
+                let sub_manifest_id = branch_manifest_id.clone();
                 let sub_machine = StepMachine::new(
                     sub_graph,
                     context_template.clone(),
@@ -1290,7 +1290,7 @@ async fn call_inference_stream(
 /// site, and the untrusted-input flag read taint markers the context write side
 /// had stopped emitting — so the block could never fire. Restoring the gate
 /// means first giving tools real taint labels and propagating taint on write.
-pub(crate) pub(crate) pub(crate) async fn invoke_tool(tools: &Arc<dyn ToolPort>, tool_name: &str, input: Value) -> Result<Value> {
+pub(crate) async fn invoke_tool(tools: &Arc<dyn ToolPort>, tool_name: &str, input: Value) -> Result<Value> {
     let tool_info = tools.get_tool_info(tool_name).await.ok_or_else(|| {
         TemplateError::NotFound(hkask_types::NotFound {
             entity_type: "tool".to_string(),

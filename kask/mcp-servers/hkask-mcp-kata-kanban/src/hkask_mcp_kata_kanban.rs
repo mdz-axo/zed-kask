@@ -11,7 +11,6 @@
 pub mod idempotency;
 pub mod kanban;
 pub mod kata;
-pub mod mermaid;
 pub mod pko;
 pub mod types;
 
@@ -1443,6 +1442,160 @@ impl KanbanServer {
                 "pko": kanban_type_to_pko("contract_propose_expect").map(|s| s.to_string()),
             }))
         })
+        .await
+    }
+
+    /// Export a kanban board as mermaid kanban markdown (structure only:
+    /// columns, task titles, task IDs). The markdown round-trips through
+    /// `kanban_board_import`. Only the board owner can export (P12).
+    ///
+    /// contract: P3-svc-kanban-012
+    /// expect: "I can export a kanban board I own as mermaid markdown" \[P3\]
+    /// pre:  board_id is a valid board id owned by the caller
+    /// post: returns the mermaid markdown plus a structural summary
+    #[tool(description = "Export a kanban board as mermaid kanban markdown (columns + task titles).")]
+    pub async fn kanban_board_export(
+        &self,
+        Parameters(BoardExportRequest { board_id }): Parameters<BoardExportRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "kanban_board_export",
+            kanban_type_to_pko("kanban_board_export"),
+            async {
+                let bid = parse_board_id(&board_id)?;
+                let board = self
+                    .service
+                    .board_get(bid)
+                    .map_err(map_kanban_error)?
+                    .ok_or_else(|| {
+                        McpToolError::not_found(format!("board {bid} not found"))
+                    })?;
+                if board.owner != self.webid {
+                    return Err(McpToolError::permission_denied(format!(
+                        "board {bid} is not owned by caller — cannot export"
+                    )));
+                }
+                let tasks = self
+                    .service
+                    .task_list(bid, TaskFilter::all())
+                    .map_err(map_kanban_error)?;
+                let task_count = tasks.len();
+                let column_count = board.columns.len();
+                let markdown = kanban::mermaid::export_board_to_mermaid(&board, &tasks);
+                Ok(serde_json::to_value(BoardExportResponse {
+                    markdown,
+                    board_id: bid.to_string(),
+                    board_name: board.name,
+                    column_count,
+                    task_count,
+                    ontology: kanban_type_to_pko("kanban_board_export").map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?) // rr0044-ok: serialize-own-struct
+            },
+        )
+        .await
+    }
+
+    /// Import mermaid kanban markdown as a new board. Parses the markdown,
+    /// creates a board with columns matching the parsed sections (mapping
+    /// section names to `TaskStatus` where possible), and re-creates each
+    /// task in its parsed column's status by walking the transition chain.
+    /// Replay-safe via `idempotency_key`.
+    ///
+    /// contract: P3-svc-kanban-013
+    /// expect: "I can import mermaid kanban markdown as a new board" \[P3\]
+    /// pre:  markdown contains a `kanban` directive and at least one `section`
+    /// post: returns the new board id and a structural summary
+    #[tool(description = "Import mermaid kanban markdown as a new board with tasks in parsed columns.")]
+    pub async fn kanban_board_import(
+        &self,
+        Parameters(BoardImportRequest {
+            markdown,
+            board_name,
+            idempotency_key,
+        }): Parameters<BoardImportRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "kanban_board_import",
+            kanban_type_to_pko("kanban_board_import"),
+            with_idempotency(
+                &self.idempotency,
+                "kanban_board_import",
+                idempotency_key.as_deref(),
+                async {
+                    let parsed = kanban::mermaid::parse_mermaid_kanban(&markdown)
+                        .map_err(|e| McpToolError::invalid_argument(e))?;
+                    if parsed.columns.is_empty() {
+                        return Err(McpToolError::invalid_argument(
+                            "mermaid kanban markdown has no sections — nothing to import",
+                        ));
+                    }
+                    let name = board_name
+                        .or(parsed.name)
+                        .unwrap_or_else(|| "Imported Board".to_string());
+                    let columns = kanban::mermaid::columns_from_parsed(&parsed);
+                    let column_count = columns.len();
+                    let board = self
+                        .service
+                        .board_create(self.webid, &name, &columns)
+                        .map_err(map_kanban_error)?;
+
+                    let mut task_count: usize = 0;
+                    for column in &parsed.columns {
+                        let target_status = board
+                            .columns
+                            .iter()
+                            .find(|c| c.name == column.name)
+                            .map(|c| c.status)
+                            .unwrap_or(TaskStatus::Backlog);
+                        for title in &column.tasks {
+                            let spec = TaskSpec::new(title.clone());
+                            let task = self
+                                .service
+                                .task_create(board.id, spec, self.webid)
+                                .map_err(map_kanban_error)?;
+                            task_count += 1;
+                            // Walk the task forward from Backlog to the target
+                            // status through valid transitions.
+                            let mut current = TaskStatus::Backlog;
+                            while current != target_status {
+                                let next = match current.next() {
+                                    Some(s) => s,
+                                    None => break,
+                                };
+                                match self.service.task_move(task.id, next, self.webid) {
+                                    Ok(moved) => {
+                                        current = moved.status;
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            target: "hkask.mcp.kata_kanban",
+                                            task_id = %task.id,
+                                            target_status = %target_status,
+                                            error = %e,
+                                            "import: could not move task to target status, leaving at {current}",
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Ok(serde_json::to_value(BoardImportResponse {
+                        board_id: board.id.to_string(),
+                        board_name: board.name,
+                        column_count,
+                        task_count,
+                        ontology: kanban_type_to_pko("kanban_board_import")
+                            .map(|s| s.to_string()),
+                    })
+                    .map_err(|e| McpToolError::internal(e.to_string()))?) // rr0044-ok: serialize-own-struct
+                },
+            ),
+        )
         .await
     }
 }

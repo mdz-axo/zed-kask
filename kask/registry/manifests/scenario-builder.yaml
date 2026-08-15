@@ -100,7 +100,7 @@ steps:
     input_mapping:
       subject: "{{ domain | default(null) }}"
     on_failure:
-      action: escalate
+      action: report
       resume: >
         scenario_calibration failed — the scenarios MCP server may be down.
         Restart the server via sync_kask_mcp_servers and re-invoke. Do NOT
@@ -141,7 +141,7 @@ steps:
       question: "{{ step_2_result.refined_question | default(focal_question) }}"
       limit: 5
     on_failure:
-      action: escalate
+      action: report
       resume: >
         market_match failed — the prediction-markets MCP server may be down
         or the base-events registry may be empty. Restart the server via
@@ -232,7 +232,7 @@ steps:
       context: "{{ step_8_result | default(step_6_result) | tojson }}"
       max_events: 10
     on_failure:
-      action: escalate
+      action: report
       resume: >
         scenario_build failed to persist the scenarios — the scenarios MCP
         server may be down. Restart the server via sync_kask_mcp_servers and

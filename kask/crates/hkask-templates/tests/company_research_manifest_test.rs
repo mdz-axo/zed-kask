@@ -113,14 +113,14 @@ fn company_research_flash_manifest_parses() {
 #[test]
 fn company_research_flash_has_expected_step_count() {
     let manifest = load_named_manifest("company-research-flash");
-    // 1 (SCOUT) + 2/3/4 (INTEL) + 5/6 (listening) + 7 (FORENSIC pre) +
-    // 8/9 (CRITICAL FACTOR) + 10/11 (FORENSIC full) + 12/13/14/15/16
-    // (VALUATION) + 17 (COMM) + 18/19/20 (KATA) + 21/22 (LENS MCP) + 23 (LENS)
-    // + 24 (convergence) + 25 (loop) = 25 steps.
+    // 0 (forecast_list) + 1 (SCOUT) + 2/3/4 (INTEL) + 5/6 (listening) +
+    // 7 (FORENSIC pre) + 8/9 (CRITICAL FACTOR) + 10/11 (FORENSIC full) +
+    // 12/13/14/15/16 (VALUATION) + 17 (COMM) + 18/19/20 (KATA) + 21/22
+    // (LENS MCP) + 23 (LENS) + 24 (convergence) + 25 (loop) = 26 steps.
     assert_eq!(
         manifest.steps.len(),
-        25,
-        "company-research-flash must have 25 steps, got {}",
+        26,
+        "company-research-flash must have 26 steps (25 + forecast_list step 0), got {}",
         manifest.steps.len()
     );
 }
@@ -133,15 +133,16 @@ fn company_research_flash_execute_steps_have_mcp_fields() {
         .iter()
         .filter(|s| s.action == "execute")
         .collect();
-    // 2 (research_search) + 3 (web_search) + 5 (company_transcript) +
-    // 8 (scenario_build) + 10 (company_transcript) + 12 (dcf_valuation) +
-    // 13 (comparable_analysis) + 14 (expectations_gap) + 15 (scenario_impact_valuation) +
-    // 18 (market_check_resolutions) + 19 (market_calibration) + 21 (market_match) +
-    // 22 (evaluate_evidence) = 13 execute steps.
+    // 0 (forecast_list) + 2 (research_search) + 3 (web_search) +
+    // 5 (company_transcript) + 8 (scenario_build) + 10 (company_transcript) +
+    // 12 (dcf_valuation) + 13 (comparable_analysis) + 14 (expectations_gap) +
+    // 15 (scenario_impact_valuation) + 18 (market_check_resolutions) +
+    // 19 (market_calibration) + 21 (market_match) + 22 (evaluate_evidence)
+    // = 14 execute steps.
     assert_eq!(
         execute_steps.len(),
-        13,
-        "expected 13 execute steps, got {}",
+        14,
+        "expected 14 execute steps (13 + forecast_list step 0), got {}",
         execute_steps.len()
     );
     for step in &execute_steps {
