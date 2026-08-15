@@ -221,7 +221,7 @@ mod tool_surface_tests {
     // silently registers nothing (`cargo check` passes on an unwired orphan).
     // Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_23_registered_tools() {
+    fn tool_surface_is_exactly_25_registered_tools() {
         let n = KanbanServer::tool_router().list_all().len();
         assert_eq!(
             n, 25,

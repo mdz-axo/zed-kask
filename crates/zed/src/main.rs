@@ -2391,6 +2391,7 @@ fn main() {
                 let tool_port_for_sub = tool_port_for_model_task.clone();
                 let manifests_dir_for_sub = registry_manifests_dir.clone();
                 let templates_dir_for_sub = registry_templates_dir.clone();
+                let regulation_ledger_for_sub = regulation_ledger_for_model_task.clone();
                 // zed-kask: D24 — separate AtomicBool for the edit-prediction port.
                 let ep_wired_for_sub =
                     std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
