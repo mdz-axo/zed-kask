@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use super::error::McpToolError;
+
 /// Parse .env files and return key-value pairs without mutating the process environment.
 ///
 /// Deprecated: prefer the OS keychain via `kask keystore load`. This function
@@ -82,6 +84,51 @@ pub fn resolve_credential(env_var: &str) -> Result<String, hkask_keystore::Keyst
                 "Credential resolved via keychain or environment"
             );
             Ok(val)
+        }
+    }
+}
+
+/// Resolve `HKASK_DB_PASSPHRASE` using the canonical 2-tier chain:
+/// 1. `ctx.credentials` (governed launch injection via `build_mcp_server_env`)
+/// 2. `resolve_credential("HKASK_DB_PASSPHRASE")` (env var → keychain `hkask-db-passphrase`)
+///
+/// Returns `Ok(passphrase)` if found in any tier, or
+/// `Err(McpToolError::permission_denied(...))` if all tiers miss. The error
+/// names the env var and the keychain key so the operator knows what to set.
+///
+/// Servers that want to fall back to in-memory mode on miss should call this
+/// and handle the `Err` with a `tracing::warn!` + in-memory fallback (the
+/// `.rules` canonical pattern for degraded-mode servers).
+///
+/// Servers that require persistence (no in-memory fallback) should propagate
+/// the `Err` directly — it's already `McpToolError::permission_denied`.
+#[must_use = "result must be used"]
+pub fn resolve_db_passphrase(
+    credentials: &HashMap<String, String>,
+) -> Result<String, McpToolError> {
+    if let Some(passphrase) = credentials.get("HKASK_DB_PASSPHRASE") {
+        if !passphrase.is_empty() {
+            return Ok(passphrase.clone());
+        }
+    }
+    match resolve_credential("HKASK_DB_PASSPHRASE") {
+        Ok(passphrase) if !passphrase.is_empty() => Ok(passphrase),
+        Ok(_) => Err(McpToolError::permission_denied(
+            "HKASK_DB_PASSPHRASE resolved to an empty string. \
+             Set HKASK_DB_PASSPHRASE via the keychain or environment variable."
+        )),
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.mcp.credentials",
+                %error,
+                "HKASK_DB_PASSPHRASE not found in credentials map, env, or keychain"
+            );
+            Err(McpToolError::permission_denied(format!(
+                "HKASK_DB_PASSPHRASE not configured. \
+                 Set HKASK_DB_PASSPHRASE via the keychain (kask://credentials/hkask_db_passphrase) \
+                 or environment variable, or run provision_agent. \
+                 Resolution error: {error}"
+            )))
         }
     }
 }

@@ -721,12 +721,23 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // Record the skill outcome span (reg.skill.<id>.outcome) for the
         // regulation feedback loop. Best-effort: if the ledger is not wired
         // (tests, pre-login) or the write fails, the result is unaffected.
-        let skill_id = manifest.id.as_deref().unwrap_or(skill_name);
+        let skill_id = &manifest.id;
         let outcome_payload = match &result {
-            Ok(_) => serde_json::json!({
-                "success": true,
-                "skill_id": skill_id,
-            }),
+            Ok(outcome) => {
+                let mut payload = serde_json::json!({
+                    "success": true,
+                    "skill_id": skill_id,
+                    "exit_kind": format!("{:?}", outcome.exit_kind),
+                });
+                // Surface the on_failure resume text to the operator when the
+                // cascade escalated via an on_failure config (follow-up #2).
+                // Without this, the operator sees ExitKind::Escalated but not
+                // the author's resume instruction.
+                if let Some(ref resume) = outcome.resume_text {
+                    payload["resume_text"] = serde_json::Value::String(resume.clone());
+                }
+                payload
+            }
             Err(msg) => serde_json::json!({
                 "success": false,
                 "skill_id": skill_id,
@@ -1240,6 +1251,7 @@ mod tests {
                 rjoule_remaining: 0.0,
                 rjoule_enabled: false,
             },
+            resume_text: None,
         }
     }
 

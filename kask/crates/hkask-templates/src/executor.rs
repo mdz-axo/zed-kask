@@ -324,6 +324,7 @@ mod tests {
                 rjoule_remaining: 0.0,
                 rjoule_enabled: false,
             },
+            resume_text: None,
         }
     }
 

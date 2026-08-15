@@ -30,7 +30,7 @@ mod validation;
 // ── Re-exports ─────────────────────────────────────────────────────────────
 
 pub use context::{CapabilityTier, CredentialRequirement, ServerContext};
-pub use credentials::{load_dotenv, resolve_credential};
+pub use credentials::{load_dotenv, resolve_credential, resolve_db_passphrase};
 pub use error::{McpError, McpToolError};
 pub use http_helpers::classify_http_error;
 pub use tool_span::{ToolContext, ToolSpanGuard, execute_tool, execute_tool_semantic};

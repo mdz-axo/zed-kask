@@ -46,7 +46,7 @@ mds_categories: [composition, domain]
 | [Condenser](condenser.md) | `mcp-servers/hkask-mcp-condenser` | Context condensation (thread summarization, persistence, saliency) | 4 | `tool_surface_is_exactly_4_registered_tools` |
 | [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 27 | `tool_surface_is_exactly_27_registered_tools` |
 | Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 9 | `tool_surface_is_exactly_9_registered_tools` |
-| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 23 | `tool_surface_is_exactly_23_registered_tools` |
+| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 25 | `tool_surface_is_exactly_25_registered_tools` |
 | Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation (image, video, audio, gallery) | 41 | `tool_surface_is_exactly_41_registered_tools` |
 | Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 14 | `tool_surface_is_exactly_14_registered_tools` |
 | [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves, residuals | 32 | `tool_surface_is_exactly_32_registered_tools` |

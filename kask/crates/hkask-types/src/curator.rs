@@ -142,6 +142,46 @@ pub enum CuratorDirective {
         /// Human-readable summary of the evidence.
         evidence: String,
     },
+    /// Evolve an MCP tool's input schema based on skill-use feedback.
+    ///
+    /// This is the Phase 3 co-evolution directive: the Curator analyzes
+    /// skill-use reports (Phase 2.2) and `reg.tool.*` spans, identifies
+    /// schema mismatches or missing inputs, and issues a directive to
+    /// evolve the tool's schema. The directive does not directly modify the
+    /// schema (MCP tool schemas are compiled Rust structs); it records the
+    /// evolution request in the regulation ledger so a developer or
+    /// automated migration agent can act on it.
+    EvolveMcpToolSchema {
+        /// MCP server name (e.g., "hkask-mcp-companies").
+        server_name: String,
+        /// Tool name on that server (e.g., "dcf_valuation").
+        tool_name: String,
+        /// Type of schema evolution requested.
+        evolution_type: SchemaEvolutionType,
+        /// Field name to add/remove/rename/change.
+        field_name: String,
+        /// New field type (for add_field/change_type), or new field name (for
+        /// rename_field). Omitted for remove_field.
+        new_type: Option<String>,
+        /// Why this evolution is needed — grounded in skill-use reports.
+        rationale: String,
+        /// Evidence summary (which skill, which step, what failure).
+        evidence: String,
+    },
+}
+
+/// Type of MCP tool schema evolution requested by the Curator.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SchemaEvolutionType {
+    /// Add a new input field to the tool's schema.
+    AddField,
+    /// Remove an existing input field.
+    RemoveField,
+    /// Rename an existing input field.
+    RenameField,
+    /// Change the type of an existing input field.
+    ChangeType,
 }
 
 impl CuratorDirective {
@@ -155,6 +195,7 @@ impl CuratorDirective {
             CuratorDirective::ReplenishBudget { .. } => "replenish_budget",
             CuratorDirective::ClearOverride { .. } => "clear_override",
             CuratorDirective::EscalateDomain { .. } => "escalate_domain",
+            CuratorDirective::EvolveMcpToolSchema { .. } => "evolve_mcp_tool_schema",
         }
     }
 
@@ -171,6 +212,7 @@ impl CuratorDirective {
             CuratorDirective::ReplenishBudget { agent, .. } => Some(*agent),
             CuratorDirective::ClearOverride { agent } => Some(*agent),
             CuratorDirective::EscalateDomain { .. } => None,
+            CuratorDirective::EvolveMcpToolSchema { .. } => None,
         }
     }
 

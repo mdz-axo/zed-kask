@@ -67,6 +67,13 @@ pub struct StepMachine {
     /// The manifest ID (skill name). Used by `on_failure: report` to identify
     /// the skill in curator skill-use-issue reports.
     pub(crate) manifest_id: String,
+    /// Resume text from the `on_failure` config that triggered the cascade
+    /// exit. Populated by `dispatch_with_retry` when an `on_failure` action
+    /// (halt/escalate/report) produces `Effect::Exit(Escalated)`. Surfaced to
+    /// the operator via `CascadeOutcome.resume_text` so they can distinguish
+    /// "escalated by on_failure" from "escalated by the model" and see the
+    /// author's resume instruction.
+    pub(crate) resume_text: Option<String>,
     /// Program counter — which step we're executing.
     pub(crate) pc: StepId,
     /// Iteration counter — how many times we've re-entered the cascade.
@@ -85,6 +92,12 @@ pub struct CascadeOutcome {
     pub exit_kind: ExitKind,
     pub last_result_step: Option<StepId>,
     pub budget_snapshot: crate::budget::BudgetSnapshot,
+    /// Resume instruction from the `on_failure` config that triggered the
+    /// exit. `Some` only when the exit was caused by an `on_failure` action
+    /// (halt/escalate/report); `None` for normal convergence, max-out, or
+    /// model-initiated exits. Operators read this to understand why the
+    /// cascade escalated and how to resume.
+    pub resume_text: Option<String>,
 }
 
 impl StepMachine {
@@ -108,6 +121,7 @@ impl StepMachine {
             iteration: 0,
             last_result_step: None,
             depth: 0,
+            resume_text: None,
         }
     }
 
@@ -249,6 +263,7 @@ impl StepMachine {
             exit_kind,
             last_result_step: self.last_result_step,
             budget_snapshot,
+            resume_text: self.resume_text.take(),
         })
     }
 
@@ -517,6 +532,7 @@ impl StepMachine {
                                     "Step {} failed — on_failure report+escalate",
                                     node.ordinal
                                 );
+                                self.resume_text = Some(on_failure.resume.clone());
                                 return Ok(crate::step_actions::Effect::Exit(
                                     crate::step_graph::ExitKind::Escalated,
                                 ));
@@ -531,6 +547,7 @@ impl StepMachine {
                                     "Step {} failed — on_failure config halts the cascade",
                                     node.ordinal
                                 );
+                                self.resume_text = Some(on_failure.resume.clone());
                                 return Ok(crate::step_actions::Effect::Exit(
                                     crate::step_graph::ExitKind::Escalated,
                                 ));
