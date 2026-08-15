@@ -17,7 +17,7 @@ pub mod types;
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{
-    McpToolError, execute_tool, map_infra_error, map_memory_store_error,
+    McpToolError, execute_tool, map_infra_error, map_memory_store_error, resolve_db_passphrase,
 };
 use hkask_services_core::{ErrorKind, ServiceError};
 use hkask_storage::database::sqlite::SqliteDriver;
@@ -133,7 +133,21 @@ impl CuratorDb {
             }
             resolved.to_string_lossy().to_string()
         });
-        let passphrase = ctx.credentials.get("HKASK_DB_PASSPHRASE").cloned();
+        // Resolve passphrase via the canonical 2-tier chain
+        // (ctx.credentials → resolve_credential which does env → keychain).
+        // Falls back to None (in-memory / no-heal mode) on miss; the helper
+        // already emits a `warn!` on miss.
+        let passphrase = match resolve_db_passphrase(&ctx.credentials) {
+            Ok(passphrase) => Some(passphrase),
+            Err(error) => {
+                tracing::warn!(
+                    target: "hkask.mcp.curator",
+                    %error,
+                    "Falling back to in-memory / no-heal mode. Curator data will not persist across restarts."
+                );
+                None
+            }
+        };
         let heal_enabled = passphrase.is_some();
         let stores = open_curator_stores(Some(db_path.as_str()), passphrase.as_deref());
         let this = Self {

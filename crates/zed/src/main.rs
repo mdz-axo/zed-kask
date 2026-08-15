@@ -851,6 +851,7 @@ fn main() {
         // status bar (wired later in the deferred task's model-dependent
         // wiring block).
         let panel_regulation_ledger = regulation_ledger.clone();
+        let regulation_ledger_for_model_task = regulation_ledger.clone();
         // The alert sink forwards critical alerts to a GPUI foreground task
         // that dispatches them as toasts, so the user is notified even when
         // the Kask panel is closed. The channel bridges the background tokio
@@ -1211,7 +1212,6 @@ fn main() {
         // the username.
         let tool_port_for_model_task: std::sync::Arc<dyn hkask_capability::ToolPort> =
             tool_port.clone();
-        let regulation_ledger_for_model_task = regulation_ledger.clone();
         {
             let user_store = app_state.user_store.clone();
             let mcp_runtime_for_deferred = mcp_runtime_for_startup;

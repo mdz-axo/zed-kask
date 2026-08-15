@@ -13,7 +13,7 @@ use base64::Engine;
 use hkask_bridge_ontology::{dc_bibo, eso, pko};
 use hkask_mcp_server::server::{
     CredentialRequirement, McpToolError, ServerContext, execute_tool_semantic, map_join_error,
-    resolve_credential, validate_tool_url_with_dns,
+    resolve_db_passphrase, validate_tool_url_with_dns,
 };
 use reqwest::Client;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -1757,11 +1757,19 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     default_path.to_string_lossy().to_string()
                 });
 
-                let passphrase = ctx
-                    .credentials
-                    .get("HKASK_DB_PASSPHRASE")
-                    .cloned()
-                    .or_else(|| resolve_credential("HKASK_DB_PASSPHRASE").ok());
+                // Resolve passphrase via the canonical 2-tier chain
+                // (ctx.credentials → resolve_credential which does env → keychain).
+                let passphrase = match resolve_db_passphrase(&ctx.credentials) {
+                    Ok(passphrase) => Some(passphrase),
+                    Err(error) => {
+                        tracing::warn!(
+                            target = "hkask.research.init",
+                            %error,
+                            "Falling back to no RSS database. RSS tools will be unavailable."
+                        );
+                        None
+                    }
+                };
 
                 match passphrase {
                     Some(passphrase) => {
@@ -1784,15 +1792,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             }
                         }
                     }
-                    None => {
-                        tracing::warn!(
-                            target = "hkask.research.init",
-                            "HKASK_DB_PASSPHRASE not resolved — RSS tools will be \
-                             unavailable. Set HKASK_DB_PASSPHRASE or ensure the \
-                             keychain entry exists."
-                        );
-                        None
-                    }
+                    None => None,
                 }
             };
 

@@ -1,6 +1,6 @@
 # Research Plan: Skill ↔ MCP Co-Evolution
 
-**Status**: Phase 1 + Phase 2 implemented. Phase 3 (co-evolution) follow-ups #1, #2, #3 implemented; #4 investigated. Medium-priority skill migrations (graph-audit, metacognition, kata-improvement) pending.
+**Status**: Phase 1 + Phase 2 implemented. Phase 3 (co-evolution) follow-ups #1–#4 implemented. Medium-priority skill migrations (graph-audit, metacognition, kata-improvement) pending.
 **Date**: 2026-08-14 (plan), 2026-08-15 (implementation)
 **Author**: Curator (GLM 5.2)
 
@@ -412,8 +412,8 @@ What's missing is:
 | `forecast-ledger` (MCP tool on hkask-mcp-companies) | Persist equity forecasts/PTs for Brier scoring against realized prices | High | ✅ `forecast_list`, `forecast_get`, `forecast_record`, `calibrate_forecast` exist. `forecast_list` wired into `company-research-flash` step 0. `forecast_persist` (follow-up #1) added — accepts a pre-computed PT (price + current price or price change) and stores it without an outcome or decomposition model. Wired into `company-research-flash` step 26. |
 | Migration tests for each skill that moves to `execute` steps | Pin the new flowdef contract | High | ✅ All 4 migrated skills + company-research-flash have tests pinning step counts, execute step ordinals, `mcp:` fields, `on_failure` configs, and `condition:` gates. |
 | `on_failure: report` enforcement in `dispatch_with_retry` | Wire skill-use reporting into the executor | High | ✅ Built. `OnFailureConfig` extended with `action: report`. `manifest_id` added to `StepMachine`. `invoke_tool` made `pub(crate)`. Follow-up #2: `resume_text` added to `CascadeOutcome` — the `on_failure.resume` text is now surfaced to the operator via the regulation span payload, not just logged. |
-| Curator analysis surface for MCP tool usage patterns | Read `reg.tool.*` spans + skill-use reports; identify patterns | Medium | ⏳ Pending (Phase 3). |
-| Curator directive targeting MCP tool schemas | Evolve MCP tool schemas based on skill feedback | Medium | ⏳ Pending (Phase 3). |
+| Curator analysis surface for MCP tool usage patterns | Read `reg.tool.*` spans + skill-use reports; identify patterns | Medium | ✅ The skill-use reporting loop (Phase 2.2) captures the signals. The `EvolveMcpToolSchema` directive (follow-up #4) provides the output channel. The Curator model reads skill-use reports via `curator_memory_recall` and issues directives via `curator_directive`. |
+| Curator directive targeting MCP tool schemas | Evolve MCP tool schemas based on skill feedback | Medium | ✅ Built (follow-up #4). `EvolveMcpToolSchema` variant added to `CuratorDirectiveRequest` and `CuratorDirective`. `CyberneticsLoop::apply_directive` persists the evolution request to the regulation ledger. |
 
 ## Open questions
 
@@ -475,18 +475,24 @@ What's missing is:
    and `step_1_result.time_horizon` through with fallbacks to the existing
    defaults. Files: `stage_0_triage.j2`, `superforecasting.yaml`.
 
-4. **Curator directive targeting MCP tool schemas** ⏳ Investigated, not
-   built. `curator_directive` exists as an **in-process agent tool**
-   (`CuratorDirectiveTool` in `crates/agent/src/tools/curator_tools.rs`), not
-   as an MCP tool on `hkask-mcp-curator`. Its `CuratorDirectiveRequest` enum
-   has 7 variants: `CalibrateThreshold`, `UpdateCapabilities`,
-   `OverrideEnergyBudget`, `SeekMoreEvidence`, `ReplenishBudget`,
-   `ClearOverride`, `EscalateDomain`. **None target MCP tool schemas.** The
-   plan's claim that "The Curator already has the `curator_status` and
-   `curator_directive` tools" was incorrect — those are in-process Curator
-   agent capabilities, not MCP tools. To close the Phase 3 co-evolution gap,
-   a new `CuratorDirectiveRequest` variant (e.g., `EvolveMcpToolSchema`)
-   would need to be added, plus a sink that writes to the MCP server's
-   configuration. This is a larger design effort deferred to a future PR.
-   The skill-use reporting loop (Phase 2.2) captures the signals; the
-   directive channel is the missing piece.
+4. **Curator directive targeting MCP tool schemas** ✅ Implemented.
+   `curator_directive` was an in-process agent tool (`CuratorDirectiveTool` in
+   `crates/agent/src/tools/curator_tools.rs`), not an MCP tool. Its
+   `CuratorDirectiveRequest` enum had 7 variants, none targeting MCP tool
+   schemas. Added a new `EvolveMcpToolSchema` variant to both
+   `CuratorDirectiveRequest` (agent crate) and `CuratorDirective`
+   (`hkask-types` crate), plus a `SchemaEvolutionType` enum
+   (`add_field`/`remove_field`/`rename_field`/`change_type`). The bridge
+   (`directive_bridge.rs`) converts the agent-name-based request to the
+   `hkask-types` directive. The `CyberneticsLoop::apply_directive` handler
+   logs the directive and persists the full evolution request (server,
+   tool, evolution type, field, new type, rationale, evidence) to the
+   regulation ledger as a `CurationDirectiveAcknowledged` span — so a
+   developer or automated migration agent can read the ledger and act on
+   the request. The `CURATOR_STATIC_CONTEXT` prompt now advertises the
+   `evolve_mcp_tool_schema` variant. Tests: bridge round-trip test,
+   regulation-sink persistence test, no-sink-no-panic test. Files:
+   `hkask-types/src/curator.rs`, `crates/agent/src/tools/curator_tools.rs`,
+   `kask_bridge/src/directive_bridge.rs`,
+   `hkask-regulation/src/cybernetics_loop.rs`,
+   `crates/agent/src/curator_agent_server.rs`.

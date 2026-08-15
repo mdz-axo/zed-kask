@@ -21,6 +21,20 @@ use hkask_types::Visibility;
 /// Default concurrency for step execution within a PDCA iteration.
 const DEFAULT_CONCURRENCY: u32 = 32;
 
+/// A golden-output fixture for maintenance-time validation of skills with
+/// deterministic-ish output contracts. The skill is run with the provided
+/// input context and the output is compared exactly against
+/// `expected_output`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoldenOutputFixture {
+    /// A JSON object string parsed into the skill's context map. Example:
+    /// `{"task": "generate a flowchart of a login flow"}`.
+    pub input: String,
+    /// The exact expected output string from the skill cascade.
+    pub expected_output: String,
+}
+
 /// Default per-step timeout in seconds. Used when a manifest step omits
 /// `timeout_seconds` — serde's `#[serde(default = "default_timeout_seconds")]`
 /// calls this function instead of `u32::default()` (0). A zero timeout
@@ -227,6 +241,17 @@ pub struct BundleManifest {
     /// advisory.
     #[serde(default = "default_concurrency")]
     pub concurrency: u32,
+    /// Optional golden-output fixtures for maintenance-time validation of
+    /// skills with deterministic-ish output contracts. Each fixture is a
+    /// `(input_context_json, expected_output)` pair. When present,
+    /// `BridgeManifestExecutor::validate_golden_outputs` runs the skill
+    /// against the input and compares the output string exactly.
+    ///
+    /// Not a runtime gate — this is a maintenance-time check used by
+    /// `skill-maintenance` and the gemba walk briefing. Not applicable to
+    /// methodology-driven synthesis skills (which have no golden output).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub golden_outputs: Option<Vec<GoldenOutputFixture>>,
 }
 
 impl BundleManifest {

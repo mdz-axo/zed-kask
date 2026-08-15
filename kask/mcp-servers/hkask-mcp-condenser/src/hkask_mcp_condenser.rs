@@ -34,7 +34,9 @@ use hkask_condenser::inference::SUMMARY_SYSTEM_PROMPT;
 use hkask_condenser::saliency;
 use hkask_condenser::types::*;
 
-use hkask_mcp_server::server::{CapabilityTier, McpToolError, execute_tool_semantic};
+use hkask_mcp_server::server::{
+    CapabilityTier, McpToolError, execute_tool_semantic, resolve_db_passphrase,
+};
 use hkask_memory::{MemoryStore, MemoryStoreError};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{Database, EmbeddingStore, HMem, HMemError};
@@ -544,8 +546,11 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             )
                         });
                     let db_path_str = db_path.to_string_lossy().to_string();
-                    match ctx.credentials.get("HKASK_DB_PASSPHRASE").cloned().or_else(|| std::env::var("HKASK_DB_PASSPHRASE").ok()) {
-                        Some(passphrase) => {
+                    // Resolve passphrase via the canonical 2-tier chain
+                    // (ctx.credentials → resolve_credential which does env → keychain).
+                    // The helper emits a `warn!` on miss.
+                    match resolve_db_passphrase(&ctx.credentials) {
+                        Ok(passphrase) => {
                             if let Some(parent) = db_path.parent() {
                                 std::fs::create_dir_all(parent).ok();
                             }
@@ -571,7 +576,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                                 embedding_store,
                             )))
                         }
-                        None => None,
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "hkask.mcp.condenser",
+                                %error,
+                                "Falling back to in-memory mode. Condenser data will not persist across restarts."
+                            );
+                            None
+                        }
                     }
                 };
 

@@ -669,12 +669,15 @@ fn default_embed_batch_size() -> usize {
 
 /// Default passphrase for the corpus memory DB.
 ///
-/// Returns an empty string when `HKASK_DB_PASSPHRASE` is unset. `Database::open`
-/// rejects empty passphrases with a clear error ("Passphrase cannot be empty"),
-/// so tools that use this default will fail with an actionable message rather
-/// than silently encrypting the DB with a publicly-known hardcoded passphrase.
+/// Resolves `HKASK_DB_PASSPHRASE` via the canonical keystore chain
+/// (env var → keychain `hkask-db-passphrase`) using
+/// `hkask_mcp_server::resolve_credential`. Returns an empty string when
+/// the credential is unset in both tiers. `Database::open` rejects empty
+/// passphrases with a clear error ("Passphrase cannot be empty"), so tools
+/// that use this default will fail with an actionable message rather than
+/// silently encrypting the DB with a publicly-known hardcoded passphrase.
 /// Production must set `HKASK_DB_PASSPHRASE` (keychain-provisioned, delivered
 /// via the registry `credentials` allowlist under governed launch).
 pub(crate) fn default_corpus_passphrase() -> String {
-    std::env::var("HKASK_DB_PASSPHRASE").unwrap_or_default()
+    hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE").unwrap_or_default()
 }

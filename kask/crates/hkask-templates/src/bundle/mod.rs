@@ -14,7 +14,8 @@ pub mod manifest;
 pub use composition::*;
 pub use config::*;
 pub use manifest::{
-    BundleManifest, BundleManifestStep, BundleSkill, MAX_CONCURRENCY, OnFailureConfig,
+    BundleManifest, BundleManifestStep, BundleSkill, GoldenOutputFixture, MAX_CONCURRENCY,
+    OnFailureConfig,
 };
 // cascade types are pub(crate) — not re-exported
 
