@@ -344,7 +344,20 @@ pub struct ErrorHandlingConfig {
     /// retried; other transient errors (`Inference`, `Mcp`) propagate without
     /// consulting this field (they surface from the action handler directly).
     pub on_timeout: String,
-    /// Maximum retry attempts when `on_timeout == "retry"`. Read by
+    /// Policy for JSON parse failures from `select` steps: `"retry"` (retry
+    /// up to `max_retries` times with a correction preamble) or `"abort"`
+    /// (propagate immediately). Read by `StepMachine::dispatch_with_retry`.
+    /// Parse failures are `TemplateError::Manifest` errors where the message
+    /// starts with "Step N: Failed to parse JSON response" or
+    /// "Step N returned empty output" or
+    /// "Step N truncated at max_tokens". These are often transient — the
+    /// model may emit valid JSON on retry. Non-parse `Manifest` errors
+    /// (e.g. missing `mcp` reference) propagate immediately regardless of
+    /// this field.
+    #[serde(default = "default_on_parse_failure")]
+    pub on_parse_failure: String,
+    /// Maximum retry attempts when `on_timeout == "retry"` or
+    /// `on_parse_failure == "retry"`. Read by
     /// `StepMachine::dispatch_with_retry`. 0 disables retry.
     pub max_retries: u32,
     /// Seconds to wait between retry attempts. Read by
@@ -376,6 +389,7 @@ impl Default for ErrorHandlingConfig {
         Self {
             on_gas_exceeded: "abort".into(),
             on_timeout: "retry".into(),
+            on_parse_failure: default_on_parse_failure(),
             max_retries: 2,
             retry_backoff_seconds: 1,
             on_validation_failure: "abort".into(),
@@ -384,6 +398,15 @@ impl Default for ErrorHandlingConfig {
             on_capability_denied: String::new(),
         }
     }
+}
+
+/// Default for `on_parse_failure`. Defaults to `"retry"` — parse failures
+/// are often transient (model emitted malformed JSON, empty output, or
+/// truncated output) and a retry with a correction preamble frequently
+/// succeeds. Manifests that want to abort on parse failure can set
+/// `on_parse_failure: abort`.
+fn default_on_parse_failure() -> String {
+    "retry".into()
 }
 
 /// Regulation monitoring configuration. Loaded from manifest YAML, spans handled by `McpRuntime::invoke` / `ToolGovernance` (in `hkask-mcp`) at runtime.

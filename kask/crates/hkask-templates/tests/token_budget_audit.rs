@@ -196,11 +196,10 @@ fn has_high_reasoning_overhead(template_content: &str) -> bool {
         }
     }
 
-    // work_effort: "high" means the model takes more reasoning steps.
-    if let Some(ref we) = inference.work_effort {
-        if we == "high" {
-            return true;
-        }
+    // work_effort is not stored in InferenceBlock — check the raw text.
+    // The [inference] block after frontmatter contains `work_effort = "high"`.
+    if after_fm.contains("work_effort = \"high\"") {
+        return true;
     }
 
     false

@@ -432,16 +432,17 @@ fn select_step_input_mapping_fields_match_template_output() {
         eprintln!("  MISMATCH: {m}");
     }
 
-    // Diagnostic: does not fail. Many mismatches are intentional (optional
-    // fields with defaults, agent-coordinated context). Promoting to a hard
-    // failure requires annotating the intentional cases.
-    //
-    // To tighten: uncomment the assert below once the mismatch list is clean.
-    // assert!(
-    //     mismatches.is_empty(),
-    //     "{} input_mapping/contract.output mismatches",
-    //     mismatches.len()
-    // );
+    // Regression ceiling: the current mismatch count is 0. Any new
+    // mismatch is a potential bug (input_mapping references a field the
+    // template doesn't produce). Intentional mismatches (optional fields
+    // with defaults, agent-coordinated context) should be annotated and
+    // the ceiling incremented.
+    assert!(
+        mismatches.len() <= 0,
+        "{mismatches_len} input_mapping/contract.output mismatches (regression ceiling: 0). \
+         If the new mismatch is intentional, annotate it and increment the ceiling.",
+        mismatches_len = mismatches.len()
+    );
 }
 
 /// Regex to find `step_N_result` in condition expressions.
