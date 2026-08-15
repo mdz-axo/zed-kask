@@ -721,7 +721,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // Record the skill outcome span (reg.skill.<id>.outcome) for the
         // regulation feedback loop. Best-effort: if the ledger is not wired
         // (tests, pre-login) or the write fails, the result is unaffected.
-        let skill_id = manifest.id.as_deref().unwrap_or(skill_name);
+        let skill_id = &manifest.id;
         let outcome_payload = match &result {
             Ok(_) => serde_json::json!({
                 "success": true,
