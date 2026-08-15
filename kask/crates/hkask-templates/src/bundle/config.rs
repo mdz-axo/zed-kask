@@ -51,10 +51,13 @@ pub const RJOULE_TO_GAS: u64 = 250_000;
 #[serde(default)]
 pub struct ConvergenceConfig {
     // ── Kata target-condition fields ──
-    /// Context field holding the target artifact spec (Dublin Core object
-    /// space). The target condition for artifact completeness — which fields
-    /// should be populated, which should be grounded. Produced by an early
-    /// `select` step or provided as a manifest input.
+    /// Semantic label for the target artifact the skill converges on (Dublin
+    /// Core object space). Used as a non-null gate by `kata_enabled()` — the
+    /// actual convergence signal is read from the `convergence_signal` context
+    /// field (set by the loop step's `input_mapping`). The string value is
+    /// descriptive (e.g., `"thesis_verdict"`) and is NOT used as a context
+    /// lookup key. Produced by an early `select` step or provided as a manifest
+    /// input.
     #[serde(default)]
     pub target_artifacts_field: Option<String>,
     /// Context field holding the measured current artifact state (Dublin Core

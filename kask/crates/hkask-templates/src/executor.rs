@@ -215,6 +215,7 @@ impl ManifestExecutor {
             budget,
             convergence,
             manifest.error_handling.clone(),
+            manifest.id.clone(),
         );
         let outcome = machine.run(infra).await?;
 

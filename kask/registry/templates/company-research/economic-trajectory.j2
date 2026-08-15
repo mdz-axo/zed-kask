@@ -5,6 +5,7 @@ contract:
     ticker: string
     company_board: object
     rotated_board: object|null
+    prior_economic_trajectory: object|null
   output:
     falling_cost: object
     constraint_being_removed: object
@@ -58,6 +59,19 @@ Your job is the fox-work: observe the economic reality — the cost trajectories
 ```
 
 The rotated board corrects framing errors in the competitive analysis. Use the rotated competitive landscape, not the original, when assessing the subject's position in the economic trajectory.
+{% endif %}
+
+{% if prior_economic_trajectory %}
+## Prior Economic Trajectory (from previous PDCA iteration — advisory)
+
+```json
+{{ prior_economic_trajectory | tojson }}
+```
+
+This is the economic trajectory from the previous loop iteration. Use it to detect whether the COMPANY revision addressed the trajectory gaps:
+- If the current Company Board still encodes the same cost assumptions the prior trajectory corrected (e.g., assuming the old cost structure persists), the COMPANY revision did NOT address the trajectory gap — flag this in `rationale`.
+- If the current Company Board has incorporated the prior trajectory's cost projections, the trajectory gap is closing — acknowledge this in `rationale`.
+- Do NOT copy the prior trajectory's output. Perform a fresh probe on the current Company Board. The prior trajectory is advisory context, not a shortcut.
 {% endif %}
 
 ## Analytical Basis

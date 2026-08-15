@@ -701,11 +701,25 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
         );
     }
 
-    // The loop step (ordinal 13) must reference step_10_result (CHECK).
+    // The loop step (ordinal 13) must reference step_10_result (CHECK) and
+    // re-enter at step 1 (state-fetch) so execute steps re-run each iteration.
     let loop_step = manifest
         .steps
         .iter()
         .find(|s| s.action == "loop")
         .expect("manifest must have a loop step");
     assert_eq!(loop_step.ordinal, 13, "loop step should be ordinal 13");
+    let loop_mapping = loop_step
+        .input_mapping
+        .as_ref()
+        .and_then(|v| v.as_object())
+        .expect("loop step has input_mapping");
+    let loop_target = loop_mapping
+        .get("loop_target")
+        .and_then(|v| v.as_str())
+        .expect("loop step has loop_target");
+    assert!(
+        loop_target.contains("1"),
+        "loop_target must re-enter at step 1 (state-fetch) so execute steps re-run, got: {loop_target}"
+    );
 }

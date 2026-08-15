@@ -136,6 +136,9 @@ pub struct BundleManifestStep {
     /// this instead of the manifest-level `error_handling` policy.
     /// `action: halt` produces `Effect::Exit(ExitKind::Escalated)` with the
     /// `resume` text; `action: escalate` is an alias.
+    /// `action: report` calls `curator_report_skill_use_issue` (skill name,
+    /// tool name, step ordinal, error) before escalating — wires the
+    /// skill-use reporting loop (Co-evolution Phase 2, Loop 2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_failure: Option<OnFailureConfig>,
 }
@@ -146,8 +149,10 @@ pub struct BundleManifestStep {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OnFailureConfig {
-    /// What to do when the step fails: `halt` (stop the cascade, escalate)
-    /// or `escalate` (alias for `halt`).
+    /// What to do when the step fails: `halt` (stop the cascade, escalate),
+    /// `escalate` (alias for `halt`), or `report` (call
+    /// `curator_report_skill_use_issue` with the failure details, then
+    /// escalate — wires the Co-evolution Phase 2 skill-use reporting loop).
     pub action: String,
     /// Human-readable instruction for how to resume from this failure.
     /// Stored in the step result and surfaced to the operator.

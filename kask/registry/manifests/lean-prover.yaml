@@ -35,6 +35,7 @@ convergence:
   cauchy_window: 3
   max_iterations: 10
   min_iterations: 2
+  target_artifacts_field: "lean_proof_verdict"
   on_not_reached: escalate
 
 gas:

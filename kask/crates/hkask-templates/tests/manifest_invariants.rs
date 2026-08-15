@@ -189,7 +189,19 @@ fn convergence_config_is_internally_consistent() {
 
         // Kata mode checks
         if !mode.is_empty() {
+            // All Kata modes (gap, cauchy, calibration, or combinations) require
+            // at least one target-condition field for `kata_enabled()` to return
+            // true. Without it, the tracker silently falls back to legacy mode.
+            let has_target =
+                conv.target_artifacts_field.is_some() || conv.target_procedure_field.is_some();
+            if !has_target {
+                errors.push(format!(
+                    "{fname}: convergence_mode is '{mode}' (Kata) but no target_artifacts_field or target_procedure_field set — kata_enabled() will return false and silently fall back to legacy mode"
+                ));
+            }
             if mode.contains("gap") {
+                // Gap convergence specifically needs a target — already checked
+                // above, but the gap-specific message is more precise.
                 let has_target =
                     conv.target_artifacts_field.is_some() || conv.target_procedure_field.is_some();
                 if !has_target {
