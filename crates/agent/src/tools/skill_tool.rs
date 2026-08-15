@@ -122,16 +122,14 @@ impl SkillExecutionError {
     /// The skill name involved in the failure.
     pub fn skill_name(&self) -> &str {
         match self {
-            Self::CompileTime { skill_name, .. }
-            | Self::Runtime { skill_name, .. } => skill_name,
+            Self::CompileTime { skill_name, .. } | Self::Runtime { skill_name, .. } => skill_name,
         }
     }
 
     /// The failure phase (e.g. "load", "inference", "gas_exhausted").
     pub fn phase(&self) -> &'static str {
         match self {
-            Self::CompileTime { phase, .. }
-            | Self::Runtime { phase, .. } => phase,
+            Self::CompileTime { phase, .. } | Self::Runtime { phase, .. } => phase,
         }
     }
 
@@ -144,10 +142,18 @@ impl SkillExecutionError {
 impl std::fmt::Display for SkillExecutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::CompileTime { skill_name, phase, message } => {
+            Self::CompileTime {
+                skill_name,
+                phase,
+                message,
+            } => {
                 write!(f, "[{phase}] {skill_name}: {message}")
             }
-            Self::Runtime { skill_name, phase, message } => {
+            Self::Runtime {
+                skill_name,
+                phase,
+                message,
+            } => {
                 write!(f, "[{phase}] {skill_name}: {message}")
             }
         }
@@ -155,6 +161,102 @@ impl std::fmt::Display for SkillExecutionError {
 }
 
 impl std::error::Error for SkillExecutionError {}
+
+/// Record operator feedback on a skill invocation. This closes the human
+/// feedback loop for drift detection and gemba walk review.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct RecordSkillFeedbackInput {
+    /// The name of the skill that was invoked.
+    pub skill_name: String,
+    /// The operator's disposition: "accepted", "overridden", "rejected", or "corrected".
+    pub disposition: String,
+    /// Optional free-text feedback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comments: Option<String>,
+}
+
+/// Tool output for `RecordSkillFeedbackTool`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum RecordSkillFeedbackOutput {
+    Ok { recorded: bool },
+    Error { error: String },
+}
+
+/// Built-in agent tool for recording operator feedback on skill invocations.
+pub struct RecordSkillFeedbackTool {
+    manifest_executor_resolver:
+        Arc<dyn Fn() -> Option<Arc<dyn SkillManifestExecutor>> + Send + Sync>,
+}
+
+impl RecordSkillFeedbackTool {
+    pub fn with_manifest_executor_resolver<
+        R: Fn() -> Option<Arc<dyn SkillManifestExecutor>> + Send + Sync + 'static,
+    >(
+        manifest_executor_resolver: R,
+    ) -> Self {
+        Self {
+            manifest_executor_resolver: Arc::new(manifest_executor_resolver),
+        }
+    }
+}
+
+impl AgentTool for RecordSkillFeedbackTool {
+    type Input = RecordSkillFeedbackInput;
+    type Output = RecordSkillFeedbackOutput;
+
+    const NAME: &'static str = "record_skill_feedback";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        match input {
+            Ok(input) => format!(
+                "Record feedback: {} → {}",
+                input.skill_name, input.disposition
+            )
+            .into(),
+            Err(_) => "Record skill feedback".into(),
+        }
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        let resolver = self.manifest_executor_resolver.clone();
+        cx.spawn(async move |_cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|_| RecordSkillFeedbackOutput::Error {
+                    error: "error: invalid input".to_string(),
+                })?;
+
+            let executor = (resolver)().ok_or_else(|| RecordSkillFeedbackOutput::Error {
+                error: "Skill manifest executor not configured.".to_string(),
+            })?;
+
+            executor
+                .record_operator_feedback(
+                    &input.skill_name,
+                    &input.disposition,
+                    input.comments.as_deref(),
+                )
+                .await
+                .map(|_| RecordSkillFeedbackOutput::Ok { recorded: true })
+                .map_err(|e| RecordSkillFeedbackOutput::Error { error: e })
+        })
+    }
+}
 
 /// Retrieves the content and resources of a skill by name. Use this when a user's request matches a skill's description.
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -204,6 +306,23 @@ impl From<SkillToolOutput> for LanguageModelToolResultContent {
                 LanguageModelToolResultContent::Text(rendered.into())
             }
             SkillToolOutput::Error { error } => LanguageModelToolResultContent::Text(error.into()),
+        }
+    }
+}
+
+impl From<RecordSkillFeedbackOutput> for LanguageModelToolResultContent {
+    fn from(output: RecordSkillFeedbackOutput) -> Self {
+        match output {
+            RecordSkillFeedbackOutput::Ok { recorded } => {
+                LanguageModelToolResultContent::Text(if recorded {
+                    "Feedback recorded.".into()
+                } else {
+                    "Feedback not recorded.".into()
+                })
+            }
+            RecordSkillFeedbackOutput::Error { error } => {
+                LanguageModelToolResultContent::Text(error.into())
+            }
         }
     }
 }
@@ -369,6 +488,16 @@ pub trait SkillManifestExecutor: Send + Sync {
         progress: Option<CascadeProgress>,
         title: Option<CascadeProgress>,
     ) -> Result<String, String>;
+
+    /// Record operator feedback for a skill invocation as a
+    /// `reg.skill.<id>.operator_feedback` span. This closes the human
+    /// feedback loop for drift detection and gemba walk review.
+    async fn record_operator_feedback(
+        &self,
+        skill_name: &str,
+        disposition: &str,
+        comments: Option<&str>,
+    ) -> Result<(), String>;
 }
 
 /// The result of composing and executing a skill bundle.
@@ -1600,6 +1729,15 @@ mod tests {
             _title: Option<CascadeProgress>,
         ) -> Result<String, String> {
             Ok(self.output.clone())
+        }
+
+        async fn record_operator_feedback(
+            &self,
+            _skill_name: &str,
+            _disposition: &str,
+            _comments: Option<&str>,
+        ) -> Result<(), String> {
+            Ok(())
         }
     }
 

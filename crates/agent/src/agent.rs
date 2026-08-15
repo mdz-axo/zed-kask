@@ -970,6 +970,13 @@ impl NativeAgent {
                 project.clone(),
                 crate::manifest_executor_cloned,
             ));
+            // Register the record_skill_feedback tool for operator feedback
+            // on skill invocations. Shares the same manifest executor resolver
+            // — the bridge routes the feedback to RegulationLedger's
+            // SkillSpanStore as a reg.skill.<id>.operator_feedback span.
+            thread.add_tool(RecordSkillFeedbackTool::with_manifest_executor_resolver(
+                crate::manifest_executor_cloned,
+            ));
         });
 
         let subscriptions = vec![

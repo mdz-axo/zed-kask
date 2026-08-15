@@ -103,6 +103,7 @@ steps:
       symptom: "{{ symptom | default('') }}"
       code_context: "{{ code_context | default({}) }}"
       spec_reference: "{{ spec_reference | default('') }}"
+      blast_radius: "{{ step_0_result | default({}) }}"
 
   - ordinal: 2
     action: select

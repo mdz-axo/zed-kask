@@ -1,6 +1,6 @@
 # Research Plan: Skill ↔ MCP Co-Evolution
 
-**Status**: Phase 1 + Phase 2 implemented. Phase 3 (co-evolution) follow-ups #1–#4 implemented. Medium-priority skill migrations (graph-audit, metacognition, kata-improvement) pending.
+**Status**: Phase 1 + Phase 2 + Phase 3 implemented. All follow-ups (#1–#4) implemented. All medium and low priority skill migrations complete.
 **Date**: 2026-08-14 (plan), 2026-08-15 (implementation)
 **Author**: Curator (GLM 5.2)
 
@@ -398,11 +398,11 @@ What's missing is:
 | **High** | `company-research-flash` | companies + scenarios + prediction-markets | Native `execute` steps from the start + `forecast_list` step 0 + `forecast_persist` step 26 | All loops | ✅ Done (15 execute steps, 27 total) |
 | **High** | `company-research-deep` | companies + scenarios | Native `execute` steps from the start | All loops | ✅ Already had 6 execute steps |
 | **Medium** | `swarm-intelligence` | swarm | Convert SENSE/CHECK state-fetching to `execute` steps | Persistence loop (2.3) | ✅ Done (4 execute steps, 13 total) |
-| **Medium** | `graph-audit` | codegraph | Convert code-graph queries to `execute` steps | Persistence loop (2.3) | ⏳ Pending |
-| **Medium** | `metacognition` | scenarios + prediction-markets | Add `execute` steps to read prior Brier scores and calibration | Calibration loop (2.1) | ⏳ Pending |
-| **Medium** | `kata-improvement` | kata-kanban | Add `execute` steps to read prior PDCA cycles from the kanban MCP | Persistence loop (2.3) | ⏳ Pending |
-| **Low** | `bug-hunt` | (investigate) | Investigate which MCP tools it should use | TBD | ⏳ Pending |
-| **Low** | `diagnose` | (investigate) | Investigate which MCP tools it should use | TBD | ⏳ Pending |
+| **Medium** | `graph-audit` | codegraph | Convert code-graph queries to `execute` steps | Persistence loop (2.3) | ✅ Done (6 execute steps, 25 total) |
+| **Medium** | `metacognition` | scenarios + prediction-markets | Add `execute` steps to read prior Brier scores and calibration | Calibration loop (2.1) | ✅ Done (1 execute step, 10 total) |
+| **Medium** | `kata-improvement` | kata-kanban | Add `execute` steps to read prior PDCA cycles from the kanban MCP | Persistence loop (2.3) | ✅ Done (2 execute steps, 14 total) |
+| **Low** | `bug-hunt` | codegraph | Pre-compute quality analysis via `codegraph_analysis` execute step | Persistence loop (2.3) | ✅ Done (1 execute step, 8 total) |
+| **Low** | `diagnose` | codegraph | Pre-compute blast radius via `codegraph_impact` execute step | Persistence loop (2.3) | ✅ Done (1 execute step, 8 total) |
 
 ## Infrastructure needed
 
