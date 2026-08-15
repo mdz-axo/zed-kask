@@ -10,6 +10,7 @@ contract:
     web_search_result: object|null
     fetch_result: object|null
     flash_pipeline_output: object|null
+    thesis_gaps: array|null
   output:
     company_board: object
     data_gaps: array
@@ -56,6 +57,18 @@ You are the COMPANY agent for an institutional equity research desk. Your job is
 
 ```json
 {{ flash_pipeline_output | tojson }}
+```
+{% endif %}
+
+{% if thesis_gaps and thesis_gaps | length > 0 %}
+## THESIS Gaps (from prior THESIS quality gate — address these in this re-run)
+
+The goal-analysis/judge quality gate flagged the following gaps in the previous
+THESIS pass. You MUST address each gap in this re-run — deepen the relevant
+Company Board section to resolve the gap.
+
+```json
+{{ thesis_gaps | tojson }}
 ```
 {% endif %}
 

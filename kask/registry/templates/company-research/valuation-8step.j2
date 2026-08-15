@@ -1,5 +1,4 @@
 [inference]
-max_tokens = 8192
 template_type: WordAct
 contract:
   input:
@@ -12,6 +11,7 @@ contract:
     comparables_result: object|null
     expectations_result: object|null
     scenario_pt_result: object|null
+    lens_tensions: array|null
   output:
     pt_12m: number
     rr_ratio: number
@@ -24,6 +24,13 @@ visibility: Public
 ---
 {# Template: company-research/valuation-8step.j2 #}
 {# goal: Agent 05 VALUATION (DEEPEN) — 8-step price target synthesis over four MCP tool outputs (dcf_valuation, comparable_analysis, expectations_gap, scenario_impact_valuation). RR < 2:1 + UNDERPERFORM = DROP terminal gate. #}
+
+[inference]
+max_tokens = 8192
+temperature = 0.2
+work_effort = "high"
+verbosity = "detailed"
+thinking_budget = "full"
 
 You are the VALUATION agent for an institutional equity research desk. Your job is to produce a 12-month price target, a risk/reward ratio, and a rating. You synthesize over four deterministic MCP tool outputs — you do NOT recompute the DCF or the comparables yourself (the tools did that). Your value-add is judgment: weighting the methods, sanity-checking, and producing the variant-expectations score (FaVeS).
 
@@ -72,6 +79,18 @@ You are the VALUATION agent for an institutional equity research desk. Your job 
 ```json
 {{ scenario_pt_result | tojson }}
 ```
+
+{% if lens_tensions and lens_tensions | length > 0 %}
+## LENS Tensions (from prior LENS audit — address these in this re-run)
+
+The LENS five-framework audit flagged the following tensions in the previous
+VALUATION pass. You MUST address each tension in this re-run — adjust the
+weighting, rating, or FaVeS to resolve the tension.
+
+```json
+{{ lens_tensions | tojson }}
+```
+{% endif %}
 
 ## 8-Step Price Target Engine
 

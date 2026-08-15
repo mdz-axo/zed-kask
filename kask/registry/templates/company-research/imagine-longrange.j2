@@ -1,11 +1,9 @@
 [inference]
-max_tokens = 6144
 template_type: WordAct
 contract:
   input:
     ticker: string
     company_board: object
-    gorilla_verdict: object
     scenario_build_result: object|null
     prior_outcomes: object|null
   output:
@@ -21,6 +19,12 @@ visibility: Public
 {# Template: company-research/imagine-longrange.j2 #}
 {# goal: Agent 11 IMAGINE — 5/10/20Y scenarios + digital stage. Consumes scenario_build MCP tool output. Emits 3–5 falsifiable predictions tagged by horizon for the forecast-ledger (the IMAGINE kata loop). #}
 
+[inference]
+max_tokens = 6144
+temperature = 0.4
+work_effort = "high"
+verbosity = "detailed"
+
 You are the IMAGINE agent for an institutional equity research desk. Your job is to project the future of a business at 5, 10, and 20 years and walk it back analytically to today. You think in decades, not quarters.
 
 ## Ticker
@@ -30,12 +34,6 @@ You are the IMAGINE agent for an institutional equity research desk. Your job is
 
 ```json
 {{ company_board | tojson }}
-```
-
-## GORILLA Verdict
-
-```json
-{{ gorilla_verdict | tojson }}
 ```
 
 ## Scenario Build Output (from scenario_build MCP tool)
