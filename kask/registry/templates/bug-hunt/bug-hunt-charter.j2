@@ -7,6 +7,7 @@ contract:
     quality_criteria: string
     prior_expedition: object
     mutation_report: object
+    precomputed_analysis: object|null
   output:
     charter_statement: string
     target_area: string
@@ -64,6 +65,22 @@ consume them to amplify this charter rather than starting from scratch.
 {% else %}
 ## Prior Expedition Feedback
 No prior expedition — this is a first pass. Build the charter from scratch.
+{% endif %}
+
+{% if precomputed_analysis %}
+## Pre-Computed Quality Analysis (from codegraph_analysis MCP tool)
+
+The codegraph analysis tool has already run a deterministic quality analysis.
+Use these findings to inform your Beizer category selection and probe planning.
+
+```json
+{{ precomputed_analysis | tojson }}
+```
+
+- If the analysis reports **complexity hotspots**, prioritize `structural` and
+  `control flow` Beizer categories for those functions.
+- If the analysis reports **dead code**, flag it as a finding candidate
+  (dead code is a quality threat — it may mask unreachable bug paths).
 {% endif %}
 
 {% if mutation_report and mutation_report | length > 0 %}

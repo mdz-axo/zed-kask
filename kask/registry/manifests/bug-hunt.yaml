@@ -97,6 +97,30 @@ ledger:
   span_namespace: reg.skill.bug-hunt
 
 steps:
+  # ── Phase 3 co-evolution: pre-computed quality analysis ──
+  # The codegraph_analysis MCP tool runs deterministic dead_code/complexity
+  # analysis. Running it as an execute step before the charter gives the
+  # charter pre-computed quality findings to incorporate into its Beizer
+  # category selection. on_failure: report surfaces a broken codegraph
+  # channel without blocking the bug hunt.
+  - ordinal: 0
+    action: execute
+    description: >
+      Pre-compute code quality analysis (dead_code + complexity) via
+      codegraph_analysis MCP tool. Deterministic. Returns quality findings
+      that the charter (step 1) incorporates into its Beizer category
+      selection and probe planning.
+    mcp: codegraph_analysis
+    gas_cap: 3000
+    timeout_seconds: 60
+    on_failure:
+      action: report
+      resume: >
+        codegraph_analysis failed — pre-computed quality findings are not
+        available. The charter proceeds without dead_code/complexity data.
+    input_mapping:
+      kind: "complexity"
+
   - ordinal: 1
     action: select
     description: >
@@ -113,6 +137,7 @@ steps:
       target: "{{ task | default(target) }}"
       quality_criteria: "{{ quality_criteria }}"
       prior_expedition: "{{ prior_expedition | default({}) }}"
+      precomputed_analysis: "{{ step_0_result | default({}) }}"
 
   - ordinal: 2
     action: select
