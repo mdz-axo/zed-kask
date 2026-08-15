@@ -1,7 +1,7 @@
 # Research Plan: Skill ↔ MCP Co-Evolution
 
-**Status**: Research plan (not implementation). Grounded in verified source code.
-**Date**: 2026-08-14
+**Status**: Phase 1 + Phase 2 implemented. Phase 3 (co-evolution) pending.
+**Date**: 2026-08-14 (plan), 2026-08-15 (implementation)
 **Author**: Curator (GLM 5.2)
 
 ---
@@ -390,49 +390,93 @@ What's missing is:
 
 ## Prioritized migration list
 
-| Priority | Skill | MCP server | Migration | Co-evolution loop |
-|----------|-------|------------|-----------|-------------------|
-| **High** | `superforecasting` | scenarios + prediction-markets | Add `execute` steps for `market_cmp`, `scenario_calibration`, `scenario_score` | Calibration loop (2.1) |
-| **High** | `scenario-builder` | prediction-markets + scenarios | Add `execute` steps for `market_cmp`, `scenario_build` | Calibration loop (2.1) |
-| **High** | `kanban-task-management` | kata-kanban | Convert all "post-cascade instructions" to `execute` steps | Persistence loop (2.3) |
-| **High** | `company-research` (planned) | companies + scenarios + prediction-markets + portfolio | Design with native `execute` steps from the start (see EFRA-AI plan) | All loops |
-| **Medium** | `swarm-intelligence` | swarm | Convert SENSE/CHECK state-fetching to `execute` steps | Persistence loop (2.3) |
-| **Medium** | `graph-audit` | codegraph | Convert code-graph queries to `execute` steps | Persistence loop (2.3) |
-| **Medium** | `metacognition` | scenarios + prediction-markets | Add `execute` steps to read prior Brier scores and calibration | Calibration loop (2.1) |
-| **Medium** | `kata-improvement` | kata-kanban | Add `execute` steps to read prior PDCA cycles from the kanban MCP | Persistence loop (2.3) |
-| **Low** | `bug-hunt` | (investigate) | Investigate which MCP tools it should use | TBD |
-| **Low** | `diagnose` | (investigate) | Investigate which MCP tools it should use | TBD |
+| Priority | Skill | MCP server | Migration | Co-evolution loop | Status |
+|----------|-------|------------|-----------|-------------------|--------|
+| **High** | `superforecasting` | scenarios + prediction-markets | Add `execute` steps for `market_match`, `scenario_calibration`, `scenario_score` | Calibration loop (2.1) | ✅ Done (3 execute steps, 21 total) |
+| **High** | `scenario-builder` | prediction-markets + scenarios | Add `execute` steps for `market_match`, `scenario_build`, `scenario_calibration` | Calibration loop (2.1) | ✅ Done (3 execute steps, 11 total) |
+| **High** | `kanban-task-management` | kata-kanban | Convert deterministic single-call "post-cascade instructions" to `execute` steps | Persistence loop (2.3) | ✅ Done (5 execute steps, 19 total) |
+| **High** | `company-research-flash` | companies + scenarios + prediction-markets | Native `execute` steps from the start + `forecast_list` step 0 | All loops | ✅ Done (14 execute steps, 26 total) |
+| **High** | `company-research-deep` | companies + scenarios | Native `execute` steps from the start | All loops | ✅ Already had 6 execute steps |
+| **Medium** | `swarm-intelligence` | swarm | Convert SENSE/CHECK state-fetching to `execute` steps | Persistence loop (2.3) | ✅ Done (4 execute steps, 13 total) |
+| **Medium** | `graph-audit` | codegraph | Convert code-graph queries to `execute` steps | Persistence loop (2.3) | ⏳ Pending |
+| **Medium** | `metacognition` | scenarios + prediction-markets | Add `execute` steps to read prior Brier scores and calibration | Calibration loop (2.1) | ⏳ Pending |
+| **Medium** | `kata-improvement` | kata-kanban | Add `execute` steps to read prior PDCA cycles from the kanban MCP | Persistence loop (2.3) | ⏳ Pending |
+| **Low** | `bug-hunt` | (investigate) | Investigate which MCP tools it should use | TBD | ⏳ Pending |
+| **Low** | `diagnose` | (investigate) | Investigate which MCP tools it should use | TBD | ⏳ Pending |
 
 ## Infrastructure needed
 
-| Item | Purpose | Priority |
-|------|---------|----------|
-| `curator_report_skill_use_issue` (new MCP tool on hkask-mcp-curator) | Skill-use reporting channel (Phase 2.2) | High |
-| `forecast-ledger` (new MCP tool, possibly on hkask-mcp-scenarios or hkask-mcp-prediction-markets) | Persist equity forecasts/PTs for Brier scoring against realized prices | High |
-| Migration tests for each skill that moves to `execute` steps | Pin the new flowdef contract | High |
-| Curator analysis surface for MCP tool usage patterns | Read `reg.tool.*` spans + skill-use reports; identify patterns | Medium |
-| Curator directive targeting MCP tool schemas | Evolve MCP tool schemas based on skill feedback | Medium |
+| Item | Purpose | Priority | Status |
+|------|---------|----------|--------|
+| `curator_report_skill_use_issue` (MCP tool on hkask-mcp-curator) | Skill-use reporting channel (Phase 2.2) | High | ✅ Built. Wired into `on_failure: report` on all 4 migrated skills. |
+| `forecast-ledger` (MCP tool on hkask-mcp-companies) | Persist equity forecasts/PTs for Brier scoring against realized prices | High | ✅ `forecast_list`, `forecast_get`, `forecast_record`, `calibrate_forecast` already exist. `forecast_list` wired into `company-research-flash` step 0. ⏳ Remaining gap: no tool persists a *pre-computed* PT (see follow-up #1). |
+| Migration tests for each skill that moves to `execute` steps | Pin the new flowdef contract | High | ✅ All 4 migrated skills + company-research-flash have tests pinning step counts, execute step ordinals, `mcp:` fields, `on_failure` configs, and `condition:` gates. |
+| `on_failure: report` enforcement in `dispatch_with_retry` | Wire skill-use reporting into the executor | High | ✅ Built. `OnFailureConfig` extended with `action: report`. `manifest_id` added to `StepMachine`. `invoke_tool` made `pub(crate)`. |
+| Curator analysis surface for MCP tool usage patterns | Read `reg.tool.*` spans + skill-use reports; identify patterns | Medium | ⏳ Pending (Phase 3). |
+| Curator directive targeting MCP tool schemas | Evolve MCP tool schemas based on skill feedback | Medium | ⏳ Pending (Phase 3). |
 
 ## Open questions
 
-1. **`scenario_calibration` scope**: Does it currently persist per-forecaster
-   calibration curves, or only per-question? The superforecasting loop needs
-   per-forecaster calibration (the overconfidence_bias is a forecaster-level
-   signal, not a question-level one). **Action**: verify by reading the
-   scenarios MCP server code.
+### Resolved (Phase 1 + Phase 2 implementation)
 
-2. **`market_check_resolutions` for equities**: This tool resolves prediction-
-   market questions, not equity price targets. For the company-research
-   calibration loop, we need a tool that resolves equity PTs against realized
-   prices. This is the `forecast-ledger` infrastructure item. **Action**:
-   design `forecast-ledger` in a follow-up plan.
+1. **`scenario_calibration` scope**: Resolved — the tool computes calibration
+   from all resolved forecasts in the store, optionally filtered by `subject`.
+   The `overconfidence_score` is a store-level signal (not per-forecaster),
+   which is sufficient for the current single-forecaster design. Per-forecaster
+   calibration would require adding a `forecaster_id` filter to
+   `CalibrationRequest`.
 
-3. **Curator directive scope**: Can `curator_directive` currently target MCP
-   tool schemas, or only skill thresholds? If it can only target skills, we
-   need to extend it to target MCP tool configuration. **Action**: verify by
-   reading the curator MCP server code.
+2. **`market_check_resolutions` for equities**: Partially resolved — the
+   `forecast_list`, `forecast_get`, `forecast_record`, and `calibrate_forecast`
+   tools on `hkask-mcp-companies` provide the forecast-ledger infrastructure.
+   `company-research-flash` now calls `forecast_list` (step 0) to read prior
+   forecasts. **Remaining gap**: no tool persists a *pre-computed* price target
+   from the valuation step (see follow-up question #1 below).
 
-4. **Skill-use report storage**: Where should `curator_report_skill_use_issue`
-   reports be stored? The curator MCP server has a memory store, but skill-use
-   reports may need a dedicated table for pattern analysis. **Action**: design
-   the storage schema in a follow-up.
+3. **Curator directive scope**: Not yet verified — deferred to Phase 3.
+
+4. **Skill-use report storage**: Resolved — reports are stored as episodic
+   h_mems in the curator's memory store with entity `skill_use_issue:<skill_name>`,
+   queryable via `curator_memory_recall` and `curator_semantic_search`.
+
+### Follow-up questions (post-Phase 2)
+
+1. **`forecast_persist` tool for pre-computed price targets**: The
+   `calibrate_forecast` tool persists a forecast but runs its own Fermi
+   decomposition model — it doesn't accept a pre-computed PT from the
+   company-research valuation step. The `forecast_record` tool requires the
+   actual outcome (can't persist a pending PT). A new `forecast_persist` tool
+   on `hkask-mcp-companies` that accepts `{symbol, forecast_date, horizon,
+   forecast_multiple, forecast_price_change, forecast_id?}` and stores it
+   without an outcome would close this gap. The stored forecast can later be
+   resolved by `forecast_record` when the horizon passes. **Priority**: Medium.
+   **Effort**: Small (the storage infrastructure already exists via
+   `calibrate_forecast`'s persistence path).
+
+2. **`on_failure` resume text not surfaced to operator**: The `dispatch_with_retry`
+   enforcement logs the `resume` text via `tracing::warn!` but doesn't store it
+   in the step result or `CascadeOutcome`. The operator sees `ExitKind::Escalated`
+   but not the resume instruction. To fix: extend `PassResult::Exit` or
+   `CascadeOutcome` to carry a `resume_text: Option<String>` field, populated
+   from the `on_failure.resume` config when the escalation is triggered by
+   `on_failure`. **Priority**: Low. **Effort**: Medium (touches the exit flow
+   in `step_machine.rs` and the `CascadeOutcome` consumer in `executor.rs`).
+
+3. **Hardcoded `scenario_type` and `time_horizon` in `scenario_score` persistence**:
+   Superforecasting step 16 constructs a `ScenarioEvent` with
+   `scenario_type: "emerging_economic"` and `time_horizon: "strategic"` as
+   hardcoded defaults. A question about quarterly earnings should use
+   `scenario_type: "company_update"` and `time_horizon: "tactical"`. The
+   hardcoded defaults mean all forecasts are categorized as "emerging economic"
+   in the calibration store, which could skew per-domain calibration. To fix:
+   have the triage step (step 1) classify the forecasting question into a
+   scenario type and time horizon, thread the classification through to the
+   persistence step via `input_mapping`. **Priority**: Low. **Effort**: Small
+   (add classification fields to the triage template's output contract, thread
+   through `input_mapping`).
+
+4. **Curator directive targeting MCP tool schemas**: Can `curator_directive`
+   currently target MCP tool schemas, or only skill thresholds? If it can only
+   target skills, we need to extend it to target MCP tool configuration. This
+   is the Phase 3 co-evolution orchestration gap. **Priority**: Medium.
+   **Effort**: TBD (requires reading the curator MCP server code).

@@ -6,7 +6,7 @@
 //!
 //! ## Format
 //!
-//! ```text
+//! ````text
 //! ```mermaid
 //! kanban
 //! %% kanban board: <optional board name>
@@ -16,7 +16,7 @@
 //!   section In Progress
 //!     Task Title 3
 //! ```
-//! ```
+//! ````
 //!
 //! The format is intentionally minimal: columns (sections) and task titles
 //! only. Rich metadata (description, criteria, labels, assignees) is not

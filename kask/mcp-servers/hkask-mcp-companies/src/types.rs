@@ -405,10 +405,38 @@ pub struct ForecastRecordRequest {
     pub actual_multiple: f64,
     /// Actual price change from forecast date to outcome date
     pub actual_price_change: f64,
-    /// Forecast ID from dcf_valuation or calibrate_forecast.
-    /// When provided, looks up the stored projected model and decomposes
-    /// the return gap into 11-line-item drivers (revenue growth, gross margin,
-    /// D&A, capex, NWC, multiple expansion, net debt).
+    /// Forecast ID from dcf_valuation, calibrate_forecast, or forecast_persist.
+    /// When provided and the stored snapshot contains a full projected model,
+    /// decomposes the return gap into 11-line-item drivers (revenue growth,
+    /// gross margin, D&A, capex, NWC, multiple expansion, net debt).
+    /// Pre-computed PTs persisted via forecast_persist carry no decomposition
+    /// model — Brier scoring still runs, decomposition is skipped.
+    pub forecast_id: Option<String>,
+}
+
+/// Persist a pre-computed price target for later Brier scoring.
+/// Unlike calibrate_forecast (which runs its own Fermi decomposition) and
+/// forecast_record (which requires the actual outcome), this tool stores a
+/// pending price target without an outcome and without a decomposition model.
+/// The stored forecast can later be resolved by forecast_record when the
+/// horizon passes — Brier scoring runs on the recorded multiple and price
+/// change; gap decomposition is unavailable (no projected model).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ForecastPersistRequest {
+    pub symbol: String,
+    /// When the forecast was made (YYYY-MM-DD)
+    pub forecast_date: String,
+    /// Forecast horizon.
+    pub horizon: Horizon,
+    /// Forecast valuation multiple (e.g., P/E or EV/FCF)
+    pub forecast_multiple: f64,
+    /// Forecast price change over the horizon (e.g., 0.10 = 10% return)
+    pub forecast_price_change: f64,
+    /// Optional parent forecast ID for a same-symbol revision.
+    pub revision_of: Option<String>,
+    /// Optional caller-supplied forecast ID. When omitted, the server
+    /// generates a UUID. Useful for flowdef steps that need a stable ID
+    /// to thread to a later forecast_record call.
     pub forecast_id: Option<String>,
 }
 

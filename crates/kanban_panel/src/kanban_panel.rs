@@ -25,8 +25,8 @@ use std::collections::HashSet;
 use anyhow::Result;
 use editor::Editor;
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString, Task,
-    WeakEntity, Window, actions,
+    App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, Render,
+    SharedString, Task, WeakEntity, Window, actions,
 };
 use gpui_util::ResultExt;
 use hkask_kanban_widget::block::{KanbanBlockBody, TaskActivityBody, TaskBody};
@@ -73,6 +73,10 @@ const TASK_LIST_TOOL: &str = "kanban_task_list";
 const BOARD_CREATE_TOOL: &str = "kanban_board_create";
 /// The tool name for deleting a board.
 const BOARD_DELETE_TOOL: &str = "kanban_board_delete";
+/// The tool name for exporting a board as mermaid markdown.
+const BOARD_EXPORT_TOOL: &str = "kanban_board_export";
+/// The tool name for importing a board from mermaid markdown.
+const BOARD_IMPORT_TOOL: &str = "kanban_board_import";
 /// The tool name for creating a task.
 const TASK_CREATE_TOOL: &str = "kanban_task_create";
 /// The tool name for deleting a task.
@@ -109,7 +113,12 @@ enum RefreshTarget {
 /// the server does not protect would make an interrupted call *look* replay-safe
 /// while actually duplicating — `idempotent_tools_are_creates_or_spawns` pins the
 /// list shape against that drift.
-const IDEMPOTENT_TOOLS: &[&str] = &[TASK_CREATE_TOOL, BOARD_CREATE_TOOL, TASK_SPAWN_TOOL];
+const IDEMPOTENT_TOOLS: &[&str] = &[
+    TASK_CREATE_TOOL,
+    BOARD_CREATE_TOOL,
+    BOARD_IMPORT_TOOL,
+    TASK_SPAWN_TOOL,
+];
 
 /// Whether `tool` absorbs a replayed call server-side.
 fn is_idempotent_tool(tool: &str) -> bool {
@@ -305,6 +314,8 @@ const ADVERTISED_KANBAN_TOOLS: &[&str] = &[
     "kanban_board_create",
     "kanban_board_list",
     "kanban_board_delete",
+    "kanban_board_export",
+    "kanban_board_import",
     "kanban_task_create",
     "kanban_task_list",
     "kanban_task_move",
@@ -1279,6 +1290,109 @@ impl KanbanPanel {
         self.kanban_widget = None;
     }
 
+    /// Export the selected board as mermaid kanban markdown and copy it to
+    /// the system clipboard. The markdown round-trips through `import_board`.
+    /// Only the board owner can export (the server enforces P12); a
+    /// permission error surfaces in the error strip.
+    fn export_board(&mut self, cx: &mut Context<Self>) {
+        let Some(board_id) = self.selected_board_id.clone() else {
+            return;
+        };
+        let Some(invoker) = shared_tool_invoker() else {
+            self.error = Some(hkask_tool_invoker::NOT_WIRED_MESSAGE.into());
+            cx.notify();
+            return;
+        };
+        self.fetching = true;
+        self.error = None;
+        cx.notify();
+        let args = json!({ "board_id": board_id });
+        let task = invoker.invoke_tool(KANBAN_SERVER, BOARD_EXPORT_TOOL, args);
+        cx.spawn(async move |this, cx| match task.await {
+            Ok(output) => {
+                if let Some(err) = parse_tool_error(&output) {
+                    this.update(cx, |this, cx| {
+                        this.fetching = false;
+                        this.error =
+                            Some(format!("Failed to export board: {}", err.message).into());
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
+                let markdown = parse_tool_response(&output).and_then(|content| {
+                    serde_json::from_value::<serde_json::Value>(content)
+                        .ok()
+                        .and_then(|v| v.get("markdown")?.as_str().map(|s| s.to_string()))
+                });
+                this.update(cx, |this, cx| {
+                    this.fetching = false;
+                    match markdown {
+                        Some(md) => {
+                            cx.write_to_clipboard(ClipboardItem::new_string(md));
+                            this.error = None;
+                        }
+                        None => {
+                            this.error =
+                                Some(format!("Failed to parse export response: {output}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .log_err();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.fetching = false;
+                    this.error = Some(
+                        if error.is_retryable() {
+                            format!("Reconnecting to the kanban server… ({error})").into()
+                        } else {
+                            error.message().into()
+                        },
+                    );
+                    cx.notify();
+                })
+                .log_err();
+            }
+        })
+        .detach();
+    }
+
+    /// Import a board from mermaid kanban markdown read from the system
+    /// clipboard. Creates a new board with columns and tasks matching the
+    /// parsed markdown, then refreshes the board list. Replay-safe via the
+    /// server's idempotency key (generated per gesture).
+    fn import_board(&mut self, cx: &mut Context<Self>) {
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            self.error = Some("Clipboard is empty — copy mermaid kanban markdown first".into());
+            cx.notify();
+            return;
+        };
+        let Some(markdown) = clipboard.text() else {
+            self.error = Some("Clipboard has no text — copy mermaid kanban markdown first".into());
+            cx.notify();
+            return;
+        };
+        if markdown.trim().is_empty() {
+            self.error = Some("Clipboard is empty — copy mermaid kanban markdown first".into());
+            cx.notify();
+            return;
+        }
+        let args = json!({
+            "markdown": markdown,
+            // The server falls back to the parsed board name or "Imported Board",
+            // so we do not set board_name here — preserve the exported name.
+        });
+        self.dispatch_mutation(
+            BOARD_IMPORT_TOOL,
+            args,
+            "import board",
+            RefreshTarget::Boards,
+            cx,
+        );
+    }
+
     // ── Steer mode ─────────────────────────────────────────────────────────
 
     /// Switch the panel mode (Browse or Steer).
@@ -1551,6 +1665,49 @@ impl KanbanPanel {
                             } else {
                                 Color::Muted
                             }),
+                    ),
+            )
+            .child(
+                div()
+                    .id("kanban-export-board-btn")
+                    .cursor_pointer()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .when(has_board, |this| this.hover(|this| this.bg(border_color)))
+                    .when(!has_board, |this| this.opacity(0.5))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.selected_board_id.is_some() {
+                            this.export_board(cx);
+                        }
+                    }))
+                    .tooltip(Tooltip::text("Export board as mermaid markdown to clipboard"))
+                    .child(
+                        Icon::new(IconName::Download)
+                            .size(IconSize::Small)
+                            .color(if has_board {
+                                Color::Accent
+                            } else {
+                                Color::Muted
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .id("kanban-import-board-btn")
+                    .cursor_pointer()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .hover(|this| this.bg(border_color))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.import_board(cx);
+                    }))
+                    .tooltip(Tooltip::text("Import board from mermaid markdown in clipboard"))
+                    .child(
+                        Icon::new(IconName::Share)
+                            .size(IconSize::Small)
+                            .color(Color::Accent),
                     ),
             )
             .child(self.render_refresh_button(cx))
@@ -2011,9 +2168,10 @@ impl SerializableItem for KanbanPanel {
 #[cfg(test)]
 mod tests {
     use super::{
-        ADVERTISED_KANBAN_TOOLS, BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, IDEMPOTENT_TOOLS,
-        MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL, TASK_DELETE_TOOL, TASK_SPAWN_TOOL,
-        TASK_UPDATE_TOOL, attach_idempotency_key, classify_kanban_fetch_error, is_idempotent_tool,
+        ADVERTISED_KANBAN_TOOLS, BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_EXPORT_TOOL,
+        BOARD_IMPORT_TOOL, IDEMPOTENT_TOOLS, MAX_MUTATION_RETRIES, RefreshTarget,
+        TASK_CREATE_TOOL, TASK_DELETE_TOOL, TASK_SPAWN_TOOL, TASK_UPDATE_TOOL,
+        attach_idempotency_key, classify_kanban_fetch_error, is_idempotent_tool,
         mutation_retry_delay, refresh_target, steer_system_prompt,
     };
     use hkask_tool_invoker::InvokeError;
@@ -2026,7 +2184,7 @@ mod tests {
     // per attempt, or every retry looks like new work and the protection is
     // worthless.
 
-    /// Only the three tools that mint a fresh server-side identity carry keys.
+    /// Only the tools that mint a fresh server-side identity carry keys.
     ///
     /// Guards against drift in both directions. Adding a tool here that the
     /// server does not protect would make an interrupted call *look* replay-safe
@@ -2035,10 +2193,11 @@ mod tests {
     fn idempotent_tools_are_exactly_the_identity_minting_creates() {
         assert!(is_idempotent_tool(TASK_CREATE_TOOL));
         assert!(is_idempotent_tool(BOARD_CREATE_TOOL));
+        assert!(is_idempotent_tool(BOARD_IMPORT_TOOL));
         assert!(is_idempotent_tool(TASK_SPAWN_TOOL));
         assert_eq!(
             IDEMPOTENT_TOOLS.len(),
-            3,
+            4,
             "the protected set must match the server's `with_idempotency` wiring; \
              adding one here without wiring the server would make an interrupted \
              call look replay-safe while actually duplicating"

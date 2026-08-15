@@ -1525,7 +1525,7 @@ impl KanbanServer {
                 "kanban_board_import",
                 idempotency_key.as_deref(),
                 async {
-                    let parsed = kanban::mermaid::parse_mermaid_kanban(&markdown)
+                    let mut parsed = kanban::mermaid::parse_mermaid_kanban(&markdown)
                         .map_err(|e| McpToolError::invalid_argument(e))?;
                     if parsed.columns.is_empty() {
                         return Err(McpToolError::invalid_argument(
@@ -1533,7 +1533,7 @@ impl KanbanServer {
                         ));
                     }
                     let name = board_name
-                        .or(parsed.name)
+                        .or(parsed.name.take())
                         .unwrap_or_else(|| "Imported Board".to_string());
                     let columns = kanban::mermaid::columns_from_parsed(&parsed);
                     let column_count = columns.len();
@@ -1570,7 +1570,7 @@ impl KanbanServer {
                                         current = moved.status;
                                     }
                                     Err(e) => {
-                                        log::warn!(
+                                        tracing::warn!(
                                             target: "hkask.mcp.kata_kanban",
                                             task_id = %task.id,
                                             target_status = %target_status,

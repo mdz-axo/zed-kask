@@ -91,6 +91,71 @@ pub fn manifest_execution_failed_body(skill_name: &str, error: &dyn std::fmt::Di
     )
 }
 
+/// Typed error from skill manifest execution, distinguishing structural
+/// (compile-time) failures from execution (runtime) failures.
+///
+/// `CompileTime` failures indicate the manifest itself is broken — the
+/// caller should suggest `skill-maintenance`, not retry.
+///
+/// `Runtime` failures indicate the manifest is fine but execution failed
+/// — the caller may retry or surface the error to the user.
+#[derive(Debug, Clone)]
+pub enum SkillExecutionError {
+    /// Structural failure: manifest parse, input validation, schema
+    /// resolution. The manifest is broken — trigger skill-maintenance,
+    /// not retry.
+    CompileTime {
+        skill_name: String,
+        phase: &'static str,
+        message: String,
+    },
+    /// Execution failure: inference, tool invocation, gas exhaustion,
+    /// convergence not reached. The manifest is fine — retry or degrade.
+    Runtime {
+        skill_name: String,
+        phase: &'static str,
+        message: String,
+    },
+}
+
+impl SkillExecutionError {
+    /// The skill name involved in the failure.
+    pub fn skill_name(&self) -> &str {
+        match self {
+            Self::CompileTime { skill_name, .. }
+            | Self::Runtime { skill_name, .. } => skill_name,
+        }
+    }
+
+    /// The failure phase (e.g. "load", "inference", "gas_exhausted").
+    pub fn phase(&self) -> &'static str {
+        match self {
+            Self::CompileTime { phase, .. }
+            | Self::Runtime { phase, .. } => phase,
+        }
+    }
+
+    /// Whether this is a compile-time (structural) failure.
+    pub fn is_compile_time(&self) -> bool {
+        matches!(self, Self::CompileTime { .. })
+    }
+}
+
+impl std::fmt::Display for SkillExecutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CompileTime { skill_name, phase, message } => {
+                write!(f, "[{phase}] {skill_name}: {message}")
+            }
+            Self::Runtime { skill_name, phase, message } => {
+                write!(f, "[{phase}] {skill_name}: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SkillExecutionError {}
+
 /// Retrieves the content and resources of a skill by name. Use this when a user's request matches a skill's description.
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SkillToolInput {
@@ -203,7 +268,9 @@ pub trait SkillManifestExecutor: Send + Sync {
     /// like "Step 2/5: scope"). When `Some`, the executor calls it at each
     /// cascade step so the tool call header shows which step is running.
     ///
-    /// Returns the cascade's final output as text, or an error message.
+    /// Returns the cascade's final output as text, or a typed error
+    /// distinguishing compile-time (structural) from runtime (execution)
+    /// failures.
     async fn execute_skill(
         &self,
         skill_name: &str,
@@ -212,7 +279,7 @@ pub trait SkillManifestExecutor: Send + Sync {
         memory_snippets: Vec<MemorySnippetRecord>,
         progress: Option<CascadeProgress>,
         title: Option<CascadeProgress>,
-    ) -> Result<String, String>;
+    ) -> Result<String, SkillExecutionError>;
 
     /// Compose a bundle from multiple peer-level skills via the `skill-bundler`
     /// manifest, then execute the composed bundle's cascade.
@@ -1440,7 +1507,7 @@ mod tests {
             _memory_snippets: Vec<crate::MemorySnippetRecord>,
             _progress: Option<CascadeProgress>,
             _title: Option<CascadeProgress>,
-        ) -> Result<String, String> {
+        ) -> Result<String, SkillExecutionError> {
             *self
                 .last_context
                 .lock()
@@ -1448,7 +1515,11 @@ mod tests {
             if self.known.contains(skill_name) {
                 Ok(self.output.clone())
             } else {
-                Err(format!("no manifest for {skill_name}"))
+                Err(SkillExecutionError::CompileTime {
+                    skill_name: skill_name.to_string(),
+                    phase: "load",
+                    message: format!("no manifest for {skill_name}"),
+                })
             }
         }
 
