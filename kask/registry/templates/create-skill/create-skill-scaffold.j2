@@ -120,6 +120,13 @@ For reference documents (RenderAct), generate .yaml files (no [inference] frontm
 
 Generate the process manifest (`kask/registry/manifests/<name>.yaml`):
 
+Apply the five composition principles (see SKILL.md):
+1. **Determinism frontier**: use `execute` for deterministic MCP tool calls, `compute` (lisp.eval) for math/invariants, `select` only for LLM judgment.
+2. **Persistence-grounded learning**: if the skill produces forecasts/analyses, add an `execute` step at ordinal 0 to read prior runs.
+3. **Failure surfacing**: every `execute` step must have `on_failure: { action: report, resume: "..." }`.
+4. **Lisp scaffold**: if an LLM step produces structured output with invariants, follow it with a `lisp.eval` compute step.
+5. **Co-evolution**: check whether existing MCP tools provide capabilities the skill should adopt natively.
+
 ```yaml
 {% raw %}
 manifest:
@@ -129,20 +136,21 @@ manifest:
   description: >
     <full description>
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.34.0
   editor: curator-or-human-admin
   visibility: Public
 
 convergence:
-  threshold: <0.05-0.30>
-  improvement_gate: threshold_only
-  max_iterations: 3
-  min_iterations: 1
-  convergence_field: step_N_result.convergence_metric
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 gas:
-  cap: <50000-150000>
+  cap: <50000-180000>
   cost_per_iteration: 100
   alert_threshold: 0.8
   hard_limit: true
@@ -165,6 +173,25 @@ inputs:
       Output of a previous iteration. Closes the feedback loop.
 
 steps:
+  # Optional: persistence-grounded learning (ordinal 0)
+  # If the skill produces forecasts/analyses, read prior runs first.
+  - ordinal: 0
+    action: execute
+    description: >
+      Read prior <calibration/PDCA/forecast> data via <mcp_tool> MCP tool.
+      Deterministic. Feeds the first select step so the skill knows its
+      past performance.
+    mcp: <mcp_tool_name>
+    gas_cap: 2000
+    timeout_seconds: 60
+    on_failure:
+      action: report
+      resume: >
+        <mcp_tool_name> failed — prior data is not available. The skill
+        proceeds without prior context.
+    input_mapping:
+      <param>: "{{ <value> }}"
+
   - ordinal: 1
     action: select
     description: >
@@ -175,29 +202,33 @@ steps:
     timeout_seconds: <30-300>
     input_mapping:
       <field>: "{{ <input> }}"
+      prior_data: "{{ step_0_result | default({}) }}"
       prior_iteration: "{{ prior_iteration | default({}) }}"
   # ... one step per phase ...
+
+  # Optional: lisp.eval scaffold (deterministic invariant check)
+  # If an LLM step produces structured output with invariants, check them.
   - ordinal: N
-    action: select
+    action: compute
+    compute_ref: lisp.eval
     description: >
-      <convergence check description>
-    renderer: minijinja
-    template_ref: <skill_name>/<convergence-check>
-    gas_cap: 2048
-    timeout_seconds: 30
+      Deterministic invariant check on step N-1's output.
+    gas_cap: 100
+    timeout_seconds: 10
     input_mapping:
-      primary_result: "{{ step_(N-1)_result }}"
+      form: "<lisp form>"
+      env:
+        step_N_result: "{{ step_(N-1)_result }}"
+
   - ordinal: N+1
     action: loop
     description: >
-      Re-enter cycle if convergence is not met. Routes
-      step_N_result.next_<focus>_focus back to step 1.
+      Re-enter cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
+      convergence_signal: "{{ step_N_result }}"
       prior_iteration:
         lessons_learned: "{{ step_(N-1)_result.lessons_learned | default([]) }}"
-        pattern_signatures: "{{ step_(N-1)_result.pattern_signatures | default([]) }}"
-        next_<focus>_focus: "{{ step_N_result.next_<focus>_focus | default('') }}"
 
 error_handling:
   on_gas_exceeded: abort
@@ -208,9 +239,6 @@ error_handling:
 
 ledger:
   emit_spans: true
-  # MANDATORY: must be reg.skill.<manifest.id> (CI-enforced by
-  # scripts/check-skill-span-namespace.sh). Any other form fails the gate.
-  # The abolished `spans:` list MUST NOT appear here.
   span_namespace: reg.skill.<skill_name>
   telemetry_namespace: hkask.template.<skill_name>
   variety_monitoring: true

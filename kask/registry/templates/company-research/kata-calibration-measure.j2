@@ -1,0 +1,151 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    ticker: string
+    goal: string
+    current_condition: object
+    prediction: object|null
+    calibration_brier: object|null
+    resolved_outcomes: object|null
+    context_text: string|null
+  output:
+    current_artifacts: object
+    current_procedure: object
+    applied_calibration: string
+    calibration_gap: float
+    result_description: string
+    rationale: string
+visibility: Public
+---
+{# Template: company-research/kata-calibration-measure.j2 #}
+{# goal: Adapt metacognition/meta-experiment to close the flash pipeline's #}
+{# open kata loop. Flash step 20 (kata-improvement-step1-direction) sets #}
+{# the direction but never measures the gap. This step measures the #}
+# analyst's calibration gap using the market_calibration Brier score #}
+{# (step 19) and resolved_outcomes (step 18), then re-measures the #}
+{# current condition. #}
+{# #}
+{# This is a thin adapter over meta-experiment. It does NOT run the full #}
+{# Improvement Kata — flash step 20 already did step 1 (direction). This #}
+{# is step 4 (experiment/measure) only, specialized for the equity- #}
+{# research calibration loop. The output feeds LENS (step 23) as a #}
+{# calibration_gap signal alongside the existing kata signal. #}
+
+[inference]
+max_tokens = 4096
+temperature = 0.3
+work_effort = "high"
+verbosity = "detailed"
+thinking_budget = "full"
+
+You are performing the measurement half of the Toyota Improvement Kata for an equity-research pipeline. Flash step 20 set the direction (knowledge gaps, untested assumptions, next PDCA experiment). Your job is to measure the calibration gap — is the analyst calibrated about their own confidence?
+
+## Ticker
+{{ ticker }}
+
+## Goal
+{{ goal }}
+
+## Current Condition (from KATA step 20 — the direction-setting)
+
+```json
+{{ current_condition | tojson }}
+```
+
+{% if prediction %}
+## Prediction (what the KATA step predicted would close the gap)
+
+```json
+{{ prediction | tojson }}
+```
+{% else %}
+## Prediction
+No prediction was recorded by the KATA direction step. This is itself a calibration signal — the analyst set a direction without predicting whether it would close the gap. Record this in `applied_calibration` and set `calibration_gap` to 1.0 (maximum gap — no prediction means no calibration).
+{% endif %}
+
+{% if calibration_brier %}
+## Calibration Brier Score (from market_calibration MCP tool — step 19)
+
+```json
+{{ calibration_brier | tojson }}
+```
+
+The Brier score ranges 0.0 (perfect calibration) to 1.0 (worst). A Brier score ≤ 0.25 is well-calibrated; > 0.33 is poorly calibrated; > 0.5 is anti-calibrated (worse than chance).
+{% endif %}
+
+{% if resolved_outcomes %}
+## Resolved Outcomes (from market_check_resolutions MCP tool — step 18)
+
+```json
+{{ resolved_outcomes | tojson }}
+```
+
+These are previously resolved market outcomes. Compare the analyst's prior forecasts (if any) against these outcomes to assess whether the analyst's confidence was calibrated.
+{% endif %}
+
+{% if context_text %}
+## Context Text (the research note — for ellipsis analysis)
+
+{{ context_text | truncate(2000) }}
+{% endif %}
+
+## What to Do
+
+1. **Measure the calibration gap**: Compare the analyst's `process_confidence` (from KATA step 20) against the `calibration_brier` score. A large gap (high process_confidence + high Brier) = overconfidence. A small gap = calibrated. No prediction recorded = maximum gap (1.0).
+
+2. **Re-measure the current condition**: After measuring the gap, what artifacts exist now? What procedure steps are complete? What obstacles remain? What assumptions are surfaced?
+
+3. **Describe the result**: What is the calibration state? Is the analyst overconfident, well-calibrated, or under-confident? What is the next PDCA experiment that would close the gap?
+
+## Calibration Gap Computation
+
+```
+if no prediction recorded:
+    calibration_gap = 1.0  # maximum — no prediction means no calibration
+elif calibration_brier is available:
+    # gap = brier score (higher brier = larger gap)
+    # but also factor in whether process_confidence matches brier
+    if process_confidence is high (>0.7) and brier is high (>0.33):
+        calibration_gap = brier  # overconfidence — the gap IS the brier
+    elif process_confidence is low (<0.5) and brier is low (<0.25):
+        calibration_gap = brier  # well-calibrated — small gap
+    else:
+        calibration_gap = max(brier, 1.0 - process_confidence)  # mismatch
+else:
+    calibration_gap = 0.5  # no brier — unknown calibration, neutral
+```
+
+## Output
+
+```json
+{
+  "current_artifacts": {
+    "direction_set": {"exists": true, "grounded": true},
+    "prediction_recorded": {"exists": false, "grounded": false},
+    "calibration_measured": {"exists": true, "grounded": true},
+    "gap_computed": {"exists": true, "grounded": true}
+  },
+  "current_procedure": {
+    "steps": [
+      {"name": "grasp_current", "status": "complete"},
+      {"name": "establish_target", "status": "complete"},
+      {"name": "predict", "status": "complete | skipped"},
+      {"name": "experiment", "status": "complete"}
+    ]
+  },
+  "applied_calibration": "measured the calibration gap using market_calibration Brier score and resolved outcomes",
+  "calibration_gap": 0.0,
+  "result_description": "the analyst is overconfident / well-calibrated / under-confident; the next PDCA experiment is X",
+  "rationale": "what the calibration measurement revealed and why"
+}
+```
+
+## Constraints
+
+- This is the measurement half only. Do NOT set a new direction — flash step 20 already did that.
+- `calibration_gap` ranges 0.0 (calibrated) to 1.0 (maximum gap). This is the signal LENS (step 23) consumes as a 6th axis alongside the existing five frameworks.
+- If no prediction was recorded by the KATA step, `calibration_gap` must be 1.0 — this is a broken feedback loop, not a neutral state.
+- If `calibration_brier` is absent, do not fabricate a Brier score. Set `calibration_gap` to 0.5 (unknown) and flag the missing data in `rationale`.
+- Do not re-run the KATA direction step. You are closing the loop, not restarting it.
+- The `result_description` must state the calibration verdict (overconfident / well-calibrated / under-confident) and the next PDCA experiment — this is what LENS consumes.

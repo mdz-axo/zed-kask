@@ -213,9 +213,13 @@ impl BridgeManifestExecutor {
             let input_context: HashMap<String, Value> = serde_json::from_str(&fixture.input)
                 .map_err(|e| format!("golden_outputs[{i}] input is not valid JSON: {e}"))?;
 
-            let output = self
-                .execute_skill(
-                    skill_name,
+            // Run the cascade directly via run_manifest_cascade_with_manifest,
+            // bypassing execute_skill's span emission. Golden-output validation
+            // must NOT create spurious outcome/convergence spans that would
+            // pollute the drift detector's signal (adversarial review finding 1).
+            let result = self
+                .run_manifest_cascade_with_manifest(
+                    &manifest,
                     input_context,
                     Vec::new(),
                     Vec::new(),
@@ -224,8 +228,9 @@ impl BridgeManifestExecutor {
                 )
                 .await;
 
-            let result = match output {
-                Ok(actual) => {
+            let result = match result {
+                Ok(outcome) => {
+                    let actual = extract_final_step_result(&outcome);
                     let passed = actual == fixture.expected_output;
                     GoldenOutputResult {
                         fixture_index: i,
@@ -239,12 +244,12 @@ impl BridgeManifestExecutor {
                         },
                     }
                 }
-                Err(e) => GoldenOutputResult {
+                Err(msg) => GoldenOutputResult {
                     fixture_index: i,
                     passed: false,
                     actual: None,
                     expected: fixture.expected_output.clone(),
-                    error: Some(e.to_string()),
+                    error: Some(msg),
                 },
             };
             results.push(result);
@@ -800,7 +805,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // Record the skill outcome span (reg.skill.<id>.outcome) for the
         // regulation feedback loop. Best-effort: if the ledger is not wired
         // (tests, pre-login) or the write fails, the result is unaffected.
-        let skill_id = &manifest.id;
+        let skill_id = skill_name;
         let outcome_payload = match &result {
             Ok(outcome) => {
                 let mut payload = serde_json::json!({

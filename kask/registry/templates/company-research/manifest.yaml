@@ -257,6 +257,73 @@ templates:
       self-assessment — wired as a cross-skill `select` step in the flowdef,
       not inside this template.
 
+  # ── Cross-skill adapter templates (v0.36.0) ──
+  # Thin adapters that compose a perspective skill's reusable template into
+  # the equity-research context. Each adapter carries an equity-research
+  # contract (input/output schema) and delegates the methodology to the
+  # upstream skill's template via prompt structure. They do NOT re-implement
+  # the upstream skill — they specialize it.
+
+  - id: company-research/intel-semantic-classify
+    name: "INTEL — pragmatic-semantics certainty classification (v0.36.0)"
+    path: intel-semantic-classify.j2
+    type: KnowAct
+    description: >
+      v0.36.0 cross-skill adapter. Adapts pragmatic-semantics/
+      semantics-classify-statement to the INTEL mosaic. Classifies every
+      news_item and hypothesis by ontological mode (IS/OUGHT), epistemic
+      mode (declarative/probabilistic/subjunctive), constraint force, and
+      provenance — BEFORE downstream steps consume the intel. Prevents
+      certainty-level drift: a management quote treated as an ontological
+      fact, a scenario treated as a forecast. Emits semantic_tags and
+      certainty_drift_risk that downstream templates (forensic, critical-
+      factor, valuation) consume via intel_bundle.semantic_tags.
+
+  - id: company-research/gorilla-capability-reason
+    name: "GORILLA — capabilities-reasoner floor/ceiling/maturity (v0.36.0)"
+    path: gorilla-capability-reason.j2
+    type: KnowAct
+    description: >
+      v0.36.0 cross-skill adapter. Adapts capabilities-reasoner/
+      capability-reason to the GORILLA 4-dim framework. Types each GORILLA
+      dimension (Obvious Problem, Invisible Gorilla, Combinatorial Solution,
+      Choke Point) against a capability registry with floor, ceiling, and
+      maturity-gate limits. The GORILLA score (0–100) is the elicited
+      potential; the capability assessment determines whether that score
+      is credible against the company's observed behavior and maturity.
+      Emits capability_assessments, floor_violations, ceiling_violations,
+      maturity_blocks. A maturity block on a dimension means the lisp.eval
+      scoring step should treat that dimension's score as nil, not as the
+      elicited value.
+
+  - id: company-research/thesis-essentialist
+    name: "THESIS — essentialist 3-gate eliminative interrogation (v0.36.0)"
+    path: thesis-essentialist.j2
+    type: KnowAct
+    description: >
+      v0.36.0 cross-skill adapter. Adapts essentialist/essentialist-flow to
+      the three-pillar investment thesis. Runs a single pass of the 3-gate
+      protocol (Exist, Surface, Contract) on the thesis to enforce parsimony
+      — does each pillar earn its place? Is the thesis at the right
+      abstraction level? Can it be stated more tersely? Mode is autonomous
+      (no human in the loop during the pipeline). The elimination_report feeds
+      the goal-analysis quality gate as additional evidence — it does not
+      block the thesis directly.
+
+  - id: company-research/kata-calibration-measure
+    name: "KATA — metacognition calibration gap measurement (v0.36.0)"
+    path: kata-calibration-measure.j2
+    type: KnowAct
+    description: >
+      v0.36.0 cross-skill adapter. Adapts metacognition/meta-experiment to
+      close the flash pipeline's open kata loop. Flash step 20 (kata-
+      improvement-step1-direction) sets the direction but never measures the
+      gap. This step measures the analyst's calibration gap using the
+      market_calibration Brier score (step 19) and resolved_outcomes (step
+      18), then re-measures the current condition. Emits calibration_gap
+      (0.0 calibrated → 1.0 maximum gap) that LENS (step 23) consumes as a
+      6th axis alongside the existing five frameworks.
+
 # FlowDef orchestrators — two flowdefs mirroring EFRA-AI's two-pipeline
 # structure. See registry/manifests/company-research-flash.yaml and
 # registry/manifests/company-research-deep.yaml.

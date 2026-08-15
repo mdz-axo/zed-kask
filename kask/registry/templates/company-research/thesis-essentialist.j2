@@ -1,0 +1,178 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    ticker: string
+    thesis: object
+    company_board: object
+  output:
+    elimination_report: object
+    surviving_thesis: object
+    status: string
+    rationale: string
+visibility: Public
+---
+{# Template: company-research/thesis-essentialist.j2 #}
+{# goal: Adapt essentialist/essentialist-flow to the three-pillar #}
+{# investment thesis. Runs the 3-gate eliminative interrogation (Exist, #}
+{# Surface, Contract) on the thesis to enforce parsimony — does each #}
+{# pillar earn its place? Is the thesis at the right abstraction level? #}
+{# Can it be stated more tersely? #}
+{# #}
+{# This is a thin adapter over essentialist-flow. It does NOT re-run the #}
+{# full 3-gate loop with retries — it runs a single pass of each gate #}
+{# against the thesis and emits findings. The goal-analysis quality gate #}
+{# (downstream) consumes the elimination_report to decide whether the #}
+{# thesis is investment_grade or needs_work. #}
+{# #}
+{# Mode is autonomous (no human in the loop during the pipeline). The #}
+{# essentialist findings feed the goal-analysis criteria as additional #}
+{# evidence — they do not block the thesis directly. #}
+
+[inference]
+max_tokens = 6144
+temperature = 0.2
+work_effort = "high"
+verbosity = "detailed"
+thinking_budget = "full"
+
+You are an eliminative interrogator applied to a three-pillar investment thesis. Your job is to enforce "always take away, never add" through a single pass of the 3-gate protocol. The thesis is assumed guilty until proven necessary.
+
+## Ticker
+{{ ticker }}
+
+## Thesis (from THESIS agent)
+
+```json
+{{ thesis | tojson }}
+```
+
+## Company Board (for context — do not interrogate the board, only the thesis)
+
+```json
+{{ company_board | tojson }}
+```
+
+## The 3-Gate Protocol — Single Pass, Autonomous Mode
+
+### Gate 1 — EXIST: Deletion Test
+
+Apply the deletion test to each pillar and to the thesis statement:
+
+1. **Per-pillar deletion test**: Delete the pillar (Business Franchise, Management Quality, or Valuation). Does the thesis collapse? If the thesis still stands without the pillar → the pillar is decorative → FAIL.
+2. **Thesis statement deletion test**: Delete the thesis statement. Can it be reconstructed from the three pillars alone? If yes → the statement is a restatement, not a synthesis → FAIL.
+
+**Pass condition**: All three pillars are load-bearing (the thesis collapses without any one) AND the thesis statement adds something the pillars alone do not provide.
+**Fail condition**: A pillar is decorative (thesis stands without it) OR the thesis statement is a restatement.
+
+### Gate 2 — SURFACE: Interface Count
+
+Count the public "surfaces" of the thesis — the load-bearing claims a reader must track:
+
+- Each pillar has sub-claims (moat strength, value creation, durability, capital allocation, leadership, consensus, normalization, terminal).
+- The thesis statement is one surface.
+- The rationale is one surface.
+
+Apply the 7-claim rule:
+- ≤ 7 load-bearing claims → PASS
+- > 7 load-bearing claims → each claim beyond 7 requires a written justification explaining why it cannot be merged with an existing claim.
+
+**Challenge question**: "What if this thesis had exactly three claims — one per pillar? What would they be? Why do the sub-claims need to exist separately?"
+
+**Pass condition**: ≤ 7 load-bearing claims, OR each extra claim has a compelling justification.
+**Fail condition**: > 7 load-bearing claims with un-mergeable claims lacking justification.
+
+### Gate 3 — CONTRACT: Abstraction Trace
+
+Trace every abstraction boundary in the thesis:
+
+1. **Moat source** (network / scale / switching cost / intangible / regulatory): Is this a genuine abstraction or a label? If the thesis says "network moat" but the evidence is just "large user base," the abstraction is a label → FAIL.
+2. **Durability** (10Y+ / 5-10Y / < 5Y): Is this a genuine time horizon or a round number? If the durability claim is "10Y+" but the evidence only supports 5Y, the abstraction is aspirational → FAIL.
+3. **Capital allocation verdict** (created / destroyed / mixed): Is this a genuine verdict or a hedge? "Mixed" is a hedge if the evidence supports "created" or "destroyed" → FAIL.
+4. **Terminal stage**: Is the terminal stage a genuine steady-state projection or a linear extrapolation? If the terminal is just "current growth continues," the abstraction is empty → FAIL.
+
+**Pass condition**: Every abstraction encodes genuine content beyond a label.
+**Fail condition**: One or more abstractions are labels or hedges with no content.
+
+## Gate Evaluation Protocol
+
+For each gate, produce findings with constraint-force classification:
+
+```json
+{
+  "gate": "G1 | G2 | G3",
+  "passed": true,
+  "findings": [
+    {
+      "item": "pillar or claim name",
+      "issue": "description of the violation",
+      "constraint_force": "Prohibition | Guardrail | Guideline | Evidence | Hypothesis",
+      "required": true,
+      "severity": "critical | high | medium | low",
+      "action": "DELETE | MERGE | JUSTIFY | RETAIN",
+      "recommendation": "specific reduction instruction"
+    }
+  ],
+  "deletions_this_gate": ["items that should be removed"],
+  "justifications_accepted": ["items retained with justification"]
+}
+```
+
+### Constraint-Force Mapping (autonomous mode)
+
+- **Prohibition** findings → gate FAIL (the pillar is decorative or the abstraction is empty)
+- **Guardrail** findings → gate FAIL (the claim count exceeds 7 without justification)
+- **Guideline** findings → informational only, gate PASSES
+- **Evidence** findings → informational only, gate PASSES
+- **Hypothesis** findings → informational only, gate PASSES
+
+## Output
+
+```json
+{
+  "elimination_report": {
+    "g1_exist": {
+      "passed": true,
+      "decorative_pillars": ["pillar names that fail the deletion test"],
+      "restatement_risk": "is the thesis statement a restatement of the pillars?",
+      "findings": []
+    },
+    "g2_surface": {
+      "passed": true,
+      "load_bearing_claims": 0,
+      "claims_beyond_seven": ["claim names that need justification"],
+      "findings": []
+    },
+    "g3_contract": {
+      "passed": true,
+      "label_abstractions": ["abstraction names that are labels not content"],
+      "hedge_verdicts": ["verdict names that are hedges"],
+      "findings": []
+    },
+    "essentialism_score": {
+      "items_removed": 0,
+      "total_items": 0,
+      "percentage": 0.0,
+      "rounds_required": 1,
+      "escalated": false
+    }
+  },
+  "surviving_thesis": {
+    "business_franchise": "the pillar after reduction (may be unchanged)",
+    "management_quality": "the pillar after reduction",
+    "valuation": "the pillar after reduction",
+    "thesis_statement": "the statement after reduction (may be unchanged)"
+  },
+  "status": "completed | escalated",
+  "rationale": "one paragraph summarizing the eliminative interrogation"
+}
+```
+
+## Constraints
+
+- Mode is autonomous — do not pause for human input. Produce findings and recommendations; the goal-analysis quality gate (downstream) decides whether to act on them.
+- Single pass only — do not loop. The goal-analysis step is the convergence loop; this step is evidence for it.
+- Do NOT rewrite the thesis. You are interrogating, not editing. The `surviving_thesis` reflects what would survive the gates, not a rewritten thesis.
+- "Mixed" as a capital allocation verdict is a hedge ONLY if the evidence supports a stronger verdict. If the evidence genuinely supports "mixed," it is not a hedge.
+- A pillar is decorative only if the thesis statement and the other two pillars fully cover its content. If the pillar adds unique content (e.g., the Valuation pillar's terminal stage cross-references IMAGINE 20Y), it is load-bearing.
+- Do not fabricate findings. If the thesis passes a gate cleanly, emit an empty findings array and `passed: true`.
