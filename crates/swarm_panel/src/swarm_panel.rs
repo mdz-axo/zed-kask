@@ -390,6 +390,23 @@ enum SwarmFilter {
     Agents,
 }
 
+/// Browse-list filter by backend source. Orthogonal to `SwarmFilter` (which
+/// selects kind: All/Swarms/Agents) — kind and source are independent axes, so a
+/// single combined enum would either explode to 9 variants or lose the
+/// ability to show, e.g., all local agents. `Synced` entries (cards that exist
+/// in both cloud and local, linked by `cloud_id`) appear under both `Cloud`
+/// and `Local` — they represent a card visible on either backend, so hiding
+/// them from either view would be a regression. `All` shows every entry
+/// regardless of source. Restores the source filtering that `bc51229ffe`
+/// removed when it decoupled the per-form `CreateTarget` (creation target) from
+/// the browse view; `CreateTarget` only affects authoring, not browsing.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+enum SourceFilter {
+    All,
+    Cloud,
+    Local,
+}
+
 /// Which backend to target when creating an agent or swarm. This is a
 /// per-form choice, not a global setting — both cloud and local backends are
 /// always available (the swarm MCP server registers both tool sets in either
@@ -491,6 +508,11 @@ pub struct SwarmPanel {
     /// manual refresh.
     retry_attempt: u32,
     filter: SwarmFilter,
+    /// Browse-list source filter (All/Cloud/Local). Orthogonal to `filter`
+    /// (kind). Drives the source half of `filter_entries`; the kind half is
+    /// `filter`. Restored by re-adding the source filter control that
+    /// `bc51229ffe` removed.
+    source_filter: SourceFilter,
     entries: Vec<SwarmEntry>,
     filtered_entry_indices: Vec<usize>,
     query_editor: Entity<Editor>,
@@ -695,6 +717,7 @@ impl SwarmPanel {
                 retry_task: None,
                 retry_attempt: 0,
                 filter: SwarmFilter::All,
+                source_filter: SourceFilter::All,
                 entries: Vec::new(),
                 filtered_entry_indices: Vec::new(),
                 query_editor,
@@ -1717,15 +1740,20 @@ impl SwarmPanel {
         cx.notify();
     }
 
-    /// Filter the browse entries by the active `SwarmFilter` (All/Swarms/Agents)
-    /// and the search query. Both cloud and local entries are always shown —
-    /// the swarm MCP server registers both tool sets in either mode, so the
-    /// backend is not a capability gate and should not filter the browse list.
-    /// The prior design filtered by `kask.swarm.mode`, which hid local agents
-    /// when the setting was `abw` and vice-versa, forcing an either/or
-    /// round-trip through settings just to see the other backend's entries.
+    /// Filter the browse entries by the active `SwarmFilter` (All/Swarms/Agents),
+    /// the search query, and the active `SourceFilter` (All/Cloud/Local).
+    /// Kind and source are orthogonal axes — both are applied. The source
+    /// filter restores the cloud/local browse separation that `bc51229ffe`
+    /// removed when it moved backend selection onto the per-form
+    /// `CreateTarget` (which only affects creation, not browsing). `Synced`
+    /// entries (cards present in both backends, linked by `cloud_id`) appear
+    /// under both `Cloud` and `Local` — they are visible on either backend, so
+    /// hiding them from either view would be a regression. This matches the
+    /// original `kask.swarm.mode`-driven behavior, minus the settings
+    /// round-trip: the filter is in-memory state, toggled from the header.
     fn filter_entries(&mut self, cx: &mut Context<Self>) {
         let filter = self.filter;
+        let source_filter = self.source_filter;
         let query = self.search_query(cx).map(|q| q.to_lowercase());
         let indices: Vec<usize> = self
             .entries
@@ -1739,6 +1767,24 @@ impl SwarmPanel {
                     _ => false,
                 };
                 if !kind_matches {
+                    return false;
+                }
+                let source_matches = match source_filter {
+                    SourceFilter::All => true,
+                    SourceFilter::Cloud => match entry {
+                        SwarmEntry::Agent(a) => {
+                            a.source == AgentSource::Cloud || a.source == AgentSource::Synced
+                        }
+                        SwarmEntry::Swarm(s) => s.source == AgentSource::Cloud,
+                    },
+                    SourceFilter::Local => match entry {
+                        SwarmEntry::Agent(a) => {
+                            a.source == AgentSource::Local || a.source == AgentSource::Synced
+                        }
+                        SwarmEntry::Swarm(s) => s.source == AgentSource::Local,
+                    },
+                };
+                if !source_matches {
                     return false;
                 }
                 match &query {
@@ -2578,6 +2624,56 @@ impl Render for SwarmPanel {
                                             SwarmFilter::All => 0,
                                             SwarmFilter::Swarms => 1,
                                             SwarmFilter::Agents => 2,
+                                        })
+                                        .into_any_element(),
+                                    ),
+                                )
+                                // Source filter (All/Cloud/Local) — orthogonal to the
+                                // kind filter above. Restores the cloud/local browse
+                                // separation removed by `bc51229ffe`. `All` shows
+                                // every entry; `Cloud` shows cloud + synced agents
+                                // and cloud swarms; `Local` shows local + synced
+                                // agents and local swarms. Synced cards appear in
+                                // both because they exist on both backends.
+                                .child(
+                                    div().child(
+                                        ToggleButtonGroup::single_row(
+                                            "swarm-source-filter-buttons",
+                                            [
+                                                ToggleButtonSimple::new(
+                                                    "All",
+                                                    cx.listener(|this, _event, _, cx| {
+                                                        this.source_filter = SourceFilter::All;
+                                                        this.filter_entries(cx);
+                                                        this.scroll_to_top(cx);
+                                                    }),
+                                                ),
+                                                ToggleButtonSimple::new(
+                                                    "Cloud",
+                                                    cx.listener(|this, _event, _, cx| {
+                                                        this.source_filter = SourceFilter::Cloud;
+                                                        this.filter_entries(cx);
+                                                        this.scroll_to_top(cx);
+                                                    }),
+                                                ),
+                                                ToggleButtonSimple::new(
+                                                    "Local",
+                                                    cx.listener(|this, _event, _, cx| {
+                                                        this.source_filter = SourceFilter::Local;
+                                                        this.filter_entries(cx);
+                                                        this.scroll_to_top(cx);
+                                                    }),
+                                                ),
+                                            ],
+                                        )
+                                        .style(ToggleButtonGroupStyle::Outlined)
+                                        .size(ToggleButtonGroupSize::Custom(rems_from_px(30.0_f32)))
+                                        .label_size(LabelSize::Default)
+                                        .auto_width()
+                                        .selected_index(match self.source_filter {
+                                            SourceFilter::All => 0,
+                                            SourceFilter::Cloud => 1,
+                                            SourceFilter::Local => 2,
                                         })
                                         .into_any_element(),
                                     ),

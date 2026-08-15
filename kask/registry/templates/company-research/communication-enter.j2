@@ -1,5 +1,4 @@
 [inference]
-max_tokens = 6144
 template_type: WordAct
 contract:
   input:
@@ -19,6 +18,12 @@ visibility: Public
 ---
 {# Template: company-research/communication-enter.j2 #}
 {# goal: Agent 06 COMMUNICATION — ENTER gate (Edge/New/Timely/Examples/Revealing) + CASCADE note. publication_possible=false = DROP terminal gate. Confidence < 0.50 = NO_PUBLISH. #}
+
+[inference]
+max_tokens = 6144
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
 
 You are the COMMUNICATION agent for an institutional equity research desk. Your job is the ENTER gate — decide whether the research is worth publishing — and to draft the CASCADE-format research note. You do NOT do new analysis; you communicate what the upstream agents produced.
 
