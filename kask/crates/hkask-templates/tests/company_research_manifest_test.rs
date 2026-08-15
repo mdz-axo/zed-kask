@@ -415,6 +415,34 @@ fn company_research_deep_uses_canonical_actions_only() {
     }
 }
 
+// ── Condition syntax contract ────────────────────────────────────────────
+
+/// The condition evaluator (`condition.rs::evaluate_step_condition`) does NOT
+/// render Jinja expressions. It evaluates raw strings as dot-path lookups,
+/// comparisons, and boolean compositions. A condition wrapped in `{{ }}` is
+/// treated as a literal string key lookup — it will never resolve, and the
+/// condition silently evaluates to a fixed value (true for `!=`, false for
+/// truthy checks). This test pins the contract: no condition field may
+/// contain `{{` — the native syntax (dot paths, `==`, `!=`, `AND`, `OR`)
+/// must be used directly.
+#[test]
+fn company_research_conditions_do_not_use_jinja_syntax() {
+    for name in &["company-research-flash", "company-research-deep"] {
+        let manifest = load_named_manifest(name);
+        for step in &manifest.steps {
+            if let Some(ref cond) = step.condition {
+                assert!(
+                    !cond.contains("{{"),
+                    "{} step {} condition contains Jinja syntax '{{{{' — the condition evaluator does not render Jinja. Use native syntax (dot paths, ==, !=, AND, OR). Condition: {}",
+                    name,
+                    step.ordinal,
+                    cond
+                );
+            }
+        }
+    }
+}
+
 // ── Cross-skill composition contract ──────────────────────────────────────
 
 #[test]

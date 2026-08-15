@@ -135,6 +135,13 @@ fn invalid_yaml_is_rejected() {
 /// Verify the superforecasting manifest loads via the full loader and that
 /// its `compute` step (the connected-layers bridge to hkask_forecast) parses
 /// correctly with `action: "compute"` and a valid `compute_ref`.
+///
+/// Co-evolution Phase 1: three native MCP `execute` steps were added to close
+/// the calibration loop:
+///   - Step 4: market_match (outside-view anchor from prediction markets)
+///   - Step 16: scenario_score (persist forecast for later Brier scoring)
+///   - Step 18: scenario_calibration (fetch prior Brier/overconfidence curve)
+/// The manifest grew from 18 to 21 steps; all downstream ordinals shifted.
 #[test]
 fn superforecasting_manifest_loads_with_compute_step() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -148,21 +155,17 @@ fn superforecasting_manifest_loads_with_compute_step() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load superforecasting manifest: {e}"));
 
-    // 11 select steps + 6 compute steps + 1 loop step = 18 total.
-    // The combine_tree_probabilities compute step (ordinal 9) was inserted
-    // between stage_3 and stage_4 to replace the heuristic combine. The
-    // former kata.convergence_check compute step was removed — the
-    // ConvergenceTracker is the single convergence gate. The lisp.eval step
-    // (ordinal 16) remains: it computes the convergence signal that the loop
-    // step pushes via `convergence_signal:`.
+    // 11 select steps + 6 compute steps + 3 execute steps + 1 loop step = 21 total.
+    // The three execute steps (market_match, scenario_score, scenario_calibration)
+    // were added in Co-evolution Phase 1 to close the calibration loop.
     assert_eq!(
         manifest.steps.len(),
-        18,
-        "expected 18 steps after Fermi + outside-view + tree-combine + Bayesian + lisp.eval signal + calibration compute steps"
+        21,
+        "expected 21 steps after Co-evolution Phase 1 (3 execute steps added)"
     );
 
-    // Six compute steps: Fermi (3), outside-view (5), tree-combine (9),
-    // Bayesian (11), lisp.eval signal (16), calibration (17). The former
+    // Six compute steps: Fermi (3), outside-view (6), tree-combine (10),
+    // Bayesian (12), lisp.eval signal (19), calibration (20). The former
     // convergence-check compute was removed — convergence is gated by the
     // ConvergenceTracker.
     let compute_steps: Vec<_> = manifest
@@ -177,50 +180,96 @@ fn superforecasting_manifest_loads_with_compute_step() {
         Some("calibrate_from_fermi")
     );
     assert_eq!(
-        compute_steps[1].ordinal, 5,
-        "outside-view compute at ordinal 5"
+        compute_steps[1].ordinal, 6,
+        "outside-view compute at ordinal 6"
     );
     assert_eq!(
         compute_steps[1].compute_ref.as_deref(),
         Some("outside_view_adjustment")
     );
     assert_eq!(
-        compute_steps[2].ordinal, 9,
-        "tree-combine compute at ordinal 9"
+        compute_steps[2].ordinal, 10,
+        "tree-combine compute at ordinal 10"
     );
     assert_eq!(
         compute_steps[2].compute_ref.as_deref(),
         Some("combine_tree_probabilities")
     );
     assert_eq!(
-        compute_steps[3].ordinal, 11,
-        "Bayesian compute at ordinal 11"
+        compute_steps[3].ordinal, 12,
+        "Bayesian compute at ordinal 12"
     );
     assert_eq!(
         compute_steps[3].compute_ref.as_deref(),
         Some("bayesian_update")
     );
     assert_eq!(
-        compute_steps[4].ordinal, 16,
-        "lisp.eval signal compute at ordinal 16"
+        compute_steps[4].ordinal, 19,
+        "lisp.eval signal compute at ordinal 19"
     );
     assert_eq!(compute_steps[4].compute_ref.as_deref(), Some("lisp.eval"));
     assert_eq!(
-        compute_steps[5].ordinal, 17,
-        "calibration feedback compute at ordinal 17"
+        compute_steps[5].ordinal, 20,
+        "calibration feedback compute at ordinal 20"
     );
     assert_eq!(
         compute_steps[5].compute_ref.as_deref(),
         Some("apply_calibration_adjustment")
     );
 
-    // The loop step (ordinal 18) must carry the calibration-adjusted prior.
+    // Three execute steps (Co-evolution Phase 1): market_match (4),
+    // scenario_score (16), scenario_calibration (18). Each must have an
+    // mcp field and an on_failure config (no silent collapse to defaults).
+    let execute_steps: Vec<_> = manifest
+        .steps
+        .iter()
+        .filter(|s| s.action == "execute")
+        .collect();
+    assert_eq!(
+        execute_steps.len(),
+        3,
+        "manifest must have 3 execute steps (Co-evolution Phase 1)"
+    );
+    assert_eq!(execute_steps[0].ordinal, 4, "market_match execute at ordinal 4");
+    assert_eq!(
+        execute_steps[0].mcp.as_deref(),
+        Some("market_match"),
+        "step 4 must call market_match"
+    );
+    assert_eq!(
+        execute_steps[1].ordinal, 16,
+        "scenario_score execute at ordinal 16"
+    );
+    assert_eq!(
+        execute_steps[1].mcp.as_deref(),
+        Some("scenario_score"),
+        "step 16 must call scenario_score"
+    );
+    assert_eq!(
+        execute_steps[2].ordinal, 18,
+        "scenario_calibration execute at ordinal 18"
+    );
+    assert_eq!(
+        execute_steps[2].mcp.as_deref(),
+        Some("scenario_calibration"),
+        "step 18 must call scenario_calibration"
+    );
+    // Every execute step must have on_failure (no silent collapse to defaults).
+    for step in &execute_steps {
+        assert!(
+            step.on_failure.is_some(),
+            "execute step {} must have on_failure config (no silent collapse)",
+            step.ordinal
+        );
+    }
+
+    // The loop step (ordinal 21) must carry the calibration-adjusted prior.
     let loop_step = manifest
         .steps
         .iter()
         .find(|s| s.action == "loop")
         .expect("manifest must have a loop step");
-    assert_eq!(loop_step.ordinal, 18, "loop step should be ordinal 18");
+    assert_eq!(loop_step.ordinal, 21, "loop step should be ordinal 21");
 }
 
 /// Verify the stage_1 and stage_3 templates declare the tree-structure
@@ -374,4 +423,279 @@ fn kali_audit_manifest_loads_with_correct_structure() {
     assert!(manifest.gas.cap > 0, "gas cap must be positive");
 
     // Verify steps are present.
+}
+
+/// Verify the scenario-builder manifest loads correctly after Co-evolution
+/// Phase 1 migration. Two native MCP `execute` steps were added to close the
+/// calibration loop:
+///   - Step 2: market_match (fetch prediction-market records for the focal question)
+///   - Step 8: scenario_build (persist generated scenarios for later outcome comparison)
+/// The manifest grew from 8 to 10 steps; all downstream ordinals shifted.
+#[test]
+fn scenario_builder_manifest_loads_with_execute_steps() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = crate_dir.join("../..");
+    let manifest_path = workspace_root.join("registry/manifests/scenario-builder.yaml");
+    if !manifest_path.exists() {
+        eprintln!("scenario-builder.yaml not found — skipping");
+        return;
+    }
+    let yaml = std::fs::read_to_string(&manifest_path).unwrap();
+    let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
+        .unwrap_or_else(|e| panic!("Failed to load scenario-builder manifest: {e}"));
+
+    // 6 select steps + 1 compute step + 2 execute steps + 1 loop step = 10 total.
+    assert_eq!(
+        manifest.steps.len(),
+        10,
+        "expected 10 steps after Co-evolution Phase 1 (2 execute steps added)"
+    );
+
+    // Two execute steps: market_match (2) and scenario_build (8).
+    let execute_steps: Vec<_> = manifest
+        .steps
+        .iter()
+        .filter(|s| s.action == "execute")
+        .collect();
+    assert_eq!(
+        execute_steps.len(),
+        2,
+        "manifest must have 2 execute steps (Co-evolution Phase 1)"
+    );
+    assert_eq!(execute_steps[0].ordinal, 2, "market_match execute at ordinal 2");
+    assert_eq!(
+        execute_steps[0].mcp.as_deref(),
+        Some("market_match"),
+        "step 2 must call market_match"
+    );
+    assert_eq!(
+        execute_steps[1].ordinal, 8,
+        "scenario_build execute at ordinal 8"
+    );
+    assert_eq!(
+        execute_steps[1].mcp.as_deref(),
+        Some("scenario_build"),
+        "step 8 must call scenario_build"
+    );
+    // Every execute step must have on_failure (no silent collapse to defaults).
+    for step in &execute_steps {
+        assert!(
+            step.on_failure.is_some(),
+            "execute step {} must have on_failure config (no silent collapse)",
+            step.ordinal
+        );
+    }
+
+    // The loop step (ordinal 10) must reference step_9_result for convergence.
+    let loop_step = manifest
+        .steps
+        .iter()
+        .find(|s| s.action == "loop")
+        .expect("manifest must have a loop step");
+    assert_eq!(loop_step.ordinal, 10, "loop step should be ordinal 10");
+}
+
+/// Verify the kanban-task-management manifest loads correctly after Co-evolution
+/// Phase 1 migration. Five native MCP `execute` steps replace the
+/// "post-cascade instructions for the agent" pattern for deterministic
+/// single-call tool invocations:
+///   - Step 6: kanban_board_create (decompose phase — create the board)
+///   - Step 8: kanban_task_spawn (delegate phase — spawn the subagent)
+///   - Step 10: kanban_task_comment (delegate phase — post status comment)
+///   - Step 11: kanban_board_list (operate phase — fetch board state)
+///   - Step 12: kanban_task_list (operate phase — fetch task list)
+/// Multi-task creation and LLM-judgment tool calls remain agent-mediated.
+/// The manifest grew from 14 to 19 steps.
+#[test]
+fn kanban_task_management_manifest_loads_with_execute_steps() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = crate_dir.join("../..");
+    let manifest_path = workspace_root.join("registry/manifests/kanban-task-management.yaml");
+    if !manifest_path.exists() {
+        eprintln!("kanban-task-management.yaml not found — skipping");
+        return;
+    }
+    let yaml = std::fs::read_to_string(&manifest_path).unwrap();
+    let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
+        .unwrap_or_else(|e| panic!("Failed to load kanban-task-management manifest: {e}"));
+
+    // 13 select steps + 5 execute steps + 1 loop step = 19 total.
+    assert_eq!(
+        manifest.steps.len(),
+        19,
+        "expected 19 steps after Co-evolution Phase 1 (5 execute steps added)"
+    );
+
+    // Five execute steps, each condition-gated on a triage phase.
+    let execute_steps: Vec<_> = manifest
+        .steps
+        .iter()
+        .filter(|s| s.action == "execute")
+        .collect();
+    assert_eq!(
+        execute_steps.len(),
+        5,
+        "manifest must have 5 execute steps (Co-evolution Phase 1)"
+    );
+    assert_eq!(
+        execute_steps[0].ordinal, 6,
+        "kanban_board_create execute at ordinal 6"
+    );
+    assert_eq!(
+        execute_steps[0].mcp.as_deref(),
+        Some("kanban_board_create"),
+        "step 6 must call kanban_board_create"
+    );
+    assert_eq!(
+        execute_steps[1].ordinal, 8,
+        "kanban_task_spawn execute at ordinal 8"
+    );
+    assert_eq!(
+        execute_steps[1].mcp.as_deref(),
+        Some("kanban_task_spawn"),
+        "step 8 must call kanban_task_spawn"
+    );
+    assert_eq!(
+        execute_steps[2].ordinal, 10,
+        "kanban_task_comment execute at ordinal 10"
+    );
+    assert_eq!(
+        execute_steps[2].mcp.as_deref(),
+        Some("kanban_task_comment"),
+        "step 10 must call kanban_task_comment"
+    );
+    assert_eq!(
+        execute_steps[3].ordinal, 11,
+        "kanban_board_list execute at ordinal 11"
+    );
+    assert_eq!(
+        execute_steps[3].mcp.as_deref(),
+        Some("kanban_board_list"),
+        "step 11 must call kanban_board_list"
+    );
+    assert_eq!(
+        execute_steps[4].ordinal, 12,
+        "kanban_task_list execute at ordinal 12"
+    );
+    assert_eq!(
+        execute_steps[4].mcp.as_deref(),
+        Some("kanban_task_list"),
+        "step 12 must call kanban_task_list"
+    );
+    // Every execute step must have on_failure and a condition gate.
+    for step in &execute_steps {
+        assert!(
+            step.on_failure.is_some(),
+            "execute step {} must have on_failure config (no silent collapse)",
+            step.ordinal
+        );
+        assert!(
+            step.condition.is_some(),
+            "execute step {} must have a condition gate (triage phase)",
+            step.ordinal
+        );
+    }
+
+    // The loop step (ordinal 19) must reference the final phase outputs.
+    let loop_step = manifest
+        .steps
+        .iter()
+        .find(|s| s.action == "loop")
+        .expect("manifest must have a loop step");
+    assert_eq!(loop_step.ordinal, 19, "loop step should be ordinal 19");
+}
+
+/// Verify the swarm-intelligence manifest loads correctly after Co-evolution
+/// Phase 1 migration. Four native MCP `execute` steps replace the
+/// agent-mediated state fetch in SENSE and CHECK:
+///   - Step 1: swarm_get_swarm (ABW mode — fetch workspace roster)
+///   - Step 2: swarm_get_local_swarm (local mode — fetch local swarm roster)
+///   - Step 8: swarm_get_swarm (ABW mode — re-fetch post-Act)
+///   - Step 9: swarm_get_local_swarm (local mode — re-fetch post-Act)
+/// The ACT phase remains agent-mediated (consent-gated).
+/// The manifest grew from 9 to 13 steps.
+#[test]
+fn swarm_intelligence_manifest_loads_with_execute_steps() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = crate_dir.join("../..");
+    let manifest_path = workspace_root.join("registry/manifests/swarm-intelligence.yaml");
+    if !manifest_path.exists() {
+        eprintln!("swarm-intelligence.yaml not found — skipping");
+        return;
+    }
+    let yaml = std::fs::read_to_string(&manifest_path).unwrap();
+    let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
+        .unwrap_or_else(|e| panic!("Failed to load swarm-intelligence manifest: {e}"));
+
+    // 5 select steps + 2 compute steps + 4 execute steps + 1 loop step + 1 choice = 13 total.
+    assert_eq!(
+        manifest.steps.len(),
+        13,
+        "expected 13 steps after Co-evolution Phase 1 (4 execute steps added)"
+    );
+
+    // Four execute steps, each condition-gated on mode.
+    let execute_steps: Vec<_> = manifest
+        .steps
+        .iter()
+        .filter(|s| s.action == "execute")
+        .collect();
+    assert_eq!(
+        execute_steps.len(),
+        4,
+        "manifest must have 4 execute steps (Co-evolution Phase 1)"
+    );
+    // Steps 1 and 8: swarm_get_swarm (ABW mode)
+    assert_eq!(execute_steps[0].ordinal, 1, "swarm_get_swarm execute at ordinal 1");
+    assert_eq!(
+        execute_steps[0].mcp.as_deref(),
+        Some("swarm_get_swarm"),
+        "step 1 must call swarm_get_swarm"
+    );
+    // Steps 2 and 9: swarm_get_local_swarm (local mode)
+    assert_eq!(
+        execute_steps[1].ordinal, 2,
+        "swarm_get_local_swarm execute at ordinal 2"
+    );
+    assert_eq!(
+        execute_steps[1].mcp.as_deref(),
+        Some("swarm_get_local_swarm"),
+        "step 2 must call swarm_get_local_swarm"
+    );
+    assert_eq!(execute_steps[2].ordinal, 8, "swarm_get_swarm re-fetch at ordinal 8");
+    assert_eq!(
+        execute_steps[2].mcp.as_deref(),
+        Some("swarm_get_swarm"),
+        "step 8 must call swarm_get_swarm"
+    );
+    assert_eq!(
+        execute_steps[3].ordinal, 9,
+        "swarm_get_local_swarm re-fetch at ordinal 9"
+    );
+    assert_eq!(
+        execute_steps[3].mcp.as_deref(),
+        Some("swarm_get_local_swarm"),
+        "step 9 must call swarm_get_local_swarm"
+    );
+    // Every execute step must have on_failure and a condition gate.
+    for step in &execute_steps {
+        assert!(
+            step.on_failure.is_some(),
+            "execute step {} must have on_failure config (no silent collapse)",
+            step.ordinal
+        );
+        assert!(
+            step.condition.is_some(),
+            "execute step {} must have a condition gate (mode)",
+            step.ordinal
+        );
+    }
+
+    // The loop step (ordinal 13) must reference step_10_result (CHECK).
+    let loop_step = manifest
+        .steps
+        .iter()
+        .find(|s| s.action == "loop")
+        .expect("manifest must have a loop step");
+    assert_eq!(loop_step.ordinal, 13, "loop step should be ordinal 13");
 }

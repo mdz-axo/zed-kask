@@ -3,6 +3,15 @@
 # Inside view (stage 3) is split: hypothesis generation → falsifiability-hypothesize,
 # counterfactual necessary-conditions → falsifiability-counterfactual, probability
 # estimation + anchor adjustment → superforecasting/stage_3_probability_estimate.
+#
+# Co-evolution Phase 1: three native MCP execute steps close the calibration
+# loop that the skill's comments previously described but never implemented:
+#   - Step 4: market_match (outside-view anchor from prediction markets)
+#   - Step 16: scenario_score (persist forecast for later Brier scoring)
+#   - Step 18: scenario_calibration (fetch prior Brier/overconfidence curve)
+# The loop: forecast → persist → market resolves → Brier score →
+#   scenario_calibration reads Brier → overconfidence_score feeds step 20 →
+#     next forecast is calibrated.
 
 manifest:
   id: superforecasting
@@ -69,25 +78,29 @@ inputs:
     required: false
     description: >
       Signed calibration bias (positive = overconfident). Fed to the
-      step-16 compute (apply_calibration_adjustment) to close the learning
-      loop. Defaults to 0.0 (no adjustment). Sources, in priority order:
-      (1) the `eqm` skill's feedback step (overconfidence_bias computed from
-      EQM red-flag dominance — `extreme_confidence` + `forecast_rationale_misalign`
-      minus `statistical_reasoning` + `best_practices`), which the invoking
-      agent fetches by running `eqm` on the prior iteration's rationale
-      before re-invoking superforecasting; (2) a Brier-scored calibration
-      curve from `scenario_calibration`; (3) 0.0 (no adjustment).
+      step-20 compute (apply_calibration_adjustment) as a fallback when the
+      scenario_calibration execute step (18) returns insufficient data.
+      Sources, in priority order: (1) the scenario_calibration execute step
+      (18), which fetches the overconfidence_score from the scenarios MCP
+      forecast store — the canonical Brier-scored calibration curve; (2) the
+      `eqm` skill's feedback step (overconfidence_bias computed from EQM
+      red-flag dominance), which the invoking agent fetches by running `eqm`
+      on the prior iteration's rationale before re-invoking superforecasting;
+      (3) 0.0 (no adjustment).
   - name: market_context
     type: array
     required: false
     description: >
-      Annotated prediction-market records for the forecasting question,
-      fetched by the invoking agent from hkask-mcp-prediction-markets
-      (`market_match`) before cascade invocation. Each element is a
-      MarketRecord carrying probability + reliability_tier + calibration +
-      ontology mapping. Merged into stage 2's outside-view `knowns` so a
-      market-implied base rate anchors the reference class. Absent = no
-      market anchor (cascade runs on LLM reference classes only).
+      Annotated prediction-market records for the forecasting question.
+      Fetched natively by the market_match execute step (4) from
+      hkask-mcp-prediction-markets. Each element is a confidence-tiered
+      MarketRecord candidate carrying probability + reliability_tier +
+      calibration + ontology mapping. Merged into stage 2's outside-view
+      `knowns` so a market-implied base rate anchors the reference class.
+      This input is retained as a cascade-level override — the invoking agent
+      may pre-populate it to bypass the market_match step's fetch (e.g. when
+      the prediction-markets server is offline). When absent, step 4 fetches
+      it deterministically.
   - name: expert_prior
     type: array
     required: false
@@ -150,7 +163,36 @@ steps:
     input_mapping:
       questions: "{{ step_2_result.sub_questions | default([]) }}"
 
+  # ── Outside-view market anchor (native MCP execute step) ──
+  # Fetches prediction-market candidates for the forecasting question via
+  # market_match. The result (an array of confidence-tiered MarketRecord
+  # candidates) feeds the outside-view step's market_context input, replacing
+  # the former agent-mediated fetch. market_match refuses low-confidence
+  # matches rather than anchoring on a wrong-event market — an empty result
+  # is a valid signal that no relevant market exists, not an error.
   - ordinal: 4
+    action: execute
+    description: >
+      Fetch prediction-market candidates for the forecasting question via
+      market_match (hkask-mcp-prediction-markets). Deterministic outside-view
+      anchor — the market-implied probability is the strongest reference-class
+      base rate when a relevant market exists. Result lands in step_4_result
+      and feeds the outside-view step's market_context input.
+    mcp: market_match
+    gas_cap: 2000
+    timeout_seconds: 60
+    input_mapping:
+      question: "{{ forecasting_question }}"
+      limit: 5
+    on_failure:
+      action: escalate
+      resume: >
+        market_match failed — the prediction-markets MCP server may be down or
+        the base-events registry may be empty. Restart the server via
+        sync_kask_mcp_servers and re-invoke, or proceed without a market anchor
+        by passing market_context: [] as a cascade input.
+
+  - ordinal: 5
     action: select
     description: Build outside-view base-rate anchor.
     renderer: minijinja
@@ -161,10 +203,10 @@ steps:
       forecasting_question: "{{ forecasting_question }}"
       sub_questions: "{{ step_2_result.sub_questions | default([]) }}"
       knowns: "{{ step_2_result.knowns | default([]) }}"
-      market_context: "{{ market_context | default([]) }}"
+      market_context: "{{ step_4_result | default([]) }}"
       expert_prior: "{{ expert_prior | default([]) }}"
 
-  - ordinal: 5
+  - ordinal: 6
     action: compute
     description: >
       Deterministic outside-view adjustment — shrinkage estimator blending the
@@ -178,11 +220,11 @@ steps:
     gas_cap: 100
     timeout_seconds: 5
     input_mapping:
-      base_rate: "{{ step_4_result.starting_probability | default(0.5) }}"
+      base_rate: "{{ step_5_result.starting_probability | default(0.5) }}"
       inside_estimate: "{{ step_3_result.calibrated | default(0.5) }}"
-      reference_count: "{{ step_4_result.base_rates | default([]) | length }}"
+      reference_count: "{{ step_5_result.base_rates | default([]) | length }}"
 
-  - ordinal: 6
+  - ordinal: 7
     action: select
     description: >
       Delegate causal-hypothesis generation to the falsifiability skill
@@ -196,9 +238,9 @@ steps:
     input_mapping:
       admitted_target: "{{ forecasting_question }}"
       domain: "{{ domain | default('forecasting') }}"
-      context: "{{ {'sub_questions': step_2_result.sub_questions | default([]), 'outside_view': step_4_result} }}"
+      context: "{{ {'sub_questions': step_2_result.sub_questions | default([]), 'outside_view': step_5_result} }}"
 
-  - ordinal: 7
+  - ordinal: 8
     action: select
     description: >
       Delegate necessary-conditions counterfactual analysis to the falsifiability
@@ -210,11 +252,11 @@ steps:
     gas_cap: 4096
     timeout_seconds: 150
     input_mapping:
-      hypotheses: "{{ step_6_result.hypotheses | default([]) }}"
+      hypotheses: "{{ step_7_result.hypotheses | default([]) }}"
       admitted_target: "{{ forecasting_question }}"
       domain: "{{ domain | default('forecasting') }}"
 
-  - ordinal: 8
+  - ordinal: 9
     action: select
     description: >
       Estimate per-hypothesis probabilities (informed by each counterfactual's
@@ -222,7 +264,7 @@ steps:
       conditional probability tree. The remaining inside-view work after
       generation and counterfactual analysis were delegated. The starting
       probability now comes from the deterministic outside-view compute step
-      (step_5_result.calibrated), not the LLM's raw starting_probability. The
+      (step_6_result.calibrated), not the LLM's raw starting_probability. The
       tree combination is no longer LLM-estimated — stage 3 emits the tree
       (tree_nodes) and the next compute step (combine_tree_probabilities)
       derives tree_combined_probability via the exact chain-rule
@@ -233,15 +275,15 @@ steps:
     timeout_seconds: 150
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
-      hypotheses: "{{ step_6_result.hypotheses | default([]) }}"
-      counterfactuals: "{{ step_7_result.counterfactuals | default([]) }}"
-      starting_probability: "{{ step_5_result.calibrated | default(0.5) }}"
-      outside_view_output: "{{ step_4_result }}"
+      hypotheses: "{{ step_7_result.hypotheses | default([]) }}"
+      counterfactuals: "{{ step_8_result.counterfactuals | default([]) }}"
+      starting_probability: "{{ step_6_result.calibrated | default(0.5) }}"
+      outside_view_output: "{{ step_5_result }}"
       sub_question_tree: "{{ step_2_result.sub_question_tree | default([]) }}"
       topological_order: "{{ step_2_result.topological_order | default([]) }}"
       outcome_node_id: "{{ step_2_result.outcome_node_id | default('') }}"
 
-  - ordinal: 9
+  - ordinal: 10
     action: compute
     description: >
       Deterministic conditional-tree combine — replaces stage_3's former
@@ -258,11 +300,11 @@ steps:
     gas_cap: 100
     timeout_seconds: 5
     input_mapping:
-      nodes: "{{ step_8_result.tree_nodes | default([]) }}"
+      nodes: "{{ step_9_result.tree_nodes | default([]) }}"
       topological_order: "{{ step_2_result.topological_order | default([]) }}"
       outcome_id: "{{ step_2_result.outcome_node_id | default('') }}"
 
-  - ordinal: 10
+  - ordinal: 11
     action: select
     description: Apply Bayesian updates from incoming evidence.
     renderer: minijinja
@@ -271,30 +313,30 @@ steps:
     timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
-      prior_probability: "{{ step_9_result.tree_combined_probability | default(step_8_result.hypothesis_probabilities.combined_probability | default(step_5_result.calibrated | default(0.5))) }}"
-      hypothesis_analysis: "{{ step_8_result.hypothesis_probabilities | default({}) }}"
+      prior_probability: "{{ step_10_result.tree_combined_probability | default(step_9_result.hypothesis_probabilities.combined_probability | default(step_6_result.calibrated | default(0.5))) }}"
+      hypothesis_analysis: "{{ step_9_result.hypothesis_probabilities | default({}) }}"
       new_evidence: "{{ new_evidence | default([]) }}"
-      market_context: "{{ market_context | default([]) }}"
+      market_context: "{{ step_4_result | default([]) }}"
       expert_prior: "{{ expert_prior | default([]) }}"
 
-  - ordinal: 11
+  - ordinal: 12
     action: compute
     description: >
       Deterministic Bayesian update — applies Bayes' theorem using the LLM's
       evidence assessment (evidence_likelihood = P(E|H), evidence_base_rate =
       P(E)) and the prior from the tree-combine step. Uses
       hkask_forecast::bayesian_update. Replaces the LLM's arithmetic with
-      canonical math. The LLM's updated_probability is retained in step_10_result
+      canonical math. The LLM's updated_probability is retained in step_11_result
       for cross-validation against this deterministic posterior.
     compute_ref: bayesian_update
     gas_cap: 100
     timeout_seconds: 5
     input_mapping:
-      prior: "{{ step_9_result.tree_combined_probability | default(step_5_result.calibrated | default(0.5)) }}"
-      evidence_likelihood: "{{ step_10_result.evidence_likelihood | default(0.5) }}"
-      evidence_base_rate: "{{ step_10_result.evidence_base_rate | default(0.5) }}"
+      prior: "{{ step_10_result.tree_combined_probability | default(step_6_result.calibrated | default(0.5)) }}"
+      evidence_likelihood: "{{ step_11_result.evidence_likelihood | default(0.5) }}"
+      evidence_base_rate: "{{ step_11_result.evidence_base_rate | default(0.5) }}"
 
-  - ordinal: 12
+  - ordinal: 13
     action: select
     description: Synthesize multi-model dragonfly-eye view.
     renderer: minijinja
@@ -303,11 +345,11 @@ steps:
     timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
-      updated_probability: "{{ step_11_result.posterior | default(0.5) }}"
-      hypothesis_analysis: "{{ step_8_result.hypothesis_probabilities | default({}) }}"
-      inside_view_output: "{{ step_8_result }}"
+      updated_probability: "{{ step_12_result.posterior | default(0.5) }}"
+      hypothesis_analysis: "{{ step_9_result.hypothesis_probabilities | default({}) }}"
+      inside_view_output: "{{ step_9_result }}"
 
-  - ordinal: 13
+  - ordinal: 14
     action: select
     description: Calibrate final probability and confidence level.
     renderer: minijinja
@@ -316,11 +358,11 @@ steps:
     timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
-      synthesized_probability: "{{ step_12_result.synthesized_probability | default(step_11_result.posterior | default(0.5)) }}"
-      synthesis_output: "{{ step_12_result }}"
-      pipeline_outputs: "{{ {'triage': step_1_result, 'outside': step_4_result, 'inside': step_8_result, 'evidence': step_10_result, 'synthesis': step_12_result} }}"
+      synthesized_probability: "{{ step_13_result.synthesized_probability | default(step_12_result.posterior | default(0.5)) }}"
+      synthesis_output: "{{ step_13_result }}"
+      pipeline_outputs: "{{ {'triage': step_1_result, 'outside': step_5_result, 'inside': step_9_result, 'evidence': step_11_result, 'synthesis': step_13_result} }}"
 
-  - ordinal: 14
+  - ordinal: 15
     action: select
     description: Record structured forecast for later scoring/post-mortem.
     renderer: minijinja
@@ -329,13 +371,59 @@ steps:
     timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
-      final_probability: "{{ step_13_result.final_probability | default(step_12_result.synthesized_probability | default(0.5)) }}"
-      confidence_level: "{{ step_13_result.confidence_level | default('medium') }}"
-      pipeline_summary: "{{ {'triage_difficulty': step_1_result.difficulty_level | default('unknown'), 'sub_question_count': step_2_result.sub_questions | default([]) | length, 'reference_class_count': step_4_result.reference_classes | default([]) | length, 'hypothesis_count': step_6_result.hypotheses | default([]) | length, 'evidence_count': step_10_result.evidence_items | default([]) | length} }}"
+      final_probability: "{{ step_14_result.final_probability | default(step_13_result.synthesized_probability | default(0.5)) }}"
+      confidence_level: "{{ step_14_result.confidence_level | default('medium') }}"
+      pipeline_summary: "{{ {'triage_difficulty': step_1_result.difficulty_level | default('unknown'), 'sub_question_count': step_2_result.sub_questions | default([]) | length, 'reference_class_count': step_5_result.reference_classes | default([]) | length, 'hypothesis_count': step_7_result.hypotheses | default([]) | length, 'evidence_count': step_11_result.evidence_items | default([]) | length} }}"
       resolution_criteria: "{{ resolution_criteria | default('Outcome judged against explicit public evidence.') }}"
       expiration_date: "{{ expiration_date | default(null) }}"
 
-  - ordinal: 15
+  # ── Forecast persistence (native MCP execute step) ──
+  # Persists the forecast to the scenarios MCP forecast store via
+  # scenario_score with empty outcomes. scenario_score inserts each event as a
+  # pending StoredForecastRecord (outcome: None) — durable via journal append.
+  # When the forecast later resolves, a subsequent scenario_score call with
+  # outcomes populated resolves the records and computes the Brier score.
+  # This closes the persistence half of the calibration loop: the forecast is
+  # now in the store where scenario_calibration can read it on the next
+  # invocation.
+  - ordinal: 16
+    action: execute
+    description: >
+      Persist the forecast to the scenarios MCP forecast store via
+      scenario_score (hkask-mcp-scenarios) with empty outcomes. The forecast is
+      inserted as a pending record for later resolution and Brier scoring.
+      Closes the persistence half of the calibration loop.
+    mcp: scenario_score
+    gas_cap: 2000
+    timeout_seconds: 60
+    input_mapping:
+      forecast_id: "{{ step_15_result.tracking_id | default(forecasting_question) }}"
+      events:
+        - id: "{{ step_15_result.tracking_id | default(forecasting_question) }}"
+          name: "{{ step_15_result.forecast_record.question | default(forecasting_question) }}"
+          question: "{{ step_15_result.forecast_record.question | default(forecasting_question) }}"
+          deadline: "{{ step_15_result.forecast_record.expiration_date | default(expiration_date) | default('2030-01-01') }}"
+          time_horizon: "{{ time_horizon | default('strategic') }}"
+          scenario_type: "emerging_economic"
+          subject: "{{ domain | default(forecasting_question) }}"
+          probability: "{{ step_15_result.forecast_record.probability | default(step_14_result.final_probability | default(0.5)) }}"
+          depends_on: []
+          sub_questions: []
+          base_rate: null
+          reference_class: null
+          brier_score: null
+          update_count: 0
+      outcomes: []
+    on_failure:
+      action: escalate
+      resume: >
+        scenario_score failed to persist the forecast — the scenarios MCP
+        server may be down or the forecast store may be unwritable. Restart
+        the server via sync_kask_mcp_servers and re-invoke. The forecast is
+        still valid (in step_15_result) but will not be available for future
+        Brier scoring until persisted.
+
+  - ordinal: 17
     action: select
     description: Independent quality gate — evaluates calibration realism, confidence, evidence trail, and record completeness.
     renderer: minijinja
@@ -344,11 +432,50 @@ steps:
     timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
-      calibration_result: "{{ step_13_result }}"
-      record_result: "{{ step_14_result }}"
-      synthesis_output: "{{ step_12_result }}"
+      calibration_result: "{{ step_14_result }}"
+      record_result: "{{ step_15_result }}"
+      synthesis_output: "{{ step_13_result }}"
 
-  - ordinal: 16
+  # ── Calibration curve fetch (native MCP execute step) ──
+  # Fetches the forecaster's calibration curve from the scenarios MCP via
+  # scenario_calibration. The curve is computed from resolved forecasts in the
+  # store — the same store that step 16 persists to. The overconfidence_score
+  # from this curve feeds the apply_calibration_adjustment compute step,
+  # closing the calibration loop: prior forecasts → Brier scores →
+  # overconfidence bias → adjusted prior for this forecast.
+  #
+  # CRITICAL (.rules trap): this step must NOT collapse a failed fetch to
+  # overconfidence_bias: 0.0 — that would silently disable calibration. The
+  # on_failure config escalates so the operator knows the calibration curve is
+  # unavailable, rather than the skill proceeding as if the forecaster were
+  # perfectly calibrated.
+  - ordinal: 18
+    action: execute
+    description: >
+      Fetch the forecaster's calibration curve from the scenarios MCP via
+      scenario_calibration (hkask-mcp-scenarios). Returns overall_brier,
+      overconfidence_score, and per-bin calibration data from resolved
+      forecasts. The overconfidence_score feeds the
+      apply_calibration_adjustment compute step (20), closing the Brier
+      feedback loop. On the first invocation with no resolved forecasts, the
+      tool returns overconfidence_score: 0.0 with guidance noting insufficient
+      data — this is a valid result, not a failure.
+    mcp: scenario_calibration
+    gas_cap: 2000
+    timeout_seconds: 60
+    input_mapping:
+      subject: "{{ domain | default(null) }}"
+    on_failure:
+      action: escalate
+      resume: >
+        scenario_calibration failed — the scenarios MCP server may be down or
+        the forecast store may be corrupt. Restart the server via
+        sync_kask_mcp_servers and re-invoke. Do NOT proceed with
+        overconfidence_bias: 0.0 — that silently disables calibration. If the
+        server cannot be restored, the operator may manually pass
+        overconfidence_bias as a cascade input to proceed without the curve.
+
+  - ordinal: 19
     action: compute
     compute_ref: lisp.eval
     description: >
@@ -363,34 +490,36 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((cr (assoc "calibration_realism_score" step_15_result))
-              (cj (assoc "confidence_justification_score" step_15_result))
-              (et (assoc "evidence_trail_score" step_15_result))
-              (rc (assoc "record_completeness_score" step_15_result)))
+        (let ((cr (assoc "calibration_realism_score" step_17_result))
+              (cj (assoc "confidence_justification_score" step_17_result))
+              (et (assoc "evidence_trail_score" step_17_result))
+              (rc (assoc "record_completeness_score" step_17_result)))
           (if (is_null cr) 1.0
             (if (is_null cj) 1.0
               (if (is_null et) 1.0
                 (if (is_null rc) 1.0
                   (/ (- 4.0 (+ cr cj et rc)) 4.0))))))
       env:
-        step_15_result: "{{ step_15_result }}"
+        step_17_result: "{{ step_17_result }}"
 
-  - ordinal: 17
+  - ordinal: 20
     action: compute
     description: >
       Apply the learned calibration bias to the prior probability before
       re-entering the loop. Uses hkask_forecast::apply_calibration_adjustment
       — the canonical primitive that closes the Brier feedback loop. The
-      overconfidence_bias input defaults to 0.0 (no adjustment) until an
-      external calibration curve (e.g. from scenario_calibration) supplies it.
+      overconfidence_bias input is sourced from the scenario_calibration
+      execute step (18) when available, falling back to the cascade input
+      overconfidence_bias (from the eqm skill or operator) when the
+      calibration curve has insufficient data.
     compute_ref: apply_calibration_adjustment
     gas_cap: 100
     timeout_seconds: 5
     input_mapping:
-      prior: "{{ step_13_result.final_probability | default(0.5) }}"
-      overconfidence_bias: "{{ overconfidence_bias | default(0.0) }}"
+      prior: "{{ step_14_result.final_probability | default(0.5) }}"
+      overconfidence_bias: "{{ step_18_result.overconfidence_score | default(overconfidence_bias | default(0.0)) }}"
 
-  - ordinal: 18
+  - ordinal: 21
     action: loop
     description: >
       Re-enter forecasting refinement cycle if convergence is not met.
@@ -399,13 +528,16 @@ steps:
       loop restarts at Fermi decomposition (step 2). The prior iteration's
       calibration-adjusted probability is carried forward as prior_probability
       so the convergence check's materiality guard can detect vacuous
-      iterations (delta < 0.02 with no new evidence).
+      iterations (delta < 0.02 with no new evidence). The market_match (4),
+      scenario_score (16), and scenario_calibration (18) execute steps also
+      re-run on each iteration — the market anchor and calibration curve are
+      fresh on every pass.
     input_mapping:
       loop_target: "{{ 2 }}"
-      prior_probability: "{{ step_17_result.adjusted | default(step_13_result.final_probability | default(0.5)) }}"
+      prior_probability: "{{ step_20_result.adjusted | default(step_14_result.final_probability | default(0.5)) }}"
       # Push the forecast quality signal into convergence_signal so the Cauchy
       # criterion can detect when the iterates have stopped moving.
-      convergence_signal: "{{ step_16_result }}"
+      convergence_signal: "{{ step_19_result }}"
 
 error_handling:
   on_gas_exceeded: abort

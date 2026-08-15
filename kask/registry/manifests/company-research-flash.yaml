@@ -143,7 +143,7 @@ steps:
       Deterministic, governed, no LLM round-trip. Result lands in
       step_2_result and feeds INTEL synthesis (step 4).
     mcp: research_search
-    condition: "{{ step_1_result.decision != 'DROP' }}"
+    condition: "step_1_result.decision != 'DROP'"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -156,7 +156,7 @@ steps:
       INTEL — fetch news mosaic via web_search MCP tool. Deterministic.
       Result lands in step_3_result and feeds INTEL synthesis (step 4).
     mcp: web_search
-    condition: "{{ step_1_result.decision != 'DROP' }}"
+    condition: "step_1_result.decision != 'DROP'"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -175,7 +175,7 @@ steps:
       never collapse to None.
     renderer: minijinja
     template_ref: company-research/intel-mosaic
-    condition: "{{ step_1_result.decision != 'DROP' }}"
+    condition: "step_1_result.decision != 'DROP'"
     gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
@@ -197,7 +197,7 @@ steps:
       the listening skill. Deterministic. Result lands in step_5_result
       and feeds the listening template (step 6).
     mcp: company_transcript
-    condition: "{{ step_1_result.decision != 'DROP' }}"
+    condition: "step_1_result.decision != 'DROP'"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -214,7 +214,7 @@ steps:
       template. Consumes the company_transcript output (5). Result feeds
       INTEL business context and FORENSIC full management profile.
     template_ref: listening
-    condition: "{{ step_1_result.decision != 'DROP' }}"
+    condition: "step_1_result.decision != 'DROP'"
     gas_cap: 120000
     timeout_seconds: 300
     input_mapping:
@@ -233,7 +233,7 @@ steps:
       be skipped (EFRA-AI invariant).
     renderer: minijinja
     template_ref: company-research/forensic-pre-screen
-    condition: "{{ step_4_result.mosaic_clear }}"
+    condition: "step_4_result.mosaic_clear"
     gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
@@ -250,7 +250,7 @@ steps:
       scenario_build MCP tool. Deterministic. Result lands in step_8_result
       and feeds CRITICAL FACTOR synthesis (step 9).
     mcp: scenario_build
-    condition: "{{ step_7_result.recommendation != 'BLOCK' }}"
+    condition: "step_7_result.recommendation != 'BLOCK'"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -270,7 +270,7 @@ steps:
       (0.35) vs round (0.50) probabilities.
     renderer: minijinja
     template_ref: company-research/critical-factor
-    condition: "{{ step_7_result.recommendation != 'BLOCK' }}"
+    condition: "step_7_result.recommendation != 'BLOCK'"
     gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
@@ -291,7 +291,7 @@ steps:
       tool for management profile (owner-operator, capital allocation track
       record). Deterministic. Result lands in step_10_result.
     mcp: company_transcript
-    condition: "{{ step_9_result.factors | length > 0 }}"
+    condition: "step_9_result.factors"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -309,7 +309,7 @@ steps:
       governance_score, accruals_score. FORENSIC cannot be skipped.
     renderer: minijinja
     template_ref: company-research/forensic-full
-    condition: "{{ step_9_result.factors | length > 0 }}"
+    condition: "step_9_result.factors"
     gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
@@ -328,7 +328,7 @@ steps:
       round-trip. Result lands in step_12_result and feeds VALUATION
       synthesis (16).
     mcp: dcf_valuation
-    condition: "{{ step_9_result.factors | length > 0 and step_11_result.recommendation != 'BLOCK' }}"
+    condition: "step_9_result.factors AND step_11_result.recommendation != 'BLOCK'"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -340,7 +340,7 @@ steps:
       VALUATION — peer comparables via comparable_analysis MCP tool.
       Deterministic. Result lands in step_13_result.
     mcp: comparable_analysis
-    condition: "{{ step_9_result.factors | length > 0 and step_11_result.recommendation != 'BLOCK' }}"
+    condition: "step_9_result.factors AND step_11_result.recommendation != 'BLOCK'"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -352,7 +352,7 @@ steps:
       VALUATION — expectations gap (Mauboussin expectations investing) via
       expectations_gap MCP tool. Deterministic. Result lands in step_14_result.
     mcp: expectations_gap
-    condition: "{{ step_9_result.factors | length > 0 and step_11_result.recommendation != 'BLOCK' }}"
+    condition: "step_9_result.factors AND step_11_result.recommendation != 'BLOCK'"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -366,7 +366,7 @@ steps:
       scenario_build (8) and the per-node EPS impact mappings from
       CRITICAL FACTOR (9). Result lands in step_15_result.
     mcp: scenario_impact_valuation
-    condition: "{{ step_9_result.factors | length > 0 and step_11_result.recommendation != 'BLOCK' }}"
+    condition: "step_9_result.factors AND step_11_result.recommendation != 'BLOCK'"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -385,7 +385,7 @@ steps:
       terminal gate.
     renderer: minijinja
     template_ref: company-research/valuation-8step
-    condition: "{{ step_9_result.factors | length > 0 and step_11_result.recommendation != 'BLOCK' }}"
+    condition: "step_9_result.factors AND step_11_result.recommendation != 'BLOCK'"
     gas_cap: 10000
     timeout_seconds: 240
     input_mapping:
@@ -412,7 +412,7 @@ steps:
       Confidence < 0.50 = NO_PUBLISH (EFRA-AI invariant).
     renderer: minijinja
     template_ref: company-research/communication-enter
-    condition: "{{ step_16_result.rr_ratio >= 2.0 or step_16_result.rating != 'UNDERPERFORM' }}"
+    condition: "step_16_result.rr_ratio >= 2.0 OR step_16_result.rating != 'UNDERPERFORM'"
     gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
@@ -436,7 +436,7 @@ steps:
       EFRA-AI's KATA agent describes but cannot close (no outcome data).
       Deterministic. Result lands in step_18_result.
     mcp: market_check_resolutions
-    condition: "{{ step_17_result.publication_possible and step_17_result.final_confidence >= 0.50 }}"
+    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
     gas_cap: 3000
     timeout_seconds: 90
     input_mapping:
@@ -451,7 +451,7 @@ steps:
       KATA process_confidence adjustment. Deterministic. Result lands in
       step_19_result.
     mcp: market_calibration
-    condition: "{{ step_17_result.publication_possible and step_17_result.final_confidence >= 0.50 }}"
+    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
     gas_cap: 3000
     timeout_seconds: 90
     input_mapping:
@@ -468,7 +468,7 @@ steps:
       next_review_date. Never blocks publication.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step1-direction
-    condition: "{{ step_17_result.publication_possible and step_17_result.final_confidence >= 0.50 }}"
+    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
     gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
@@ -494,7 +494,7 @@ steps:
       superforecasting lens. Deterministic. Result lands in step_21_result
       and feeds LENS synthesis (step 23).
     mcp: market_match
-    condition: "{{ step_17_result.publication_possible and step_17_result.final_confidence >= 0.50 }}"
+    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
     gas_cap: 3000
     timeout_seconds: 90
     input_mapping:
@@ -509,7 +509,7 @@ steps:
       question. Deterministic. Result lands in step_22_result and feeds LENS
       synthesis (step 23).
     mcp: evaluate_evidence
-    condition: "{{ step_17_result.publication_possible and step_17_result.final_confidence >= 0.50 }}"
+    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
     gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
@@ -527,7 +527,7 @@ steps:
       key_tensions, pm_memo (200 words). Never blocks publication.
     renderer: minijinja
     template_ref: company-research/lens-five-frameworks
-    condition: "{{ step_17_result.publication_possible and step_17_result.final_confidence >= 0.50 }}"
+    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
     gas_cap: 10000
     timeout_seconds: 240
     input_mapping:
@@ -580,7 +580,7 @@ steps:
       LENS key_tensions are injected into the next VALUATION pass via the
       loop's input_mapping. INCONSISTENT (1.0) does not loop — it escalates
       via on_not_reached. max_iterations: 3 bounds the loop.
-    condition: "{{ step_24_result > 0.0 and step_24_result < 1.0 }}"
+    condition: "step_24_result > 0.0 AND step_24_result < 1.0"
     input_mapping:
       loop_target: "{{ 16 }}"
       lens_tensions: "{{ step_23_result.key_tensions | default([]) }}"
