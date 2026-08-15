@@ -141,6 +141,32 @@ ledger:
   span_namespace: reg.skill.metacognition
 
 steps:
+  # ── Phase 3 co-evolution: read prior calibration before Kata cycle ──
+  # The calibration loop (2.1): read prior Brier scores from the scenarios
+  # MCP forecast store before the Kata cycle starts. The overconfidence_bias
+  # from the calibration curve feeds the grasp-current step so the agent
+  # knows its historical calibration. on_failure: report surfaces a broken
+  # calibration channel to the Curator without blocking the Kata cycle.
+  - ordinal: 0
+    action: execute
+    description: >
+      Read prior calibration from the scenarios MCP forecast store via
+      scenario_calibration. Deterministic. Returns the calibration curve
+      (Brier score history, overconfidence_bias) from all resolved forecasts.
+      The overconfidence_bias feeds the grasp-current step (step 1) so the
+      agent knows its historical calibration and can adjust its predictions.
+    mcp: scenario_calibration
+    gas_cap: 2000
+    timeout_seconds: 60
+    on_failure:
+      action: report
+      resume: >
+        scenario_calibration failed — prior Brier scores are not available.
+        The Kata cycle proceeds without calibration context; predictions
+        will not be informed by historical overconfidence_bias.
+    input_mapping:
+      subject: "{{ goal | default('metacognition') }}"
+
   # ── Improvement Kata Step 1: Grasp the Current Condition ──
   # Measure the agent's actual metacognitive state right now. This is the
   # "go and see" step — measure, don't assume. Produces:
@@ -173,6 +199,7 @@ steps:
       prior_outcomes: "{{ prior_outcomes | default([]) }}"
       safety_mode: "{{ safety_mode | default(false) }}"
       prev_grasp: "{{ prev_step_1_result | default({}) }}"
+      prior_calibration: "{{ step_0_result | default({}) }}"
 
   # ── Improvement Kata Step 2: Establish the Target Condition ──
   # Declare the target metacognitive state — what "sufficient meta-knowledge"

@@ -66,8 +66,49 @@ inputs:
       scores, and current drill focus.
 
 steps:
-  # === BEGINNER MODE (folded from kata-starter) ===
+  # ── Phase 3 co-evolution: read prior PDCA cycles before Kata ──
+  # The persistence loop (2.3): read prior PDCA cycles from the kata-kanban
+  # MCP before the Kata cycle starts. The prior tasks feed the direction step
+  # so the agent knows what experiments have already been run and what
+  # was learned. on_failure: report surfaces a broken kanban channel
+  # to the Curator without blocking the Kata cycle.
   - ordinal: 1
+    action: execute
+    description: >
+      Read prior kanban boards via kanban_board_list MCP tool. Deterministic.
+      Returns all boards owned by the caller. The first board's ID feeds
+      step 2 (kanban_task_list) to read prior PDCA tasks.
+    mcp: kanban_board_list
+    gas_cap: 1000
+    timeout_seconds: 30
+    on_failure:
+      action: report
+      resume: >
+        kanban_board_list failed — prior PDCA boards are not available.
+        The Kata cycle proceeds without prior experiment context.
+    input_mapping: {}
+
+  - ordinal: 2
+    action: execute
+    description: >
+      Read prior PDCA tasks from the first kanban board via kanban_task_list
+      MCP tool. Deterministic. Returns all tasks (PDCA cycles) on the board.
+      The tasks feed the direction step (step 7) so the agent knows what
+      experiments have already been run.
+    mcp: kanban_task_list
+    condition: "step_1_result.boards"
+    gas_cap: 1000
+    timeout_seconds: 30
+    on_failure:
+      action: report
+      resume: >
+        kanban_task_list failed — prior PDCA tasks are not available.
+        The Kata cycle proceeds without prior experiment context.
+    input_mapping:
+      board_id: "{{ step_1_result.boards[0].board_id | default('') }}"
+
+  # === BEGINNER MODE (folded from kata-starter) ===
+  - ordinal: 3
     action: select
     condition: "mode == 'beginner'"
     description: >
@@ -83,9 +124,9 @@ steps:
       learner_profile: "{{ learner_profile | default({}) }}"
       practice_goal: "{{ practice_goal | default('foundational scientific thinking') }}"
 
-  - ordinal: 2
+  - ordinal: 4
     action: select
-    condition: "mode == 'beginner' AND step_1_result.selected_drill == 'five-questions'"
+    condition: "mode == 'beginner' AND step_3_result.selected_drill == 'five-questions'"
     description: >
       BEGINNER FIVE QUESTIONS DRILL: Practice asking the 5 coaching questions
       in order on a trivial process (making toast, brewing coffee).
@@ -95,11 +136,11 @@ steps:
     timeout_seconds: 120
     input_mapping:
       learner_profile: "{{ learner_profile | default({}) }}"
-      selector_result: "{{ step_1_result }}"
+      selector_result: "{{ step_3_result }}"
 
-  - ordinal: 3
+  - ordinal: 5
     action: select
-    condition: "mode == 'beginner' AND step_1_result.selected_drill == 'pdca-cycle'"
+    condition: "mode == 'beginner' AND step_3_result.selected_drill == 'pdca-cycle'"
     description: >
       BEGINNER PDCA CYCLE DRILL: Practice Plan-Do-Check-Act on a trivial
       measurable process.
@@ -109,11 +150,11 @@ steps:
     timeout_seconds: 120
     input_mapping:
       learner_profile: "{{ learner_profile | default({}) }}"
-      selector_result: "{{ step_1_result }}"
+      selector_result: "{{ step_3_result }}"
 
-  - ordinal: 4
+  - ordinal: 6
     action: select
-    condition: "mode == 'beginner' AND step_1_result.selected_drill == 'observation-drill'"
+    condition: "mode == 'beginner' AND step_3_result.selected_drill == 'observation-drill'"
     description: >
       BEGINNER OBSERVATION DRILL: Practice separating observed facts (IS) from
       interpretations (OUGHT).
@@ -123,9 +164,9 @@ steps:
     timeout_seconds: 120
     input_mapping:
       learner_profile: "{{ learner_profile | default({}) }}"
-      selector_result: "{{ step_1_result }}"
+      selector_result: "{{ step_3_result }}"
 
-  - ordinal: 5
+  - ordinal: 7
     action: compute
     condition: "mode == 'beginner'"
     compute_ref: lisp.eval
@@ -143,9 +184,9 @@ steps:
     input_mapping:
       form: "(if (is_null step_2_result) 1.0 (let ((a (assoc \"automaticity_self_assess\" step_2_result))) (if (is_null a) 1.0 (- 1.0 a))))"
       env:
-        step_2_result: "{{ step_2_result }}"
+        step_2_result: "{{ step_4_result }}"
 
-  - ordinal: 6
+  - ordinal: 8
     action: select
     condition: "mode != 'beginner'"
     description: Step 1 — understand direction/challenge.
@@ -155,8 +196,10 @@ steps:
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
+      prior_kanban: "{{ step_2_result | default({}) }}"
+      prior_boards: "{{ step_1_result | default({}) }}"
 
-  - ordinal: 7
+  - ordinal: 9
     action: select
     condition: "mode != 'beginner'"
     description: Step 2 — grasp current condition with data.
@@ -167,9 +210,9 @@ steps:
     input_mapping:
       challenge: "{{ challenge }}"
       current_metrics: "{{ current_metrics | default({}) }}"
-      direction: "{{ step_6_result }}"
+      direction: "{{ step_8_result }}"
 
-  - ordinal: 8
+  - ordinal: 10
     action: select
     condition: "mode != 'beginner'"
     description: Step 3 — establish target condition.
@@ -179,9 +222,9 @@ steps:
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
-      current_condition: "{{ step_7_result }}"
+      current_condition: "{{ step_9_result }}"
 
-  - ordinal: 9
+  - ordinal: 11
     action: select
     condition: "mode != 'beginner'"
     description: Step 4 — define next experiment.
@@ -191,10 +234,10 @@ steps:
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
-      current_condition: "{{ step_7_result }}"
-      target_condition: "{{ step_8_result }}"
+      current_condition: "{{ step_9_result }}"
+      target_condition: "{{ step_10_result }}"
 
-  - ordinal: 10
+  - ordinal: 12
     action: compute
     condition: "mode != 'beginner'"
     compute_ref: lisp.eval
@@ -212,31 +255,31 @@ steps:
     input_mapping:
       form: "(- 7 (+ (if (is_null (assoc \"obstacle\" step_9_result)) 0 1) (if (is_null (assoc \"next_experiment\" step_9_result)) 0 1) (if (is_null (assoc \"prediction\" step_9_result)) 0 1) (if (is_null (assoc \"measurement_method\" step_9_result)) 0 1) (if (is_null (assoc \"success_criterion\" step_9_result)) 0 1) (if (is_null (assoc \"learning_commitment\" step_9_result)) 0 1) (if (is_null (assoc \"when_to_check\" step_9_result)) 0 1)))"
       env:
-        step_9_result: "{{ step_9_result }}"
+        step_9_result: "{{ step_11_result }}"
 
-  - ordinal: 11
+  - ordinal: 13
     action: loop
     condition: "mode == 'beginner'"
     description: Re-enter beginner kata cycle if convergence is not met.
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: "{{ 1 }}"
+      loop_target: "{{ 3 }}"
       # Push the drill quality signal into convergence_signal so the Cauchy
       # criterion can detect when the iterates have stopped moving.
-      convergence_signal: "{{ step_5_result }}"
+      convergence_signal: "{{ step_7_result }}"
 
-  - ordinal: 12
+  - ordinal: 14
     action: loop
     condition: "mode != 'beginner'"
     description: Re-enter improvement kata cycle if convergence is not met.
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: "{{ 7 }}"
+      loop_target: "{{ 8 }}"
       # Push the experiment quality signal into convergence_signal so the Cauchy
       # criterion can detect when the iterates have stopped moving.
-      convergence_signal: "{{ step_11_result }}"
+      convergence_signal: "{{ step_12_result }}"
 
 error_handling:
   on_gas_exceeded: abort

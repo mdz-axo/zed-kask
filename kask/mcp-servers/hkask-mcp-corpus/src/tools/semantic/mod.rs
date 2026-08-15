@@ -509,9 +509,8 @@ impl CorpusServer {
         let model_name = model.unwrap_or_else(|| default_embedding_model().to_string());
 
         let dim = embedding_dim();
-        let store =
-            hkask_memory::MemoryStore::open(db_path, passphrase, dim)
-                .map_err(|e| map_database_error(e, "Cannot open memory DB"))?;
+        let store = hkask_memory::MemoryStore::open(db_path, passphrase, dim)
+            .map_err(|e| map_database_error(e, "Cannot open memory DB"))?;
 
         let mut embedded = 0usize;
         let mut failed = 0usize;
@@ -669,15 +668,43 @@ fn default_embed_batch_size() -> usize {
 
 /// Default passphrase for the corpus memory DB.
 ///
-/// Resolves `HKASK_DB_PASSPHRASE` via the canonical keystore chain
-/// (env var → keychain `hkask-db-passphrase`) using
-/// `hkask_mcp_server::resolve_credential`. Returns an empty string when
-/// the credential is unset in both tiers. `Database::open` rejects empty
-/// passphrases with a clear error ("Passphrase cannot be empty"), so tools
-/// that use this default will fail with an actionable message rather than
-/// silently encrypting the DB with a publicly-known hardcoded passphrase.
-/// Production must set `HKASK_DB_PASSPHRASE` (keychain-provisioned, delivered
-/// via the registry `credentials` allowlist under governed launch).
+/// Resolves `HKASK_DB_PASSPHRASE` via a 3-tier chain:
+/// 1. `ctx.credentials` (governed launch injection via `build_mcp_server_env`)
+///    — captured at server construction into [`CORPUS_DB_PASSPHRASE`] by
+///    [`set_corpus_db_passphrase`].
+/// 2. `resolve_credential("HKASK_DB_PASSPHRASE")` (env var → keychain
+///    `hkask-db-passphrase`).
+///
+/// Returns an empty string when the credential is unset in all tiers.
+/// `Database::open` rejects empty passphrases with a clear error
+/// ("Passphrase cannot be empty"), so tools that use this default will fail
+/// with an actionable message rather than silently encrypting the DB with a
+/// publicly-known hardcoded passphrase. Production must set
+/// `HKASK_DB_PASSPHRASE` (keychain-provisioned, delivered via the registry
+/// `credentials` allowlist under governed launch).
+///
+/// The `OnceLock` is acceptable here because there is exactly one corpus
+/// server per process (MCP servers run as child processes). Tests that don't
+/// go through `run_server` leave the `OnceLock` unset and fall back to the
+/// env/keychain tier, preserving existing test behavior.
+static CORPUS_DB_PASSPHRASE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// Initialize the process-wide corpus DB passphrase from `ctx.credentials`.
+///
+/// Called once from the `run_server` closure after resolving the passphrase
+/// via `hkask_mcp_server::resolve_db_passphrase`. Pass `None` when resolution
+/// failed (tools will then fall back to env/keychain per call). Idempotent —
+/// the first call wins; subsequent calls are no-ops (the `OnceLock` is set
+/// once at construction and never changed).
+pub(crate) fn set_corpus_db_passphrase(passphrase: Option<String>) {
+    let _ = CORPUS_DB_PASSPHRASE.set(passphrase);
+}
+
 pub(crate) fn default_corpus_passphrase() -> String {
+    if let Some(Some(resolved)) = CORPUS_DB_PASSPHRASE.get() {
+        return resolved.clone();
+    }
+    // Fall back to env → keychain for tests or when construction didn't set
+    // the OnceLock (or set it to `None` after a resolution failure).
     hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE").unwrap_or_default()
 }

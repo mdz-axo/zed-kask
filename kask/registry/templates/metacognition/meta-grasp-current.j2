@@ -8,6 +8,7 @@ contract:
     prior_outcomes: array|null
     safety_mode: boolean|null
     prev_grasp: object|null
+    prior_calibration: object|null
   output:
     current_artifacts: object
     current_procedure: object
@@ -56,6 +57,17 @@ Your job is to measure the agent's actual metacognitive state right now — not 
 {{ prev_grasp | tojson }}
 ```
 This is a refinement cycle. Compare the current state to the previous grasp. What changed? What didn't? Be specific.
+{% endif %}
+
+{% if prior_calibration %}
+## Prior Calibration (from scenario_calibration MCP tool)
+```json
+{{ prior_calibration | tojson }}
+```
+The calibration curve shows your historical Brier score and overconfidence bias.
+- **overconfidence_bias**: Positive means your predictions were too high (overconfident); negative means too low (underconfident).
+- **brier_score**: Lower is better (0 = perfect, 0.25 = coin-flip, 1 = worst).
+Use this to calibrate your prediction in step 3 — if overconfidence_bias is positive, lower your confidence.
 {% endif %}
 
 ## What to Measure

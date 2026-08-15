@@ -5,6 +5,8 @@ contract:
   input:
     context: object
     challenge: string
+    prior_kanban: object|null
+    prior_boards: object|null
   output:
     response: string
 visibility: Public
@@ -22,6 +24,26 @@ You must articulate the direction before you can measure progress toward it.
 
 Context: {{ context | tojson }}
 Prior step outputs: {{ previous_steps | tojson }}
+
+{% if prior_boards or prior_kanban %}
+## Prior PDCA Cycles (from kata-kanban MCP)
+
+{% if prior_boards and prior_boards.boards %}
+Boards found: {{ prior_boards.boards | length }}
+{% for board in prior_boards.boards %}
+- **{{ board.name }}** ({{ board.board_id }}) — {{ board.column_count }} columns
+{% endfor %}
+{% endif %}
+
+{% if prior_kanban and prior_kanban.tasks %}
+Prior tasks (PDCA cycles):
+{% for task in prior_kanban.tasks %}
+- **{{ task.title }}** — status: {{ task.status | default('unknown') }}
+{% endfor %}
+
+Review these prior experiments. What was learned? What obstacles were encountered? What should the next experiment address that hasn't been tried yet?
+{% endif %}
+{% endif %}
 
 ## What You Must Do
 
