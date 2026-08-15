@@ -587,18 +587,30 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         memory_snippets: Vec<agent::MemorySnippetRecord>,
         progress: Option<agent::CascadeProgress>,
         title: Option<agent::CascadeProgress>,
-    ) -> Result<String, String> {
+    ) -> Result<String, agent::SkillExecutionError> {
+        use agent::SkillExecutionError;
+
         // Load the manifest with caching. Loaded before validation so we can
         // check the caller-supplied context against declared `inputs` (Layer A)
         // before injecting runtime defaults.
-        let manifest = self.load_cached_manifest(skill_name)?;
+        let manifest = self.load_cached_manifest(skill_name).map_err(|e| {
+            SkillExecutionError::CompileTime {
+                skill_name: skill_name.to_string(),
+                phase: "load",
+                message: e,
+            }
+        })?;
 
         // Enforce the category labelling system at the execution boundary.
         if !manifest.is_skill() {
-            return Err(format!(
-                "Skill '{skill_name}' has category '{:?}' — only `skill` manifests may execute via the skill tool",
-                manifest.category
-            ));
+            return Err(SkillExecutionError::CompileTime {
+                skill_name: skill_name.to_string(),
+                phase: "category_check",
+                message: format!(
+                    "Skill '{skill_name}' has category '{:?}' — only `skill` manifests may execute via the skill tool",
+                    manifest.category
+                ),
+            });
         }
 
         // Profile enforcement (proposer/evaluator separation): if any step
@@ -611,14 +623,18 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                         if let Some(step) = manifest.steps.iter().find(|s| s.profile.is_some())
                             && let Some(profile_name) = step.profile.as_ref()
                         {
-                            return Err(format!(
-                                "Step {} declares profile '{}' but the `terminal` tool is enabled. \
-                                 This violates proposer/evaluator separation — a proposer with terminal \
-                                 can evaluate its own tests (self-confirming loop anti-pattern). \
-                                 Remediation: remove `terminal` from the '{}' profile in settings, \
-                                 or bind this step to a profile without `terminal` (e.g. `ask`).",
-                                step.ordinal, profile_name, profile_name
-                            ));
+                            return Err(SkillExecutionError::CompileTime {
+                                skill_name: skill_name.to_string(),
+                                phase: "profile_enforcement",
+                                message: format!(
+                                    "Step {} declares profile '{}' but the `terminal` tool is enabled. \
+                                     This violates proposer/evaluator separation — a proposer with terminal \
+                                     can evaluate its own tests (self-confirming loop anti-pattern). \
+                                     Remediation: remove `terminal` from the '{}' profile in settings, \
+                                     or bind this step to a profile without `terminal` (e.g. `ask`).",
+                                    step.ordinal, profile_name, profile_name
+                                ),
+                            });
                         }
                     }
                 }
@@ -641,7 +657,11 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             &context,
             SKILL_CONTEXT_SYSTEM_KEYS,
         ) {
-            return Err(format!("Skill '{skill_name}' input validation failed: {e}"));
+            return Err(SkillExecutionError::CompileTime {
+                skill_name: skill_name.to_string(),
+                phase: "input_validation",
+                message: format!("Skill '{skill_name}' input validation failed: {e}"),
+            });
         }
 
         // Delegate to the shared cascade path — model defaults injection,
@@ -677,7 +697,12 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                 progress,
                 title,
             )
-            .await?;
+            .await
+            .map_err(|e| SkillExecutionError::Runtime {
+                skill_name: skill_name.to_string(),
+                phase: "cascade",
+                message: e,
+            })?;
 
         // (K5) `extract_final_step_result` selects `last_result_step`'s
         // value (deterministic — the machine tracks it, O(1)).

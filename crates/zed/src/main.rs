@@ -3476,13 +3476,14 @@ impl hkask_types::SkillExecPort for AgentSkillExec {
             // `{{ task }}` still resolve, and non-JSON callers are unaffected.
             context.insert("task".to_string(), serde_json::Value::String(task));
             // `executor` is the upstream `agent::SkillManifestExecutor` (D1 seam),
-            // whose `execute_skill` returns `Result<String, String>`. The
-            // `From<String>` conversion (into `SkillExecError::Failed`) bridges
-            // that into the typed `SkillExecError` without an upstream change.
+            // whose `execute_skill` now returns `Result<String, SkillExecutionError>`.
+            // The conversion to `SkillExecError` preserves the compile-time/runtime
+            // classification: `CompileTime` → `Failed` (structural, not retryable);
+            // `Runtime` → `Failed` (execution failure, retryable by caller).
             executor
                 .execute_skill(&name, context, Vec::new(), Vec::new(), None, None)
                 .await
-                .map_err(Into::into)
+                .map_err(|e| hkask_types::SkillExecError::Failed(e.to_string()))
         })
     }
 }

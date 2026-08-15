@@ -123,7 +123,7 @@ pub fn tool_to_ontology(tool: &str) -> Option<&'static str> {
         "equity_duration" => Some(INTERNAL_RATE_OF_RETURN),
         // Forecast tools
         "calibrate_forecast" => Some(BRIER_SCORE),
-        "forecast_record" | "forecast_get" | "forecast_list" => Some(FORECAST_ID),
+        "forecast_record" | "forecast_get" | "forecast_list" | "forecast_persist" => Some(FORECAST_ID),
         "result_feedback" => Some(BRIER_SCORE),
         // Analysis tools
         "company_screener" => Some(STOCK_SCREENER),
@@ -239,10 +239,11 @@ mod tests {
     fn tool_to_ontology_maps_forecast_tools() {
         // calibrate_forecast is about scoring accuracy → BRIER_SCORE.
         assert_eq!(tool_to_ontology("calibrate_forecast"), Some(BRIER_SCORE));
-        // forecast_record/get/list are about forecast identity.
+        // forecast_record/get/list/persist are about forecast identity.
         assert_eq!(tool_to_ontology("forecast_record"), Some(FORECAST_ID));
         assert_eq!(tool_to_ontology("forecast_get"), Some(FORECAST_ID));
         assert_eq!(tool_to_ontology("forecast_list"), Some(FORECAST_ID));
+        assert_eq!(tool_to_ontology("forecast_persist"), Some(FORECAST_ID));
         // result_feedback is about forecast accuracy feedback.
         assert_eq!(tool_to_ontology("result_feedback"), Some(BRIER_SCORE));
     }

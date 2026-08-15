@@ -951,7 +951,75 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Record a forecast outcome to close the superforecasting loop. Forecast a valuation multiple and price change over a horizon (3mo/6mo/1yr/2yr/3yr), then record what actually happened. Computes Brier scores on multiple direction and price return vs a tolerance band. When forecast_id is provided (from dcf_valuation or calibrate_forecast), looks up the stored 11-line-item projection model and decomposes the return gap into revenue growth, gross margin, D&A, capex, NWC, multiple expansion, and net debt contributions."
+        description = "Persist a pre-computed price target for later Brier scoring. Unlike calibrate_forecast (which runs its own Fermi decomposition) and forecast_record (which requires the actual outcome), this tool stores a pending price target without an outcome and without a decomposition model. The stored forecast can later be resolved by forecast_record when the horizon passes — Brier scoring runs on the recorded multiple and price change; gap decomposition is unavailable (no projected model). Use this when a flowdef valuation step (e.g., company-research-flash step 16) produces a price target that should be tracked for calibration."
+    )]
+    pub async fn forecast_persist(
+        &self,
+        Parameters(req): Parameters<types::ForecastPersistRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "forecast_persist", Self::ontology_anchor("forecast_persist"), async {
+            validate_symbol(&req.symbol)?;
+            for (name, value) in [
+                ("forecast_multiple", req.forecast_multiple),
+                ("forecast_price_change", req.forecast_price_change),
+            ] {
+                validate_finite(name, value)?;
+            }
+            if let Some(ref revision_of) = req.revision_of {
+                let revision_of = revision_of.clone();
+                let symbol = req.symbol.clone();
+                run_portfolio(self.portfolio.clone(), move |portfolio| {
+                    portfolio.validate_forecast_revision(&revision_of, &symbol)
+                })
+                .await?;
+            }
+
+            let forecast_id = req
+                .forecast_id
+                .clone()
+                .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+            // Store a minimal snapshot — no projected model, so gap
+            // decomposition is unavailable when forecast_record later looks
+            // up this ID. Brier scoring on the recorded multiple and price
+            // change still runs. The snapshot carries the forecast inputs so
+            // forecast_list consumers can see what was persisted.
+            let snapshot = serde_json::json!({
+                "kind": "precomputed_price_target",
+                "symbol": req.symbol,
+                "forecast_date": req.forecast_date,
+                "horizon": req.horizon,
+                "forecast_multiple": req.forecast_multiple,
+                "forecast_price_change": req.forecast_price_change,
+            });
+
+            self.save_forecast(PersistedForecast {
+                id: forecast_id.clone(),
+                symbol: req.symbol.clone(),
+                revision_of: req.revision_of.clone(),
+                snapshot,
+                outcomes: Vec::new(),
+                created_at: now_rfc3339(),
+            })
+            .await?;
+
+            Ok(serde_json::json!({
+                "status": "persisted",
+                "symbol": req.symbol,
+                "forecast_id": forecast_id,
+                "revision_of": req.revision_of,
+                "forecast_date": req.forecast_date,
+                "horizon": req.horizon,
+                "forecast_multiple": req.forecast_multiple,
+                "forecast_price_change": req.forecast_price_change,
+                "note": "Pre-computed price target persisted without a decomposition model. Call forecast_record with this forecast_id when the horizon passes to close the Brier loop. Gap decomposition will be unavailable (no projected model).",
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Record a forecast outcome to close the superforecasting loop. Forecast a valuation multiple and price change over a horizon (3mo/6mo/1yr/2yr/3yr), then record what actually happened. Computes Brier scores on multiple direction and price return vs a tolerance band. When forecast_id is provided (from dcf_valuation, calibrate_forecast, or forecast_persist), looks up the stored 11-line-item projection model and decomposes the return gap into revenue growth, gross margin, D&A, capex, NWC, multiple expansion, and net debt contributions. Pre-computed PTs from forecast_persist carry no decomposition model — Brier scoring still runs, decomposition is skipped."
     )]
     pub async fn forecast_record(
         &self,
@@ -991,10 +1059,24 @@ impl CompaniesServer {
                         persisted.symbol, req.symbol
                     )));
                 }
-                Some(
-                    StoredForecast::from_snapshot(&persisted.snapshot)
-                        .map_err(|e| McpToolError::internal(e.to_string()))?, // rr0044-ok: own-struct-deserialize
-                )
+                // Pre-computed PTs from forecast_persist carry a minimal
+                // snapshot (kind: "precomputed_price_target") with no
+                // projected model — StoredForecast::from_snapshot fails on
+                // those. Fall back to None (no decomposition) so Brier
+                // scoring still runs. Per .rules: don't collapse to None via
+                // .ok()? on a fallible operation silently — log the skip so
+                // the operator can distinguish "no model" from "broken."
+                match StoredForecast::from_snapshot(&persisted.snapshot) {
+                    Ok(stored) => Some(stored),
+                    Err(e) => {
+                        tracing::warn!(
+                            "forecast_record: forecast '{}' snapshot is not a full StoredForecast — \
+                             gap decomposition unavailable, Brier scoring still runs. Error: {}",
+                            forecast_id, e
+                        );
+                        None
+                    }
+                }
             } else {
                 None
             };
