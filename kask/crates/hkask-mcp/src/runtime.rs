@@ -19,11 +19,11 @@
 //!    already closed, covering the window before the keeper task is scheduled.
 //! 3. **Reconnect on demand** — `start_server_with_env` records each server's
 //!    launch spec, so `call_tool_inner` can re-spawn a dead server once (subject
-//!    to [`RECONNECT_COOLDOWN`]) and retry the call rather than failing until the
+//!    to the reconnect cooldown]) and retry the call rather than failing until the
 //!    next settings change.
 //! 4. **Health supervisor** — a per-server background task that periodically
 //!    checks transport liveness and proactively removes dead connections before
-//!    the next tool call discovers them. After [`MAX_CONSECUTIVE_HEALTH_FAILURES`]
+//!    the next tool call discovers them. After the max consecutive health failures
 //!    consecutive failures it logs an operator-actionable error and stops.
 //!
 //! Without these, `start_server_with_env`'s presence-based idempotency check
@@ -52,28 +52,142 @@ use tracing::{info, warn};
 /// Bounds the damage from a crash-looping binary: without it, a server that
 /// dies during its handshake would be re-spawned once per tool call, turning a
 /// broken binary into a process-spawn storm.
-const RECONNECT_COOLDOWN: Duration = Duration::from_secs(5);
+///
+/// Override: `HKASK_MCP_RECONNECT_COOLDOWN_SECS` env var.
+const DEFAULT_RECONNECT_COOLDOWN: Duration = Duration::from_secs(5);
 
 /// Maximum number of retry attempts when a server fails to start (spawn or
 /// handshake). After exhausting these, the failure is reported to the caller
 /// and the next tool call will retry via the on-demand reconnect path.
-const STARTUP_MAX_RETRIES: u32 = 3;
+///
+/// Override: `HKASK_MCP_STARTUP_MAX_RETRIES` env var.
+const DEFAULT_STARTUP_MAX_RETRIES: u32 = 3;
 
 /// Initial backoff for startup retries. Doubles each attempt up to
-/// `STARTUP_MAX_BACKOFF`.
-const STARTUP_INITIAL_BACKOFF: Duration = Duration::from_millis(500);
+/// `DEFAULT_STARTUP_MAX_BACKOFF`.
+///
+/// Override: `HKASK_MCP_STARTUP_INITIAL_BACKOFF_MS` env var.
+const DEFAULT_STARTUP_INITIAL_BACKOFF: Duration = Duration::from_millis(500);
 
 /// Cap on the startup retry backoff.
-const STARTUP_MAX_BACKOFF: Duration = Duration::from_secs(10);
+///
+/// Override: `HKASK_MCP_STARTUP_MAX_BACKOFF_SECS` env var.
+const DEFAULT_STARTUP_MAX_BACKOFF: Duration = Duration::from_secs(10);
 
 /// Interval between proactive health checks. The supervisor checks each
 /// server's transport liveness and, if closed, removes the dead connection
 /// so the on-demand reconnect path heals it on the next tool call.
-const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+///
+/// Override: `HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS` env var.
+const DEFAULT_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Maximum consecutive health-check failures before the supervisor stops
 /// auto-healing and logs an operator-actionable error.
-const MAX_CONSECUTIVE_HEALTH_FAILURES: u32 = 3;
+///
+/// Override: `HKASK_MCP_MAX_HEALTH_FAILURES` env var.
+const DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES: u32 = 3;
+
+/// Resolve a duration from an env var (seconds), falling back to `default`.
+/// Logs a warning on parse failure per `.rules` (numeric env vars that fail
+/// to parse must `log::warn!` naming the malformed value).
+fn resolve_duration_env_secs(var: &str, default: Duration) -> Duration {
+    match std::env::var(var) {
+        Ok(val) => match val.parse::<u64>() {
+            Ok(secs) => Duration::from_secs(secs),
+            Err(_) => {
+                tracing::warn!(
+                    target: "hkask.mcp",
+                    env_var = %var,
+                    value = %val,
+                    "Failed to parse as u64 seconds — using default"
+                );
+                default
+            }
+        },
+        Err(_) => default,
+    }
+}
+
+/// Resolve a duration from an env var (milliseconds), falling back to `default`.
+fn resolve_duration_env_millis(var: &str, default: Duration) -> Duration {
+    match std::env::var(var) {
+        Ok(val) => match val.parse::<u64>() {
+            Ok(millis) => Duration::from_millis(millis),
+            Err(_) => {
+                tracing::warn!(
+                    target: "hkask.mcp",
+                    env_var = %var,
+                    value = %val,
+                    "Failed to parse as u64 milliseconds — using default"
+                );
+                default
+            }
+        },
+        Err(_) => default,
+    }
+}
+
+/// Resolve a u32 from an env var, falling back to `default`.
+fn resolve_u32_env(var: &str, default: u32) -> u32 {
+    match std::env::var(var) {
+        Ok(val) => match val.parse::<u32>() {
+            Ok(n) => n,
+            Err(_) => {
+                tracing::warn!(
+                    target: "hkask.mcp",
+                    env_var = %var,
+                    value = %val,
+                    "Failed to parse as u32 — using default"
+                );
+                default
+            }
+        },
+        Err(_) => default,
+    }
+}
+
+/// Resolved MCP runtime tuning parameters. Read once at first server launch
+/// and cached for the process lifetime.
+#[derive(Clone, Debug)]
+struct McpRuntimeConfig {
+    reconnect_cooldown: Duration,
+    startup_max_retries: u32,
+    startup_initial_backoff: Duration,
+    startup_max_backoff: Duration,
+    health_check_interval: Duration,
+    max_consecutive_health_failures: u32,
+}
+
+impl Default for McpRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            reconnect_cooldown: resolve_duration_env_secs(
+                "HKASK_MCP_RECONNECT_COOLDOWN_SECS",
+                DEFAULT_RECONNECT_COOLDOWN,
+            ),
+            startup_max_retries: resolve_u32_env(
+                "HKASK_MCP_STARTUP_MAX_RETRIES",
+                DEFAULT_STARTUP_MAX_RETRIES,
+            ),
+            startup_initial_backoff: resolve_duration_env_millis(
+                "HKASK_MCP_STARTUP_INITIAL_BACKOFF_MS",
+                DEFAULT_STARTUP_INITIAL_BACKOFF,
+            ),
+            startup_max_backoff: resolve_duration_env_secs(
+                "HKASK_MCP_STARTUP_MAX_BACKOFF_SECS",
+                DEFAULT_STARTUP_MAX_BACKOFF,
+            ),
+            health_check_interval: resolve_duration_env_secs(
+                "HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS",
+                DEFAULT_HEALTH_CHECK_INTERVAL,
+            ),
+            max_consecutive_health_failures: resolve_u32_env(
+                "HKASK_MCP_MAX_HEALTH_FAILURES",
+                DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES,
+            ),
+        }
+    }
+}
 
 /// A simple flat-cost energy estimator.
 ///
@@ -239,11 +353,13 @@ pub struct McpRuntime {
     cancellation_tokens: Arc<RwLock<HashMap<String, CancellationToken>>>,
     /// How each server was launched, so a dead connection can be rebuilt.
     launch_specs: Arc<RwLock<HashMap<String, LaunchSpec>>>,
-    /// Last reconnect attempt per server, for [`RECONNECT_COOLDOWN`].
+    /// Last reconnect attempt per server, for the reconnect cooldown.
     last_reconnect: Arc<RwLock<HashMap<String, Instant>>>,
     /// Consecutive health-check failures per server. After
-    /// [`MAX_CONSECUTIVE_HEALTH_FAILURES`] the supervisor stops auto-healing.
+    /// `config.max_consecutive_health_failures` the supervisor stops auto-healing.
     health_failures: Arc<RwLock<HashMap<String, u32>>>,
+    /// Resolved tuning parameters (env-overridable defaults).
+    config: McpRuntimeConfig,
     governance: Option<ToolGovernance>,
 }
 
@@ -261,6 +377,7 @@ impl McpRuntime {
             launch_specs: Arc::new(RwLock::new(HashMap::new())),
             last_reconnect: Arc::new(RwLock::new(HashMap::new())),
             health_failures: Arc::new(RwLock::new(HashMap::new())),
+            config: McpRuntimeConfig::default(),
             governance: None,
         }
     }
@@ -385,11 +502,11 @@ impl McpRuntime {
 
         // Spawn + handshake with retry. A server that fails its handshake (binary
         // missing, DB locked, socket misconfiguration) is retried with exponential
-        // backoff up to [`STARTUP_MAX_RETRIES`]. Each attempt pipes stderr and
+        // backoff up to `config.startup_max_retries`. Each attempt pipes stderr and
         // forwards lines to the tracing substrate tagged with the server_id, so
         // operator logs attribute child diagnostics correctly.
         let mut last_error: Option<ServerStartError> = None;
-        let mut backoff = STARTUP_INITIAL_BACKOFF;
+        let mut backoff = self.config.startup_initial_backoff;
         let mut attempt: u32 = 0;
         let running = loop {
             let mut cmd = Command::new(&binary);
@@ -429,15 +546,15 @@ impl McpRuntime {
                         target: "hkask.mcp",
                         server_id = %server_id,
                         attempt = attempt + 1,
-                        max = STARTUP_MAX_RETRIES,
+                        max = self.config.startup_max_retries,
                         error = %e,
                         "MCP server spawn failed — will retry"
                     );
-                    if attempt + 1 >= STARTUP_MAX_RETRIES {
+                    if attempt + 1 >= self.config.startup_max_retries {
                         break None;
                     }
                     tokio::time::sleep(backoff).await;
-                    backoff = std::cmp::min(backoff * 2, STARTUP_MAX_BACKOFF);
+                    backoff = std::cmp::min(backoff * 2, self.config.startup_max_backoff);
                     attempt += 1;
                     continue;
                 }
@@ -487,15 +604,15 @@ impl McpRuntime {
                         target: "hkask.mcp",
                         server_id = %server_id,
                         attempt = attempt + 1,
-                        max = STARTUP_MAX_RETRIES,
+                        max = self.config.startup_max_retries,
                         error = %e,
                         "MCP server handshake failed — will retry"
                     );
-                    if attempt + 1 >= STARTUP_MAX_RETRIES {
+                    if attempt + 1 >= self.config.startup_max_retries {
                         break None;
                     }
                     tokio::time::sleep(backoff).await;
-                    backoff = std::cmp::min(backoff * 2, STARTUP_MAX_BACKOFF);
+                    backoff = std::cmp::min(backoff * 2, self.config.startup_max_backoff);
                     attempt += 1;
                 }
             }
@@ -652,7 +769,7 @@ impl McpRuntime {
         // lets the on-demand reconnect path (`call_tool_inner → try_reconnect`)
         // heal it on the next tool call.
         //
-        // After [`MAX_CONSECUTIVE_HEALTH_FAILURES`] consecutive failures the
+        // After `config.max_consecutive_health_failures` consecutive failures the
         // supervisor stops and logs an operator-actionable error, so a
         // crash-looping binary doesn't spin forever. The failure counter
         // increments on every check where the connection is dead or missing,
@@ -662,8 +779,10 @@ impl McpRuntime {
         let supervisor_connections = self.connections.clone();
         let supervisor_health_failures = self.health_failures.clone();
         let supervisor_id = server_id.to_string();
+        let health_check_interval = self.config.health_check_interval;
+        let max_health_failures = self.config.max_consecutive_health_failures;
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(HEALTH_CHECK_INTERVAL);
+            let mut interval = tokio::time::interval(health_check_interval);
             interval.tick().await; // skip the immediate first tick
             loop {
                 tokio::select! {
@@ -727,7 +846,7 @@ impl McpRuntime {
                     *count
                 };
 
-                if failures >= MAX_CONSECUTIVE_HEALTH_FAILURES {
+                if failures >= max_health_failures {
                     tracing::error!(
                         target: "hkask.mcp",
                         server_id = %supervisor_id,
@@ -787,8 +906,8 @@ impl McpRuntime {
         self.get_peer(server_id).await.is_some()
     }
 
-    /// Re-spawn a server whose connection died, subject to
-    /// [`RECONNECT_COOLDOWN`].
+    /// Re-spawn a server whose connection died, subject to the reconnect cooldown
+    /// (`config.reconnect_cooldown`).
     ///
     /// Returns `true` when a live connection exists afterwards. Requires a launch
     /// spec recorded by a prior `start_server_with_env` — a server that was only
@@ -804,7 +923,7 @@ impl McpRuntime {
         {
             let mut last = self.last_reconnect.write().await;
             if let Some(previous) = last.get(server_id)
-                && previous.elapsed() < RECONNECT_COOLDOWN
+                && previous.elapsed() < self.config.reconnect_cooldown
             {
                 tracing::debug!(
                     target: "hkask.mcp",
@@ -1073,7 +1192,7 @@ impl McpRuntime {
     ///
     /// Heals a lost connection rather than reporting it: when the server has no
     /// live peer, or the dispatch itself fails because the transport closed under
-    /// it, this reconnects once (bounded by [`RECONNECT_COOLDOWN`]) and retries.
+    /// it, this reconnects once (bounded by the reconnect cooldown) and retries.
     /// Exactly one retry — a second transport failure is reported, because a
     /// server that dies immediately after a successful handshake is broken, not
     /// transiently unavailable, and retrying would spin.
