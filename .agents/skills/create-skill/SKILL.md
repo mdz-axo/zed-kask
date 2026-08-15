@@ -217,10 +217,96 @@ Detection criteria — add a render step if **any** of these are true:
 Skills that do NOT produce visual artifacts (pure reasoning, extraction, audit,
 code review, etc.) do not need a render step.
 
+### Composition principles for optimal skill design (Phase 3 gate)
+
+Five principles discovered through the co-evolution of skills and MCP tools.
+Apply these when designing the PDCA shape and step sequence:
+
+#### 1. The Determinism Frontier
+
+Every skill has a boundary between deterministic steps (output fully
+determined by inputs) and probabilistic steps (LLM exercises judgment).
+Push as much work as possible to the deterministic side.
+
+- **`execute`** for MCP tool calls whose inputs are fully determined by prior
+  step outputs (financial data, codegraph queries, calibration reads).
+- **`compute`** (lisp.eval) for math, invariant checks, convergence signals.
+- **`select`** only for steps that require LLM judgment (synthesis, reasoning,
+  classification, prediction).
+
+The test: "Could a deterministic function produce this output from these
+inputs?" If yes, it should be `execute` or `compute`, not `select`.
+
+Example: `company-research-flash` has 15 `execute` steps (deterministic
+financial data + valuation tools) and 9 `select` steps (LLM synthesis).
+The financial data is deterministic; the analysis is judgment.
+
+#### 2. Persistence-Grounded Learning
+
+Every skill that produces forecasts, analyses, or recommendations should
+read its own prior outputs from MCP persistence before the cascade starts.
+This closes the feedback loop: the skill's current invocation is informed
+by its past performance.
+
+The pattern: `execute` step at ordinal 0 → read prior runs → thread into
+the first `select` step's `input_mapping`.
+
+Examples:
+- `superforecasting` reads `scenario_calibration` (Brier score history)
+- `metacognition` reads `scenario_calibration` (overconfidence bias)
+- `kata-improvement` reads `kanban_board_list` + `kanban_task_list` (prior PDCA cycles)
+- `company-research-flash` reads `forecast_list` (prior price targets)
+- `swarm-intelligence` reads `swarm_get_swarm` / `swarm_get_local_swarm` (prior swarm state)
+
+#### 3. Failure Surfacing
+
+Every `execute` step must declare `on_failure: { action: report, resume: "..." }`.
+The `report` action calls `curator_report_skill_use_issue` before escalating
+— the Curator receives the skill name, tool name, step ordinal, and error.
+The `resume` text must explain what was lost and how to proceed without the
+failed tool's output.
+
+This is the enforcement point for the `.rules` trap: "Opt-in features that
+fail must log the failure classification, not collapse to `None` via `.ok()?`."
+Without `on_failure: report`, a failed `execute` step silently propagates as
+`TemplateError` and the operator sees `ExitKind::Escalated` with no context.
+
+#### 4. The Lisp Scaffold Pattern
+
+When an LLM step produces structured output with invariant properties (count,
+completeness, diversity, mutual exclusivity), follow it with a `lisp.eval`
+`compute` step that checks those invariants deterministically. The Lisp step's
+output (defect list or gap score) feeds the convergence signal.
+
+Pattern: LLM generates → Lisp checks → LLM repairs (on next iteration).
+
+Examples:
+- `diagnose` step 4: Lisp checks hypothesis count (3-7), completeness
+  (prediction + falsifier), diversity (≥2 likelihoods), mutual exclusivity
+- `metacognition` steps 5-8: Lisp computes object gap, process gap,
+  hypotenuse, Brier score
+- `graph-audit` steps 19/21/22: Lisp computes convergence from quality
+  findings / blockers count
+
+The Lisp form is the deterministic scaffold; the LLM is the probabilistic
+reasoner. The scaffold checks what the LLM cannot reliably self-evaluate.
+
+#### 5. The Co-Evolution Loop
+
+Skills and MCP tools evolve together. Skills reveal MCP tool design issues
+(missing inputs, confusing schemas) via `on_failure: report`. The Curator
+reads skill-use reports and issues `EvolveMcpToolSchema` directives. MCP
+tools gain new capabilities that skills should adopt via `execute` steps.
+
+When designing a new skill, check whether existing MCP tools provide
+capabilities the skill should adopt natively (via `execute` steps) rather
+than agent-mediated tool calls. The `skill-mcp-integration.md` reference
+doc lists the two invocation patterns and when to use each.
+
 ### Phase 4 — Validate (delegate to skill-maintenance-validate)
 
 Delegate to `skill-maintenance-validate` to check the scaffolded crate
-against R1-R12, Z1-Z8, X1-X4, E1-E11.
+against R1-R12, Z1-Z8, X1-X4, E1-E16.
 
 ### Phase 5 — Converge
 
@@ -236,7 +322,7 @@ were insufficient or the PDCA shape didn't emerge correctly from them.
 | `create-skill-research.j2` | `KnowAct` | Search academic/industry literature for the skill's domain. Find ontological anchors (process ontologies, quality criteria, entity types, existing ontologies). Derive the PDCA shape from the anchors. |
 | `create-skill-describe.j2` | `KnowAct` | Capture the skill's purpose, name, PDCA shape (emergent from anchors), delegates, span namespace, ontology annotations. |
 | `create-skill-scaffold.j2` | `KnowAct` | Generate the full registry crate structure with ontology-annotated artifacts. Delegates to skill-maintenance-build. |
-| `create-skill-validate.j2` | `KnowAct` | Validate the scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E11. Delegates to skill-maintenance-validate. |
+| `create-skill-validate.j2` | `KnowAct` | Validate the scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E16. Delegates to skill-maintenance-validate. |
 | `create-skill-ontologies.yaml` | `RenderAct` | Reference: ontology reference set (PKO, Dublin Core, GOLEM, MovieLabs OMC, ESO) with domain mappings and annotation patterns. |
 
 ## Constraints

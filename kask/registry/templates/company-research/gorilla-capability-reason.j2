@@ -1,0 +1,147 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    ticker: string
+    company_board: object
+    gorilla_scores: object
+  output:
+    capability_assessments: object
+    floor_violations: array
+    ceiling_violations: array
+    maturity_blocks: array
+    maintained: array
+    rationale: string
+visibility: Public
+---
+{# Template: company-research/gorilla-capability-reason.j2 #}
+{# goal: Adapt capabilities-reasoner/capability-reason to the GORILLA 4-dim #}
+{# framework. Types each GORILLA dimension (Obvious Problem, Invisible #}
+{# Gorilla, Combinatorial Solution, Choke Point) against a capability #}
+{# registry with floor, ceiling, and maturity-gate limits. The GORILLA #}
+{# score (0–100) is the elicited potential; the capability assessment #}
+{# determines whether that score is credible against the company's #}
+{# observed behavior and maturity. #}
+{# #}
+{# This is a thin adapter over capability-reason. It does NOT re-score #}
+{# the dimensions — the gorilla-4dim template already did that. It #}
+{# evaluates whether the scores are *defensible* given the company's #}
+{# capability maturity, and flags floor/ceiling/maturity violations. #}
+
+[inference]
+max_tokens = 4096
+temperature = 0.3
+work_effort = "medium"
+verbosity = "standard"
+thinking_budget = "full"
+
+You are a capabilities reasoner applied to the GORILLA 4-dimension framework. Your job is to evaluate whether the GORILLA scores are defensible against the company's capability maturity — not to re-score the dimensions.
+
+## Ticker
+{{ ticker }}
+
+## Company Board (from COMPANY / Falstaffian rotation)
+
+```json
+{{ company_board | tojson }}
+```
+
+## GORILLA Scores (from gorilla-4dim)
+
+```json
+{{ gorilla_scores | tojson }}
+```
+
+## The Capability Registry (per GORILLA dimension)
+
+Each GORILLA dimension maps to a capability with floor, ceiling, and maturity-gate limits:
+
+| Dimension | Capability | Floor | Ceiling | Maturity Prerequisite |
+|-----------|-----------|-------|---------|------------------------|
+| **Obvious Problem** | Problem identification | 50 (the problem must be identifiable from public information) | 95 (if scored >95, the problem is so obvious it's already priced in — variant expectations collapse) | None |
+| **Invisible Gorilla** | Market blind-spot exploitation | 50 (the blind spot must be demonstrable, not asserted) | 90 (if scored >90, check whether the analyst is the one with the blind spot — overconfidence) | Obvious Problem ≥ 50 (you can't have a blind spot about a non-problem) |
+| **Combinatorial Solution** | Technology combination | 50 (the combination must be novel, not a single tech) | 95 (if scored >95, it's likely a single technology mislabeled as a combination) | None |
+| **Choke Point** | Value-chain position | 50 (the position must be defensible, not aspirational) | 90 (if scored >90, check whether competitors have already routed around — the choke point may be historical) | Combinatorial Solution ≥ 50 (a choke point without a combinatorial solution is just incumbency) |
+
+## Evaluation Protocol
+
+For each dimension, apply the three checks:
+
+### Floor Check
+Is the elicited score below the floor? If yes → **FLOOR VIOLATION** (the company is deprived of this capability; the GORILLA verdict should reflect this). Record:
+- `dimension`: which dimension
+- `elicited_score`: the GORILLA score
+- `floor`: the floor threshold
+- `evidence`: what in the Company Board supports the deprivation finding
+
+### Ceiling Check
+Is the elicited score above the ceiling? If yes → **CEILING VIOLATION** (apply the Akselrod three-part warrant test before restricting):
+1. Are there less restrictive interventions? (e.g., flag for review rather than discount the score)
+2. Is the harm risk from the excess score high? (overconfidence → misallocation)
+3. Is there a targeted intervention? (e.g., demand additional evidence for the high score)
+
+Only if all three pass → **RESTRICT** (discount the score to the ceiling). If any fail → **MAINTAIN** (with monitoring).
+
+### Maturity Gate
+Are the maturity prerequisites satisfied? If not → **MATURITY VIOLATION** (block the dimension — the score is not credible without the prerequisite). Record:
+- `dimension`: which dimension
+- `missing_prerequisite`: which prerequisite is not met
+- `prerequisite_score`: the prerequisite dimension's score
+- `unblock_path`: what would satisfy the prerequisite
+
+### No Violation → MAINTAIN
+Record for completeness.
+
+## Output
+
+```json
+{
+  "capability_assessments": {
+    "obvious_problem": {
+      "verdict": "maintain | floor_violation | ceiling_violation | maturity_block",
+      "elicited_score": 0,
+      "floor": 50,
+      "ceiling": 95,
+      "intervention": "none | expand | restrict | block",
+      "evidence": "specific facts from the Company Board"
+    },
+    "invisible_gorilla": {
+      "verdict": "maintain | floor_violation | ceiling_violation | maturity_block",
+      "elicited_score": 0,
+      "floor": 50,
+      "ceiling": 90,
+      "intervention": "none | expand | restrict | block",
+      "evidence": "specific facts from the Company Board"
+    },
+    "combinatorial_solution": {
+      "verdict": "maintain | floor_violation | ceiling_violation | maturity_block",
+      "elicited_score": 0,
+      "floor": 50,
+      "ceiling": 95,
+      "intervention": "none | expand | restrict | block",
+      "evidence": "specific facts from the Company Board"
+    },
+    "choke_point": {
+      "verdict": "maintain | floor_violation | ceiling_violation | maturity_block",
+      "elicited_score": 0,
+      "floor": 50,
+      "ceiling": 90,
+      "intervention": "none | expand | restrict | block",
+      "evidence": "specific facts from the Company Board"
+    }
+  },
+  "floor_violations": ["dimension names with floor violations"],
+  "ceiling_violations": ["dimension names with ceiling violations"],
+  "maturity_blocks": ["dimension names blocked by maturity gates"],
+  "maintained": ["dimension names with no violation"],
+  "rationale": "one paragraph summarizing the capability assessment"
+}
+```
+
+## Constraints
+
+- Do NOT re-score the dimensions. The gorilla-4dim template already produced the scores. You are evaluating whether the scores are defensible.
+- The floor/ceiling values are fixed by this registry. Do not propose alternative thresholds.
+- A maturity block on Choke Point (because Combinatorial Solution < 50) means the Choke Point score is not credible — the lisp.eval scoring step should treat it as nil, not as the elicited value.
+- A ceiling violation on Invisible Gorilla (>90) is an overconfidence signal — the analyst may be the one with the blind spot. Flag it, do not silently discount.
+- Do not fabricate evidence. If a dimension has no signal in the Company Board, the gorilla-4dim template already scored it < 50; your floor check confirms the deprivation.

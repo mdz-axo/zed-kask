@@ -2175,4 +2175,124 @@ mod tests {
             "Public skills have no worktree: {rendered}"
         );
     }
+
+    // ── RecordSkillFeedbackTool tests ───────────────────────────────────
+
+    /// `RecordSkillFeedbackTool` returns `Ok { recorded: true }` when the
+    /// executor is wired and `record_operator_feedback` succeeds.
+    #[gpui::test]
+    async fn test_record_skill_feedback_returns_ok(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let executor = Arc::new(StubManifestExecutor::new(["any-skill"], "unused"));
+        let tool = Arc::new(RecordSkillFeedbackTool::with_manifest_executor_resolver(
+            move || Some(executor.clone()),
+        ));
+
+        let (mut sender, input) = ToolInput::<RecordSkillFeedbackInput>::test();
+        sender.send_full(json!({
+            "skill_name": "test-skill",
+            "disposition": "accepted",
+            "comments": "output was useful",
+        }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let output = task.await.unwrap();
+
+        match output {
+            RecordSkillFeedbackOutput::Ok { recorded } => assert!(recorded),
+            other => panic!("expected Ok, got: {other:?}"),
+        }
+    }
+
+    /// `RecordSkillFeedbackTool` returns `Error` when the executor is not
+    /// wired (resolver returns `None`).
+    #[gpui::test]
+    async fn test_record_skill_feedback_errors_when_executor_not_configured(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let tool = Arc::new(RecordSkillFeedbackTool::with_manifest_executor_resolver(
+            || None,
+        ));
+
+        let (mut sender, input) = ToolInput::<RecordSkillFeedbackInput>::test();
+        sender.send_full(json!({
+            "skill_name": "test-skill",
+            "disposition": "rejected",
+        }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let output = task.await.unwrap();
+
+        match output {
+            RecordSkillFeedbackOutput::Error { error } => {
+                assert!(
+                    error.contains("not configured"),
+                    "error should mention executor not configured: {error}"
+                );
+            }
+            other => panic!("expected Error, got: {other:?}"),
+        }
+    }
+
+    // ── ValidateGoldenOutputsTool tests ────────────────────────────────
+
+    /// `ValidateGoldenOutputsTool` returns the JSON results string from the
+    /// executor when wired.
+    #[gpui::test]
+    async fn test_validate_golden_outputs_returns_results(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let executor = Arc::new(StubManifestExecutor::new(["test-skill"], "unused"));
+        let tool = Arc::new(ValidateGoldenOutputsTool::with_manifest_executor_resolver(
+            move || Some(executor.clone()),
+        ));
+
+        let (mut sender, input) = ToolInput::<ValidateGoldenOutputsInput>::test();
+        sender.send_full(json!({ "skill_name": "test-skill" }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let output = task.await.unwrap();
+
+        match output {
+            ValidateGoldenOutputsOutput::Ok { results } => {
+                assert_eq!(
+                    results, "[]",
+                    "stub returns empty array for no golden outputs"
+                );
+            }
+            other => panic!("expected Ok, got: {other:?}"),
+        }
+    }
+
+    /// `ValidateGoldenOutputsTool` returns `Error` when the executor is not
+    /// wired.
+    #[gpui::test]
+    async fn test_validate_golden_outputs_errors_when_executor_not_configured(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let tool = Arc::new(ValidateGoldenOutputsTool::with_manifest_executor_resolver(
+            || None,
+        ));
+
+        let (mut sender, input) = ToolInput::<ValidateGoldenOutputsInput>::test();
+        sender.send_full(json!({ "skill_name": "test-skill" }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let output = task.await.unwrap();
+
+        match output {
+            ValidateGoldenOutputsOutput::Error { error } => {
+                assert!(
+                    error.contains("not configured"),
+                    "error should mention executor not configured: {error}"
+                );
+            }
+            other => panic!("expected Error, got: {other:?}"),
+        }
+    }
 }

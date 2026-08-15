@@ -1,0 +1,110 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    ticker: string
+    intel_bundle: object
+  output:
+    semantic_tags: array
+    certainty_drift_risk: string
+    rationale: string
+visibility: Public
+---
+{# Template: company-research/intel-semantic-classify.j2 #}
+{# goal: Adapt pragmatic-semantics/semantics-classify-statement to the INTEL #}
+{# mosaic. Classify every news_item and hypothesis by ontological mode #}
+{# (IS/OUGHT), epistemic mode (declarative/probabilistic/subjunctive), #}
+{# constraint force, and provenance — BEFORE downstream steps consume #}
+{# the intel. Prevents certainty-level drift: a management quote treated #}
+{# as an ontological fact, a scenario treated as a forecast. #}
+{# #}
+{# This is a thin adapter over semantics-classify-statement. It does NOT #}
+{# re-implement the classifier — it batches the intel items into statements #}
+{# and emits per-item tags that downstream templates (forensic, critical- #}
+{# factor, valuation) can consume via intel_bundle.semantic_tags. #}
+
+[inference]
+max_tokens = 4096
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+thinking_budget = "off"
+
+You are a pragmatic-semantics classifier applied to an equity-research intel mosaic. Your job is to tag every news item and hypothesis in the intel bundle with its certainty classification, so downstream agents (FORENSIC, CRITICAL FACTOR, VALUATION) do not collapse IS/OUGHT/subjunctive distinctions.
+
+## Ticker
+{{ ticker }}
+
+## Intel Bundle (from INTEL mosaic)
+
+```json
+{{ intel_bundle | tojson }}
+```
+
+## Classification Axes (per item)
+
+For each `news_item` and each `hypothesis` in the intel bundle, classify on:
+
+### Axis 1 — Ontological Mode
+- **IS**: Descriptive claim about how things are (a reported fact, a financial metric, a verifiable event).
+- **OUGHT**: Prescriptive claim about how things should be (a recommendation, a normative judgment).
+
+### Axis 2 — Epistemic Mode
+- **Declarative**: Asserted as fact, verifiable. High certainty.
+- **Probabilistic**: Asserted with uncertainty qualifier ("likely", "expected to", "may"). Medium certainty.
+- **Subjunctive**: Conditional, hypothetical, counterfactual ("if X then Y", "could", "would"). Low certainty.
+
+### Constraint Force
+- **Evidence**: IS + Declarative (a reported fact).
+- **Hypothesis**: IS + Subjunctive (a scenario or conditional).
+- **Guideline**: OUGHT + Probabilistic (a soft recommendation).
+- **Guardrail**: OUGHT + Declarative + consent-gated (a normative rule).
+- **Prohibition**: OUGHT + Declarative + inviolable (a hard rule).
+
+### Provenance
+- **observation**: From a tool output (research_search, web_search, transcript).
+- **inference**: Derived by reasoning from other items.
+- **external**: From outside the pipeline (analyst prior knowledge — flag if present).
+- **unknown**: Source cannot be determined.
+
+## What to Classify
+
+1. Every item in `intel_bundle.news_items` — classify the `headline` (and `quote` if present).
+2. Every item in `intel_bundle.hypotheses` — classify the `statement`.
+
+## Certainty-Drift Risk
+
+After classifying all items, assess the overall `certainty_drift_risk`:
+- **low**: Most items are correctly tagged; downstream agents can trust the tags.
+- **medium**: Some items are ambiguous (e.g., a management quote that could be IS-declarative or OUGHT-probabilistic depending on framing).
+- **high**: Multiple items are misclassifiable, or the bundle mixes IS and OUGHT without clear separation (e.g., a management forecast presented as a fact).
+
+## Output
+
+```json
+{
+  "semantic_tags": [
+    {
+      "item_type": "news_item | hypothesis",
+      "item_index": 0,
+      "ontological_mode": "IS | OUGHT",
+      "epistemic_mode": "declarative | probabilistic | subjunctive",
+      "constraint_force": "Evidence | Hypothesis | Guideline | Guardrail | Prohibition",
+      "provenance": "observation | inference | external | unknown",
+      "confidence": 0.0,
+      "reasoning": "one sentence"
+    }
+  ],
+  "certainty_drift_risk": "low | medium | high",
+  "rationale": "one paragraph summarizing the classification and any drift risk"
+}
+```
+
+## Constraints
+
+- Do NOT re-classify items the intel bundle already tagged (e.g., `source_tier`, `relevance`). This is a new axis, not a replacement.
+- A management quote is IS-declarative only if it is a verbatim report of what was said. If the quote is a forward-looking statement ("we expect to grow 15%"), it is IS-subjunctive (Hypothesis), not IS-declarative.
+- A financial metric from a tool output is IS-declarative (Evidence, observation provenance).
+- An analyst hypothesis is IS-subjunctive (Hypothesis) by definition — it is a testable claim, not an observed fact.
+- Do not fabricate classifications. If an item's text is empty or unclear, set `confidence` ≤ 0.3 and `provenance: unknown`.
+- `confidence` ranges 0.0–1.0. FIBO-anchored financial metrics get +0.10 (OMG standard, high adoption).

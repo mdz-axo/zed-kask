@@ -326,6 +326,47 @@ impl MetacognitionLoop {
             }
         }
 
+        // Also trend operator_feedback disposition rates. A skill can have
+        // 100% cascade success but declining operator acceptance (outputs are
+        // technically successful but increasingly useless). This catches that
+        // case — the outcome channel alone cannot (adversarial review finding 3).
+        let op_skill_ids = ledger.skill_ids_with_feedback("operator_feedback").await;
+        for skill_id in op_skill_ids {
+            let spans = ledger
+                .query_skill_feedback(&skill_id, "operator_feedback")
+                .await;
+            if spans.len() < self.config.feedback_drift_min_samples {
+                continue;
+            }
+            let window = self.config.feedback_drift_window;
+            if spans.len() < window * 2 {
+                continue;
+            }
+            let split = spans.len() - window;
+            let prior_spans = &spans[split - window..split];
+            let current_spans = &spans[split..];
+            let prior_rate = acceptance_rate(prior_spans);
+            let current_rate = acceptance_rate(current_spans);
+            if prior_rate > 0.0
+                && current_rate < prior_rate * self.config.feedback_drift_decline_ratio
+            {
+                alerts.push(EscalationAlert {
+                    trigger: EscalationTrigger::FeedbackDrift {
+                        skill_id: skill_id.clone(),
+                    },
+                    severity: EscalationSeverity::Warning,
+                    value: current_rate,
+                    threshold: prior_rate * self.config.feedback_drift_decline_ratio,
+                    message: format!(
+                        "Skill '{skill_id}' operator acceptance rate declined from \
+                         {:.0}% to {:.0}% (prior window → current window)",
+                        prior_rate * 100.0,
+                        current_rate * 100.0
+                    ),
+                });
+            }
+        }
+
         alerts
     }
 
@@ -509,6 +550,26 @@ fn success_rate(spans: &[StoredSkillSpan]) -> f64 {
         })
         .count();
     successes as f64 / spans.len() as f64
+}
+
+/// Compute the operator acceptance rate from a slice of operator_feedback
+/// spans. Each span's payload is `{"disposition": "accepted"|"overridden"|
+/// "rejected"|"corrected", ...}`. "accepted" counts as acceptance; all others
+/// do not. Returns 0.0–1.0. Empty input returns 0.0.
+fn acceptance_rate(spans: &[StoredSkillSpan]) -> f64 {
+    if spans.is_empty() {
+        return 0.0;
+    }
+    let accepted = spans
+        .iter()
+        .filter(|s| {
+            s.payload
+                .get("disposition")
+                .and_then(|v| v.as_str())
+                .is_some_and(|d| d == "accepted")
+        })
+        .count();
+    accepted as f64 / spans.len() as f64
 }
 
 #[cfg(test)]

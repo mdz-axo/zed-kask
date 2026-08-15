@@ -211,16 +211,47 @@ steps:
       research_search_result: "{{ step_2_result }}"
       web_search_result: "{{ step_3_result }}"
 
+  # ── Step 5: INTEL — pragmatic-semantics certainty classification (v0.36.0) ──
+  # Cross-skill adapter: company-research/intel-semantic-classify adapts
+  # pragmatic-semantics/semantics-classify-statement to the intel mosaic.
+  # Classifies every news_item and hypothesis by IS/OUGHT, declarative/
+  # probabilistic/subjunctive, constraint force, and provenance — BEFORE
+  # downstream steps (forensic, critical-factor, valuation) consume the
+  # intel. Prevents certainty-level drift. Emits semantic_tags and
+  # certainty_drift_risk. Downstream templates consume via
+  # intel_bundle.semantic_tags (the forensic and critical-factor templates
+  # already receive intel_bundle as input — the semantic_tags field rides
+  # along without template changes).
+  - ordinal: 5
+    action: select
+    description: >
+      INTEL — pragmatic-semantics certainty classification. Adapts
+      pragmatic-semantics/semantics-classify-statement to the intel mosaic
+      (step 4). Classifies every news_item and hypothesis by ontological
+      mode (IS/OUGHT), epistemic mode (declarative/probabilistic/subjunctive),
+      constraint force, and provenance. Emits semantic_tags and
+      certainty_drift_risk. Prevents certainty-level drift through the
+      pipeline — a management quote treated as an ontological fact, a
+      scenario treated as a forecast. Result lands in step_5_result.
+    renderer: minijinja
+    template_ref: company-research/intel-semantic-classify
+    condition: "step_1_result.decision != 'DROP' AND step_4_result.mosaic_clear"
+    gas_cap: 4000
+    timeout_seconds: 120
+    input_mapping:
+      ticker: "{{ ticker }}"
+      intel_bundle: "{{ step_4_result }}"
+
   # ── Steps 5–6: INTEL — earnings transcript via listening skill (cross-skill) ──
   # Step 5 fetches the transcript via company_transcript MCP tool (native
   # execute). Step 6 applies the listening/apply-template (MAIA v3 no-
   # fabrication) over the fetched chunks. Cross-skill template_ref — same
   # pattern as superforecasting step 6 reusing falsifiability/* templates.
-  - ordinal: 5
+  - ordinal: 6
     action: execute
     description: >
       INTEL — fetch earnings transcript via company_transcript MCP tool for
-      the listening skill. Deterministic. Result lands in step_5_result
+      the listening skill. Deterministic. Result lands in step_6_result
       and feeds the listening template (step 6).
     mcp: company_transcript
     condition: "step_1_result.decision != 'DROP'"
@@ -231,7 +262,7 @@ steps:
       mode: "earnings"
       quarters_back: 4
 
-  - ordinal: 6
+  - ordinal: 7
     action: flowdef
     description: >
       INTEL — earnings-call listening via the full listening skill (MAIA v3
@@ -245,12 +276,12 @@ steps:
     timeout_seconds: 300
     input_mapping:
       company_symbol: "{{ ticker }}"
-      transcript: "{{ step_5_result.transcripts[0].content | default('') }}"
+      transcript: "{{ step_6_result.transcripts[0].content | default('') }}"
       prior_transcripts: "{{ prior_outcomes.prior_transcripts | default([]) }}"
 
   # ── Step 7: FORENSIC pre-screen ──
   # Condition: INTEL mosaic_clear (false = MNPI HALT terminal gate).
-  - ordinal: 7
+  - ordinal: 8
     action: select
     description: >
       FORENSIC pre-screen: quick risk scan across accounting red flags,
@@ -269,14 +300,14 @@ steps:
   # ── Steps 8–9: CRITICAL FACTOR — Bull/Base/Bear thesis engine ──
   # Step 8 generates the scenario tree via scenario_build MCP tool.
   # Step 9 synthesizes the critical factors and scenarios.
-  - ordinal: 8
+  - ordinal: 9
     action: execute
     description: >
       CRITICAL FACTOR — generate Bull/Base/Bear scenario tree via
-      scenario_build MCP tool. Deterministic. Result lands in step_8_result
+      scenario_build MCP tool. Deterministic. Result lands in step_9_result
       and feeds CRITICAL FACTOR synthesis (step 9).
     mcp: scenario_build
-    condition: "step_7_result.recommendation != 'BLOCK'"
+    condition: "step_8_result.recommendation != 'BLOCK'"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -284,7 +315,7 @@ steps:
       scenario_type: "equity_thesis"
       context: "{{ step_4_result.business_model | default('') }}"
 
-  - ordinal: 9
+  - ordinal: 10
     action: select
     description: >
       CRITICAL FACTOR: identify 3–5 critical factors and construct Bull/Base/
@@ -296,28 +327,28 @@ steps:
       (0.35) vs round (0.50) probabilities.
     renderer: minijinja
     template_ref: company-research/critical-factor
-    condition: "step_7_result.recommendation != 'BLOCK'"
+    condition: "step_8_result.recommendation != 'BLOCK'"
     gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       ticker: "{{ ticker }}"
       intel_bundle: "{{ step_4_result }}"
-      forensic_profile: "{{ step_7_result }}"
+      forensic_profile: "{{ step_8_result }}"
       downstream_mode: "{{ step_1_result.downstream_mode }}"
       horizon_tag: "{{ step_1_result.horizon_tag }}"
-      scenario_build_result: "{{ step_8_result }}"
+      scenario_build_result: "{{ step_9_result }}"
 
   # ── Steps 10–11: FORENSIC full audit ──
   # Condition: CRITICAL FACTOR produced factors (empty = DROP terminal).
   # Step 10 fetches company_transcript for mgmt quotes. Step 11 synthesizes.
-  - ordinal: 10
+  - ordinal: 11
     action: execute
     description: >
       FORENSIC full — fetch earnings transcript via company_transcript MCP
       tool for management profile (owner-operator, capital allocation track
-      record). Deterministic. Result lands in step_10_result.
+      record). Deterministic. Result lands in step_11_result.
     mcp: company_transcript
-    condition: "step_9_result.factors"
+    condition: "step_10_result.factors"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -325,7 +356,7 @@ steps:
       mode: "earnings"
       quarters_back: 4
 
-  - ordinal: 11
+  - ordinal: 12
     action: select
     description: >
       FORENSIC full audit: accruals quality, governance (board independence,
@@ -335,38 +366,26 @@ steps:
       governance_score, accruals_score. FORENSIC cannot be skipped.
     renderer: minijinja
     template_ref: company-research/forensic-full
-    condition: "step_9_result.factors"
+    condition: "step_10_result.factors"
     gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       ticker: "{{ ticker }}"
       intel_bundle: "{{ step_4_result }}"
-      listening_verdict: "{{ step_6_result }}"
-      transcript_result: "{{ step_10_result }}"
+      listening_verdict: "{{ step_7_result }}"
+      transcript_result: "{{ step_11_result }}"
 
   # ── Steps 12–16: VALUATION — 8-step price target (DEEPEN) ──
   # Four native execute steps (12–15) + LLM synthesis (16).
   # Condition: FORENSIC full did not BLOCK.
-  - ordinal: 12
-    action: execute
-    description: >
-      VALUATION — DCF via dcf_valuation MCP tool. Deterministic, no LLM
-      round-trip. Result lands in step_12_result and feeds VALUATION
-      synthesis (16).
-    mcp: dcf_valuation
-    condition: "step_9_result.factors AND step_11_result.recommendation != 'BLOCK'"
-    gas_cap: 5000
-    timeout_seconds: 120
-    input_mapping:
-      symbol: "{{ ticker }}"
-
   - ordinal: 13
     action: execute
     description: >
-      VALUATION — peer comparables via comparable_analysis MCP tool.
-      Deterministic. Result lands in step_13_result.
-    mcp: comparable_analysis
-    condition: "step_9_result.factors AND step_11_result.recommendation != 'BLOCK'"
+      VALUATION — DCF via dcf_valuation MCP tool. Deterministic, no LLM
+      round-trip. Result lands in step_13_result and feeds VALUATION
+      synthesis (16).
+    mcp: dcf_valuation
+    condition: "step_10_result.factors AND step_12_result.recommendation != 'BLOCK'"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -375,10 +394,10 @@ steps:
   - ordinal: 14
     action: execute
     description: >
-      VALUATION — expectations gap (Mauboussin expectations investing) via
-      expectations_gap MCP tool. Deterministic. Result lands in step_14_result.
-    mcp: expectations_gap
-    condition: "step_9_result.factors AND step_11_result.recommendation != 'BLOCK'"
+      VALUATION — peer comparables via comparable_analysis MCP tool.
+      Deterministic. Result lands in step_14_result.
+    mcp: comparable_analysis
+    condition: "step_10_result.factors AND step_12_result.recommendation != 'BLOCK'"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
@@ -387,20 +406,32 @@ steps:
   - ordinal: 15
     action: execute
     description: >
-      VALUATION — scenario-weighted price target via scenario_impact_valuation
-      MCP tool. Deterministic. Consumes the scenario event tree from
-      scenario_build (8) and the per-node EPS impact mappings from
-      CRITICAL FACTOR (9). Result lands in step_15_result.
-    mcp: scenario_impact_valuation
-    condition: "step_9_result.factors AND step_11_result.recommendation != 'BLOCK'"
+      VALUATION — expectations gap (Mauboussin expectations investing) via
+      expectations_gap MCP tool. Deterministic. Result lands in step_15_result.
+    mcp: expectations_gap
+    condition: "step_10_result.factors AND step_12_result.recommendation != 'BLOCK'"
     gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       symbol: "{{ ticker }}"
-      scenario_tree: "{{ step_8_result | tojson }}"
-      impact_mappings: "{{ step_9_result.impact_mappings | default([]) | tojson }}"
 
   - ordinal: 16
+    action: execute
+    description: >
+      VALUATION — scenario-weighted price target via scenario_impact_valuation
+      MCP tool. Deterministic. Consumes the scenario event tree from
+      scenario_build (8) and the per-node EPS impact mappings from
+      CRITICAL FACTOR (9). Result lands in step_16_result.
+    mcp: scenario_impact_valuation
+    condition: "step_10_result.factors AND step_12_result.recommendation != 'BLOCK'"
+    gas_cap: 5000
+    timeout_seconds: 120
+    input_mapping:
+      symbol: "{{ ticker }}"
+      scenario_tree: "{{ step_9_result | tojson }}"
+      impact_mappings: "{{ step_10_result.impact_mappings | default([]) | tojson }}"
+
+  - ordinal: 17
     action: select
     description: >
       VALUATION 8-step synthesis: LLM reasons over the four MCP tool outputs
@@ -411,24 +442,24 @@ steps:
       terminal gate.
     renderer: minijinja
     template_ref: company-research/valuation-8step
-    condition: "step_9_result.factors AND step_11_result.recommendation != 'BLOCK'"
+    condition: "step_10_result.factors AND step_12_result.recommendation != 'BLOCK'"
     gas_cap: 10000
     timeout_seconds: 240
     input_mapping:
       ticker: "{{ ticker }}"
-      forensic_profile: "{{ step_11_result }}"
-      cf_scenarios: "{{ step_9_result.scenarios }}"
+      forensic_profile: "{{ step_12_result }}"
+      cf_scenarios: "{{ step_10_result.scenarios }}"
       intel_bundle: "{{ step_4_result }}"
       downstream_mode: "{{ step_1_result.downstream_mode }}"
-      dcf_result: "{{ step_12_result }}"
-      comparables_result: "{{ step_13_result }}"
-      expectations_result: "{{ step_14_result }}"
-      scenario_pt_result: "{{ step_15_result }}"
+      dcf_result: "{{ step_13_result }}"
+      comparables_result: "{{ step_14_result }}"
+      expectations_result: "{{ step_15_result }}"
+      scenario_pt_result: "{{ step_16_result }}"
       lens_tensions: "{{ lens_tensions | default([]) }}"
 
   # ── Step 17: COMMUNICATION — ENTER gate + CASCADE note ──
   # Condition: VALUATION did not DROP (RR >= 2:1 or rating != UNDERPERFORM).
-  - ordinal: 17
+  - ordinal: 18
     action: select
     description: >
       COMMUNICATION: ENTER gate (Edge / New / Timely / Examples / Revealing —
@@ -438,14 +469,14 @@ steps:
       Confidence < 0.50 = NO_PUBLISH (EFRA-AI invariant).
     renderer: minijinja
     template_ref: company-research/communication-enter
-    condition: "step_16_result AND (step_16_result.rr_ratio >= 2.0 OR step_16_result.rating != 'UNDERPERFORM')"
+    condition: "step_17_result AND (step_17_result.rr_ratio >= 2.0 OR step_17_result.rating != 'UNDERPERFORM')"
     gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       ticker: "{{ ticker }}"
-      valuation_model: "{{ step_16_result }}"
-      forensic_profile: "{{ step_11_result }}"
-      cf_output: "{{ step_9_result }}"
+      valuation_model: "{{ step_17_result }}"
+      forensic_profile: "{{ step_12_result }}"
+      cf_output: "{{ step_10_result }}"
       intel_bundle: "{{ step_4_result }}"
       downstream_mode: "{{ step_1_result.downstream_mode }}"
 
@@ -453,36 +484,74 @@ steps:
   # Two native execute steps (18/19) for forecast-to-outcome calibration loop
   # + cross-skill reuse of kata-improvement (20).
   # Condition: COMMUNICATION publication_possible.
-  - ordinal: 18
+  - ordinal: 19
     action: execute
     description: >
       KATA — fetch resolved prediction-market outcomes for PDCA "check" via
       market_check_resolutions MCP tool. This is the highest-value cybernetic
       integration: closes the forecast-to-outcome calibration loop that
       EFRA-AI's KATA agent describes but cannot close (no outcome data).
-      Deterministic. Result lands in step_18_result.
+      Deterministic. Result lands in step_19_result.
     mcp: market_check_resolutions
-    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
+    condition: "step_18_result.publication_possible AND step_18_result.final_confidence >= 0.50"
     gas_cap: 3000
     timeout_seconds: 90
     input_mapping:
       limit: 50
 
-  - ordinal: 19
+  - ordinal: 20
     action: execute
     description: >
       KATA — fetch calibration Brier score via market_calibration MCP tool.
       Strengthens the calibration loop: market_calibration Brier score →
       KATA process_confidence adjustment. Deterministic. Result lands in
-      step_19_result.
+      step_20_result.
     mcp: market_calibration
-    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
+    condition: "step_18_result.publication_possible AND step_18_result.final_confidence >= 0.50"
     gas_cap: 3000
     timeout_seconds: 90
     input_mapping:
       bucket: "economics"
 
-  - ordinal: 20
+  # ── Step 21: KATA — metacognition calibration gap measurement (v0.36.0) ──
+  # Cross-skill adapter: company-research/kata-calibration-measure adapts
+  # metacognition/meta-experiment to close the flash pipeline's open kata
+  # loop. Step 22 (kata-improvement-step1-direction, now step 22 after this
+  # insertion) sets the direction but never measures the gap. This step
+  # measures the analyst's calibration gap using the market_calibration
+  # Brier score (step 20) and resolved_outcomes (step 19), then re-measures
+  # the current condition. Emits calibration_gap (0.0 calibrated → 1.0
+  # maximum gap) that LENS (now step 25) consumes as a 6th axis alongside
+  # the existing five frameworks. No prediction recorded by the KATA
+  # direction step = maximum gap (1.0) — a broken feedback loop, not a
+  # neutral state.
+  - ordinal: 21
+    action: select
+    description: >
+      KATA — metacognition calibration gap measurement. Adapts
+      metacognition/meta-experiment to close the open kata loop: step 22
+      (kata-improvement-step1-direction) sets the direction but never
+      measures the gap. This step measures the analyst calibration gap
+      using the market_calibration Brier score (step 20) and
+      resolved_outcomes (step 19). Emits calibration_gap (0.0 calibrated →
+      1.0 maximum gap) that LENS consumes as a 6th axis. No prediction
+      recorded = 1.0 (broken feedback loop, not neutral). Result lands in
+      step_21_result and feeds LENS (step 25).
+    renderer: minijinja
+    template_ref: company-research/kata-calibration-measure
+    condition: "step_18_result.publication_possible AND step_18_result.final_confidence >= 0.50"
+    gas_cap: 5000
+    timeout_seconds: 150
+    input_mapping:
+      ticker: "{{ ticker }}"
+      goal: "Close the calibration loop for {{ ticker }}: measure whether the analyst's process_confidence matches the market_calibration Brier score."
+      current_condition: "{{ step_22_result | default({}) }}"
+      prediction: "{{ step_22_result.prediction | default(none) }}"
+      calibration_brier: "{{ step_20_result }}"
+      resolved_outcomes: "{{ step_19_result }}"
+      context_text: "{{ step_18_result.cascade_note | default('') }}"
+
+  - ordinal: 22
     action: select
     description: >
       KATA — cross-skill reuse of kata-improvement/improvement-step1-direction
@@ -493,48 +562,48 @@ steps:
       next_review_date. Never blocks publication.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step1-direction
-    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
+    condition: "step_18_result.publication_possible AND step_18_result.final_confidence >= 0.50"
     gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       challenge: "Audit the research process for {{ ticker }}: identify knowledge gaps, untested assumptions, and the next PDCA experiment that would move research to higher confidence."
       context:
         ticker: "{{ ticker }}"
-        resolved_outcomes: "{{ step_18_result }}"
-        calibration_brier: "{{ step_19_result }}"
+        resolved_outcomes: "{{ step_19_result }}"
+        calibration_brier: "{{ step_20_result }}"
         prior_outcomes: "{{ step_0_result | default(prior_outcomes | default({})) }}"
-        valuation: "{{ step_16_result }}"
-        communication: "{{ step_17_result }}"
+        valuation: "{{ step_17_result }}"
+        communication: "{{ step_18_result }}"
 
   # ── Steps 21–22: LENS — outside view + evidence quality (native execute) ──
   # Condition: COMMUNICATION publication_possible (KATA and LENS skip if not
   # published — graceful: pipeline completes with a "not published" verdict).
-  - ordinal: 21
+  - ordinal: 23
     action: execute
     description: >
       LENS Lens 2 — find prediction markets about {{ ticker }} via the
       market_match MCP tool (entity resolution from a forecasting question
       to candidate markets about the same underlying event). Provides the
       outside-view market-implied probabilities for the Tetlock
-      superforecasting lens. Deterministic. Result lands in step_21_result
+      superforecasting lens. Deterministic. Result lands in step_23_result
       and feeds LENS synthesis (step 23).
     mcp: market_match
-    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
+    condition: "step_18_result.publication_possible AND step_18_result.final_confidence >= 0.50"
     gas_cap: 3000
     timeout_seconds: 90
     input_mapping:
       question: "Will {{ ticker }} outperform the market over the next 12 months?"
       limit: 10
 
-  - ordinal: 22
+  - ordinal: 24
     action: execute
     description: >
       LENS — evaluate evidence quality via evaluate_evidence MCP tool.
       Structured evidence quality audit against the investment thesis
-      question. Deterministic. Result lands in step_22_result and feeds LENS
+      question. Deterministic. Result lands in step_24_result and feeds LENS
       synthesis (step 23).
     mcp: evaluate_evidence
-    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
+    condition: "step_18_result.publication_possible AND step_18_result.final_confidence >= 0.50"
     gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
@@ -542,7 +611,7 @@ steps:
       artifacts: "{{ step_3_result.results | default([]) }}"
 
   # ── Step 23: LENS — five-framework audit (LLM synthesis) ──
-  - ordinal: 23
+  - ordinal: 25
     action: select
     description: >
       LENS five-framework consistency audit: The Loop, Superforecasting,
@@ -552,7 +621,7 @@ steps:
       key_tensions, pm_memo (200 words). Never blocks publication.
     renderer: minijinja
     template_ref: company-research/lens-five-frameworks
-    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
+    condition: "step_18_result.publication_possible AND step_18_result.final_confidence >= 0.50"
     gas_cap: 10000
     timeout_seconds: 240
     input_mapping:
@@ -560,19 +629,20 @@ steps:
       downstream_mode: "{{ step_1_result.downstream_mode }}"
       scout: "{{ step_1_result }}"
       intel: "{{ step_4_result }}"
-      forensic: "{{ step_11_result }}"
-      cf: "{{ step_9_result }}"
-      valuation: "{{ step_16_result }}"
-      communication: "{{ step_17_result }}"
-      kata: "{{ step_20_result | default({}) }}"
-      market_outside_view: "{{ step_21_result }}"
-      evidence_audit: "{{ step_22_result }}"
+      forensic: "{{ step_12_result }}"
+      cf: "{{ step_10_result }}"
+      valuation: "{{ step_17_result }}"
+      communication: "{{ step_18_result }}"
+      kata: "{{ step_22_result | default({}) }}"
+      calibration_gap: "{{ step_21_result | default({}) }}"
+      market_outside_view: "{{ step_23_result }}"
+      evidence_audit: "{{ step_24_result }}"
 
   # ── Step 24: Convergence check — LENS verdict consistency ──
   # Deterministic lisp.eval: CONSISTENT=0.0, PARTIAL=0.5, INCONSISTENT=1.0.
   # No unwrap_or(0) on regulation signals — missing verdict surfaces as 1.0
   # (worst case), not silently "converged."
-  - ordinal: 24
+  - ordinal: 26
     action: compute
     compute_ref: lisp.eval
     description: >
@@ -585,31 +655,31 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((v (assoc "overall_verdict" step_23_result)))
+        (let ((v (assoc "overall_verdict" step_25_result)))
           (cond
             ((eq v "CONSISTENT") 0.0)
             ((eq v "PARTIAL") 0.5)
             ((eq v "INCONSISTENT") 1.0)
             (t 1.0)))
       env:
-        step_23_result: "{{ step_23_result | default({}) }}"
+        step_25_result: "{{ step_25_result | default({}) }}"
 
   # ── Step 25: Loop back to VALUATION synthesis if LENS flags PARTIAL ──
   # Re-runs valuation (16) with LENS tensions injected. INCONSISTENT (1.0)
   # does not loop — it escalates via on_not_reached. max_iterations: 3
   # bounds the loop.
-  - ordinal: 25
+  - ordinal: 27
     action: loop
     description: >
       Re-enter VALUATION synthesis (step 16) if LENS flags PARTIAL (0.5).
       LENS key_tensions are injected into the next VALUATION pass via the
       loop's input_mapping. INCONSISTENT (1.0) does not loop — it escalates
       via on_not_reached. max_iterations: 3 bounds the loop.
-    condition: "step_24_result > 0.0 AND step_24_result < 1.0"
+    condition: "step_26_result > 0.0 AND step_26_result < 1.0"
     input_mapping:
-      loop_target: "{{ 16 }}"
-      lens_tensions: "{{ step_23_result.key_tensions | default([]) }}"
-      convergence_signal: "{{ step_24_result }}"
+      loop_target: "{{ 17 }}"
+      lens_tensions: "{{ step_25_result.key_tensions | default([]) }}"
+      convergence_signal: "{{ step_26_result }}"
 
   # ── Step 26: Persist the price target for Brier calibration ──
   # Runs after the convergence loop exits (CONSISTENT or INCONSISTENT) and
@@ -621,7 +691,7 @@ steps:
   # outcome; forecast_persist accepts a pre-computed PT from the flowdef.
   # Conditioned on publication_possible so unpublished research (DROP / HALT /
   # BLOCK) doesn't pollute the forecast store.
-  - ordinal: 26
+  - ordinal: 28
     action: execute
     description: >
       PERSIST — store the valuation price target via forecast_persist MCP
@@ -629,9 +699,9 @@ steps:
       synthesis PT (step 16) and the communication gate (step 17). The
       stored forecast_id can be passed to forecast_record when the 12-month
       horizon passes to close the calibration loop. Result lands in
-      step_26_result.
+      step_28_result.
     mcp: forecast_persist
-    condition: "step_17_result.publication_possible AND step_17_result.final_confidence >= 0.50"
+    condition: "step_18_result.publication_possible AND step_18_result.final_confidence >= 0.50"
     on_failure:
       action: report
       resume: "forecast_persist failed — the price target was not stored for Brier calibration. The research note is still published; calibration will not run for this PT."
@@ -641,8 +711,8 @@ steps:
       symbol: "{{ ticker }}"
       forecast_date: "{{ now | default('') }}"
       horizon: "1yr"
-      forecast_price: "{{ step_16_result.pt_12m | default(0) }}"
-      current_price: "{{ step_16_result.pt_components.market_price | default(0) }}"
+      forecast_price: "{{ step_17_result.pt_12m | default(0) }}"
+      current_price: "{{ step_17_result.pt_components.market_price | default(0) }}"
 
 error_handling:
   on_gas_exceeded: abort
