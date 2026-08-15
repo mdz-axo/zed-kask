@@ -36,26 +36,35 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::time::Duration;
 
-/// Default dampening window: 60 seconds.
+use crate::set_points::{
+    DEFAULT_DAMPEN_WINDOW_SECS, DEFAULT_METACOGNITIVE_WINDOW_SECS, DEFAULT_OVERRIDE_COOLDOWN_SECS,
+};
+
+/// Default dampening window.
 ///
 /// Within this window, the same directive (same type + target) will be
-/// suppressed to prevent feedback oscillation.
-pub(crate) const DEFAULT_DAMPEN_WINDOW: Duration = Duration::from_secs(60);
+/// suppressed to prevent feedback oscillation. Derived from
+/// `set_points::DEFAULT_DAMPEN_WINDOW_SECS` — single source of truth.
+pub(crate) const DEFAULT_DAMPEN_WINDOW: Duration = Duration::from_secs(DEFAULT_DAMPEN_WINDOW_SECS);
 
-/// Metacognitive override dampening window: 300 seconds.
+/// Metacognitive override dampening window.
 ///
 /// Metacognitive overrides (`OverrideEnergyBudget`, `SeekMoreEvidence`) represent
 /// higher-order reflective interventions and are dampened at a longer window
 /// to prevent premature re-issuance while still allowing genuine re-triggering.
-pub(crate) const METACOGNITIVE_DAMPEN_WINDOW: Duration = Duration::from_secs(300);
+/// Derived from `set_points::DEFAULT_METACOGNITIVE_WINDOW_SECS`.
+pub(crate) const METACOGNITIVE_DAMPEN_WINDOW: Duration =
+    Duration::from_secs(DEFAULT_METACOGNITIVE_WINDOW_SECS);
 
-/// Default override cooldown: 120 seconds.
+/// Default override cooldown.
 ///
 /// After any metacognitive override passes the per-fingerprint dedup check,
 /// ALL subsequent overrides are suppressed for this duration regardless of
 /// type or target. This prevents override oscillation — the scenario where
 /// the Curation↔Cybernetics feedback loop rapidly fires different overrides.
-pub(crate) const DEFAULT_OVERRIDE_COOLDOWN: Duration = Duration::from_secs(120);
+/// Derived from `set_points::DEFAULT_OVERRIDE_COOLDOWN_SECS`.
+pub(crate) const DEFAULT_OVERRIDE_COOLDOWN: Duration =
+    Duration::from_secs(DEFAULT_OVERRIDE_COOLDOWN_SECS);
 
 /// A fingerprint that identifies a directive for dampening.
 ///

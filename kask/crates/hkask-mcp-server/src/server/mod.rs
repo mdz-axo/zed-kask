@@ -35,7 +35,9 @@ pub use error::{McpError, McpToolError};
 pub use http_helpers::classify_http_error;
 pub use tool_span::{ToolContext, ToolSpanGuard, execute_tool, execute_tool_semantic};
 pub use transport::{run_stdio_server, run_stdio_server_with_preloaded};
-pub use validation::{MAX_READ_BYTES, contain_for_read, contain_for_write, read_capped};
+pub use validation::{
+    MAX_READ_BYTES, contain_for_read, contain_for_write, read_capped, resolve_max_read_bytes,
+};
 pub use validation::{
     map_infra_error, map_io_error, map_join_error, map_memory_store_error, validate_identifier,
     validate_path, validate_tool_url_permissive, validate_tool_url_with_dns,

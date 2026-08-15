@@ -163,7 +163,42 @@ pub fn map_memory_store_error(
 
 /// Default read size cap for [`read_capped`] (32 MiB). Bounds a hostile or
 /// mistaken path from exhausting memory (CWE-400).
+///
+/// Override: `HKASK_MCP_MAX_READ_BYTES` env var (parsed as u64 bytes).
 pub const MAX_READ_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Resolve the effective read size cap from env var or default.
+///
+/// Reads `HKASK_MCP_MAX_READ_BYTES` and parses as u64 bytes. Falls back to
+/// `MAX_READ_BYTES` if unset or unparseable (with a `warn!` on parse failure
+/// per `.rules`).
+#[must_use]
+pub fn resolve_max_read_bytes() -> u64 {
+    match std::env::var("HKASK_MCP_MAX_READ_BYTES") {
+        Ok(val) => match val.parse::<u64>() {
+            Ok(0) => {
+                tracing::warn!(
+                    target: "hkask.mcp_server",
+                    env_var = "HKASK_MCP_MAX_READ_BYTES",
+                    value = %val,
+                    "Parsed as 0 — using default (a zero cap would reject all reads)"
+                );
+                MAX_READ_BYTES
+            }
+            Ok(n) => n,
+            Err(_) => {
+                tracing::warn!(
+                    target: "hkask.mcp_server",
+                    env_var = "HKASK_MCP_MAX_READ_BYTES",
+                    value = %val,
+                    "Failed to parse as u64 — using default"
+                );
+                MAX_READ_BYTES
+            }
+        },
+        Err(_) => MAX_READ_BYTES,
+    }
+}
 
 /// Canonicalize `path` for a target that may not exist yet (writes): resolve
 /// the nearest existing ancestor, then re-append the remaining components.
