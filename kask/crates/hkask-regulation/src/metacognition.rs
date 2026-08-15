@@ -116,7 +116,9 @@ pub enum EscalationTrigger {
     LowEffectiveness,
     /// Operator feedback acceptance rate for a skill is declining over
     /// the rolling window — the skill's outputs may be drifting.
-    FeedbackDrift { skill_id: String },
+    FeedbackDrift {
+        skill_id: String,
+    },
 }
 
 /// Metacognition loop configuration.
@@ -279,10 +281,7 @@ impl MetacognitionLoop {
     /// This is the automated drift detection layer (Compiled AI gap 2).
     /// It uses the `reg.skill.<id>.outcome` spans emitted by
     /// `BridgeManifestExecutor::execute_skill` (Step 0 of the revised plan).
-    async fn sense_feedback_drift(
-        &self,
-        ledger: &RegulationLedger,
-    ) -> Vec<EscalationAlert> {
+    async fn sense_feedback_drift(&self, ledger: &RegulationLedger) -> Vec<EscalationAlert> {
         let skill_ids = ledger.skill_ids_with_feedback("outcome").await;
         let mut alerts = Vec::new();
 
@@ -502,7 +501,12 @@ fn success_rate(spans: &[StoredSkillSpan]) -> f64 {
     }
     let successes = spans
         .iter()
-        .filter(|s| s.payload.get("success").and_then(|v| v.as_bool()).unwrap_or(false))
+        .filter(|s| {
+            s.payload
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
         .count();
     successes as f64 / spans.len() as f64
 }
@@ -665,5 +669,190 @@ mod tests {
             events.is_empty(),
             "non-critical alerts should not reach the AlertSink, got {events:?}"
         );
+    }
+
+    // ── Feedback drift detection tests ──────────────────────────────────
+
+    /// Helper: record `n` outcome spans for a skill, with the given success
+    /// rate. The first `success_count` spans have `success: true`, the rest
+    /// `success: false`.
+    async fn record_outcomes(
+        ledger: &RegulationLedger,
+        skill_id: &str,
+        total: usize,
+        success_count: usize,
+    ) {
+        for i in 0..total {
+            let success = i < success_count;
+            ledger
+                .record_skill_span(
+                    skill_id,
+                    "outcome",
+                    serde_json::json!({ "success": success }),
+                )
+                .await;
+        }
+    }
+
+    /// `success_rate` returns 0.0 for empty input.
+    #[test]
+    fn success_rate_empty_returns_zero() {
+        assert_eq!(success_rate(&[]), 0.0);
+    }
+
+    /// `success_rate` returns 1.0 when all spans are successful.
+    #[test]
+    fn success_rate_all_success_returns_one() {
+        let spans = vec![
+            make_outcome_span("s1", true),
+            make_outcome_span("s2", true),
+            make_outcome_span("s3", true),
+        ];
+        assert_eq!(success_rate(&spans), 1.0);
+    }
+
+    /// `success_rate` returns 0.0 when all spans are failures.
+    #[test]
+    fn success_rate_all_failure_returns_zero() {
+        let spans = vec![
+            make_outcome_span("s1", false),
+            make_outcome_span("s2", false),
+        ];
+        assert_eq!(success_rate(&spans), 0.0);
+    }
+
+    /// `success_rate` returns the correct fraction for mixed input.
+    #[test]
+    fn success_rate_mixed_returns_fraction() {
+        let spans = vec![
+            make_outcome_span("s1", true),
+            make_outcome_span("s2", false),
+            make_outcome_span("s3", true),
+            make_outcome_span("s4", false),
+        ];
+        assert_eq!(success_rate(&spans), 0.5);
+    }
+
+    /// `sense_feedback_drift` emits a `FeedbackDrift` alert when the current
+    /// window's success rate drops below the decline ratio of the prior
+    /// window's rate. Prior window: 8/10 success (80%). Current window: 3/10
+    /// success (30%). Decline ratio: 0.8 → threshold = 0.8 * 0.8 = 0.64.
+    /// 0.3 < 0.64 → alert.
+    #[tokio::test]
+    async fn drift_detects_declining_success_rate() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        // Record 20 outcomes: first 10 at 80% success, next 10 at 30%.
+        {
+            let guard = ledger.read().await;
+            record_outcomes(&guard, "test-skill", 10, 8).await;
+            record_outcomes(&guard, "test-skill", 10, 3).await;
+        }
+
+        let loop_ = MetacognitionLoop::with_config(
+            ledger.clone(),
+            MetacognitionConfig {
+                feedback_drift_min_samples: 10,
+                feedback_drift_window: 10,
+                feedback_drift_decline_ratio: 0.8,
+                ..MetacognitionConfig::default()
+            },
+        );
+
+        let guard = ledger.read().await;
+        let alerts = loop_.sense_feedback_drift(&guard).await;
+        assert_eq!(alerts.len(), 1);
+        assert!(matches!(
+            alerts[0].trigger,
+            EscalationTrigger::FeedbackDrift { ref skill_id } if skill_id == "test-skill"
+        ));
+    }
+
+    /// `sense_feedback_drift` does NOT alert when the success rate is stable.
+    #[tokio::test]
+    async fn drift_no_alert_when_stable() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        {
+            let guard = ledger.read().await;
+            record_outcomes(&guard, "stable-skill", 10, 8).await;
+            record_outcomes(&guard, "stable-skill", 10, 8).await;
+        }
+
+        let loop_ = MetacognitionLoop::with_config(
+            ledger.clone(),
+            MetacognitionConfig {
+                feedback_drift_min_samples: 10,
+                feedback_drift_window: 10,
+                feedback_drift_decline_ratio: 0.8,
+                ..MetacognitionConfig::default()
+            },
+        );
+
+        let guard = ledger.read().await;
+        let alerts = loop_.sense_feedback_drift(&guard).await;
+        assert!(
+            alerts.is_empty(),
+            "stable success rate should not trigger drift alert, got {alerts:?}"
+        );
+    }
+
+    /// `sense_feedback_drift` does NOT alert when there are too few samples.
+    #[tokio::test]
+    async fn drift_no_alert_below_min_samples() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        // Only 5 samples — below the min_samples threshold of 10.
+        {
+            let guard = ledger.read().await;
+            record_outcomes(&guard, "sparse-skill", 5, 1).await;
+        }
+
+        let loop_ = MetacognitionLoop::with_config(ledger.clone(), MetacognitionConfig::default());
+
+        let guard = ledger.read().await;
+        let alerts = loop_.sense_feedback_drift(&guard).await;
+        assert!(
+            alerts.is_empty(),
+            "below min_samples should not trigger, got {alerts:?}"
+        );
+    }
+
+    /// `sense_feedback_drift` does NOT alert when the skill is improving.
+    #[tokio::test]
+    async fn drift_no_alert_when_improving() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        // Prior window: 30% success. Current window: 80% success. Improving.
+        {
+            let guard = ledger.read().await;
+            record_outcomes(&guard, "improving-skill", 10, 3).await;
+            record_outcomes(&guard, "improving-skill", 10, 8).await;
+        }
+
+        let loop_ = MetacognitionLoop::with_config(
+            ledger.clone(),
+            MetacognitionConfig {
+                feedback_drift_min_samples: 10,
+                feedback_drift_window: 10,
+                feedback_drift_decline_ratio: 0.8,
+                ..MetacognitionConfig::default()
+            },
+        );
+
+        let guard = ledger.read().await;
+        let alerts = loop_.sense_feedback_drift(&guard).await;
+        assert!(
+            alerts.is_empty(),
+            "improving success rate should not trigger, got {alerts:?}"
+        );
+    }
+
+    /// Helper for `success_rate` tests: construct a `StoredSkillSpan` with the
+    /// given skill ID and success flag.
+    fn make_outcome_span(skill_id: &str, success: bool) -> StoredSkillSpan {
+        StoredSkillSpan {
+            namespace: format!("reg.skill.{skill_id}.outcome"),
+            skill_id: skill_id.to_string(),
+            phase: "outcome".to_string(),
+            payload: serde_json::json!({ "success": success }),
+            recorded_at: chrono::Utc::now(),
+        }
     }
 }

@@ -27,6 +27,8 @@ use std::path::Path;
 // zed-kask: core skill classification lives in `agent_skills::CORE_SKILL_NAMES`.
 // `kask_bridge` depends on `agent_skills` to access `is_core_skill` for the
 // registry seeder's core-vs-user split.
+use agent::SkillExecutionError;
+use agent::SkillManifestExecutor;
 use agent_skills::is_core_skill;
 
 /// Context keys the runtime injects itself (not user-supplied params), excluded
@@ -54,6 +56,22 @@ const SKILL_CONTEXT_SYSTEM_KEYS: &[&str] = &[
 /// but does not enforce (the `.rules` "startup-failure signal" pattern).
 pub trait ProfileResolver: Send + Sync {
     fn is_tool_enabled(&self, tool_name: &str) -> bool;
+}
+
+/// Result of a single golden-output fixture validation. Returned by
+/// `BridgeManifestExecutor::validate_golden_outputs`.
+#[derive(Debug, Clone)]
+pub struct GoldenOutputResult {
+    /// Index of the fixture in the manifest's `golden_outputs` list.
+    pub fixture_index: usize,
+    /// Whether the skill's output matched the expected output exactly.
+    pub passed: bool,
+    /// The actual output from the skill cascade (`None` if execution failed).
+    pub actual: Option<String>,
+    /// The expected output from the fixture.
+    pub expected: String,
+    /// Error message if the skill failed to execute or the output didn't match.
+    pub error: Option<String>,
 }
 
 /// A `ProfileResolver` backed by a snapshot of a profile's `terminal` tool state,
@@ -169,6 +187,69 @@ impl BridgeManifestExecutor {
     ) -> Self {
         self.regulation_ledger = Some(ledger);
         self
+    }
+
+    /// Validate a skill's golden-output fixtures by running the cascade
+    /// against each fixture's input and comparing the output exactly.
+    /// Returns a report of pass/fail per fixture. This is a maintenance-time
+    /// check (used by `skill-maintenance` and the gemba walk briefing), not
+    /// a runtime gate on every invocation.
+    ///
+    /// Skills without `golden_outputs` in their manifest return an empty
+    /// report (not an error) — golden-output validation is opt-in and only
+    /// meaningful for skills with deterministic-ish output contracts.
+    pub async fn validate_golden_outputs(
+        &self,
+        skill_name: &str,
+    ) -> Result<Vec<GoldenOutputResult>, String> {
+        let manifest = self.load_cached_manifest(skill_name)?;
+        let fixtures = match &manifest.golden_outputs {
+            Some(f) if !f.is_empty() => f,
+            _ => return Ok(Vec::new()),
+        };
+
+        let mut results = Vec::with_capacity(fixtures.len());
+        for (i, fixture) in fixtures.iter().enumerate() {
+            let input_context: HashMap<String, Value> = serde_json::from_str(&fixture.input)
+                .map_err(|e| format!("golden_outputs[{i}] input is not valid JSON: {e}"))?;
+
+            let output = self
+                .execute_skill(
+                    skill_name,
+                    input_context,
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    None,
+                )
+                .await;
+
+            let result = match output {
+                Ok(actual) => {
+                    let passed = actual == fixture.expected_output;
+                    GoldenOutputResult {
+                        fixture_index: i,
+                        passed,
+                        actual: Some(actual),
+                        expected: fixture.expected_output.clone(),
+                        error: if passed {
+                            None
+                        } else {
+                            Some("output does not match expected".to_string())
+                        },
+                    }
+                }
+                Err(e) => GoldenOutputResult {
+                    fixture_index: i,
+                    passed: false,
+                    actual: None,
+                    expected: fixture.expected_output.clone(),
+                    error: Some(e.to_string()),
+                },
+            };
+            results.push(result);
+        }
+        Ok(results)
     }
 
     /// Resolve a skill's manifest YAML from the filesystem. Disk is the
@@ -606,9 +687,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         memory_snippets: Vec<agent::MemorySnippetRecord>,
         progress: Option<agent::CascadeProgress>,
         title: Option<agent::CascadeProgress>,
-    ) -> Result<String, agent::SkillExecutionError> {
-        use agent::SkillExecutionError;
-
+    ) -> Result<String, SkillExecutionError> {
         // Load the manifest with caching. Loaded before validation so we can
         // check the caller-supplied context against declared `inputs` (Layer A)
         // before injecting runtime defaults.
@@ -1158,10 +1237,7 @@ fn extract_final_step_result(outcome: &CascadeOutcome) -> String {
         // `select` steps store Value::Object(parsed_json), which falls
         // through to `other.to_string()` producing the JSON string.
         Value::String(s) => s,
-        Value::Null => {
-            serde_json::to_string(&outcome.context.materialize())
-                .unwrap_or_default()
-        }
+        Value::Null => serde_json::to_string(&outcome.context.materialize()).unwrap_or_default(),
         other => other.to_string(),
     }
 }

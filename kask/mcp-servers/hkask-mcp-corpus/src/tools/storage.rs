@@ -393,8 +393,10 @@ fn default_purge_prefix() -> String {
 }
 
 fn default_purge_passphrase() -> String {
-    // Returns empty when env unset — `Database::open` rejects empty passphrases
-    // with "Passphrase cannot be empty", so the tool fails with an actionable
+    // Resolves via the canonical keystore chain (env → keychain) using
+    // `hkask_mcp_server::resolve_credential`. Returns empty when unset in
+    // both tiers — `Database::open` rejects empty passphrases with
+    // "Passphrase cannot be empty", so the tool fails with an actionable
     // error rather than silently using a hardcoded dev passphrase.
-    std::env::var("HKASK_DB_PASSPHRASE").unwrap_or_default()
+    hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE").unwrap_or_default()
 }

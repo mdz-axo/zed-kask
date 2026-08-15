@@ -166,6 +166,7 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
         enforce_inputs: file.manifest.enforce_inputs,
         principles: file.principles,
         concurrency: file.manifest.concurrency,
+        golden_outputs: None,
     };
 
     // Sort steps by ordinal once at load time. The executor's `run_cascade`

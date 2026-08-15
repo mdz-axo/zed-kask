@@ -725,7 +725,7 @@ impl CyberneticsLoop {
                 server_name,
                 tool_name,
                 evolution_type,
-                &field_name,
+                field_name,
                 new_type,
                 ref rationale,
                 ref evidence,
@@ -2224,5 +2224,94 @@ mod tests {
                 Some(alert.domain.as_str())
             );
         }
+    }
+
+    // ── Phase 3 co-evolution: EvolveMcpToolSchema directive ─────────────
+
+    /// Capturing sink for `RegulationSink` — records every `persist` call's
+    /// JSON payload so tests can assert the directive was recorded.
+    struct CapturingRegulationSink {
+        records: std::sync::Mutex<Vec<serde_json::Value>>,
+    }
+
+    impl CapturingRegulationSink {
+        fn new() -> Self {
+            Self { records: std::sync::Mutex::new(Vec::new()) }
+        }
+
+        fn records(&self) -> Vec<serde_json::Value> {
+            self.records.lock().unwrap().clone()
+        }
+    }
+
+    impl RegulationSink for CapturingRegulationSink {
+        fn persist(&self, record: &RegulationRecord) -> Result<(), hkask_types::InfrastructureError> {
+            self.records.lock().unwrap().push(record.observation.clone());
+            Ok(())
+        }
+    }
+
+    /// Helper: build a CyberneticsLoop wired with a CapturingRegulationSink
+    /// (for testing event_sink persistence).
+    fn loop_with_regulation_sink() -> (CyberneticsLoop, Arc<CapturingRegulationSink>) {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let sink = Arc::new(CapturingRegulationSink::new());
+        let loop_instance =
+            CyberneticsLoop::new(ledger).with_event_sink(sink.clone() as Arc<dyn RegulationSink>);
+        (loop_instance, sink)
+    }
+
+    #[tokio::test]
+    async fn evolve_mcp_tool_schema_directive_persists_to_regulation_ledger() {
+        let (loop_instance, sink) = loop_with_regulation_sink();
+
+        loop_instance
+            .apply_directive(CuratorDirective::EvolveMcpToolSchema {
+                server_name: "hkask-mcp-companies".to_string(),
+                tool_name: "dcf_valuation".to_string(),
+                evolution_type: SchemaEvolutionType::AddField,
+                field_name: "wacc_override".to_string(),
+                new_type: Some("Option<f64>".to_string()),
+                rationale: "forensic-adjusted WACC needed".to_string(),
+                evidence: "skill_use_issue:superforecasting".to_string(),
+            })
+            .await;
+
+        let records = sink.records();
+        assert_eq!(
+            records.len(),
+            1,
+            "EvolveMcpToolSchema should persist exactly one regulation record"
+        );
+        let payload = &records[0];
+        assert_eq!(payload["directive_type"], "evolve_mcp_tool_schema");
+        assert_eq!(payload["outcome"], "recorded");
+        assert_eq!(payload["server_name"], "hkask-mcp-companies");
+        assert_eq!(payload["tool_name"], "dcf_valuation");
+        assert_eq!(payload["evolution_type"], "add_field");
+        assert_eq!(payload["field_name"], "wacc_override");
+        assert_eq!(payload["new_type"], "Option<f64>");
+        assert_eq!(payload["rationale"], "forensic-adjusted WACC needed");
+        assert_eq!(payload["evidence"], "skill_use_issue:superforecasting");
+    }
+
+    #[tokio::test]
+    async fn evolve_mcp_tool_schema_directive_without_sink_does_not_panic() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let loop_instance = CyberneticsLoop::new(ledger);
+
+        // No event_sink wired — must not panic, just log a warning.
+        loop_instance
+            .apply_directive(CuratorDirective::EvolveMcpToolSchema {
+                server_name: "hkask-mcp-companies".to_string(),
+                tool_name: "dcf_valuation".to_string(),
+                evolution_type: SchemaEvolutionType::RemoveField,
+                field_name: "unused_field".to_string(),
+                new_type: None,
+                rationale: "field is unused".to_string(),
+                evidence: "no skill references this field".to_string(),
+            })
+            .await;
+        // No assertion needed — the test passes if it doesn't panic.
     }
 }

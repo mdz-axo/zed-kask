@@ -31,6 +31,7 @@ pub mod step_machine;
 pub mod template_renderer;
 
 pub use bundle::BundleManifest;
+pub use bundle::GoldenOutputFixture;
 pub use bundle::BundleRegistryIndex;
 pub use executor::ManifestExecutor;
 pub use executor::extract_final_step_result;
