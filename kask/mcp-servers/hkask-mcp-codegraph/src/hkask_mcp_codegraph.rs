@@ -682,6 +682,16 @@ impl CodeGraphServer {
                     "Embedding indexing complete"
                 );
 
+                // If every batch failed, the index is broken — surface as an MCP
+                // error rather than a success envelope with 0 symbols. Partial
+                // success (some embeddings inserted, some errors) is acceptable.
+                if symbols_embedded == 0 && !errors.is_empty() {
+                    return Err(McpToolError::unavailable(format!(
+                        "Embedding failed for all batches: {}",
+                        errors.join("; ")
+                    )));
+                }
+
                 Ok(serde_json::json!({
                     "symbols_embedded": symbols_embedded,
                     "total_symbols": symbols.len(),

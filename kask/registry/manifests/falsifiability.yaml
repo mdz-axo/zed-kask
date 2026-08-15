@@ -195,7 +195,7 @@ steps:
   # falsifier or with insufficient diversity.
   - ordinal: 4
     action: select
-    condition: "{{ step_3_result | length == 0 }}"
+    condition: "NOT step_3_result"
     description: >
       Pearl/Halpern counterfactual generation. For each surviving hypothesis
       construct the minimal do(not X) counterfactual, hold confounders fixed,

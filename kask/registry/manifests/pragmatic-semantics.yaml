@@ -77,7 +77,7 @@ steps:
     template_ref: pragmatic-semantics/semantics-conflict-resolve
     gas_cap: 4000
     timeout_seconds: 150
-    condition: "{{ step_2_result.conflicts_detected | default(false) == true }}"
+    condition: "step_2_result.conflicts_detected == true"
     # When condition is false, step_3_result is undefined. Downstream steps
     # must use `step_3_result | default({})` to handle the skipped case.
     input_mapping:

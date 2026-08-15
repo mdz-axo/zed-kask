@@ -704,6 +704,11 @@ pub enum HostProviderError {
     DatasetError(String),
     #[error("Provider backend error: {0}")]
     Backend(String),
+    /// A required precondition for the operation is not met (e.g. a required
+    /// env var like `HF_TOKEN` is missing). Maps to `McpToolError::failed_precondition`
+    /// so the operator sees a precondition error, not an opaque internal failure.
+    #[error("Missing precondition: {0}")]
+    MissingPrecondition(String),
 }
 
 // ── TrainingHost trait ────────────────────────────────────────────────────

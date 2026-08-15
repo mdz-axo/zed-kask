@@ -323,6 +323,29 @@ impl StepMachine {
                     "Model did not call structured-output tool — falling back to text parsing"
                 );
             }
+            // A2: empty-output guard. The model returned no text and no tool
+            // call. Without this guard, `parse_json_response("")` produces a
+            // cryptic "EOF while parsing a value at line 1 column 0" that gives
+            // the operator no signal. Surface the finish_reason and likely
+            // causes so the regulation loop / UI can act (raise max_tokens,
+            // enable thinking_budget, retry, or convert the step to a
+            // deterministic `render` action).
+            if result_text.trim().is_empty() {
+                tracing::warn!(
+                    target: "reg.skill.cascade.step_executed",
+                    step = node.ordinal,
+                    finish_reason = ?finish_reason,
+                    "Step returned empty output with no structured tool call"
+                );
+                return Err(TemplateError::Manifest(format!(
+                    "Step {} returned empty output (finish_reason: {:?}). \
+                     Likely causes: max_tokens too low, model spent its budget on \
+                     reasoning, or the provider returned no completion. \
+                     Remediation: raise max_tokens, enable thinking_budget, \
+                     retry, or convert the step to a deterministic `render` action.",
+                    node.ordinal, finish_reason
+                )));
+            }
             crate::executor::parse_json_response(&result_text, node.ordinal)?
         };
 
@@ -1367,12 +1390,83 @@ mod tests {
         .await
         .expect("stream should complete");
 
-        assert_eq!(text, "{\"partial\":");
+        assert_eq!(text, "{\"partial":");
         assert!(tool_calls.is_empty());
         assert_eq!(
             finish_reason.as_deref(),
             Some("length"),
             "finish_reason must be threaded out for execute_select truncation detection"
+        );
+    }
+
+    /// A2: empty-output guard. When the model returns no text and no tool
+    /// call, `execute_select` must surface an actionable error naming the
+    /// finish_reason and likely causes — not the cryptic
+    /// "EOF while parsing a value at line 1 column 0" from
+    /// `parse_json_response("")`. This test pins the stream-level shape
+    /// (empty text, no tool calls, finish_reason threaded) that the guard in
+    /// `execute_select` checks. The guard itself is exercised by the
+    /// prompt-enhance cascade integration tests.
+    #[tokio::test]
+    async fn execute_select_empty_output_guard_pins_stream_shape() {
+        use hkask_types::{InferenceError, InferenceResult, InferenceUsage};
+        use std::future::Future;
+        use std::pin::Pin;
+
+        struct EmptyOutput;
+        impl InferencePort for EmptyOutput {
+            fn generate(
+                &self,
+                _prompt: &str,
+                _parameters: &LLMParameters,
+                _tools: Option<&[ChatToolDefinition]>,
+            ) -> Pin<
+                Box<
+                    dyn Future<Output = std::result::Result<InferenceResult, InferenceError>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                let result = InferenceResult {
+                    text: String::new(),
+                    model: "test".into(),
+                    usage: InferenceUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    finish_reason: "stop".into(),
+                    token_probabilities: None,
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                    cost_usd: None,
+                };
+                Box::pin(async move { Ok(result) })
+            }
+        }
+
+        let inference = Arc::new(EmptyOutput) as Arc<dyn InferencePort>;
+        let (text, tool_calls, _cost, finish_reason) = call_inference_stream(
+            &inference,
+            "prompt",
+            &LLMParameters::default(),
+            None,
+            std::time::Duration::from_secs(30),
+            1,
+            None,
+        )
+        .await
+        .expect("stream should complete");
+
+        assert!(text.is_empty(), "empty-output case must produce empty text");
+        assert!(
+            tool_calls.is_empty(),
+            "empty-output case must produce no tool calls"
+        );
+        assert_eq!(
+            finish_reason.as_deref(),
+            Some("stop"),
+            "finish_reason must be threaded so the guard can name it in the error"
         );
     }
 }

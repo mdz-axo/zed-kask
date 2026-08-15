@@ -233,7 +233,7 @@ steps:
   # expression that resolves before the condition evaluator sees it.
   - ordinal: 3
     action: select
-    condition: "{{ step_2_result | length > 0 }}"
+    condition: "step_2_result"
     description: >
       LLM refines the hypothesis set in response to the Lisp invariant verdict.
       Gated — only runs if the Lisp step found structural defects. This is the

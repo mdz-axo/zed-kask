@@ -111,7 +111,7 @@ steps:
   # like for this problem.
   - ordinal: 2
     action: select
-    condition: "{{ target_artifacts | default('') | length == 0 }}"
+    condition: "NOT target_artifacts"
     description: >
       ESTABLISH TARGET CONDITION: Declare the target understanding — what
       "sufficient understanding" looks like for this problem. Produces

@@ -1051,14 +1051,18 @@ impl TrainingHost for RunpodHost {
         // cross the pod boundary so the pod can consume those artifacts. Without it,
         // axolotl fails with HTTP 401 on private dataset load and the container exits
         // after the (public) base-model download completes — GPU never utilized.
-        if let Ok(token) = std::env::var("HF_TOKEN") {
-            env_entries.push(("HF_TOKEN", token));
-        } else {
-            tracing::warn!(
-                target: "hkask.training.runpod",
-                "HF_TOKEN not set — pod cannot access private HF datasets or upload to private model repos"
-            );
-        }
+        //
+        // Defense in depth: `training_submit`'s G-P1 preflight already rejects the
+        // Runpod path when `HF_TOKEN` is missing (via `HuggingFaceTraining::from_env`),
+        // so this branch is unreachable in the normal flow. We still fail fast here
+        // so a future caller that bypasses G-P1 cannot silently create a tokenless
+        // pod that fails later with an opaque HTTP 401.
+        let hf_token = std::env::var("HF_TOKEN").map_err(|_| {
+            HostProviderError::MissingPrecondition(
+                "HF_TOKEN not set — HuggingFace private dataset/model access will fail. Set HF_TOKEN.".to_string(),
+            )
+        })?;
+        env_entries.push(("HF_TOKEN", hf_token));
 
         // Generate docker args if not provided via env var.
         // The generic training-base image uses ENTRYPOINT to invoke

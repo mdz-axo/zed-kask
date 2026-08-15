@@ -15,6 +15,7 @@
 //!   have corresponding `field` in the referenced template's `contract.output`
 
 use hkask_templates::load_manifest_from_yaml;
+use serde_json::Value;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -178,10 +179,69 @@ fn all_manifests_have_structural_integrity() {
                         step.ordinal
                     ));
                 }
+
+                // Loop payload diagnostic: every key in the loop's
+                // input_mapping (except loop_target and convergence_signal)
+                // that is NOT in the target step's input_mapping is flagged
+                // as a warning. The loop binds these keys into the global
+                // context (via insert_protocol), so the target template CAN
+                // access them via {{ variable }} even without an explicit
+                // input_mapping binding. However, if the key is not in the
+                // target's input_mapping, the template's contract.input may
+                // not declare it — which means the contract alignment test
+                // won't catch a mismatch. This is a style/robustness issue,
+                // not a hard bug. Collected as warnings, not errors.
+                if let Some(Value::Object(loop_map)) = mapping {
+                    let loop_target_str = loop_map
+                        .get("loop_target")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let target_ordinal: Option<u32> = loop_target_str
+                        .trim_matches(|c: char| !c.is_ascii_digit())
+                        .parse()
+                        .ok();
+                    if let Some(target_ord) = target_ordinal {
+                        let target_step = manifest.steps.iter().find(|s| s.ordinal == target_ord);
+                        if let Some(target) = target_step {
+                            let target_keys: HashSet<String> = target
+                                .input_mapping
+                                .as_ref()
+                                .and_then(|m| m.as_object())
+                                .map(|obj| obj.keys().cloned().collect())
+                                .unwrap_or_default();
+                            for key in loop_map.keys() {
+                                if key == "loop_target" || key == "convergence_signal" {
+                                    continue;
+                                }
+                                if !target_keys.contains(key) {
+                                    eprintln!(
+                                        "  WARN: {fname}: step {} — loop injects '{}' into context but target step {} input_mapping does not declare it (template may still access via global context)",
+                                        step.ordinal, key, target_ord
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Condition expressions must not reference forward step results.
             if let Some(ref cond) = step.condition {
+                // Condition must not use Jinja syntax. The condition evaluator
+                // (condition.rs) does NOT render Jinja — it evaluates raw
+                // strings as dot-path lookups, comparisons, and boolean
+                // compositions. A `{{ }}` wrapper makes the string unresolvable
+                // as a dot path, causing `!=` conditions to always evaluate
+                // true (the lhs resolves to a literal string that never
+                // equals the rhs) and truthy conditions to always evaluate
+                // false (the key is not found). Either way, the condition
+                // gate is silently disabled.
+                if cond.contains("{{") {
+                    errors.push(format!(
+                        "{fname}: step {} — condition contains Jinja syntax — the condition evaluator does not render Jinja. Use native syntax (dot paths, ==, !=, AND, OR, NOT). Condition: {cond}",
+                        step.ordinal
+                    ));
+                }
                 for cap in FORWARD_REF_RE.captures_iter(cond) {
                     if let Some(n_str) = cap.get(1) {
                         // Check this isn't prev_step_N_result.
@@ -196,6 +256,31 @@ fn all_manifests_have_structural_integrity() {
                                     "{fname}: step {} — condition references step_{}_result (forward/self reference — resolves to null, silently disabling the condition)",
                                     step.ordinal, n
                                 ));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Diagnostic: `| default({})` or `| default([])` on step_N_result
+            // references in input_mapping. If the step was skipped (condition
+            // false) or the tool failed, the default masks the absence — the
+            // consuming template can't distinguish "tool returned empty" from
+            // "tool failed/skipped." This is a warning, not an error: the
+            // default is sometimes correct (optional step, conditional skip).
+            if let Some(ref mapping) = step.input_mapping {
+                if let Some(obj) = mapping.as_object() {
+                    for (key, value) in obj {
+                        if let Some(s) = value.as_str() {
+                            if s.contains("step_")
+                                && s.contains("_result")
+                                && (s.contains("| default({})")
+                                    || s.contains("| default([])"))
+                            {
+                                eprintln!(
+                                    "  WARN: {fname}: step {} input_mapping '{}' uses | default on a step_N_result reference — verify the default is intentional (optional step / conditional skip), not masking a failure",
+                                    step.ordinal, key
+                                );
                             }
                         }
                     }

@@ -1,0 +1,165 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    enhanced_prompt:
+      type: string
+      description: The Phase 3 rewritten prompt to deliver
+    original_prompt:
+      type: string
+    prompt_type:
+      type: string
+    effort_tier:
+      type: string
+    output_format_resolved:
+      type: string
+      enum: [inline, file, both]
+    output_path_resolved:
+      type: string
+    phases_run:
+      type: object
+      description: Routing decision from Phase 1 (which phases were selected)
+    audit_findings:
+      type: array
+      description: Findings from the inline audit with constraint_force labels
+    grill_ratings:
+      type: array
+      description: Verify-step ratings per area (empty if verify skipped)
+    grill_verdict:
+      type: string
+      description: Verify-step verdict (pass, rewrite_needed, fail, or skipped)
+    mutations_applied:
+      type: array
+      description: Mutations applied during the rewrite
+    mutations_deferred:
+      type: array
+      description: Hypothesis-tier findings deferred for user verification
+    schema_defects:
+      type: array
+      description: Defects from the step 3 deterministic schema check (empty if passed)
+    convergence_metric:
+      type: number
+  output:
+    delivered_output:
+      type: string
+      description: The final formatted output (inline block + change log)
+    output_path_written:
+      type: string
+      description: Path written if file/both; empty otherwise
+    change_log:
+      type: object
+visibility: Public
+---
+{# hKask v0.34.0 — prompt-enhance (C2 redesign) #}
+{# ACT phase: Deterministic format and deliver the enhanced prompt. #}
+{# goal: Deliver the enhanced prompt per output_format with a change log. #}
+{#
+  Group: G (Prompt Enhancement — deterministic output)
+  Replaces the former `select` step (enhance-output.j2) with a `render`
+  step. The former step called the LLM to format the change log from
+  structured data — but the data was already structured (audit_findings,
+  grill_ratings, mutations_applied are all JSON arrays/objects). An LLM
+  call for deterministic formatting was the single largest source of
+  cascade failures: the model sometimes returned empty output (reasoning
+  budget exhausted, provider hiccup), and `parse_json_response("")`
+  produced "EOF while parsing a value at line 1 column 0" — killing the
+  whole skill after 4 successful LLM calls. Converting to `render`
+  eliminates the failure mode: no LLM, no empty-output risk, no JSON
+  parse. The change log is templated from the structured data.
+
+  Reference: de la Torre (2025, arXiv:2506.10021) — symbolic-neural
+  scaffolding. Deterministic steps verify structural invariants the LLM
+  cannot reliably self-evaluate. The output format is a structural
+  invariant; an LLM call to produce it is speculative generality.
+#}
+
+{# ── Build the change log sections deterministically ── #}
+
+{# Summary line #}
+{%- set summary_line -%}
+type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }} convergence={{ convergence_metric }}
+{%- endset -%}
+
+{# Audit findings table — sorted by constraint force (Prohibition → Guardrail → Guideline → Evidence → Hypothesis) #}
+{%- set force_order = {"Prohibition": 0, "Guardrail": 1, "Guideline": 2, "Evidence": 3, "Hypothesis": 4} -%}
+{%- set sorted_findings = audit_findings -%}
+{%- set findings_table_rows = [] -%}
+{%- for finding in sorted_findings -%}
+  {%- set _ = findings_table_rows.append("| " ~ (finding.constraint_force | default("Hypothesis")) ~ " | " ~ (finding.lens | default("unspecified")) ~ " | " ~ (finding.finding | default("unspecified")) ~ " | " ~ (finding.addressed | default(false) | string) ~ " |") -%}
+{%- endfor -%}
+{%- set findings_table = "| Force | Lens | Finding | Addressed |\n|-------|------|---------|----------|\n" ~ findings_table_rows.join("\n") -%}
+
+{# Grill ratings list #}
+{%- set grill_lines = [] -%}
+{%- for rating in grill_ratings -%}
+  {%- set _ = grill_lines.append("- **" ~ (rating.area | default("unknown")) ~ "** — " ~ (rating.rating | default("unrated")) ~ ": " ~ (rating.evidence | default("no evidence"))) -%}
+{%- endfor -%}
+{%- set grill_ratings_text = grill_lines.join("\n") if grill_lines else "_Skipped (low tier or no verify step)._" -%}
+
+{# Mutations applied list #}
+{%- set mutation_lines = [] -%}
+{%- for mutation in mutations_applied -%}
+  {%- set _ = mutation_lines.append("- **" ~ (mutation.finding | default("unspecified")) ~ "** → " ~ (mutation.mutation | default("unspecified")) ~ " _(" ~ (mutation.section | default("unspecified")) ~ ")_") -%}
+{%- endfor -%}
+{%- set mutations_text = mutation_lines.join("\n") if mutation_lines else "_None._" -%}
+
+{# Deferred findings list #}
+{%- set deferred_lines = [] -%}
+{%- for deferred in mutations_deferred -%}
+  {%- set _ = deferred_lines.append("- " ~ (deferred.finding | default("unspecified")) ~ " — " ~ (deferred.reason | default("Hypothesis-tier — needs user verification"))) -%}
+{%- endfor -%}
+{%- set deferred_text = deferred_lines.join("\n") if deferred_lines else "_None._" -%}
+
+{# Schema defects (from step 3 deterministic check) #}
+{%- set defects_text = schema_defects | join(", ") if schema_defects and schema_defects | length > 0 else "_None._" -%}
+
+{# ── Assemble the change log ── #}
+{%- set change_log_md -%}
+## Change Log
+
+**Summary:** {{ summary_line }}
+
+### Audit findings
+
+{{ findings_table }}
+
+### Grill verdict: {{ grill_verdict }}
+
+{{ grill_ratings_text }}
+
+### Mutations applied
+
+{{ mutations_text }}
+
+### Deferred findings
+
+{{ deferred_text }}
+
+### Schema defects (step 3 deterministic check)
+
+{{ defects_text }}
+{%- endset -%}
+
+{# ── Assemble the delivered output per output_format ── #}
+{%- if output_format_resolved == "inline" or output_format_resolved == "both" -%}
+{%- set delivered_output = "```\n" ~ enhanced_prompt ~ "\n```\n\n" ~ change_log_md -%}
+{%- elif output_format_resolved == "file" -%}
+{%- set delivered_output = "Enhanced prompt written to `" ~ output_path_resolved ~ "`.\n\n" ~ change_log_md -%}
+{%- else -%}
+{%- set delivered_output = "```\n" ~ enhanced_prompt ~ "\n```\n\n" ~ change_log_md -%}
+{%- endif -%}
+
+{# ── Emit the structured result as JSON (the render step's stored value) ── #}
+{
+  "delivered_output": {{ delivered_output | tojson }},
+  "output_path_written": {{ output_path_resolved if output_format_resolved == "file" or output_format_resolved == "both" else "" | tojson }},
+  "change_log": {
+    "summary": {{ summary_line | tojson }},
+    "audit_findings_table": {{ findings_table | tojson }},
+    "grill_verdict": {{ grill_verdict | tojson }},
+    "grill_ratings": {{ grill_ratings_text | tojson }},
+    "mutations_applied": {{ mutations_applied | map(attribute="mutation") | list | tojson }},
+    "deferred_findings": {{ mutations_deferred | map(attribute="finding") | list | tojson }},
+    "schema_defects": {{ schema_defects | tojson }}
+  }
+}

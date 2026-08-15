@@ -79,7 +79,7 @@ impl CompaniesServer {
                     self.tavily_api_key.as_deref(),
                     self.brave_api_key.as_deref(),
                 )
-                .await;
+                .await?;
 
                 let claims = research::ResearchClaimClassifier::classify_all(&research);
 

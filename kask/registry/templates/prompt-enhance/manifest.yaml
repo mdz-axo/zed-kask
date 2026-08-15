@@ -86,6 +86,19 @@ templates:
     generates_spans:
       - reg.prompt-enhance.output
 
+  # enhance-output-render.j2 is a render-only variant of enhance-output.j2
+  # (no inference — pure Jinja2 rendering for programmatic delivery). Not
+  # referenced by the current process manifest but kept here so the orphan
+  # .j2 check passes and the template remains available.
+  - id: prompt-enhance/enhance-output-render
+    name: "Render-only prompt delivery (no inference)"
+    path: enhance-output-render.j2
+    type: KnowAct
+    description: >
+      Render-only variant of enhance-output for programmatic delivery without
+      an LLM round-trip. Formats the enhanced prompt per output_format.
+    generates_spans: []
+
   # enhance-audit.j2 is retained from the former multi-step design but is not
   # referenced by the current process manifest (the audit is folded into
   # enhance-rewrite.j2). Kept here so the bootstrap test's source_path check

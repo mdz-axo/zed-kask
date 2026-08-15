@@ -142,7 +142,7 @@ steps:
   # incomplete PICO frame.
   - ordinal: 4
     action: select
-    condition: "{{ step_3_result | length == 0 }}"
+    condition: "NOT step_3_result"
     description: >
       Single cognitive act: derive a testable hypothesis, formulate the null
       hypothesis, classify type, operationalize into research aims and

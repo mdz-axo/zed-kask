@@ -69,7 +69,7 @@ steps:
   # === BEGINNER MODE (folded from kata-starter) ===
   - ordinal: 1
     action: select
-    condition: "{{ mode | default('improvement') == 'beginner' }}"
+    condition: "mode == 'beginner'"
     description: >
       BEGINNER SELECTOR: Select appropriate starter drill based on learner
       profile and practice history. If no history, start with Observation
@@ -85,7 +85,7 @@ steps:
 
   - ordinal: 2
     action: select
-    condition: "{{ mode | default('improvement') == 'beginner' and step_1_result.selected_drill == 'five-questions' }}"
+    condition: "mode == 'beginner' AND step_1_result.selected_drill == 'five-questions'"
     description: >
       BEGINNER FIVE QUESTIONS DRILL: Practice asking the 5 coaching questions
       in order on a trivial process (making toast, brewing coffee).
@@ -99,7 +99,7 @@ steps:
 
   - ordinal: 3
     action: select
-    condition: "{{ mode | default('improvement') == 'beginner' and step_1_result.selected_drill == 'pdca-cycle' }}"
+    condition: "mode == 'beginner' AND step_1_result.selected_drill == 'pdca-cycle'"
     description: >
       BEGINNER PDCA CYCLE DRILL: Practice Plan-Do-Check-Act on a trivial
       measurable process.
@@ -113,7 +113,7 @@ steps:
 
   - ordinal: 4
     action: select
-    condition: "{{ mode | default('improvement') == 'beginner' and step_1_result.selected_drill == 'observation-drill' }}"
+    condition: "mode == 'beginner' AND step_1_result.selected_drill == 'observation-drill'"
     description: >
       BEGINNER OBSERVATION DRILL: Practice separating observed facts (IS) from
       interpretations (OUGHT).
@@ -127,7 +127,7 @@ steps:
 
   - ordinal: 5
     action: compute
-    condition: "{{ mode | default('improvement') == 'beginner' }}"
+    condition: "mode == 'beginner'"
     compute_ref: lisp.eval
     description: >
       Compute structural-validity score from the beginner drill's actual
@@ -147,7 +147,7 @@ steps:
 
   - ordinal: 6
     action: select
-    condition: "{{ mode | default('improvement') == 'improvement' }}"
+    condition: "mode != 'beginner'"
     description: Step 1 — understand direction/challenge.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step1-direction.j2
@@ -158,7 +158,7 @@ steps:
 
   - ordinal: 7
     action: select
-    condition: "{{ mode | default('improvement') == 'improvement' }}"
+    condition: "mode != 'beginner'"
     description: Step 2 — grasp current condition with data.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step2-current.j2
@@ -171,7 +171,7 @@ steps:
 
   - ordinal: 8
     action: select
-    condition: "{{ mode | default('improvement') == 'improvement' }}"
+    condition: "mode != 'beginner'"
     description: Step 3 — establish target condition.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step3-target.j2
@@ -183,7 +183,7 @@ steps:
 
   - ordinal: 9
     action: select
-    condition: "{{ mode | default('improvement') == 'improvement' }}"
+    condition: "mode != 'beginner'"
     description: Step 4 — define next experiment.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step4-experiment.j2
@@ -196,7 +196,7 @@ steps:
 
   - ordinal: 10
     action: compute
-    condition: "{{ mode | default('improvement') == 'improvement' }}"
+    condition: "mode != 'beginner'"
     compute_ref: lisp.eval
     description: >
       Compute structural-validity score from step 10's actual experiment
@@ -216,7 +216,7 @@ steps:
 
   - ordinal: 11
     action: loop
-    condition: "{{ mode | default('improvement') == 'beginner' }}"
+    condition: "mode == 'beginner'"
     description: Re-enter beginner kata cycle if convergence is not met.
     gas_cap: 1000
     timeout_seconds: 30
@@ -228,7 +228,7 @@ steps:
 
   - ordinal: 12
     action: loop
-    condition: "{{ mode | default('improvement') == 'improvement' }}"
+    condition: "mode != 'beginner'"
     description: Re-enter improvement kata cycle if convergence is not met.
     gas_cap: 1000
     timeout_seconds: 30

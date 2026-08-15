@@ -194,7 +194,7 @@ steps:
   # ── Step 5: LLM probabilistic step — instrumentation, gated on Lisp verdict ──
   - ordinal: 5
     action: select
-    condition: "{{ step_4_result | length == 0 }}"
+    condition: "NOT step_4_result"
     description: >
       Instrument code with targeted probes mapped to the top-ranked hypothesis.
       Gated on the Lisp hypothesis invariant check (step 4) — only runs when

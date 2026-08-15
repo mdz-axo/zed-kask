@@ -6,6 +6,7 @@
 //! full LLM inference).
 
 use anyhow::anyhow;
+use hkask_mcp_server::server::McpToolError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -65,8 +66,11 @@ pub struct ProviderSummary {
 /// Search for company research across all available providers.
 /// Returns aggregated, de-duplicated claims.
 ///
-/// Each optional API key enables the corresponding provider. Providers
-/// without a key are silently skipped.
+/// Each optional API key enables the corresponding provider. If NO
+/// provider key is configured (all `None` or empty), returns
+/// `permission_denied` so the operator can distinguish a credential gap
+/// from a genuine no-match. An empty result from a configured provider is
+/// a genuine no-match and is returned as `Ok`.
 pub async fn search_fundamental(
     client: &reqwest::Client,
     symbol: &str,
@@ -75,7 +79,21 @@ pub async fn search_fundamental(
     exa_key: Option<&str>,
     tavily_key: Option<&str>,
     brave_key: Option<&str>,
-) -> ResearchResult {
+) -> Result<ResearchResult, McpToolError> {
+    // Guard: if no search provider is configured, surface a credential gap
+    // rather than silently returning empty results. An operator seeing an
+    // empty `Vec` cannot tell "no matches" from "no credentials" — this
+    // makes the missing-credentials case loud and actionable.
+    let has_exa = exa_key.map(|k| !k.is_empty()).unwrap_or(false);
+    let has_tavily = tavily_key.map(|k| !k.is_empty()).unwrap_or(false);
+    let has_brave = brave_key.map(|k| !k.is_empty()).unwrap_or(false);
+    if !has_exa && !has_tavily && !has_brave {
+        return Err(McpToolError::permission_denied(
+            "No search provider credentials configured. Set at least one of \
+             HKASK_EXA_API_KEY, HKASK_TAVILY_API_KEY, or HKASK_BRAVE_API_KEY.",
+        ));
+    }
+
     let query = format!(
         "{} {} {}",
         symbol.trim(),
@@ -143,11 +161,11 @@ pub async fn search_fundamental(
         }
     }
 
-    ResearchResult {
+    Ok(ResearchResult {
         query,
         claims: deduped_claims,
         provider_summary,
-    }
+    })
 }
 
 // ── Exa search ────────────────────────────────────────────────────────
