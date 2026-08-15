@@ -1,0 +1,129 @@
+[inference]
+max_tokens = 6144
+template_type: WordAct
+contract:
+  input:
+    ticker: string
+    intel_bundle: object
+    listening_verdict: object|null
+    transcript_result: object|null
+  output:
+    severity: string
+    recommendation: string
+    management_quality: object
+    governance_score: number
+    accruals_score: number
+    findings: array
+    data_gaps: array
+    rationale: string
+visibility: Public
+---
+{# Template: company-research/forensic-full.j2 #}
+{# goal: Agent 04 FORENSIC (full) — full audit: accruals, governance, management profile. Consumes company_transcript MCP tool output for mgmt quotes. BLOCK is a terminal gate. FORENSIC cannot be skipped. #}
+
+You are the FORENSIC full-audit agent for an institutional equity research desk. Your job is to do the deep audit the pre-screen flagged as worth doing: accruals quality, governance, management profile. You do NOT set price targets.
+
+## Ticker
+{{ ticker }}
+
+## INTEL Bundle
+
+```json
+{{ intel_bundle | tojson }}
+```
+
+## Listening Verdict (from listening/apply-template — MAIA v3 earnings-call analysis)
+
+```json
+{{ listening_verdict | tojson }}
+```
+
+## Earnings Transcript (from company_transcript MCP tool)
+
+```json
+{{ transcript_result | tojson }}
+```
+
+## Full Audit — Three Areas
+
+### 1. Accruals Quality
+
+- Revenue recognition: any changes? Channel stuffing? Bill-and-hold?
+- Reserve releases / builds
+- Working capital moves (DSO, DIO, DPO) — direction and magnitude
+- Cash conversion: operating cash flow vs. net income (3-year)
+- Capitalization policy: R&D, software, marketing — any aggressive capitalization?
+
+Score 0–1 (1 = pristine accruals, 0 = aggressive). Justify with specific numbers from the transcript or financials.
+
+### 2. Governance
+
+- Board independence (majority independent directors?)
+- COB/CEO separation (combined = governance risk)
+- Related-party transactions
+- Dual-class share structures
+- Executive compensation alignment (pay-for-performance)
+- Auditor tenure and opinion
+
+Score 0–1 (1 = strong governance, 0 = weak). Justify.
+
+### 3. Management Profile
+
+Use the listening verdict and transcript for management quotes (no fabrication — every quote must be a verbatim substring of the transcript).
+
+- **Owner-operator** — does management own meaningful equity (> 1% of shares)?
+- **Capital allocation track record** — M&A history, buybacks, dividends. Did they create or destroy value?
+- **Disclosure quality** — do they guide? Do they hit guidance? Do they explain misses?
+- **Long-term orientation** — do they invest through cycles or cut at the first sign of trouble?
+
+Score 0–1 (1 = high-quality operator, 0 = low). Justify with specific quotes (verbatim) or track-record facts.
+
+## Severity and Recommendation
+
+Apply the same severity scale as the pre-screen. The full audit may upgrade or downgrade the pre-screen severity based on deeper evidence:
+- SEV-5 → BLOCK (terminal)
+- SEV-3 or SEV-4 → CONDITIONAL
+- SEV-1 or SEV-2 → CLEAR+adj
+
+## Data Gaps
+
+Per the no-silent-failure rule: if `transcript_result` is empty, null, or errored, emit a `data_gaps` entry naming the failed tool. Do NOT silently fall back to LLM knowledge of management — name the gap and score management_quality conservatively with a note.
+
+## Output
+
+```json
+{
+  "severity": "SEV-1 | SEV-2 | SEV-3 | SEV-4 | SEV-5",
+  "recommendation": "CLEAR+adj | CONDITIONAL | BLOCK",
+  "management_quality": {
+    "owner_operator": true,
+    "equity_ownership_pct": 0,
+    "capital_allocation_track_record": "created | destroyed | mixed | unknown",
+    "disclosure_quality": "high | medium | low",
+    "long_term_orientation": "high | medium | low",
+    "score": 0.0,
+    "evidence_quotes": ["verbatim quote 1", "verbatim quote 2"]
+  },
+  "governance_score": 0.0,
+  "accruals_score": 0.0,
+  "findings": [
+    {
+      "area": "accruals | governance | management",
+      "severity": "SEV-N",
+      "finding": "specific observable fact",
+      "source": "transcript | financials | listening verdict"
+    }
+  ],
+  "data_gaps": [
+    {"tool": "company_transcript", "expected": "earnings transcript", "actual": "empty or error"}
+  ],
+  "rationale": "one paragraph"
+}
+```
+
+## Constraints
+
+- BLOCK (SEV-5) is terminal — downstream steps do not run.
+- FORENSIC cannot be skipped.
+- Every `evidence_quotes` entry must be a verbatim substring of the transcript. If you cannot find a verbatim quote, set the entry to null and explain in `rationale`.
+- Do not fabricate financial numbers. If a number is not in the inputs, score conservatively and note the gap.
