@@ -419,8 +419,8 @@ pub struct ForecastRecordRequest {
 /// forecast_record (which requires the actual outcome), this tool stores a
 /// pending price target without an outcome and without a decomposition model.
 /// The stored forecast can later be resolved by forecast_record when the
-/// horizon passes — Brier scoring runs on the recorded multiple and price
-/// change; gap decomposition is unavailable (no projected model).
+/// horizon passes — Brier scoring runs on the recorded price change;
+/// gap decomposition is unavailable (no projected model).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ForecastPersistRequest {
     pub symbol: String,
@@ -428,10 +428,17 @@ pub struct ForecastPersistRequest {
     pub forecast_date: String,
     /// Forecast horizon.
     pub horizon: Horizon,
-    /// Forecast valuation multiple (e.g., P/E or EV/FCF)
-    pub forecast_multiple: f64,
-    /// Forecast price change over the horizon (e.g., 0.10 = 10% return)
+    /// Forecast price change over the horizon (e.g., 0.10 = 10% return).
+    /// The primary Brier signal — forecast_record scores this against the
+    /// actual price change within a 20% tolerance band.
     pub forecast_price_change: f64,
+    /// Optional forecast valuation multiple (e.g., P/E or EV/FCF).
+    /// Pre-computed PTs from flowdef valuation synthesis may not carry a
+    /// multiple — the price target is an absolute price, not a multiple.
+    /// When omitted, the multiple-direction Brier score is null (it is
+    /// already null in forecast_record — the multiple probability is not
+    /// modeled).
+    pub forecast_multiple: Option<f64>,
     /// Optional parent forecast ID for a same-symbol revision.
     pub revision_of: Option<String>,
     /// Optional caller-supplied forecast ID. When omitted, the server

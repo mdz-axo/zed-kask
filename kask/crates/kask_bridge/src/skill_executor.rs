@@ -111,6 +111,11 @@ pub struct BridgeManifestExecutor {
     manifest_cache: std::sync::Mutex<
         std::collections::HashMap<String, (std::time::SystemTime, hkask_templates::BundleManifest)>,
     >,
+    /// Optional RegulationLedger for recording skill feedback spans
+    /// (`reg.skill.<id>.outcome`). When `None`, skill outcomes are not
+    /// persisted to the regulation system (tests, pre-login).
+    #[allow(dead_code)] // wired in a later commit — field is set but not yet read
+    regulation_ledger: Option<Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>>,
 }
 
 impl BridgeManifestExecutor {
@@ -135,6 +140,7 @@ impl BridgeManifestExecutor {
             tokio_handle,
             profile_resolver: None,
             manifest_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            regulation_ledger: None,
         }
     }
 
@@ -149,6 +155,19 @@ impl BridgeManifestExecutor {
     #[must_use]
     pub fn with_profile_resolver(mut self, resolver: Arc<dyn ProfileResolver>) -> Self {
         self.profile_resolver = Some(resolver);
+        self
+    }
+
+    /// Wire a RegulationLedger for recording skill feedback spans.
+    /// When set, `execute_skill` records `reg.skill.<id>.outcome` spans
+    /// after each invocation (success or failure), closing the feedback
+    /// loop for drift detection and gemba walk review.
+    #[must_use]
+    pub fn with_regulation_ledger(
+        mut self,
+        ledger: Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>,
+    ) -> Self {
+        self.regulation_ledger = Some(ledger);
         self
     }
 
@@ -697,12 +716,35 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                 progress,
                 title,
             )
-            .await
-            .map_err(|e| SkillExecutionError::Runtime {
-                skill_name: skill_name.to_string(),
-                phase: "cascade",
-                message: e,
-            })?;
+            .await;
+
+        // Record the skill outcome span (reg.skill.<id>.outcome) for the
+        // regulation feedback loop. Best-effort: if the ledger is not wired
+        // (tests, pre-login) or the write fails, the result is unaffected.
+        let skill_id = manifest.id.as_deref().unwrap_or(skill_name);
+        let outcome_payload = match &result {
+            Ok(_) => serde_json::json!({
+                "success": true,
+                "skill_id": skill_id,
+            }),
+            Err(msg) => serde_json::json!({
+                "success": false,
+                "skill_id": skill_id,
+                "error": msg,
+            }),
+        };
+        if let Some(ref ledger) = self.regulation_ledger {
+            let ledger_guard = ledger.read().await;
+            ledger_guard
+                .record_skill_span(skill_id, "outcome", outcome_payload)
+                .await;
+        }
+
+        let result = result.map_err(|e| SkillExecutionError::Runtime {
+            skill_name: skill_name.to_string(),
+            phase: "cascade",
+            message: e,
+        })?;
 
         // (K5) `extract_final_step_result` selects `last_result_step`'s
         // value (deterministic — the machine tracks it, O(1)).

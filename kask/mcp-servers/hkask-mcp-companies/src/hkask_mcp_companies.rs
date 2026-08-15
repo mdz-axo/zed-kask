@@ -6,7 +6,7 @@
 //! symbol characteristics, with automatic fallback. EODHD responses are
 //! normalized to match FMP format so analysis functions work transparently.
 //!
-//! ## Tools (44) — pinned by `tool_surface_is_exactly_44_registered_tools`
+//! ## Tools (45) — pinned by `tool_surface_is_exactly_44_registered_tools`
 //!
 //! Tools are split across submodules under `src/tools/`, each with its own
 //! `#[tool_router]` block, merged in `combined_router()`:
@@ -15,7 +15,7 @@
 //! - `tools/analysis.rs` — moat_check, management_scorecard, working_capital_cycle
 //! - `tools/valuation.rs` — dcf_valuation, reverse_dcf, ep_valuation, comparable_analysis,
 //!   scenario_analysis, sensitivity_analysis, monte_carlo_dcf, scenario_impact_valuation,
-//!   calibrate_forecast, forecast_record
+//!   calibrate_forecast, forecast_record, forecast_persist
 //! - `tools/analytics.rs` — portfolio_attribution, portfolio_characteristics,
 //!   portfolio_comparison, portfolio_returns
 //! - `tools/economic_profit.rs` — ep_valuation (economic profit view)
@@ -264,7 +264,7 @@ mod tool_surface_tests {
     #[test]
     fn tool_surface_is_exactly_44_registered_tools() {
         let n = CompaniesServer::combined_router().list_all().len();
-        assert_eq!(n, 44, "companies registered tool surface changed; got {n}");
+        assert_eq!(n, 45, "companies registered tool surface changed; got {n}");
     }
 
     // Coverage: every registered tool must have a non-None ontology anchor.

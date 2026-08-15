@@ -534,12 +534,12 @@ fn strip_jinja_comments(input: &str) -> String {
 // (shapes_applied, framing_errors_detected, etc.) as `rotated_board`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Regex to find bare `step_N_result` (not `step_N_result.field`).
-/// Uses negative lookahead to exclude field-path references.
-/// Also excludes `prev_step_N_result`.
+/// Regex to find all `step_N_result` references (with or without .field).
+/// We filter for bare references (no .field) in code since the `regex` crate
+/// doesn't support negative lookahead.
 static BARE_STEP_RESULT_RE: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"(?<!prev_)step_(\d+)_result(?![._\w])").unwrap()
+        regex::Regex::new(r"(?:prev_)?step_(\d+)_result").unwrap()
     });
 
 /// Regex to find `step_N_result.field | default(step_M_result)` patterns.
@@ -674,9 +674,23 @@ fn bare_step_result_passing_is_annotated() {
                 .map(|v| v.to_string())
                 .unwrap_or_default();
 
-            // Find bare step_N_result references (no .field path).
+            // Find bare step_N_result references (no .field path, no prev_ prefix).
+            // The regex captures all step_N_result references; we filter in code
+            // because the `regex` crate doesn't support negative lookahead.
             let bare_refs: Vec<u32> = BARE_STEP_RESULT_RE
                 .captures_iter(&mapping_str)
+                .filter(|cap| {
+                    let full = cap.get(0).unwrap().as_str();
+                    // Exclude prev_step_N_result (cross-iteration references).
+                    if full.starts_with("prev_") {
+                        return false;
+                    }
+                    // Exclude step_N_result.field (field-path references —
+                    // these are checked by the other test).
+                    let end = cap.get(0).unwrap().end();
+                    let next_char = mapping_str[end..].chars().next();
+                    next_char != Some('.')
+                })
                 .filter_map(|cap| cap.get(1).and_then(|m| m.as_str().parse::<u32>().ok()))
                 .collect();
 
@@ -720,10 +734,22 @@ fn bare_step_result_passing_is_annotated() {
                     .and_then(|obj| {
                         obj.iter().find_map(|(k, val)| {
                             let val_str = val.to_string();
-                            if BARE_STEP_RESULT_RE
+                            // Check if this value contains a bare step_N_result
+                            // (no .field path) for the current ref_ordinal.
+                            let has_bare_ref = BARE_STEP_RESULT_RE
                                 .captures_iter(&val_str)
-                                .any(|c| c.get(1).and_then(|m| m.as_str().parse::<u32>().ok()) == Some(*ref_ordinal))
-                            {
+                                .any(|c| {
+                                    let full = c.get(0).unwrap().as_str();
+                                    if full.starts_with("prev_") {
+                                        return false;
+                                    }
+                                    let end = c.get(0).unwrap().end();
+                                    let next_char = val_str[end..].chars().next();
+                                    next_char != Some('.')
+                                        && c.get(1).and_then(|m| m.as_str().parse::<u32>().ok())
+                                            == Some(*ref_ordinal)
+                                });
+                            if has_bare_ref {
                                 Some(k.clone())
                             } else {
                                 None
@@ -735,7 +761,7 @@ fn bare_step_result_passing_is_annotated() {
 
                 // Check if the consuming field is in the consumer's input
                 // contract — if it is, this is a wired binding.
-                let in_contract = consumer_input_keys.contains(field_label.as_str());
+                let in_contract = consumer_input_keys.contains(field_label);
 
                 warnings.push(format!(
                     "{fname} step {} (template '{template_ref}'): input_mapping field '{field_label}' passes bare step_{}_result \
@@ -846,6 +872,14 @@ fn default_fallback_produces_full_replacement() {
                 let (Some(n), Some(field), Some(m)) = (n, field, m) else {
                     continue;
                 };
+
+                // Skip self-referential fallbacks (step_N_result.field | default(step_N_result)).
+                // This is a different pattern: "use .field if present, else use the full
+                // result." It's not a cross-step replacement and the partial-overlay
+                // concern doesn't apply.
+                if n == m {
+                    continue;
+                }
 
                 // Load the producer template (step N).
                 let producer_step = match find_step_by_ordinal(&manifest, n) {

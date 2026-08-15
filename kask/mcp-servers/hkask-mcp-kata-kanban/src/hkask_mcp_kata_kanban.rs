@@ -1483,7 +1483,7 @@ impl KanbanServer {
                 let task_count = tasks.len();
                 let column_count = board.columns.len();
                 let markdown = kanban::mermaid::export_board_to_mermaid(&board, &tasks);
-                Ok(serde_json::to_value(BoardExportResponse {
+                serde_json::to_value(BoardExportResponse {
                     markdown,
                     board_id: bid.to_string(),
                     board_name: board.name,
@@ -1491,7 +1491,7 @@ impl KanbanServer {
                     task_count,
                     ontology: kanban_type_to_pko("kanban_board_export").map(|s| s.to_string()),
                 })
-                .map_err(|e| McpToolError::internal(e.to_string()))?) // rr0044-ok: serialize-own-struct
+                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
             },
         )
         .await
@@ -1584,7 +1584,7 @@ impl KanbanServer {
                         }
                     }
 
-                    Ok(serde_json::to_value(BoardImportResponse {
+                    serde_json::to_value(BoardImportResponse {
                         board_id: board.id.to_string(),
                         board_name: board.name,
                         column_count,
@@ -1592,7 +1592,7 @@ impl KanbanServer {
                         ontology: kanban_type_to_pko("kanban_board_import")
                             .map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?) // rr0044-ok: serialize-own-struct
+                    .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
                 },
             ),
         )

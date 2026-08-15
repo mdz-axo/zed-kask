@@ -2980,6 +2980,7 @@ async fn try_wire_manifest_executor(
     tool_port: &std::sync::Arc<dyn hkask_capability::ToolPort>,
     registry_manifests_dir: &std::path::Path,
     registry_templates_dir: &std::path::Path,
+    regulation_ledger: &std::sync::Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>,
     cx: &mut gpui::AsyncApp,
 ) -> Result<(), anyhow::Error> {
     // Already wired — no-op.
@@ -3072,7 +3073,8 @@ async fn try_wire_manifest_executor(
                 registry_templates_dir.to_path_buf(),
                 gpui_tokio::Tokio::handle(cx),
             )
-            .with_profile_resolver(profile_resolver),
+            .with_profile_resolver(profile_resolver)
+            .with_regulation_ledger(regulation_ledger.clone()),
         );
         agent::set_manifest_executor(Some(executor));
         log::info!(
