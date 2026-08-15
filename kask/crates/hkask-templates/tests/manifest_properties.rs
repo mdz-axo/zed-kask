@@ -286,8 +286,7 @@ fn all_manifests_have_structural_integrity() {
                         if let Some(s) = value.as_str() {
                             if s.contains("step_")
                                 && s.contains("_result")
-                                && (s.contains("| default({})")
-                                    || s.contains("| default([])"))
+                                && (s.contains("| default({})") || s.contains("| default([])"))
                                 && !key.starts_with("prior_")
                                 && !key.starts_with("prev_")
                                 && !key.starts_with("previous_")
@@ -538,16 +537,14 @@ fn strip_jinja_comments(input: &str) -> String {
 /// We filter for bare references (no .field) in code since the `regex` crate
 /// doesn't support negative lookahead.
 static BARE_STEP_RESULT_RE: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"(?:prev_)?step_(\d+)_result").unwrap()
-    });
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?:prev_)?step_(\d+)_result").unwrap());
 
 /// Regex to find `step_N_result.field | default(step_M_result)` patterns.
 /// Captures: (1) step N ordinal, (2) field name, (3) step M ordinal.
-static DEFAULT_FALLBACK_RE: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"step_(\d+)_result\.(\w+)\s*\|\s*default\(\s*step_(\d+)_result\s*\)").unwrap()
-    });
+static DEFAULT_FALLBACK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"step_(\d+)_result\.(\w+)\s*\|\s*default\(\s*step_(\d+)_result\s*\)")
+        .unwrap()
+});
 
 /// Extract `contract.input` field names from a .j2 template's frontmatter.
 /// Delegates to the production `extract_contract_input_keys` re-exported
@@ -727,33 +724,25 @@ fn bare_step_result_passing_is_annotated() {
                 // Parse the input_mapping to find the key whose value contains
                 // the bare step_N_result reference.
                 let mapping_value = step.input_mapping.as_ref();
-                let consuming_field = mapping_value
-                    .and_then(|v| v.as_object())
-                    .and_then(|obj| {
-                        obj.iter().find_map(|(k, val)| {
-                            let val_str = val.to_string();
-                            // Check if this value contains a bare step_N_result
-                            // (no .field path) for the current ref_ordinal.
-                            let has_bare_ref = BARE_STEP_RESULT_RE
-                                .captures_iter(&val_str)
-                                .any(|c| {
-                                    let full = c.get(0).unwrap().as_str();
-                                    if full.starts_with("prev_") {
-                                        return false;
-                                    }
-                                    let end = c.get(0).unwrap().end();
-                                    let next_char = val_str[end..].chars().next();
-                                    next_char != Some('.')
-                                        && c.get(1).and_then(|m| m.as_str().parse::<u32>().ok())
-                                            == Some(*ref_ordinal)
-                                });
-                            if has_bare_ref {
-                                Some(k.clone())
-                            } else {
-                                None
+                let consuming_field = mapping_value.and_then(|v| v.as_object()).and_then(|obj| {
+                    obj.iter().find_map(|(k, val)| {
+                        let val_str = val.to_string();
+                        // Check if this value contains a bare step_N_result
+                        // (no .field path) for the current ref_ordinal.
+                        let has_bare_ref = BARE_STEP_RESULT_RE.captures_iter(&val_str).any(|c| {
+                            let full = c.get(0).unwrap().as_str();
+                            if full.starts_with("prev_") {
+                                return false;
                             }
-                        })
-                    });
+                            let end = c.get(0).unwrap().end();
+                            let next_char = val_str[end..].chars().next();
+                            next_char != Some('.')
+                                && c.get(1).and_then(|m| m.as_str().parse::<u32>().ok())
+                                    == Some(*ref_ordinal)
+                        });
+                        if has_bare_ref { Some(k.clone()) } else { None }
+                    })
+                });
 
                 let Some(field_label) = consuming_field.as_deref() else {
                     continue; // Couldn't determine which field receives the bare result.
@@ -823,7 +812,11 @@ fn bare_step_result_passing_is_annotated() {
     //     (matching output field name). Review needed.
     //   - gradient-hunter step 3: passes bare step_2_result as `actual_field`
     //     (matching output field name). Review needed.
-    const WARNING_CEILING: usize = 22;
+    //   - company-research-flash step 25 (LENS) semantic_tags: passes full
+    //     step_5_result because LENS uses both `semantic_tags` and
+    //     `certainty_drift_risk` from the intel-semantic-classify adapter.
+    //     Intentional — the LENS template dumps the full object via `tojson`.
+    const WARNING_CEILING: usize = 23;
     assert!(
         warnings.len() <= WARNING_CEILING,
         "{} bare step_N_result passing warnings (regression ceiling: {WARNING_CEILING}). \
@@ -919,18 +912,17 @@ fn default_fallback_produces_full_replacement() {
                 let Some(producer_tref) = &producer_step.template_ref else {
                     continue;
                 };
-                let producer_content = match load_template_content(&templates_dir, producer_tref)
-                {
+                let producer_content = match load_template_content(&templates_dir, producer_tref) {
                     Some(c) => c,
                     None => continue,
                 };
 
                 // Check that the field exists in the producer's output.
-                let field_type =
-                    match extract_contract_output_field_type(&producer_content, &field) {
-                        Some(t) => t,
-                        None => continue, // Field doesn't exist — caught by the other test.
-                    };
+                let field_type = match extract_contract_output_field_type(&producer_content, &field)
+                {
+                    Some(t) => t,
+                    None => continue, // Field doesn't exist — caught by the other test.
+                };
 
                 // Only check object-typed fields (these are the ones that can
                 // be partial overlays).
@@ -943,8 +935,7 @@ fn default_fallback_produces_full_replacement() {
                 // Heuristic: check if the producer's template body contains
                 // "echo back" / "full" language indicating it emits a full
                 // replacement.
-                let has_echo_language =
-                    template_body_has_echo_back_language(&producer_content);
+                let has_echo_language = template_body_has_echo_back_language(&producer_content);
 
                 if !has_echo_language {
                     // Load the fallback template (step M) to see what fields
@@ -962,8 +953,7 @@ fn default_fallback_produces_full_replacement() {
                             Some(c) => c,
                             None => continue,
                         };
-                    let fallback_output_keys =
-                        extract_contract_output_keys(&fallback_content);
+                    let fallback_output_keys = extract_contract_output_keys(&fallback_content);
 
                     warnings.push(format!(
                         "{fname} step {} (template '{template_ref}'): uses step_{}_result.{} | default(step_{}_result) \

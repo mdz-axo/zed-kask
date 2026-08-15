@@ -1,7 +1,7 @@
 ---
 name: company-research-flash
 visibility: public
-description: "Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequential 14-step flowdef: SCOUT alpha score → INTEL business context + earnings listening → FORENSIC pre-screen → CRITICAL FACTOR Bull/Base/Bear → FORENSIC full audit → VALUATION 8-step (4 native MCP tool calls + LLM synthesis) → COMMUNICATION ENTER gate + CASCADE note → KATA PDCA (2 native MCP tool calls + cross-skill reuse) → LENS five-framework audit (2 native MCP tool calls + LLM synthesis) → convergence check → loop on PARTIAL. MCP tool calls are native action: execute steps; templates do LLM synthesis over their outputs. Early-exit gates (DROP / HALT / BLOCK) are condition: on downstream steps. Converges on LENS verdict consistency."
+description: "Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequential 29-step flowdef: SCOUT alpha score → INTEL business context + earnings listening + pragmatic-semantics certainty classification → FORENSIC pre-screen → CRITICAL FACTOR Bull/Base/Bear → FORENSIC full audit → VALUATION 8-step (4 native MCP tool calls + LLM synthesis) → COMMUNICATION ENTER gate + CASCADE note → KATA PDCA (2 native MCP tool calls + cross-skill reuse) + metacognition calibration gap measurement → LENS five-framework audit (2 native MCP tool calls + LLM synthesis) → convergence check → loop on PARTIAL. MCP tool calls are native action: execute steps; templates do LLM synthesis over their outputs. Early-exit gates (DROP / HALT / BLOCK) are condition: on downstream steps. Converges on LENS verdict consistency."
 ---
 
 # Company Research — Flash Pipeline
@@ -30,6 +30,12 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 2. Build the information mosaic with source-tier classification and horizon tagging.
 3. Form 3–5 testable hypotheses with PENDING / VALIDATED / UNRESOLVABLE lifecycle.
 4. Emit mosaic_clear (false = MNPI HALT terminal gate), business_model, news_items, hypotheses, data_gaps.
+
+### intel-semantic-classify
+
+1. Classify every news_item and hypothesis by ontological mode (IS/OUGHT), epistemic mode (declarative/probabilistic/subjunctive), constraint force, and provenance.
+2. Emit semantic_tags and certainty_drift_risk (low/medium/high).
+3. Prevents certainty-level drift — a management quote treated as an ontological fact, a scenario treated as a forecast.
 
 ### forensic-pre-screen
 
@@ -79,7 +85,9 @@ The flash pipeline converges on LENS verdict consistency: CONSISTENT = 0.0 (full
 ## Cross-Skill Composition
 
 - Step 3b reuses `listening/apply-template` (MAIA v3 earnings-call listening, no-fabrication invariant).
+- Step 5 reuses `pragmatic-semantics/semantics-classify-statement` (via `company-research/intel-semantic-classify` adapter) — classifies intel items by IS/OUGHT, declarative/probabilistic/subjunctive before downstream steps consume them.
 - Step 9c reuses `kata-improvement/improvement-step1-direction` (Toyota Improvement Kata step 1).
+- Step 21 reuses `metacognition/meta-experiment` (via `company-research/kata-calibration-measure` adapter) — closes the open kata loop by measuring the calibration gap using the market_calibration Brier score.
 
 ## MCP Tool Integration
 

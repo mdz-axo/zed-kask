@@ -38,15 +38,10 @@ fn registry_templates_dir() -> std::path::PathBuf {
 /// Load a manifest by name from registry/manifests/.
 fn load_named_manifest(name: &str) -> hkask_templates::BundleManifest {
     let path = registry_manifests_dir().join(format!("{name}.yaml"));
-    let yaml = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        panic!(
-            "Failed to read {name}.yaml at {}: {e}",
-            path.display()
-        )
-    });
-    load_manifest_from_yaml(&yaml).unwrap_or_else(|e| {
-        panic!("{name}.yaml must parse with the general executor: {e:?}")
-    })
+    let yaml = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("Failed to read {name}.yaml at {}: {e}", path.display()));
+    load_manifest_from_yaml(&yaml)
+        .unwrap_or_else(|e| panic!("{name}.yaml must parse with the general executor: {e:?}"))
 }
 
 /// Resolve a `template_ref` (e.g. "company-research/scout-alpha-score") to a
@@ -70,7 +65,9 @@ fn template_ref_resolves(template_ref: &str) -> bool {
         return true;
     }
     // Fallback: parse the crate manifest to find the template's `path` field.
-    let crate_manifest = registry_templates_dir().join(crate_name).join("manifest.yaml");
+    let crate_manifest = registry_templates_dir()
+        .join(crate_name)
+        .join("manifest.yaml");
     if let Ok(crate_yaml) = std::fs::read_to_string(&crate_manifest) {
         // Naive grep for the template id and the next `path:` field.
         let mut found_id = false;
@@ -81,10 +78,7 @@ fn template_ref_resolves(template_ref: &str) -> bool {
                 continue;
             }
             if found_id && trimmed.starts_with("path:") {
-                let path_val = trimmed
-                    .trim_start_matches("path:")
-                    .trim()
-                    .trim_matches('"');
+                let path_val = trimmed.trim_start_matches("path:").trim().trim_matches('"');
                 let resolved = registry_templates_dir().join(crate_name).join(path_val);
                 return resolved.is_file();
             }
@@ -113,15 +107,16 @@ fn company_research_flash_manifest_parses() {
 #[test]
 fn company_research_flash_has_expected_step_count() {
     let manifest = load_named_manifest("company-research-flash");
-    // 0 (forecast_list) + 1 (SCOUT) + 2/3/4 (INTEL) + 5/6 (listening) +
-    // 7 (FORENSIC pre) + 8/9 (CRITICAL FACTOR) + 10/11 (FORENSIC full) +
-    // 12/13/14/15/16 (VALUATION) + 17 (COMM) + 18/19/20 (KATA) + 21/22
-    // (LENS MCP) + 23 (LENS) + 24 (convergence) + 25 (loop) +
-    // 26 (forecast_persist) = 27 steps.
+    // 0 (forecast_list) + 1 (SCOUT) + 2/3/4 (INTEL) + 5 (semantic-classify) +
+    // 6/7 (listening) + 8 (FORENSIC pre) + 9/10 (CRITICAL FACTOR) +
+    // 11/12 (FORENSIC full) + 13/14/15/16/17 (VALUATION) + 18 (COMM) +
+    // 19/20 (KATA MCP) + 21 (calibration-measure) + 22 (kata-direction) +
+    // 23/24 (LENS MCP) + 25 (LENS) + 26 (convergence) + 27 (loop) +
+    // 28 (forecast_persist) = 29 steps.
     assert_eq!(
         manifest.steps.len(),
-        27,
-        "company-research-flash must have 27 steps (26 + forecast_persist step 26), got {}",
+        29,
+        "company-research-flash must have 29 steps (27 original + 2 cross-skill adapters: semantic-classify step 5 + calibration-measure step 21), got {}",
         manifest.steps.len()
     );
 }
@@ -163,14 +158,16 @@ fn company_research_flash_select_steps_have_template_refs() {
         .iter()
         .filter(|s| s.action == "select")
         .collect();
-    // 1 (scout) + 4 (intel-mosaic) + 7 (forensic-pre) +
-    // 9 (critical-factor) + 11 (forensic-full) + 16 (valuation-8step) +
-    // 17 (communication-enter) + 20 (kata-improvement) + 23 (lens) = 9 select steps.
+    // 1 (scout) + 4 (intel-mosaic) + 5 (semantic-classify) +
+    // 7 (forensic-pre) + 9 (critical-factor) + 11 (forensic-full) +
+    // 16 (valuation-8step) + 17 (communication-enter) +
+    // 21 (calibration-measure) + 22 (kata-improvement) + 25 (lens)
+    // = 11 select steps.
     // (Step 6 was select but is now flowdef — invokes the full listening skill.)
     assert_eq!(
         select_steps.len(),
-        9,
-        "expected 9 select steps, got {}",
+        11,
+        "expected 11 select steps (9 original + 2 cross-skill adapters: semantic-classify + calibration-measure), got {}",
         select_steps.len()
     );
     for step in &select_steps {
@@ -258,8 +255,8 @@ fn company_research_flash_has_early_exit_conditions() {
 fn company_research_flash_uses_canonical_actions_only() {
     let manifest = load_named_manifest("company-research-flash");
     let canonical: HashSet<&str> = [
-        "select", "populate", "compute", "execute", "feedback", "validate", "retrieve",
-        "render", "flowdef", "loop", "choice", "abort", "escalate",
+        "select", "populate", "compute", "execute", "feedback", "validate", "retrieve", "render",
+        "flowdef", "loop", "choice", "abort", "escalate",
     ]
     .iter()
     .copied()
@@ -294,13 +291,15 @@ fn company_research_deep_manifest_parses() {
 #[test]
 fn company_research_deep_has_expected_step_count() {
     let manifest = load_named_manifest("company-research-deep");
-    // 1/2/3/4/5/6 (COMPANY) + 7 (FALSTAFFIAN) + 8/9 (GORILLA) +
-    // 10 (scenario_build) + 11 (ECONOMIC TRAJECTORY) + 12 (IMAGINE) +
-    // 13 (THESIS) + 14 (goal-analysis gate) + 15 (convergence) + 16 (loop) = 16 steps.
+    // 1/2/3/4/5/6 (COMPANY) + 7 (FALSTAFFIAN) + 8 (GORILLA) +
+    // 9 (gorilla-capability-reason) + 10 (GORILLA lisp.eval) +
+    // 11 (scenario_build) + 12 (ECONOMIC TRAJECTORY) + 13 (IMAGINE) +
+    // 14 (THESIS) + 15 (thesis-essentialist) + 16 (goal-analysis gate) +
+    // 17 (convergence) + 18 (loop) = 18 steps.
     assert_eq!(
         manifest.steps.len(),
-        16,
-        "company-research-deep must have 16 steps, got {}",
+        18,
+        "company-research-deep must have 18 steps (16 original + 2 cross-skill adapters: gorilla-capability-reason step 9 + thesis-essentialist step 15), got {}",
         manifest.steps.len()
     );
 }
@@ -339,12 +338,13 @@ fn company_research_deep_select_steps_have_template_refs() {
         .filter(|s| s.action == "select")
         .collect();
     // 6 (company-8part) + 7 (falstaffian-competitive-rotation) + 8 (gorilla-4dim) +
-    // 12 (imagine-longrange) + 13 (thesis-three-pillars) + 14 (goal-analysis/judge)
-    // + 11 (economic-trajectory) = 7 select steps.
+    // 9 (gorilla-capability-reason) + 12 (imagine-longrange) +
+    // 13 (economic-trajectory) + 14 (thesis-three-pillars) +
+    // 15 (thesis-essentialist) + 16 (goal-analysis/judge) = 9 select steps.
     assert_eq!(
         select_steps.len(),
-        7,
-        "expected 7 select steps, got {}",
+        9,
+        "expected 9 select steps (7 original + 2 cross-skill adapters: gorilla-capability-reason + thesis-essentialist), got {}",
         select_steps.len()
     );
     for step in &select_steps {
@@ -403,8 +403,8 @@ fn company_research_deep_has_convergence_and_loop() {
 fn company_research_deep_uses_canonical_actions_only() {
     let manifest = load_named_manifest("company-research-deep");
     let canonical: HashSet<&str> = [
-        "select", "populate", "compute", "execute", "feedback", "validate", "retrieve",
-        "render", "flowdef", "loop", "choice", "abort", "escalate",
+        "select", "populate", "compute", "execute", "feedback", "validate", "retrieve", "render",
+        "flowdef", "loop", "choice", "abort", "escalate",
     ]
     .iter()
     .copied()

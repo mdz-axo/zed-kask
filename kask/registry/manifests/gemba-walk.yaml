@@ -1,0 +1,267 @@
+# Gemba Walk Process Manifest
+# ℏKask v0.34.0 — Human-in-the-loop guided evolution of the cybernetic regulation system.
+#
+# Implements the Prepare and Present phases of the gemba loop
+# (docs/reports/gemba-loop-specification.md). A single-pass briefing
+# generator — not an interactive session. The operator asks follow-up
+# questions in the regular agent conversation after the skill completes.
+#
+# Design references:
+# - Microsoft "Continuous improvement with agentic AI: Conducting a virtual
+#   gemba walk" — 7-step workflow maps to the cascade steps.
+# - Greenham "Gemba AI Framework" — TAPOIF lifecycle (Thought → Action →
+#   Pause → Observation → Inform → Follow-up) maps to the cascade.
+# - Meyer "The Gemba Was Always There" — flow kaizen, not point kaizen.
+# - GembaCore — two-plane architecture (WorkPlane + OrchestrationPlane).
+# - C.H. Robinson "What Is Lean AI?" — start with a real problem, test
+#   solutions, integrate human oversight, measure results.
+#
+# The skill calls existing curator MCP tools and synthesizes a briefing.
+# Skill feedback spans (outcome, operator_feedback, convergence) live in
+# the in-memory RegulationLedger and are not yet exposed via MCP — the
+# briefing notes this gap when relevant. The skill-use issue reports
+# (curator_report_skill_use_issue) ARE queryable via curator_memory_recall
+# with entity "skill_use_issue:<skill_name>", so the briefing includes
+# accumulated skill-use issues as a proxy signal for skill health.
+
+manifest:
+  id: gemba-walk
+  category: skill
+  name: Gemba Walk
+  description: >
+    Human-in-the-loop guided review of the cybernetic regulation system.
+    Queries algedonic alerts, pending escalations, and the curator's memory
+    for skill performance patterns, then synthesizes a structured briefing
+    with per-skill digest and proposed refinement actions for operator
+    approval. Implements the Prepare and Present phases of the gemba loop.
+  functional_role: flowdef
+  version: "0.34.0"
+  editor: curator-or-human-admin
+  visibility: Public
+  enforce_inputs: true
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.05
+  cauchy_window: 2
+  max_iterations: 3
+  min_iterations: 1
+  on_not_reached: escalate
+  target_artifacts_field: "briefing"
+
+gas:
+  cap: 150000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 5
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: task
+    type: string
+    required: false
+    description: >
+      The operator's gemba walk request (e.g. "show me the system health" or
+      "review skill X"). Carried as context so templates can reference the
+      operator's intent.
+  - name: focus_skill
+    type: string
+    required: false
+    description: >
+      Optional skill ID to focus the gemba walk on (e.g. "superforecasting").
+      When empty, the walk reviews all skills with curator memory signals.
+  - name: algedonic_hours
+    type: integer
+    required: false
+    description: >
+      Lookback window for algedonic alerts (hours). Default 24.
+
+ledger:
+  span_namespace: reg.skill.gemba-walk
+  emit_spans: true
+  telemetry_namespace: hkask.template.gemba-walk
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+
+steps:
+  # ── SENSE: Query algedonic log for recent alerts ──────────────────────
+  # TAPOIF Thought: analyze signals from the regulation system.
+  - ordinal: 1
+    action: execute
+    description: >
+      Query the algedonic event log for the configured lookback window.
+      Algedonic alerts are pain/pleasure signals from the cybernetics loop
+      — variety deficits, energy exhaustion, outcome plateaus. These are
+      the "real problems" (C.H. Robinson) the gemba walk starts from.
+    mcp: curator_algedonic_log
+    gas_cap: 1024
+    timeout_seconds: 30
+    input_mapping:
+      hours: "{{ algedonic_hours | default(24) }}"
+    on_failure:
+      action: report
+      resume: >
+        The algedonic log query failed. The curator MCP server may be down
+        or the regulation archive may not be wired. Check curator_status
+        and retry. The gemba walk can proceed with escalations and memory
+        signals, but the algedonic channel is a primary input — its
+        absence should be investigated.
+
+  # ── GATHER: Query pending escalations ────────────────────────────────
+  # TAPOIF Action: prepare the briefing by collecting escalation backlog.
+  - ordinal: 2
+    action: execute
+    description: >
+      Query pending escalations requiring review. Escalations are alerts
+      the cybernetics loop produced that need human attention — threshold
+      breaches, drift detections, blocked actions. The gemba walk reviews
+      this backlog so the operator can triage.
+    mcp: curator_escalations
+    gas_cap: 1024
+    timeout_seconds: 30
+    on_failure:
+      action: report
+      resume: >
+        The escalations query failed. The curator MCP server may be down
+        or the escalation queue may not be wired. Check curator_status
+        and retry. The gemba walk can proceed with algedonic and memory
+        signals, but the escalation backlog is a primary input — its
+        absence should be investigated.
+
+  # ── GATHER: Query curator memory for skill performance patterns ──────
+  # TAPOIF Action: collect skill-use issue reports and performance patterns
+  # from the curator's episodic + semantic memory.
+  - ordinal: 3
+    action: execute
+    description: >
+      Consult the curator's memory for skill performance patterns. The
+      curator ingests skill-use issue reports (via curator_report_skill_use_issue,
+      stored as episodic h_mem with entity "skill_use_issue:<skill_name>")
+      and other skill performance observations. This consultation retrieves
+      accumulated patterns so the briefing can surface skills with recurring
+      issues. When focus_skill is set, the consultation is scoped to that
+      skill; otherwise it asks for all skills with recent issues.
+    mcp: curator_consult
+    gas_cap: 2048
+    timeout_seconds: 60
+    input_mapping:
+      query: >
+        {% if focus_skill %}skill performance issues and patterns for skill "{{ focus_skill }}"{% else %}recent skill performance issues, skill-use failures, and drift patterns across all skills{% endif %}
+      limit: 20
+    on_failure:
+      action: report
+      resume: >
+        The curator memory consultation failed. The curator's memory store
+        may be down or partially degraded. Check curator_status for the
+        memory_degraded flag. The gemba walk can proceed with algedonic
+        and escalation signals, but the skill performance channel is a
+        primary input — its absence should be investigated.
+
+  # ── ANALYZE: Synthesize the structured briefing ──────────────────────
+  # TAPOIF Observation: retrieve and structure the answers from the three
+  # signal channels into a coherent briefing.
+  - ordinal: 4
+    action: select
+    description: >
+      Synthesize the three signal channels (algedonic, escalations, memory)
+      into a structured briefing. The briefing has four sections: (1) system
+      health summary, (2) algedonic alert digest, (3) escalation backlog
+      digest, (4) per-skill performance digest. Each per-skill entry
+      includes issue count, recent failure patterns, and a health
+      classification (healthy / watch / intervene). The briefing explicitly
+      notes when skill feedback spans (outcome, operator_feedback) are not
+      available via MCP — this is a known gap, not a silent omission.
+    renderer: minijinja
+    template_ref: gemba-walk/synthesize-briefing
+    gas_cap: 4096
+    timeout_seconds: 120
+    input_mapping:
+      task: "{{ task | default('show me the system health') }}"
+      focus_skill: "{{ focus_skill | default('') }}"
+      algedonic_result: "{{ step_1_result }}"
+      escalations_result: "{{ step_2_result }}"
+      memory_result: "{{ step_3_result }}"
+
+  # ── PRESENT: Render the conversational briefing ──────────────────────
+  # TAPOIF Inform: present the findings to the operator as a readable
+  # summary with structured tables.
+  - ordinal: 5
+    action: select
+    description: >
+      Render the structured briefing as a conversational summary with
+      structured tables per skill. The summary opens with a one-paragraph
+      system health overview, then the algedonic alert table, then the
+      escalation backlog table, then the per-skill performance table.
+      Each table is followed by a brief narrative interpretation. The
+      presentation closes with a prompt for the operator to ask follow-up
+      questions in the regular conversation (the Observe phase happens
+      outside the skill cascade).
+    renderer: minijinja
+    template_ref: gemba-walk/present-briefing
+    gas_cap: 4096
+    timeout_seconds: 120
+    input_mapping:
+      task: "{{ task }}"
+      focus_skill: "{{ focus_skill | default('') }}"
+      briefing: "{{ step_4_result }}"
+
+  # ── RECOMMEND: Propose actions for operator approval ─────────────────
+  # TAPOIF Follow-up: track decisions. The skill proposes, the operator
+  # decides (human-in-the-loop design principle).
+  - ordinal: 6
+    action: select
+    description: >
+      Propose refinement actions for operator approval. For each skill with
+      a "watch" or "intervene" classification, propose one of: curator_directive
+      (threshold/budget adjustment), skill-maintenance (artifact refinement),
+      validate_golden_outputs (for deterministic skills), direct edit
+      (manifest/template fix), or no action (observe further). The proposals
+      are recommendations, not autonomous actions — the operator reviews and
+      decides which to execute in the regular conversation.
+    renderer: minijinja
+    template_ref: gemba-walk/recommend-actions
+    gas_cap: 4096
+    timeout_seconds: 120
+    input_mapping:
+      task: "{{ task }}"
+      focus_skill: "{{ focus_skill | default('') }}"
+      briefing: "{{ step_4_result }}"
+
+  # ── LOOP: Convergence check ─────────────────────────────────────────
+  - ordinal: 7
+    action: loop
+    description: >
+      Re-enter the cascade if the briefing has not converged (the synthesize
+      step produced an incomplete briefing or the present step flagged
+      missing signal channels). Bounded by max_iterations (3) — a gemba
+      walk that cannot produce a briefing in 3 passes escalates.
+    gas_cap: 1000
+    timeout_seconds: 30
+    input_mapping:
+      loop_target: "{{ 4 }}"
+      convergence_signal: "{{ step_4_result.briefing_complete | default(true) }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+# The gemba walk is itself a skill tracked by the regulation system.
+# BridgeManifestExecutor::execute_skill records reg.skill.gemba-walk.outcome
+# and reg.skill.gemba-walk.convergence spans after each invocation, so the
+# next gemba walk can review the previous walk's outcome — the loop closes
+# on itself.
+#
+# Open infrastructure gap: skill feedback spans (outcome, operator_feedback,
+# convergence) live in the in-memory RegulationLedger and are not yet
+# exposed via MCP. The gemba-walk skill uses curator_consult as a proxy
+# signal (skill-use issue reports are persisted to the curator's memory).
+# Exposing skill feedback aggregates via MCP is a follow-up task — see
+# docs/reports/gemba-loop-specification.md "What Needs to Be Built".

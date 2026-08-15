@@ -6,6 +6,7 @@ contract:
     capability_definition: string
     registry_seed: object|null
     prior_iteration: object|null
+    skill_manifests: array|null
   output:
     registry_source: string
     registry_description: string
@@ -108,7 +109,7 @@ No prior iteration — this is a first pass. Build the registry from scratch.
 ## Step 1 — Select Registry Source and Domain
 
 First, identify the **capability domain** (psychological, economic, compute,
-or a mix). Each domain has its own exemplar tradition:
+skill_composition, or a mix). Each domain has its own exemplar tradition:
 
 - **Psychological** (Dunning [kruger-dunning-1999]): capabilities where
   self-assessment is unreliable. The registry must include metacognitive
@@ -123,8 +124,35 @@ or a mix). Each domain has its own exemplar tradition:
 - **Compute** (Miller [miller-2006], AIP [aip-2026]): capabilities as
   object-capability authorities. The registry must include scope, budget,
   max_depth, and expiry per capability — authority only attenuates.
+- **Skill composition** (kask co-evolution [kask-coevolution-2026]): the
+  kask skill system itself as a capability system. Five composition
+  principles with floor/ceiling/maturity-gate thresholds:
+  - **Determinism frontier** (floor): push deterministic work to execute/
+    compute, use select only for LLM judgment.
+  - **Persistence-grounded learning** (floor): read prior outputs from MCP
+    persistence before the cascade starts.
+  - **Failure surfacing** (floor): every execute step has on_failure: report.
+  - **Lisp scaffold** (maturity gate): lisp.eval checks structural invariants
+    after LLM-generated structured output.
+  - **Co-evolution loop** (maturity gate): on_failure: report signals flow
+    to the Curator; new MCP capabilities adopted via execute steps.
 
-Then select one of four registry sources, in order of preference:
+{% if skill_manifests and skill_manifests | length > 0 %}
+## Skill Composition Evaluation Mode
+
+Skill manifests provided: {{ skill_manifests | length }}
+
+```json
+{{ skill_manifests | tojson }}
+```
+
+Build the skill composition capability registry from the five principles.
+For each principle, the evaluation will check each manifest against the
+threshold. The registry source is the skill composition ontology
+(`capability-ontology.yaml` → `skill_composition_capabilities`).
+{% endif %}
+
+Then select one of five registry sources, in order of preference:
 
 1. **Nussbaum registry** — for human-impact assessment (economic domain).
    Use Nussbaum's 10 central capabilities [nussbaum-2000] (Life, Bodily
@@ -147,6 +175,12 @@ Then select one of four registry sources, in order of preference:
    capabilities SHOULD exist given the system's purpose. Include
    Dunning's metacognitive capabilities [kruger-dunning-1999] if
    self-assessment reliability is a concern.
+5. **Skill composition registry** — for evaluating kask skill manifests
+   against the five composition principles (skill_composition domain).
+   Use the `skill_composition_capabilities` from `capability-ontology.yaml`.
+   Each principle has a limit type (floor or maturity_gate), threshold,
+   and evaluation method. When `skill_manifests` are provided, this is
+   the default registry source.
 
 ## Step 2 — Define Limits per Capability
 

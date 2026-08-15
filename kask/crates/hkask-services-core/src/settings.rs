@@ -39,25 +39,27 @@ pub fn settings_path() -> std::path::PathBuf {
 pub struct HkaskSettings {
     /// Default embedding model for vectorization.
     /// Override: `HKASK_EMBEDDING_MODEL` env var.
-    #[serde(default = "default_embedding_model")]
     pub embedding_model: String,
 
     /// Primary classifier model for corpus pipeline classification.
     /// Override: `HKASK_CLASSIFIER_MODEL` env var.
-    #[serde(default = "default_classifier_model")]
     pub classifier_model: String,
 
     /// Default OCR model for scanned PDF fallback.
     /// Override: `HKASK_OCR_MODEL` env var.
-    #[serde(default = "default_ocr_model")]
     pub ocr_model: String,
 
     /// Default max tokens per chunk for document chunking.
     /// 256 tokens ≈ 192 words — paragraph-level granularity suitable for
     /// QA generation and semantic search. Override: `HKASK_CHUNK_MAX_TOKENS` env var.
-    #[serde(default = "default_chunk_max_tokens")]
     pub chunk_max_tokens: usize,
 }
+
+/// Default max tokens per chunk for document chunking.
+///
+/// 256 tokens ≈ 192 words — paragraph-level granularity suitable for
+/// QA generation and semantic search.
+pub const DEFAULT_CHUNK_MAX_TOKENS: usize = 256;
 
 fn default_embedding_model() -> String {
     // Single source of truth: hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL.
@@ -78,7 +80,7 @@ fn default_ocr_model() -> String {
 }
 
 fn default_chunk_max_tokens() -> usize {
-    256
+    DEFAULT_CHUNK_MAX_TOKENS
 }
 
 impl Default for HkaskSettings {

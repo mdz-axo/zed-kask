@@ -230,7 +230,10 @@ fn superforecasting_manifest_loads_with_compute_step() {
         3,
         "manifest must have 3 execute steps (Co-evolution Phase 1)"
     );
-    assert_eq!(execute_steps[0].ordinal, 4, "market_match execute at ordinal 4");
+    assert_eq!(
+        execute_steps[0].ordinal, 4,
+        "market_match execute at ordinal 4"
+    );
     assert_eq!(
         execute_steps[0].mcp.as_deref(),
         Some("market_match"),
@@ -472,7 +475,10 @@ fn scenario_builder_manifest_loads_with_execute_steps() {
         Some("scenario_calibration"),
         "step 1 must call scenario_calibration"
     );
-    assert_eq!(execute_steps[1].ordinal, 3, "market_match execute at ordinal 3");
+    assert_eq!(
+        execute_steps[1].ordinal, 3,
+        "market_match execute at ordinal 3"
+    );
     assert_eq!(
         execute_steps[1].mcp.as_deref(),
         Some("market_match"),
@@ -656,7 +662,10 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
         "manifest must have 4 execute steps (Co-evolution Phase 1)"
     );
     // Steps 1 and 8: swarm_get_swarm (ABW mode)
-    assert_eq!(execute_steps[0].ordinal, 1, "swarm_get_swarm execute at ordinal 1");
+    assert_eq!(
+        execute_steps[0].ordinal, 1,
+        "swarm_get_swarm execute at ordinal 1"
+    );
     assert_eq!(
         execute_steps[0].mcp.as_deref(),
         Some("swarm_get_swarm"),
@@ -672,7 +681,10 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
         Some("swarm_get_local_swarm"),
         "step 2 must call swarm_get_local_swarm"
     );
-    assert_eq!(execute_steps[2].ordinal, 8, "swarm_get_swarm re-fetch at ordinal 8");
+    assert_eq!(
+        execute_steps[2].ordinal, 8,
+        "swarm_get_swarm re-fetch at ordinal 8"
+    );
     assert_eq!(
         execute_steps[2].mcp.as_deref(),
         Some("swarm_get_swarm"),
@@ -721,5 +733,180 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
     assert!(
         loop_target.contains("1"),
         "loop_target must re-enter at step 1 (state-fetch) so execute steps re-run, got: {loop_target}"
+    );
+}
+
+/// Verify the gemba-walk manifest loads correctly with the expected step
+/// structure. The gemba walk implements the Prepare and Present phases of
+/// the gemba loop (docs/reports/gemba-loop-specification.md). It is a
+/// single-pass briefing generator — not an interactive session.
+///
+/// Step structure (7 steps):
+///   - Step 1: execute (curator_algedonic_log) — SENSE
+///   - Step 2: execute (curator_escalations) — GATHER
+///   - Step 3: execute (curator_consult) — GATHER
+///   - Step 4: select (synthesize-briefing) — ANALYZE
+///   - Step 5: select (present-briefing) — PRESENT
+///   - Step 6: select (recommend-actions) — RECOMMEND
+///   - Step 7: loop — convergence check
+///
+/// Three execute steps call existing curator MCP tools. Three select steps
+/// render Jinja2 templates. One loop step bounds the cascade.
+#[test]
+fn gemba_walk_manifest_loads_with_correct_structure() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = crate_dir.join("../..");
+    let manifest_path = workspace_root.join("registry/manifests/gemba-walk.yaml");
+    if !manifest_path.exists() {
+        eprintln!("gemba-walk.yaml not found — skipping");
+        return;
+    }
+    let yaml = std::fs::read_to_string(&manifest_path).unwrap();
+    let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
+        .unwrap_or_else(|e| panic!("Failed to load gemba-walk manifest: {e}"));
+
+    // 3 execute steps + 3 select steps + 1 loop step = 7 total.
+    assert_eq!(
+        manifest.steps.len(),
+        7,
+        "expected 7 steps: algedonic_log → escalations → consult → synthesize → present → recommend → loop"
+    );
+
+    // Verify step ordinals are sequential starting at 1.
+    for (i, step) in manifest.steps.iter().enumerate() {
+        assert_eq!(
+            step.ordinal,
+            (i + 1) as u32,
+            "step ordinals must be sequential starting at 1"
+        );
+    }
+
+    // Verify the three execute steps call the expected curator MCP tools.
+    let execute_steps: Vec<_> = manifest
+        .steps
+        .iter()
+        .filter(|s| s.action == "execute")
+        .collect();
+    assert_eq!(
+        execute_steps.len(),
+        3,
+        "manifest must have 3 execute steps (curator MCP tool calls)"
+    );
+    assert_eq!(
+        execute_steps[0].ordinal, 1,
+        "curator_algedonic_log at ordinal 1"
+    );
+    assert_eq!(
+        execute_steps[0].mcp.as_deref(),
+        Some("curator_algedonic_log"),
+        "step 1 must call curator_algedonic_log"
+    );
+    assert_eq!(
+        execute_steps[1].ordinal, 2,
+        "curator_escalations at ordinal 2"
+    );
+    assert_eq!(
+        execute_steps[1].mcp.as_deref(),
+        Some("curator_escalations"),
+        "step 2 must call curator_escalations"
+    );
+    assert_eq!(execute_steps[2].ordinal, 3, "curator_consult at ordinal 3");
+    assert_eq!(
+        execute_steps[2].mcp.as_deref(),
+        Some("curator_consult"),
+        "step 3 must call curator_consult"
+    );
+
+    // Every execute step must have on_failure (no silent collapse to defaults).
+    for step in &execute_steps {
+        assert!(
+            step.on_failure.is_some(),
+            "execute step {} must have on_failure config (no silent collapse)",
+            step.ordinal
+        );
+    }
+
+    // Verify the three select steps reference the expected templates.
+    let select_steps: Vec<_> = manifest
+        .steps
+        .iter()
+        .filter(|s| s.action == "select")
+        .collect();
+    assert_eq!(
+        select_steps.len(),
+        3,
+        "manifest must have 3 select steps (Jinja2 template rendering)"
+    );
+    assert_eq!(
+        select_steps[0].ordinal, 4,
+        "synthesize-briefing at ordinal 4"
+    );
+    assert_eq!(
+        select_steps[0].template_ref.as_deref(),
+        Some("gemba-walk/synthesize-briefing"),
+        "step 4 must reference gemba-walk/synthesize-briefing"
+    );
+    assert_eq!(select_steps[1].ordinal, 5, "present-briefing at ordinal 5");
+    assert_eq!(
+        select_steps[1].template_ref.as_deref(),
+        Some("gemba-walk/present-briefing"),
+        "step 5 must reference gemba-walk/present-briefing"
+    );
+    assert_eq!(select_steps[2].ordinal, 6, "recommend-actions at ordinal 6");
+    assert_eq!(
+        select_steps[2].template_ref.as_deref(),
+        Some("gemba-walk/recommend-actions"),
+        "step 6 must reference gemba-walk/recommend-actions"
+    );
+
+    // Verify the loop step (ordinal 7) re-enters at step 4 (synthesize).
+    let loop_step = manifest
+        .steps
+        .iter()
+        .find(|s| s.action == "loop")
+        .expect("manifest must have a loop step");
+    assert_eq!(loop_step.ordinal, 7, "loop step should be ordinal 7");
+    let loop_mapping = loop_step
+        .input_mapping
+        .as_ref()
+        .and_then(|v| v.as_object())
+        .expect("loop step has input_mapping");
+    let loop_target = loop_mapping
+        .get("loop_target")
+        .and_then(|v| v.as_str())
+        .expect("loop step has loop_target");
+    assert!(
+        loop_target.contains("4"),
+        "loop_target must re-enter at step 4 (synthesize-briefing), got: {loop_target}"
+    );
+
+    // Verify the convergence block uses the Cauchy model with a generous
+    // iteration budget (the gemba walk synthesizes a potentially large briefing).
+    assert_eq!(
+        manifest.convergence.convergence_mode, "cauchy",
+        "gemba-walk should use the Cauchy convergence mode"
+    );
+    assert_eq!(
+        manifest.convergence.max_iterations, 3,
+        "gemba-walk max_iterations should be 3 (single-pass briefing, bounded retries)"
+    );
+    assert_eq!(
+        manifest.convergence.min_iterations, 1,
+        "gemba-walk min_iterations should be 1 (single-pass is valid)"
+    );
+
+    // Verify gas cap is positive and generous (the briefing queries multiple
+    // data sources and synthesizes a large output).
+    assert!(
+        manifest.gas.cap >= 100000,
+        "gas cap must be at least 100000 for a multi-source briefing, got {}",
+        manifest.gas.cap
+    );
+
+    // Verify the manifest declares the correct span namespace.
+    assert_eq!(
+        manifest.ledger.span_namespace.as_str(),
+        "reg.skill.gemba-walk",
+        "ledger span_namespace must be reg.skill.gemba-walk"
     );
 }
