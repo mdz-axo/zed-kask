@@ -147,7 +147,7 @@ steps:
       verbatim company description. Deterministic. Result lands in
       step_5_result. Conditioned on web_search returning a URL.
     mcp: fetch
-    condition: "{{ step_4_result.results[0].url is defined and step_4_result.results[0].url | length > 0 }}"
+    condition: "step_4_result"
     gas_cap: 3000
     timeout_seconds: 90
     input_mapping:
@@ -366,7 +366,7 @@ steps:
       THESIS gap analysis is injected into the next COMPANY pass via the
       loop's input_mapping. incomplete (1.0) does not loop — it escalates
       via on_not_reached. max_iterations: 3 bounds the loop.
-    condition: "{{ step_13_result > 0.0 and step_13_result < 1.0 }}"
+    condition: "step_13_result > 0.0 AND step_13_result < 1.0"
     input_mapping:
       loop_target: "{{ 6 }}"
       thesis_gaps: "{{ step_12_result.gap_analysis | default([]) }}"

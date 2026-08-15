@@ -653,12 +653,12 @@ mod tests {
             "swarm-intelligence inputs must include `task_success` (C0)"
         );
 
-        // CHECK (ordinal 6) threads `task_success` into its input_mapping.
+        // CHECK (ordinal 10) threads `task_success` into its input_mapping.
         let check = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 6)
-            .expect("swarm-intelligence has a CHECK step (ordinal 6)");
+            .find(|s| s.ordinal == 10)
+            .expect("swarm-intelligence has a CHECK step (ordinal 10)");
         let mapping = check
             .input_mapping
             .as_ref()
@@ -683,33 +683,33 @@ mod tests {
         let manifest =
             load_manifest_from_yaml(yaml).expect("swarm-intelligence manifest must parse");
 
-        // Step 4 is the filter_proposed_moves compute primitive (C3/C7
+        // Step 6 is the filter_proposed_moves compute primitive (C3/C7
         // deterministic enforcement between DECIDE and ACT).
         let filter = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 4)
-            .expect("swarm-intelligence has a filter step (ordinal 4)");
+            .find(|s| s.ordinal == 6)
+            .expect("swarm-intelligence has a filter step (ordinal 6)");
         assert_eq!(
             filter.compute_ref.as_deref(),
             Some("swarm.filter_proposed_moves"),
-            "step 4 compute_ref must be swarm.filter_proposed_moves (C3/C7 enforcement)"
+            "step 6 compute_ref must be swarm.filter_proposed_moves (C3/C7 enforcement)"
         );
 
-        // Step 7 is the converge_accumulate compute primitive.
+        // Step 11 is the converge_accumulate compute primitive.
         let accumulate = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 7)
-            .expect("swarm-intelligence has a converge_accumulate step (ordinal 7)");
+            .find(|s| s.ordinal == 11)
+            .expect("swarm-intelligence has a converge_accumulate step (ordinal 11)");
         assert_eq!(
             accumulate.action, "compute",
-            "step 7 must be a compute step"
+            "step 11 must be a compute step"
         );
         assert_eq!(
             accumulate.compute_ref.as_deref(),
             Some("swarm.converge_accumulate"),
-            "step 7 compute_ref must be swarm.converge_accumulate (C1/C3/C7)"
+            "step 11 compute_ref must be swarm.converge_accumulate (C1/C3/C7)"
         );
         let acc_mapping = accumulate
             .input_mapping
@@ -731,27 +731,27 @@ mod tests {
             );
         }
 
-        // Step 8 is the second_order_monitor compute primitive.
+        // Step 12 is the second_order_monitor compute primitive.
         let monitor = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 8)
-            .expect("swarm-intelligence has a second_order_monitor step (ordinal 8)");
+            .find(|s| s.ordinal == 12)
+            .expect("swarm-intelligence has a second_order_monitor step (ordinal 12)");
         assert_eq!(
             monitor.compute_ref.as_deref(),
             Some("swarm.second_order_monitor"),
-            "step 8 compute_ref must be swarm.second_order_monitor (C1)"
+            "step 12 compute_ref must be swarm.second_order_monitor (C1)"
         );
 
-        // The loop step (ordinal 9) threads the accumulators + blame_count
+        // The loop step (ordinal 13) threads the accumulators + blame_count
         // back into context so the next iteration's DECIDE/ORIENT/CHECK/FILTER can
         // read them. A dropped binding silently disables a guard — this pins
         // the threading (the advertised-invariants trap).
         let loop_step = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 9)
-            .expect("swarm-intelligence has a loop step (ordinal 9)");
+            .find(|s| s.ordinal == 13)
+            .expect("swarm-intelligence has a loop step (ordinal 13)");
         let loop_mapping = loop_step
             .input_mapping
             .as_ref()
@@ -770,23 +770,23 @@ mod tests {
             );
         }
         // fault_count is now aggregated by the deterministic compute step
-        // (swarm.converge_accumulate, ordinal 7), not the CHECK LLM template —
-        // pin that the loop threads it from step_7_result, not step_6_result.
+        // (swarm.converge_accumulate, ordinal 11), not the CHECK LLM template —
+        // pin that the loop threads it from step_11_result, not step_10_result.
         let fc_binding = loop_mapping
             .get("fault_count")
             .and_then(|v| v.as_str())
             .expect("loop step binds fault_count");
         assert!(
-            fc_binding.contains("step_7_result.fault_count"),
-            "fault_count must thread from the compute step (step_7_result), not CHECK — got {fc_binding}"
+            fc_binding.contains("step_11_result.fault_count"),
+            "fault_count must thread from the compute step (step_11_result), not CHECK — got {fc_binding}"
         );
 
-        // DECIDE (ordinal 3) binds the guards it consumes.
+        // DECIDE (ordinal 5) binds the guards it consumes.
         let decide = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 3)
-            .expect("swarm-intelligence has a DECIDE step (ordinal 3)");
+            .find(|s| s.ordinal == 5)
+            .expect("swarm-intelligence has a DECIDE step (ordinal 5)");
         let decide_mapping = decide
             .input_mapping
             .as_ref()
@@ -804,13 +804,13 @@ mod tests {
             );
         }
 
-        // ORIENT (ordinal 2) binds delegate_results for C5 fault attribution
+        // ORIENT (ordinal 4) binds delegate_results for C5 fault attribution
         // (the execution telemetry feed, not the prior ACT plan).
         let orient = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 2)
-            .expect("swarm-intelligence has an ORIENT step (ordinal 2)");
+            .find(|s| s.ordinal == 4)
+            .expect("swarm-intelligence has an ORIENT step (ordinal 4)");
         let orient_mapping = orient
             .input_mapping
             .as_ref()
@@ -822,19 +822,19 @@ mod tests {
         );
 
         // The loop step must bind convergence_signal from a real field the
-        // CHECK step (ordinal 6) actually produces — not a phantom
+        // CHECK step (ordinal 10) actually produces — not a phantom
         // `hypotenuse` field on the converge_accumulate compute step (which
         // returns iteration_log/failed_edits/influence_scores/fault_count, not
         // hypotenuse). A stale binding leaves the convergence tracker's
         // signal_history at a constant default and causes premature Cauchy
-        // convergence. Pin that the signal reads from step_6_result.
+        // convergence. Pin that the signal reads from step_10_result.
         let conv_signal = loop_mapping
             .get("convergence_signal")
             .and_then(|v| v.as_str())
             .expect("loop step binds convergence_signal");
         assert!(
-            conv_signal.contains("step_6_result"),
-            "convergence_signal must read from the CHECK step (step_6_result), not a phantom field on the compute step — got {conv_signal}"
+            conv_signal.contains("step_10_result"),
+            "convergence_signal must read from the CHECK step (step_10_result), not a phantom field on the compute step — got {conv_signal}"
         );
     }
 

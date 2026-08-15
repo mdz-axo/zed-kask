@@ -2,6 +2,15 @@
 # ℏKask v0.34.0 — Swarm composition as convergent PDCA
 # Decomposed into: SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE → LOOP
 #
+# Co-evolution Phase 1: four native MCP execute steps replace the
+# agent-mediated state fetch in SENSE and CHECK:
+#   - Step 1: swarm_get_swarm (ABW mode — fetch workspace roster)
+#   - Step 2: swarm_get_local_swarm (local mode — fetch local swarm roster)
+#   - Step 8: swarm_get_swarm (ABW mode — re-fetch post-Act)
+#   - Step 9: swarm_get_local_swarm (local mode — re-fetch post-Act)
+# The ACT phase (swarm_delegate, swarm_delegate_local) remains agent-mediated
+# — consent-gated, requires human approval.
+#
 # Substrate ontology: Agent Bestiary World (ABW) swarm semantics. A swarm is
 # an ABW workspace with hired agents. Compound agents orchestrate via
 # execute_agent (text consult) and delegate_to_agent (full tool access, 1 cr
@@ -185,17 +194,65 @@ inputs:
       not direct SENSE writes.
 
 steps:
+  # ── SENSE state fetch (native MCP execute steps) ──
+  # Fetches the swarm roster deterministically before the SENSE template
+  # runs. ABW mode uses swarm_get_swarm; local mode uses swarm_get_local_swarm.
+  # The condition gates on the `mode` cascade input: `mode != 'local'` matches
+  # 'abw' (the default) and unset; `mode == 'local'` matches local mode.
+  # Only one of the two execute steps runs per invocation.
   - ordinal: 1
+    action: execute
+    description: >
+      Fetch the ABW workspace roster via swarm_get_swarm (hkask-mcp-swarm).
+      Deterministic state fetch for the SENSE phase — replaces the former
+      agent-mediated fetch. Condition-gated on ABW mode (mode != 'local').
+      Result lands in step_1_result and feeds the SENSE template's swarm_state.
+    mcp: swarm_get_swarm
+    gas_cap: 2000
+    timeout_seconds: 60
+    condition: "mode != 'local'"
+    input_mapping:
+      workspace_id: "{{ swarm_id | default(null) }}"
+    on_failure:
+      action: escalate
+      resume: >
+        swarm_get_swarm failed — the hkask-mcp-swarm server may be down or
+        the ABW API key may be missing. Restart the server via
+        sync_kask_mcp_servers and re-invoke, or switch to local mode by
+        passing mode: 'local' as a cascade input.
+
+  - ordinal: 2
+    action: execute
+    description: >
+      Fetch the local swarm roster via swarm_get_local_swarm
+      (hkask-mcp-swarm). Deterministic state fetch for the SENSE phase —
+      replaces the former agent-mediated fetch. Condition-gated on local mode
+      (mode == 'local'). Result lands in step_2_result and feeds the SENSE
+      template's swarm_state.
+    mcp: swarm_get_local_swarm
+    gas_cap: 2000
+    timeout_seconds: 60
+    condition: "mode == 'local'"
+    input_mapping:
+      swarm_id: "{{ swarm_id }}"
+    on_failure:
+      action: escalate
+      resume: >
+        swarm_get_local_swarm failed — the hkask-mcp-swarm server may be down
+        or the swarm_id may not exist. Restart the server via
+        sync_kask_mcp_servers and re-invoke.
+
+  - ordinal: 3
     action: select
     description: >
-      SENSE: Measure current swarm state. Fetch the workspace roster
-      (agents[], their accepts[]/produces[]/capabilities/dependencies) and
-      the wallet balance/transactions via hkask-mcp-swarm. Compute Onto4MAT
-      team properties: alignment (delegation-graph density from produces/
-      accepts overlap), cohesion (fraction of required dependencies
-      satisfied by hired agents), separation (distinct (agent_type, model,
-      temperature) tuples / agent count). Record required_transforms derived
-      from the task. Consumes prior_iteration.next_focus when present.
+      SENSE: Measure current swarm state. Reads the fetched roster from
+      step_1_result (ABW) or step_2_result (local) — no longer fetches via
+      the LLM's tool-use loop. Compute Onto4MAT team properties: alignment
+      (delegation-graph density from produces/accepts overlap), cohesion
+      (fraction of required dependencies satisfied by hired agents),
+      separation (distinct (agent_type, model, temperature) tuples / agent
+      count). Record required_transforms derived from the task. Consumes
+      prior_iteration.next_focus when present.
       Vacuous-truth defaults: empty required_transforms → variety_coverage
       1.0 + trivial_task flag; empty swarm → diversity 0.0, variety 0.0.
     renderer: minijinja
@@ -208,14 +265,11 @@ steps:
       mode: "{{ mode | default('abw') }}"
       target_condition: "{{ target_condition | default({}) }}"
       prior_iteration: "{{ prior_iteration | default({}) }}"
-      # delegate_results is needed for Step 5b (per-agent Onto4MAT properties:
-      # energy + distanceToGoal computed from LocalDelegateResult fields) and
-      # the stigmergy read (prior delegation performance annotations). Without
-      # this mapping, the SENSE template cannot compute per-agent metrics.
       delegate_results: "{{ delegate_results | default(none) }}"
       kanban_board_id: "{{ kanban_board_id | default('') }}"
+      fetched_swarm_state: "{{ step_1_result | default(step_2_result | default({})) }}"
 
-  - ordinal: 2
+  - ordinal: 4
     action: select
     description: >
       ORIENT: Classify the gap between sensed state and target condition into
@@ -235,21 +289,12 @@ steps:
     gas_cap: 4096
     timeout_seconds: 150
     input_mapping:
-      swarm_state: "{{ step_1_result }}"
+      swarm_state: "{{ step_3_result }}"
       task: "{{ task }}"
       target_condition: "{{ target_condition | default({}) }}"
-      # Cybernetic Swarm Plan C5: delegate_results is the operator- or
-      # Kask-Curator-supplied execution telemetry — an array of
-      # LocalDelegateResult-shaped objects (agent_id, tool_calls[].ok,
-      # executed_skills[].ok, response, task_success) from a real
-      # swarm_execute_plan_local run. The planning cascade's ACT emits intents
-      # (emitted_calls), not outcomes; delegate_results is what ORIENT
-      # attributes fault from. Absent in the pure planning cascade (C5/C6
-      # inert); present when the operator or the Kask Curator executes the plan
-      # and feeds results back (Option A / B).
       delegate_results: "{{ delegate_results | default(none) }}"
 
-  - ordinal: 3
+  - ordinal: 5
     action: select
     description: >
       DECIDE: Propose composition adjustments isomorphic to swarm-algorithm
@@ -276,24 +321,15 @@ steps:
     gas_cap: 6144
     timeout_seconds: 150
     input_mapping:
-      swarm_state: "{{ step_1_result }}"
-      orientation: "{{ step_2_result }}"
+      swarm_state: "{{ step_3_result }}"
+      orientation: "{{ step_4_result }}"
       task: "{{ task }}"
-      # Cybernetic Swarm Plan C3/C7: deterministic guards threaded from the
-      # CONVERGE accumulator (via the loop step). failed_edits = the anti-loop
-      # set DECIDE rejects re-proposals against; influence_scores = the
-      # per-agent_type running sum DECIDE rejects re-hire of negatively-
-      # influential types against. second_order = the C1 monitor recommendation
-      # (go_see | diversify_action | none). Absent on iteration 1.
       failed_edits: "{{ failed_edits | default([]) }}"
       influence_scores: "{{ influence_scores | default({}) }}"
       second_order: "{{ second_order | default({}) }}"
-      # Cybernetic Swarm Plan C5: the deterministic fault-count map (agent_name
-      # -> count of attributed faults across iterations). DECIDE computes
-      # agent_sel = argmax fault_count to pick the reconfigure-or-fire target.
       fault_count: "{{ fault_count | default({}) }}"
 
-  - ordinal: 4
+  - ordinal: 6
     action: compute
     compute_ref: swarm.filter_proposed_moves
     description: >
@@ -310,13 +346,13 @@ steps:
       that only re-proposes known-bad edits should stall, at which point the
       second-order monitor's diversify/Go See fires.
     input_mapping:
-      proposed_moves: "{{ step_3_result.proposed_moves | default([]) }}"
+      proposed_moves: "{{ step_5_result.proposed_moves | default([]) }}"
       failed_edits: "{{ failed_edits | default([]) }}"
       influence_scores: "{{ influence_scores | default({}) }}"
-      deficit_class: "{{ step_2_result.deficit_class | default('') }}"
-      swarm_state: "{{ step_1_result | default({}) }}"
+      deficit_class: "{{ step_4_result.deficit_class | default('') }}"
+      swarm_state: "{{ step_3_result | default({}) }}"
 
-  - ordinal: 5
+  - ordinal: 7
     action: select
     description: >
       ACT: Emit the gated composition change. For each proposed hire/
@@ -336,43 +372,89 @@ steps:
     gas_cap: 4096
     timeout_seconds: 150
     input_mapping:
-      decisions: "{{ step_4_result }}"
+      decisions: "{{ step_6_result }}"
       swarm_id: "{{ swarm_id }}"
       task: "{{ task }}"
       mode: "{{ mode | default('abw') }}"
       steering_mode: "{{ steering_mode | default('advisory') }}"
 
-  - ordinal: 6
+  # ── CHECK state re-fetch (native MCP execute steps) ──
+  # Re-fetches the swarm roster deterministically before the CHECK template
+  # runs. Same condition-gated pair as the SENSE fetch (steps 1-2).
+  - ordinal: 8
+    action: execute
+    description: >
+      Re-fetch the ABW workspace roster via swarm_get_swarm (hkask-mcp-swarm)
+      post-Act. Deterministic state re-fetch for the CHECK phase — replaces
+      the former agent-mediated re-fetch. Condition-gated on ABW mode.
+      Result lands in step_8_result and feeds the CHECK template's
+      post_act_state.
+    mcp: swarm_get_swarm
+    gas_cap: 2000
+    timeout_seconds: 60
+    condition: "mode != 'local'"
+    input_mapping:
+      workspace_id: "{{ swarm_id | default(null) }}"
+    on_failure:
+      action: escalate
+      resume: >
+        swarm_get_swarm failed during CHECK — the hkask-mcp-swarm server may
+        be down. Restart the server via sync_kask_mcp_servers and re-invoke.
+
+  - ordinal: 9
+    action: execute
+    description: >
+      Re-fetch the local swarm roster via swarm_get_local_swarm
+      (hkask-mcp-swarm) post-Act. Deterministic state re-fetch for the CHECK
+      phase — replaces the former agent-mediated re-fetch. Condition-gated on
+      local mode. Result lands in step_9_result and feeds the CHECK
+      template's post_act_state.
+    mcp: swarm_get_local_swarm
+    gas_cap: 2000
+    timeout_seconds: 60
+    condition: "mode == 'local'"
+    input_mapping:
+      swarm_id: "{{ swarm_id }}"
+    on_failure:
+      action: escalate
+      resume: >
+        swarm_get_local_swarm failed during CHECK — the hkask-mcp-swarm
+        server may be down or the swarm_id may not exist. Restart the server
+        via sync_kask_mcp_servers and re-invoke.
+
+  - ordinal: 10
     action: select
     description: >
-      CHECK: Re-measure the swarm state post-Act (re-fetch workspace +
-      wallet). Compute the convergence metric: composite swarm-state
-      distance d = sqrt( (1 - variety_coverage)^2 + max(0, diversity_floor -
-      diversity)^2 + (1 - loop_closure)^2 ). d = 0 means the target
-      condition is met on all three axes. Emit next_focus: if variety is the
-      largest term, focus next iteration on hiring; if diversity, on
-      diversification; if loop_closure, on reconciliation. Also emit the
-      algedonic signal: any 402 / un-acknowledged curator dispatch is
-      surfaced as a loop-break regardless of d. Vacuous-truth default: zero
-      dispatches → loop_closure 1.0. When the caller supplies a deterministic
-      `task_success` verdict (Cybernetic Swarm Plan component C0), d gains a
-      fourth axis `(1 - s)^2` (s = task_success.score, or pass→1.0 / fail→0.0);
-      when `task_success` is null (open tasks with no oracle), d uses the three
-      swarm-health axes only — the human Go See loop (C2) covers the task-success
-      gap, never an LLM judge.
+      CHECK: Re-measure the swarm state post-Act. Reads the re-fetched roster
+      from step_8_result (ABW) or step_9_result (local) — no longer fetches
+      via the LLM's tool-use loop. Compute the convergence metric: composite
+      swarm-state distance d = sqrt( (1 - variety_coverage)^2 + max(0,
+      diversity_floor - diversity)^2 + (1 - loop_closure)^2 ). d = 0 means
+      the target condition is met on all three axes. Emit next_focus: if
+      variety is the largest term, focus next iteration on hiring; if
+      diversity, on diversification; if loop_closure, on reconciliation. Also
+      emit the algedonic signal: any 402 / un-acknowledged curator dispatch
+      is surfaced as a loop-break regardless of d. Vacuous-truth default:
+      zero dispatches → loop_closure 1.0. When the caller supplies a
+      deterministic `task_success` verdict (Cybernetic Swarm Plan component
+      C0), d gains a fourth axis `(1 - s)^2` (s = task_success.score, or
+      pass→1.0 / fail→0.0); when `task_success` is null (open tasks with no
+      oracle), d uses the three swarm-health axes only — the human Go See
+      loop (C2) covers the task-success gap, never an LLM judge.
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-check
     gas_cap: 4096
     timeout_seconds: 150
     input_mapping:
-      pre_act_state: "{{ step_1_result }}"
-      act_result: "{{ step_5_result }}"
+      pre_act_state: "{{ step_3_result }}"
+      act_result: "{{ step_7_result }}"
       swarm_id: "{{ swarm_id }}"
       mode: "{{ mode | default('abw') }}"
       target_condition: "{{ target_condition | default({}) }}"
       task_success: "{{ task_success | default(none) }}"
+      fetched_post_act_state: "{{ step_8_result | default(step_9_result | default({})) }}"
 
-  - ordinal: 7
+  - ordinal: 11
     action: compute
     compute_ref: swarm.converge_accumulate
     description: >
@@ -393,21 +475,15 @@ steps:
       iteration_log: "{{ iteration_log | default([]) }}"
       failed_edits: "{{ failed_edits | default([]) }}"
       influence_scores: "{{ influence_scores | default({}) }}"
-      d: "{{ step_6_result.convergence_metric }}"
-      task_success: "{{ step_6_result.task_success | default(none) }}"
-      deficit_class: "{{ step_2_result.deficit_class | default('') }}"
-      decisions: "{{ step_4_result | default({}) }}"
-      swarm_state: "{{ step_1_result | default({}) }}"
-      # Cybernetic Swarm Plan C5: fault-count aggregation (promoted from the
-      # CHECK template to the deterministic compute layer — an LLM template
-      # cannot reliably maintain a running counter). agent_at_fault is this
-      # iteration's ORIENT attribution (for the prior iteration's failure);
-      # fault_count is the carried running map (threaded via the loop). The
-      # primitive increments the blamed agent's count.
-      agent_at_fault: "{{ step_2_result.agent_at_fault | default(none) }}"
+      d: "{{ step_10_result.convergence_metric }}"
+      task_success: "{{ step_10_result.task_success | default(none) }}"
+      deficit_class: "{{ step_4_result.deficit_class | default('') }}"
+      decisions: "{{ step_6_result | default({}) }}"
+      swarm_state: "{{ step_3_result | default({}) }}"
+      agent_at_fault: "{{ step_4_result.agent_at_fault | default(none) }}"
       fault_count: "{{ fault_count | default({}) }}"
 
-  - ordinal: 8
+  - ordinal: 12
     action: compute
     compute_ref: swarm.second_order_monitor
     description: >
@@ -421,41 +497,33 @@ steps:
       DECIDE can diversify a stuck action and the Go See cadence (C2) can fire
       on the divergence trigger.
     input_mapping:
-      iteration_log: "{{ step_7_result.iteration_log | default([]) }}"
+      iteration_log: "{{ step_11_result.iteration_log | default([]) }}"
       loop_window: 3
-      # Cybernetic Swarm Plan C2 — scheduled Go See cadence: force a human
-      # Go See check every 3 convergences regardless of the monitor's signals.
-      # The event triggers (sensor_truth_divergence, reasoning_loop) have high
-      # variety for the failures they measure but cannot detect failures
-      # outside their programmed variety (§5.1: Go See cannot be fully
-      # automated). The cadence is the irreducible human check for the
-      # unknown-unknowns.
       cadence_every: 3
 
-  - ordinal: 9
+  - ordinal: 13
     action: loop
     description: >
       Re-enter the swarm-intelligence cycle if convergence is not met. Routes
-      the prior CHECK's lessons_learned and next_focus back to step 1 as
+      the prior CHECK's lessons_learned and next_focus back to step 3 as
       prior_iteration, AND threads the deterministic accumulators (C1/C3/C7)
       and the second-order monitor's recommendation back so the next
       iteration's DECIDE can apply the failed-edit and influence guards and
-      diversify a stuck action. Closes the feedback loop.
+      diversify a stuck action. Closes the feedback loop. The state-fetch
+      execute steps (1-2, 8-9) re-run on each iteration — the swarm state is
+      fresh on every SENSE and CHECK pass.
     input_mapping:
-      loop_target: "{{ 1 }}"
+      loop_target: "{{ 3 }}"
       prior_iteration:
-        lessons_learned: "{{ step_6_result.lessons_learned | default([]) }}"
-        next_focus: "{{ step_6_result.next_focus | default('') }}"
-        second_order: "{{ step_8_result | default({}) }}"
-      # swarm.converge_accumulate (step 7) produces iteration_log, failed_edits,
-      # influence_scores, fault_count — not hypotenuse. The convergence signal
-      # is the swarm-state distance d from step 6 (the CHECK step).
-      convergence_signal: "{{ step_6_result.convergence_metric }}"
-      iteration_log: "{{ step_7_result.iteration_log | default([]) }}"
-      failed_edits: "{{ step_7_result.failed_edits | default([]) }}"
-      influence_scores: "{{ step_7_result.influence_scores | default({}) }}"
-      second_order: "{{ step_8_result | default({}) }}"
-      fault_count: "{{ step_7_result.fault_count | default({}) }}"
+        lessons_learned: "{{ step_10_result.lessons_learned | default([]) }}"
+        next_focus: "{{ step_10_result.next_focus | default('') }}"
+        second_order: "{{ step_12_result | default({}) }}"
+      convergence_signal: "{{ step_10_result.convergence_metric }}"
+      iteration_log: "{{ step_11_result.iteration_log | default([]) }}"
+      failed_edits: "{{ step_11_result.failed_edits | default([]) }}"
+      influence_scores: "{{ step_11_result.influence_scores | default({}) }}"
+      second_order: "{{ step_12_result | default({}) }}"
+      fault_count: "{{ step_11_result.fault_count | default({}) }}"
 
 error_handling:
   on_gas_exceeded: abort

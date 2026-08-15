@@ -15,7 +15,19 @@
 # Templates for non-active phases receive the triage phase and produce a
 # skip result ({"skipped": true, "phase": "..."}) without meaningful LLM
 # work. This is necessary because the manifest executor runs all steps
-# in ordinal order — there is no conditional step-skip mechanism.
+# in ordinal order — conditional steps use the `condition:` field to skip.
+#
+# Co-evolution Phase 1: five native MCP execute steps replace the
+# "post-cascade instructions for the agent" pattern for deterministic
+# single-call tool invocations:
+#   - Step 6: kanban_board_create (decompose phase — create the board)
+#   - Step 8: kanban_task_spawn (delegate phase — spawn the subagent)
+#   - Step 10: kanban_task_comment (delegate phase — post status comment)
+#   - Step 11: kanban_board_list (operate phase — fetch board state)
+#   - Step 12: kanban_task_list (operate phase — fetch task list)
+# Multi-task creation (kanban_task_create) and LLM-judgment tool calls
+# (kanban_task_move, kanban_task_verify) remain agent-mediated — they
+# require iteration or task selection that the flowdef cannot express.
 #
 # Ontological anchor: PKO (Procedural Knowledge Ontology, Carriero et al. 2025).
 #   - Board = pko:Procedure, Task = pko:Step
@@ -35,8 +47,11 @@ manifest:
     tasks with recomposition strategy, (2) delegate tasks to subagents with
     spawn configuration and gas budgeting, (3) monitor boards, coordinate
     agents, track deliverables, move tasks, verify completion, and escalate.
-    All phases include post-cascade MCP tool-call instructions for the agent.
-    Ontology: PKO — board = pko:Procedure, task = pko:Step.
+    Deterministic single-call MCP tool invocations (kanban_board_create,
+    kanban_task_spawn, kanban_task_comment, kanban_board_list,
+    kanban_task_list) are native execute steps; multi-task creation and
+    LLM-judgment tool calls remain agent-mediated. Ontology: PKO — board =
+    pko:Procedure, task = pko:Step.
   functional_role: flowdef
   version: "0.34.0"
   editor: curator-or-human-admin
@@ -52,7 +67,7 @@ convergence:
   target_artifacts_field: "current_artifacts"
 
 gas:
-  cap: 60000
+  cap: 70000
   cost_per_iteration: 100
   alert_threshold: 0.8
   hard_limit: true
@@ -120,7 +135,7 @@ steps:
       task_to_delegate: "{{ task_to_delegate | default({}) }}"
       board_id: "{{ board_id | default('') }}"
 
-  # ── Phase 1: Decompose (steps 2-5) ────────────────────────────────────
+  # ── Phase 1: Decompose (steps 2-6) ────────────────────────────────────
   - ordinal: 2
     action: select
     description: >
@@ -169,9 +184,11 @@ steps:
   - ordinal: 5
     action: select
     description: >
-      DECOMPOSE-4 — Populate board-ready task list. Includes post-cascade
-      MCP tool-call instructions for the agent to call kanban_board_create
-      and kanban_task_create. Skips if triage phase is not "decompose".
+      DECOMPOSE-4 — Populate board-ready task list. The board is created
+      by the kanban_board_create execute step (6); individual tasks are
+      created by the agent via kanban_task_create (multi-task iteration
+      not expressible as a single execute step). Skips if triage phase
+      is not "decompose".
     renderer: minijinja
     template_ref: kanban-task-management/populate-board
     gas_cap: 2000
@@ -182,13 +199,39 @@ steps:
       recomposition: "{{ step_3_result.recomposition | default({}) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  # ── Phase 2: Delegate (steps 6-7) ─────────────────────────────────────
+  # ── Board creation (native MCP execute step) ──
+  # Creates the kanban board deterministically. The board_id from this step
+  # is available to downstream steps and the agent for kanban_task_create
+  # calls. Condition-gated on the decompose phase — skipped for delegate/
+  # operate phases.
   - ordinal: 6
+    action: execute
+    description: >
+      Create the kanban board via kanban_board_create (hkask-mcp-kata-kanban).
+      Deterministic — board name from the gather-context step. The board_id
+      in the result is used by the agent for subsequent kanban_task_create
+      calls. Condition-gated on the decompose phase.
+    mcp: kanban_board_create
+    gas_cap: 2000
+    timeout_seconds: 60
+    condition: "step_1_result.phase == 'decompose'"
+    input_mapping:
+      name: "{{ step_2_result.project_name | default('Untitled Project') }}"
+    on_failure:
+      action: escalate
+      resume: >
+        kanban_board_create failed — the kata-kanban MCP server may be down.
+        Restart the server via sync_kask_mcp_servers and re-invoke. The
+        decomposed task list is still valid (in step_5_result) but cannot be
+        persisted to a board until the server is restored.
+
+  # ── Phase 2: Delegate (steps 7-10) ─────────────────────────────────────
+  - ordinal: 7
     action: select
     description: >
-      DELEGATE-1 — Configure spawn parameters for one task. Includes
-      post-cascade instructions for the agent to call kanban_task_spawn.
-      Skips if triage phase is not "delegate".
+      DELEGATE-1 — Configure spawn parameters for one task. The spawn is
+      executed by the kanban_task_spawn execute step (8). Skips if triage
+      phase is not "delegate".
     renderer: minijinja
     template_ref: kanban-task-management/configure-spawn
     gas_cap: 3000
@@ -199,12 +242,40 @@ steps:
       available_tool_servers: "{{ available_tool_servers | default([]) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 7
+  # ── Task spawn (native MCP execute step) ──
+  # Spawns the subagent deterministically. The task_id, delegation_level,
+  # and delegated_skills are all from the configure-spawn step's output.
+  # Condition-gated on the delegate phase.
+  - ordinal: 8
+    action: execute
+    description: >
+      Spawn the subagent via kanban_task_spawn (hkask-mcp-kata-kanban).
+      Deterministic — task_id, delegation_level, and delegated_skills from
+      the configure-spawn step. Condition-gated on the delegate phase.
+    mcp: kanban_task_spawn
+    gas_cap: 5000
+    timeout_seconds: 120
+    condition: "step_1_result.phase == 'delegate'"
+    input_mapping:
+      task_id: "{{ task_to_delegate.task_id | default('') }}"
+      delegation_level: "{{ step_7_result.delegation_level | default('standard') }}"
+      delegated_skills: "{{ step_7_result.delegated_skills | default([]) }}"
+      gas_budget: "{{ step_7_result.gas_budget | default(null) }}"
+      rjoule_budget: "{{ step_7_result.rjoule_budget | default(null) }}"
+    on_failure:
+      action: escalate
+      resume: >
+        kanban_task_spawn failed — the kata-kanban MCP server may be down or
+        the task_id may not exist. Restart the server via sync_kask_mcp_servers
+        and re-invoke. The spawn configuration is still valid (in step_7_result).
+
+  - ordinal: 9
     action: select
     description: >
       DELEGATE-2 — Execute the delegated task and report status,
-      deliverables, blockers. Includes post-cascade instructions for the
-      agent to call kanban_task_comment and kanban_task_add_deliverable.
+      deliverables, blockers. The status comment is posted by the
+      kanban_task_comment execute step (10); deliverables are attached by
+      the agent via kanban_task_add_deliverable (may have multiple).
       Skips if triage phase is not "delegate".
     renderer: minijinja
     template_ref: kanban-task-management/execute-task
@@ -212,31 +283,101 @@ steps:
     timeout_seconds: 150
     input_mapping:
       task: "{{ task_to_delegate | default({}) }}"
-      spawn_configuration: "{{ step_6_result | default({}) }}"
+      spawn_configuration: "{{ step_7_result | default({}) }}"
       comment_thread: "{{ task_to_delegate.comments | default([]) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  # ── Phase 3: Operate (steps 8-13) ─────────────────────────────────────
-  - ordinal: 8
+  # ── Status comment (native MCP execute step) ──
+  # Posts the execution status comment deterministically. The task_id and
+  # body are from the execute-task step's output. Condition-gated on the
+  # delegate phase.
+  - ordinal: 10
+    action: execute
+    description: >
+      Post the execution status comment via kanban_task_comment
+      (hkask-mcp-kata-kanban). Deterministic — task_id and body from the
+      execute-task step. Condition-gated on the delegate phase.
+    mcp: kanban_task_comment
+    gas_cap: 2000
+    timeout_seconds: 60
+    condition: "step_1_result.phase == 'delegate'"
+    input_mapping:
+      task_id: "{{ task_to_delegate.task_id | default('') }}"
+      body: "{{ step_9_result.status_report | default(step_9_result | tojson) }}"
+    on_failure:
+      action: escalate
+      resume: >
+        kanban_task_comment failed — the kata-kanban MCP server may be down.
+        Restart the server via sync_kask_mcp_servers and re-invoke. The
+        execution status is still valid (in step_9_result).
+
+  # ── Phase 3: Operate (steps 11-18) ────────────────────────────────────
+  # ── Board state fetch (native MCP execute steps) ──
+  # Fetches board and task state deterministically before the monitor-board
+  # step. This replaces the former agent-mediated fetch — the operate phase
+  # now reads persisted state from the kanban MCP (single source of truth),
+  # not from the LLM's context window. Condition-gated on the operate phase.
+  - ordinal: 11
+    action: execute
+    description: >
+      Fetch all kanban boards via kanban_board_list (hkask-mcp-kata-kanban).
+      Deterministic — no inputs. The board list is available to the
+      monitor-board step for board identification. Condition-gated on the
+      operate phase.
+    mcp: kanban_board_list
+    gas_cap: 2000
+    timeout_seconds: 60
+    condition: "step_1_result.phase == 'operate'"
+    input_mapping: {}
+    on_failure:
+      action: escalate
+      resume: >
+        kanban_board_list failed — the kata-kanban MCP server may be down.
+        Restart the server via sync_kask_mcp_servers and re-invoke.
+
+  - ordinal: 12
+    action: execute
+    description: >
+      Fetch the task list for the board via kanban_task_list
+      (hkask-mcp-kata-kanban). Deterministic — board_id from the cascade
+      input. The task list is the single source of truth for the operate
+      phase, replacing the former agent-mediated fetch. Condition-gated on
+      the operate phase.
+    mcp: kanban_task_list
+    gas_cap: 2000
+    timeout_seconds: 60
+    condition: "step_1_result.phase == 'operate'"
+    input_mapping:
+      board_id: "{{ board_id | default('') }}"
+    on_failure:
+      action: escalate
+      resume: >
+        kanban_task_list failed — the kata-kanban MCP server may be down or
+        the board_id may not exist. Restart the server via sync_kask_mcp_servers
+        and re-invoke.
+
+  - ordinal: 13
     action: select
     description: >
       OPERATE-1 — Monitor board state, identify blockers, flag overdue
-      tasks. Includes pre-cascade instructions for the agent to fetch
-      board data. Skips if triage phase is not "operate".
+      tasks. Reads persisted state from the kanban_task_list execute step
+      (12), not from the agent's context window. Skips if triage phase is
+      not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/monitor-board
     gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       board_name: "{{ board_name | default('') }}"
-      tasks: "{{ tasks | default([]) }}"
+      tasks: "{{ step_12_result.tasks | default(tasks | default([])) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 9
+  - ordinal: 14
     action: select
     description: >
       OPERATE-2 — Coordinate with agents through comment threads. Includes
-      post-cascade instructions for the agent to call kanban_task_comment.
+      post-cascade instructions for the agent to call kanban_task_comment
+      (multi-comment, LLM-judgment on which threads to respond to).
       Skips if triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/coordinate-agents
@@ -244,57 +385,60 @@ steps:
     timeout_seconds: 150
     input_mapping:
       board_name: "{{ board_name | default('') }}"
-      active_tasks: "{{ tasks | default([]) }}"
+      active_tasks: "{{ step_12_result.tasks | default(tasks | default([])) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 10
+  - ordinal: 15
     action: select
     description: >
       OPERATE-3 — Track deliverables for relevance and review readiness.
       Includes post-cascade instructions for kanban_task_move and
-      kanban_task_add_deliverable. Skips if triage phase is not "operate".
+      kanban_task_add_deliverable (LLM-judgment on which task to move).
+      Skips if triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/track-deliverables
     gas_cap: 4000
     timeout_seconds: 150
     input_mapping:
-      task: "{{ tasks | first | default({}) }}"
-      deliverables: "{{ tasks | first | default({}) | get('deliverables', []) }}"
+      task: "{{ step_12_result.tasks | first | default(tasks | first | default({})) }}"
+      deliverables: "{{ step_12_result.tasks | first | default({}) | get('deliverables', []) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 11
+  - ordinal: 16
     action: select
     description: >
       OPERATE-4 — Move tasks through columns with WIP enforcement.
-      Includes post-cascade instructions for kanban_task_move. Skips if
-      triage phase is not "operate".
+      Includes post-cascade instructions for kanban_task_move (LLM-judgment
+      on which task to move to which column). Skips if triage phase is not
+      "operate".
     renderer: minijinja
     template_ref: kanban-task-management/move-tasks
     gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
-      tasks: "{{ tasks | default([]) }}"
-      columns: "{{ step_8_result.board_summary | default({}) | get('columns', []) }}"
+      tasks: "{{ step_12_result.tasks | default(tasks | default([])) }}"
+      columns: "{{ step_13_result.board_summary | default({}) | get('columns', []) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 12
+  - ordinal: 17
     action: select
     description: >
       OPERATE-5 — Verify task completion against acceptance criteria.
       Includes post-cascade instructions for kanban_task_verify and
-      kanban_task_move. Skips if triage phase is not "operate".
+      kanban_task_move (LLM-judgment on which task to verify). Skips if
+      triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/verify-completion
     gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
-      task_title: "{{ tasks | first | default({}) | get('title', '') }}"
-      criteria: "{{ tasks | first | default({}) | get('criteria', []) }}"
-      deliverables: "{{ tasks | first | default({}) | get('deliverables', []) }}"
-      evidence: "{{ step_10_result | default({}) | tojson }}"
+      task_title: "{{ step_12_result.tasks | first | default({}) | get('title', '') }}"
+      criteria: "{{ step_12_result.tasks | first | default({}) | get('criteria', []) }}"
+      deliverables: "{{ step_12_result.tasks | first | default({}) | get('deliverables', []) }}"
+      evidence: "{{ step_15_result | default({}) | tojson }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 13
+  - ordinal: 18
     action: select
     description: >
       OPERATE-6 — Escalate unresolved issues to human operator. Includes
@@ -306,11 +450,11 @@ steps:
     timeout_seconds: 150
     input_mapping:
       board_name: "{{ board_name | default('') }}"
-      escalation_candidates: "{{ step_9_result.escalation_candidates | default([]) }}"
+      escalation_candidates: "{{ step_14_result.escalation_candidates | default([]) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  # ── Step 14: Convergence ──────────────────────────────────────────────
-  - ordinal: 14
+  # ── Step 19: Convergence ──────────────────────────────────────────────
+  - ordinal: 19
     action: loop
     description: >
       Convergence check. The active phase is complete when its final step
@@ -318,8 +462,8 @@ steps:
       errors, re-enter at the triage step with the error context.
     input_mapping:
       loop_target: "{{ 1 }}"
-      convergence_signal: "{{ step_13_result | default(step_7_result | default(step_5_result | default({}))) | length }}"
-      prior_artifacts: "{{ step_13_result | default({}) }}"
+      convergence_signal: "{{ step_18_result | default(step_9_result | default(step_5_result | default({}))) | length }}"
+      prior_artifacts: "{{ step_18_result | default({}) }}"
 
 ledger:
   emit_spans: true

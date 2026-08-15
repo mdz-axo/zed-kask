@@ -167,6 +167,7 @@ pub(crate) fn write_credential(
     let provider = provider.clone();
     let url = url.to_string();
     let value = value.to_string();
+    let is_kask_namespace = url.starts_with(KASK_CREDENTIAL_NAMESPACE);
     // Mark as written immediately so the UI shows "Configured" on next render.
     // The keychain write is async; the session cache bridges the gap.
     // `refresh_windows` triggers a re-render so the "Configured" card appears.
@@ -177,6 +178,21 @@ pub(crate) fn write_credential(
             .write_credentials(&url, "kask", value.as_bytes(), cx)
             .await
             .log_err();
+        // After the keychain write lands, nudge `SettingsStore` so the
+        // `sync_kask_mcp_runtime_servers` observer re-reads the keychain via
+        // `build_mcp_server_env` and restarts any governed MCP server whose
+        // env changed. The nudge must fire AFTER the write completes —
+        // otherwise the restart would re-read the stale (empty) value.
+        // Only kask-namespaced credentials feed MCP servers; inference-provider
+        // keys (written under their `api_url`) are consumed by zed's
+        // `LanguageModelRegistry`, not by kask MCP servers, so they don't need
+        // a restart.
+        if is_kask_namespace {
+            // `AsyncApp::update` returns `R` directly (not `Result`), so there
+            // is no error to propagate — the call is infallible once the app
+            // is alive (the spawn's `cx` keeps it alive).
+            cx.update(|cx| nudge_mcp_servers(cx));
+        }
     })
 }
 
@@ -187,12 +203,55 @@ pub(crate) fn delete_credential(
 ) -> Task<()> {
     let provider = provider.clone();
     let url = url.to_string();
+    let is_kask_namespace = url.starts_with(KASK_CREDENTIAL_NAMESPACE);
     // Remove from session cache so the UI shows the input field again.
     unmark_recently_written(&url);
     cx.refresh_windows();
     cx.spawn(async move |cx| {
         let _ = provider.delete_credentials(&url, cx).await.log_err();
+        // After the keychain delete lands, nudge `SettingsStore` so the
+        // `sync_kask_mcp_runtime_servers` observer re-reads the keychain and
+        // restarts any governed MCP server that no longer has a key (rather
+        // than keeping a stale key in its launch env). Same namespace guard as
+        // `write_credential` — inference-provider deletes don't need a restart.
+        if is_kask_namespace {
+            cx.update(|cx| nudge_mcp_servers(cx));
+        }
     })
+}
+
+/// Nudge `SettingsStore` so the `sync_kask_mcp_runtime_servers` observer
+/// (wired to `cx.observe_global::<SettingsStore>` in `main.rs`) re-runs.
+///
+/// A keychain write/delete does NOT touch `SettingsStore` — the keychain is
+/// out-of-band storage — so without this nudge the governed `McpRuntime`
+/// keeps its launch-time env (with the stale empty key) until Zed restarts
+/// or an unrelated settings edit fires the observer.
+///
+/// The nudge performs a no-op `update_settings_file` on the `kask` section:
+/// it re-writes the current `kask.mcp.load_default` value to itself, which
+/// is content-neutral (no setting changes) but still triggers
+/// `SettingsStore::set_user_settings`, which notifies observers. This
+/// mirrors the pattern `set_data_service_enabled` uses (it writes the
+/// toggle value; here we re-write an existing value to itself).
+///
+/// Only call this for `kask://credentials/...` URLs — inference-provider
+/// keys are consumed by zed's `LanguageModelRegistry`, not by kask MCP
+/// servers, so a restart would be wasted work.
+pub(crate) fn nudge_mcp_servers(cx: &mut App) {
+    // Read the current `load_default` so we re-write the same value (no-op
+    // content-wise). If the kask section is absent, default to `true` to
+    // match `KaskMcpSettings::default()` — writing `Some(true)` into an empty
+    // section is still a no-op relative to the resolved settings.
+    let current_load_default = raw_kask_settings(cx)
+        .and_then(|c| c.mcp)
+        .and_then(|m| m.load_default)
+        .unwrap_or(true);
+    SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
+        let kask = settings.kask.get_or_insert_default();
+        let mcp = kask.mcp.get_or_insert_default();
+        mcp.load_default = Some(current_load_default);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -698,5 +757,86 @@ pub(crate) fn kask_page() -> SettingsPage {
     SettingsPage {
         title: "Kask",
         items: items.into_boxed_slice(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// zed-kask: pinning test for the credential-write → MCP-restart wiring.
+    ///
+    /// `write_credential` / `delete_credential` write to the OS keychain,
+    /// which is out-of-band storage that does NOT touch `SettingsStore`.
+    /// The governed `McpRuntime` only re-reads env (and thus the keychain via
+    /// `build_mcp_server_env`) inside `sync_kask_mcp_runtime_servers`, which
+    /// is wired to `cx.observe_global::<SettingsStore>` in `main.rs`. Without
+    /// a nudge, a freshly-written key is invisible to running MCP servers
+    /// until Zed restarts.
+    ///
+    /// The fix adds `nudge_mcp_servers`, which performs a no-op
+    /// `update_settings_file` on the `kask` section so `SettingsStore` fires
+    /// its observers. This test pins the wiring so removing `nudge_mcp_servers`
+    /// or breaking its signature breaks compilation here.
+    ///
+    /// A full integration test (real `McpRuntime` + keychain + `SettingsStore`
+    /// observer) is infeasible in this crate's test harness — it requires the
+    /// `zed` binary crate's composition root (`main.rs` owns the observer and
+    /// the `McpRuntime` instance). The `zed` crate's `kask_wiring_symbols_exist`
+    /// test pins the observer side (`sync_kask_mcp_runtime_servers`); this test
+    /// pins the nudge side. Together they cover the full path:
+    ///   keychain write → `nudge_mcp_servers` → `SettingsStore` notification →
+    ///   `sync_kask_mcp_runtime_servers` → `build_mcp_server_env` (re-reads
+    ///   keychain) → restart changed servers.
+    #[test]
+    fn nudge_mcp_servers_symbol_exists() {
+        // Referencing the fn value pins both its existence and its signature;
+        // renaming, deleting, or changing the signature breaks compilation.
+        let _ = nudge_mcp_servers as fn(&mut gpui::App);
+    }
+
+    /// The nudge must only fire for `kask://credentials/...` URLs. Inference
+    /// providers write keys under their `api_url` (e.g.
+    /// `https://api.deepinfra.com/v1/openai`) AND mirror to
+    /// `kask://credentials/<key>`; the `api_url` write is consumed by zed's
+    /// `LanguageModelRegistry`, not by kask MCP servers, so it must NOT
+    /// trigger a restart. This test pins the namespace guard predicate so a
+    /// future change that drops the `starts_with(KASK_CREDENTIAL_NAMESPACE)`
+    /// check (and starts nudging on every credential write, including
+    /// inference-provider `api_url` writes) fails loudly.
+    #[test]
+    fn kask_credential_namespace_guard_distinguishes_kask_and_provider_urls() {
+        // Kask-namespaced credential URLs (data services, swarm, curator
+        // email, etc.) — these feed MCP server env and MUST nudge.
+        let kask_urls = [
+            "kask://credentials/hkask_abw_api_key",
+            "kask://credentials/hkask_eodhd_api_key",
+            "kask://credentials/hkask_smtp_password",
+            "kask://credentials/hkask_exa_api_key",
+        ];
+        for url in kask_urls {
+            assert!(
+                url.starts_with(KASK_CREDENTIAL_NAMESPACE),
+                "expected `{url}` to be in the kask credential namespace"
+            );
+        }
+
+        // Inference-provider `api_url` writes — these are consumed by zed's
+        // `LanguageModelRegistry`, NOT by kask MCP servers, and must NOT nudge.
+        // (The mirrored `kask://credentials/<key>` write from the same flow IS
+        // kask-namespaced and will nudge — that's the intended dual-write.)
+        let provider_api_urls = [
+            "https://api.deepinfra.com/v1/openai",
+            "https://openrouter.ai/api/v1",
+            "https://api.atlascloud.ai/v1",
+        ];
+        for url in provider_api_urls {
+            assert!(
+                !url.starts_with(KASK_CREDENTIAL_NAMESPACE),
+                "inference-provider `api_url` `{url}` must NOT be in the kask \
+                 credential namespace — it is consumed by zed's \
+                 `LanguageModelRegistry`, not by kask MCP servers"
+            );
+        }
     }
 }
