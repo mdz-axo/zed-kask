@@ -14,7 +14,7 @@ mod ontology_io;
 mod qa;
 
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
-use crate::helpers::map_corpus_io_error;
+use crate::helpers::{map_corpus_io_error, map_database_error};
 use crate::services::assertions::{AssertionsRequest, AssertionsService};
 use crate::{
     Arc, CorpusServer, LLMParameters, McpToolError, Mutex, Parameters, default_embedding_model,
@@ -509,9 +509,9 @@ impl CorpusServer {
         let model_name = model.unwrap_or_else(|| default_embedding_model().to_string());
 
         let dim = embedding_dim();
-        let store = hkask_memory::MemoryStore::open(db_path, passphrase, dim).map_err(|e| {
-            McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
-        })?;
+        let store =
+            hkask_memory::MemoryStore::open(db_path, passphrase, dim)
+                .map_err(|e| map_database_error(e, "Cannot open memory DB"))?;
 
         let mut embedded = 0usize;
         let mut failed = 0usize;

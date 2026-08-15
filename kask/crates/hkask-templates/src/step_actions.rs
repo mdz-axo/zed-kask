@@ -335,14 +335,10 @@ impl StepMachine {
                     target: "reg.skill.cascade.step_executed",
                     step = node.ordinal,
                     finish_reason = ?finish_reason,
-                    "Step returned empty output with no structured tool call"
+                    "Step returned empty output with no structured tool call."
                 );
                 return Err(TemplateError::Manifest(format!(
-                    "Step {} returned empty output (finish_reason: {:?}). \
-                     Likely causes: max_tokens too low, model spent its budget on \
-                     reasoning, or the provider returned no completion. \
-                     Remediation: raise max_tokens, enable thinking_budget, \
-                     retry, or convert the step to a deterministic `render` action.",
+                    "Step {} returned empty output (finish_reason: {:?}). Likely causes: max_tokens too low, model spent its budget on reasoning, or the provider returned no completion. Remediation: raise max_tokens, enable thinking_budget, retry, or convert the step to a deterministic render action.",
                     node.ordinal, finish_reason
                 )));
             }
@@ -1390,12 +1386,12 @@ mod tests {
         .await
         .expect("stream should complete");
 
-        assert_eq!(text, "{\"partial":");
+        assert_eq!(text, "{\"partial\":");
         assert!(tool_calls.is_empty());
         assert_eq!(
             finish_reason.as_deref(),
             Some("length"),
-            "finish_reason must be threaded out for execute_select truncation detection"
+            "finish_reason must be threaded out for execute_select truncation detection."
         );
     }
 
@@ -1456,17 +1452,17 @@ mod tests {
             None,
         )
         .await
-        .expect("stream should complete");
+        .expect("stream should complete.");
 
-        assert!(text.is_empty(), "empty-output case must produce empty text");
+        assert!(text.is_empty(), "empty-output case must produce empty text.");
         assert!(
             tool_calls.is_empty(),
-            "empty-output case must produce no tool calls"
+            "empty-output case must produce no tool calls."
         );
         assert_eq!(
             finish_reason.as_deref(),
             Some("stop"),
-            "finish_reason must be threaded so the guard can name it in the error"
+            "finish_reason threading is required for guard diagnostics"
         );
     }
 }

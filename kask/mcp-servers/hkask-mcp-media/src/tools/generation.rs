@@ -41,7 +41,7 @@ impl MediaServer {
                     .media_generate("generate_image", &media_params)
                     .await
                     .map_err(|e| {
-                        McpToolError::unavailable(format!("Image generation failed: {}", e))
+                        classify_inference_error("Image generation failed", e)
                     })?;
                 // Attach an OMC-tagged, provenance-carrying display hint so the
                 // media widget can dispatch the OMC-driven "Explain" affordance and
@@ -101,7 +101,7 @@ impl MediaServer {
                     .media_generate("image_to_image", &media_params)
                     .await
                     .map_err(|e| {
-                        McpToolError::unavailable(format!("Image transform failed: {}", e))
+                        classify_inference_error("Image transform failed", e)
                     })?;
                 let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
                 Ok(crate::media_block::enrich_with_omc_and_provenance(
@@ -137,7 +137,7 @@ impl MediaServer {
                     .vision_port
                     .media_generate("upscale", &media_params)
                     .await
-                    .map_err(|e| McpToolError::unavailable(format!("Upscale failed: {}", e)))?;
+                    .map_err(|e| classify_inference_error("Upscale failed", e))?;
                 let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
                 Ok(crate::media_block::enrich_with_omc_and_provenance(
                     result,
@@ -186,7 +186,7 @@ impl MediaServer {
                     .media_generate("generate_video", &media_params)
                     .await
                     .map_err(|e| {
-                        McpToolError::unavailable(format!("Video generation failed: {}", e))
+                        classify_inference_error("Video generation failed", e)
                     })?;
                 let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
                 Ok(crate::media_block::enrich_with_omc_and_provenance(
@@ -228,9 +228,10 @@ impl MediaServer {
                 .generate_vision(&expansion_instruction, &[], &llm_params, None)
                 .await
                 .map_err(|e| {
-                    McpToolError::unavailable(format!(
-                        "Prompt expansion failed (requires vision LLM via IPC bridge): {e}"
-                    ))
+                    classify_inference_error(
+                        "Prompt expansion failed (requires vision LLM via IPC bridge)",
+                        e,
+                    )
                 })?;
 
             let expanded = result.text.trim().to_string();

@@ -426,11 +426,11 @@ fn kali_audit_manifest_loads_with_correct_structure() {
 }
 
 /// Verify the scenario-builder manifest loads correctly after Co-evolution
-/// Phase 1 migration. Two native MCP `execute` steps were added to close the
-/// calibration loop:
-///   - Step 2: market_match (fetch prediction-market records for the focal question)
-///   - Step 8: scenario_build (persist generated scenarios for later outcome comparison)
-/// The manifest grew from 8 to 10 steps; all downstream ordinals shifted.
+/// Phase 1 + Phase 2 migration. Three native MCP `execute` steps:
+///   - Step 1: scenario_calibration (Phase 2 — read prior calibration curve)
+///   - Step 3: market_match (Phase 1 — fetch prediction-market records)
+///   - Step 9: scenario_build (Phase 1 — persist generated scenarios)
+/// The manifest grew from 8 to 11 steps.
 #[test]
 fn scenario_builder_manifest_loads_with_execute_steps() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -444,14 +444,15 @@ fn scenario_builder_manifest_loads_with_execute_steps() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load scenario-builder manifest: {e}"));
 
-    // 6 select steps + 1 compute step + 2 execute steps + 1 loop step = 10 total.
+    // 6 select steps + 1 compute step + 3 execute steps + 1 loop step = 11 total.
     assert_eq!(
         manifest.steps.len(),
-        10,
-        "expected 10 steps after Co-evolution Phase 1 (2 execute steps added)"
+        11,
+        "expected 11 steps after Co-evolution Phase 1 + Phase 2 (3 execute steps)"
     );
 
-    // Two execute steps: market_match (2) and scenario_build (8).
+    // Three execute steps: scenario_calibration (1), market_match (3),
+    // scenario_build (9).
     let execute_steps: Vec<_> = manifest
         .steps
         .iter()
@@ -459,23 +460,32 @@ fn scenario_builder_manifest_loads_with_execute_steps() {
         .collect();
     assert_eq!(
         execute_steps.len(),
-        2,
-        "manifest must have 2 execute steps (Co-evolution Phase 1)"
+        3,
+        "manifest must have 3 execute steps (Co-evolution Phase 1 + Phase 2)"
     );
-    assert_eq!(execute_steps[0].ordinal, 2, "market_match execute at ordinal 2");
+    assert_eq!(
+        execute_steps[0].ordinal, 1,
+        "scenario_calibration execute at ordinal 1"
+    );
     assert_eq!(
         execute_steps[0].mcp.as_deref(),
-        Some("market_match"),
-        "step 2 must call market_match"
+        Some("scenario_calibration"),
+        "step 1 must call scenario_calibration"
     );
-    assert_eq!(
-        execute_steps[1].ordinal, 8,
-        "scenario_build execute at ordinal 8"
-    );
+    assert_eq!(execute_steps[1].ordinal, 3, "market_match execute at ordinal 3");
     assert_eq!(
         execute_steps[1].mcp.as_deref(),
+        Some("market_match"),
+        "step 3 must call market_match"
+    );
+    assert_eq!(
+        execute_steps[2].ordinal, 9,
+        "scenario_build execute at ordinal 9"
+    );
+    assert_eq!(
+        execute_steps[2].mcp.as_deref(),
         Some("scenario_build"),
-        "step 8 must call scenario_build"
+        "step 9 must call scenario_build"
     );
     // Every execute step must have on_failure (no silent collapse to defaults).
     for step in &execute_steps {
@@ -486,13 +496,13 @@ fn scenario_builder_manifest_loads_with_execute_steps() {
         );
     }
 
-    // The loop step (ordinal 10) must reference step_9_result for convergence.
+    // The loop step (ordinal 11) must reference step_10_result for convergence.
     let loop_step = manifest
         .steps
         .iter()
         .find(|s| s.action == "loop")
         .expect("manifest must have a loop step");
-    assert_eq!(loop_step.ordinal, 10, "loop step should be ordinal 10");
+    assert_eq!(loop_step.ordinal, 11, "loop step should be ordinal 11");
 }
 
 /// Verify the kanban-task-management manifest loads correctly after Co-evolution

@@ -204,19 +204,30 @@ steps:
       round: 1
     condition: "step_1_result.effort_tier != 'low'"
 
-  # ─── STEP 5: OUTPUT ───
-  # Format per output_format: inline (fenced code block, default),
-  # file (write to path), or both. Always include change log.
+  # ─── STEP 5: OUTPUT (deterministic render — no LLM call) ───
+  # C2: Converted from `select` (LLM call) to `render` (deterministic).
+  # The former step called the LLM to format the change log from structured
+  # data that was already structured (audit_findings, grill_ratings,
+  # mutations_applied are all JSON). The LLM call was the single largest
+  # source of cascade failures: the model sometimes returned empty output
+  # (reasoning budget exhausted, provider hiccup), and parse_json_response("")
+  # produced "EOF while parsing a value at line 1 column 0" — killing the
+  # whole skill after 4 successful LLM calls. The render step eliminates
+  # the failure mode: no LLM, no empty-output risk, no JSON parse.
+  # Reference: de la Torre (2025, arXiv:2506.10021) — symbolic-neural
+  # scaffolding; deterministic steps verify structural invariants the LLM
+  # cannot reliably self-evaluate.
   - ordinal: 5
-    action: select
+    action: render
     description: >
-      Format and deliver the enhanced prompt per output_format
+      Deterministic format and deliver the enhanced prompt per output_format
       (inline/file/both). Always include a change log with audit findings,
-      grill verdict, mutations applied, and deferred findings.
+      grill verdict, mutations applied, and deferred findings. No LLM call —
+      the change log is templated from structured data.
     renderer: minijinja
-    template_ref: prompt-enhance/enhance-output.j2
-    gas_cap: 4000
-    timeout_seconds: 120
+    template_ref: prompt-enhance/enhance-output-render.j2
+    gas_cap: 0
+    timeout_seconds: 10
     input_mapping:
       enhanced_prompt: "{{ step_2_result.enhanced_prompt }}"
       original_prompt: "{{ prompt }}"

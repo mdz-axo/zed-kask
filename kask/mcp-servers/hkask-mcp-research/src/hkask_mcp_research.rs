@@ -118,7 +118,7 @@ macro_rules! require_rss_db {
         match &$self.rss_db {
             Some(db) => db.clone(),
             None => {
-                return Err(McpToolError::unavailable(
+                return Err(McpToolError::permission_denied(
                     "RSS database not configured. Set HKASK_RSS_DB and HKASK_DB_PASSPHRASE.",
                 ));
             }

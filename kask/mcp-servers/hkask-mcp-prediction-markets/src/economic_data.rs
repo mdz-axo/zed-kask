@@ -22,7 +22,7 @@ use serde_json::Value;
 pub enum EconomicDataError {
     #[error("invalid parameter: {0}")]
     InvalidParam(String),
-    #[error("API key not configured")]
+    #[error("HKASK_FRED_API_KEY not configured. Set HKASK_FRED_API_KEY via the keychain or environment variable.")]
     MissingApiKey,
     #[error("{provider} API request failed: {detail}")]
     RequestFailed {
@@ -51,7 +51,8 @@ impl From<EconomicDataError> for McpToolError {
     fn from(error: EconomicDataError) -> Self {
         use EconomicDataError::*;
         match error {
-            InvalidParam(_) | MissingApiKey => McpToolError::invalid_argument(error.to_string()),
+            InvalidParam(_) => McpToolError::invalid_argument(error.to_string()),
+            MissingApiKey => McpToolError::permission_denied(error.to_string()),
             HttpError { .. } | RequestFailed { .. } => McpToolError::unavailable(error.to_string()),
             ParseError { .. } | ApiError { .. } => McpToolError::internal(error.to_string()), // rr0044-ok: mapper-internal-arm
         }

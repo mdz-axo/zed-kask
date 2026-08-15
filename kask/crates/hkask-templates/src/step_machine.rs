@@ -383,6 +383,13 @@ impl StepMachine {
     /// This is the enforcement point for `ErrorHandlingConfig.on_timeout` /
     /// `max_retries` / `retry_backoff_seconds` — previously parsed but never
     /// read (an advertised invariant with no enforcement point).
+    ///
+    /// Per-step `on_failure` config: when a step (any action, not just gates)
+    /// fails after retries are exhausted, the `on_failure` config is checked.
+    /// `action: halt` or `action: escalate` produces `Effect::Exit(Escalated)`
+    /// with the `resume` text. This is the enforcement point for per-step
+    /// `on_failure` — previously only gates checked it (an advertised
+    /// invariant with no enforcement point for execute/select/compute steps).
     async fn dispatch_with_retry(
         &mut self,
         node: &crate::step_graph::StepNode,
@@ -425,7 +432,32 @@ impl StepMachine {
                     }
                     continue;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    // Per-step on_failure: check for halt/escalate after
+                    // retries are exhausted. This is the enforcement point
+                    // for OnFailureConfig on execute/select/compute steps —
+                    // previously only gates checked it.
+                    if let Some(ref on_failure) = node.on_failure {
+                        match on_failure.action.as_str() {
+                            "halt" | "escalate" => {
+                                tracing::warn!(
+                                    target: "reg.skill.cascade.step_failed",
+                                    step = node.ordinal,
+                                    action = %on_failure.action,
+                                    error = %e,
+                                    resume = %on_failure.resume,
+                                    "Step {} failed — on_failure config halts the cascade",
+                                    node.ordinal
+                                );
+                                return Ok(crate::step_actions::Effect::Exit(
+                                    crate::step_graph::ExitKind::Escalated,
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                    return Err(e);
+                }
             }
         }
     }

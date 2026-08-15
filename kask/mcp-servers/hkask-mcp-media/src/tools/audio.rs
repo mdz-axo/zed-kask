@@ -41,7 +41,7 @@ impl MediaServer {
                     )
                     .await
                     .map_err(|e| {
-                        McpToolError::unavailable(format!("Voice design inference failed: {}", e))
+                        classify_inference_error("Voice design inference failed", e)
                     })?;
 
                 match serde_json::from_str::<serde_json::Value>(&r.text) {
@@ -95,7 +95,7 @@ impl MediaServer {
                     .media_generate("generate_speech", &media_params)
                     .await
                     .map_err(|e| {
-                        McpToolError::unavailable(format!("Speech generation failed: {}", e))
+                        classify_inference_error("Speech generation failed", e)
                     })
                     .map(|result| {
                         crate::media_block::enrich_with_omc_and_provenance(
@@ -139,7 +139,7 @@ impl MediaServer {
                 self.vision_port
                     .media_generate("transcribe", &media_params)
                     .await
-                    .map_err(|e| McpToolError::unavailable(format!("Transcription failed: {}", e)))
+                    .map_err(|e| classify_inference_error("Transcription failed", e))
             },
         )
         .await
@@ -173,7 +173,7 @@ impl MediaServer {
                     .media_generate("transcribe", &media_params)
                     .await
                     .map_err(|e| {
-                        McpToolError::unavailable(format!("Transcription failed: {}", e))
+                        classify_inference_error("Transcription failed", e)
                     })?;
 
                 let full_text = raw
@@ -334,7 +334,7 @@ impl MediaServer {
                     Ok(()) => self.vision_port
                         .media_generate("transcribe", &media_params)
                         .await
-                        .map_err(|e| McpToolError::unavailable(format!("Transcription failed: {}", e))),
+                        .map_err(|e| classify_inference_error("Transcription failed", e)),
                     Err(e) => Err(e),
                 }
             };

@@ -398,7 +398,9 @@ impl ProviderPool {
     ) -> Result<ProviderSearchOutput, WebError> {
         match self.exa {
             Some(ref exa) => exa.find_similar(url, num_results).await,
-            None => Err(WebError::NoProvider),
+            None => Err(WebError::NoProviderConfigured(
+                "Exa provider not configured. Set HKASK_EXA_API_KEY to use web_find_similar.".to_string(),
+            )),
         }
     }
 
@@ -423,6 +425,12 @@ impl ProviderPool {
     ) -> Result<BrowseResult, WebError> {
         // SSRF defense-in-depth: validate once at the pool boundary.
         validate_provider_url(url).await?;
+        if self.browse_providers.is_empty() {
+            return Err(WebError::NoProviderConfigured(
+                "No browse provider configured. Set HKASK_FIRECRAWL_API_KEY or HKASK_BROWSERBASE_API_KEY to use web_browse."
+                    .to_string(),
+            ));
+        }
         try_fallback!(&self.browse_providers, browse, url, instruction, timeout)
     }
 

@@ -20,7 +20,10 @@ pub mod video;
 
 pub use budget::{MediaBudget, UnitCosts};
 use budget::{build_media_budget, charge_budget_gate};
-pub use error::{MediaError, map_gallery_store_error, map_image_open_error, map_media_error};
+pub use error::{
+    MediaError, classify_embedding_error, classify_inference_error, map_gallery_store_error,
+    map_image_open_error, map_media_error,
+};
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
@@ -282,7 +285,7 @@ impl MediaServer {
     /// Return the best available vision model or an error if none is configured.
     async fn require_vision(&self) -> Result<(&'static str, &'static str), McpToolError> {
         self.resolve_vision_model().await.ok_or_else(|| {
-            McpToolError::unavailable(
+            McpToolError::permission_denied(
                 "No vision-capable provider configured. Vision LLMs route through zed's \
                  LanguageModelRegistry via the inference IPC bridge — enable a vision \
                  model in the kask inference provider settings. The media server process \
@@ -303,10 +306,10 @@ impl MediaServer {
             .embed(&model, std::slice::from_ref(&text.to_string()))
             .await
             .map_err(|e| {
-                McpToolError::unavailable(format!(
-                    "Embedding model unavailable: {}. Configure a cloud provider.",
-                    e
-                ))
+                classify_embedding_error(
+                    "Embedding model unavailable. Configure a cloud provider",
+                    e,
+                )
             })?;
         vectors
             .into_iter()

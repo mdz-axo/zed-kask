@@ -14,8 +14,9 @@
 //! invariant (P4 deserialization totality) that is out of scope here.
 
 use hkask_mcp_curator::types::{
-    AlgedonicLogRequest, EscalationDismissRequest, EscalationResolveRequest, MemoryRecallRequest,
-    PingRequest, RegQueryRequest, SemanticSearchRequest,
+    AlgedonicLogRequest, CuratorConsultRequest, EscalationDismissRequest, EscalationResolveRequest,
+    MemoryRecallRequest, PingRequest, RegQueryRequest, ReportSkillUseIssueRequest,
+    SemanticSearchRequest,
 };
 use hkask_mcp_server::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -42,3 +43,5 @@ schema_clean_test!(semantic_search_request_schema, SemanticSearchRequest);
 schema_clean_test!(memory_recall_request_schema, MemoryRecallRequest);
 schema_clean_test!(algedonic_log_request_schema, AlgedonicLogRequest);
 schema_clean_test!(reg_query_request_schema, RegQueryRequest);
+schema_clean_test!(curator_consult_request_schema, CuratorConsultRequest);
+schema_clean_test!(report_skill_use_issue_request_schema, ReportSkillUseIssueRequest);

@@ -11,7 +11,7 @@
 //!   multi-chunk cluster into a single comprehensive passage, re-embeds
 //!   the consolidated text, and stores the new embedding in the DB.
 
-use crate::helpers::{map_corpus_io_error, map_memory_store_error, read_text_capped};
+use crate::helpers::{map_corpus_io_error, map_database_error, map_memory_store_error, read_text_capped};
 use crate::services::consolidation::{ChunkConsolidationRequest, ConsolidationService};
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
@@ -54,9 +54,8 @@ impl CorpusServer {
             }
 
             let dim = embedding_dim();
-            let store = MemoryStore::open(&req.db_path, &req.passphrase, dim).map_err(|e| {
-                McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
-            })?;
+            let store = MemoryStore::open(&req.db_path, &req.passphrase, dim)
+                .map_err(|e| map_database_error(e, "Cannot open memory DB"))?;
             let embeddings = store
                 .embeddings_by_prefix(&req.prefix)
                 .map_err(|e| map_memory_store_error(e, "Embedding query failed"))?;
@@ -278,7 +277,7 @@ impl CorpusServer {
             // Store h_mems + embeddings
             let dim = embedding_dim();
             let store = MemoryStore::open(&req.db_path, &req.passphrase, dim)
-                .map_err(|e| McpToolError::failed_precondition(format!("Cannot open memory DB: {e}")))?;
+                .map_err(|e| map_database_error(e, "Cannot open memory DB"))?;
             let webid = owner_webid(&req.owner);
             let mut stored = 0usize;
 
