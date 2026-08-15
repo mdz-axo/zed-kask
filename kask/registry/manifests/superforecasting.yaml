@@ -403,8 +403,8 @@ steps:
           name: "{{ step_15_result.forecast_record.question | default(forecasting_question) }}"
           question: "{{ step_15_result.forecast_record.question | default(forecasting_question) }}"
           deadline: "{{ step_15_result.forecast_record.expiration_date | default(expiration_date) | default('2030-01-01') }}"
-          time_horizon: "{{ time_horizon | default('strategic') }}"
-          scenario_type: "emerging_economic"
+          time_horizon: "{{ step_1_result.time_horizon | default(time_horizon) | default('strategic') }}"
+          scenario_type: "{{ step_1_result.scenario_type | default('emerging_economic') }}"
           subject: "{{ domain | default(forecasting_question) }}"
           probability: "{{ step_15_result.forecast_record.probability | default(step_14_result.final_probability | default(0.5)) }}"
           depends_on: []

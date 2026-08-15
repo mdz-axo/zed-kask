@@ -959,10 +959,44 @@ impl CompaniesServer {
     ) -> String {
         execute_tool_semantic(self, "forecast_persist", Self::ontology_anchor("forecast_persist"), async {
             validate_symbol(&req.symbol)?;
-            validate_finite("forecast_price_change", req.forecast_price_change)?;
             if let Some(value) = req.forecast_multiple {
                 validate_finite("forecast_multiple", value)?;
             }
+            if let Some(value) = req.forecast_price {
+                validate_finite("forecast_price", value)?;
+            }
+            if let Some(value) = req.current_price {
+                validate_finite("current_price", value)?;
+            }
+            // Resolve the forecast price change: prefer the direct field, else
+            // compute from forecast_price and current_price. Reject if neither
+            // path is available — persisting a PT with no price change is a
+            // broken calibration signal (per .rules: no silent fallbacks on
+            // regulation signals).
+            let forecast_price_change = match req.forecast_price_change {
+                Some(change) => {
+                    validate_finite("forecast_price_change", change)?;
+                    change
+                }
+                None => {
+                    let fp = req.forecast_price.ok_or_else(|| {
+                        McpToolError::invalid_argument(
+                            "forecast_price_change or forecast_price+current_price is required",
+                        )
+                    })?;
+                    let cp = req.current_price.ok_or_else(|| {
+                        McpToolError::invalid_argument(
+                            "forecast_price_change or forecast_price+current_price is required",
+                        )
+                    })?;
+                    if cp <= 0.0 {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "current_price must be positive to compute forecast_price_change, got {cp}"
+                        )));
+                    }
+                    (fp - cp) / cp
+                }
+            };
             if let Some(ref revision_of) = req.revision_of {
                 let revision_of = revision_of.clone();
                 let symbol = req.symbol.clone();
@@ -988,7 +1022,9 @@ impl CompaniesServer {
                 "forecast_date": req.forecast_date,
                 "horizon": req.horizon,
                 "forecast_multiple": req.forecast_multiple,
-                "forecast_price_change": req.forecast_price_change,
+                "forecast_price": req.forecast_price,
+                "current_price": req.current_price,
+                "forecast_price_change": forecast_price_change,
             });
 
             self.save_forecast(PersistedForecast {
@@ -1009,7 +1045,9 @@ impl CompaniesServer {
                 "forecast_date": req.forecast_date,
                 "horizon": req.horizon,
                 "forecast_multiple": req.forecast_multiple,
-                "forecast_price_change": req.forecast_price_change,
+                "forecast_price": req.forecast_price,
+                "current_price": req.current_price,
+                "forecast_price_change": forecast_price_change,
                 "note": "Pre-computed price target persisted without a decomposition model. Call forecast_record with this forecast_id when the horizon passes to close the Brier loop. Gap decomposition will be unavailable (no projected model).",
             }))
         })
