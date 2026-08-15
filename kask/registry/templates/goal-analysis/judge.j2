@@ -8,6 +8,7 @@ contract:
     criteria: array
     outcome_summary: string
     artifacts: array
+    essentialist_report: object|null
   output:
     verdict: string
     reason: string
@@ -37,6 +38,14 @@ You are a strict judge evaluating whether an autonomous agent has achieved a use
 {% for artifact in artifacts %}
 - {{ artifact }}
 {% endfor %}
+{% endif %}
+
+{% if essentialist_report %}
+**Essentialist Elimination Report (from thesis-essentialist adapter, v0.36.0):**
+```json
+{{ essentialist_report | tojson }}
+```
+The essentialist ran a 3-gate eliminative interrogation (Exist, Surface, Contract) on the thesis. If any gate failed, the thesis has parsimony issues — decorative pillars, restatement risk, label abstractions, or hedge verdicts. Factor this into the verdict: a thesis with essentialist failures is `continue` (needs_work), not `done`, even if the three pillars are present.
 {% endif %}
 
 ---

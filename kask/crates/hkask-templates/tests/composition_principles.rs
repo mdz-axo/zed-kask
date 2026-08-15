@@ -1,0 +1,739 @@
+//! Composition-principle tests derived from bug history and new-capability
+//! failure-mode analysis.
+//!
+//! These tests enforce principles that were identified in the composition-
+//! principles analysis but not covered by the existing test harness. Each
+//! test documents the principle it enforces, the bug class or capability it
+//! addresses, and the gap it closes.
+//!
+//! Principles enforced:
+//! - G1 (P25b): every symbol in a `lisp.eval` form is bound in `env` or is a
+//!   builtin/special-form — unbound symbols resolve to `null` silently.
+//! - G3 (P26): `mcp:` steps have failure handling (`on_failure` or a
+//!   downstream `condition` checking the result) — a failed MCP call must
+//!   not silently propagate `null`.
+//! - G5 (P27): `calibration` convergence mode requires `min_iterations >= 2`
+//!   — Brier scoring needs prediction + result, which requires at least 2
+//!   iterations.
+//! - G6 (P27): only whitelisted `convergence_mode` combinations are allowed
+//!   — semantically incoherent combinations are rejected.
+//! - G7 (P28): `compute` step `input_mapping` provides the primitive's
+//!   required input keys — a missing required input fails at compute time.
+//! - G8 (P28): `shell.exec` is only used in `skill`-category manifests —
+//!   the security gate documented in `compute.rs` is enforced at the
+//!   manifest level.
+
+use hkask_templates::load_manifest_from_yaml;
+use std::collections::HashSet;
+use std::path::Path;
+
+// ── G1: lisp.eval form symbols are bound ───────────────────────────────────
+
+/// The set of Lisp builtins (native functions) defined by `default_builtins`
+/// in `hkask-lisp/src/hkask_lisp.rs`. These are always available — a form
+/// referencing one of these does not need an `env` binding.
+const LISP_BUILTINS: &[&str] = &[
+    "+", "-", "*", "/", "=", "!=", "<", "<=", ">", ">=",
+    "car", "cdr", "cons", "list", "length", "nth", "reverse",
+    "is_null", "numberp", "listp", "assoc", "append",
+    "string=", "concat",
+];
+
+/// Special forms recognized by `eval_special_form` — these are language
+/// constructs, not function calls, and are always available.
+const LISP_SPECIAL_FORMS: &[&str] = &[
+    "quote", "if", "let", "lambda", "define", "begin", "and", "or", "not",
+];
+
+/// Recursively collect all symbol names referenced in a parsed Lisp form,
+/// excluding symbols that are locally bound within the form (via `let`,
+/// `lambda` params, or `define`).
+///
+/// `local_bindings` is the set of symbols bound in enclosing scopes within
+/// the form (not from `env` — env bindings are checked by the caller). A
+/// symbol that is in `local_bindings` is a reference to a local variable, not
+/// an unbound symbol.
+fn collect_symbol_references(
+    form: &hkask_lisp::LispValue,
+    local_bindings: &HashSet<String>,
+    out: &mut HashSet<String>,
+) {
+    match form {
+        hkask_lisp::LispValue::Symbol(s) => {
+            // Only collect if not locally bound (env bindings are checked
+            // by the caller against the collected set).
+            if !local_bindings.contains(s) {
+                out.insert(s.clone());
+            }
+        }
+        hkask_lisp::LispValue::List(list) => {
+            let items = list.to_vec();
+            if items.is_empty() || list.is_nil() {
+                return;
+            }
+            if let hkask_lisp::LispValue::Symbol(head) = &items[0] {
+                match head.as_str() {
+                    // `let` — first arg is a binding list. Binding names are
+                    // added to the local scope. Value expressions are traversed
+                    // in the *outer* scope (they can't reference their own
+                    // binding name — sequential `let` semantics). The body is
+                    // traversed in the extended scope.
+                    "let" => {
+                        if items.len() == 2 {
+                            let mut new_bindings = local_bindings.clone();
+                            if let hkask_lisp::LispValue::List(bindings) = &items[1] {
+                                for binding in bindings.to_vec() {
+                                    if let hkask_lisp::LispValue::List(pair) = &binding {
+                                        let pair_vec = pair.to_vec();
+                                        if pair_vec.len() == 2 {
+                                            // Value expression: traverse in outer scope.
+                                            collect_symbol_references(
+                                                &pair_vec[1],
+                                                local_bindings,
+                                                out,
+                                            );
+                                            // Binding name: add to scope for body.
+                                            if let hkask_lisp::LispValue::Symbol(name) =
+                                                &pair_vec[0]
+                                            {
+                                                new_bindings.insert(name.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Body: traverse in extended scope.
+                            collect_symbol_references(&items[1], &new_bindings, out);
+                            return;
+                        }
+                    }
+                    // `lambda` — first arg is a parameter list (definitions).
+                    // The body is traversed in a scope extended with the params.
+                    "lambda" => {
+                        if items.len() == 2 {
+                            let mut new_bindings = local_bindings.clone();
+                            if let hkask_lisp::LispValue::List(params) = &items[0] {
+                                for param in params.to_vec() {
+                                    if let hkask_lisp::LispValue::Symbol(s) = &param {
+                                        new_bindings.insert(s.clone());
+                                    }
+                                }
+                            }
+                            collect_symbol_references(&items[1], &new_bindings, out);
+                            return;
+                        }
+                    }
+                    // `define` — first arg is the name being defined. The
+                    // name is added to the current scope (define mutates the
+                    // env). The value expression is traversed in the current
+                    // scope.
+                    "define" => {
+                        if items.len() == 2 {
+                            if let hkask_lisp::LispValue::Symbol(name) = &items[0] {
+                                // The name is defined in the current scope.
+                                // We don't need to track it for exclusion
+                                // because `define` appears in `begin`/`let`
+                                // bodies and subsequent forms may reference it.
+                                // For our purposes, we just traverse the value.
+                                let mut new_bindings = local_bindings.clone();
+                                new_bindings.insert(name.clone());
+                                collect_symbol_references(&items[1], &new_bindings, out);
+                            } else {
+                                collect_symbol_references(&items[1], local_bindings, out);
+                            }
+                            return;
+                        }
+                    }
+                    // `quote` — the argument is data, not code. Don't traverse.
+                    "quote" => return,
+                    _ => {}
+                }
+            }
+            // Default: traverse all elements in the current scope.
+            for item in &items {
+                collect_symbol_references(item, local_bindings, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// G1 (P25b): Every symbol referenced in a `lisp.eval` step's `form` must be
+/// either a Lisp builtin, a special form, or bound in the step's `env` block.
+///
+/// An unbound symbol resolves to `null` silently at eval time — the same
+/// class of silent failure as the self/forward reference bug (P1), but for
+/// Lisp symbols rather than `step_N_result` references. The E13 test catches
+/// `step_N_result` references in `env`; this test catches symbol references
+/// in `form` that have no corresponding `env` binding.
+///
+/// The test parses the `form` via `hkask_lisp::parse` (which also validates
+/// syntax — E14), walks the AST to collect all symbol references (excluding
+/// binding positions in `let`/`lambda`/`define`), and verifies each is either
+/// a builtin, a special form, or present in the `env` block's keys.
+#[test]
+fn lisp_eval_form_symbols_are_bound() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("registry/manifests");
+    if !dir.exists() {
+        eprintln!("{} not found — skipping test", dir.display());
+        return;
+    }
+
+    let builtins: HashSet<&str> = LISP_BUILTINS.iter().copied().collect();
+    let special_forms: HashSet<&str> = LISP_SPECIAL_FORMS.iter().copied().collect();
+
+    let mut errors = Vec::new();
+    let mut checked = 0;
+
+    for entry in walkdir::WalkDir::new(&dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "yaml") {
+            continue;
+        }
+        let yaml = std::fs::read_to_string(path).unwrap();
+        if !yaml.contains("\nmanifest:") && !yaml.starts_with("manifest:") {
+            continue;
+        }
+        let manifest = match load_manifest_from_yaml(&yaml) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let fname = path.file_name().unwrap().to_string_lossy();
+
+        for step in &manifest.steps {
+            if step.action != "compute" {
+                continue;
+            }
+            let Some(ref compute_ref) = step.compute_ref else {
+                continue;
+            };
+            if compute_ref != "lisp.eval" {
+                continue;
+            }
+            let Some(ref mapping) = step.input_mapping else {
+                continue;
+            };
+            let Some(obj) = mapping.as_object() else {
+                continue;
+            };
+            let Some(form_val) = obj.get("form") else {
+                continue; // E12 catches missing form
+            };
+            let form_str = form_val.as_str().unwrap_or("");
+            if form_str.trim().is_empty() {
+                continue; // E12 catches empty form
+            }
+
+            let parsed = match hkask_lisp::parse(form_str) {
+                Ok(forms) => forms,
+                Err(_) => continue, // E14 catches parse errors
+            };
+
+            // Collect env keys (the bindings available to the form).
+            let env_keys: HashSet<String> = obj
+                .get("env")
+                .and_then(|v| v.as_object())
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default();
+
+            // Collect all symbol references in the form.
+            let mut referenced: HashSet<String> = HashSet::new();
+            for form in &parsed {
+                collect_symbol_references(form, &mut referenced);
+            }
+
+            checked += 1;
+
+            // Every referenced symbol must be a builtin, special form, or env key.
+            for sym in &referenced {
+                let is_builtin = builtins.contains(sym.as_str());
+                let is_special = special_forms.contains(sym.as_str());
+                let is_env = env_keys.contains(sym);
+                if !is_builtin && !is_special && !is_env {
+                    errors.push(format!(
+                        "{fname} step {}: lisp.eval form references symbol '{}' which is not a builtin, special form, or env binding — resolves to null at runtime",
+                        step.ordinal, sym
+                    ));
+                }
+            }
+        }
+    }
+
+    eprintln!(
+        "lisp.eval symbol-binding check: {checked} forms checked — {} errors",
+        errors.len()
+    );
+    for err in &errors {
+        eprintln!("  ERR: {err}");
+    }
+    assert!(
+        errors.is_empty(),
+        "{} unbound symbol errors found:\n{}",
+        errors.len(),
+        errors.join("\n")
+    );
+}
+
+// ── G3: mcp: steps have failure handling ───────────────────────────────────
+
+/// G3 (P26): Every step with an `mcp:` field must have failure handling —
+/// either a per-step `on_failure` config or a `condition` on a downstream
+/// step that checks the MCP result.
+///
+/// A direct MCP tool call can fail (permission denied, timeout, missing
+/// credential, tool not found). Without failure handling, the error
+/// propagates as `null` to downstream steps — a broken feedback loop (the
+/// operator can't distinguish "tool returned empty" from "tool failed").
+///
+/// This test checks for the minimal failure-handling surface: the step
+/// itself has `on_failure`, or a downstream step has a `condition` that
+/// references `step_N_result` (where N is the MCP step's ordinal). The
+/// latter is a heuristic — a condition referencing the result implies the
+/// manifest author anticipated the result's presence and is gating on it.
+#[test]
+fn mcp_steps_have_failure_handling() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("registry/manifests");
+    if !dir.exists() {
+        eprintln!("{} not found — skipping test", dir.display());
+        return;
+    }
+
+    let mut errors = Vec::new();
+    let mut checked = 0;
+
+    for entry in walkdir::WalkDir::new(&dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "yaml") {
+            continue;
+        }
+        let yaml = std::fs::read_to_string(path).unwrap();
+        if !yaml.contains("\nmanifest:") && !yaml.starts_with("manifest:") {
+            continue;
+        }
+        let manifest = match load_manifest_from_yaml(&yaml) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let fname = path.file_name().unwrap().to_string_lossy();
+
+        for step in &manifest.steps {
+            if step.mcp.is_none() {
+                continue;
+            }
+            checked += 1;
+
+            let has_on_failure = step.on_failure.is_some();
+
+            // Check if any downstream step has a condition referencing this
+            // step's result.
+            let step_ordinal = step.ordinal;
+            let result_ref = format!("step_{}_result", step_ordinal);
+            let has_downstream_condition = manifest.steps.iter().any(|s| {
+                s.ordinal > step_ordinal
+                    && s.condition
+                        .as_ref()
+                        .is_some_and(|c| c.contains(&result_ref))
+            });
+
+            if !has_on_failure && !has_downstream_condition {
+                errors.push(format!(
+                    "{fname} step {}: mcp:'{}' step has no on_failure and no downstream condition references step_{}_result — a failed MCP call will silently propagate null",
+                    step.ordinal,
+                    step.mcp.as_ref().unwrap(),
+                    step_ordinal
+                ));
+            }
+        }
+    }
+
+    eprintln!(
+        "mcp: failure-handling check: {checked} mcp steps checked — {} errors",
+        errors.len()
+    );
+    for err in &errors {
+        eprintln!("  ERR: {err}");
+    }
+    assert!(
+        errors.is_empty(),
+        "{} mcp: failure-handling errors found:\n{}",
+        errors.len(),
+        errors.join("\n")
+    );
+}
+
+// ── G5: calibration mode min_iterations gate ───────────────────────────────
+
+/// G5 (P27): If `convergence_mode` contains "calibration", then
+/// `min_iterations` must be >= 2.
+///
+/// Calibration convergence computes a rolling Brier average over
+/// `brier_window` cycles. Brier scoring needs a prediction (from one
+/// iteration) and a result (from the next) — a single iteration cannot
+/// produce a Brier score. With `min_iterations < 2`, the convergence
+/// tracker may exit before the first Brier reading is available, silently
+/// falling back to "not converged" or skipping the calibration check
+/// entirely.
+#[test]
+fn calibration_mode_min_iterations_gate() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("registry/manifests");
+    if !dir.exists() {
+        eprintln!("{} not found — skipping test", dir.display());
+        return;
+    }
+
+    let mut errors = Vec::new();
+    let mut checked = 0;
+
+    for entry in walkdir::WalkDir::new(&dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "yaml") {
+            continue;
+        }
+        let yaml = std::fs::read_to_string(path).unwrap();
+        if !yaml.contains("\nmanifest:") && !yaml.starts_with("manifest:") {
+            continue;
+        }
+        let manifest = match load_manifest_from_yaml(&yaml) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let fname = path.file_name().unwrap().to_string_lossy();
+        let conv = &manifest.convergence;
+
+        if conv.convergence_mode.contains("calibration") {
+            checked += 1;
+            if conv.min_iterations < 2 {
+                errors.push(format!(
+                    "{fname}: convergence_mode='{}' contains 'calibration' but min_iterations={} (must be >= 2 — Brier scoring needs prediction + result)",
+                    conv.convergence_mode, conv.min_iterations
+                ));
+            }
+        }
+    }
+
+    eprintln!(
+        "calibration min_iterations gate: {checked} manifests checked — {} errors",
+        errors.len()
+    );
+    for err in &errors {
+        eprintln!("  ERR: {err}");
+    }
+    assert!(
+        errors.is_empty(),
+        "{} calibration min_iterations errors found:\n{}",
+        errors.len(),
+        errors.join("\n")
+    );
+}
+
+// ── G6: convergence mode combinations are valid ────────────────────────────
+
+/// G6 (P27): Only whitelisted `convergence_mode` combinations are allowed.
+///
+/// The `ConvergenceConfig` docs define five valid modes:
+/// - `"gap"`: gap convergence only
+/// - `"cauchy"`: Cauchy convergence only
+/// - `"calibration"`: calibration convergence only
+/// - `"gap_or_cauchy"`: gap or Cauchy
+/// - `"gap_or_cauchy_or_calibration"` (default): all three
+///
+/// An invalid combination (e.g., `"cauchy_or_calibration"` without gap, or a
+/// typo like `"gap_or_calibraton"`) would be silently accepted by the string
+/// `contains` checks in the convergence tracker but would not match any
+/// intended mode — the tracker might skip a signal the author intended to
+/// activate.
+///
+/// The empty string is also valid (legacy mode — uses threshold +
+/// convergence_field instead of Kata fields).
+#[test]
+fn convergence_mode_combinations_are_valid() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("registry/manifests");
+    if !dir.exists() {
+        eprintln!("{} not found — skipping test", dir.display());
+        return;
+    }
+
+    let valid_modes: HashSet<&str> = [
+        "",
+        "gap",
+        "cauchy",
+        "calibration",
+        "gap_or_cauchy",
+        "gap_or_cauchy_or_calibration",
+    ]
+    .into_iter()
+    .collect();
+
+    let mut errors = Vec::new();
+    let mut checked = 0;
+
+    for entry in walkdir::WalkDir::new(&dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "yaml") {
+            continue;
+        }
+        let yaml = std::fs::read_to_string(path).unwrap();
+        if !yaml.contains("\nmanifest:") && !yaml.starts_with("manifest:") {
+            continue;
+        }
+        let manifest = match load_manifest_from_yaml(&yaml) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let fname = path.file_name().unwrap().to_string_lossy();
+        let mode = &manifest.convergence.convergence_mode;
+        checked += 1;
+
+        if !valid_modes.contains(mode.as_str()) {
+            errors.push(format!(
+                "{fname}: convergence_mode='{}' is not a recognized combination (valid: {:?}) — the convergence tracker uses substring checks that may silently skip intended signals",
+                mode,
+                valid_modes
+            ));
+        }
+    }
+
+    eprintln!(
+        "convergence mode validation: {checked} manifests checked — {} errors",
+        errors.len()
+    );
+    for err in &errors {
+        eprintln!("  ERR: {err}");
+    }
+    assert!(
+        errors.is_empty(),
+        "{} invalid convergence_mode errors found:\n{}",
+        errors.len(),
+        errors.join("\n")
+    );
+}
+
+// ── G7: compute step input_mapping covers primitive inputs ─────────────────
+
+/// Required input keys for each compute primitive, derived from
+/// `dispatch_compute` in `compute.rs`. A step using a primitive must provide
+/// these keys in its `input_mapping` (or via agent-coordinated context, but
+/// the `input_mapping` is the declarative surface we can check).
+///
+/// Primitives not listed here either have no required inputs (e.g.,
+/// `swarm.second_order_monitor` defaults gracefully) or have complex input
+/// shapes (e.g., `swarm.converge_accumulate`) where most fields are optional.
+/// We only check primitives with a clear required-input contract.
+fn required_inputs_for_primitive(compute_ref: &str) -> Option<&'static [&'static str]> {
+    match compute_ref {
+        "calibrate_from_fermi" => Some(&["questions"]),
+        "outside_view_adjustment" => Some(&["base_rate", "inside_estimate", "reference_count"]),
+        "bayesian_update" => Some(&["prior", "evidence_likelihood", "evidence_base_rate"]),
+        "combine_tree_probabilities" => Some(&["nodes", "topological_order", "outcome_id"]),
+        "apply_calibration_adjustment" => Some(&["prior", "overconfidence_bias"]),
+        "brier_score" => Some(&["probability", "outcome_occurred"]),
+        "brier_score_multi" => Some(&["probabilities", "outcomes"]),
+        "brier_interpretation" => Some(&["score"]),
+        "kata.object_gap" => Some(&["current_artifacts", "target_artifacts"]),
+        "kata.process_gap" => Some(&["current_procedure", "target_procedure"]),
+        "kata.hypotenuse" => Some(&["object_gap", "process_gap"]),
+        // kata.prediction_vs_result reads nested fields (prediction.confidence,
+        // result.occurred/result.actual_delta) — the top-level keys are
+        // "prediction" and "result".
+        "kata.prediction_vs_result" => Some(&["prediction", "result"]),
+        // swarm.converge_accumulate: only "d" is required (all others default).
+        "swarm.converge_accumulate" => Some(&["d"]),
+        // lisp.eval: "form" is required (E12 checks this). "env" is optional.
+        "lisp.eval" => Some(&["form"]),
+        // shell.exec: "command" is required. "cwd" is optional.
+        "shell.exec" => Some(&["command"]),
+        // listening.* and swarm.filter_proposed_moves: not in dispatch_compute
+        // or have complex optional shapes — skip (no required-input contract
+        // we can statically check).
+        _ => None,
+    }
+}
+
+/// G7 (P28): A `compute` step's `input_mapping` must provide all required
+/// input keys for the primitive it invokes.
+///
+/// A missing required input fails at compute time with an error like
+/// "compute 'brier_score': missing or non-numeric input 'probability'". This
+/// is a runtime failure that is invisible at manifest-load time — the
+/// manifest loads successfully, but the cascade fails mid-execution.
+///
+/// This test checks that the `input_mapping` JSON object contains the
+/// required keys for each primitive. The values may be Jinja expressions
+/// (e.g., `"{{ step_3_result.score }}"`) — we check key presence, not value
+/// validity.
+#[test]
+fn compute_step_input_mapping_covers_primitive_inputs() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("registry/manifests");
+    if !dir.exists() {
+        eprintln!("{} not found — skipping test", dir.display());
+        return;
+    }
+
+    let mut errors = Vec::new();
+    let mut checked = 0;
+
+    for entry in walkdir::WalkDir::new(&dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "yaml") {
+            continue;
+        }
+        let yaml = std::fs::read_to_string(path).unwrap();
+        if !yaml.contains("\nmanifest:") && !yaml.starts_with("manifest:") {
+            continue;
+        }
+        let manifest = match load_manifest_from_yaml(&yaml) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let fname = path.file_name().unwrap().to_string_lossy();
+
+        for step in &manifest.steps {
+            if step.action != "compute" {
+                continue;
+            }
+            let Some(ref compute_ref) = step.compute_ref else {
+                continue;
+            };
+            let Some(required) = required_inputs_for_primitive(compute_ref) else {
+                continue; // No static contract for this primitive.
+            };
+
+            let mapping_keys: HashSet<String> = step
+                .input_mapping
+                .as_ref()
+                .and_then(|v| v.as_object())
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default();
+
+            checked += 1;
+
+            for req in required {
+                if !mapping_keys.contains(*req) {
+                    errors.push(format!(
+                        "{fname} step {}: compute_ref='{}' requires input '{}' but input_mapping does not provide it (available keys: {:?})",
+                        step.ordinal,
+                        compute_ref,
+                        req,
+                        mapping_keys
+                    ));
+                }
+            }
+        }
+    }
+
+    eprintln!(
+        "compute input_mapping check: {checked} compute steps checked — {} errors",
+        errors.len()
+    );
+    for err in &errors {
+        eprintln!("  ERR: {err}");
+    }
+    assert!(
+        errors.is_empty(),
+        "{} compute input_mapping errors found:\n{}",
+        errors.len(),
+        errors.join("\n")
+    );
+}
+
+// ── G8: shell.exec only in skill-category manifests ────────────────────────
+
+/// G8 (P28): `shell.exec` is only used in `skill`-category manifests.
+///
+/// The `compute.rs` docs state: "The caller must gate `shell.exec` to
+/// `category: skill` manifests only." This is a security gate —
+/// `shell.exec` runs arbitrary shell commands, and infrastructure manifests
+/// (if they existed) would run without human review. The
+/// `VALID_CATEGORIES` test in `manifest_compliance.rs` rejects non-`skill`
+/// manifests entirely, but doesn't test the `shell.exec` gate in isolation.
+///
+/// This test verifies that no manifest using `shell.exec` has a non-`skill`
+/// category. It's a belt-and-suspenders check: if a future change relaxes
+/// the category restriction, this test catches `shell.exec` usage in
+/// non-skill manifests before they ship.
+#[test]
+fn shell_exec_only_in_skill_category_manifests() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("registry/manifests");
+    if !dir.exists() {
+        eprintln!("{} not found — skipping test", dir.display());
+        return;
+    }
+
+    let mut errors = Vec::new();
+    let mut checked = 0;
+
+    for entry in walkdir::WalkDir::new(&dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "yaml") {
+            continue;
+        }
+        let yaml = std::fs::read_to_string(path).unwrap();
+        if !yaml.contains("\nmanifest:") && !yaml.starts_with("manifest:") {
+            continue;
+        }
+        let manifest = match load_manifest_from_yaml(&yaml) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let fname = path.file_name().unwrap().to_string_lossy();
+
+        let uses_shell_exec = manifest
+            .steps
+            .iter()
+            .any(|s| s.compute_ref.as_deref() == Some("shell.exec"));
+
+        if uses_shell_exec {
+            checked += 1;
+            if !manifest.is_skill() {
+                errors.push(format!(
+                    "{fname}: uses shell.exec but category='{}' (must be 'skill' — shell.exec runs arbitrary commands and requires human review)",
+                    manifest.category.as_deref().unwrap_or("(none)")
+                ));
+            }
+        }
+    }
+
+    eprintln!(
+        "shell.exec category gate: {checked} manifests using shell.exec checked — {} errors",
+        errors.len()
+    );
+    for err in &errors {
+        eprintln!("  ERR: {err}");
+    }
+    assert!(
+        errors.is_empty(),
+        "{} shell.exec category errors found:\n{}",
+        errors.len(),
+        errors.join("\n")
+    );
+}

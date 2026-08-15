@@ -5,6 +5,7 @@ contract:
     ticker: string
     company_board: object
     gorilla_verdict: object|null
+    gorilla_capability: object|null
     imagine_board: object
     rotated_board: object|null
     economic_trajectory: object|null
@@ -61,6 +62,15 @@ The Business Franchise pillar MUST reflect this rotated competitive framing, not
 ```json
 {{ gorilla_verdict | tojson }}
 ```
+
+{% if gorilla_capability %}
+## GORILLA Capability Assessment (from gorilla-capability-reason adapter, v0.36.0)
+
+```json
+{{ gorilla_capability | tojson }}
+```
+If the capability assessment has maturity_blocks, the GORILLA verdict's scores for those dimensions are not credible — they were nil'd by the lisp.eval scoring step. The thesis rationale must note this: a GORILLA verdict based on fewer than 4 credible dimensions is weaker than one based on all 4.
+{% endif %}
 
 ## Imagine Board (from IMAGINE agent — anchored on economic trajectory)
 

@@ -26,9 +26,9 @@ The convergent pattern: **monotone capability sets bounded by a floor and a
 ceiling, where authority may only narrow — never widen — without re-
 authorization.** This is what makes the lineages composable instead of competing.
 
-## Three capability domains
+## Three capability domains (four with skill composition)
 
-The reasoner distinguishes three domains, each with its own exemplar tradition:
+The reasoner distinguishes four domains, each with its own exemplar tradition:
 
 ### 1. Psychological capabilities (Dunning)
 
@@ -99,6 +99,33 @@ distributed systems, demonstrating that object-capability security scales to
 production systems — the reasoner's registry and token model follow this
 precedent.
 
+### 4. Skill composition capabilities (kask co-evolution)
+
+The kask skill system itself is a capability system. Five composition
+principles discovered through the co-evolution of skills and MCP tools
+(Phase 1–3) define the floor/ceiling/maturity-gate thresholds:
+
+- **Determinism frontier** (floor): push deterministic work to `execute`/
+  `compute`, use `select` only for LLM judgment.
+- **Persistence-grounded learning** (floor): read prior outputs from MCP
+  persistence before the cascade starts.
+- **Failure surfacing** (floor): every `execute` step has `on_failure: report`.
+- **Lisp scaffold** (maturity gate): `lisp.eval` checks structural invariants
+  after LLM-generated structured output.
+- **Co-evolution loop** (maturity gate): `on_failure: report` signals flow to
+  the Curator; new MCP capabilities are adopted via `execute` steps.
+
+For a capabilities reasoner:
+- **Floor** = a skill without these patterns is deprived — it pays LLM costs
+  for deterministic work, cannot learn from past performance, and silently
+  drops failures.
+- **Maturity gate** = the lisp scaffold and co-evolution loop are Level 2/3
+  capabilities that require the floor capabilities as prerequisites.
+- **Self-assessment gap** (Dunning): a skill that lacks the determinism
+  frontier cannot diagnose its own inefficiency — it doesn't know which
+  `select` steps could be `execute` steps. The reasoner must detect this
+  externally by analyzing the manifest.
+
 ## ML capability evaluation lineage
 
 The ML lineage provides the **measurement** layer — how to elicit and quantify
@@ -121,7 +148,9 @@ capabilities:
 - Assess an ML model's capabilities against a safety registry (floor/ceiling per capability)
 - Evaluate an agent's tool-use capabilities against an OCAP capability registry
 - Audit a system's human-impact capabilities against Nussbaum's 10 dimensions
-- Determine whether a capability restriction is warranted (Akselrod three-part test)
+- Evaluate the kask skill system's composition quality against the five composition principles (determinism frontier, persistence-grounded learning, failure surfacing, lisp scaffold, co-evolution loop)
+- Determine whether a skill manifest is below floor on composition principles (deprivation diagnosis)
+- Determine whether capability restrictions are warranted (Akselrod three-part test)
 - Check whether capability prerequisites are satisfied before granting a new capability (CMMI maturity gate)
 - Assess whether capability verdicts are stable across metric choices (mirage check)
 - Detect Dunning-Kruger gaps: systems that cannot self-assess a capability they lack

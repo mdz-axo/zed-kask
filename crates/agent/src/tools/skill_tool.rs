@@ -2224,10 +2224,10 @@ mod tests {
         }));
         let (event_stream, _rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
-        let output = task.await.unwrap();
+        let output = task.await;
 
         match output {
-            RecordSkillFeedbackOutput::Error { error } => {
+            Err(RecordSkillFeedbackOutput::Error { error }) => {
                 assert!(
                     error.contains("not configured"),
                     "error should mention executor not configured: {error}"
@@ -2283,10 +2283,10 @@ mod tests {
         sender.send_full(json!({ "skill_name": "test-skill" }));
         let (event_stream, _rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.run(input, event_stream, cx));
-        let output = task.await.unwrap();
+        let output = task.await;
 
         match output {
-            ValidateGoldenOutputsOutput::Error { error } => {
+            Err(ValidateGoldenOutputsOutput::Error { error }) => {
                 assert!(
                     error.contains("not configured"),
                     "error should mention executor not configured: {error}"
