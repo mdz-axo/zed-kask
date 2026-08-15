@@ -1426,6 +1426,11 @@ mod tests {
             // skill_bundle delegates to the manifest executor (same as skill);
             // permission checks happen inside the composed cascade's tool calls.
             "skill_bundle",
+            // run_pipeline executes a pipeline manifest via the same
+            // SkillManifestExecutor as skill/skill_bundle. The manifest path
+            // is contained via find_project_path (same as ReadFileTool), and
+            // permission checks happen inside the cascade's tool calls.
+            "run_pipeline",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

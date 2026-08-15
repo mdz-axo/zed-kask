@@ -84,6 +84,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Error classification must be per-variant, not blanket `McpToolError::internal`.
 * Tool inputs accepting arbitrary JSON must use `AnyJsonValue`, not `serde_json::Value` (schemars renders `Value` as bare `true`, which breaks strict-schema providers).
 * Live-mutation probe suites must run with `--test-threads=1` and keep probes self-contained.
+* Missing credentials must surface as `McpToolError::permission_denied` with the env var named in the message, not as `unavailable`, `invalid_argument`, `failed_precondition`, or a silent fallback. Canonical pattern: read credential from `ctx.credentials.get("ENV_VAR")` → if `None`, return a typed error → map to `permission_denied` at the tool boundary. See `hkask-mcp-swarm/src/abw_client.rs:require_auth` for the reference implementation. A missing credential is an authorization failure, not a transient unavailability or a bad argument. Silent fallbacks (empty results, in-memory DB, skipped env injection) are broken feedback loops — the operator cannot distinguish "not configured" from "no results" or "provider down."
 
 ## Dead code patterns
 

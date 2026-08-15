@@ -55,6 +55,14 @@ pub enum InferenceError {
     CircuitOpen(String),
     #[error("Vision inference unsupported: {0}")]
     VisionUnsupported(String),
+    /// A required provider credential or configuration is missing (e.g. an
+    /// API key env var is unset, or no provider is registered for the op).
+    /// This is a configuration/authorization failure, not a transient
+    /// outage — callers map it to `permission_denied` rather than
+    /// `unavailable`. Replaces string-matching on "api key not configured"
+    /// / "no provider configured" in downstream MCP servers.
+    #[error("Not configured: {0}")]
+    NotConfigured(String),
 }
 
 /// Token usage statistics

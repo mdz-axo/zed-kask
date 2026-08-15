@@ -52,7 +52,7 @@ steps:
     renderer: minijinja
     template_ref: grill-me/grill-me-escalate
     gas_cap: 3000
-    timeout_seconds: 30
+    timeout_seconds: 120
     input_mapping:
       topic: "{{ task | default(topic) }}"
       current_level: "{{ start_level | default(1) }}"
