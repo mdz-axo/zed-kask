@@ -101,6 +101,8 @@ dispatches only canonical actions; non-canonical actions cause runtime errors.
 | E12 | lisp.eval form present | Every step with `action: compute` and `compute_ref: lisp.eval` has a non-empty `form` string in `input_mapping`. The `form` is the Lisp source the interpreter evaluates; a missing or empty `form` causes a runtime `Manifest` error (`compute 'lisp.eval': missing 'form' string`). Verify the `form` parses by checking it is a non-empty YAML string. | Critical |
 | E13 | lisp.eval step_N_result references backward | Every `{% raw %}{{ step_N_result ... }}{% endraw %}` Jinja expression inside a `lisp.eval` step's `input_mapping.env` references an ordinal `N` strictly less than the current step's ordinal. Forward references (`step_5_result` in step 3) are silent failures — the binding resolves to `null`/`undefined` with no error, and the Lisp form receives a missing value. This check catches the class of bug where a manifest author copies a binding from a later step. Also check `.field` access on `step_N_result`: if step N's result is a bare list (common for `lisp.eval` defect-list outputs), `step_N_result.field` is always `undefined` — the binding should be `step_N_result` directly, with any field access done in Lisp via `assoc`. | High |
 | E14 | lisp.eval form syntax dry-run | For every `lisp.eval` step, the `form` string is valid Lisp syntax per the `hkask_lisp` interpreter. This is a dry-run parse check (the interpreter's `parse()` function succeeds on the form). Catches unbalanced parentheses, invalid boolean literals (`#t`/`#f` instead of `true`/`false`/`nil`), and use of unsupported builtins (`eval`, `defmacro`). The supported special forms are: `quote`, `if`, `let`, `lambda`, `define`, `begin`, `and`, `or`, `not`. The supported builtins are: `+`, `-`, `*`, `/`, `=`, `!=`, `<`, `<=`, `>`, `>=`, `car`, `cdr`, `cons`, `list`, `length`, `nth`, `reverse`, `is_null`, `numberp`, `assoc`, `append`, `string=`, `concat`. `=` is numeric-only; string equality uses `string=`. String concatenation uses `concat`. List concatenation uses `append`. | High |
+| E15 | on_failure config on execute steps | Every `action: execute` step should have an `on_failure` config with `action: report` (wires `curator_report_skill_use_issue`) and a non-empty `resume` text. Steps without `on_failure` silently propagate errors as `TemplateError` — the operator sees `ExitKind::Escalated` but not the resume instruction. The `report` action surfaces the failure to the Curator before escalating. | Medium |
+| E16 | execute step mcp field references known tool | Every `action: execute` step's `mcp:` field references a tool in the known MCP tool list (see `manifest_load_validation.rs` `KNOWN_MCP_TOOLS`). Unknown tool names cause runtime `TemplateError::Manifest` errors. | Critical |
 
 ### Canonical Action Semantics (Pattern A type system)
 
@@ -136,7 +138,7 @@ Respond with a JSON object:
   "validation_results": [
     {
       "skill_name": "name of validated skill",
-      "check_id": "R1|R2|...|Z1|Z2|...|X1|X2|...|E1|E2|...|E14",
+      "check_id": "R1|R2|...|Z1|Z2|...|X1|X2|...|E1|E2|...|E16",
       "check_name": "Human-readable check name",
       "result": "pass|fail",
       "detail": "Specific evidence for pass or fail",
@@ -167,11 +169,11 @@ Respond with a JSON object:
 
 - Every check must be evaluated for every targeted skill — no omissions.
 - Registry checks (R1–R12) are mandatory. Companion checks (Z1–Z8) are secondary.
-- Executor compliance checks (E1–E14) are mandatory for process manifests.
+- Executor compliance checks (E1–E16) are mandatory for process manifests.
 - Fail results must include specific evidence.
 - Fix suggestions must be actionable.
 - Registry check failures (R1–R5) are always `critical`.
-- Executor compliance failures (E1, E2, E4, E5, E6, E7, E9, E11, E12) are always `critical`.
+- Executor compliance failures (E1, E2, E4, E5, E6, E7, E9, E11, E12, E16) are always `critical`.
 - Safety check failures (Z5, Z6, Z7) are always `high`.
 - Missing SKILL.md (Z1 absent) is `info` — not a failure.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).

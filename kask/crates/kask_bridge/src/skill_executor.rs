@@ -60,7 +60,7 @@ pub trait ProfileResolver: Send + Sync {
 
 /// Result of a single golden-output fixture validation. Returned by
 /// `BridgeManifestExecutor::validate_golden_outputs`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct GoldenOutputResult {
     /// Index of the fixture in the manifest's `golden_outputs` list.
     pub fixture_index: usize,
@@ -198,7 +198,7 @@ impl BridgeManifestExecutor {
     /// Skills without `golden_outputs` in their manifest return an empty
     /// report (not an error) — golden-output validation is opt-in and only
     /// meaningful for skills with deterministic-ish output contracts.
-    pub async fn validate_golden_outputs(
+    pub async fn validate_golden_outputs_inner(
         &self,
         skill_name: &str,
     ) -> Result<Vec<GoldenOutputResult>, String> {
@@ -1253,6 +1253,12 @@ steps:
             .record_skill_span(skill_name, "operator_feedback", payload)
             .await;
         Ok(())
+    }
+
+    async fn validate_golden_outputs(&self, skill_name: &str) -> Result<String, String> {
+        let results = self.validate_golden_outputs_inner(skill_name).await?;
+        serde_json::to_string(&results)
+            .map_err(|e| format!("Failed to serialize golden-output results: {e}"))
     }
 }
 

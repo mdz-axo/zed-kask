@@ -343,12 +343,19 @@ impl BundleManifest {
         }
         let mut ordinals: Vec<u32> = self.steps.iter().map(|s| s.ordinal).collect();
         ordinals.sort();
+        // Ordinals must be sequential. Two valid starting points:
+        //   - 0 (pre-processing step pattern, e.g., forecast_list, codegraph_stats)
+        //   - 1 (standard sequential pattern)
+        // Once the starting ordinal is determined, all subsequent ordinals must
+        // be consecutive (no gaps, no duplicates).
+        let start = ordinals.first().copied().unwrap_or(1);
+        let expected_start = if start == 0 { 0 } else { 1 };
         for (i, expected) in ordinals.iter().enumerate() {
-            if *expected != (i as u32) + 1 {
+            let want = expected_start + (i as u32);
+            if *expected != want {
                 errors.push(format!(
                     "Step ordinals not sequential: expected {}, found {}",
-                    (i as u32) + 1,
-                    expected
+                    want, expected
                 ));
                 break;
             }
@@ -461,6 +468,105 @@ template_ref: test.j2
             step.timeout_seconds, DEFAULT_STEP_TIMEOUT_SECONDS,
             "timeout_seconds must default to {DEFAULT_STEP_TIMEOUT_SECONDS}, not 0 — \
              a zero timeout breaks inference calls in the skill cascade"
+        );
+    }
+
+    /// Ordinals starting at 0 (pre-processing step pattern) must pass
+    /// validation. Four production manifests use this pattern:
+    /// company-research-flash, metacognition, bug-hunt, diagnose.
+    #[test]
+    fn validate_accepts_ordinal_zero_start() {
+        let yaml = r#"
+manifest:
+  id: test-ordinal-zero
+  category: skill
+  name: Test
+  description: test
+  functional_role: flowdef
+  version: 1.0.0
+  editor: test
+  visibility: Public
+steps:
+  - ordinal: 0
+    action: execute
+    description: pre-processing
+    mcp: test_tool
+  - ordinal: 1
+    action: select
+    description: main
+    renderer: minijinja
+    template_ref: test/template
+convergence:
+  convergence_mode: ""
+  max_iterations: 1
+  min_iterations: 1
+  on_not_reached: abort
+gas:
+  cap: 50000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+rjoule:
+  cap: 1
+  alert_threshold: 0.8
+  hard_limit: true
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(yaml).expect("manifest should parse");
+        let result = manifest.validate();
+        assert!(
+            result.errors.iter().all(|e| !e.contains("ordinal")),
+            "ordinal-0 start should not produce ordinal errors, got: {:?}",
+            result.errors
+        );
+    }
+
+    /// Ordinals with gaps must still fail validation.
+    #[test]
+    fn validate_rejects_ordinal_gaps() {
+        let yaml = r#"
+manifest:
+  id: test-ordinal-gap
+  category: skill
+  name: Test
+  description: test
+  functional_role: flowdef
+  version: 1.0.0
+  editor: test
+  visibility: Public
+steps:
+  - ordinal: 1
+    action: select
+    description: first
+    renderer: minijinja
+    template_ref: test/template
+  - ordinal: 3
+    action: select
+    description: gap
+    renderer: minijinja
+    template_ref: test/template
+convergence:
+  convergence_mode: ""
+  max_iterations: 1
+  min_iterations: 1
+  on_not_reached: abort
+gas:
+  cap: 50000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+rjoule:
+  cap: 1
+  alert_threshold: 0.8
+  hard_limit: true
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(yaml).expect("manifest should parse");
+        let result = manifest.validate();
+        assert!(
+            result.errors.iter().any(|e| e.contains("ordinal")),
+            "ordinal gap (1→3) should produce an error, got: {:?}",
+            result.errors
         );
     }
 }

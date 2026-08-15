@@ -60,7 +60,7 @@ registry with a `template_type` discriminator per architecture v0.22.0
 | `StepGraph` struct | `kask/crates/hkask-templates/src/step_graph.rs:103` |
 | `StepNode` struct | `kask/crates/hkask-templates/src/step_graph.rs:79` |
 | `ControlFlow` enum | `kask/crates/hkask-templates/src/step_graph.rs:51` |
-| `ExitKind` enum | `kask/crates/hkask-templates/src/step_graph.rs:65` |
+| `ExitKind` enum | `kask/crates/hkask-templates/src/step_graph.rs:65` (re-exported at `hkask_templates.rs:38` as `pub use step_graph::ExitKind`) |
 | `StepId` type alias | `kask/crates/hkask-templates/src/step_graph.rs:23` |
 | `ENTRY` const | `kask/crates/hkask-templates/src/step_graph.rs:26` |
 | `MAX_STEPS` const | `kask/crates/hkask-templates/src/step_graph.rs:41` |
