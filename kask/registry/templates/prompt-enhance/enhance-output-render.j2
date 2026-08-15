@@ -87,31 +87,31 @@ type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }
 {%- for finding in sorted_findings -%}
   {%- set _ = findings_table_rows.append("| " ~ (finding.constraint_force | default("Hypothesis")) ~ " | " ~ (finding.lens | default("unspecified")) ~ " | " ~ (finding.finding | default("unspecified")) ~ " | " ~ (finding.addressed | default(false) | string) ~ " |") -%}
 {%- endfor -%}
-{%- set findings_table = "| Force | Lens | Finding | Addressed |\n|-------|------|---------|----------|\n" ~ findings_table_rows.join("\n") -%}
+{%- set findings_table = "| Force | Lens | Finding | Addressed |\n|-------|------|---------|----------|\n" ~ (findings_table_rows | join("\n")) -%}
 
 {# Grill ratings list #}
 {%- set grill_lines = [] -%}
 {%- for rating in grill_ratings -%}
   {%- set _ = grill_lines.append("- **" ~ (rating.area | default("unknown")) ~ "** — " ~ (rating.rating | default("unrated")) ~ ": " ~ (rating.evidence | default("no evidence"))) -%}
 {%- endfor -%}
-{%- set grill_ratings_text = grill_lines.join("\n") if grill_lines else "_Skipped (low tier or no verify step)._" -%}
+{%- set grill_ratings_text = (grill_lines | join("\n")) if grill_lines else "_Skipped (low tier or no verify step)." -%}
 
 {# Mutations applied list #}
 {%- set mutation_lines = [] -%}
 {%- for mutation in mutations_applied -%}
   {%- set _ = mutation_lines.append("- **" ~ (mutation.finding | default("unspecified")) ~ "** → " ~ (mutation.mutation | default("unspecified")) ~ " _(" ~ (mutation.section | default("unspecified")) ~ ")_") -%}
 {%- endfor -%}
-{%- set mutations_text = mutation_lines.join("\n") if mutation_lines else "_None._" -%}
+{%- set mutations_text = (mutation_lines | join("\n")) if mutation_lines else "_None._" -%}
 
 {# Deferred findings list #}
 {%- set deferred_lines = [] -%}
 {%- for deferred in mutations_deferred -%}
   {%- set _ = deferred_lines.append("- " ~ (deferred.finding | default("unspecified")) ~ " — " ~ (deferred.reason | default("Hypothesis-tier — needs user verification"))) -%}
 {%- endfor -%}
-{%- set deferred_text = deferred_lines.join("\n") if deferred_lines else "_None._" -%}
+{%- set deferred_text = (deferred_lines | join("\n")) if deferred_lines else "_None._" -%}
 
 {# Schema defects (from step 3 deterministic check) #}
-{%- set defects_text = schema_defects | join(", ") if schema_defects and schema_defects | length > 0 else "_None._" -%}
+{%- set defects_text = (schema_defects | join(", ")) if schema_defects and (schema_defects | length) > 0 else "_None._" -%}
 
 {# ── Assemble the change log ── #}
 {%- set change_log_md -%}
@@ -152,7 +152,7 @@ type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }
 {# ── Emit the structured result as JSON (the render step's stored value) ── #}
 {
   "delivered_output": {{ delivered_output | tojson }},
-  "output_path_written": {{ output_path_resolved if output_format_resolved == "file" or output_format_resolved == "both" else "" | tojson }},
+  "output_path_written": {{ (output_path_resolved if output_format_resolved == "file" or output_format_resolved == "both" else "") | tojson }},
   "change_log": {
     "summary": {{ summary_line | tojson }},
     "audit_findings_table": {{ findings_table | tojson }},

@@ -1072,10 +1072,19 @@ steps:
 /// `Value::Null`.
 fn extract_final_step_result(outcome: &CascadeOutcome) -> String {
     let value = hkask_templates::extract_final_step_result(outcome);
-    if value.is_null() {
-        serde_json::to_string(&outcome.context.materialize()).unwrap_or_default()
-    } else {
-        value.to_string()
+    match value {
+        // F1: `render` steps store Value::String(rendered_text). Calling
+        // `to_string()` on Value::String produces `"s"` (quoted + escaped),
+        // double-encoding the output. Unwrap to the inner string so the
+        // agent sees the raw rendered text (JSON or prose) directly.
+        // `select` steps store Value::Object(parsed_json), which falls
+        // through to `other.to_string()` producing the JSON string.
+        Value::String(s) => s,
+        Value::Null => {
+            serde_json::to_string(&outcome.context.materialize())
+                .unwrap_or_default()
+        }
+        other => other.to_string(),
     }
 }
 
@@ -1171,6 +1180,10 @@ mod tests {
     /// `extract_final_step_result` now selects `last_result_step`'s value from
     /// the typed `CascadeOutcome`. Deterministic by construction (no randomized
     /// HashMap order). Pins that contract + the null→full-context fallback.
+    ///
+    /// F1: `Value::String` is unwrapped to the inner string (not quoted),
+    /// so `render` steps that store `Value::String(rendered_text)` return
+    /// the raw text, not a double-quoted/escaped version.
     #[test]
     fn extract_final_step_result_returns_last_result_step() {
         let mut ctx = StepContext::new(std::collections::HashMap::new());
@@ -1180,8 +1193,23 @@ mod tests {
         let outcome = outcome_with_last(ctx, Some(2));
         let out = extract_final_step_result(&outcome);
         assert_eq!(
-            out, "\"third\"",
-            "must return last_result_step's value (step_id 2 = ordinal 3)"
+            out, "third",
+            "must return last_result_step's inner string value (step_id 2 = ordinal 3), not the double-quoted form"
+        );
+    }
+
+    /// F1: `Value::String` unwrapping must not affect `Value::Object` —
+    /// `select` steps store parsed JSON objects, which must still serialize
+    /// to a JSON string via `to_string()`.
+    #[test]
+    fn extract_final_step_result_serializes_object_not_string() {
+        let mut ctx = StepContext::new(std::collections::HashMap::new());
+        ctx.store_result(0, 1, json!({"answer": 42}));
+        let outcome = outcome_with_last(ctx, Some(0));
+        let out = extract_final_step_result(&outcome);
+        assert_eq!(
+            out, "{\"answer\":42}",
+            "Value::Object must serialize to JSON string, not be unwrapped"
         );
     }
 
