@@ -214,7 +214,7 @@ steps:
     input_mapping:
       workspace_id: "{{ swarm_id | default(null) }}"
     on_failure:
-      action: escalate
+      action: report
       resume: >
         swarm_get_swarm failed — the hkask-mcp-swarm server may be down or
         the ABW API key may be missing. Restart the server via
@@ -236,7 +236,7 @@ steps:
     input_mapping:
       swarm_id: "{{ swarm_id }}"
     on_failure:
-      action: escalate
+      action: report
       resume: >
         swarm_get_local_swarm failed — the hkask-mcp-swarm server may be down
         or the swarm_id may not exist. Restart the server via
@@ -396,7 +396,7 @@ steps:
     input_mapping:
       workspace_id: "{{ swarm_id | default(null) }}"
     on_failure:
-      action: escalate
+      action: report
       resume: >
         swarm_get_swarm failed during CHECK — the hkask-mcp-swarm server may
         be down. Restart the server via sync_kask_mcp_servers and re-invoke.
@@ -416,7 +416,7 @@ steps:
     input_mapping:
       swarm_id: "{{ swarm_id }}"
     on_failure:
-      action: escalate
+      action: report
       resume: >
         swarm_get_local_swarm failed during CHECK — the hkask-mcp-swarm
         server may be down or the swarm_id may not exist. Restart the server

@@ -445,7 +445,7 @@ impl StepMachine {
                 Err(crate::ports::TemplateError::Manifest(ref msg))
                     if attempt < max_retries
                         && self.error_handling.on_parse_failure == "retry"
-                        && is_parse_failure(msg) =>
+                        && is_parse_failure(msg.as_str()) =>
                 {
                     attempt += 1;
                     tracing::warn!(

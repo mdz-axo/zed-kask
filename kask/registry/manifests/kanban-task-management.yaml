@@ -218,7 +218,7 @@ steps:
     input_mapping:
       name: "{{ step_2_result.project_name | default('Untitled Project') }}"
     on_failure:
-      action: escalate
+      action: report
       resume: >
         kanban_board_create failed — the kata-kanban MCP server may be down.
         Restart the server via sync_kask_mcp_servers and re-invoke. The
@@ -263,7 +263,7 @@ steps:
       gas_budget: "{{ step_7_result.gas_budget | default(null) }}"
       rjoule_budget: "{{ step_7_result.rjoule_budget | default(null) }}"
     on_failure:
-      action: escalate
+      action: report
       resume: >
         kanban_task_spawn failed — the kata-kanban MCP server may be down or
         the task_id may not exist. Restart the server via sync_kask_mcp_servers
@@ -305,7 +305,7 @@ steps:
       task_id: "{{ task_to_delegate.task_id | default('') }}"
       body: "{{ step_9_result.status_report | default(step_9_result | tojson) }}"
     on_failure:
-      action: escalate
+      action: report
       resume: >
         kanban_task_comment failed — the kata-kanban MCP server may be down.
         Restart the server via sync_kask_mcp_servers and re-invoke. The
@@ -330,7 +330,7 @@ steps:
     condition: "step_1_result.phase == 'operate'"
     input_mapping: {}
     on_failure:
-      action: escalate
+      action: report
       resume: >
         kanban_board_list failed — the kata-kanban MCP server may be down.
         Restart the server via sync_kask_mcp_servers and re-invoke.
@@ -350,7 +350,7 @@ steps:
     input_mapping:
       board_id: "{{ board_id | default('') }}"
     on_failure:
-      action: escalate
+      action: report
       resume: >
         kanban_task_list failed — the kata-kanban MCP server may be down or
         the board_id may not exist. Restart the server via sync_kask_mcp_servers

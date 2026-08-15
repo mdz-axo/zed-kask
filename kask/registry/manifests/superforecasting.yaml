@@ -185,7 +185,7 @@ steps:
       question: "{{ forecasting_question }}"
       limit: 5
     on_failure:
-      action: escalate
+      action: report
       resume: >
         market_match failed — the prediction-markets MCP server may be down or
         the base-events registry may be empty. Restart the server via
@@ -415,7 +415,7 @@ steps:
           update_count: 0
       outcomes: []
     on_failure:
-      action: escalate
+      action: report
       resume: >
         scenario_score failed to persist the forecast — the scenarios MCP
         server may be down or the forecast store may be unwritable. Restart
@@ -466,7 +466,7 @@ steps:
     input_mapping:
       subject: "{{ domain | default(null) }}"
     on_failure:
-      action: escalate
+      action: report
       resume: >
         scenario_calibration failed — the scenarios MCP server may be down or
         the forecast store may be corrupt. Restart the server via
