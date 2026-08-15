@@ -395,7 +395,9 @@ impl StepMachine {
         node: &crate::step_graph::StepNode,
         infra: &Infra,
     ) -> Result<crate::step_actions::Effect> {
-        let max_retries = if self.error_handling.on_timeout == "retry" {
+        let max_retries = if self.error_handling.on_timeout == "retry"
+            || self.error_handling.on_parse_failure == "retry"
+        {
             self.error_handling.max_retries
         } else {
             0
@@ -408,7 +410,9 @@ impl StepMachine {
                 Err(crate::ports::TemplateError::Timeout {
                     step_ordinal,
                     elapsed_seconds,
-                }) if attempt < max_retries => {
+                }) if attempt < max_retries
+                    && self.error_handling.on_timeout == "retry" =>
+                {
                     attempt += 1;
                     tracing::warn!(
                         target: "reg.skill.cascade.timeout_retry",
@@ -420,6 +424,33 @@ impl StepMachine {
                         "Step {} timed out after {}s — retrying (attempt {}/{}) after {}s backoff",
                         step_ordinal,
                         elapsed_seconds,
+                        attempt,
+                        max_retries,
+                        self.error_handling.retry_backoff_seconds,
+                    );
+                    if self.error_handling.retry_backoff_seconds > 0 {
+                        tokio::time::sleep(std::time::Duration::from_secs(
+                            self.error_handling.retry_backoff_seconds as u64,
+                        ))
+                        .await;
+                    }
+                    continue;
+                }
+                Err(crate::ports::TemplateError::Manifest(ref msg))
+                    if attempt < max_retries
+                        && self.error_handling.on_parse_failure == "retry"
+                        && is_parse_failure(msg) =>
+                {
+                    attempt += 1;
+                    tracing::warn!(
+                        target: "reg.skill.cascade.parse_failure_retry",
+                        step = node.ordinal,
+                        attempt,
+                        max_retries,
+                        backoff_seconds = self.error_handling.retry_backoff_seconds,
+                        error = %msg,
+                        "Step {} parse failure — retrying (attempt {}/{}) after {}s backoff",
+                        node.ordinal,
                         attempt,
                         max_retries,
                         self.error_handling.retry_backoff_seconds,
@@ -588,4 +619,16 @@ enum PassResult {
     Reenter(StepId),
     /// The pass hit an `Exit` — the cascade is done.
     Exit(ExitKind),
+}
+
+/// Check whether a `TemplateError::Manifest` message represents a parse
+/// failure that is eligible for retry under `on_parse_failure: retry`.
+/// Parse failures are transient — the model may emit valid JSON on retry.
+/// Non-parse `Manifest` errors (e.g. missing `mcp` reference, missing
+/// `template_ref`) are not eligible for retry — they are structural
+/// errors that will recur on every attempt.
+fn is_parse_failure(msg: &str) -> bool {
+    msg.contains("Failed to parse JSON response")
+        || msg.contains("returned empty output")
+        || msg.contains("truncated at max_tokens")
 }

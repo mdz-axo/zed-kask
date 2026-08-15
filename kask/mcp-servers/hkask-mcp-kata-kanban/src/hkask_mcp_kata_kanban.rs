@@ -26,7 +26,7 @@ pub use kata::{
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
-use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool_semantic};
+use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool_semantic, resolve_credential};
 use hkask_mcp_swarm::{
     LazyLocalSwarmRuntime, LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry,
 };
@@ -1521,8 +1521,49 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         );
                         default_path.to_string_lossy().to_string()
                     });
-                let db = if let Some(passphrase) = ctx.credentials.get("HKASK_DB_PASSPHRASE") {
-                    hkask_storage::open_or_repair(&kanban_db_path, passphrase)
+                // Resolve the DB passphrase through the full keystore chain:
+                //   1. `ctx.credentials` — populated by `build_mcp_server_env`
+                //      from `kask://credentials/hkask_db_passphrase` (governed
+                //      launch path).
+                //   2. `std::env::var` — direct env override (matches the
+                //      condenser's fallback at hkask_mcp_condenser.rs).
+                //   3. `resolve_credential` — bridges to the keychain key
+                //      `hkask-db-passphrase` that `provision_agent` writes to
+                //      (identity.rs). Without this third leg, governed launch
+                //      where `build_mcp_server_env` never populates
+                //      `ctx.credentials` (keychain entry
+                //      `kask://credentials/hkask_db_passphrase` absent because
+                //      `provision_agent` writes under a different key) silently
+                //      falls back to in-memory and loses all boards on restart.
+                let passphrase = ctx
+                    .credentials
+                    .get("HKASK_DB_PASSPHRASE")
+                    .cloned()
+                    .or_else(|| {
+                        std::env::var("HKASK_DB_PASSPHRASE")
+                            .ok()
+                            .filter(|value| !value.is_empty())
+                    })
+                    .or_else(|| {
+                        match resolve_credential("HKASK_DB_PASSPHRASE") {
+                            Ok(value) if !value.is_empty() => Some(value),
+                            Ok(_) => None,
+                            Err(error) => {
+                                tracing::warn!(
+                                    target: "hkask.mcp.kata_kanban",
+                                    %error,
+                                    "HKASK_DB_PASSPHRASE not found in credentials map, env, \
+                                     or keychain — falling back to in-memory mode. \
+                                     Kanban data will not persist across server restarts. \
+                                     Set HKASK_DB_PASSPHRASE or run provision_agent \
+                                     for encrypted persistent storage."
+                                );
+                                None
+                            }
+                        }
+                    });
+                let db = if let Some(passphrase) = passphrase {
+                    hkask_storage::open_or_repair(&kanban_db_path, &passphrase)
                         .map_err(|e| anyhow::anyhow!("{e}"))?
                 } else {
                     // No passphrase configured — fall back to in-memory mode.
@@ -1530,12 +1571,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     // public key provides zero confidentiality. In-memory mode
                     // loses persistence but matches the security posture of
                     // the curator and condenser servers.
-                    tracing::warn!(
-                        target: "hkask.mcp.kata_kanban",
-                        "HKASK_DB_PASSPHRASE not set — falling back to in-memory mode. \
-                         Kanban data will not persist across server restarts. \
-                         Set HKASK_DB_PASSPHRASE for encrypted persistent storage."
-                    );
                     hkask_storage::Database::in_memory()
                         .map_err(|e| anyhow::anyhow!("in-memory DB: {e}"))?
                 };

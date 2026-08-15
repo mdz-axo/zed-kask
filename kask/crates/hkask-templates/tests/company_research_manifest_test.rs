@@ -292,12 +292,13 @@ fn company_research_deep_manifest_parses() {
 #[test]
 fn company_research_deep_has_expected_step_count() {
     let manifest = load_named_manifest("company-research-deep");
-    // 1/2/3/4/5/6 (COMPANY) + 7/8 (GORILLA) + 9/10 (IMAGINE) +
-    // 11 (THESIS) + 12 (goal-analysis gate) + 13 (convergence) + 14 (loop) = 14 steps.
+    // 1/2/3/4/5/6 (COMPANY) + 7 (FALSTAFFIAN) + 8/9 (GORILLA) +
+    // 10 (scenario_build) + 11 (ECONOMIC TRAJECTORY) + 12 (IMAGINE) +
+    // 13 (THESIS) + 14 (goal-analysis gate) + 15 (convergence) + 16 (loop) = 16 steps.
     assert_eq!(
         manifest.steps.len(),
-        14,
-        "company-research-deep must have 14 steps, got {}",
+        16,
+        "company-research-deep must have 16 steps, got {}",
         manifest.steps.len()
     );
 }
@@ -335,12 +336,13 @@ fn company_research_deep_select_steps_have_template_refs() {
         .iter()
         .filter(|s| s.action == "select")
         .collect();
-    // 6 (company-8part) + 7 (gorilla-4dim) + 10 (imagine-longrange) +
-    // 11 (thesis-three-pillars) + 12 (goal-analysis/judge) = 5 select steps.
+    // 6 (company-8part) + 7 (falstaffian-competitive-rotation) + 8 (gorilla-4dim) +
+    // 12 (imagine-longrange) + 13 (thesis-three-pillars) + 14 (goal-analysis/judge)
+    // + 11 (economic-trajectory) = 7 select steps.
     assert_eq!(
         select_steps.len(),
-        5,
-        "expected 5 select steps, got {}",
+        7,
+        "expected 7 select steps, got {}",
         select_steps.len()
     );
     for step in &select_steps {

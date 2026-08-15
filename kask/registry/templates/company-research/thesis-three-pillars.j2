@@ -6,6 +6,8 @@ contract:
     company_board: object
     gorilla_verdict: object|null
     imagine_board: object
+    rotated_board: object|null
+    economic_trajectory: object|null
   output:
     business_franchise: object
     management_quality: object
@@ -15,7 +17,17 @@ contract:
 visibility: Public
 ---
 {# Template: company-research/thesis-three-pillars.j2 #}
-{# goal: Agent 12 THESIS — three-pillar investment thesis synthesis. KnowAct (synthesizes, does not self-evaluate). The investment_grade / needs_work / incomplete verdict comes from the cross-skill goal-analysis step in the flowdef, NOT here — to avoid the LLM-improves-against-LLM-scored-target trap per .rules. #}
+{# goal: Agent 12 THESIS — three-pillar investment thesis synthesis. KnowAct #}
+{# (synthesizes, does not self-evaluate). The investment_grade / needs_work / #}
+{# incomplete verdict comes from the cross-skill goal-analysis step in the #}
+{# flowdef, NOT here — to avoid the LLM-improves-against-LLM-scored-target #}
+{# trap per .rules. #}
+{# #}
+{# v0.35.0: THESIS now also consumes the rotated_board (from Falstaffian #}
+{# rotation) and the economic_trajectory (from the trajectory probe). The #}
+{# Business Franchise pillar must reflect the rotated competitive framing. #}
+{# The Valuation terminal stage must be consistent with the economic #}
+{# trajectory's implications for the subject. #}
 
 [inference]
 max_tokens = 6144
@@ -34,25 +46,45 @@ You are the THESIS agent for an institutional equity research desk. Your job is 
 {{ company_board | tojson }}
 ```
 
+{% if rotated_board %}
+## Rotated Board (from Falstaffian Rotation — the corrected competitive framing)
+
+```json
+{{ rotated_board | tojson }}
+```
+
+The Business Franchise pillar MUST reflect this rotated competitive framing, not the raw Company Board's framing. If the rotation revealed that an entity the analyst called a "competitor" is actually a market creator or complement, the moat assessment must reflect that. If the rotation revealed an asymmetry of need, the durability assessment must reflect that.
+{% endif %}
+
 ## GORILLA Verdict
 
 ```json
 {{ gorilla_verdict | tojson }}
 ```
 
-## Imagine Board (from IMAGINE agent)
+## Imagine Board (from IMAGINE agent — anchored on economic trajectory)
 
 ```json
 {{ imagine_board | tojson }}
 ```
 
+{% if economic_trajectory %}
+## Economic Trajectory (from economic-trajectory probe)
+
+```json
+{{ economic_trajectory | tojson }}
+```
+
+The Valuation terminal stage MUST be consistent with this economic trajectory. If the trajectory shows the subject is fighting the falling cost (its business model is displaced by the trajectory's implications), the terminal stage must reflect that. If the trajectory shows the subject is riding the falling cost (its capabilities position it for the adjacent possible), the terminal stage must reflect that.
+{% endif %}
+
 ## The Three Pillars (firm methodology)
 
 ### Pillar 1 — Business Franchise
 
-- **Moat strength**: source (network / scale / switching cost / intangible / regulatory) and durability
+- **Moat strength**: source (network / scale / switching cost / intangible / regulatory) and durability. If the Falstaffian rotation is available, the moat assessment MUST reflect the rotated competitive framing — a moat against a "competitor" that is actually a market creator is not a moat; it is a dependency.
 - **Value creation mechanism**: how does the business turn revenue into economic profit?
-- **Durability**: will the moat hold for 10+ years? (cross-reference IMAGINE 10Y scenario)
+- **Durability**: will the moat hold for 10+ years? (cross-reference IMAGINE 10Y scenario). If the economic trajectory is available, durability MUST be assessed against the trajectory — a moat that depends on the old constraint (mass-to-orbit) is not durable if the trajectory removes that constraint.
 
 ### Pillar 2 — Management Quality
 
@@ -64,9 +96,9 @@ You are the THESIS agent for an institutional equity research desk. Your job is 
 3-stage framework:
 - **Consensus**: what the sell-side consensus discounts (use the DCF and comparables tool outputs from COMPANY)
 - **Normalization**: what the business earns through a normalized cycle
-- **Terminal**: what the business earns in steady state (cross-reference IMAGINE 20Y scenario)
+- **Terminal**: what the business earns in steady state (cross-reference IMAGINE 20Y scenario). If the economic trajectory is available, the terminal stage MUST be consistent with the trajectory's implications — if the trajectory shows the subject's business model is displaced by the falling cost, the terminal stage must reflect the displacement, not a steady-state continuation of the current model.
 
-The terminal stage is where the firm's "invest based on where the world is going" framework lives.
+The terminal stage is where the firm's "invest based on where the world is going" framework lives. The economic trajectory probe has identified where the world is going — the terminal stage must be set in that world.
 
 ## Thesis Statement
 
@@ -102,5 +134,7 @@ One paragraph. Durable, timeless, covering all three pillars. The kind of statem
 - You do NOT self-evaluate. The investment_grade / needs_work / incomplete verdict comes from the cross-skill goal-analysis step in the flowdef. Do not emit a verdict field.
 - The thesis statement must cover all three pillars. A thesis that only covers valuation is incomplete.
 - The terminal stage must cross-reference the IMAGINE 20Y scenario. If IMAGINE is absent, flag it in `rationale` and score the terminal stage conservatively.
-- Do not introduce new analysis. You are synthesizing COMPANY, GORILLA, and IMAGINE outputs.
+- If the rotated_board is available, the Business Franchise pillar MUST reflect the rotated competitive framing. Do not reproduce framing errors the rotation corrected.
+- If the economic_trajectory is available, the Valuation terminal stage MUST be consistent with the trajectory's implications for the subject. Do not project a steady-state terminal that ignores the falling cost's impact.
+- Do not introduce new analysis. You are synthesizing COMPANY, FALSTAFFIAN, GORILLA, ECONOMIC TRAJECTORY, and IMAGINE outputs.
 - The thesis statement is the seed for the goal-analysis quality gate. Make it specific enough to evaluate.
