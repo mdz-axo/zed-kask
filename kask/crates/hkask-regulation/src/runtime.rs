@@ -92,6 +92,18 @@ impl SkillSpanStore {
             .map(|deque| deque.iter().cloned().collect())
             .unwrap_or_default()
     }
+
+    /// Return the set of skill IDs that have at least one span for the given
+    /// phase. Used by the metacognition loop to enumerate skills for drift
+    /// detection without scanning all possible skill names.
+    pub(crate) fn skill_ids_with_phase(&self, phase: &str) -> Vec<String> {
+        self.spans
+            .keys()
+            .filter_map(|key| {
+                key.split_once(':').filter(|(_, p)| *p == phase).map(|(id, _)| id.to_string())
+            })
+            .collect()
+    }
 }
 
 // ── Variety counter infrastructure ────────────────────────────────────────
@@ -691,6 +703,14 @@ impl RegulationLedger {
     pub async fn query_skill_feedback(&self, skill_id: &str, phase: &str) -> Vec<StoredSkillSpan> {
         let state = self.state.read().await;
         state.skill_spans.query(skill_id, phase)
+    }
+
+    /// Return skill IDs that have at least one recorded span for the given
+    /// phase. Used by the metacognition loop to enumerate skills for drift
+    /// detection.
+    pub async fn skill_ids_with_feedback(&self, phase: &str) -> Vec<String> {
+        let state = self.state.read().await;
+        state.skill_spans.skill_ids_with_phase(phase)
     }
 
     /// Record a tool outcome (success or failure) for outcome quality tracking.

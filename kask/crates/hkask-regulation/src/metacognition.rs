@@ -114,6 +114,9 @@ pub enum EscalationTrigger {
     VarietyDeficit,
     CriticalAlerts,
     LowEffectiveness,
+    /// Operator feedback acceptance rate for a skill is declining over
+    /// the rolling window — the skill's outputs may be drifting.
+    FeedbackDrift { skill_id: String },
 }
 
 /// Metacognition loop configuration.
@@ -123,6 +126,16 @@ pub struct MetacognitionConfig {
     pub variety_deficit_threshold: u64,
     pub critical_alert_threshold: usize,
     pub effectiveness_floor: f64,
+    /// Minimum number of outcome spans a skill must have before drift
+    /// detection runs. Below this, there isn't enough data to trend.
+    pub feedback_drift_min_samples: usize,
+    /// Rolling window size (number of recent outcome spans) for computing
+    /// the current acceptance rate.
+    pub feedback_drift_window: usize,
+    /// If the current window's success rate drops below this fraction of
+    /// the prior window's rate, emit a FeedbackDrift alert. E.g. 0.8 means
+    /// alert when current rate < 80% of prior rate.
+    pub feedback_drift_decline_ratio: f64,
 }
 
 impl Default for MetacognitionConfig {
