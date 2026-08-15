@@ -189,7 +189,7 @@ steps:
   # Step 3: refine the seam map, gated on Gate A defects.
   - ordinal: 3
     action: select
-    condition: "{{ step_2_result | length > 0 }}"
+    condition: "step_2_result"
     description: >
       Refine the seam map in response to Gate A. Only runs if Gate A found
       structural defects (a phantom prior, an invalid verdict, or no slices).
@@ -333,7 +333,7 @@ steps:
   # Step 8: refine findings, gated on Gate B defects.
   - ordinal: 8
     action: select
-    condition: "{{ step_7_result | length > 0 }}"
+    condition: "step_7_result"
     description: >
       Re-cite / re-classify findings in response to Gate B. Only runs if Gate B
       found defects (a track with no findings, an invalid severity, or a
@@ -483,7 +483,7 @@ steps:
   # Step 13: remediation repair or hard-stop, gated on Gate C defects.
   - ordinal: 13
     action: select
-    condition: "{{ step_12_result | length > 0 }}"
+    condition: "step_12_result"
     description: >
       Repair remediation defects (add the missing test; re-scope a touched file
       behind a D-seam) OR, if Gate C found "touched_file_outside_seam" /

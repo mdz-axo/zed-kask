@@ -317,6 +317,17 @@ impl TrainingServer {
                 );
             }
 
+            // Persistence precondition: without a durable job store, the job's
+            // state is lost on restart and `training_status` cannot detect
+            // completion (it reads artifacts back from `job_store`). The init-time
+            // warn when `HKASK_DB_PASSPHRASE` is missing is not a tool-level signal;
+            // fail fast here so the operator sees the precondition before GPU spend.
+            if self.job_store.is_none() {
+                return Err(McpToolError::permission_denied(
+                    "Training persistence not available — set HKASK_DB_PASSPHRASE for encrypted persistent storage. In-memory mode loses all job/adapter state on restart and prevents completion detection.",
+                ));
+            }
+
             if let Some(ref job_store) = self.job_store {
                 let params_json = serde_json::to_string(&job.params).unwrap_or_default();
                 let status_str = format!("{:?}", TrainingJobStatus::Queued).to_lowercase();

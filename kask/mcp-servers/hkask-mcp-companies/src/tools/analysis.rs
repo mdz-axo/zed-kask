@@ -368,7 +368,7 @@ impl CompaniesServer {
                 self.exa_api_key.as_deref(),
                 self.tavily_api_key.as_deref(),
                 self.brave_api_key.as_deref(),
-            ).await;
+            ).await?;
 
             // 3. Build output with claim classification (FinGPT §3.4)
             let enhanced = research::ResearchClaimClassifier::classify_all(&research);

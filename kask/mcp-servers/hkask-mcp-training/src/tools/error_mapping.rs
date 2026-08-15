@@ -33,6 +33,7 @@ pub fn map_host_provider_error(e: HostProviderError) -> McpToolError {
         HostProviderError::InvalidConfig(_) | HostProviderError::DatasetError(_) => {
             McpToolError::invalid_argument(message)
         }
+        HostProviderError::MissingPrecondition(_) => McpToolError::failed_precondition(message),
         HostProviderError::JobFailed(_) | HostProviderError::Backend(_) => {
             McpToolError::internal(message) // rr0044-ok: mapper-internal-arm
         }

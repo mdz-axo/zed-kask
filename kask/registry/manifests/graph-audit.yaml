@@ -113,7 +113,7 @@ steps:
   # === CODE MODE (steps 1-4) — also used by DUAL mode for graph extraction ===
   - ordinal: 1
     action: select
-    condition: "{{ mode | default('code') == 'code' or mode | default('code') == 'dual' }}"
+    condition: "mode != 'semantic'"
     description: >
       CODE DISCOVER: Index the target codebase (if needed) and get a project
       structure overview. The userpod invokes codegraph_reindex (if needed),
@@ -131,7 +131,7 @@ steps:
 
   - ordinal: 2
     action: select
-    condition: "{{ mode | default('code') == 'code' or mode | default('code') == 'dual' }}"
+    condition: "mode != 'semantic'"
     description: >
       CODE QUERY: Search the code graph for symbols relevant to the goal.
       The userpod invokes codegraph_query with keyword/name/semantic queries.
@@ -146,7 +146,7 @@ steps:
 
   - ordinal: 3
     action: select
-    condition: "{{ mode | default('code') == 'code' or mode | default('code') == 'dual' }}"
+    condition: "mode != 'semantic'"
     description: >
       CODE ANALYZE: Traverse the dependency graph (forward and reverse) for
       matched symbols, run quality analysis (complexity, dead code, impact),
@@ -164,7 +164,7 @@ steps:
 
   - ordinal: 4
     action: select
-    condition: "{{ (mode | default('code') == 'code' or mode | default('code') == 'dual') and requires_context | default(true) }}"
+    condition: "mode != 'semantic' AND requires_context"
     description: >
       CODE CONTEXT: Assemble token-budgeted context from the gathered analysis
       for downstream use. Conditional - runs only when requires_context is true.
@@ -181,7 +181,7 @@ steps:
   # === SEMANTIC MODE (steps 5-8) ===
   - ordinal: 5
     action: select
-    condition: "{{ mode == 'semantic' }}"
+    condition: "mode == 'semantic'"
     description: >
       SEMANTIC CLASSIFY: Force-classify every edge using the pragmatic-semantics
       constraint hierarchy (Prohibition > Guardrail > Guideline > Evidence > Hypothesis).
@@ -196,7 +196,7 @@ steps:
 
   - ordinal: 6
     action: select
-    condition: "{{ mode == 'semantic' }}"
+    condition: "mode == 'semantic'"
     description: >
       SEMANTIC ANALYZE: Evaluate graph health through four lenses -
       pragmatic-cybernetics, essentialist, grill-me, pragmatic-semantics.
@@ -212,7 +212,7 @@ steps:
 
   - ordinal: 7
     action: select
-    condition: "{{ mode == 'semantic' }}"
+    condition: "mode == 'semantic'"
     description: >
       SEMANTIC DETECT: Detect structural pathologies (cycles, redundancies,
       gaps, orphans, fan-in/out anomalies, force/structure mismatches).
@@ -228,7 +228,7 @@ steps:
 
   - ordinal: 8
     action: select
-    condition: "{{ mode == 'semantic' }}"
+    condition: "mode == 'semantic'"
     description: >
       SEMANTIC REPORT: Synthesize classification, four-lens analysis, and
       structural detection into a graph-health convergence metric + markdown report.
@@ -247,7 +247,7 @@ steps:
   # === DUAL MODE — semantic audit on extracted code graph ===
   - ordinal: 9
     action: select
-    condition: "{{ mode == 'dual' }}"
+    condition: "mode == 'dual'"
     description: >
       DUAL SEMANTIC CLASSIFY: Force-classify edges extracted from the code graph
       analysis (steps 1-4). Nodes = discovered symbols; edges = dependency/caller
@@ -263,7 +263,7 @@ steps:
 
   - ordinal: 10
     action: select
-    condition: "{{ mode == 'dual' }}"
+    condition: "mode == 'dual'"
     description: >
       DUAL SEMANTIC ANALYZE: Evaluate the extracted code graph through four lenses.
     renderer: minijinja
@@ -278,7 +278,7 @@ steps:
 
   - ordinal: 11
     action: select
-    condition: "{{ mode == 'dual' }}"
+    condition: "mode == 'dual'"
     description: >
       DUAL SEMANTIC DETECT: Detect structural pathologies in the extracted code graph.
     renderer: minijinja
@@ -293,7 +293,7 @@ steps:
 
   - ordinal: 12
     action: select
-    condition: "{{ mode == 'dual' }}"
+    condition: "mode == 'dual'"
     description: >
       DUAL SEMANTIC REPORT: Synthesize graph-health report for the extracted code graph.
     renderer: minijinja
@@ -313,7 +313,7 @@ steps:
   # quality_findings count, then the ConvergenceTracker checks it (Cauchy criterion).
   - ordinal: 13
     action: compute
-    condition: "{{ mode | default('code') == 'code' }}"
+    condition: "mode != 'semantic' AND mode != 'dual'"
     compute_ref: lisp.eval
     description: >
       COMPUTE CODE-ANALYSIS GAP (code mode): Deterministic Lisp
@@ -337,7 +337,7 @@ steps:
 
   - ordinal: 14
     action: select
-    condition: "{{ mode == 'semantic' }}"
+    condition: "mode == 'semantic'"
     description: >
       SEMANTIC CONVERGENCE: The semantic-report step (ordinal 8) already computes
       the graph-health convergence metric. This step passes it through.
@@ -358,7 +358,7 @@ steps:
   # replacing the phantom LLM-generated convergence_metric.
   - ordinal: 15
     action: compute
-    condition: "{{ mode == 'semantic' }}"
+    condition: "mode == 'semantic'"
     compute_ref: lisp.eval
     description: >
       COMPUTE SEMANTIC-REPORT GAP (semantic mode): Deterministic Lisp
@@ -383,7 +383,7 @@ steps:
   # semantic-report's blockers array length.
   - ordinal: 16
     action: compute
-    condition: "{{ mode == 'dual' }}"
+    condition: "mode == 'dual'"
     compute_ref: lisp.eval
     description: >
       COMPUTE DUAL-REPORT GAP (dual mode): Deterministic Lisp
@@ -405,7 +405,7 @@ steps:
 
   - ordinal: 17
     action: loop
-    condition: "{{ mode | default('code') == 'code' }}"
+    condition: "mode != 'semantic' AND mode != 'dual'"
     description: Re-enter code mode cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
@@ -415,7 +415,7 @@ steps:
 
   - ordinal: 18
     action: loop
-    condition: "{{ mode == 'semantic' }}"
+    condition: "mode == 'semantic'"
     description: Re-enter semantic mode cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 5 }}"
@@ -425,7 +425,7 @@ steps:
 
   - ordinal: 19
     action: loop
-    condition: "{{ mode == 'dual' }}"
+    condition: "mode == 'dual'"
     description: Re-enter dual mode cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
