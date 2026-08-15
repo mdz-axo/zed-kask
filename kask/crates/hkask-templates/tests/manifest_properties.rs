@@ -437,11 +437,12 @@ fn select_step_input_mapping_fields_match_template_output() {
     // template doesn't produce). Intentional mismatches (optional fields
     // with defaults, agent-coordinated context) should be annotated and
     // the ceiling incremented.
+    const MISMATCH_CEILING: usize = 0;
     assert!(
-        mismatches.len() <= 0,
-        "{mismatches_len} input_mapping/contract.output mismatches (regression ceiling: 0). \
-         If the new mismatch is intentional, annotate it and increment the ceiling.",
-        mismatches_len = mismatches.len()
+        mismatches.len() == MISMATCH_CEILING,
+        "{count} input_mapping/contract.output mismatches (regression ceiling: {MISMATCH_CEILING}). \
+         If the new mismatch is intentional, annotate it and increment MISMATCH_CEILING.",
+        count = mismatches.len()
     );
 }
 

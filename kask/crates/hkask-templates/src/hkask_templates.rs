@@ -40,7 +40,8 @@ pub use inputs::{
     InputValidationError, extract_contract_input_keys, render_input_param_spec, validate_inputs,
 };
 pub use manifest_loader::{
-    ManifestLoadError, load_manifest_from_file, load_manifest_from_yaml, resolve_manifest,
+    ManifestLoadError, McpReferenceWarning, load_manifest_from_file, load_manifest_from_yaml,
+    resolve_manifest, validate_mcp_references,
 };
 pub use ports::{FsSkillReader, ManifestResolveError, Result, SkillFinding, TemplateError};
 pub use prompt_strategy::PromptStrategy;

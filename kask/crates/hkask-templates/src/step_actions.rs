@@ -309,6 +309,7 @@ impl StepMachine {
                     tracing::warn!(
                         target: "reg.skill.cascade.step_executed",
                         step = node.ordinal,
+                        failure_mode = "truncated",
                         "Step truncated at max_tokens before emitting structured-output tool call"
                     );
                     return Err(TemplateError::Manifest(format!(
@@ -320,6 +321,7 @@ impl StepMachine {
                 tracing::warn!(
                     target: "reg.skill.cascade.step_executed",
                     step = node.ordinal,
+                    failure_mode = "no_structured_output",
                     "Model did not call structured-output tool — falling back to text parsing"
                 );
             }
@@ -335,10 +337,11 @@ impl StepMachine {
                     target: "reg.skill.cascade.step_executed",
                     step = node.ordinal,
                     finish_reason = ?finish_reason,
+                    failure_mode = "empty_output",
                     "Step returned empty output with no structured tool call."
                 );
                 return Err(TemplateError::Manifest(format!(
-                    "Step {} returned empty output (finish_reason: {:?}). Likely causes: max_tokens too low, model spent its budget on reasoning, or the provider returned no completion. Remediation: raise max_tokens, enable thinking_budget, retry, or convert the step to a deterministic render action.",
+                    "Step {} returned empty output (finish_reason: {:?}). Likely causes: max_tokens too low, model spent its budget on reasoning, or the provider returned no completion. Remediation: raise max_tokens, enable thinking_budget, retry, or convert the manifest step from 'select' to 'render' action.",
                     node.ordinal, finish_reason
                 )));
             }

@@ -1,21 +1,34 @@
 # Company Research — Deep Pipeline Process Manifest
-# ℏKask v0.34.0 — EFRA-AI research pipeline (agents 10–13) as convergent flowdef
+# ℏKask v0.35.0 — EFRA-AI research pipeline (agents 10–13) as convergent flowdef
 #
 # Design: kask/docs/plans/efra-ai-to-kask-company-research-skill.md
 #
 # Sequential pipeline mirroring EFRA-AI's research pipeline:
-#   COMPANY(1-6) → GORILLA(7-8) → IMAGINE(9-10) → THESIS(11) →
+#   COMPANY(1-6) → FALSTAFFIAN(6b) → GORILLA(7-8) → IMAGINE(9-10) → THESIS(11) →
 #   goal-analysis gate(12) → convergence(13) → loop(14)
 #
 # Each agent feeds the next, building a comprehensive investment thesis.
 # COMPANY is a DEEPEN agent — it consumes company_transcript, dcf_valuation,
 # comparable_analysis, web_search, fetch MCP tool outputs (native execute
-# steps) and does LLM synthesis over them. IMAGINE consumes scenario_build.
-# THESIS's investment_grade / needs_work / incomplete verdict is the
+# steps) and does LLM synthesis over them. FALSTAFFIAN (6b) rotates the
+# competitive framing before GORILLA scores it — structural defense against
+# frame capture by analyst narratives. IMAGINE consumes scenario_build and
+# the economic_trajectory probe (9b) which anchors imagination on falling
+# costs, constraint removal, and the Kauffman adjacent possible. THESIS's
+# investment_grade / needs_work / incomplete verdict is the
 # convergence signal; needs_work loops back to COMPANY with THESIS gaps
 # injected. Per .rules (LLM-improves-against-LLM-scored-target trap): the
 # THESIS quality gate uses goal-analysis semantic evaluation (cross-skill
 # select step), not self-assessment inside the thesis template.
+#
+# v0.35.0 changes: Added FALSTAFFIAN competitive rotation (step 6b) and
+# ECONOMIC TRAJECTORY probe (step 9b). GORILLA now consumes the rotated
+# board. IMAGINE now consumes the economic trajectory and the Falstaffian
+# rotations — scenarios are anchored on the trajectory and challenged by
+# the rotations. Anchored to MAIA Substack methodology: "Focus and
+# Imagination", "Falstaff: Give Me Life", "Competition: Readings vs
+# Reality", "Stuart A. Kauffman Readings", "More From Less", "The Future
+# Is Faster Than You Think", "Bottlenecks and Critical Mass".
 
 manifest:
   id: company-research-deep
@@ -24,15 +37,21 @@ manifest:
   description: >
     Equity research deep pipeline converted from EFRA-AI (Replicant-
     Partners). Sequential flowdef: COMPANY deep 8-part analysis (6 native
-    MCP tool calls + LLM synthesis) → GORILLA 4-dimension framework (fixed
-    weights, lisp.eval scoring) → IMAGINE 5/10/20Y scenarios + digital stage
-    (scenario_build MCP tool call + LLM synthesis) → THESIS three-pillar
-    synthesis (cross-skill goal-analysis quality gate) → convergence check →
-    loop on needs_work. MCP tool calls are native `action: execute` steps;
-    templates do LLM synthesis over their outputs. Converges on THESIS
-    investment_grade verdict.
+    MCP tool calls + LLM synthesis) → FALSTAFFIAN competitive perspective
+    rotation (cross-skill metacognition, anchored to MAIA "Falstaff: Give
+    Me Life" + "Competition: Readings vs Reality") → GORILLA 4-dimension
+    framework (fixed weights, lisp.eval scoring, consumes rotated board)
+    → ECONOMIC TRAJECTORY probe (falling costs, Coasean shifts, Kauffman
+    adjacent possible, anchored to MAIA "Focus and Imagination" + "More
+    From Less" + "Kauffman Readings") → IMAGINE 5/10/20Y scenarios
+    anchored on the economic trajectory and challenged by the Falstaffian
+    rotations + digital stage (scenario_build MCP tool call + LLM
+    synthesis) → THESIS three-pillar synthesis (cross-skill goal-analysis
+    quality gate) → convergence check → loop on needs_work. MCP tool calls
+    are native `action: execute` steps; templates do LLM synthesis over
+    their outputs. Converges on THESIS investment_grade verdict.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true
@@ -47,8 +66,8 @@ convergence:
   target_artifacts_field: "thesis_verdict"
 
 gas:
-  cap: 250000
-  cost_per_iteration: 250
+  cap: 270000
+  cost_per_iteration: 300
   alert_threshold: 0.8
   hard_limit: true
 
@@ -179,26 +198,52 @@ steps:
       flash_pipeline_output: "{{ flash_pipeline_output | default({}) }}"
       thesis_gaps: "{{ thesis_gaps | default([]) }}"
 
-  # ── Steps 7–8: GORILLA — 4-dimension framework ──
-  # Fixed weights (25/30/25/20) — mcda rejected (essentialist Surface gate:
-  # adds ceremony for fixed weights). Scoring is a lisp.eval compute step
-  # (8), not an mcda call.
+  # ── Step 6b: FALSTAFFIAN — competitive perspective rotation ──
+  # Cross-skill metacognition step. Rotates the competitive framing before
+  # GORILLA scores it. Prevents GORILLA from scoring a frame-contaminated
+  # board. Anchored to MAIA "Falstaff: Give Me Life", "Competition: Readings
+  # vs Reality", "Company Analysis", "Thinking Like an Owner".
   - ordinal: 7
     action: select
     description: >
+      FALSTAFFIAN — rotate the competitive framing of the Company Board
+      before GORILLA scores it. Applies Falstaffian semantic rotation
+      shapes (predicate hollow, subject expansion, object inversion,
+      direction reversal) to expose framing errors in the analyst
+      narrative. Emits rotated_board with competitor-complement analysis,
+      market creator vs participant classification, framing errors
+      detected, and rotated competitive position. GORILLA consumes the
+      rotated board, not the raw Company Board.
+    renderer: minijinja
+    template_ref: company-research/falstaffian-competitive-rotation
+    gas_cap: 8000
+    timeout_seconds: 200
+    input_mapping:
+      ticker: "{{ ticker }}"
+      company_board: "{{ step_6_result }}"
+
+  # ── Steps 7–8: GORILLA — 4-dimension framework ──
+  # Fixed weights (25/30/25/20) — mcda rejected (essentialist Surface gate:
+  # adds ceremony for fixed weights). Scoring is a lisp.eval compute step
+  # (8), not an mcda call. GORILLA consumes the ROTATED board (step_6b),
+  # not the raw Company Board (step_6) — the rotation corrects framing
+  # errors before scoring.
+  - ordinal: 8
+    action: select
+    description: >
       GORILLA — assess the 4 dimensions (Obvious Problem, Invisible Gorilla,
-      Combinatorial Solution, Choke Point) against the COMPANY analysis.
-      Emits per-dimension qualitative assessments (0–100) that the lisp.eval
-      step (8) weights to the final gorilla_score.
+      Combinatorial Solution, Choke Point) against the ROTATED Company
+      Board. Emits per-dimension qualitative assessments (0–100) that the
+      lisp.eval step (8) weights to the final gorilla_score.
     renderer: minijinja
     template_ref: company-research/gorilla-4dim
     gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       ticker: "{{ ticker }}"
-      company_board: "{{ step_6_result }}"
+      company_board: "{{ step_7_result.rotated_board | default(step_6_result) }}"
 
-  - ordinal: 8
+  - ordinal: 9
     action: compute
     compute_ref: lisp.eval
     description: >
@@ -213,10 +258,10 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((op (assoc "obvious_problem" step_7_result))
-              (ig (assoc "invisible_gorilla" step_7_result))
-              (cs (assoc "combinatorial_solution" step_7_result))
-              (cp (assoc "choke_point" step_7_result)))
+        (let ((op (assoc "obvious_problem" step_8_result))
+              (ig (assoc "invisible_gorilla" step_8_result))
+              (cs (assoc "combinatorial_solution" step_8_result))
+              (cp (assoc "choke_point" step_8_result)))
           (let ((op-ok (numberp op))
                 (ig-ok (numberp ig))
                 (cs-ok (numberp cs))
@@ -239,16 +284,16 @@ steps:
                           (cons "combinatorial_solution" cs)
                           (cons "choke_point" cp)))))))
       env:
-        step_7_result: "{{ step_7_result | default({}) }}"
+        step_8_result: "{{ step_8_result | default({}) }}"
 
-  # ── Steps 9–10: IMAGINE — 5/10/20Y scenarios + digital stage ──
+  # ── Step 9: IMAGINE — scenario_build MCP tool ──
   # Step 9 generates the scenario tree via scenario_build MCP tool.
-  # Step 10 synthesizes the 5/10/20Y scenarios and falsifiable predictions.
-  - ordinal: 9
+  # Step 9b (economic trajectory) and step 10 (IMAGINE synthesis) follow.
+  - ordinal: 10
     action: execute
     description: >
       IMAGINE — generate 5/10/20Y scenario tree via scenario_build MCP tool.
-      Deterministic. Result lands in step_9_result and feeds IMAGINE
+      Deterministic. Result lands in step_10_result and feeds IMAGINE
       synthesis (10).
     mcp: scenario_build
     gas_cap: 5000
@@ -258,28 +303,67 @@ steps:
       time_horizon: "20 years"
       context: "{{ step_6_result.company_board.business_franchise | default('') }}"
 
-  - ordinal: 10
+  # ── Step 9b: ECONOMIC TRAJECTORY — falling-cost / Coase / adjacent possible ──
+  # Economically-anchored imagination scaffold. Identifies the falling cost,
+  # the constraint being removed, the Coasean firm-boundary shifts, and the
+  # Kauffman adjacent possible. IMAGINE (10) consumes this as the anchor for
+  # its 5/10/20Y scenarios. Anchored to MAIA "Focus and Imagination",
+  # "More From Less", "Kauffman Readings", "The Future Is Faster",
+  # "Bottlenecks and Critical Mass".
+  - ordinal: 11
+    action: select
+    description: >
+      ECONOMIC TRAJECTORY — identify the falling-cost trajectory in the
+      subject's industry, the design constraint being removed, the Coasean
+      firm-boundary shifts, and the Kauffman adjacent possible nodes.
+      Consumes the Company Board and the rotated board (if available).
+      Emits economic_trajectory with falling_cost, constraint_being_removed,
+      coasean_shifts, adjacent_possible_nodes, convergence_vectors, and
+      implications_for_subject. IMAGINE (10) consumes this as the anchor.
+    renderer: minijinja
+    template_ref: company-research/economic-trajectory
+    gas_cap: 8000
+    timeout_seconds: 200
+    input_mapping:
+      ticker: "{{ ticker }}"
+      company_board: "{{ step_6_result }}"
+      rotated_board: "{{ step_7_result | default(none) }}"
+
+  # ── Steps 10: IMAGINE — 5/10/20Y scenarios + digital stage ──
+  # Step 10 synthesizes the 5/10/20Y scenarios and falsifiable predictions.
+  # Scenarios are ANCHORED on the economic trajectory (step 9b) and
+  # CHALLENGED by the Falstaffian rotations (step 6b). The economic
+  # trajectory is the focus that anchors imagination in reality (MAIA:
+  # "Focus and Imagination"). The Falstaffian rotations are the perspective
+  # shifts that a rapidly evolving trajectory demands.
+  - ordinal: 12
     action: select
     description: >
       IMAGINE — project the business at 5, 10, 20 years and walk it back
       analytically. Digital Transformation Stages (MODEL / SHADOW / TWIN /
       SOURCE), Growth Driver Classification (innovation / demographic /
-      both / neither). Reasons over scenario_build output (9). Emits
-      ImagineBoard with digital stage, growth driver, 3 scenarios, 3–5
-      falsifiable predictions (tagged by 5/10/20Y horizon for the forecast-
-      ledger), what's not on the page, what's not in the price.
+      both / neither). Reasons over scenario_build output (9) and the
+      economic_trajectory probe (9b). Scenarios MUST be anchored on the
+      economic trajectory and challenged by the Falstaffian rotations (6b).
+      Emits ImagineBoard with digital stage, growth driver, 3 scenarios,
+      3–5 falsifiable predictions (tagged by 5/10/20Y horizon for the
+      forecast-ledger), what's not on the page (anchored on the adjacent
+      possible), what's not in the price (anchored on the trajectory's
+      implications), trajectory_anchoring, falstaffian_challenge.
     renderer: minijinja
     template_ref: company-research/imagine-longrange
-    gas_cap: 10000
-    timeout_seconds: 240
+    gas_cap: 12000
+    timeout_seconds: 300
     input_mapping:
       ticker: "{{ ticker }}"
       company_board: "{{ step_6_result }}"
-      scenario_build_result: "{{ step_9_result }}"
+      scenario_build_result: "{{ step_10_result }}"
+      economic_trajectory: "{{ step_11_result | default(none) }}"
+      falstaffian_rotations: "{{ step_7_result | default(none) }}"
       prior_outcomes: "{{ prior_outcomes | default({}) }}"
 
   # ── Step 11: THESIS — three-pillar synthesis ──
-  - ordinal: 11
+  - ordinal: 13
     action: select
     description: >
       THESIS — synthesize all prior research into a formal investment thesis
@@ -297,14 +381,16 @@ steps:
     input_mapping:
       ticker: "{{ ticker }}"
       company_board: "{{ step_6_result }}"
-      gorilla_verdict: "{{ step_8_result }}"
-      imagine_board: "{{ step_10_result }}"
+      gorilla_verdict: "{{ step_9_result }}"
+      imagine_board: "{{ step_12_result }}"
+      rotated_board: "{{ step_7_result | default(none) }}"
+      economic_trajectory: "{{ step_11_result | default(none) }}"
 
   # ── Step 12: THESIS quality gate — cross-skill goal-analysis ──
   # Per .rules: LLM-improves-against-LLM-scored-target loops must be grounded
   # in real sources. The quality gate uses goal-analysis/judge (semantic
   # evaluator), not LLM self-assessment inside the thesis template.
-  - ordinal: 12
+  - ordinal: 14
     action: select
     description: >
       THESIS quality gate — cross-skill goal-analysis/judge semantic
@@ -320,21 +406,23 @@ steps:
     input_mapping:
       goal_text: "Three-pillar investment thesis for {{ ticker }}: Business Franchise (moat strength, value creation, durability), Management Quality (capital allocation, leadership), Valuation (3-stage: consensus → normalization → terminal). Verdict: investment_grade / needs_work / incomplete."
       criteria:
-        - "Business Franchise pillar covers moat source, value creation mechanism, and durability (10Y+ / 5-10Y / < 5Y)"
+        - "Business Franchise pillar covers moat source, value creation mechanism, and durability (10Y+ / 5-10Y / < 5Y) and reflects the Falstaffian rotated competitive framing (does not reproduce framing errors the rotation corrected)"
         - "Management Quality pillar covers capital allocation verdict (created/destroyed/mixed) and leadership assessment with evidence"
-        - "Valuation pillar covers all 3 stages (consensus, normalization, terminal) with the terminal stage cross-referencing the IMAGINE 20Y scenario"
+        - "Valuation pillar covers all 3 stages (consensus, normalization, terminal) with the terminal stage cross-referencing the IMAGINE 20Y scenario and consistent with the economic trajectory's implications for the subject"
         - "Thesis statement is durable, timeless, and covers all three pillars"
-      outcome_summary: "{{ step_11_result.thesis_statement }}"
+        - "If economic trajectory is present: the thesis is consistent with the falling-cost trajectory and the adjacent possible — it does not project a steady-state terminal that ignores the trajectory's impact"
+        - "If Falstaffian rotation is present: the thesis does not reproduce framing errors the rotation corrected (e.g., calling a market creator a competitor)"
+      outcome_summary: "{{ step_13_result.thesis_statement }}"
       artifacts:
-        - "{{ step_11_result.business_franchise }}"
-        - "{{ step_11_result.management_quality }}"
-        - "{{ step_11_result.valuation }}"
+        - "{{ step_13_result.business_franchise }}"
+        - "{{ step_13_result.management_quality }}"
+        - "{{ step_13_result.valuation }}"
 
   # ── Step 13: Convergence check — THESIS verdict ──
   # goal-analysis/judge emits "done|continue|blocked". Map: done=0.0
   # (converged), continue=0.5 (loop), blocked=1.0 (escalate). No
   # unwrap_or(0) — missing verdict surfaces as 1.0.
-  - ordinal: 13
+  - ordinal: 15
     action: compute
     compute_ref: lisp.eval
     description: >
@@ -347,30 +435,30 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((v (assoc "verdict" step_12_result)))
+        (let ((v (assoc "verdict" step_14_result)))
           (cond
             ((eq v "done") 0.0)
             ((eq v "continue") 0.5)
             ((eq v "blocked") 1.0)
             (t 1.0)))
       env:
-        step_12_result: "{{ step_12_result | default({}) }}"
+        step_14_result: "{{ step_14_result | default({}) }}"
 
   # ── Step 14: Loop back to COMPANY if THESIS flags needs_work ──
   # Re-runs COMPANY (6) with THESIS gaps injected. incomplete (1.0) does
   # not loop — it escalates via on_not_reached. max_iterations: 3 bounds.
-  - ordinal: 14
+  - ordinal: 16
     action: loop
     description: >
       Re-enter COMPANY synthesis (step 6) if THESIS flags needs_work (0.5).
       THESIS gap analysis is injected into the next COMPANY pass via the
       loop's input_mapping. incomplete (1.0) does not loop — it escalates
       via on_not_reached. max_iterations: 3 bounds the loop.
-    condition: "step_13_result > 0.0 AND step_13_result < 1.0"
+    condition: "step_15_result > 0.0 AND step_15_result < 1.0"
     input_mapping:
       loop_target: "{{ 6 }}"
-      thesis_gaps: "{{ step_12_result.gap_analysis | default([]) }}"
-      convergence_signal: "{{ step_13_result }}"
+      thesis_gaps: "{{ step_14_result.gap_analysis | default([]) }}"
+      convergence_signal: "{{ step_15_result }}"
 
 error_handling:
   on_gas_exceeded: abort

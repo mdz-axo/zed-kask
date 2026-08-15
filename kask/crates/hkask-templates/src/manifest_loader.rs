@@ -185,6 +185,69 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
     Ok(manifest)
 }
 
+/// Validate that every `mcp:` reference in a manifest's `execute` steps
+/// exists in the provided set of known tool names. Returns a list of
+/// warnings for tools that are not found — these are not errors (the tool
+/// may be registered later at runtime), but they indicate a manifest-vs-
+/// registry drift that will cause a runtime failure if the tool is not
+/// registered by the time the step executes.
+///
+/// Callers should pass the set of tool names registered across all MCP
+/// servers (e.g. from `ToolPort::get_tool_info`). At test time, this can
+/// be a static list compiled from the known MCP server tool registrations.
+pub fn validate_mcp_references(
+    manifest: &BundleManifest,
+    known_tools: &std::collections::HashSet<&str>,
+) -> Vec<McpReferenceWarning> {
+    let mut warnings = Vec::new();
+    for step in &manifest.steps {
+        if step.action != "execute" {
+            continue;
+        }
+        if let Some(ref mcp_ref) = step.mcp {
+            // Strip ${variable} references — these are resolved at runtime
+            // and cannot be validated at load time.
+            if mcp_ref.contains("${") {
+                continue;
+            }
+            if !known_tools.contains(mcp_ref.as_str()) {
+                warnings.push(McpReferenceWarning {
+                    manifest_id: manifest.id.clone(),
+                    step_ordinal: step.ordinal,
+                    mcp_ref: mcp_ref.clone(),
+                });
+            }
+        }
+    }
+    if !warnings.is_empty() {
+        tracing::warn!(
+            target: "hkask.manifest_loader.mcp_validation",
+            manifest_id = %manifest.id,
+            warning_count = warnings.len(),
+            "Manifest references MCP tools not in the known set — these will fail at runtime if not registered"
+        );
+    }
+    warnings
+}
+
+/// A warning about an MCP tool reference that is not in the known tool set.
+#[derive(Debug, Clone)]
+pub struct McpReferenceWarning {
+    pub manifest_id: String,
+    pub step_ordinal: u32,
+    pub mcp_ref: String,
+}
+
+impl std::fmt::Display for McpReferenceWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "manifest '{}' step {} references mcp tool '{}' not in the known set",
+            self.manifest_id, self.step_ordinal, self.mcp_ref
+        )
+    }
+}
+
 /// Resolve a process_manifest reference to a BundleManifest.
 ///
 /// The `process_manifest` field on an agent definition can be:

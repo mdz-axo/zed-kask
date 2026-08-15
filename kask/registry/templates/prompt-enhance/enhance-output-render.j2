@@ -80,11 +80,9 @@ visibility: Public
 type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }} convergence={{ convergence_metric }}
 {%- endset -%}
 
-{# Audit findings table — sorted by constraint force (Prohibition → Guardrail → Guideline → Evidence → Hypothesis) #}
-{%- set force_order = {"Prohibition": 0, "Guardrail": 1, "Guideline": 2, "Evidence": 3, "Hypothesis": 4} -%}
-{%- set sorted_findings = audit_findings -%}
+{# Audit findings table — in step order (minijinja has no sort_by filter; the step 2 template already emits findings in constraint-force order) #}
 {%- set findings_table_rows = [] -%}
-{%- for finding in sorted_findings -%}
+{%- for finding in audit_findings -%}
   {%- set _ = findings_table_rows.append("| " ~ (finding.constraint_force | default("Hypothesis")) ~ " | " ~ (finding.lens | default("unspecified")) ~ " | " ~ (finding.finding | default("unspecified")) ~ " | " ~ (finding.addressed | default(false) | string) ~ " |") -%}
 {%- endfor -%}
 {%- set findings_table = "| Force | Lens | Finding | Addressed |\n|-------|------|---------|----------|\n" ~ (findings_table_rows | join("\n")) -%}
@@ -144,7 +142,10 @@ type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }
 {%- if output_format_resolved == "inline" or output_format_resolved == "both" -%}
 {%- set delivered_output = "```\n" ~ enhanced_prompt ~ "\n```\n\n" ~ change_log_md -%}
 {%- elif output_format_resolved == "file" -%}
-{%- set delivered_output = "Enhanced prompt written to `" ~ output_path_resolved ~ "`.\n\n" ~ change_log_md -%}
+{# F5: render steps cannot write files — only render text. The agent or
+   operator must save the output to output_path_resolved. Don't claim the
+   file was written. #}
+{%- set delivered_output = "Enhanced prompt ready for save to `" ~ output_path_resolved ~ "` (render steps cannot write files — copy the output below).\n\n```\n" ~ enhanced_prompt ~ "\n```\n\n" ~ change_log_md -%}
 {%- else -%}
 {%- set delivered_output = "```\n" ~ enhanced_prompt ~ "\n```\n\n" ~ change_log_md -%}
 {%- endif -%}
@@ -152,7 +153,7 @@ type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }
 {# ── Emit the structured result as JSON (the render step's stored value) ── #}
 {
   "delivered_output": {{ delivered_output | tojson }},
-  "output_path_written": {{ (output_path_resolved if output_format_resolved == "file" or output_format_resolved == "both" else "") | tojson }},
+  "output_path_written": {{ "" | tojson }},
   "change_log": {
     "summary": {{ summary_line | tojson }},
     "audit_findings_table": {{ findings_table | tojson }},

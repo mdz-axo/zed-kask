@@ -1,11 +1,13 @@
 # Template crate manifest for company-research skill
-# hKask v0.34.0
+# hKask v0.35.0
 # Design: kask/docs/plans/efra-ai-to-kask-company-research-skill.md
 #
-# 12 templates mapping the 13 EFRA-AI agents (07 CATALOG eliminated — it is a
-# classification utility not in pipeline.ts). The crate backs two flowdef
-# manifests: company-research-flash (SCOUT → ... → LENS) and
-# company-research-deep (COMPANY → GORILLA → IMAGINE → THESIS).
+# 14 templates mapping the 13 EFRA-AI agents (07 CATALOG eliminated — it is a
+# classification utility not in pipeline.ts) plus two v0.35.0 additions:
+# falstaffian-competitive-rotation (step 6b) and economic-trajectory (step 9b).
+# The crate backs two flowdef manifests: company-research-flash (SCOUT → ... →
+# LENS) and company-research-deep (COMPANY → FALSTAFFIAN → GORILLA → IMAGINE
+# → THESIS).
 #
 # Three templates are DEEPEN agents (INTEL, VALUATION, COMPANY): they
 # orchestrate native `action: execute` MCP tool calls in the flowdef and only
@@ -16,22 +18,32 @@
 # Cross-skill composition: the flash flowdef reuses `listening/apply-template`
 # (step 3) and `kata-improvement/improvement-step1-direction` (step 9c) via
 # `template_ref` — the same pattern superforecasting uses for
-# `falsifiability/falsifiability-hypothesize`.
+# `falsifiability/falsifiability-hypothesize`. The deep flowdef reuses
+# `goal-analysis/judge` (step 12) and the falstaffian-competitive-rotation /
+# economic-trajectory templates (steps 6b, 9b) which are cross-skill
+# compositions anchored to the metacognition/falstaffian reference documents.
 
 crate:
   name: company-research
-  version: "0.34.0"
+  version: "0.35.0"
   description: >
     Equity research pipeline converted from EFRA-AI (Replicant-Partners).
     Two flowdefs: company-research-flash (SCOUT → INTEL → FORENSIC × 2 →
     CRITICAL FACTOR → VALUATION → COMMUNICATION → KATA → LENS) producing a
     flash note / initiation report, and company-research-deep (COMPANY →
-    GORILLA → IMAGINE → THESIS) producing a deep company analysis and
-    investment thesis. MCP tool calls (dcf_valuation, comparable_analysis,
-    expectations_gap, scenario_impact_valuation, market_check_resolutions,
-    market_calibration, market_cmp, evaluate_evidence, company_transcript,
-    scenario_build, web_search, fetch) are native `action: execute` flowdef
-    steps; templates do LLM synthesis over their outputs.
+    FALSTAFFIAN → GORILLA → ECONOMIC TRAJECTORY → IMAGINE → THESIS)
+    producing a deep company analysis and investment thesis. The deep
+    pipeline applies Falstaffian perspective rotation to the competitive
+    framing before GORILLA scores it (structural defense against frame
+    capture), and anchors IMAGINE on an economic trajectory probe
+    (falling costs, Coasean shifts, Kauffman adjacent possible) that is
+    challenged by the Falstaffian rotations. MCP tool calls
+    (dcf_valuation, comparable_analysis, expectations_gap,
+    scenario_impact_valuation, market_check_resolutions,
+    market_calibration, market_cmp, evaluate_evidence,
+    company_transcript, scenario_build, web_search, fetch) are native
+    `action: execute` flowdef steps; templates do LLM synthesis over their
+    outputs.
 
 templates:
   # ── Flash pipeline (01–09) ──
@@ -142,7 +154,7 @@ templates:
       `overall_verdict` (CONSISTENT / PARTIAL / INCONSISTENT), `key_tensions`,
       `pm_memo` (200 words). Never blocks publication.
 
-  # ── Deep pipeline (10–13) ──
+  # ── Deep pipeline (10–13) + v0.35.0 additions ──
   - id: company-research/company-8part
     name: "COMPANY — deep 8-part company analysis (DEEPEN)"
     path: company-8part.j2
@@ -157,6 +169,23 @@ templates:
       outputs (bound via input_mapping from prior `execute` steps). Emits
       `CompanyBoard` with all 8 sections, `data_gaps`.
 
+  - id: company-research/falstaffian-competitive-rotation
+    name: "FALSTAFFIAN — competitive perspective rotation (v0.35.0)"
+    path: falstaffian-competitive-rotation.j2
+    type: KnowAct
+    description: >
+      v0.35.0 addition. Rotates the competitive framing of the Company
+      Board before GORILLA scores it. Applies Falstaffian semantic rotation
+      shapes (predicate hollow, subject expansion, object inversion,
+      direction reversal) to expose framing errors in the analyst
+      narrative. Emits rotated_board with competitor-complement analysis,
+      market creator vs participant classification (Wardley evolution
+      axis), framing errors detected, and rotated competitive position.
+      Anchored to MAIA "Falstaff: Give Me Life", "Competition: Readings
+      vs Reality", "Company Analysis", "Thinking Like an Owner".
+      Cross-references metacognition/falstaffian-perspective-engine shapes
+      and decision tree.
+
   - id: company-research/gorilla-4dim
     name: "GORILLA — Value Gorilla 4-dimension framework"
     path: gorilla-4dim.j2
@@ -167,23 +196,50 @@ templates:
       Combinatorial Solution 25% / Choke Point 20%). Weights are fixed by
       firm methodology — NOT user-tunable, so mcda was rejected (essentialist
       Surface gate: adds ceremony for fixed weights). Scoring is a
-      `lisp.eval` compute step in the flowdef, not an mcda call. Emits
-      `gorilla_score`, `verdict` (GORILLA ≥75 / SMALL_ANIMAL 50-74 /
-      PEDESTRIAN <50), per-dimension scores.
+      `lisp.eval` compute step in the flowdef, not an mcda call. In v0.35.0,
+      GORILLA consumes the ROTATED board (from falstaffian-competitive-
+      rotation), not the raw Company Board — the rotation corrects framing
+      errors before scoring. Emits `gorilla_score`, `verdict` (GORILLA ≥75 /
+      SMALL_ANIMAL 50-74 / PEDESTRIAN <50), per-dimension scores.
+
+  - id: company-research/economic-trajectory
+    name: "ECONOMIC TRAJECTORY — falling-cost / Coase / adjacent possible (v0.35.0)"
+    path: economic-trajectory.j2
+    type: KnowAct
+    description: >
+      v0.35.0 addition. Economically-anchored imagination scaffold.
+      Identifies the falling-cost trajectory in the subject's industry
+      (McAfee dematerialization), the design constraint being removed
+      (MAIA bottleneck framework), the Coasean firm-boundary shifts
+      (Kauffman economic web), the Kauffman adjacent possible nodes
+      (never-before-born goods and services, Darwinian preadaptations),
+      and convergence vectors (Diamandis). Emits economic_trajectory
+      with falling_cost, constraint_being_removed, coasean_shifts,
+      adjacent_possible_nodes, convergence_vectors, implications_for_
+      subject, trajectory_velocity. IMAGINE consumes this as the anchor
+      for its 5/10/20Y scenarios. Anchored to MAIA "Focus and
+      Imagination", "More From Less", "Kauffman Readings", "The Future
+      Is Faster", "Bottlenecks and Critical Mass", "Time Horizons".
 
   - id: company-research/imagine-longrange
-    name: "IMAGINE — 5/10/20Y scenarios + digital stage"
+    name: "IMAGINE — 5/10/20Y scenarios anchored on economic trajectory (v0.35.0)"
     path: imagine-longrange.j2
     type: WordAct
     description: >
-      Agent 11 IMAGINE. Projects the business at 5, 10, 20 years and walks it
-      back analytically. Digital Transformation Stages (MODEL / SHADOW / TWIN
-      / SOURCE), Growth Driver Classification (innovation / demographic /
-      both / neither). Consumes `scenario_build` MCP tool output for
-      structured 5/10/20Y scenario generation. Emits `ImagineBoard` with
-      digital stage, growth driver, 3 scenarios, 3–5 falsifiable predictions
-      (tagged by horizon for the forecast-ledger), what's not on the page,
-      what's not in the price.
+      Agent 11 IMAGINE. Projects the business at 5, 10, 20 years and walks
+      it back analytically. Digital Transformation Stages (MODEL / SHADOW /
+      TWIN / SOURCE), Growth Driver Classification (innovation / demographic
+      / both / neither). In v0.35.0, scenarios are ANCHORED on the economic
+      trajectory probe (falling cost, constraint removal, adjacent
+      possible) and CHALLENGED by the Falstaffian rotations (rotated
+      competitive framing, framing errors detected). Consumes
+      `scenario_build` MCP tool output and the `economic_trajectory` probe.
+      Emits `ImagineBoard` with digital stage, growth driver, 3 scenarios
+      (each with trajectory_anchor and falstaffian_challenge), 3–5
+      falsifiable predictions (tagged by horizon, each with trajectory_
+      basis), what's not on the page (anchored on adjacent possible),
+      what's not in the price (anchored on trajectory implications),
+      trajectory_anchoring, falstaffian_challenge.
 
   - id: company-research/thesis-three-pillars
     name: "THESIS — three-pillar investment thesis synthesis"
