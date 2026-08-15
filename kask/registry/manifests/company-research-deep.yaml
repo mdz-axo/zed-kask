@@ -291,7 +291,7 @@ steps:
     timeout_seconds: 120
     input_mapping:
       ticker: "{{ ticker }}"
-      company_board: "{{ step_7_result.rotated_board | default(step_6_result) }}"
+      company_board: "{{ step_7_result.rotated_board | default(step_6_result.company_board) }}"
       gorilla_scores: "{{ step_8_result }}"
 
   # ── Step 10: GORILLA — deterministic weighted score with capability gates ──
@@ -485,7 +485,7 @@ steps:
     input_mapping:
       ticker: "{{ ticker }}"
       thesis: "{{ step_14_result }}"
-      company_board: "{{ step_6_result }}"
+      company_board: "{{ step_6_result.company_board }}"
 
   - ordinal: 16
     action: select

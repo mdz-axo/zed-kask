@@ -19,7 +19,25 @@ use hkask_inference::InferenceConfig;
 const DEFAULT_ENERGY_BUDGET_CAP: u64 = 10_000;
 const DEFAULT_GAS_REPLENISH_RATE: u64 = 1_000;
 const DEFAULT_REG_THRESHOLD: u64 = 100;
-const DEFAULT_TEMPLATE_CACHE_PATH: &str = "/tmp/hkask-templates";
+/// Default template cache path, resolved from the platform cache directory.
+///
+/// Uses `$XDG_CACHE_HOME/hkask/templates` on Linux, `~/Library/Caches/hkask/templates`
+/// on macOS, and `%LOCALAPPDATA%/hkask/templates` on Windows via `dirs::cache_dir()`.
+/// Falls back to `/tmp/hkask-templates` only if `dirs` cannot determine a cache dir.
+/// Override: `HKASK_TEMPLATE_CACHE_PATH` env var.
+fn default_template_cache_path() -> String {
+    dirs::cache_dir()
+        .map(|d| {
+            d.join("hkask")
+                .join("templates")
+                .to_string_lossy()
+                .to_string()
+        })
+        .unwrap_or_else(|| DEFAULT_TEMPLATE_CACHE_PATH_FALLBACK.to_string())
+}
+
+/// Fallback when `dirs::cache_dir()` returns `None` (rare: no HOME set).
+const DEFAULT_TEMPLATE_CACHE_PATH_FALLBACK: &str = "/tmp/hkask-templates";
 /// Fallback agent name when `HKASK_AGENT_NAME` is not set.
 ///
 /// In zed-kask, the composition root sets `HKASK_AGENT_NAME` from the
@@ -27,6 +45,12 @@ const DEFAULT_TEMPLATE_CACHE_PATH: &str = "/tmp/hkask-templates";
 /// (admin commands, repair tools) where no Zed session is available.
 const DEFAULT_USER_NAME: &str = "curator";
 const TEST_USER_NAME: &str = "test-user";
+
+/// Default memory retention in days (≈6 months).
+///
+/// Controls how long episodic and semantic memory entries persist before
+/// decay. Override: `HKASK_MEMORY_LIFE_DAYS` env var.
+const DEFAULT_MEMORY_LIFE_DAYS: f64 = 180.0;
 
 // Default DB filename and data-dir resolution are path primitives owned by
 // `hkask_types::agent_paths`; re-exported here so this crate's historical
@@ -114,7 +138,7 @@ impl ServiceConfig {
         let inference_config = InferenceConfig::from_env();
         let default_model = inference_config.default_model.clone();
         let template_cache_path = std::env::var("HKASK_TEMPLATE_CACHE_PATH")
-            .unwrap_or_else(|_| DEFAULT_TEMPLATE_CACHE_PATH.to_string());
+            .unwrap_or_else(|_| default_template_cache_path());
         let memory_db_path = std::env::var("HKASK_MEMORY_DB_PATH").ok();
         let user_name = std::env::var("HKASK_AGENT_NAME")
             .ok()
@@ -135,7 +159,7 @@ impl ServiceConfig {
         let memory_life_days = std::env::var("HKASK_MEMORY_LIFE_DAYS")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(180.0);
+            .unwrap_or(DEFAULT_MEMORY_LIFE_DAYS);
         Ok(Self {
             db_path,
             db_passphrase,
@@ -168,12 +192,12 @@ impl ServiceConfig {
             .unwrap_or_else(|_| data_dir.join(DEFAULT_DB_PATH).to_string_lossy().to_string());
         let inference_config = InferenceConfig::from_env();
         let template_cache_path = std::env::var("HKASK_TEMPLATE_CACHE_PATH")
-            .unwrap_or_else(|_| DEFAULT_TEMPLATE_CACHE_PATH.to_string());
+            .unwrap_or_else(|_| default_template_cache_path());
         let memory_db_path = std::env::var("HKASK_MEMORY_DB_PATH").ok();
         let memory_life_days = std::env::var("HKASK_MEMORY_LIFE_DAYS")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(180.0);
+            .unwrap_or(DEFAULT_MEMORY_LIFE_DAYS);
         Self {
             db_path,
             db_passphrase,
@@ -210,9 +234,9 @@ impl ServiceConfig {
             in_memory: true,
             default_model: inference_config.default_model,
             user_name: TEST_USER_NAME.to_string(),
-            template_cache_path: DEFAULT_TEMPLATE_CACHE_PATH.to_string(),
+            template_cache_path: default_template_cache_path(),
             memory_db_path: None,
-            memory_life_days: 180.0,
+            memory_life_days: DEFAULT_MEMORY_LIFE_DAYS,
         }
     }
 }

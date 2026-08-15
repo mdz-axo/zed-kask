@@ -23,6 +23,11 @@ use hkask_types::template::LLMParameters;
 use serde_json::Value;
 use std::sync::Arc;
 
+/// Fallback timeout (in seconds) when a step's `timeout_seconds` is 0 or
+/// `Duration::ZERO`. Prevents `tokio::time::timeout(Duration::ZERO, ...)` from
+/// firing immediately without polling the inference future.
+const INFERENCE_TIMEOUT_FALLBACK_SECS: u64 = 300;
+
 /// What a step action produced. The machine merges this with the node's
 /// static `ControlFlow` to decide what happens next.
 #[derive(Debug, Clone)]
@@ -995,7 +1000,7 @@ fn effective_timeout(timeout_seconds: u32) -> std::time::Duration {
             target: "hkask.templates.effective_timeout",
             "timeout_seconds is 0 — substituting 300s fallback to avoid zero-timeout"
         );
-        std::time::Duration::from_secs(300)
+        std::time::Duration::from_secs(INFERENCE_TIMEOUT_FALLBACK_SECS)
     } else {
         std::time::Duration::from_secs(timeout_seconds as u64)
     }
@@ -1097,13 +1102,13 @@ async fn call_inference_stream_with_messages(
     Option<f64>,
     Option<String>,
 )> {
-    // Defense in depth: if a caller passes Duration::ZERO, substitute 300s.
+    // Defense in depth: if a caller passes Duration::ZERO, substitute fallback.
     let timeout = if timeout == std::time::Duration::ZERO {
         tracing::warn!(
             target: "hkask.templates.call_inference_stream",
-            "timeout is Duration::ZERO — substituting 300s fallback"
+            "timeout is Duration::ZERO — substituting {INFERENCE_TIMEOUT_FALLBACK_SECS}s fallback"
         );
-        std::time::Duration::from_secs(300)
+        std::time::Duration::from_secs(INFERENCE_TIMEOUT_FALLBACK_SECS)
     } else {
         timeout
     };
@@ -1202,13 +1207,13 @@ async fn call_inference_stream(
     // Defense in depth: if a caller passes Duration::ZERO (e.g. from a
     // manifest step with timeout_seconds: 0 loaded through a path that
     // bypasses the serde default), tokio::time::timeout fires immediately
-    // without polling the inference future. Substitute a 300s fallback.
+    // without polling the inference future. Substitute the fallback.
     let timeout = if timeout == std::time::Duration::ZERO {
         tracing::warn!(
             target: "hkask.templates.call_inference_stream",
-            "timeout is Duration::ZERO — substituting 300s fallback"
+            "timeout is Duration::ZERO — substituting {INFERENCE_TIMEOUT_FALLBACK_SECS}s fallback"
         );
-        std::time::Duration::from_secs(300)
+        std::time::Duration::from_secs(INFERENCE_TIMEOUT_FALLBACK_SECS)
     } else {
         timeout
     };
@@ -1290,7 +1295,11 @@ async fn call_inference_stream(
 /// site, and the untrusted-input flag read taint markers the context write side
 /// had stopped emitting — so the block could never fire. Restoring the gate
 /// means first giving tools real taint labels and propagating taint on write.
-pub(crate) async fn invoke_tool(tools: &Arc<dyn ToolPort>, tool_name: &str, input: Value) -> Result<Value> {
+pub(crate) async fn invoke_tool(
+    tools: &Arc<dyn ToolPort>,
+    tool_name: &str,
+    input: Value,
+) -> Result<Value> {
     let tool_info = tools.get_tool_info(tool_name).await.ok_or_else(|| {
         TemplateError::NotFound(hkask_types::NotFound {
             entity_type: "tool".to_string(),
@@ -1318,7 +1327,10 @@ mod tests {
         // causes tokio::time::timeout to fire immediately without polling
         // the inference future, silently breaking every select/execute step.
         let result = effective_timeout(0);
-        assert_eq!(result, std::time::Duration::from_secs(300));
+        assert_eq!(
+            result,
+            std::time::Duration::from_secs(INFERENCE_TIMEOUT_FALLBACK_SECS)
+        );
     }
 
     #[test]

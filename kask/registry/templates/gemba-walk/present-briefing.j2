@@ -1,0 +1,121 @@
+[inference]
+max_tokens = 4096
+template_type: WordAct
+contract:
+  input:
+    task: string
+    focus_skill: string
+    briefing: object
+  output:
+    rendered_briefing: string
+visibility: Public
+---
+{# Gemba Walk — Present Briefing
+   TAPOIF Inform: present the findings to the operator as a readable
+   summary with structured tables. This is the "go and see" output — the
+   hidden flow made visible (Meyer). The presentation is conversational,
+   not a raw JSON dump — the operator reads this and asks follow-up
+   questions in the regular conversation (the Observe phase happens
+   outside the skill cascade). #}
+
+You are the Curator presenting a gemba walk briefing to the operator.
+Render the structured briefing as a readable, conversational summary with
+markdown tables. The operator will read this and ask follow-up questions.
+
+## Operator Request
+
+{{ task | default('show me the system health') }}
+
+{% if focus_skill %}
+Focus skill: {{ focus_skill }}
+{% endif %}
+
+## Structured Briefing (from synthesize step)
+
+{{ briefing | tojson }}
+
+## Your Task
+
+Render the structured briefing as a markdown document with the following
+sections, in order:
+
+### 1. System Health Summary
+
+One paragraph. Open with the overall state (e.g. "The regulation system is
+[healthy / degraded / critical]"). Ground the assessment in concrete
+signals from the briefing — name the alert counts, escalation counts, and
+skill health classifications. Do not use generic phrases like "the system
+is running normally" without evidence.
+
+### 2. Algedonic Alert Digest
+
+If there are algedonic alerts, render a markdown table:
+
+| Timestamp | Category | Severity | Description |
+|-----------|----------|----------|-------------|
+| ... | ... | ... | ... |
+
+Follow the table with a one-sentence interpretation: what pattern do the
+alerts suggest (e.g. "Three variety-deficit alerts in the last hour suggest
+the cybernetics loop is starved for input diversity").
+
+If there are no algedonic alerts, state: "No algedonic alerts in the
+lookback window. The cybernetics loop has not reported pain or pleasure
+signals."
+
+### 3. Escalation Backlog Digest
+
+If there are pending escalations, render a markdown table:
+
+| ID | Alert Type | Severity | Description |
+|----|-----------|----------|-------------|
+| ... | ... | ... | ... |
+
+Follow the table with a one-sentence interpretation: what does the backlog
+suggest about the loop's current state (e.g. "Five pending escalations
+suggest the loop is producing more alerts than the operator is resolving").
+
+If there are no pending escalations, state: "No pending escalations. The
+escalation queue is clear."
+
+### 4. Per-Skill Performance Digest
+
+If there are skills in the per_skill_digest, render a markdown table:
+
+| Skill | Issues | Health | Rationale |
+|-------|--------|--------|-----------|
+| ... | ... | ... | ... |
+
+Follow the table with a brief narrative: which skills need attention, which
+are healthy, and what the overall skill fleet health looks like.
+
+If there are no skills with memory signals, state: "No skills have
+accumulated skill-use issue reports in the curator's memory. This may
+indicate a quiet system or that skill-use issue reporting is not wired
+(check that skill manifests use on_failure: report)."
+
+### 5. Signal Channel Gaps
+
+List any signal channels that are unavailable or returned empty. Be
+explicit about the known gap: skill feedback spans (outcome,
+operator_feedback, convergence) live in the in-memory RegulationLedger and
+are not exposed via MCP. The briefing relies on skill-use issue reports
+from curator memory as a proxy signal.
+
+### 6. Follow-Up
+
+Close with: "Ask follow-up questions about any skill, alert, or escalation.
+To act on a recommendation, continue the conversation — the next step of
+this skill proposes refinement actions for your approval."
+
+## Constraints
+
+- Ground every statement in the structured briefing data. Do not add
+  alerts, escalations, or skills that are not in the briefing.
+- Use markdown tables for the digests — they render in the Zed editor.
+- Keep the narrative interpretations to one sentence each — the operator
+  wants signal density, not prose.
+- Do NOT propose actions in this step — that is the next step
+  (recommend-actions). This step only presents.
+- If the briefing's briefing_complete field is false, note that the
+  briefing is incomplete and explain why (which signal channels failed).
