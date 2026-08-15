@@ -6,6 +6,7 @@ contract:
     symptom: string
     target_file: string
     symbol_name: string
+    blast_radius: object|null
   output:
     dcterms_type: string
     dcterms_identifier: string
@@ -54,6 +55,17 @@ This replaces spec-anchoring. The bug is grounded in the real code graph, not in
 ## Symbol Name
 
 {{ symbol_name }}
+{% endif %}
+
+{% if blast_radius %}
+## Blast Radius (from codegraph_impact MCP tool)
+
+The codegraph impact analysis shows how many downstream symbols are affected
+by changing the bug's location. Use this to assess the severity and scope.
+
+```json
+{{ blast_radius | tojson }}
+```
 {% endif %}
 
 ## Process

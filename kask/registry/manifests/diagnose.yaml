@@ -64,6 +64,31 @@ ledger:
   span_namespace: reg.skill.diagnose
 
 steps:
+  # ── Phase 3 co-evolution: pre-compute blast radius ──
+  # The codegraph_impact MCP tool computes the blast radius for a symbol —
+  # how many downstream symbols are affected by changing it. Running it as
+  # an execute step before the spec-anchor gives the diagnosis the blast
+  # radius context for the bug's location. on_failure: report surfaces a
+  # broken codegraph channel without blocking the diagnosis.
+  - ordinal: 0
+    action: execute
+    description: >
+      Pre-compute the blast radius for the bug's location via codegraph_impact
+      MCP tool. Deterministic. Returns the set of symbols affected by changing
+      the function where the bug is located. Feeds the spec-anchor step (step 1)
+      so the diagnosis knows the bug's impact scope.
+    mcp: codegraph_impact
+    gas_cap: 2000
+    timeout_seconds: 60
+    on_failure:
+      action: report
+      resume: >
+        codegraph_impact failed — blast radius analysis is not available.
+        The diagnosis proceeds without impact scope context.
+    input_mapping:
+      symbol: "{{ symptom | default(bug_description | default('')) }}"
+      max_depth: 3
+
   - ordinal: 1
     action: select
     description: >
@@ -78,6 +103,7 @@ steps:
       symptom: "{{ symptom | default('') }}"
       code_context: "{{ code_context | default({}) }}"
       spec_reference: "{{ spec_reference | default('') }}"
+      blast_radius: "{{ step_0_result | default({}) }}"
 
   - ordinal: 2
     action: select

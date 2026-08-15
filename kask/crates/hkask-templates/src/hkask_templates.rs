@@ -31,10 +31,11 @@ pub mod step_machine;
 pub mod template_renderer;
 
 pub use bundle::BundleManifest;
-pub use bundle::GoldenOutputFixture;
 pub use bundle::BundleRegistryIndex;
+pub use bundle::GoldenOutputFixture;
 pub use executor::ManifestExecutor;
 pub use executor::extract_final_step_result;
+pub use step_graph::ExitKind;
 pub use step_machine::CascadeOutcome;
 
 pub use inputs::{

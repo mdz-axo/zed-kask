@@ -393,10 +393,9 @@ fn default_purge_prefix() -> String {
 }
 
 fn default_purge_passphrase() -> String {
-    // Resolves via the canonical keystore chain (env → keychain) using
-    // `hkask_mcp_server::resolve_credential`. Returns empty when unset in
-    // both tiers — `Database::open` rejects empty passphrases with
-    // "Passphrase cannot be empty", so the tool fails with an actionable
-    // error rather than silently using a hardcoded dev passphrase.
-    hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE").unwrap_or_default()
+    // Reuses the corpus server's 3-tier resolution chain (ctx.credentials →
+    // env → keychain) via `default_corpus_passphrase`, which reads the
+    // `OnceLock` set at server construction. See
+    // `crate::tools::semantic::set_corpus_db_passphrase`.
+    crate::tools::semantic::default_corpus_passphrase()
 }

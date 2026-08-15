@@ -828,6 +828,18 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             ledger_guard
                 .record_skill_span(skill_id, "outcome", outcome_payload)
                 .await;
+            // Also record a convergence span with iteration count and exit
+            // kind, so the gemba walk can trend convergence quality per skill.
+            if let Ok(ref outcome) = result {
+                let convergence_payload = serde_json::json!({
+                    "iterations": outcome.iterations,
+                    "exit_kind": format!("{:?}", outcome.exit_kind),
+                    "converged": matches!(outcome.exit_kind, hkask_templates::ExitKind::Converged),
+                });
+                ledger_guard
+                    .record_skill_span(skill_id, "convergence", convergence_payload)
+                    .await;
+            }
         }
 
         let result = result.map_err(|e| SkillExecutionError::Runtime {
@@ -1218,6 +1230,29 @@ steps:
             .map_err(|e| format!("Pipeline execution task failed: {e}"))??;
 
         Ok(extract_final_step_result(&result))
+    }
+
+    async fn record_operator_feedback(
+        &self,
+        skill_name: &str,
+        disposition: &str,
+        comments: Option<&str>,
+    ) -> Result<(), String> {
+        let ledger = self.regulation_ledger.as_ref().ok_or_else(|| {
+            "Regulation ledger not wired — operator feedback cannot be recorded".to_string()
+        })?;
+
+        let payload = serde_json::json!({
+            "disposition": disposition,
+            "comments": comments.unwrap_or(""),
+            "skill_name": skill_name,
+        });
+
+        let ledger_guard = ledger.read().await;
+        ledger_guard
+            .record_skill_span(skill_name, "operator_feedback", payload)
+            .await;
+        Ok(())
     }
 }
 

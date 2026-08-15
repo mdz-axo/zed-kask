@@ -774,6 +774,28 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
             let ocr_thresholds = ThresholdConfig::from_env();
 
+            // Resolve `HKASK_DB_PASSPHRASE` via the canonical 3-tier chain
+            // (ctx.credentials → env → keychain) once at construction and
+            // publish it to the process-wide `OnceLock` so every tool's
+            // `default_corpus_passphrase` / `default_purge_passphrase` serde
+            // default benefits from governed-launch injection. On resolution
+            // failure we publish `None` and let each tool fall back to
+            // env/keychain per call (and ultimately fail with an actionable
+            // "Passphrase cannot be empty" error from `Database::open`).
+            let db_passphrase = match hkask_mcp_server::resolve_db_passphrase(&ctx.credentials) {
+                Ok(passphrase) => Some(passphrase),
+                Err(error) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.corpus",
+                        %error,
+                        "HKASK_DB_PASSPHRASE not resolved at construction — \
+                         tools will fall back to env/keychain resolution per call"
+                    );
+                    None
+                }
+            };
+            crate::tools::semantic::set_corpus_db_passphrase(db_passphrase);
+
             let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(
                 &inference_port,
             )));
