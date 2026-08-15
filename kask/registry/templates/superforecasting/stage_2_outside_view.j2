@@ -41,7 +41,8 @@ and say so. If `calibration.domain_bias` is set (e.g. politics markets are
 chronically compressed toward 0.5 per arXiv:2602.19520), adjust the anchor
 accordingly rather than taking the price at face value.
 {% for m in market_context %}
-- [{{ m.source }}] {{ m.question }} — p={{ m.probability }} (tier: {{ m.reliability_tier }}, spread: {{ m.spread }}, bias: {{ m.calibration.domain_bias | default("none") }}, deadline: {{ m.deadline }})
+{% set market = m.market | default(m) %}
+- [{{ market.source }}] {{ market.question }} — p={{ market.probability }} (tier: {{ market.reliability_tier }}, spread: {{ market.spread }}, bias: {{ market.calibration.domain_bias | default("none") }}, deadline: {{ market.deadline }}, match_confidence: {{ m.match_confidence | default("unknown") }})
 {% endfor %}
 {% endif %}
 

@@ -8,6 +8,7 @@ contract:
     mode: string
     target_condition: object|null
     task_success: object|null
+    fetched_post_act_state: object|null
   output:
     post_act_state: object
     variety_coverage: number
@@ -73,6 +74,33 @@ You are a swarm-convergence analyst. Re-measure the swarm state post-Act and com
 
 ## Step 1 — Re-measure the swarm state post-Act
 
+The post-Act swarm state has been pre-fetched by the flowdef execute step
+(step 8 for ABW mode, step 9 for local mode) and is provided as
+`fetched_post_act_state`. Do NOT call swarm_get_swarm or
+swarm_list_local_agents — the state is already here. Parse it and
+recompute the team properties against the post-Act roster.
+
+{% if fetched_post_act_state and fetched_post_act_state | length > 0 %}
+### Pre-fetched Post-Act State
+```json
+{{ fetched_post_act_state | tojson }}
+```
+
+{% if mode == "local" %}
+Also call `swarm_balance_local` for the current ledger balance (lightweight,
+not worth a dedicated execute step). If it fails, set
+`wallet_state = { balance: null, source: "local_ledger" }`.
+{% else %}
+Optionally call `swarm_run_status` for recent workspace messages
+(dispatch/reconciliation evidence) — this is a lightweight read not worth
+a dedicated execute step.
+{% endif %}
+
+Recompute variety_coverage, diversity, alignment, cohesion, separation
+exactly as in SENSE, against the post-Act roster.
+{% else %}
+### No pre-fetched state — fetch via tool calls
+
 {% if mode == "local" %}
 Re-fetch the local agent registry via `swarm_list_local_agents`, the local
 ledger balance via `swarm_balance_local`, and the local ledger history via
@@ -85,6 +113,7 @@ orchestrates these calls), plus `swarm_run_status` for the workspace's
 recent messages (dispatch/reconciliation evidence). Recompute
 variety_coverage, diversity, alignment, cohesion, separation exactly as in
 SENSE, against the post-Act roster.
+{% endif %}
 {% endif %}
 
 ## Step 2 — Compute loop_closure

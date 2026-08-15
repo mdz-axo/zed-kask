@@ -8,6 +8,8 @@ contract:
     target_condition: object|null
     prior_iteration: object|null
     kanban_board_id: string|null
+    fetched_swarm_state: object|null
+    delegate_results: array|null
   output:
     workspace_roster: object
     wallet_state: object
@@ -137,66 +139,52 @@ should be pre-populated):
 Record the kanban task list as `kanban_tasks` in the output.
 {% endif %}
 
-## Step 1 — Fetch Swarm State
+## Step 1 — Swarm State (pre-fetched by execute step)
+
+The swarm state has been pre-fetched by the flowdef execute step (step 1 for
+ABW mode, step 2 for local mode) and is provided as `fetched_swarm_state`.
+Do NOT call swarm_get_swarm or swarm_list_local_agents — the state is already
+here. Parse it and proceed to Step 2.
+
+{% if fetched_swarm_state and fetched_swarm_state | length > 0 %}
+### Pre-fetched Swarm State
+```json
+{{ fetched_swarm_state | tojson }}
+```
 
 {% if mode == "local" %}
-Via the hkask-mcp-swarm local tools (the agent orchestrates these calls
-between template invocations; in pure FlowDef execution the
-workspace_roster should be pre-populated):
+The `fetched_swarm_state` contains the local swarm's member roster
+(`{ swarm_id, name, mission, members[] }`). To get the full agent cards,
+the execute step also fetched the local agent registry — but only the
+roster is passed here. Use the `members[]` list as the team scope.
 
-- `swarm_get_local_swarm` with swarm_id → the swarm's member roster:
-  `{ swarm_id, name, mission, members[] }` where `members[]` is a list of
-  agent id strings. This is the local analog of ABW's `swarm_get_swarm` —
-  it scopes the team to the specific swarm, not the entire local registry.
-- `swarm_list_local_agents` → the full local agent registry: `agents[]`
-  each with `{ agent_id, agent_type, accepts[], produces[], capabilities
-  { model, min_provider_class, system_prompt, mcp_tools[], skills[] },
-  dependencies { required[], optional[] } }`. **Filter this list to just
-  the agents whose `agent_id` appears in the swarm's `members[]`** — the
-  team properties (Step 3) must be computed over the swarm's roster, not
-  the entire local registry. Agents in `members[]` that have no matching
-  card are roster gaps (the id was added but no card exists yet —
-  resolution happens at delegation time, mirroring ABW workspaces).
-- `swarm_balance_local` → the local ledger balance: `{ balance, asset }`.
-  Records accumulated local spend rather than gating it, so an unfunded ledger
-  that has run delegations reads **negative**. That is normal, not a fault, and
-  is not a reason to withhold a local delegation. If the call fails, set
-  `wallet_state = { balance: null, source: "local_ledger" }` — do NOT
-  fabricate a zero balance (the `.rules` trap on `unwrap_or(0)` for
-  regulation signals — a null balance means "not yet measured", not "zero").
-- Optionally, when an agent's `accepts[]`/`produces[]` is ambiguous about
-  whether it covers a required transform, probe its prefix-scoped semantic
-  memory via `swarm_search_knowledge_local` with `{ agent_name, query }` →
-  `{ fragments[], source, agent_name, note }` to assess actual capability.
-- **Stigmergy (ACO pheromone trail):** for each agent in the filtered roster,
-  optionally query prior delegation performance via
-  `swarm_search_knowledge_local` with `{ agent_name, query: "delegation" }`.
-  The response includes `latency_ms` and `task_success` annotations written by
-  prior `swarm_delegate_local` calls. Use these to inform the per-agent metrics
-  (Step 5b): an agent with consistently high `latency_ms` or repeated
-  `task_success: false` is a fitness risk even if its `accepts[]`/`produces[]`
-  covers the required transform. Absent annotations (first invocation or memory
-  unconfigured) → the agent has no prior delegation history (not a negative
-  signal — unknown, not bad).
-
-Record the raw workspace_roster (the filtered team) and wallet_state.
+Also call `swarm_balance_local` to get the local ledger balance (this is
+a lightweight call not worth a dedicated execute step). If the call fails,
+set `wallet_state = { balance: null, source: "local_ledger" }` — do NOT
+fabricate a zero balance.
 {% else %}
-Via the hkask-mcp-swarm tools (the agent orchestrates these calls between
-template invocations in a Zed session; in pure FlowDef execution the
-workspace_roster should be pre-populated):
+The `fetched_swarm_state` contains the ABW workspace roster (`agents[]`
+each with `{ agent_id, agent_name, agent_type, accepts[], produces[],
+description, capabilities, dependencies, total_executions }`) and
+optionally the wallet envelope.
+{% endif %}
 
-- `swarm_get_swarm` with swarm_id → workspace roster: `agents[]` each with
-  `{ agent_id, agent_name, agent_type, accepts[], produces[], description,
-  capabilities { executor, mcp_tools[], model, temperature }, dependencies
-  { required[], optional[] }, total_executions }`.
-- `swarm_get_swarm` wallet read (or the wallet envelope in the response) →
-  `{ balance, transactions[] }`.
-- Optionally, when an agent's `accepts[]`/`produces[]` is ambiguous about
-  whether it covers a required transform, probe its consolidated knowledge
-  graph via `swarm_search_knowledge` (fermi v0.10.26 — the embedder is
-  fixed; vector search returns real hits) to assess actual capability.
+Record the raw workspace_roster and wallet_state from the pre-fetched data.
+{% else %}
+### No pre-fetched state — fetch via tool calls
 
-Record the raw workspace_roster and wallet_state.
+The execute step did not provide `fetched_swarm_state` (it may have been
+skipped due to a condition gate or the MCP server was unavailable). Fall
+back to fetching via tool calls:
+
+{% if mode == "local" %}
+- `swarm_get_local_swarm` with swarm_id → the swarm's member roster.
+- `swarm_list_local_agents` → the full local agent registry (filter to
+  members[]).
+- `swarm_balance_local` → the local ledger balance.
+{% else %}
+- `swarm_get_swarm` with swarm_id → workspace roster + wallet envelope.
+{% endif %}
 {% endif %}
 
 ## Step 2 — Derive required_transforms from the task

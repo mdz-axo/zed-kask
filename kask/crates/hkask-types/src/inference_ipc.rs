@@ -287,6 +287,7 @@ impl From<InferenceError> for InferenceErrorPayload {
             InferenceError::Json(m) => ("Json", m),
             InferenceError::CircuitOpen(m) => ("CircuitOpen", m),
             InferenceError::VisionUnsupported(m) => ("VisionUnsupported", m),
+            InferenceError::NotConfigured(m) => ("NotConfigured", m),
         };
         Self {
             code: code.to_string(),
@@ -304,6 +305,7 @@ impl From<InferenceErrorPayload> for InferenceError {
             "Json" => InferenceError::Json(e.message),
             "CircuitOpen" => InferenceError::CircuitOpen(e.message),
             "VisionUnsupported" => InferenceError::VisionUnsupported(e.message),
+            "NotConfigured" => InferenceError::NotConfigured(e.message),
             _ => InferenceError::Generation(e.message),
         }
     }

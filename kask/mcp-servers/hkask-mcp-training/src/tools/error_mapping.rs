@@ -27,21 +27,15 @@ pub fn map_adapter_store_error(e: AdapterStoreError) -> McpToolError {
 
 /// Classify a `HostProviderError` into the MCP wire-level `McpToolError` kind.
 ///
-/// `Unavailable` is split by message: a missing-credential failure (the
-/// provider messages are authored in `providers/mod.rs` and all contain
-/// "not configured") is a configuration/authorization problem, so it maps to
-/// `permission_denied`; transient unavailability (provider down, missing home
+/// `NotConfigured` (a missing credential like `RUNPOD_API_KEY` unset) maps to
+/// `permission_denied` — it is a configuration/authorization failure, not
+/// transient unavailability. `Unavailable` (provider down, missing home
 /// directory, unreadable SSH key) stays `unavailable`.
 pub fn map_host_provider_error(e: HostProviderError) -> McpToolError {
     let message = e.to_string();
     match e {
-        HostProviderError::Unavailable(ref msg) => {
-            if msg.contains("not configured") {
-                McpToolError::permission_denied(message)
-            } else {
-                McpToolError::unavailable(message)
-            }
-        }
+        HostProviderError::NotConfigured(_) => McpToolError::permission_denied(message),
+        HostProviderError::Unavailable(_) => McpToolError::unavailable(message),
         HostProviderError::InvalidConfig(_) | HostProviderError::DatasetError(_) => {
             McpToolError::invalid_argument(message)
         }

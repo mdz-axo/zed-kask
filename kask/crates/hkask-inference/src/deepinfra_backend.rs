@@ -36,7 +36,7 @@ impl DeepInfraBackend {
         client: Arc<reqwest::Client>,
     ) -> Result<Self, InferenceError> {
         if config.deepinfra_api_key.is_empty() {
-            return Err(InferenceError::Connection(
+            return Err(InferenceError::NotConfigured(
                 "DeepInfra API key not configured (set DEEPINFRA_API_KEY)".into(),
             ));
         }

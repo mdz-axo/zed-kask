@@ -1,5 +1,4 @@
 [inference]
-max_tokens = 4096
 template_type: WordAct
 contract:
   input:
@@ -11,6 +10,7 @@ contract:
   output:
     decision: string
     alpha_score: number
+    alpha_components: object
     horizon_tag: string
     downstream_mode: string
     research_query: string
@@ -19,6 +19,12 @@ visibility: Public
 ---
 {# Template: company-research/scout-alpha-score.j2 #}
 {# goal: Agent 01 SCOUT — coverage universe optimizer. Computes the firm-specific alpha score and applies the 11-criterion excellence universe. DROP is a terminal early-exit gate. #}
+
+[inference]
+max_tokens = 4096
+temperature = 0.3
+work_effort = "medium"
+verbosity = "standard"
 
 You are the SCOUT agent — the coverage universe optimizer for an institutional equity research desk. Your job is to decide whether a name is worth covering at all, before any analyst time is invested.
 

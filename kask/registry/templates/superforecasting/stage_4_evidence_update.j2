@@ -51,7 +51,8 @@ with tight spread is strong evidence; the same move on thin volume or wide
 spread is weak. A market at `low` reliability_tier or `stale` calibration is
 context, not evidence — do not update on it.
 {% for m in market_context %}
-- [{{ m.source }}] {{ m.question }} — p={{ m.probability }} (tier: {{ m.reliability_tier }}, spread: {{ m.spread }}, volume: {{ m.volume }}, deadline: {{ m.deadline }})
+{% set market = m.market | default(m) %}
+- [{{ market.source }}] {{ market.question }} — p={{ market.probability }} (tier: {{ market.reliability_tier }}, spread: {{ market.spread }}, volume: {{ market.volume }}, deadline: {{ market.deadline }}, match_confidence: {{ m.match_confidence | default("unknown") }})
 {% endfor %}
 {% endif %}
 

@@ -268,6 +268,9 @@ fn all_manifests_have_structural_integrity() {
             // consuming template can't distinguish "tool returned empty" from
             // "tool failed/skipped." This is a warning, not an error: the
             // default is sometimes correct (optional step, conditional skip).
+            // Filter out known-legitimate patterns: `prior_*`, `prev_*`,
+            // `previous_*` keys are loop-carried feedback that is intentionally
+            // empty on the first iteration.
             if let Some(ref mapping) = step.input_mapping {
                 if let Some(obj) = mapping.as_object() {
                     for (key, value) in obj {
@@ -276,6 +279,9 @@ fn all_manifests_have_structural_integrity() {
                                 && s.contains("_result")
                                 && (s.contains("| default({})")
                                     || s.contains("| default([])"))
+                                && !key.starts_with("prior_")
+                                && !key.starts_with("prev_")
+                                && !key.starts_with("previous_")
                             {
                                 eprintln!(
                                     "  WARN: {fname}: step {} input_mapping '{}' uses | default on a step_N_result reference — verify the default is intentional (optional step / conditional skip), not masking a failure",

@@ -45,7 +45,7 @@ impl AtlasCloudBackend {
         client: Arc<reqwest::Client>,
     ) -> Result<Self, InferenceError> {
         if config.atlascloud_api_key.is_empty() {
-            return Err(InferenceError::Connection(
+            return Err(InferenceError::NotConfigured(
                 "AtlasCloud API key not configured (set ATLASCLOUD_API_KEY)".into(),
             ));
         }

@@ -365,8 +365,11 @@ mod tests {
     #[test]
     fn fred_error_classifies_correctly() {
         use hkask_types::McpErrorKind;
+        // P2: MissingApiKey is an authorization failure (missing credential),
+        // not a bad argument — must classify as permission_denied so the
+        // operator sees a credential gap rather than a "bad input" signal.
         let e: hkask_mcp_server::server::McpToolError = EconomicDataError::MissingApiKey.into();
-        assert_eq!(e.kind, McpErrorKind::InvalidArgument);
+        assert_eq!(e.kind, McpErrorKind::PermissionDenied);
 
         let e: hkask_mcp_server::server::McpToolError = EconomicDataError::RequestFailed {
             provider: "FRED",

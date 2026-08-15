@@ -44,7 +44,7 @@ pub fn create_host(
     match config.host {
         TrainingHostId::Runpod => {
             if config.runpod_api_key.is_empty() {
-                return Err(HostProviderError::Unavailable(
+                return Err(HostProviderError::NotConfigured(
                     "Runpod API key not configured (set RUNPOD_API_KEY)".to_string(),
                 ));
             }
@@ -58,7 +58,7 @@ pub fn create_host(
         }
         TrainingHostId::DeepInfra => {
             let api_key = std::env::var("DEEPINFRA_API_KEY").map_err(|_| {
-                HostProviderError::Unavailable("DEEPINFRA_API_KEY not configured".to_string())
+                HostProviderError::NotConfigured("DEEPINFRA_API_KEY not configured".to_string())
             })?;
             let gpu_config = std::env::var("DEEPINFRA_GPU_CONFIG")
                 .unwrap_or_else(|_| "1xB200-180GB".to_string());
@@ -74,10 +74,10 @@ pub fn create_host(
         }
         TrainingHostId::Nebius => {
             let project_id = std::env::var("NEBIUS_PROJECT_ID").map_err(|_| {
-                HostProviderError::Unavailable("NEBIUS_PROJECT_ID not configured".to_string())
+                HostProviderError::NotConfigured("NEBIUS_PROJECT_ID not configured".to_string())
             })?;
             let subnet_id = std::env::var("NEBIUS_SUBNET_ID").map_err(|_| {
-                HostProviderError::Unavailable("NEBIUS_SUBNET_ID not configured".to_string())
+                HostProviderError::NotConfigured("NEBIUS_SUBNET_ID not configured".to_string())
             })?;
             let ssh_key = read_ssh_public_key()?;
             let gpu_platform =

@@ -392,3 +392,154 @@ impl TrainingServer {
         .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapter::AdapterStore;
+    use crate::dataset::DatasetPipeline;
+    use crate::providers::{HostProviderError, TrainingHost, TrainingHostId, TrainingJob};
+    use crate::providers::types::PodStatus;
+    use hkask_storage::database::sqlite::SqliteDriver;
+    use hkask_types::WebID;
+    use hkask_types::{InferenceError, InferencePort, InferenceResult, LLMParameters};
+    use rmcp::handler::server::wrapper::Parameters;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    /// Mock `TrainingHost` whose `submit` is never reached in the
+    /// `job_store.is_none()` test — the guard fires before `host.submit`.
+    /// If it were reached, it would error loudly rather than silently pass.
+    struct UnreachedHost;
+    #[async_trait::async_trait]
+    impl TrainingHost for UnreachedHost {
+        async fn submit(&self, _job: &TrainingJob) -> Result<String, HostProviderError> {
+            Err(HostProviderError::Unavailable(
+                "UnreachedHost.submit should not be reached — job_store guard must fire first"
+                    .into(),
+            ))
+        }
+        async fn status(&self, _job_id: &str) -> Result<PodStatus, HostProviderError> {
+            Err(HostProviderError::Unavailable("mock".into()))
+        }
+        async fn cancel(&self, _job_id: &str) -> Result<(), HostProviderError> {
+            Err(HostProviderError::Unavailable("mock".into()))
+        }
+    }
+
+    /// Minimal `InferencePort` — `training_submit` does not call inference, so
+    /// any method that is reached returns an error (test fails loudly).
+    struct StubInference;
+    impl InferencePort for StubInference {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            Box::pin(async {
+                Err(InferenceError::Generation(
+                    "StubInference: generate should not be reached".into(),
+                ))
+            })
+        }
+    }
+
+    /// Build a `TrainingServer` with `job_store = None` (the in-memory fallback
+    /// when `HKASK_DB_PASSPHRASE` is unset). Uses `DeepInfra` host_id so the
+    /// Runpod-only HuggingFace artifact publish step is skipped — the
+    /// `job_store.is_none()` guard is reachable without HF credentials.
+    fn server_without_job_store(cache_dir: std::path::PathBuf) -> TrainingServer {
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> = {
+            let pool = SqliteDriver::in_memory_pool().expect("in-memory pool");
+            Arc::new(SqliteDriver::new(pool))
+        };
+        let adapter_store =
+            AdapterStore::from_driver(driver).expect("adapter store init");
+        TrainingServer::new(
+            WebID::new(),
+            None, // store: Option<MemoryStore> — unused by training_submit
+            Box::new(UnreachedHost),
+            TrainingHostId::DeepInfra,
+            crate::providers::TrainingHarnessId::Axolotl,
+            Mutex::new(DatasetPipeline::new(cache_dir)),
+            Arc::new(adapter_store),
+            None, // job_store — the load-bearing None under test
+            Arc::new(StubInference),
+        )
+    }
+
+    // P1 regression: `training_submit` must surface a missing `job_store` as
+    // `permission_denied`, NOT silently proceed and lose the job's state on
+    // restart. The init-time warn when `HKASK_DB_PASSPHRASE` is missing is
+    // not a tool-level signal; the guard here makes the missing-persistence
+    // case loud and actionable at the tool boundary, before any GPU spend.
+    //
+    // We drive the real `training_submit` tool with a minimal ChatML dataset
+    // and `job_store = None`. The guard fires after dataset ingestion and
+    // validation (which pass) but before `host.submit` (which is never
+    // reached — `UnreachedHost` would error if it were). The error must
+    // classify as `permission_denied` and name `HKASK_DB_PASSPHRASE`.
+    //
+    // The dataset must live under the project root because `training_submit`
+    // contains caller-supplied paths to the current working directory
+    // (CWE-22/CWE-200). `target/` is inside the project root and gitignored,
+    // so it's a safe scratch location for test fixtures.
+    #[tokio::test]
+    async fn training_submit_returns_permission_denied_when_job_store_missing() {
+        let scratch_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("training_submit_test");
+        std::fs::create_dir_all(&scratch_dir).expect("create scratch dir");
+        let cache_dir = scratch_dir.join("cache");
+        std::fs::create_dir_all(&cache_dir).expect("create cache dir");
+
+        // Minimal valid ChatML dataset — one example, enough to pass ingestion.
+        let dataset_path = scratch_dir.join("ds.jsonl");
+        std::fs::write(
+            &dataset_path,
+            r#"{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}"#,
+        )
+        .expect("write dataset");
+
+        let server = server_without_job_store(cache_dir);
+        let req = TrainSubmitRequest {
+            dataset_path: dataset_path.to_string_lossy().to_string(),
+            base_model: "Qwen/Qwen2.5-0.5B".to_string(),
+            params: None,
+            feedback_path: None,
+            skill_name: None,
+            adapter_name: None,
+            merged_output_path: None,
+            confirmed: true,
+        };
+        let out = server.training_submit(Parameters(req)).await;
+
+        // The tool returns a String envelope; an Err path serializes as
+        // `{"error": <msg>, "kind": "permission_denied"}`.
+        let envelope = hkask_types::tool_response::parse_tool_error(&out).unwrap_or_else(|| {
+            panic!(
+                "training_submit with job_store=None must return an error envelope, \
+                 not a success payload; got: {out}"
+            );
+        });
+        assert_eq!(
+            envelope.kind,
+            Some(hkask_types::McpErrorKind::PermissionDenied),
+            "missing job_store must classify as permission_denied (authorization \
+             failure — persistence is a precondition for GPU spend), not \
+             unavailable or a silent success; got message: {}",
+            envelope.message,
+        );
+        assert!(
+            envelope.message.contains("HKASK_DB_PASSPHRASE"),
+            "error message must name HKASK_DB_PASSPHRASE so the operator knows \
+             which credential to set; got: {}",
+            envelope.message,
+        );
+
+        // Clean up the scratch fixture so the test is self-contained.
+        let _ = std::fs::remove_dir_all(&scratch_dir);
+    }
+}

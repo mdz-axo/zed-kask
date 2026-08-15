@@ -696,6 +696,14 @@ pub enum TrainingJobStatus {
 pub enum HostProviderError {
     #[error("Provider '{0}' is not available (missing CLI or configuration)")]
     Unavailable(String),
+    /// A required provider credential or configuration value is missing (e.g.
+    /// `RUNPOD_API_KEY` unset, `DEEPINFRA_API_KEY` unset, `NEBIUS_PROJECT_ID`
+    /// unset). This is a configuration/authorization failure, not transient
+    /// unavailability — callers map it to `permission_denied` rather than
+    /// `unavailable`. Replaces string-matching on "not configured" in
+    /// `map_host_provider_error` and the `create_host` error mapping.
+    #[error("Not configured: {0}")]
+    NotConfigured(String),
     #[error("Training job failed: {0}")]
     JobFailed(String),
     #[error("Invalid configuration: {0}")]

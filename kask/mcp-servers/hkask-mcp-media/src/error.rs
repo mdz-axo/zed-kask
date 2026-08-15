@@ -140,16 +140,17 @@ pub fn map_image_open_error(path: &std::path::Path, e: image::ImageError) -> Mcp
     }
 }
 
-/// Substrings that mark an inference/embedding error as a missing-credential /
+/// Substrings that mark an embedding error as a missing-credential /
 /// missing-provider configuration failure rather than a transient outage.
 ///
-/// These strings are emitted by `hkask-inference` (the canonical media backend):
-/// - `"API key not configured"` — `DeepInfraBackend::new`, `AtlasCloudBackend::new`
-/// - `"no provider configured"` — `MediaRouter::media_generate` when the
-///   provider registry is empty (no API keys registered)
-///
-/// A transient failure (provider down, rate limited, timeout, HTTP 5xx) does
-/// not contain these substrings and stays `unavailable`.
+/// NOTE: string-matching on "api key not configured" / "no provider
+/// configured" — `InferenceError` now carries a typed `NotConfigured` variant
+/// (see `classify_inference_error`), but `EmbeddingGenerationError` does not
+/// yet have one. No embedding backend currently emits a not-configured
+/// message, so this is purely defensive. If you add a not-configured
+/// construction site to an embedding backend, add a `NotConfigured(String)`
+/// variant to `EmbeddingGenerationError` in `hkask-types/src/ports/embedding.rs`
+/// and update `classify_embedding_error` to match on the variant instead.
 fn is_credential_missing_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("api key not configured") || lower.contains("no provider configured")
@@ -158,23 +159,26 @@ fn is_credential_missing_error(message: &str) -> bool {
 /// Classify an `InferenceError` from a media/vision inference call into the
 /// MCP wire-level `McpToolError` kind.
 ///
-/// A missing-credential / missing-provider configuration failure maps to
-/// `permission_denied` (matching the canonical `hkask-mcp-swarm` pattern for
-/// `"no API key configured"`); every other failure (transient outage, model
-/// error, JSON parse, circuit open) stays `unavailable`. The full error
-/// message is preserved so the operator can diagnose.
+/// A missing-credential / missing-provider configuration failure (the typed
+/// `InferenceError::NotConfigured` variant, emitted by `hkask-inference` when
+/// an API key env var is unset or no provider is registered for the op) maps
+/// to `permission_denied` (matching the canonical `hkask-mcp-swarm` pattern
+/// for `"no API key configured"`); every other failure (transient outage,
+/// model error, JSON parse, circuit open) stays `unavailable`. The full
+/// error message is preserved so the operator can diagnose.
 pub fn classify_inference_error(prefix: &str, error: InferenceError) -> McpToolError {
     let message = format!("{}: {}", prefix, error);
-    if is_credential_missing_error(&message) {
-        McpToolError::permission_denied(message)
-    } else {
-        McpToolError::unavailable(message)
+    match error {
+        InferenceError::NotConfigured(_) => McpToolError::permission_denied(message),
+        _ => McpToolError::unavailable(message),
     }
 }
 
 /// Classify an `EmbeddingGenerationError` from an embedding call into the MCP
 /// wire-level `McpToolError` kind. Same credential-vs-transient split as
-/// [`classify_inference_error`].
+/// [`classify_inference_error`], but `EmbeddingGenerationError` has no typed
+/// `NotConfigured` variant yet, so this falls back to string-matching via
+/// [`is_credential_missing_error`].
 pub fn classify_embedding_error(prefix: &str, error: EmbeddingGenerationError) -> McpToolError {
     let message = format!("{}: {}", prefix, error);
     if is_credential_missing_error(&message) {
