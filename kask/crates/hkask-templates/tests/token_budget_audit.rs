@@ -22,9 +22,11 @@
 //!   output boundary; a too-low `max_tokens` makes the output boundary
 //!   unreachable.
 
+use hkask_templates::load_manifest_from_yaml;
 use hkask_templates::test_utils::{parse_and_strip_inference_block, strip_front_matter};
+use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The default `max_tokens` when no `[inference]` block declares one.
 const DEFAULT_MAX_TOKENS: u32 = 2048;
@@ -52,6 +54,165 @@ fn template_files() -> Vec<PathBuf> {
     files
 }
 
+/// Actions that do not call inference and therefore do not consume
+/// `max_tokens`. Templates used only by these steps are exempt from the
+/// token-budget audit — they render deterministically with no LLM call,
+/// so output truncation (D25) cannot occur.
+const NON_INFERENCE_ACTIONS: &[&str] = &["render", "populate"];
+
+/// Walk the registry manifests directory, load every manifest, and collect
+/// the `template_ref` values from steps whose `action` is in
+/// `NON_INFERENCE_ACTIONS`. These templates are exempt from the
+/// token-budget audit because they never call inference.
+///
+/// Returns a set of template refs (without `.j2` extension) that should
+/// be skipped by the audit.
+fn non_inference_template_refs() -> HashSet<String> {
+    let manifests_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("registry")
+        .join("manifests");
+    let mut exempt: HashSet<String> = HashSet::new();
+
+    let Ok(entries) = fs::read_dir(&manifests_dir) else {
+        return exempt;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.extension().is_some_and(|e| e == "yaml") {
+            continue;
+        }
+        let yaml = match fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if !yaml.contains("\nmanifest:") && !yaml.starts_with("manifest:") {
+            continue;
+        }
+        let manifest = match load_manifest_from_yaml(&yaml) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        for step in &manifest.steps {
+            if NON_INFERENCE_ACTIONS.contains(&step.action.as_str()) {
+                if let Some(ref template_ref) = step.template_ref {
+                    // Strip .j2 extension to match the path comparison
+                    // in is_non_inference_template (which also strips .j2).
+                    let ref_no_ext = template_ref
+                        .strip_suffix(".j2")
+                        .unwrap_or(template_ref);
+                    exempt.insert(ref_no_ext.to_string());
+                }
+            }
+        }
+    }
+    exempt
+}
+
+/// Check whether a template path is used only by non-inference steps.
+/// Cross-references the template's path against the exempt set.
+fn is_non_inference_template(path: &Path, exempt: &HashSet<String>) -> bool {
+    let registry_templates = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("registry")
+        .join("templates");
+    let relative = match path.strip_prefix(&registry_templates) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    let stem = relative.to_string_lossy().to_string();
+    let stem_no_ext = stem
+        .strip_suffix(".j2")
+        .unwrap_or(&stem);
+    exempt.contains(stem_no_ext)
+}
+
+/// Check whether the template's output schema contains any `array` fields
+/// without a `max_items` constraint. Unbounded arrays can hold arbitrarily
+/// many items, requiring a higher `max_tokens` than the field-count heuristic
+/// suggests. Returns true if at least one unbounded array field is found.
+fn has_unbounded_array_output(template_content: &str) -> bool {
+    let raw_block = extract_inference_block_raw(template_content);
+    let mut in_output = false;
+    let mut current_field_is_array = false;
+    let mut current_field_has_max_items = false;
+
+    for line in raw_block.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.starts_with("  output:") {
+            in_output = true;
+            continue;
+        }
+        if in_output {
+            if !trimmed.starts_with("    ") {
+                in_output = false;
+                continue;
+            }
+            if let Some(rest) = trimmed.strip_prefix("    ") {
+                if rest.is_empty() || rest.starts_with('#') {
+                    continue;
+                }
+                // A new field starts — check if the previous field was an
+                // unbounded array.
+                if current_field_is_array && !current_field_has_max_items {
+                    return true;
+                }
+                // Reset for the new field.
+                current_field_is_array = false;
+                current_field_has_max_items = false;
+                // Check if this field is an array type.
+                if rest.contains("array") {
+                    current_field_is_array = true;
+                }
+            }
+            // Check for max_items constraint on the current field.
+            if trimmed.contains("max_items") {
+                current_field_has_max_items = true;
+            }
+        }
+    }
+    // Check the last field.
+    if current_field_is_array && !current_field_has_max_items {
+        return true;
+    }
+    false
+}
+
+/// Check whether the template has high reasoning overhead — `thinking_budget`
+/// set to "full" or "minimal" (not "off"), or `work_effort` set to "high".
+/// These templates are at higher risk of truncation because the model spends
+/// tokens on reasoning, leaving fewer tokens for the structured output.
+fn has_high_reasoning_overhead(template_content: &str) -> bool {
+    let after_fm = strip_front_matter(template_content);
+    let (_, inference) = parse_and_strip_inference_block(after_fm);
+
+    // thinking_budget: "full" or "minimal" means the model reasons before
+    // emitting output. "off" means no reasoning overhead.
+    if let Some(ref tb) = inference.thinking_budget {
+        if tb == "full" || tb == "minimal" {
+            return true;
+        }
+    }
+
+    // work_effort: "high" means the model takes more reasoning steps.
+    if let Some(ref we) = inference.work_effort {
+        if we == "high" {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Combined risk check: a template is at high risk of truncation if it has
+/// an unbounded array output AND high reasoning overhead. This is the
+/// condition that requires the elevated `max_tokens` floor.
+fn has_unbounded_array_with_high_reasoning(template_content: &str) -> bool {
+    has_unbounded_array_output(template_content) && has_high_reasoning_overhead(template_content)
+}
+
 fn collect_j2_files(dir: &std::path::Path, files: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -65,6 +226,13 @@ fn collect_j2_files(dir: &std::path::Path, files: &mut Vec<PathBuf>) {
         }
     }
 }
+
+/// Minimum `max_tokens` for templates with unbounded array output fields
+/// AND high thinking budget or high work effort. These templates are at
+/// risk of truncation because the model spends tokens on reasoning, leaving
+/// less for the structured output. Templates with `thinking_budget = "off"`
+/// and `work_effort = "medium"` are lower risk and exempt from this floor.
+const MIN_MAX_TOKENS_UNBOUNDED_ARRAY_HIGH_EFFORT: u32 = 4096;
 
 /// Parse the `contract: output:` block from a template's `[inference]` section
 /// and count the number of declared output fields. Returns 0 if no output
@@ -132,9 +300,16 @@ fn all_templates_have_adequate_max_tokens_for_output_schema() {
         "registry templates directory must not be empty"
     );
 
+    let exempt = non_inference_template_refs();
     let mut inadequate: Vec<(String, u32, usize)> = Vec::new();
 
     for path in &templates {
+        // Skip templates used only by render/populate steps — they don't
+        // call inference, so max_tokens is irrelevant and truncation (D25)
+        // cannot occur.
+        if is_non_inference_template(path, &exempt) {
+            continue;
+        }
         let content = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
         // Strip YAML frontmatter first — the first [inference] block is the
@@ -147,11 +322,20 @@ fn all_templates_have_adequate_max_tokens_for_output_schema() {
 
         let raw_block = extract_inference_block_raw(&content);
         let field_count = count_output_fields(raw_block);
+        let has_high_risk_array = has_unbounded_array_with_high_reasoning(&content);
 
+        // Determine the required max_tokens. The field-count heuristic
+        // handles complex schemas (7+ fields). The high-risk-array check
+        // catches templates with unbounded array output AND high reasoning
+        // overhead (thinking_budget != "off" or work_effort = "high") —
+        // these are at elevated truncation risk because the model spends
+        // tokens on reasoning before emitting the structured output.
         let required = if field_count >= VERY_COMPLEX_FIELD_THRESHOLD {
             MIN_MAX_TOKENS_VERY_COMPLEX
         } else if field_count >= COMPLEX_FIELD_THRESHOLD {
             MIN_MAX_TOKENS_COMPLEX
+        } else if has_high_risk_array {
+            MIN_MAX_TOKENS_UNBOUNDED_ARRAY_HIGH_EFFORT
         } else {
             continue; // Simple enough — no assertion.
         };
@@ -197,9 +381,13 @@ fn all_templates_have_adequate_max_tokens_for_output_schema() {
 #[test]
 fn default_max_tokens_is_sufficient_for_simple_templates() {
     let templates = template_files();
+    let exempt = non_inference_template_refs();
     let mut violations = Vec::new();
 
     for path in &templates {
+        if is_non_inference_template(path, &exempt) {
+            continue;
+        }
         let content = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
         let after_fm = strip_front_matter(&content);
@@ -210,8 +398,9 @@ fn default_max_tokens_is_sufficient_for_simple_templates() {
         }
         let raw_block = extract_inference_block_raw(&content);
         let field_count = count_output_fields(raw_block);
+        let has_high_risk_array = has_unbounded_array_with_high_reasoning(&content);
 
-        if field_count >= COMPLEX_FIELD_THRESHOLD {
+        if field_count >= COMPLEX_FIELD_THRESHOLD || has_high_risk_array {
             let short = path
                 .components()
                 .rev()
@@ -225,7 +414,7 @@ fn default_max_tokens_is_sufficient_for_simple_templates() {
 
     if !violations.is_empty() {
         let mut msg = String::from(
-            "Templates with 7+ output fields have NO [inference] block (using the 2048 default):\n",
+            "Templates with 7+ output fields or unbounded array outputs have NO [inference] block (using the 2048 default):\n",
         );
         for (name, fields) in &violations {
             msg.push_str(&format!(

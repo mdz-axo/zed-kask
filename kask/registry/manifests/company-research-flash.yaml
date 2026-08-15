@@ -203,7 +203,7 @@ steps:
     input_mapping:
       symbol: "{{ ticker }}"
       mode: "earnings"
-      max_results: 4
+      quarters_back: 4
 
   - ordinal: 6
     action: flowdef
@@ -297,7 +297,7 @@ steps:
     input_mapping:
       symbol: "{{ ticker }}"
       mode: "earnings"
-      max_results: 4
+      quarters_back: 4
 
   - ordinal: 11
     action: select
@@ -412,7 +412,7 @@ steps:
       Confidence < 0.50 = NO_PUBLISH (EFRA-AI invariant).
     renderer: minijinja
     template_ref: company-research/communication-enter
-    condition: "step_16_result.rr_ratio >= 2.0 OR step_16_result.rating != 'UNDERPERFORM'"
+    condition: "step_16_result AND (step_16_result.rr_ratio >= 2.0 OR step_16_result.rating != 'UNDERPERFORM')"
     gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
@@ -440,7 +440,6 @@ steps:
     gas_cap: 3000
     timeout_seconds: 90
     input_mapping:
-      series: "{{ ticker }}"
       limit: 50
 
   - ordinal: 19
@@ -455,7 +454,7 @@ steps:
     gas_cap: 3000
     timeout_seconds: 90
     input_mapping:
-      bucket: "{{ ticker }}"
+      bucket: "economics"
 
   - ordinal: 20
     action: select
@@ -514,7 +513,7 @@ steps:
     timeout_seconds: 120
     input_mapping:
       question: "Is the investment thesis for {{ ticker }} supported by the evidence?"
-      artifacts: "{{ step_4_result.news_items | default([]) }}"
+      artifacts: "{{ step_3_result.results | default([]) }}"
 
   # ── Step 23: LENS — five-framework audit (LLM synthesis) ──
   - ordinal: 23

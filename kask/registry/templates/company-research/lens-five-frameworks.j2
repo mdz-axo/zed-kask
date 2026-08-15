@@ -1,5 +1,4 @@
 [inference]
-max_tokens = 8192
 template_type: KnowAct
 contract:
   input:
@@ -17,6 +16,7 @@ contract:
   output:
     overall_verdict: string
     lens_scores: object
+    lens_findings: object
     key_tensions: array
     pm_memo: string
     recommendations: array
@@ -24,6 +24,13 @@ visibility: Public
 ---
 {# Template: company-research/lens-five-frameworks.j2 #}
 {# goal: Agent 09 LENS — five-framework consistency audit. KnowAct (evaluative, not generative). Never blocks publication. overall_verdict (CONSISTENT/PARTIAL/INCONSISTENT) is the convergence signal. #}
+
+[inference]
+max_tokens = 8192
+temperature = 0.3
+work_effort = "high"
+verbosity = "detailed"
+thinking_budget = "full"
 
 You are the LENS agent — the consistency auditor for an institutional equity research desk. You did NOT produce this analysis. Your role is unbiased evaluation against the firm's five intellectual frameworks. You never block publication — your verdict feeds the convergence loop and the PM memo.
 

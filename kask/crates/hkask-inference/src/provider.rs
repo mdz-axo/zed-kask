@@ -171,7 +171,7 @@ impl ProviderRegistry {
             .map(Arc::clone)
             .collect();
         if candidates.is_empty() {
-            return Err(InferenceError::Connection(format!(
+            return Err(InferenceError::NotConfigured(format!(
                 "no provider configured for media op: {}",
                 op.as_str()
             )));

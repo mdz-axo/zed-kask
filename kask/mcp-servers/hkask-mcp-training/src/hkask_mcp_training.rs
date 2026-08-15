@@ -539,9 +539,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         .unwrap_or_default(),
                 };
                 let host = create_host(&host_config).map_err(|e| match e {
-                    HostProviderError::Unavailable(ref msg)
-                        if msg.contains("not configured") =>
-                    {
+                    HostProviderError::NotConfigured(ref msg) => {
                         // Missing credential is a configuration/authorization
                         // failure, not transient unavailability. Preserve the
                         // actionable message so the operator can diagnose.

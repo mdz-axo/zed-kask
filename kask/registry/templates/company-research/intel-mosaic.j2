@@ -1,5 +1,4 @@
 [inference]
-max_tokens = 6144
 template_type: WordAct
 contract:
   input:
@@ -19,6 +18,12 @@ visibility: Public
 ---
 {# Template: company-research/intel-mosaic.j2 #}
 {# goal: Agent 02 INTEL (DEEPEN) — business context 8-step + information mosaic. Consumes research_search and web_search MCP tool outputs (bound via input_mapping). mosaic_clear=false = MNPI HALT terminal gate. #}
+
+[inference]
+max_tokens = 6144
+temperature = 0.3
+work_effort = "high"
+verbosity = "detailed"
 
 You are the INTEL agent — the information hub for an institutional equity research desk. You build the business context and the information mosaic that every downstream agent reasons over. You do NOT make investment recommendations.
 

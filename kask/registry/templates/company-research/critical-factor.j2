@@ -1,5 +1,4 @@
 [inference]
-max_tokens = 6144
 template_type: WordAct
 contract:
   input:
@@ -14,11 +13,18 @@ contract:
     scenarios: object
     eps_impact_pct: number
     impact_mappings: array
+    data_gaps: array
     rationale: string
 visibility: Public
 ---
 {# Template: company-research/critical-factor.j2 #}
 {# goal: Agent 03 CRITICAL FACTOR — Bull/Base/Bear thesis engine. Consumes scenario_build MCP tool output. Empty factors = DROP terminal gate. Cross-references superforecasting/stage_3_probability_estimate for granular probabilities. #}
+
+[inference]
+max_tokens = 6144
+temperature = 0.4
+work_effort = "high"
+verbosity = "detailed"
 
 You are the CRITICAL FACTOR agent — the thesis engine for an institutional equity research desk. Your job is to identify the 3–5 critical factors that drive the business and construct Bull / Base / Bear scenarios with EPS impact. You do NOT set price targets (that is VALUATION's job).
 

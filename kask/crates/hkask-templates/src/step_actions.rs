@@ -1391,7 +1391,7 @@ mod tests {
         assert_eq!(
             finish_reason.as_deref(),
             Some("length"),
-            "finish_reason must be threaded out for execute_select truncation detection."
+            "finish_reason must be threaded out for execute_select truncation detection"
         );
     }
 
@@ -1452,12 +1452,12 @@ mod tests {
             None,
         )
         .await
-        .expect("stream should complete.");
+        .expect("stream should complete");
 
-        assert!(text.is_empty(), "empty-output case must produce empty text.");
+        assert!(text.is_empty(), "empty-output case must produce empty text");
         assert!(
             tool_calls.is_empty(),
-            "empty-output case must produce no tool calls."
+            "empty-output case must produce no tool calls"
         );
         assert_eq!(
             finish_reason.as_deref(),

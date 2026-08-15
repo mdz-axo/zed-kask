@@ -851,6 +851,133 @@ mod tests {
             "query without a name must return a search-results array: {out}"
         );
     }
+
+    // P1 regression: `codegraph_index_embeddings` must surface an all-batches-
+    // failed embedding run as `McpToolError::unavailable`, NOT as a success
+    // envelope with `symbols_embedded: 0`. The previous path returned
+    // `Ok({"symbols_embedded": 0, ...})` even when every embedding batch
+    // errored — a broken feedback loop where the regulation layer read "0
+    // symbols embedded" as "no symbols to embed" rather than "the embedding
+    // backend is broken." The guard distinguishes the two: `symbols.is_empty()`
+    // (genuine no-op) returns Ok; `symbols_embedded == 0 && !errors.is_empty()`
+    // (every batch failed) returns Err(unavailable).
+    //
+    // We drive the real tool with a mock `InferencePort` whose `embed` always
+    // returns `Err`, against a pre-populated store with one symbol. The guard
+    // must fire and the tool must return an error envelope classified
+    // `unavailable`. This pins the guard end-to-end through
+    // `execute_tool_semantic` — a future refactor that drops the guard would
+    // re-introduce the silent-success loop.
+    #[tokio::test]
+    async fn codegraph_index_embeddings_returns_unavailable_when_all_batches_fail() {
+        use hkask_types::ports::EmbeddingGenerationError;
+        use hkask_types::{InferenceError, InferencePort, InferenceResult, LLMParameters};
+        use std::future::Future;
+        use std::pin::Pin;
+
+        /// Mock `InferencePort` whose `embed` always fails. The other trait
+        /// methods are unreachable in this test (the tool only calls `embed`),
+        /// so they return errors too — if reached, the test fails loudly
+        /// rather than silently passing.
+        struct FailingEmbedPort;
+        impl InferencePort for FailingEmbedPort {
+            fn generate(
+                &self,
+                _prompt: &str,
+                _parameters: &LLMParameters,
+                _tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> Pin<
+                Box<
+                    dyn Future<Output = Result<InferenceResult, InferenceError>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async {
+                    Err(InferenceError::Generation(
+                        "FailingEmbedPort: generate should not be reached".into(),
+                    ))
+                })
+            }
+            fn embed<'a>(
+                &'a self,
+                _model: &str,
+                _texts: &[String],
+            ) -> hkask_types::ports::EmbedFuture<'a> {
+                Box::pin(async {
+                    Err(EmbeddingGenerationError::Api(
+                        503,
+                        "FailingEmbedPort: embedding backend is down".into(),
+                    ))
+                })
+            }
+        }
+
+        // Pre-populate the store with one symbol so the tool reaches the
+        // embedding loop (the `symbols.is_empty()` early-return would
+        // otherwise short-circuit before the guard).
+        let pipeline = IndexPipeline::new(GraphStore::open_in_memory().expect("in-memory store"));
+        {
+            let store = pipeline.store();
+            let file_id = store
+                .upsert_file("src/lib.rs", "h")
+                .expect("upsert_file");
+            store
+                .insert_symbols(
+                    &[Symbol {
+                        id: None,
+                        name: "target_fn".to_string(),
+                        kind: SymbolKind::Function,
+                        file: "src/lib.rs".into(),
+                        start_line: 1,
+                        end_line: 3,
+                        signature: "fn target_fn()".to_string(),
+                        visibility: Visibility::Public,
+                        doc_comment: None,
+                        complexity: Default::default(),
+                    }],
+                    file_id,
+                )
+                .expect("insert_symbols");
+        }
+
+        let webid = WebID::new();
+        let server = CodeGraphServer::new(
+            webid,
+            CapabilityTier::detect(&webid, &std::collections::HashMap::new()),
+            Arc::new(Mutex::new(pipeline)),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(FailingEmbedPort),
+        );
+
+        let req = EmbedIndexRequest {
+            model: None,
+            batch_size: 32,
+        };
+        let out = server.codegraph_index_embeddings(Parameters(req)).await;
+
+        // The tool returns a String envelope; an Err path serializes as
+        // `{"error": <msg>, "kind": "unavailable"}`. Parse via the canonical
+        // `parse_tool_error` seam — do not re-implement envelope detection.
+        let envelope = hkask_types::tool_response::parse_tool_error(&out).unwrap_or_else(|| {
+            panic!(
+                "all-batches-failed must return an error envelope, not a success \
+                 payload; got: {out}"
+            );
+        });
+        assert_eq!(
+            envelope.kind,
+            Some(hkask_types::McpErrorKind::Unavailable),
+            "all-batches-failed must classify as unavailable, not silently return \
+             a success envelope with symbols_embedded=0; got message: {}",
+            envelope.message,
+        );
+        assert!(
+            envelope.message.contains("Embedding failed for all batches"),
+            "error message must explain that all embedding batches failed; got: {}",
+            envelope.message,
+        );
+    }
 }
 
 // D28 — pins the default DB path resolution. When HKASK_CODEGRAPH_DB is

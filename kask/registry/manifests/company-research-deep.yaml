@@ -103,8 +103,8 @@ steps:
     timeout_seconds: 120
     input_mapping:
       symbol: "{{ ticker }}"
-      mode: "corpus"
-      max_results: 8
+      mode: "earnings"
+      quarters_back: 4
 
   - ordinal: 2
     action: execute

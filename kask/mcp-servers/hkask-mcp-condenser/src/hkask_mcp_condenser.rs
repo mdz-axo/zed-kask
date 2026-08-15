@@ -60,8 +60,9 @@ hkask_mcp_server::mcp_server!(
 /// Classify an `InferenceError` from the inference router into the MCP
 /// wire-level `McpToolError` kind: connection/circuit-breaker failures are
 /// availability issues (`unavailable`), a bad model or unsupported vision
-/// request is a user-input problem (`invalid_argument`), and generation/JSON
-/// failures remain `internal`.
+/// request is a user-input problem (`invalid_argument`), a missing-credential /
+/// missing-provider configuration failure is an authorization problem
+/// (`permission_denied`), and generation/JSON failures remain `internal`.
 fn map_inference_error(e: InferenceError) -> McpToolError {
     let message = e.to_string();
     match e {
@@ -71,6 +72,7 @@ fn map_inference_error(e: InferenceError) -> McpToolError {
         InferenceError::Model(_) | InferenceError::VisionUnsupported(_) => {
             McpToolError::invalid_argument(message)
         }
+        InferenceError::NotConfigured(_) => McpToolError::permission_denied(message),
         InferenceError::Generation(_) | InferenceError::Json(_) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
     }
 }

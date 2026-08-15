@@ -6,6 +6,7 @@ contract:
     focal_question: string
     planning_horizon: string
     domain: string
+    prior_calibration: object|null
   output:
     refined_question: string
     decision_relevance: string
@@ -40,6 +41,29 @@ You are a scenario planning specialist. Your first task is to refine a focal que
 ## Domain
 
 {{ domain }}
+{% endif %}
+
+{% if prior_calibration and prior_calibration | length > 0 %}
+## Prior Calibration Data
+
+Your prior scenario forecasts have been scored. Use this to calibrate your
+approach:
+
+```json
+{{ prior_calibration | tojson }}
+```
+
+Key fields:
+- `overall_brier`: your aggregate Brier score (lower = better; <0.10 = good).
+- `overconfidence_score`: signed bias (positive = overconfident, negative = underconfident).
+- `resolved_forecasts`: how many prior forecasts have been resolved.
+- `bins`: per-probability-range calibration detail.
+
+If `resolved_forecasts` is low (< 10), the calibration data is unreliable —
+proceed with standard scenario construction. If `overconfidence_score` is
+positive, you tend to assign probabilities that are too extreme — consider
+widening your uncertainty ranges. If negative, you tend to hedge too much —
+consider committing to sharper scenario probabilities.
 {% endif %}
 
 ## Refinement Rules

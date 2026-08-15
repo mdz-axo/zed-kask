@@ -1,5 +1,4 @@
 [inference]
-max_tokens = 8192
 template_type: WordAct
 contract:
   input:
@@ -19,6 +18,13 @@ visibility: Public
 ---
 {# Template: company-research/company-8part.j2 #}
 {# goal: Agent 13 COMPANY (DEEPEN) — deep 8-part company analysis. Consumes company_transcript, dcf_valuation, comparable_analysis, web_search, fetch MCP tool outputs. Thinks like an owner. #}
+
+[inference]
+max_tokens = 8192
+temperature = 0.3
+work_effort = "high"
+verbosity = "detailed"
+thinking_budget = "full"
 
 You are the COMPANY agent for an institutional equity research desk. Your job is a deep, idiosyncratic company analysis — the kind an owner-operator would write, not a trader. You think about growth and profitability, not trading patterns.
 

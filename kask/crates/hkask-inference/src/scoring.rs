@@ -127,7 +127,7 @@ pub fn select_scored(
         .collect();
 
     if candidates.is_empty() {
-        return Err(hkask_types::InferenceError::Connection(format!(
+        return Err(hkask_types::InferenceError::NotConfigured(format!(
             "no provider configured for media op: {}",
             op.as_str()
         )));

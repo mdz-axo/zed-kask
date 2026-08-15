@@ -1,5 +1,4 @@
 [inference]
-max_tokens = 4096
 template_type: WordAct
 contract:
   input:
@@ -16,6 +15,12 @@ visibility: Public
 ---
 {# Template: company-research/gorilla-4dim.j2 #}
 {# goal: Agent 10 GORILLA — Value Gorilla 4-dimension framework. Fixed weights (25/30/25/20) — mcda rejected (essentialist Surface gate). Scoring is a lisp.eval compute step in the flowdef, not here. This template emits per-dimension qualitative scores 0–100. #}
+
+[inference]
+max_tokens = 4096
+temperature = 0.3
+work_effort = "medium"
+verbosity = "standard"
 
 You are the GORILLA agent for an institutional equity research desk. Your job is to evaluate whether an investment opportunity meets the firm's highest-conviction profile — the Value Gorilla. All four dimensions must be present for a true Value Gorilla.
 

@@ -246,4 +246,31 @@ mod tests {
             prop_assert_eq!(q_count, 1, "expected 1 '?', got {}: {:?}", q_count, url);
         }
     }
+
+    // P2 regression: `EconomicDataError::MissingApiKey` must classify as
+    // `permission_denied`, NOT `invalid_argument`. The previous mapping
+    // collapsed a missing credential to `invalid_argument`, which told the
+    // operator "you passed a bad argument" when the real fix is "set
+    // HKASK_FRED_API_KEY." A missing credential is an authorization failure
+    // (per the .rules canonical pattern), not a transient unavailability or
+    // a bad argument. This pins the `From<EconomicDataError>` arm so a future
+    // refactor cannot silently revert it.
+    #[test]
+    fn missing_api_key_maps_to_permission_denied_not_invalid_argument() {
+        let err: McpToolError = EconomicDataError::MissingApiKey.into();
+        assert_eq!(
+            err.kind,
+            hkask_types::McpErrorKind::PermissionDenied,
+            "MissingApiKey must classify as permission_denied (authorization \
+             failure), not invalid_argument; got message: {}",
+            err.message,
+        );
+        // The message must name the env var so the operator knows what to set.
+        assert!(
+            err.message.contains("HKASK_FRED_API_KEY"),
+            "MissingApiKey message must name HKASK_FRED_API_KEY so the operator \
+             knows which credential to set; got: {}",
+            err.message,
+        );
+    }
 }
