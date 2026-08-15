@@ -575,7 +575,7 @@ impl MediaServer {
                     .generate_vision(&prompt, &[image_url], &params, Some(vision_model))
                     .await
                     .map_err(|e| {
-                        McpToolError::unavailable(format!("Vision inference failed: {}", e))
+                        classify_inference_error("Vision inference failed", e)
                     })?;
 
                 Ok(serde_json::json!({"description": r.text.trim(), "style": style_str}))
@@ -1126,7 +1126,7 @@ impl MediaServer {
                 .vision_port
                 .media_generate(&lineage.op, &media_params)
                 .await
-                .map_err(|e| McpToolError::unavailable(format!("Reproduce failed: {e}")))?;
+                .map_err(|e| classify_inference_error("Reproduce failed", e))?;
             // Connect the reproduced asset to the inline widget (mirrors
             // generate_image/generate_video). image_to_video yields a video;
             // every other recorded op yields an image. The OMC tag reflects

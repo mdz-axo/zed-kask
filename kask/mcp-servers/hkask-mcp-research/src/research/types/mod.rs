@@ -192,6 +192,14 @@ pub enum WebError {
     RateLimited(String),
     #[error("No provider available")]
     NoProvider,
+    /// No provider configured because the gating credential is missing. The
+    /// message names the env var(s) the operator must set. Distinct from
+    /// `NoProvider` (genuine "no provider available, possibly transient") so
+    /// the `From<WebError>` impl can map this to `permission_denied` rather
+    /// than `unavailable` — letting operators distinguish "provider is down"
+    /// from "provider was never configured."
+    #[error("{0}")]
+    NoProviderConfigured(String),
 }
 
 impl WebError {
@@ -202,6 +210,7 @@ impl WebError {
             Self::ProviderError(_) => McpErrorKind::Internal,
             Self::RateLimited(_) => McpErrorKind::RateLimited,
             Self::NoProvider => McpErrorKind::Unavailable,
+            Self::NoProviderConfigured(_) => McpErrorKind::PermissionDenied,
         }
     }
 }

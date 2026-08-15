@@ -68,3 +68,31 @@ pub struct CuratorConsultRequest {
     /// Maximum number of memory fragments to return per store (default: 5).
     pub limit: Option<usize>,
 }
+
+/// Skill-use issue report — submitted by a skill's `on_failure` config when
+/// an MCP tool call fails or produces unexpected output. The Curator
+/// collects these reports across skills and invocations to identify patterns
+/// (e.g. "dcf_valuation fails 40% of the time when growth_rate > 0.3") and
+/// issue CuratorDirectives to evolve the MCP tool.
+///
+/// The report is stored as an episodic h_mem in the curator's memory store
+/// with entity `skill_use_issue:<skill_name>` so it is queryable via
+/// `curator_memory_recall` and `curator_semantic_search`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReportSkillUseIssueRequest {
+    /// The skill manifest ID (e.g. "superforecasting", "scenario-builder").
+    pub skill_name: String,
+    /// The MCP tool name that failed or produced unexpected output
+    /// (e.g. "market_match", "scenario_score").
+    pub tool_name: String,
+    /// The step ordinal in the skill's flowdef where the failure occurred.
+    pub step_ordinal: u32,
+    /// The error message or unexpected output description.
+    pub error: String,
+    /// Optional: the input that was sent to the tool (JSON string).
+    pub tool_input: Option<String>,
+    /// Optional: classification of the failure (e.g. "wrong_inputs",
+    /// "missing_fields", "timeout", "unexpected_empty_result",
+    /// "schema_mismatch").
+    pub failure_type: Option<String>,
+}

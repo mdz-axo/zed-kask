@@ -5,6 +5,7 @@
 
 use hkask_mcp_server::server::McpToolError;
 use hkask_storage::GalleryStoreError;
+use hkask_types::{EmbeddingGenerationError, InferenceError};
 use thiserror::Error;
 
 /// Structured error for media server operations.
@@ -136,5 +137,49 @@ pub fn map_image_open_error(path: &std::path::Path, e: image::ImageError) -> Mcp
             _ => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
         },
         _ => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
+    }
+}
+
+/// Substrings that mark an inference/embedding error as a missing-credential /
+/// missing-provider configuration failure rather than a transient outage.
+///
+/// These strings are emitted by `hkask-inference` (the canonical media backend):
+/// - `"API key not configured"` — `DeepInfraBackend::new`, `AtlasCloudBackend::new`
+/// - `"no provider configured"` — `MediaRouter::media_generate` when the
+///   provider registry is empty (no API keys registered)
+///
+/// A transient failure (provider down, rate limited, timeout, HTTP 5xx) does
+/// not contain these substrings and stays `unavailable`.
+fn is_credential_missing_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("api key not configured") || lower.contains("no provider configured")
+}
+
+/// Classify an `InferenceError` from a media/vision inference call into the
+/// MCP wire-level `McpToolError` kind.
+///
+/// A missing-credential / missing-provider configuration failure maps to
+/// `permission_denied` (matching the canonical `hkask-mcp-swarm` pattern for
+/// `"no API key configured"`); every other failure (transient outage, model
+/// error, JSON parse, circuit open) stays `unavailable`. The full error
+/// message is preserved so the operator can diagnose.
+pub fn classify_inference_error(prefix: &str, error: InferenceError) -> McpToolError {
+    let message = format!("{}: {}", prefix, error);
+    if is_credential_missing_error(&message) {
+        McpToolError::permission_denied(message)
+    } else {
+        McpToolError::unavailable(message)
+    }
+}
+
+/// Classify an `EmbeddingGenerationError` from an embedding call into the MCP
+/// wire-level `McpToolError` kind. Same credential-vs-transient split as
+/// [`classify_inference_error`].
+pub fn classify_embedding_error(prefix: &str, error: EmbeddingGenerationError) -> McpToolError {
+    let message = format!("{}: {}", prefix, error);
+    if is_credential_missing_error(&message) {
+        McpToolError::permission_denied(message)
+    } else {
+        McpToolError::unavailable(message)
     }
 }

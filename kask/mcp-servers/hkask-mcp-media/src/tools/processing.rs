@@ -35,7 +35,7 @@ impl MediaServer {
                     .media_generate("remove_background", &media_params)
                     .await
                     .map_err(|e| {
-                        McpToolError::unavailable(format!("Background removal failed: {}", e))
+                        classify_inference_error("Background removal failed", e)
                     })
                     .map(|result| {
                         crate::media_block::enrich_with_omc_and_provenance(
@@ -87,7 +87,7 @@ impl MediaServer {
                 self.vision_port
                     .media_generate("image_to_image", &media_params)
                     .await
-                    .map_err(|e| McpToolError::unavailable(format!("Style transfer failed: {}", e)))
+                    .map_err(|e| classify_inference_error("Style transfer failed", e))
                     .map(|result| {
                         crate::media_block::enrich_with_omc_and_provenance(
                             result,
@@ -473,7 +473,7 @@ impl MediaServer {
                 self.vision_port
                     .media_generate("image_to_video", &media_params)
                     .await
-                    .map_err(|e| McpToolError::unavailable(format!("Image-to-video failed: {}", e)))
+                    .map_err(|e| classify_inference_error("Image-to-video failed", e))
                     .map(|result| {
                         crate::media_block::enrich_with_omc_and_provenance(
                             result,
@@ -806,10 +806,7 @@ impl MediaServer {
                     "style": style_str,
                     "frames_analyzed": image_urls.len(),
                 })),
-                Err(e) => Err(McpToolError::unavailable(format!(
-                    "Vision inference failed: {}",
-                    e
-                ))),
+                Err(e) => Err(classify_inference_error("Vision inference failed", e)),
             }
         })
         .await
@@ -974,7 +971,7 @@ impl MediaServer {
             self.vision_port
                 .media_generate("image_to_video", &media_params)
                 .await
-                .map_err(|e| McpToolError::unavailable(format!("Image-to-video failed: {}", e)))
+                .map_err(|e| classify_inference_error("Image-to-video failed", e))
                 .map(|result| {
                     crate::media_block::enrich_with_omc_and_provenance(
                         result,

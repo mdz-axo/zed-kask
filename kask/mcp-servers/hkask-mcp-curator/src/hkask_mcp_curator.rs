@@ -290,9 +290,9 @@ mod tool_surface_tests {
     // silently registers nothing (`cargo check` passes on an unwired orphan).
     // Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_9_registered_tools() {
+    fn tool_surface_is_exactly_10_registered_tools() {
         let n = CuratorServer::tool_router().list_all().len();
-        assert_eq!(n, 9, "curator registered tool surface changed; got {n}");
+        assert_eq!(n, 10, "curator registered tool surface changed; got {n}");
     }
 }
 
@@ -750,6 +750,69 @@ impl CuratorServer {
                 "replayed_count": replayed_count,
                 "filtered_count": filtered.len(),
                 "events": filtered
+            }))
+        })
+        .await
+    }
+
+    // ── Skill-use issue reporting (Co-evolution Phase 2) ────────────────
+
+    /// Report a skill-use issue — submitted by a skill's `on_failure` config
+    /// when an MCP tool call fails or produces unexpected output. The report
+    /// is stored as an episodic h_mem in the curator's memory store with
+    /// entity `skill_use_issue:<skill_name>` so it is queryable via
+    /// `curator_memory_recall` and `curator_semantic_search`.
+    ///
+    /// This is the skill-reported input channel of the co-evolution loop:
+    /// skills report MCP tool issues → the Curator analyzes patterns →
+    /// CuratorDirectives evolve the MCP tool (add validation, improve error
+    /// messages, add fallbacks). Complements the existing runtime telemetry
+    /// (reg.* spans, algedonic events).
+    #[tool(
+        description = "Report a skill-use issue when an MCP tool call fails or produces unexpected output. Stored as an episodic h_mem for Curator pattern analysis. The report includes: skill name, tool name, step ordinal, error description, optional tool input, and optional failure type classification."
+    )]
+    pub async fn curator_report_skill_use_issue(
+        &self,
+        Parameters(req): Parameters<ReportSkillUseIssueRequest>,
+    ) -> String {
+        execute_tool(self, "curator_report_skill_use_issue", async {
+            let stores = self.db.get();
+            let memory = stores.memory()?;
+
+            let entity = format!("skill_use_issue:{}", req.skill_name);
+            let now = chrono::Utc::now();
+
+            let report_value = json!({
+                "skill_name": req.skill_name,
+                "tool_name": req.tool_name,
+                "step_ordinal": req.step_ordinal,
+                "error": req.error,
+                "tool_input": req.tool_input,
+                "failure_type": req.failure_type,
+                "reported_at": now.to_rfc3339(),
+            });
+
+            let h_mem = hkask_storage::HMem::new(
+                &entity,
+                &format!("tool_failure:{}", req.tool_name),
+                report_value,
+                self.webid,
+            );
+
+            memory
+                .store(h_mem)
+                .map_err(|e| map_memory_store_error(e, "Failed to store skill-use issue report"))?;
+
+            RegulationSpan::Curation.emit("skill_use_issue_reported");
+
+            Ok(json!({
+                "reported": true,
+                "entity": entity,
+                "skill_name": req.skill_name,
+                "tool_name": req.tool_name,
+                "step_ordinal": req.step_ordinal,
+                "failure_type": req.failure_type,
+                "guidance": "The issue has been recorded in the curator's memory store. Use curator_memory_recall with entity 'skill_use_issue:<skill_name>' to retrieve accumulated reports."
             }))
         })
         .await

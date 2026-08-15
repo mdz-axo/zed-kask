@@ -87,8 +87,8 @@ use crate::adapters::{AdapterMetrics, JobStore};
 use crate::dataset::DatasetPipeline;
 use crate::huggingface::{CompletionManifest, HuggingFaceTraining};
 use crate::providers::{
-    TrainingHarnessId, TrainingHost, TrainingHostConfig, TrainingHostId, TrainingJobStatus,
-    create_host,
+    HostProviderError, TrainingHarnessId, TrainingHost, TrainingHostConfig, TrainingHostId,
+    TrainingJobStatus, create_host,
 };
 use hkask_memory::MemoryStore;
 use hkask_types::InferencePort;
@@ -538,8 +538,22 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     runpod_docker_image: std::env::var("RUNPOD_DOCKER_IMAGE")
                         .unwrap_or_default(),
                 };
-                let host = create_host(&host_config)
-                    .map_err(|e| anyhow::anyhow!("Failed to create training host: {}", e))?;
+                let host = create_host(&host_config).map_err(|e| match e {
+                    HostProviderError::Unavailable(ref msg)
+                        if msg.contains("not configured") =>
+                    {
+                        // Missing credential is a configuration/authorization
+                        // failure, not transient unavailability. Preserve the
+                        // actionable message so the operator can diagnose.
+                        hkask_mcp_server::McpError::MissingCredentials {
+                            missing: msg.clone(),
+                        }
+                    }
+                    other => hkask_mcp_server::McpError::UnexpectedResponse {
+                        context: "training host init".into(),
+                        detail: other.to_string(),
+                    },
+                })?;
 
                 Ok(TrainingServer::new(
                     ctx.webid,

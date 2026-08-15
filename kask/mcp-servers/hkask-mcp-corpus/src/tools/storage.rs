@@ -1,5 +1,5 @@
 //! Storage and query tools — cache, passage query, similarity.
-use crate::helpers::{map_corpus_io_error, map_memory_store_error};
+use crate::helpers::{map_corpus_io_error, map_database_error, map_memory_store_error};
 use crate::{
     CorpusServer, IndexedPassage, LLMParameters, McpToolError, MemoryStore, Parameters,
     cosine_similarity, embedding_dim, execute_tool_semantic, json, render_docproc_template, tool,
@@ -271,9 +271,8 @@ impl CorpusServer {
     pub async fn corpus_purge_qa(&self, Parameters(req): Parameters<PurgeQaRequest>) -> String {
         execute_tool_semantic(self, "corpus_purge_qa", Self::ontology_anchor("corpus_purge_qa"), async {
             let dim = embedding_dim();
-            let store = MemoryStore::open(&req.db_path, &req.passphrase, dim).map_err(|e| {
-                McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
-            })?;
+            let store = MemoryStore::open(&req.db_path, &req.passphrase, dim)
+                .map_err(|e| map_database_error(e, "Cannot open memory DB"))?;
 
             let embeddings_before = match store.embedding_count() {
                 Ok(n) => n,

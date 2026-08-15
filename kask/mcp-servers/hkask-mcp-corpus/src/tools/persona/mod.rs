@@ -43,7 +43,7 @@ fn inference_config() -> hkask_inference::InferenceConfig {
 fn database_passphrase() -> Result<String, McpToolError> {
     hkask_keystore::keychain::resolve_db_passphrase_string()
         .map(|value| value.to_string())
-        .map_err(|e| McpToolError::failed_precondition(e.to_string()))
+        .map_err(|e| McpToolError::permission_denied(e.to_string()))
 }
 
 fn qualitative_label(distance: f64) -> String {
