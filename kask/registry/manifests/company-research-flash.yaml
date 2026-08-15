@@ -105,14 +105,40 @@ inputs:
     required: false
     description: >
       Prior forecast-ledger outcomes for this ticker + analyst (resolved PTs
-      and prediction-market resolutions with Brier scores). Feeds KATA step
-      20 PDCA "check" — the forecast-to-outcome calibration loop. Absent on
-      first analysis of a ticker.
+      and prediction-market resolutions with Brier scores). Fetched natively
+      by the forecast_list execute step (0) from hkask-mcp-companies. This
+      input is retained as a cascade-level override — the invoking agent may
+      pre-populate it to bypass the fetch. Feeds KATA step 20 PDCA "check".
 
 ledger:
   span_namespace: reg.skill.company-research-flash
 
 steps:
+  # ── Step 0: Fetch prior forecasts (persistence-grounded learning) ──
+  # Reads prior durable forecasts for this ticker from the companies MCP
+  # forecast ledger. Feeds the KATA PDCA "check" step (20) with prior
+  # forecast-to-outcome calibration data. Absent on first analysis of a
+  # ticker — the tool returns an empty list, not an error.
+  - ordinal: 0
+    action: execute
+    description: >
+      Fetch prior durable forecasts for this ticker via forecast_list
+      (hkask-mcp-companies). Persistence-grounded learning — the KATA PDCA
+      step (20) uses prior forecast outcomes to calibrate process confidence.
+      Result lands in step_0_result and feeds the prior_outcomes input of
+      step 20.
+    mcp: forecast_list
+    gas_cap: 2000
+    timeout_seconds: 60
+    input_mapping:
+      symbol: "{{ ticker }}"
+    on_failure:
+      action: report
+      resume: >
+        forecast_list failed — the companies MCP server may be down.
+        Restart the server via sync_kask_mcp_servers and re-invoke. The
+        pipeline can proceed without prior forecast data (first analysis).
+
   # ── Step 1: SCOUT — alpha score + excellence universe ──
   - ordinal: 1
     action: select
@@ -476,7 +502,7 @@ steps:
         ticker: "{{ ticker }}"
         resolved_outcomes: "{{ step_18_result }}"
         calibration_brier: "{{ step_19_result }}"
-        prior_outcomes: "{{ prior_outcomes | default({}) }}"
+        prior_outcomes: "{{ step_0_result | default(prior_outcomes | default({})) }}"
         valuation: "{{ step_16_result }}"
         communication: "{{ step_17_result }}"
 

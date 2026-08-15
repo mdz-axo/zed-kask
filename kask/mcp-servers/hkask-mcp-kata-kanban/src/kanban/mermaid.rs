@@ -132,15 +132,18 @@ fn unescape_title(title: &str) -> String {
 /// Render a board and its tasks as mermaid kanban markdown.
 ///
 /// Tasks are grouped by their column's status, preserving the board's column
-/// order and the task order within each column (callers should sort tasks as
-/// desired before calling — `task_list` returns newest-first, so callers
-/// typically reverse to get creation order).
+/// order. Within each column, tasks are reversed from the input order so that
+/// the markdown lists them in creation order (oldest first). This matches the
+/// convention that `task_list` returns newest-first, and the parsed markdown's
+/// source order is creation order (see the round-trip tests).
 pub fn export_board_to_mermaid(board: &Board, tasks: &[Task]) -> String {
     let columns: Vec<(String, Vec<TaskSummary>)> = board
         .columns
         .iter()
         .map(|column| {
-            let column_tasks: Vec<TaskSummary> = tasks
+            // `task_list` returns newest-first; reverse to get creation order
+            // so the markdown's source order is creation order.
+            let mut column_tasks: Vec<TaskSummary> = tasks
                 .iter()
                 .filter(|task| task.status == column.status)
                 .map(|task| TaskSummary {
@@ -148,6 +151,7 @@ pub fn export_board_to_mermaid(board: &Board, tasks: &[Task]) -> String {
                     title: escape_title(&task.title),
                 })
                 .collect();
+            column_tasks.reverse();
             (column.name.clone(), column_tasks)
         })
         .collect();
@@ -307,36 +311,33 @@ pub fn columns_from_parsed(parsed: &ParsedBoard) -> Vec<ColumnDef> {
         }
     }
     // Second pass: assign remaining columns to the next unclaimed standard
-    // status, in order.
+    // status, in order. Collect into a fresh Vec to avoid borrowing `claimed`
+    // mutably and immutably in the same loop.
     let mut next_standard = 0;
-    for (i, claimed_status) in claimed.iter_mut().enumerate() {
-        if claimed_status.is_none() {
-            while next_standard < TaskStatus::STANDARD_ORDER.len() {
-                let candidate = TaskStatus::STANDARD_ORDER[next_standard];
-                next_standard += 1;
-                if !claimed.iter().any(|c| c == &Some(candidate)) {
-                    *claimed_status = Some(candidate);
-                    break;
+    let mut assigned: Vec<TaskStatus> = Vec::with_capacity(claimed.len());
+    for claimed_status in &claimed {
+        match claimed_status {
+            Some(status) => assigned.push(*status),
+            None => {
+                let mut found = TaskStatus::Backlog;
+                while next_standard < TaskStatus::STANDARD_ORDER.len() {
+                    let candidate = TaskStatus::STANDARD_ORDER[next_standard];
+                    next_standard += 1;
+                    if !claimed.iter().any(|c| c == &Some(candidate)) {
+                        found = candidate;
+                        break;
+                    }
                 }
-            }
-            // If all standard statuses are claimed, fall back to Backlog.
-            if claimed_status.is_none() {
-                *claimed_status = Some(TaskStatus::Backlog);
+                assigned.push(found);
             }
         }
-        let status = claimed[i].expect("assigned in this loop");
-        let _ = &parsed.columns[i]; // borrow check: i is valid.
-        let _ = status;
     }
 
     parsed
         .columns
         .iter()
         .enumerate()
-        .map(|(i, column)| {
-            let status = claimed[i].unwrap_or(TaskStatus::Backlog);
-            ColumnDef::new(column.name.clone(), status, i as u32)
-        })
+        .map(|(i, column)| ColumnDef::new(column.name.clone(), assigned[i], i as u32))
         .collect()
 }
 

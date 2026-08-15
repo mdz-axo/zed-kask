@@ -69,7 +69,8 @@ pub const USED: PkoConcept = "prov:used";
 /// Returns None for internal types without a PKO equivalent.
 pub fn kanban_type_to_pko(type_name: &str) -> Option<PkoConcept> {
     match type_name {
-        "Board" | "kanban_board_create" | "kanban_board_list" => Some(PROCEDURE),
+        "Board" | "kanban_board_create" | "kanban_board_list" | "kanban_board_export"
+            | "kanban_board_import" => Some(PROCEDURE),
         "Task" | "kanban_task_create" | "kanban_task_list" => Some(STEP),
         "Task.decomposed" | "kanban_task_decompose" => Some(MULTISTEP),
         "Task.execution" | "Task.in_progress" | "kanban_task_spawn" => Some(STEP_EXECUTION),

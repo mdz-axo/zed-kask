@@ -442,7 +442,7 @@ impl StepMachine {
                     }
                     continue;
                 }
-                Err(crate::ports::TemplateError::Manifest(ref msg))
+                Err(crate::ports::TemplateError::Manifest(msg))
                     if attempt < max_retries
                         && self.error_handling.on_parse_failure == "retry"
                         && is_parse_failure(msg.as_str()) =>
@@ -688,6 +688,7 @@ fn is_parse_failure(msg: &str) -> bool {
 /// This enables operators to filter and aggregate skill failures by mode
 /// (e.g. `failure_mode=timeout`, `failure_mode=parse_failure`,
 /// `failure_mode=tool_not_found`) in log analysis tools.
+#[allow(dead_code)] // in-process work — not yet wired
 fn classify_failure_mode(error: &crate::ports::TemplateError) -> &'static str {
     match error {
         crate::ports::TemplateError::Timeout { .. } => "timeout",
