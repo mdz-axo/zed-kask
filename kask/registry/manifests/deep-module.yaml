@@ -115,6 +115,24 @@ steps:
       constraint_classification: "{{ constraint_classification | default({}) }}"
 
   - ordinal: 4
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence signal: the public-interface item count.
+      Lower signal variance across iterations = convergence (Cauchy).
+      If step 3 was skipped (DELETE/MERGE recommendation), step_3_result
+      is undefined — guard to 0 (stable, Cauchy fires after min_iterations).
+      Using lisp.eval instead of a Jinja expression makes the computation
+      explicitly deterministic, budgeted (gas_cap: 100), and observable
+      via a reg.skill.deep-module span.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: "(let ((iface (assoc \"public_interface\" step_3_result))) (if (is_null iface) 0 (length iface)))"
+      env:
+        step_3_result: "{{ step_3_result | default({}) }}"
+
+  - ordinal: 5
     action: loop
     description: >
       Re-enter depth cycle if convergence is not met. The loop_target is
@@ -130,11 +148,7 @@ steps:
       persist step results, re-entry will fail.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the public-interface item count into convergence_signal so the
-      # Cauchy criterion can detect when the design has stopped moving.
-      # When step 3 (design) is skipped (DELETE/MERGE recommendation),
-      # the value defaults to 0 — stable, so Cauchy fires after min_iterations.
-      convergence_signal: "{{ step_3_result.public_interface | default([]) | length }}"
+      convergence_signal: "{{ step_4_result }}"
 
 error_handling:
   on_gas_exceeded: abort

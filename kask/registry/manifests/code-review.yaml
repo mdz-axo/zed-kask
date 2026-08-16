@@ -196,6 +196,47 @@ steps:
       probe_findings: "{{ probe_findings | default('') }}"
 
   - ordinal: 3
+    action: parallel
+    condition: "delegate_security == true OR delegate_bug_hunt == true OR delegate_architecture == true"
+    description: >
+      PARALLEL DELEGATION: Run delegated specialist skills concurrently. Each
+      branch invokes one specialist skill (kali-audit for security, bug-hunt for
+      deep defects, refactor-architecture for architecture) against the change
+      model from step 1. Results join into a single object keyed by delegate
+      name. join: allSettled — a failed delegate does not abort the others;
+      its error is captured in the errors sidecar. The adjudicate step (step 4)
+      consumes the joined findings as supplementary raw_findings alongside the
+      inline perspectives from step 2.
+
+      This replaces the agent-mediated sequential delegation path (where the
+      agent invokes specialist skills one at a time between steps 2 and 3).
+      Concurrent execution reduces wall-clock time when multiple delegates are
+      enabled. When no delegates are enabled, the condition skips this step
+      and the cascade proceeds directly from perspectives to adjudicate.
+    gas_cap: 20000
+    timeout_seconds: 300
+    input_mapping:
+      join: "allSettled"
+      branches:
+        - branch_id: "security"
+          template_ref: "kali-audit"
+          condition: "delegate_security == true"
+          input_mapping:
+            surface: "code"
+            target_files: "{{ step_1_result.changed_files | default([]) }}"
+        - branch_id: "bug_hunt"
+          template_ref: "bug-hunt"
+          condition: "delegate_bug_hunt == true"
+          input_mapping:
+            target: "{{ step_1_result.change_model | default({}) }}"
+            quality_criteria: "{{ change_spec | default('') }}"
+        - branch_id: "architecture"
+          template_ref: "refactor-architecture"
+          condition: "delegate_architecture == true"
+          input_mapping:
+            target: "{{ step_1_result.change_model | default({}) }}"
+
+  - ordinal: 4
     action: select
     description: >
       ADJUDICATE (Fagan defect collection). Turn raw observations into tiered,
@@ -215,8 +256,36 @@ steps:
       change_spec: "{{ change_spec }}"
       critical_paths: "{{ step_1_result.critical_paths | default([]) }}"
       prior_review: "{{ prior_review | default({}) }}"
+      # Findings from parallel delegation (step 3). Each key holds the
+      # specialist skill's cascade output. Empty when no delegates were
+      # enabled (step 3 was skipped) or a delegate errored (allSettled
+      # captures the error in the errors sidecar, not here).
+      delegate_findings: "{{ step_3_result | default({}) }}"
 
-  - ordinal: 4
+  - ordinal: 5
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      SEVERITY CONSISTENCY CHECK: verify that severity_counts internal
+      totals match the adjudicated_findings length. The sum of blockers +
+      should_fix + nit + fyi must equal adjudicated_findings.length. A
+      mismatch means the adjudicate step lost or invented findings — a
+      broken feedback loop. Returns 0 = consistent, 1 = inconsistent.
+      An inconsistent result pollutes the convergence signal, forcing a
+      re-run of the adjudicate step.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((findings (assoc "adjudicated_findings" step_4_result))
+              (counts (assoc "severity_counts" step_4_result)))
+          (let ((sum (+ (+ (assoc "blockers" counts) (assoc "should_fix" counts))
+                         (+ (assoc "nit" counts) (assoc "fyi" counts)))))
+            (if (= sum (length findings)) 0 1)))
+      env:
+        step_4_result: "{{ step_4_result }}"
+
+  - ordinal: 6
     action: select
     description: >
       REPORT (Fagan outputs). Produce a verdict driven by Blocker presence
@@ -231,15 +300,15 @@ steps:
     gas_cap: 4096
     timeout_seconds: 150
     input_mapping:
-      adjudicated_findings: "{{ step_3_result.adjudicated_findings | default([]) }}"
+      adjudicated_findings: "{{ step_4_result.adjudicated_findings | default([]) }}"
       change_model: "{{ step_1_result.change_model | default({}) }}"
       size_class: "{{ step_1_result.size_class | default('') }}"
-      rejected_findings: "{{ step_3_result.rejected_findings | default([]) }}"
-      severity_counts: "{{ step_3_result.severity_counts | default({}) }}"
-      blocker_delta: "{{ step_3_result.blocker_delta | default(0) }}"
+      rejected_findings: "{{ step_4_result.rejected_findings | default([]) }}"
+      severity_counts: "{{ step_4_result.severity_counts | default({}) }}"
+      blocker_delta: "{{ step_4_result.blocker_delta | default(0) }}"
       prior_review: "{{ prior_review | default({}) }}"
 
-  - ordinal: 5
+  - ordinal: 7
     action: select
     description: >
       IMPLEMENT (Fagan rework — Act phase). Caller-gated via fix_mode. SKIPPED
@@ -260,29 +329,31 @@ steps:
     timeout_seconds: 180
     condition: "fix_mode == 'blockers' OR fix_mode == 'should_fix' OR fix_mode == 'all'"
     input_mapping:
-      adjudicated_findings: "{{ step_3_result.adjudicated_findings | default([]) }}"
-      review: "{{ step_4_result.review | default({}) }}"
+      adjudicated_findings: "{{ step_4_result.adjudicated_findings | default([]) }}"
+      review: "{{ step_6_result.review | default({}) }}"
       fix_mode: "{{ fix_mode | default('none') }}"
       change_model: "{{ step_1_result.change_model | default({}) }}"
 
-  - ordinal: 6
+  - ordinal: 8
     action: compute
     compute_ref: lisp.eval
     description: >
       Compute structural-validity score from step 3's actual adjudicate
       output. The convergence signal is the weighted count of open findings:
-      severity_counts.blockers + 0.5 * severity_counts.should_fix. Lower =
-      more converged (zero open findings = converged clean). If severity_counts
-      or any count is absent, the form errors (no silent default), surfacing
-      a broken adjudicate step rather than masking it with a flat 1.0.
+      severity_counts.blockers + 0.5 * severity_counts.should_fix, plus the
+      consistency penalty from step 4 (0 = consistent, 1 = inconsistent).
+      An inconsistent adjudicate adds 100 to the signal, forcing a re-run.
+      If severity_counts or any count is absent, the form errors (no silent
+      default), surfacing a broken adjudicate step rather than masking it.
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
-      form: "(+ (assoc \"blockers\" (assoc \"severity_counts\" step_3_result)) (* 0.5 (assoc \"should_fix\" (assoc \"severity_counts\" step_3_result))))"
+      form: "(+ (+ (assoc \"blockers\" (assoc \"severity_counts\" step_4_result)) (* 0.5 (assoc \"should_fix\" (assoc \"severity_counts\" step_4_result)))) (* 100 step_5_result))"
       env:
-        step_3_result: "{{ step_3_result }}"
+        step_4_result: "{{ step_4_result }}"
+        step_5_result: "{{ step_5_result }}"
 
-  - ordinal: 7
+  - ordinal: 9
     action: loop
     description: >
       Re-enter the review cycle if convergence is not met. Routes the report's
@@ -293,10 +364,10 @@ steps:
     input_mapping:
       loop_target: "{{ 1 }}"
       prior_review:
-        next_review_focus: "{{ step_4_result.next_review_focus | default('') }}"
-        lessons_learned: "{{ step_4_result.lessons_learned | default([]) }}"
-        blockers: "{{ step_3_result.severity_counts.blockers | default(0) }}"
-      convergence_signal: "{{ step_6_result }}"
+        next_review_focus: "{{ step_6_result.next_review_focus | default('') }}"
+        lessons_learned: "{{ step_6_result.lessons_learned | default([]) }}"
+        blockers: "{{ step_4_result.severity_counts.blockers | default(0) }}"
+      convergence_signal: "{{ step_8_result }}"
 
 error_handling:
   on_gas_exceeded: abort

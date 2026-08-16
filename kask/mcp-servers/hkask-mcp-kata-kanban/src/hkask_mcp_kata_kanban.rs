@@ -1316,12 +1316,63 @@ impl KanbanServer {
                         grounding_result.narrative_leaks.len(),
                     );
                 }
+                // Rung 2 (Schema validation): validate the cleaned document
+                // AFTER grounding, BEFORE it persists. Unsupported keywords
+                // are NOT a pass. Logged at warn — schema violations are
+                // diagnostic, not blocking (the cleaned document is still
+                // the best available output).
+                let validation = crate::schema_validate::validate(
+                    &serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "deliverable_path": { "type": ["string", "null"] },
+                            "test_verdict": { "type": ["string", "null"] },
+                            "summary": { "type": "string" },
+                            "approach": { "type": "string" }
+                        }
+                    }),
+                    &cleaned,
+                );
+                if !validation.violations.is_empty() {
+                    tracing::warn!(
+                        target: "hkask.mcp.kata_kanban",
+                        task_id = %tid,
+                        agent_id = %result.agent_id,
+                        violations = ?validation.violations,
+                        "schema validation: {} violation(s) after grounding",
+                        validation.violations.len(),
+                    );
+                }
+                if !validation.unsupported.is_empty() {
+                    tracing::warn!(
+                        target: "hkask.mcp.kata_kanban",
+                        task_id = %tid,
+                        unsupported = ?validation.unsupported,
+                        "schema validation: unsupported keyword(s) — NOT a pass",
+                    );
+                }
+                // Build the delegation envelope so provenance survives the
+                // hop to the caller (N2). The envelope is additive — it
+                // carries the enforced payload, provenance, and violations.
+                let envelope = crate::envelope::build(
+                    &result.agent_id,
+                    Some(&cleaned),
+                    &grounding_result,
+                    true,
+                );
                 // Replace the response with the cleaned JSON (with provenance
                 // stamps and nulled unsourced fields).
                 result.response =
                     serde_json::to_string(&cleaned).unwrap_or_else(|_| result.response.clone());
                 // Retain the raw response for audit and future reprocessing.
                 result.raw_response = Some(raw_response);
+                // Log the envelope at debug — it's diagnostic, not blocking.
+                tracing::debug!(
+                    target: "hkask.mcp.kata_kanban",
+                    task_id = %tid,
+                    envelope = %envelope,
+                    "delegation envelope built",
+                );
             }
         }
 

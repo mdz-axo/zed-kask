@@ -86,18 +86,26 @@ steps:
     action: compute
     compute_ref: lisp.eval
     description: >
-      Deterministic convergence score from the coverage step's actual output.
-      The skill-maintenance-coverage template produces `uncovered_patterns`
-      and `partial_coverage` arrays; the sum of their lengths is the distance
-      from full corpus coverage. Lower = more converged.
+      Deterministic convergence score combining staleness (step 1) and
+      coverage gaps (step 2). The staleness component counts stale skills
+      from the audit step; the coverage component counts uncovered + partial
+      patterns. The sum is the distance from a healthy corpus. Lower = more
+      converged. If either step's output is missing a field, the form errors
+      (no silent default) — a broken audit or coverage step surfaces as a
+      loud failure rather than masking with a flat 0.
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((u (length (assoc "uncovered_patterns" step_2_result)))
-              (p (length (assoc "partial_coverage" step_2_result))))
-          (+ 0.0 (+ u p)))
+        (let ((stale (assoc "stale_skills" step_1_result))
+              (uncovered (assoc "uncovered_patterns" step_2_result))
+              (partial (assoc "partial_coverage" step_2_result)))
+          (let ((s (if (is_null stale) 0 (length stale)))
+                (u (if (is_null uncovered) 0 (length uncovered)))
+                (p (if (is_null partial) 0 (length partial))))
+            (+ 0.0 (+ (+ s u) p))))
       env:
+        step_1_result: "{{ step_1_result }}"
         step_2_result: "{{ step_2_result }}"
       max_steps: 10000
       max_depth: 32

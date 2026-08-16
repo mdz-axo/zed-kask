@@ -390,8 +390,12 @@ impl LeakRule {
                     let at = from + rel;
                     // Walk back over the separators a writer puts between a
                     // number and its unit: "480 Mb", "420-480Mb", "~90 mya".
+                    // ASCII tilde (0x7E) is included; the 0xE2 byte was
+                    // removed because it matches the first byte of any 3-byte
+                    // UTF-8 sequence in the U+2xxx range (thousands of CJK
+                    // and punctuation characters), not just Unicode tilde.
                     let mut i = at;
-                    while i > 0 && matches!(bytes[i - 1], b' ' | b'-' | b'~' | 0xE2) {
+                    while i > 0 && matches!(bytes[i - 1], b' ' | b'-' | b'~') {
                         i -= 1;
                     }
                     if i > 0 && bytes[i - 1].is_ascii_digit() {
@@ -526,6 +530,17 @@ pub fn enforce_grounding(
             if result.provenance.contains_key(field) {
                 continue;
             }
+            // Skip top-level keys that are prefixes of contract dotted
+            // paths (e.g., "deliverables" is a prefix of "deliverables[].path").
+            // These are handled by pass 1 via array-path nulling; marking
+            // them UncommissionedInference here would be a false positive.
+            if contract
+                .field_sources
+                .keys()
+                .any(|k| k.starts_with(field) && (k.len() == field.len() || k.as_bytes()[field.len()] == b'.' || k.as_bytes()[field.len()] == b'['))
+            {
+                continue;
+            }
             let tag = match contract.field_sources.get(field) {
                 Some(spec) if spec.sources.is_empty() => ProvenanceTag::Inferred,
                 Some(spec) => {
@@ -569,18 +584,35 @@ pub fn enforce_grounding(
     // Only flag a leak if the nulled field's block is NOT sourced.
     // A narrative mention of a sourced block's value is legitimate;
     // a mention of an unsourced block's value is a leak.
+    //
+    // Two scan strategies:
+    // 1. Substring match on the removed preview (≥10 chars).
+    // 2. Domain-specific NARRATIVE_LEAK_RULES (Word + Quantity matching).
+    let haystack = narrative.to_ascii_lowercase();
     for (field, tag) in &result.provenance {
         if let ProvenanceTag::Unsourced {
             removed_preview, ..
         } = tag
         {
-            if removed_preview.is_empty() {
-                continue; // Already-null field, no leak to scan.
-            }
             let block = block_of(field);
-            if !sourced_blocks.contains(block) {
+            if sourced_blocks.contains(block) {
+                continue; // Block is sourced — narrative mention is legitimate.
+            }
+            // Strategy 1: substring match on the removed preview.
+            if !removed_preview.is_empty() {
                 if let Some(leak) = scan_narrative_for_leak(narrative, removed_preview, field) {
                     result.narrative_leaks.push(leak);
+                    continue;
+                }
+            }
+            // Strategy 2: domain-specific leak rules.
+            for (rule_block, rule) in NARRATIVE_LEAK_RULES {
+                if *rule_block == block && rule.matches(&haystack) {
+                    result.narrative_leaks.push((
+                        format!("{rule_block:?} rule matched"),
+                        field.clone(),
+                    ));
+                    break;
                 }
             }
         }
