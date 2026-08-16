@@ -477,8 +477,17 @@ impl LanguageModelInferencePort {
             // input + output exceed `context_length` → 400 on every cascade
             // call. `LLMParameters::default()` sets 2048.
             max_tokens: Some(parameters.max_tokens as u64),
+            // zed-kask: D25 — when a structured-output tool (emit_result) is offered,
+            // force the model to call it via tool_choice: Any ("required" in
+            // OpenAI's API). With Auto, the model may return prose instead of
+            // calling the tool, and parse_json_response fails on the non-JSON
+            // text. Any guarantees the model emits a tool call, so the executor
+            // extracts args from tool_calls[0] instead of parsing free text.
+            // This is the LangGraph/Swarm enforce-at-the-API-layer pattern:
+            // the output contract is enforced by the provider, not by a
+            // best-effort JSON extractor.
             tool_choice: if tools.is_some() {
-                Some(LanguageModelToolChoice::Auto)
+                Some(LanguageModelToolChoice::Any)
             } else {
                 None
             },

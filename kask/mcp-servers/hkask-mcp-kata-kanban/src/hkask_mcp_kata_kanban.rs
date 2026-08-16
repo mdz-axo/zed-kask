@@ -8,11 +8,13 @@
 //! The KanbanServer struct and tool methods are exported from the library
 //! target to enable fuzz testing (P5 Testing Discipline, P4 Clear Boundaries).
 
+pub mod card_contract;
 pub mod grounding;
 pub mod idempotency;
 pub mod kanban;
 pub mod kata;
 pub mod pko;
+pub mod schema_validate;
 pub mod types;
 
 // Re-export the kata-kanban service API at crate root (folded from hkask-services-kata-kanban).

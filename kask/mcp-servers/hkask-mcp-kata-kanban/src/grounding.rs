@@ -308,7 +308,7 @@ fn select<'a>(doc: &'a serde_json::Value, segs: &[&str]) -> Vec<&'a serde_json::
 
 /// Does any value this path selects constitute a claim?
 fn path_has_claim(doc: &serde_json::Value, path: &str) -> bool {
-    select(doc, &segments(path)).iter().any(is_claim)
+    select(doc, &segments(path)).iter().any(|v| is_claim(v))
 }
 
 /// Null every value the path selects, returning the non-null ones removed.
@@ -323,9 +323,7 @@ fn null_all(doc: &mut serde_json::Value, segs: &[&str]) -> Vec<serde_json::Value
     };
     if *head == "[]" {
         return match doc.as_array_mut() {
-            Some(items) => {
-                items.iter_mut().flat_map(|it| null_all(it, rest)).collect()
-            }
+            Some(items) => items.iter_mut().flat_map(|it| null_all(it, rest)).collect(),
             None => vec![],
         };
     }
@@ -412,22 +410,71 @@ pub fn enforce_grounding(
     let mut result = GroundingResult::default();
     let mut cleaned = output.clone();
 
-    if let serde_json::Value::Object(map) = output {
+    if !output.is_object() {
+        return (result, cleaned);
+    }
+
+    // ── Pass 1: null unsourced fields, mark provenance ───────────────
+    // Track which blocks have at least one sourced field, for the
+    // partial-sourcing narrative leak check (C7).
+    let mut sourced_blocks: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for (field, spec) in &contract.field_sources {
+        // Skip fields not present in the output.
+        if !path_has_claim(output, field) {
+            continue;
+        }
+
+        if spec.sources.is_empty() {
+            // Commissioned judgment — Inferred. No nulling needed.
+            continue;
+        }
+
+        if is_sourced(&spec.sources, &successful) {
+            // Sourced — mark the block as having sourced content.
+            sourced_blocks.insert(block_of(field).to_string());
+            continue;
+        }
+
+        // Declared tools exist but none were called successfully.
+        // The field claims a value no tool supplied — null it.
+        let removed = null_path(&mut cleaned, field);
+        if let Some(ref removed_value) = removed {
+            let preview = truncate_preview(removed_value);
+            let tool_failed = tool_was_called_but_failed(&spec.sources, &failed);
+            result.nulled_fields.push(field.clone());
+            // Store the preview for narrative leak scanning in pass 2,
+            // after we know which blocks are sourced (C7).
+            let tag = ProvenanceTag::Unsourced {
+                removed_preview: preview.clone(),
+                tool_failed,
+            };
+            result.provenance.insert(field.clone(), tag.clone());
+            // Stamp provenance on the document.
+            if let serde_json::Value::Object(clean_map) = &mut cleaned {
+                clean_map.insert(
+                    format!("{}_provenance", block_of(field)),
+                    serde_json::Value::String(provenance_stamp(&tag).to_string()),
+                );
+            }
+        }
+    }
+
+    // ── Pass 2: mark Sourced, Inferred, and UncommissionedInference ──
+    // for fields that were not nulled in pass 1.
+    if let serde_json::Value::Object(map) = &output {
         for (field, value) in map {
             // Skip provenance stamps from a previous enforcement pass.
-            // This makes enforce_grounding idempotent: a second pass on
-            // an already-enforced document (which carries <field>_provenance
-            // keys) does not treat those keys as UncommissionedInference.
             if field.ends_with("_provenance") {
                 continue;
             }
+            // Skip if already handled in pass 1 (nulled fields).
+            if result.provenance.contains_key(field) {
+                continue;
+            }
             let tag = match contract.field_sources.get(field) {
-                Some(spec) if spec.sources.is_empty() => {
-                    // Commissioned judgment — Inferred.
-                    ProvenanceTag::Inferred
-                }
+                Some(spec) if spec.sources.is_empty() => ProvenanceTag::Inferred,
                 Some(spec) => {
-                    // Has declared tools — check if any was called successfully.
                     if is_sourced(&spec.sources, &successful) {
                         ProvenanceTag::Sourced {
                             tool: spec
@@ -438,48 +485,49 @@ pub fn enforce_grounding(
                                 .unwrap_or_default(),
                         }
                     } else if !is_claim(value) {
-                        // The field is already null/empty/placeholder —
-                        // not a fabrication. Mark as Unsourced but don't
-                        // null it again (idempotency: a second pass on an
-                        // already-enforced document must not raise a new
-                        // violation).
                         ProvenanceTag::Unsourced {
                             removed_preview: String::new(),
                             tool_failed: tool_was_called_but_failed(&spec.sources, &failed),
                         }
                     } else {
-                        // Declared tools exist but none were called successfully.
-                        // The field claims a value no tool supplied — null it.
-                        let preview = truncate_preview(value);
-                        let tool_failed = tool_was_called_but_failed(&spec.sources, &failed);
-                        result.nulled_fields.push(field.clone());
-                        // Null the field in the cleaned output.
-                        if let serde_json::Value::Object(clean_map) = &mut cleaned {
-                            clean_map.insert(field.clone(), serde_json::Value::Null);
-                        }
-                        // Scan narrative for the leaked value.
-                        if let Some(leak) = scan_narrative_for_leak(narrative, &preview, field) {
-                            result.narrative_leaks.push(leak);
-                        }
+                        // This shouldn't happen — pass 1 should have nulled it.
+                        // But if it does (e.g., the path didn't match), mark it.
                         ProvenanceTag::Unsourced {
-                            removed_preview: preview,
-                            tool_failed,
+                            removed_preview: truncate_preview(value),
+                            tool_failed: tool_was_called_but_failed(&spec.sources, &failed),
                         }
                     }
                 }
-                None => {
-                    // Field not in the contract — UncommissionedInference.
-                    ProvenanceTag::UncommissionedInference
-                }
+                None => ProvenanceTag::UncommissionedInference,
             };
             result.provenance.insert(field.clone(), tag.clone());
-            // Stamp `<field>_provenance` on the cleaned document so consumers
-            // can see grounding status without parsing GroundingResult.
+            // Stamp provenance on the document.
             if let serde_json::Value::Object(clean_map) = &mut cleaned {
                 clean_map.insert(
                     format!("{field}_provenance"),
                     serde_json::Value::String(provenance_stamp(&tag).to_string()),
                 );
+            }
+        }
+    }
+
+    // ── Pass 3: scan narrative for leaked values (C7) ───────────────
+    // Only flag a leak if the nulled field's block is NOT sourced.
+    // A narrative mention of a sourced block's value is legitimate;
+    // a mention of an unsourced block's value is a leak.
+    for (field, tag) in &result.provenance {
+        if let ProvenanceTag::Unsourced {
+            removed_preview, ..
+        } = tag
+        {
+            if removed_preview.is_empty() {
+                continue; // Already-null field, no leak to scan.
+            }
+            let block = block_of(field);
+            if !sourced_blocks.contains(block) {
+                if let Some(leak) = scan_narrative_for_leak(narrative, removed_preview, field) {
+                    result.narrative_leaks.push(leak);
+                }
             }
         }
     }
@@ -978,6 +1026,219 @@ mod tests {
                 spec.why
             );
         }
+    }
+
+    // ── C7: partial-sourcing awareness ─────────────────────────────────
+
+    #[test]
+    fn narrative_leak_not_flagged_when_block_is_sourced() {
+        // If the deliverable_path block has a sourced field, a narrative
+        // mention of a value from that block is legitimate, not a leak.
+        // This is the partial-sourcing property: a leak is only flagged
+        // if the block is NOT sourced.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "I wrote the file at /src/main.rs and it works."
+        });
+        // write_file succeeded — deliverable_path is sourced.
+        let tool_calls = vec![tool_call("zed/write_file", true)];
+
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        // No nulled fields, no narrative leaks.
+        assert!(result.nulled_fields.is_empty());
+        assert!(
+            result.narrative_leaks.is_empty(),
+            "narrative mentioning a sourced block's value is not a leak: {:?}",
+            result.narrative_leaks
+        );
+    }
+
+    #[test]
+    fn narrative_leak_flagged_when_block_is_not_sourced() {
+        // If the deliverable_path block is NOT sourced (no tool call),
+        // a narrative mention of the nulled value IS a leak.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/very/long/path/to/main.rs",
+            "summary": "I wrote the file at /src/very/long/path/to/main.rs."
+        });
+        // No tool calls — deliverable_path is unsourced.
+        let tool_calls: Vec<serde_json::Value> = vec![];
+
+        let (result, _cleaned) = enforce_grounding(
+            &contract,
+            &output,
+            &tool_calls,
+            "I wrote the file at /src/very/long/path/to/main.rs.",
+        );
+        assert!(
+            result
+                .nulled_fields
+                .contains(&"deliverable_path".to_string())
+        );
+        assert_eq!(result.narrative_leaks.len(), 1);
+        assert_eq!(result.narrative_leaks[0].1, "deliverable_path");
+    }
+
+    // ── C8: array path support ──────────────────────────────────────────
+
+    #[test]
+    fn array_path_nulls_all_elements() {
+        // A contract with an array path: `deliverables[].path`.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "deliverables[].path".to_string(),
+            FieldSpec {
+                sources: vec!["zed/write_file".to_string()],
+                why: "Each deliverable's path must be sourced from a \
+                      file-writing tool that succeeded."
+                    .to_string(),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({
+            "deliverables": [
+                {"path": "/src/a.rs", "description": "module a"},
+                {"path": "/src/b.rs", "description": "module b"}
+            ]
+        });
+        // No tool calls — all paths are unsourced.
+        let tool_calls: Vec<serde_json::Value> = vec![];
+
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(
+            result
+                .nulled_fields
+                .contains(&"deliverables[].path".to_string()),
+            "array path should be nulled"
+        );
+        // Both array elements should have their path nulled.
+        let deliverables = cleaned["deliverables"].as_array().unwrap();
+        assert_eq!(deliverables.len(), 2);
+        assert!(deliverables[0]["path"].is_null(), "first path nulled");
+        assert!(deliverables[1]["path"].is_null(), "second path nulled");
+        // Non-contract fields survive.
+        assert_eq!(deliverables[0]["description"], "module a");
+        assert_eq!(deliverables[1]["description"], "module b");
+    }
+
+    #[test]
+    fn array_path_sourced_when_tool_succeeded() {
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "deliverables[].path".to_string(),
+            FieldSpec {
+                sources: vec!["zed/write_file".to_string()],
+                why: "Each deliverable's path must be sourced from a \
+                      file-writing tool that succeeded."
+                    .to_string(),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({
+            "deliverables": [
+                {"path": "/src/a.rs"},
+                {"path": "/src/b.rs"}
+            ]
+        });
+        let tool_calls = vec![tool_call("zed/write_file", true)];
+
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(result.nulled_fields.is_empty());
+        let deliverables = cleaned["deliverables"].as_array().unwrap();
+        assert_eq!(deliverables[0]["path"], "/src/a.rs");
+        assert_eq!(deliverables[1]["path"], "/src/b.rs");
+    }
+
+    #[test]
+    fn array_path_reported_as_one_violation_not_per_element() {
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "deliverables[].path".to_string(),
+            FieldSpec {
+                sources: vec!["zed/write_file".to_string()],
+                why: "Each deliverable's path must be sourced from a \
+                      file-writing tool that succeeded."
+                    .to_string(),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({
+            "deliverables": [
+                {"path": "/src/a.rs"},
+                {"path": "/src/b.rs"}
+            ]
+        });
+        let tool_calls: Vec<serde_json::Value> = vec![];
+
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        // One violation for the array path, not one per element.
+        let count = result
+            .nulled_fields
+            .iter()
+            .filter(|f| *f == "deliverables[].path")
+            .count();
+        assert_eq!(
+            count, 1,
+            "array path should be one violation, not one per element"
+        );
+    }
+
+    #[test]
+    fn block_of_extracts_top_level_from_array_path() {
+        assert_eq!(block_of("deliverables[].path"), "deliverables");
+        assert_eq!(block_of("deliverable_path"), "deliverable_path");
+        assert_eq!(block_of("threats[].species"), "threats");
+    }
+
+    #[test]
+    fn segments_split_array_marker() {
+        let segs = segments("deliverables[].path");
+        assert_eq!(segs, vec!["deliverables", "[]", "path"]);
+        let segs = segments("deliverable_path");
+        assert_eq!(segs, vec!["deliverable_path"]);
+    }
+
+    #[test]
+    fn select_walks_array_elements() {
+        let doc = json!({
+            "deliverables": [
+                {"path": "/a.rs"},
+                {"path": "/b.rs"}
+            ]
+        });
+        let paths = select(&doc, &segments("deliverables[].path"));
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], "/a.rs");
+        assert_eq!(paths[1], "/b.rs");
+    }
+
+    #[test]
+    fn path_has_claim_detects_claims_in_arrays() {
+        let doc = json!({
+            "deliverables": [
+                {"path": "/a.rs"},
+                {"path": null}
+            ]
+        });
+        assert!(path_has_claim(&doc, "deliverables[].path"));
+        let doc_empty = json!({
+            "deliverables": [
+                {"path": null},
+                {"path": null}
+            ]
+        });
+        assert!(!path_has_claim(&doc_empty, "deliverables[].path"));
     }
 
     // ── Property-based tests ─────────────────────────────────────────────
