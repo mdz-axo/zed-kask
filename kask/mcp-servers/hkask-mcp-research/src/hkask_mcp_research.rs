@@ -813,14 +813,30 @@ impl ResearchServer {
         execute_tool_semantic(self, "rss_get_entries", Self::ontology_anchor("rss_get_entries"), async {
             let db = require_rss_db!(self);
             let limit = (count.unwrap_or(DEFAULT_PAGE_SIZE as u32) as usize).min(MAX_PAGE_SIZE);
-            let offset = continuation_token
-                .as_ref()
-                .and_then(|t| {
-                    let bytes = base64::engine::general_purpose::STANDARD.decode(t).ok()?;
-                    serde_json::from_slice::<Continuation>(&bytes).ok()
-                })
-                .map(|c| c.offset)
-                .unwrap_or(0);
+            let offset = match continuation_token.as_ref() {
+                None => 0,
+                Some(t) => {
+                    // A malformed continuation token must surface as an
+                    // explicit error, not silently reset to offset 0 —
+                    // otherwise a corrupted token is indistinguishable from
+                    // "no token" and the client silently re-reads the first
+                    // page (`.rules` broken-feedback-loop trap).
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(t)
+                        .map_err(|e| {
+                            McpToolError::invalid_argument(format!(
+                                "continuation_token is not valid base64: {e}"
+                            ))
+                        })?;
+                    let cont: Continuation = serde_json::from_slice(&bytes)
+                        .map_err(|e| {
+                            McpToolError::invalid_argument(format!(
+                                "continuation_token is not a valid continuation payload: {e}"
+                            ))
+                        })?;
+                    cont.offset
+                }
+            };
 
             let sid = stream_id.clone();
             let result = spawn_db(db, move |conn| {
