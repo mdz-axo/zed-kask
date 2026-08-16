@@ -100,77 +100,6 @@ pub(crate) struct KnowledgeFragment {
     pub confidence: f64,
 }
 
-/// Grounding annotation recorded alongside a delegation's latency and
-/// task-success verdict. Closes the paper's §4.1 loop: "is this getting
-/// better?" — without recording grounding violations per delegation, the
-/// trend is invisible and the check gets quietly disabled.
-///
-/// `None` (the whole annotation) means grounding did not run for this
-/// delegation (no contract for the agent_type — paper Rule 5.3: absence ≠
-/// verdict). `Some` with `had_contract: true` means grounding ran; the count
-/// fields are `Option<usize>` per the `.rules` no-`unwrap_or(0)` rule — a
-/// failed count extraction is `None` (not measured), never `0` (measured
-/// zero). When `had_contract: false`, the counts are `None` (not measured).
-#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
-pub(crate) struct GroundingAnnotation {
-    /// Whether a grounding contract existed for this delegation's agent_type.
-    pub had_contract: bool,
-    /// Count of fields nulled as Unsourced. `None` = not measured (contract
-    /// ran but the count could not be extracted — never silently 0).
-    pub nulled_fields_count: Option<usize>,
-    /// Count of narrative leaks detected. `None` = not measured.
-    pub narrative_leaks_count: Option<usize>,
-}
-
-/// A grounding trend report for an agent (or the whole swarm when
-/// `agent_id` is empty). Answers the paper's §4.1 question: "is this
-/// getting better?" The lead metric is `delegations_with_zero_nulled` —
-/// deletion-resistant (paper Rule 5.4: a scoreboard that rewards deletion
-/// counts falling, so a team that stops recording looks like it's
-/// improving). Counting delegations with zero nulled fields cannot be
-/// gamed by recording fewer delegations.
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub(crate) struct GroundingTrend {
-    /// Total delegations recorded for the scope (regardless of grounding
-    /// status). The denominator for every rate below.
-    pub total_delegations: usize,
-    /// Delegations for which a grounding contract existed and ran.
-    pub delegations_with_contract: usize,
-    /// Delegations for which no grounding contract existed (coverage gap —
-    /// paper §6: coverage is itself a metric, not a pass).
-    pub delegations_without_contract: usize,
-    /// Delegations where grounding ran and zero fields were nulled. The
-    /// deletion-resistant scoreboard metric (paper Rule 5.4).
-    pub delegations_with_zero_nulled: usize,
-    /// Delegations where grounding ran and at least one field was nulled.
-    pub delegations_with_nulled: usize,
-    /// Delegations where grounding ran and at least one narrative leak was
-    /// detected.
-    pub delegations_with_narrative_leaks: usize,
-}
-
-impl GroundingTrend {
-    /// Fraction of grounded delegations (contract ran) with zero nulled
-    /// fields. `None` when no grounded delegations exist (absence ≠ 0 —
-    /// paper Rule 5.3).
-    pub fn clean_rate(&self) -> Option<f64> {
-        let grounded = self.delegations_with_zero_nulled + self.delegations_with_nulled;
-        if grounded == 0 {
-            return None;
-        }
-        Some(self.delegations_with_zero_nulled as f64 / grounded as f64)
-    }
-
-    /// Fraction of delegations that had a grounding contract. `None` when
-    /// no delegations exist.
-    pub fn coverage_rate(&self) -> Option<f64> {
-        if self.total_delegations == 0 {
-            return None;
-        }
-        Some(self.delegations_with_contract as f64 / self.total_delegations as f64)
-    }
-}
-
 /// Search an agent's prefix-scoped semantic memory for triples whose
 /// entity/attribute/value contain the query (case-insensitive substring).
 ///
@@ -252,12 +181,16 @@ pub(crate) async fn agent_memory_seed(
 /// on silent error discarding — a failed stigmergy write must be visible in
 /// logs, not silently dropped). The delegation result is still returned to the
 /// caller regardless of whether the annotation was written.
+///
+/// Grounding annotations are no longer written here — they live in the
+/// central verification ledger (`hkask_verification::VerificationStore`),
+/// which is cross-tool and cross-server. The stigmergy trail retains only
+/// the latency and task-success annotations (the ACO pheromone signals).
 pub(crate) async fn record_delegation(
     memory: &LazyLocalMemory,
     agent_id: &str,
     latency_ms: u64,
     task_success_pass: Option<bool>,
-    grounding: Option<GroundingAnnotation>,
 ) {
     let store = match memory.get_or_init().await {
         Ok(s) => s,

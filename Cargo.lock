@@ -9655,6 +9655,7 @@ dependencies = [
  "hkask-storage",
  "hkask-test-harness",
  "hkask-types",
+ "hkask-verification",
  "proptest",
  "r2d2",
  "r2d2_sqlite",

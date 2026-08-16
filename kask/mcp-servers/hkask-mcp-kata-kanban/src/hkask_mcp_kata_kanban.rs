@@ -240,10 +240,10 @@ mod tool_surface_tests {
     // silently registers nothing (`cargo check` passes on an unwired orphan).
     // Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_26_registered_tools() {
+    fn tool_surface_is_exactly_25_registered_tools() {
         let n = KanbanServer::tool_router().list_all().len();
         assert_eq!(
-            n, 26,
+            n, 25,
             "kata-kanban registered tool surface changed; got {n}"
         );
     }
@@ -1116,7 +1116,7 @@ impl KanbanServer {
                     // Findings are logged at warn — they don't block the spawn,
                     // but they surface contract defects.
                     if let Some(ref oc) = agent.capabilities.output_contract {
-                        let findings = crate::card_contract::validate(
+                        let findings = hkask_verification::card_contract::validate(
                             oc.get("grounding"),
                             &agent.capabilities.mcp_tools,
                         );
@@ -1307,121 +1307,102 @@ impl KanbanServer {
                 ))
             })?;
 
-        // Rung 3 (Grounding): enforce the grounding contract for task agents.
-        // Parse the response as JSON, check which fields could have come from
-        // successful tool calls, null unsourced fields, scan narrative for
-        // leaked claims. The contract is hand-declared (paper §6) and covers
-        // only the "task" agent_type — other types get no grounding (None =
-        // not checked, paper Rule 5.3).
-        let grounding_contract = crate::grounding::task_agent_contract();
-        if agent.agent_type == grounding_contract.agent_type {
-            let output_json = serde_json::from_str::<serde_json::Value>(&result.response)
-                .unwrap_or(serde_json::Value::Null);
-            if output_json.is_object() {
-                // Retain the raw response before grounding overwrites it
-                // (paper §4: "the raw response is retained. Not the digest.").
-                let raw_response = result.response.clone();
-                let (grounding_result, cleaned) = crate::grounding::enforce_grounding(
-                    &grounding_contract,
-                    &output_json,
-                    &result.tool_calls,
-                    &result.response,
-                );
-                if !grounding_result.nulled_fields.is_empty() {
-                    tracing::warn!(
-                        target: "hkask.mcp.kata_kanban",
-                        task_id = %tid,
-                        agent_id = %result.agent_id,
-                        nulled_fields = ?grounding_result.nulled_fields,
-                        narrative_leaks = ?grounding_result.narrative_leaks,
-                        "grounding enforcement: nulled {} unsourced field(s), found {} narrative leak(s)",
-                        grounding_result.nulled_fields.len(),
-                        grounding_result.narrative_leaks.len(),
-                    );
-                }
-                // Rung 2 (Schema validation): validate the cleaned document
-                // AFTER grounding, BEFORE it persists. Unsupported keywords
-                // are NOT a pass. Logged at warn — schema violations are
-                // diagnostic, not blocking (the cleaned document is still
-                // the best available output).
-                let validation = crate::schema_validate::validate(
-                    &serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "deliverable_path": { "type": ["string", "null"] },
-                            "test_verdict": { "type": ["string", "null"] },
-                            "summary": { "type": "string" },
-                            "approach": { "type": "string" }
-                        }
-                    }),
-                    &cleaned,
-                );
-                if !validation.violations.is_empty() {
-                    tracing::warn!(
-                        target: "hkask.mcp.kata_kanban",
-                        task_id = %tid,
-                        agent_id = %result.agent_id,
-                        violations = ?validation.violations,
-                        "schema validation: {} violation(s) after grounding",
-                        validation.violations.len(),
-                    );
-                }
-                if !validation.unsupported.is_empty() {
-                    tracing::warn!(
-                        target: "hkask.mcp.kata_kanban",
-                        task_id = %tid,
-                        unsupported = ?validation.unsupported,
-                        "schema validation: unsupported keyword(s) — NOT a pass",
-                    );
-                }
-                // Build the delegation envelope so provenance survives the
-                // hop to the caller (N2). The envelope is additive — it
-                // carries the enforced payload, provenance, and violations.
-                let envelope = crate::envelope::build(
-                    &result.agent_id,
-                    Some(&cleaned),
-                    &grounding_result,
-                    true,
-                );
-                // Stamp the grounding summary onto the delegation result so
-                // downstream consumers (the curator, swarm-intelligence
-                // ORIENT, the trend query) can read grounding status without
-                // parsing the response JSON (paper §4.1: the trend ledger).
-                // Counts are `Some` — grounding ran and measured them.
-                result.grounding_summary = Some(hkask_mcp_swarm::GroundingSummary {
-                    had_contract: true,
-                    nulled_fields_count: Some(grounding_result.nulled_fields.len()),
-                    narrative_leaks_count: Some(grounding_result.narrative_leaks.len()),
-                });
-                // Replace the response with the cleaned JSON (with provenance
-                // stamps and nulled unsourced fields).
-                result.response =
-                    serde_json::to_string(&cleaned).unwrap_or_else(|_| result.response.clone());
-                // Retain the raw response for audit and future reprocessing.
-                result.raw_response = Some(raw_response);
-                // Log the envelope at debug — it's diagnostic, not blocking.
-                tracing::debug!(
+        // Rung 3 (Grounding): enforce the grounding contract via the
+        // central verification ledger. The store runs `enforce_grounding`
+        // (when a contract exists for the agent_type), writes a full
+        // `GroundingRecord` to the cross-tool ledger (append-only), and
+        // returns the result + cleaned JSON. The contract is hand-declared
+        // (paper §6) and covers only the "task" agent_type — other types
+        // get a coverage-gap record (had_contract: false) so the gap is
+        // visible in the trend (paper §6: coverage is itself a metric).
+        let output_json = serde_json::from_str::<serde_json::Value>(&result.response)
+            .unwrap_or(serde_json::Value::Null);
+        // Retain the raw response before grounding overwrites it (paper §4:
+        // "the raw response is retained. Not the digest.").
+        let raw_response = result.response.clone();
+        let (grounding_result, cleaned) = self.verification_store.enforce_for_agent(
+            "kanban_task_spawn",
+            &result.agent_id,
+            &agent.agent_type,
+            &output_json,
+            &result.tool_calls,
+            &result.response,
+        );
+        if let Some(ref gr) = grounding_result {
+            if !gr.nulled_fields.is_empty() {
+                tracing::warn!(
                     target: "hkask.mcp.kata_kanban",
                     task_id = %tid,
-                    envelope = %envelope,
-                    "delegation envelope built",
+                    agent_id = %result.agent_id,
+                    nulled_fields = ?gr.nulled_fields,
+                    narrative_leaks = ?gr.narrative_leaks,
+                    "grounding enforcement: nulled {} unsourced field(s), found {} narrative leak(s)",
+                    gr.nulled_fields.len(),
+                    gr.narrative_leaks.len(),
                 );
-            } else {
-                // Contract existed for this agent_type but the output was not
-                // a JSON object — grounding could not run. Record
-                // `had_contract: true` with `None` counts (paper Rule 5.3:
-                // absence ≠ verdict — this is "not checked", not "compliant").
-                result.grounding_summary = Some(hkask_mcp_swarm::GroundingSummary {
-                    had_contract: true,
-                    nulled_fields_count: None,
-                    narrative_leaks_count: None,
-                });
             }
+            // Rung 2 (Schema validation): validate the cleaned document
+            // AFTER grounding, BEFORE it persists. Unsupported keywords
+            // are NOT a pass. Logged at warn — schema violations are
+            // diagnostic, not blocking (the cleaned document is still
+            // the best available output).
+            let validation = hkask_verification::schema_validate::validate(
+                &serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "deliverable_path": { "type": ["string", "null"] },
+                        "test_verdict": { "type": ["string", "null"] },
+                        "summary": { "type": "string" },
+                        "approach": { "type": "string" }
+                    }
+                }),
+                &cleaned,
+            );
+            if !validation.violations.is_empty() {
+                tracing::warn!(
+                    target: "hkask.mcp.kata_kanban",
+                    task_id = %tid,
+                    agent_id = %result.agent_id,
+                    violations = ?validation.violations,
+                    "schema validation: {} violation(s) after grounding",
+                    validation.violations.len(),
+                );
+            }
+            if !validation.unsupported.is_empty() {
+                tracing::warn!(
+                    target: "hkask.mcp.kata_kanban",
+                    task_id = %tid,
+                    unsupported = ?validation.unsupported,
+                    "schema validation: unsupported keyword(s) — NOT a pass",
+                );
+            }
+            // Build the delegation envelope so provenance survives the
+            // hop to the caller (N2). The envelope is additive — it
+            // carries the enforced payload, provenance, and violations.
+            let envelope =
+                hkask_verification::envelope::build(&result.agent_id, Some(&cleaned), gr, true);
+            // Replace the response with the cleaned JSON (with provenance
+            // stamps and nulled unsourced fields).
+            result.response =
+                serde_json::to_string(&cleaned).unwrap_or_else(|_| result.response.clone());
+            // Retain the raw response for audit and future reprocessing.
+            result.raw_response = Some(raw_response);
+            // Log the envelope at debug — it's diagnostic, not blocking.
+            tracing::debug!(
+                target: "hkask.mcp.kata_kanban",
+                task_id = %tid,
+                envelope = %envelope,
+                "delegation envelope built",
+            );
+        } else if output_json.is_object() {
+            // No contract for this agent_type — the verification store
+            // wrote a coverage-gap record. The raw response is retained
+            // for audit even when grounding did not run.
+            result.raw_response = Some(raw_response);
         }
-        // When agent_type != "task", `grounding_summary` stays `None` —
-        // grounding did not run (no contract). Paper Rule 5.3: absence ≠
-        // verdict. The trend query counts this under
-        // `delegations_without_contract`.
+        // When the output was not a JSON object, the verification store
+        // wrote a coverage-gap record (had_contract: false). The raw
+        // response is retained above when applicable.
 
         let verdict = result.task_success.clone();
         if let Err(error) =
@@ -1758,53 +1739,6 @@ impl KanbanServer {
         )
         .await
     }
-
-    /// Aggregate the grounding trend across all delegations recorded on a
-    /// board. Answers the paper's §4.1 question: "is this getting better?"
-    /// Reads the `grounding_summary` field from each task's `delegate_result`.
-    ///
-    /// The lead metric is `delegations_with_zero_nulled` — deletion-resistant
-    /// (paper Rule 5.4: a scoreboard that counts nulled fields falling can be
-    /// gamed by recording fewer delegations; counting delegations with zero
-    /// nulled fields cannot).
-    ///
-    /// `delegations_without_contract` is the coverage gap (paper §6: coverage
-    /// is itself a metric, not a pass). A delegation with `had_contract: false`
-    /// is a coverage gap, not a compliant delegation.
-    ///
-    /// contract: P3-svc-kanban-011
-    /// expect: "I can read the grounding trend for a board" \[P3\]
-    /// pre:  board_id is a valid board id
-    /// post: returns the grounding trend report, or an empty report if no
-    ///       delegations have been recorded
-    #[tool(
-        description = "Aggregate the grounding trend across all delegations recorded on a board. Answers the paper's §4.1 question: is this getting better? The lead metric is delegations_with_zero_nulled (deletion-resistant, paper Rule 5.4). delegations_without_contract is the coverage gap (paper §6: coverage is itself a metric, not a pass)."
-    )]
-    pub async fn kanban_grounding_trend(
-        &self,
-        Parameters(GroundingTrendRequest { board_id }): Parameters<GroundingTrendRequest>,
-    ) -> String {
-        execute_tool_semantic(
-            self,
-            "kanban_grounding_trend",
-            kanban_type_to_pko("kanban_grounding_trend"),
-            async {
-                let bid = parse_board_id(&board_id)?;
-                let report = self
-                    .service
-                    .grounding_trend(bid)
-                    .map_err(map_kanban_error)?;
-                serde_json::to_value(serde_json::json!({
-                    "board_id": bid.to_string(),
-                    "trend": report,
-                    "source": "kanban_delegate_results",
-                    "note": "Primary trend for grounded delegations via kanban_task_spawn. For swarm_delegate_local delegations (no grounding), use swarm_grounding_trend.",
-                }))
-                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
-            },
-        )
-        .await
-    }
 }
 
 /// Parse a task id string or return an `invalid_argument` MCP error.
@@ -2020,7 +1954,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     }
                 };
 
-                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry, worktree_spawn_port, Arc::new(idempotency)))
+                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry, worktree_spawn_port, Arc::new(idempotency), Arc::new(hkask_verification::VerificationStore::open())))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
                 context: "kanban server init".into(),
