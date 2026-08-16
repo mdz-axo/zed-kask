@@ -23,10 +23,11 @@ static GLOBAL_LIMITER: OnceLock<Arc<ConcurrencyLimiter>> = OnceLock::new();
 pub fn set_global_concurrency_limiter(max_concurrency: u32, concurrency_step: u32) {
     let limiter = Arc::new(ConcurrencyLimiter::new(max_concurrency, concurrency_step));
     if GLOBAL_LIMITER.set(limiter).is_err() {
-        log::warn!(
+        tracing::warn!(
+            target: "hkask.concurrency",
             "set_global_concurrency_limiter: hook already set — second wiring attempt \
-             dropped. The previously-wired limiter remains active. Restart the app to \
-             re-wire from a clean process."
+             dropped. The previously-wired limiter remains active. Restart the app \
+             to re-wire from a clean process."
         );
     }
 }
