@@ -509,7 +509,7 @@ pub(crate) async fn grounding_trend(
                 )
             })
             .collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
         sorted.truncate(cap);
         trend = GroundingTrend::default();
         trend.total_delegations = sorted.len();
@@ -586,7 +586,7 @@ mod tests {
             1024,
         );
         // This must not panic.
-        record_delegation(&m, "research_agent", 4200, Some(true)).await;
+        record_delegation(&m, "research_agent", 4200, Some(true), None).await;
         // If we reach here, the graceful degradation path works.
     }
 
@@ -611,7 +611,7 @@ mod tests {
         );
 
         // Write a delegation annotation.
-        record_delegation(&m, "research_agent", 4200, Some(true)).await;
+        record_delegation(&m, "research_agent", 4200, Some(true), None).await;
 
         // Read it back — the entity prefix is "agent:research_agent:delegation".
         let fragments = search_agent_knowledge(&m, "research_agent", "delegation", 10)
@@ -661,7 +661,7 @@ mod tests {
         );
 
         // Write with no task_success (None).
-        record_delegation(&m, "creative_agent", 1500, None).await;
+        record_delegation(&m, "creative_agent", 1500, None, None).await;
 
         let fragments = search_agent_knowledge(&m, "creative_agent", "delegation", 10)
             .await
@@ -685,6 +685,188 @@ mod tests {
             "task_success must NOT be written when None (never fabricate)"
         );
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── Grounding trend tests (paper §4.1) ────────────────────────────────
+
+    fn temp_memory(label: &str) -> (std::path::PathBuf, LazyLocalMemory) {
+        let dir = std::env::temp_dir().join(format!(
+            "hkask-swarm-grounding-trend-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("grounding_trend.db");
+        let m = LazyLocalMemory::lazy(
+            db_path.to_string_lossy().to_string(),
+            "test-passphrase-123".to_string(),
+            1024,
+        );
+        (dir, m)
+    }
+
+    #[tokio::test]
+    async fn record_delegation_writes_grounding_annotation_when_some() {
+        // When grounding is Some, the had_contract, nulled, and leaks h_mems
+        // are written. This is the paper's §4.1 trend ledger.
+        let (dir, m) = temp_memory("writes-annotation");
+        record_delegation(
+            &m,
+            "task_agent",
+            1000,
+            Some(true),
+            Some(GroundingAnnotation {
+                had_contract: true,
+                nulled_fields_count: Some(2),
+                narrative_leaks_count: Some(1),
+            }),
+        )
+        .await;
+        let fragments = search_agent_knowledge(&m, "task_agent", "grounding", 20)
+            .await
+            .expect("search should succeed");
+        let has_had_contract = fragments
+            .iter()
+            .any(|f| f.attribute == "delegation:grounding_had_contract" && f.value == "true");
+        assert!(
+            has_had_contract,
+            "grounding_had_contract must be written; got: {fragments:?}"
+        );
+        let has_nulled = fragments
+            .iter()
+            .any(|f| f.attribute == "delegation:grounding_nulled" && f.value == "2");
+        assert!(
+            has_nulled,
+            "grounding_nulled count must be written; got: {fragments:?}"
+        );
+        let has_leaks = fragments
+            .iter()
+            .any(|f| f.attribute == "delegation:grounding_leaks" && f.value == "1");
+        assert!(
+            has_leaks,
+            "grounding_leaks count must be written; got: {fragments:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn record_delegation_writes_had_contract_false_when_none() {
+        // When grounding is None (grounding did not run), had_contract: false
+        // is still written — the coverage gap is visible (paper §6: coverage
+        // is itself a metric, not a pass). The nulled/leaks counts are NOT
+        // written (absence ≠ 0 — paper Rule 5.3).
+        let (dir, m) = temp_memory("had-contract-false");
+        record_delegation(&m, "research_agent", 500, None, None).await;
+        let fragments = search_agent_knowledge(&m, "research_agent", "grounding", 20)
+            .await
+            .expect("search should succeed");
+        let has_had_contract = fragments
+            .iter()
+            .any(|f| f.attribute == "delegation:grounding_had_contract" && f.value == "false");
+        assert!(
+            has_had_contract,
+            "grounding_had_contract=false must be written even when grounding did not run; got: {fragments:?}"
+        );
+        // nulled/leaks must NOT be present (not fabricated).
+        let has_nulled = fragments
+            .iter()
+            .any(|f| f.attribute == "delegation:grounding_nulled");
+        assert!(
+            !has_nulled,
+            "grounding_nulled must NOT be written when grounding did not run (never fabricate)"
+        );
+        let has_leaks = fragments
+            .iter()
+            .any(|f| f.attribute == "delegation:grounding_leaks");
+        assert!(
+            !has_leaks,
+            "grounding_leaks must NOT be written when grounding did not run (never fabricate)"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn grounding_trend_reports_zero_nulled_as_lead_metric() {
+        // The paper's §4.1 deletion-resistant scoreboard: count delegations
+        // with zero nulled fields, not count of nulled fields falling.
+        // Three delegations: one clean (0 nulled), one with violations (2
+        // nulled), one without a contract (had_contract: false).
+        let (dir, m) = temp_memory("lead-metric");
+        // Clean delegation.
+        record_delegation(
+            &m,
+            "task_agent",
+            100,
+            Some(true),
+            Some(GroundingAnnotation {
+                had_contract: true,
+                nulled_fields_count: Some(0),
+                narrative_leaks_count: Some(0),
+            }),
+        )
+        .await;
+        // Violation delegation.
+        record_delegation(
+            &m,
+            "task_agent",
+            200,
+            Some(false),
+            Some(GroundingAnnotation {
+                had_contract: true,
+                nulled_fields_count: Some(2),
+                narrative_leaks_count: Some(1),
+            }),
+        )
+        .await;
+        // No-contract delegation (swarm_delegate_local path).
+        record_delegation(&m, "task_agent", 300, None, None).await;
+        let trend = grounding_trend(&m, "task_agent", 100)
+            .await
+            .expect("trend query should succeed");
+        assert_eq!(trend.total_delegations, 3);
+        assert_eq!(trend.delegations_with_contract, 2);
+        assert_eq!(trend.delegations_without_contract, 1);
+        assert_eq!(trend.delegations_with_zero_nulled, 1);
+        assert_eq!(trend.delegations_with_nulled, 1);
+        assert_eq!(trend.delegations_with_narrative_leaks, 1);
+        // clean_rate = 1 / (1 + 1) = 0.5
+        assert_eq!(trend.clean_rate(), Some(0.5));
+        // coverage_rate = 2 / 3
+        assert!((trend.coverage_rate().unwrap() - 2.0 / 3.0).abs() < 1e-9);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn grounding_trend_returns_err_when_memory_unavailable() {
+        // The .rules broken-feedback-loop trap: a DB outage must not collapse
+        // to an empty trend, which would read as "no deviation". The query
+        // must return Err so the caller surfaces the error.
+        let m = LazyLocalMemory::lazy(
+            "/tmp/hkask-swarm-grounding-trend-unavailable.db".to_string(),
+            "short".to_string(), // < 8 chars → get_or_init returns Err
+            1024,
+        );
+        let result = grounding_trend(&m, "any_agent", 10).await;
+        assert!(
+            result.is_err(),
+            "grounding_trend must return Err when memory is unavailable, not an empty trend"
+        );
+    }
+
+    #[tokio::test]
+    async fn grounding_trend_empty_when_no_delegations() {
+        // No delegations recorded → empty trend, clean_rate=None, coverage_rate=None.
+        // (absence ≠ 0 — paper Rule 5.3.)
+        let (dir, m) = temp_memory("empty");
+        let trend = grounding_trend(&m, "no_such_agent", 10)
+            .await
+            .expect("trend query should succeed");
+        assert_eq!(trend.total_delegations, 0);
+        assert_eq!(trend.clean_rate(), None);
+        assert_eq!(trend.coverage_rate(), None);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

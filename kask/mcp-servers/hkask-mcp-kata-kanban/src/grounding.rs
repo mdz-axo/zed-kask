@@ -690,6 +690,68 @@ mod tests {
         json!({ "tool": tool, "ok": ok })
     }
 
+    // ── GroundingTrendReport tests (paper §4.1) ───────────────────────────
+
+    #[test]
+    fn trend_report_clean_rate_none_when_no_measured_delegations() {
+        // Absence ≠ 0 (paper Rule 5.3): when no delegations have measured
+        // counts, clean_rate is None, not 0.0.
+        let report = GroundingTrendReport {
+            total_delegations: 2,
+            delegations_with_contract: 2,
+            delegations_without_contract: 0,
+            delegations_with_zero_nulled: 0,
+            delegations_with_nulled: 0,
+            delegations_unmeasured: 2, // had_contract but counts not measured
+            delegations_with_narrative_leaks: 0,
+        };
+        assert_eq!(report.clean_rate(), None);
+    }
+
+    #[test]
+    fn trend_report_clean_rate_some_when_measured() {
+        let report = GroundingTrendReport {
+            total_delegations: 4,
+            delegations_with_contract: 3,
+            delegations_without_contract: 1,
+            delegations_with_zero_nulled: 2,
+            delegations_with_nulled: 1,
+            delegations_unmeasured: 0,
+            delegations_with_narrative_leaks: 1,
+        };
+        // clean_rate = 2 / (2 + 1) = 2/3
+        assert!((report.clean_rate().unwrap() - 2.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trend_report_coverage_rate_none_when_no_delegations() {
+        let report = GroundingTrendReport::default();
+        assert_eq!(report.coverage_rate(), None);
+    }
+
+    #[test]
+    fn trend_report_coverage_rate_some_when_delegations_exist() {
+        let report = GroundingTrendReport {
+            total_delegations: 4,
+            delegations_with_contract: 3,
+            delegations_without_contract: 1,
+            ..Default::default()
+        };
+        assert!((report.coverage_rate().unwrap() - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trend_report_default_is_all_zeros() {
+        let report = GroundingTrendReport::default();
+        assert_eq!(report.total_delegations, 0);
+        assert_eq!(report.delegations_with_contract, 0);
+        assert_eq!(report.delegations_without_contract, 0);
+        assert_eq!(report.delegations_with_zero_nulled, 0);
+        assert_eq!(report.delegations_with_nulled, 0);
+        assert_eq!(report.delegations_unmeasured, 0);
+        assert_eq!(report.delegations_with_narrative_leaks, 0);
+    }
+
     #[test]
     fn sourced_field_kept_when_tool_succeeded() {
         let contract = task_agent_contract();

@@ -219,12 +219,18 @@ impl SwarmServer {
                 )
                 .await
                 {
-                    Ok(trend) => Ok(serde_json::json!({
-                        "trend": trend,
-                        "agent_name": if agent_name.is_empty() { "*" } else { agent_name },
-                        "source": "local_stigmergy_trail",
-                        "note": "swarm-server-side trend (stigmergy). For grounded delegations via kanban_task_spawn, use kanban_grounding_trend.",
-                    })),
+                    Ok(trend) => {
+                        let clean_rate = trend.clean_rate();
+                        let coverage_rate = trend.coverage_rate();
+                        Ok(serde_json::json!({
+                            "trend": trend,
+                            "clean_rate": clean_rate,
+                            "coverage_rate": coverage_rate,
+                            "agent_name": if agent_name.is_empty() { "*" } else { agent_name },
+                            "source": "local_stigmergy_trail",
+                            "note": "swarm-server-side trend (stigmergy). For grounded delegations via kanban_task_spawn, use kanban_grounding_trend.",
+                        }))
+                    }
                     Err(reason) => {
                         // The `.rules` broken-feedback-loop trap: a DB
                         // outage must not collapse to an empty trend.

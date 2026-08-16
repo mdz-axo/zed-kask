@@ -732,3 +732,130 @@ fn import_empty_board() {
         "imported empty board should have no tasks"
     );
 }
+
+// ── Grounding trend (paper §4.1) ────────────────────────────────────────────
+
+fn delegate_result_with_grounding(
+    agent_id: &str,
+    summary: Option<hkask_mcp_swarm::GroundingSummary>,
+) -> hkask_mcp_swarm::LocalDelegateResult {
+    hkask_mcp_swarm::LocalDelegateResult {
+        agent_id: agent_id.to_string(),
+        response: "{}".to_string(),
+        model: "test".to_string(),
+        tokens_used: 0,
+        cost: 0,
+        cost_uncapped: 0,
+        balance: Some(0),
+        latency_ms: 0,
+        tool_calls: vec![],
+        executed_skills: vec![],
+        task_success: None,
+        bind_matched: None,
+        raw_response: None,
+        grounding_summary: summary,
+    }
+}
+
+#[test]
+fn grounding_trend_aggregates_across_tasks() {
+    // The paper's §4.1 trend ledger: aggregate grounding_summary across
+    // tasks on a board. The lead metric is delegations_with_zero_nulled
+    // (deletion-resistant, paper Rule 5.4).
+    let (svc, board, owner) = make_service_with_board();
+    let task_a = svc
+        .task_create(board.id, TaskSpec::new("Clean task".into()), owner)
+        .unwrap();
+    let task_b = svc
+        .task_create(board.id, TaskSpec::new("Violation task".into()), owner)
+        .unwrap();
+    let task_c = svc
+        .task_create(board.id, TaskSpec::new("No-contract task".into()), owner)
+        .unwrap();
+    let task_d = svc
+        .task_create(board.id, TaskSpec::new("Unmeasured task".into()), owner)
+        .unwrap();
+    // Task A: clean (0 nulled, 0 leaks).
+    svc.task_record_delegation(
+        task_a.id,
+        None,
+        delegate_result_with_grounding(
+            "task_agent",
+            Some(hkask_mcp_swarm::GroundingSummary {
+                had_contract: true,
+                nulled_fields_count: Some(0),
+                narrative_leaks_count: Some(0),
+            }),
+        ),
+        None,
+        owner,
+    )
+    .unwrap();
+    // Task B: violations (2 nulled, 1 leak).
+    svc.task_record_delegation(
+        task_b.id,
+        None,
+        delegate_result_with_grounding(
+            "task_agent",
+            Some(hkask_mcp_swarm::GroundingSummary {
+                had_contract: true,
+                nulled_fields_count: Some(2),
+                narrative_leaks_count: Some(1),
+            }),
+        ),
+        None,
+        owner,
+    )
+    .unwrap();
+    // Task C: no grounding (non-task agent_type). grounding_summary = None.
+    svc.task_record_delegation(
+        task_c.id,
+        None,
+        delegate_result_with_grounding("research_agent", None),
+        None,
+        owner,
+    )
+    .unwrap();
+    // Task D: contract existed but counts not measured (non-JSON output).
+    svc.task_record_delegation(
+        task_d.id,
+        None,
+        delegate_result_with_grounding(
+            "task_agent",
+            Some(hkask_mcp_swarm::GroundingSummary {
+                had_contract: true,
+                nulled_fields_count: None,
+                narrative_leaks_count: None,
+            }),
+        ),
+        None,
+        owner,
+    )
+    .unwrap();
+    let report = svc.grounding_trend(board.id).expect("trend query");
+    assert_eq!(report.total_delegations, 4);
+    assert_eq!(report.delegations_with_contract, 3); // A, B, D
+    assert_eq!(report.delegations_without_contract, 1); // C
+    assert_eq!(report.delegations_with_zero_nulled, 1); // A
+    assert_eq!(report.delegations_with_nulled, 1); // B
+    assert_eq!(report.delegations_unmeasured, 1); // D
+    assert_eq!(report.delegations_with_narrative_leaks, 1); // B
+    // clean_rate = 1 / (1 + 1) = 0.5 (D is unmeasured, excluded)
+    assert_eq!(report.clean_rate(), Some(0.5));
+    // coverage_rate = 3 / 4
+    assert!((report.coverage_rate().unwrap() - 0.75).abs() < 1e-9);
+}
+
+#[test]
+fn grounding_trend_empty_when_no_delegations() {
+    // No tasks with delegate_result → empty trend. clean_rate=None,
+    // coverage_rate=None (absence ≠ 0, paper Rule 5.3).
+    let (svc, board, _owner) = make_service_with_board();
+    // Create a task but don't spawn it (no delegate_result).
+    svc.task_create(board.id, TaskSpec::new("Unspawned".into()), WebID::new())
+        .unwrap();
+    let report = svc.grounding_trend(board.id).expect("trend query");
+    assert_eq!(report.total_delegations, 0);
+    assert_eq!(report.clean_rate(), None);
+    assert_eq!(report.coverage_rate(), None);
+}
