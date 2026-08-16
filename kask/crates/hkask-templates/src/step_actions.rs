@@ -608,7 +608,7 @@ impl StepMachine {
             let context = self.context.clone();
             let template_renderer = infra.template_renderer.clone();
 
-            async move {
+            let tool_future = async move {
                 // Resolve ${variable} references in the MCP reference.
                 let mcp_ref = crate::template_renderer::TemplateRenderer::render_inline(
                     &mcp_ref_raw,
@@ -657,7 +657,39 @@ impl StepMachine {
                 });
 
                 result.map(|value| (result_key, value))
-            }
+            };
+            // Wrap each tool future in `catch_unwind` so a panic in a tool
+            // invocation is converted to a typed `TemplateError` instead of
+            // unwinding the batch. Without this, a panic in one tool propagates
+            // through `join_all` and drops all other in-flight tool futures
+            // (their permits release via RAII, but their results are lost, and
+            // the regulation layer sees a panic, not a typed error). The
+            // `AssertUnwindSafe` wrapper is sound here because the tool future's
+            // captures (`Arc` clones, `context`) are not mutated across the
+            // unwind boundary — the panic aborts the tool, the captures are
+            // dropped, and the batch continues with the other tools.
+            std::panic::AssertUnwindSafe(tool_future)
+                .catch_unwind()
+                .map(move |join_result| match join_result {
+                    Ok(inner) => inner,
+                    Err(panic_payload) => {
+                        let panic_msg = panic_payload
+                            .downcast_ref::<String>()
+                            .map(String::as_str)
+                            .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+                            .unwrap_or("<non-string panic payload>");
+                        tracing::error!(
+                            target: "reg.skill.cascade.tool_batch_joined",
+                            step_ordinal = node.ordinal,
+                            panic_message = panic_msg,
+                            "tool batch entry panicked — converted to typed error"
+                        );
+                        Err(TemplateError::Manifest(format!(
+                            "Step {} (action 'mcp_batch') tool panicked: {panic_msg}",
+                            node.ordinal,
+                        )))
+                    }
+                })
         });
 
         // Run all tool futures concurrently under one shared timeout.
@@ -998,7 +1030,12 @@ impl StepMachine {
                 .get("template_ref")
                 .and_then(|v| v.as_str())
                 .map(String::from);
-            async move {
+            // Clone `branch_id` for the panic handler — the `async move` block
+            // below moves `branch_id` into the branch future, so the
+            // `catch_unwind` map closure needs its own copy to name the branch
+            // in the panic error message.
+            let branch_id_for_panic = branch_id;
+            let branch_future = async move {
                 // No branch-level permit: the global limiter gates the inner
                 // `execute_select` / `execute_tool_invoke` calls inside each
                 // branch's sub-cascade. Acquiring a branch permit here would
@@ -1070,7 +1107,7 @@ impl StepMachine {
                 // `on_throttle` on the shared limiter. Ramp here would
                 // double-count (one ramp per branch + one per inner call).
                 Ok::<(usize, CascadeOutcome), TemplateError>((branch_id, outcome))
-            }
+            };
             // Wrap each branch future in `catch_unwind` so a panic in a
             // branch's sub-cascade is converted to a typed `TemplateError`
             // instead of unwinding the parent. Without this, a panic in one
@@ -1082,28 +1119,29 @@ impl StepMachine {
             // future's captures (`Arc` clones, `Infra`) are not mutated across
             // the unwind boundary — the panic aborts the branch, the captures
             // are dropped, and the parent continues with the other branches.
-            .catch_unwind()
-            .map(|join_result| match join_result {
-                Ok(inner) => inner,
-                Err(panic_payload) => {
-                    let panic_msg = panic_payload
-                        .downcast_ref::<String>()
-                        .map(String::as_str)
-                        .or_else(|| panic_payload.downcast_ref::<&str>().copied())
-                        .unwrap_or("<non-string panic payload>");
-                    tracing::error!(
-                        target: "reg.skill.cascade.parallel_joined",
-                        step_ordinal = step_ordinal,
-                        branch_id = branch_id,
-                        panic_message = panic_msg,
-                        "parallel branch panicked — converted to typed error"
-                    );
-                    Err(TemplateError::Manifest(format!(
-                        "Step {} (action 'parallel') branch {} panicked: {panic_msg}",
-                        step_ordinal, branch_id,
-                    )))
-                }
-            })
+            std::panic::AssertUnwindSafe(branch_future)
+                .catch_unwind()
+                .map(move |join_result| match join_result {
+                    Ok(inner) => inner,
+                    Err(panic_payload) => {
+                        let panic_msg = panic_payload
+                            .downcast_ref::<String>()
+                            .map(String::as_str)
+                            .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+                            .unwrap_or("<non-string panic payload>");
+                        tracing::error!(
+                            target: "reg.skill.cascade.parallel_joined",
+                            step_ordinal = step_ordinal,
+                            branch_id = branch_id_for_panic,
+                            panic_message = panic_msg,
+                            "parallel branch panicked — converted to typed error"
+                        );
+                        Err(TemplateError::Manifest(format!(
+                            "Step {} (action 'parallel') branch {} panicked: {panic_msg}",
+                            step_ordinal, branch_id_for_panic,
+                        )))
+                    }
+                })
         });
 
         // Bounded concurrency: poll up to `buffer_bound` branch futures at
