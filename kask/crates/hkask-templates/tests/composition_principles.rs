@@ -254,28 +254,6 @@ fn collect_symbol_references(
 ///   - kask-seam-audit.yaml step 12: `fo`, `r`, `fp`, `hard-stop-obj`, `test`,
 ///     `wk` (let bindings / lambda params inside nested begin/if)
 ///   - kask-seam-audit.yaml step 14: `f` (let binding inside nested lambda)
-///   - constraints-review.yaml step 2: `check_required`, `src` (let-bound
-///     lambda + let binding inside nested cond)
-///   - constraints-review.yaml step 4: `check_all` (let-bound lambda inside
-///     nested cond)
-///   - constraints-review.yaml step 6: `check_levels` (let-bound lambda
-///     inside nested cond)
-///   - constraints-review.yaml step 8: `check_score` (let-bound lambda
-///     inside nested cond)
-///   - coherence-review.yaml step 2: `check_severity` (let-bound lambda
-///     inside nested cond)
-///   - coherence-review.yaml step 6: `check_subset`, `check_verdict` (let-bound
-///     lambdas inside nested cond)
-///   - coherence-review.yaml step 4: `check_crate` (let-bound lambda
-///     inside nested cond)
-///   - coherence-review.yaml step 6: `check_subset`, `check_verdict` (let-bound
-///     lambdas inside nested cond)
-///   - coherence-review.yaml step 8: `check_class`, `check_subset` (let-bound
-///     lambdas inside nested cond)
-///   - coherence-review.yaml step 10: `check_type`, `check_subset`, `check_one`
-///     (let-bound lambdas inside nested cond)
-///   - coherence-review.yaml step 12: `check_levels` (let-bound lambda inside
-///     nested cond)
 ///
 /// Category B (genuinely unbound — FIXED in the lisp interpreter / manifest):
 ///   - `member` → added to default_builtins() (company-research-deep step 10)
