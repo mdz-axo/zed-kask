@@ -418,6 +418,14 @@ pub struct TaskDelegateResultRequest {
     pub task_id: String,
 }
 
+/// Request the grounding trend for a board. Aggregates the `grounding_summary`
+/// field from each task's `delegate_result`. Answers the paper's §4.1
+/// question: "is this getting better?"
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GroundingTrendRequest {
+    pub board_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaskDelegateResultResponse {
     pub task_id: String,

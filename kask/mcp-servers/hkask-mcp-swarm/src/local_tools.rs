@@ -104,6 +104,13 @@ impl SwarmServer {
                 &req.agent_name,
                 result.latency_ms,
                 result.task_success.as_ref().map(|t| t.pass),
+                // Grounding does not run in `swarm_delegate_local` — it runs
+                // only in `spawn_via_local_runtime` (kata-kanban) where the
+                // task-agent contract is enforced. `None` = grounding did
+                // not run for this delegation (paper Rule 5.3: absence ≠
+                // verdict). The trend query will count this delegation under
+                // `delegations_without_contract`.
+                None,
             )
             .await;
             Ok(serde_json::to_value(&result).unwrap_or_else(|_| {
@@ -1372,6 +1379,9 @@ impl SwarmServer {
                                 &entry.agent_name,
                                 r.latency_ms,
                                 r.task_success.as_ref().map(|t| t.pass),
+                                // Grounding does not run in the plan executor —
+                                // see `swarm_delegate_local` for the rationale.
+                                None,
                             )
                             .await;
                             results.push(serde_json::to_value(&r).unwrap_or_else(

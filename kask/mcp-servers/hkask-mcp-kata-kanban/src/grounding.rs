@@ -114,6 +114,65 @@ impl GroundingResult {
     }
 }
 
+/// A grounding trend report aggregated across delegations. Answers the
+/// paper's §4.1 question: "is this getting better?" Computed by
+/// `KanbanService::grounding_trend` from the `grounding_summary` field on
+/// each task's `delegate_result`.
+///
+/// The lead metric is `delegations_with_zero_nulled` — deletion-resistant
+/// (paper Rule 5.4: a scoreboard that counts nulled fields falling can be
+/// gamed by recording fewer delegations; counting delegations with zero
+/// nulled fields cannot).
+///
+/// `delegations_without_contract` is the coverage gap (paper §6: coverage
+/// is itself a metric, not a pass). A delegation with `had_contract: false`
+/// is a coverage gap, not a compliant delegation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GroundingTrendReport {
+    /// Total delegations recorded (tasks with a `delegate_result`).
+    pub total_delegations: usize,
+    /// Delegations for which a grounding contract existed and ran
+    /// (`grounding_summary.had_contract == true`).
+    pub delegations_with_contract: usize,
+    /// Delegations for which no grounding contract existed (coverage gap —
+    /// paper §6: coverage is itself a metric, not a pass).
+    pub delegations_without_contract: usize,
+    /// Delegations where grounding ran and zero fields were nulled. The
+    /// deletion-resistant scoreboard metric (paper Rule 5.4).
+    pub delegations_with_zero_nulled: usize,
+    /// Delegations where grounding ran and at least one field was nulled.
+    pub delegations_with_nulled: usize,
+    /// Delegations where grounding ran but counts were not measured
+    /// (`had_contract: true` but `nulled_fields_count: None` — paper Rule
+    /// 5.3: absence ≠ verdict). Neither zero-nulled nor nulled.
+    pub delegations_unmeasured: usize,
+    /// Delegations where grounding ran and at least one narrative leak was
+    /// detected.
+    pub delegations_with_narrative_leaks: usize,
+}
+
+impl GroundingTrendReport {
+    /// Fraction of grounded delegations (contract ran, counts measured)
+    /// with zero nulled fields. `None` when no grounded delegations with
+    /// measured counts exist (absence ≠ 0 — paper Rule 5.3).
+    pub fn clean_rate(&self) -> Option<f64> {
+        let measured = self.delegations_with_zero_nulled + self.delegations_with_nulled;
+        if measured == 0 {
+            return None;
+        }
+        Some(self.delegations_with_zero_nulled as f64 / measured as f64)
+    }
+
+    /// Fraction of delegations that had a grounding contract. `None` when
+    /// no delegations exist.
+    pub fn coverage_rate(&self) -> Option<f64> {
+        if self.total_delegations == 0 {
+            return None;
+        }
+        Some(self.delegations_with_contract as f64 / self.total_delegations as f64)
+    }
+}
+
 /// The built-in grounding contract for `kanban-task-*` agents.
 ///
 /// These agents are spawned by `kanban_task_spawn` to execute a task using

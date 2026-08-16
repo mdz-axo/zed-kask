@@ -811,6 +811,28 @@ pub struct SearchKnowledgeLocalRequest {
     pub limit: Option<usize>,
 }
 
+/// Request the grounding trend for an agent (or the whole swarm when
+/// `agent_name` is empty). Reads the stigmergy trail written by
+/// `record_delegation` — the per-delegation grounding status annotations.
+/// Answers the paper's §4.1 question: "is this getting better?"
+///
+/// This is the swarm-server-side trend (stigmergy trail). The kanban-side
+/// trend (`KanbanService::grounding_trend`) reads `delegate_result`
+/// records from the kanban DB and is the primary trend for grounded
+/// delegations. This tool covers `swarm_delegate_local` delegations that
+/// do not go through `spawn_via_local_runtime` and therefore have no
+/// grounding contract — they show up as `delegations_without_contract`,
+/// which is the coverage gap signal (paper §6).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GroundingTrendRequest {
+    /// Agent id to scope the trend to. Empty = whole swarm.
+    #[serde(default)]
+    pub agent_name: Option<String>,
+    /// Maximum delegations to scan. Default 100.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 /// Generate a system prompt for a local agent from a description (the local
 /// analog of ABW `swarm_generate_prompt`). Authoring aid — read-only, spends
 /// nothing. Uses the local `InferencePort` (no ABW); optionally seeded with

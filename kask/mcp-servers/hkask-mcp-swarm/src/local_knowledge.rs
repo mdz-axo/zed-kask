@@ -100,6 +100,77 @@ pub(crate) struct KnowledgeFragment {
     pub confidence: f64,
 }
 
+/// Grounding annotation recorded alongside a delegation's latency and
+/// task-success verdict. Closes the paper's §4.1 loop: "is this getting
+/// better?" — without recording grounding violations per delegation, the
+/// trend is invisible and the check gets quietly disabled.
+///
+/// `None` (the whole annotation) means grounding did not run for this
+/// delegation (no contract for the agent_type — paper Rule 5.3: absence ≠
+/// verdict). `Some` with `had_contract: true` means grounding ran; the count
+/// fields are `Option<usize>` per the `.rules` no-`unwrap_or(0)` rule — a
+/// failed count extraction is `None` (not measured), never `0` (measured
+/// zero). When `had_contract: false`, the counts are `None` (not measured).
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub(crate) struct GroundingAnnotation {
+    /// Whether a grounding contract existed for this delegation's agent_type.
+    pub had_contract: bool,
+    /// Count of fields nulled as Unsourced. `None` = not measured (contract
+    /// ran but the count could not be extracted — never silently 0).
+    pub nulled_fields_count: Option<usize>,
+    /// Count of narrative leaks detected. `None` = not measured.
+    pub narrative_leaks_count: Option<usize>,
+}
+
+/// A grounding trend report for an agent (or the whole swarm when
+/// `agent_id` is empty). Answers the paper's §4.1 question: "is this
+/// getting better?" The lead metric is `delegations_with_zero_nulled` —
+/// deletion-resistant (paper Rule 5.4: a scoreboard that rewards deletion
+/// counts falling, so a team that stops recording looks like it's
+/// improving). Counting delegations with zero nulled fields cannot be
+/// gamed by recording fewer delegations.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub(crate) struct GroundingTrend {
+    /// Total delegations recorded for the scope (regardless of grounding
+    /// status). The denominator for every rate below.
+    pub total_delegations: usize,
+    /// Delegations for which a grounding contract existed and ran.
+    pub delegations_with_contract: usize,
+    /// Delegations for which no grounding contract existed (coverage gap —
+    /// paper §6: coverage is itself a metric, not a pass).
+    pub delegations_without_contract: usize,
+    /// Delegations where grounding ran and zero fields were nulled. The
+    /// deletion-resistant scoreboard metric (paper Rule 5.4).
+    pub delegations_with_zero_nulled: usize,
+    /// Delegations where grounding ran and at least one field was nulled.
+    pub delegations_with_nulled: usize,
+    /// Delegations where grounding ran and at least one narrative leak was
+    /// detected.
+    pub delegations_with_narrative_leaks: usize,
+}
+
+impl GroundingTrend {
+    /// Fraction of grounded delegations (contract ran) with zero nulled
+    /// fields. `None` when no grounded delegations exist (absence ≠ 0 —
+    /// paper Rule 5.3).
+    pub fn clean_rate(&self) -> Option<f64> {
+        let grounded = self.delegations_with_zero_nulled + self.delegations_with_nulled;
+        if grounded == 0 {
+            return None;
+        }
+        Some(self.delegations_with_zero_nulled as f64 / grounded as f64)
+    }
+
+    /// Fraction of delegations that had a grounding contract. `None` when
+    /// no delegations exist.
+    pub fn coverage_rate(&self) -> Option<f64> {
+        if self.total_delegations == 0 {
+            return None;
+        }
+        Some(self.delegations_with_contract as f64 / self.total_delegations as f64)
+    }
+}
+
 /// Search an agent's prefix-scoped semantic memory for triples whose
 /// entity/attribute/value contain the query (case-insensitive substring).
 ///
@@ -186,6 +257,7 @@ pub(crate) async fn record_delegation(
     agent_id: &str,
     latency_ms: u64,
     task_success_pass: Option<bool>,
+    grounding: Option<GroundingAnnotation>,
 ) {
     let store = match memory.get_or_init().await {
         Ok(s) => s,
@@ -233,7 +305,7 @@ pub(crate) async fn record_delegation(
             serde_json::json!(pass),
             owner,
         )
-        .with_ontology(ontology);
+        .with_ontology(ontology.clone());
         h_mem.access.visibility = Visibility::Shared;
         if let Err(e) = store.store(h_mem) {
             tracing::warn!(
@@ -243,6 +315,224 @@ pub(crate) async fn record_delegation(
             );
         }
     }
+
+    // Write the grounding annotation when grounding ran (paper §4.1: the
+    // trend ledger). `None` = grounding did not run (no contract) — we still
+    // record `had_contract: false` so the coverage gap is visible (paper §6:
+    // coverage is itself a metric, not a pass). Counts are `Option<usize>`
+    // per the `.rules` no-`unwrap_or(0)` rule — a failed extraction is `None`,
+    // never a silent 0.
+    let annotation = grounding.unwrap_or_default();
+    let mut had_contract_h_mem = HMem::new(
+        &entity,
+        "delegation:grounding_had_contract",
+        serde_json::json!(annotation.had_contract),
+        owner,
+    )
+    .with_ontology(ontology.clone());
+    had_contract_h_mem.access.visibility = Visibility::Shared;
+    if let Err(e) = store.store(had_contract_h_mem) {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            error = %e,
+            "stigmergy grounding_had_contract write failed (non-fatal)"
+        );
+    }
+    if let Some(count) = annotation.nulled_fields_count {
+        let mut h_mem = HMem::new(
+            &entity,
+            "delegation:grounding_nulled",
+            serde_json::json!(count),
+            owner,
+        )
+        .with_ontology(ontology.clone());
+        h_mem.access.visibility = Visibility::Shared;
+        if let Err(e) = store.store(h_mem) {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                error = %e,
+                "stigmergy grounding_nulled write failed (non-fatal)"
+            );
+        }
+    }
+    if let Some(count) = annotation.narrative_leaks_count {
+        let mut h_mem = HMem::new(
+            &entity,
+            "delegation:grounding_leaks",
+            serde_json::json!(count),
+            owner,
+        )
+        .with_ontology(ontology);
+        h_mem.access.visibility = Visibility::Shared;
+        if let Err(e) = store.store(h_mem) {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                error = %e,
+                "stigmergy grounding_leaks write failed (non-fatal)"
+            );
+        }
+    }
+}
+
+/// Query the grounding trend for an agent (or the whole swarm when
+/// `agent_id` is empty). Reads back the per-delegation grounding
+/// annotations written by `record_delegation` and aggregates them into
+/// the paper's §4.1 trend report.
+///
+/// The lead metric is `delegations_with_zero_nulled` — deletion-resistant
+/// (paper Rule 5.4: a scoreboard that counts nulled fields falling can be
+/// gamed by recording fewer delegations; counting delegations with zero
+/// nulled fields cannot).
+///
+/// Returns `Err` when the memory store is unavailable (the `.rules`
+/// broken-feedback-loop trap: a DB outage must not collapse to an empty
+/// trend, which would read as "no deviation"). The caller surfaces the
+/// error; it does not silently return a zeroed `GroundingTrend`.
+///
+/// `limit` caps the number of recent delegations scanned (each delegation
+/// writes up to 4 h_mems: latency, task_success, had_contract, nulled,
+/// leaks — the scan deduplicates by `observed_at` proximity). Defaults to
+/// 100 when `0` is passed.
+pub(crate) async fn grounding_trend(
+    memory: &LazyLocalMemory,
+    agent_id: &str,
+    limit: usize,
+) -> Result<GroundingTrend, LocalSwarmError> {
+    let store = memory.get_or_init().await?;
+    // Query the `delegation:grounding_had_contract` attribute across the
+    // scoped entity (single agent) or the whole store (empty agent_id).
+    // Each h_mem at this attribute is one delegation's grounding status.
+    let had_contract_entries = if agent_id.is_empty() {
+        store
+            .query_by_attribute("delegation:grounding_had_contract")
+            .map_err(|e| LocalSwarmError::Database(format!("grounding trend query failed: {e}")))?
+    } else {
+        let entity = format!("{AGENT_PREFIX}{agent_id}");
+        store
+            .query_deduped(&entity)
+            .map_err(|e| LocalSwarmError::Database(format!("grounding trend query failed: {e}")))?
+            .into_iter()
+            .filter(|t| t.attribute == "delegation:grounding_had_contract")
+            .collect()
+    };
+    // Each had_contract h_mem corresponds to one delegation. The count of
+    // these is the total delegations with a grounding status recorded.
+    let total = had_contract_entries.len();
+    let mut trend = GroundingTrend {
+        total_delegations: total,
+        ..Default::default()
+    };
+    // For each delegation, classify it into the trend buckets. We re-query
+    // the nulled/leaks counts by entity+attribute to pair them with the
+    // had_contract flag. The pairing is by `observed_at` timestamp — the
+    // had_contract, nulled, and leaks h_mems for one delegation share the
+    // same `observed_at` (written in the same `record_delegation` call).
+    //
+    // We build a per-entity index of (timestamp → counts) so we can pair
+    // the three annotations per delegation without assuming global ordering.
+    let nulled_entries = if agent_id.is_empty() {
+        store
+            .query_by_attribute("delegation:grounding_nulled")
+            .map_err(|e| LocalSwarmError::Database(format!("grounding trend query failed: {e}")))?
+    } else {
+        store
+            .query_deduped(&format!("{AGENT_PREFIX}{agent_id}"))
+            .map_err(|e| LocalSwarmError::Database(format!("grounding trend query failed: {e}")))?
+            .into_iter()
+            .filter(|t| t.attribute == "delegation:grounding_nulled")
+            .collect()
+    };
+    let leaks_entries = if agent_id.is_empty() {
+        store
+            .query_by_attribute("delegation:grounding_leaks")
+            .map_err(|e| LocalSwarmError::Database(format!("grounding trend query failed: {e}")))?
+    } else {
+        store
+            .query_deduped(&format!("{AGENT_PREFIX}{agent_id}"))
+            .map_err(|e| LocalSwarmError::Database(format!("grounding trend query failed: {e}")))?
+            .into_iter()
+            .filter(|t| t.attribute == "delegation:grounding_leaks")
+            .collect()
+    };
+    // Index nulled/leaks by (entity, observed_at) for pairing.
+    use std::collections::HashMap;
+    let mut nulled_by_key: HashMap<(String, chrono::DateTime<chrono::Utc>), usize> = HashMap::new();
+    for t in &nulled_entries {
+        if let Some(count) = t.value.as_u64().map(|c| c as usize) {
+            nulled_by_key.insert((t.entity.clone(), t.observed_at), count);
+        }
+    }
+    let mut leaks_by_key: HashMap<(String, chrono::DateTime<chrono::Utc>), usize> = HashMap::new();
+    for t in &leaks_entries {
+        if let Some(count) = t.value.as_u64().map(|c| c as usize) {
+            leaks_by_key.insert((t.entity.clone(), t.observed_at), count);
+        }
+    }
+    for t in &had_contract_entries {
+        let had_contract = t.value.as_bool().unwrap_or(false);
+        let key = (t.entity.clone(), t.observed_at);
+        if had_contract {
+            trend.delegations_with_contract += 1;
+            // Pair with nulled/leaks by timestamp. If the pairing is missing
+            // (count h_mem write failed), the delegation is counted as
+            // "grounded but counts not measured" — it does NOT collapse to
+            // zero-nulled (paper Rule 5.3: absence ≠ verdict).
+            let nulled = nulled_by_key.get(&key).copied();
+            let leaks = leaks_by_key.get(&key).copied();
+            match nulled {
+                Some(0) => trend.delegations_with_zero_nulled += 1,
+                Some(_) => trend.delegations_with_nulled += 1,
+                None => {} // counts not measured — neither bucket
+            }
+            if matches!(leaks, Some(c) if c > 0) {
+                trend.delegations_with_narrative_leaks += 1;
+            }
+        } else {
+            trend.delegations_without_contract += 1;
+        }
+    }
+    // The `limit` parameter caps how many delegations we report on. We've
+    // already scanned all; truncate the report's totals to the most recent
+    // `limit` by slicing the had_contract entries (sorted by observed_at
+    // descending). This keeps the report bounded for long-running swarms.
+    let cap = if limit == 0 { 100 } else { limit };
+    if total > cap {
+        // Recompute over the most recent `cap` delegations. Sort by
+        // observed_at descending, take the first `cap`, re-aggregate.
+        let mut sorted: Vec<_> = had_contract_entries
+            .iter()
+            .map(|t| {
+                (
+                    t.entity.clone(),
+                    t.observed_at,
+                    t.value.as_bool().unwrap_or(false),
+                )
+            })
+            .collect();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.truncate(cap);
+        trend = GroundingTrend::default();
+        trend.total_delegations = sorted.len();
+        for (entity, observed_at, had_contract) in &sorted {
+            let key = (entity.clone(), *observed_at);
+            if *had_contract {
+                trend.delegations_with_contract += 1;
+                let nulled = nulled_by_key.get(&key).copied();
+                let leaks = leaks_by_key.get(&key).copied();
+                match nulled {
+                    Some(0) => trend.delegations_with_zero_nulled += 1,
+                    Some(_) => trend.delegations_with_nulled += 1,
+                    None => {}
+                }
+                if matches!(leaks, Some(c) if c > 0) {
+                    trend.delegations_with_narrative_leaks += 1;
+                }
+            } else {
+                trend.delegations_without_contract += 1;
+            }
+        }
+    }
+    Ok(trend)
 }
 
 /// A one-shot LLM generate over the local inference port.

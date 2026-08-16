@@ -1383,6 +1383,16 @@ impl KanbanServer {
                     &grounding_result,
                     true,
                 );
+                // Stamp the grounding summary onto the delegation result so
+                // downstream consumers (the curator, swarm-intelligence
+                // ORIENT, the trend query) can read grounding status without
+                // parsing the response JSON (paper §4.1: the trend ledger).
+                // Counts are `Some` — grounding ran and measured them.
+                result.grounding_summary = Some(hkask_mcp_swarm::GroundingSummary {
+                    had_contract: true,
+                    nulled_fields_count: Some(grounding_result.nulled_fields.len()),
+                    narrative_leaks_count: Some(grounding_result.narrative_leaks.len()),
+                });
                 // Replace the response with the cleaned JSON (with provenance
                 // stamps and nulled unsourced fields).
                 result.response =
@@ -1396,8 +1406,22 @@ impl KanbanServer {
                     envelope = %envelope,
                     "delegation envelope built",
                 );
+            } else {
+                // Contract existed for this agent_type but the output was not
+                // a JSON object — grounding could not run. Record
+                // `had_contract: true` with `None` counts (paper Rule 5.3:
+                // absence ≠ verdict — this is "not checked", not "compliant").
+                result.grounding_summary = Some(hkask_mcp_swarm::GroundingSummary {
+                    had_contract: true,
+                    nulled_fields_count: None,
+                    narrative_leaks_count: None,
+                });
             }
         }
+        // When agent_type != "task", `grounding_summary` stays `None` —
+        // grounding did not run (no contract). Paper Rule 5.3: absence ≠
+        // verdict. The trend query counts this under
+        // `delegations_without_contract`.
 
         let verdict = result.task_success.clone();
         if let Err(error) =
