@@ -1,0 +1,28 @@
+[package]
+name = "hkask-verification"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Verification ladder for agent ecologies — grounding, schema validation, envelope, rollup trust, and central grounding ledger"
+
+[lib]
+name = "hkask_verification"
+path = "src/hkask_verification.rs"
+
+[dependencies]
+hkask-storage.workspace = true
+hkask-types.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest = { workspace = true }
+hkask-test-harness = { workspace = true }

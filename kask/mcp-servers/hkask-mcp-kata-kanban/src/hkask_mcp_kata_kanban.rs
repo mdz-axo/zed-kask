@@ -8,15 +8,10 @@
 //! The KanbanServer struct and tool methods are exported from the library
 //! target to enable fuzz testing (P5 Testing Discipline, P4 Clear Boundaries).
 
-pub mod card_contract;
-pub mod envelope;
-pub mod grounding;
 pub mod idempotency;
 pub mod kanban;
 pub mod kata;
 pub mod pko;
-pub mod rollup_trust;
-pub mod schema_validate;
 pub mod types;
 
 // Re-export the kata-kanban service API at crate root (folded from hkask-services-kata-kanban).
@@ -69,6 +64,11 @@ hkask_mcp_server::mcp_server!(
         /// Shares the kanban database, so protection has the same durability as
         /// the writes it guards. See `crate::idempotency`.
         pub idempotency: Arc<idempotency::IdempotencyStore>,
+        /// Central grounding ledger — shared with hkask-mcp-swarm and
+        /// hkask-mcp-curator so grounding records from every delegating tool
+        /// land in one cross-tool, cross-server store. `spawn_via_local_runtime`
+        /// calls `enforce_for_agent()` on each delegation.
+        pub verification_store: Arc<hkask_verification::VerificationStore>,
     }
 );
 

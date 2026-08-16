@@ -1042,11 +1042,11 @@ impl KanbanService {
                     report.delegations_with_narrative_leaks += 1;
                 }
             } else {
-                // `had_contract: false` — contract existed for the agent_type
-                // but grounding could not run (e.g., non-JSON output). Counted
-                // as with-contract (the contract matched) but unmeasured.
-                report.delegations_with_contract += 1;
-                report.delegations_unmeasured += 1;
+                // `had_contract: false` — no grounding contract existed for
+                // this delegation's agent_type. Coverage gap, not a compliant
+                // delegation (paper §6: coverage is itself a metric, not a
+                // pass). Matches the swarm-side `grounding_trend` behavior.
+                report.delegations_without_contract += 1;
             }
         }
         Ok(report)
