@@ -47,11 +47,15 @@ impl Default for CacheState {
 }
 
 fn ttl_from_env() -> u64 {
-    std::env::var("HKASK_MODEL_CACHE_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|&s: &u64| s > 0)
-        .unwrap_or(DEFAULT_TTL_SECS)
+    let parsed = hkask_mcp_server::parse_env_warn("HKASK_MODEL_CACHE_TTL_SECS", DEFAULT_TTL_SECS);
+    if parsed == 0 {
+        tracing::warn!(
+            target: "hkask.mcp.corpus",
+            "HKASK_MODEL_CACHE_TTL_SECS resolved to 0 — falling back to default {DEFAULT_TTL_SECS}s"
+        );
+        return DEFAULT_TTL_SECS;
+    }
+    parsed
 }
 
 /// Access the process-scoped cache cell (lazily initialized on first use).

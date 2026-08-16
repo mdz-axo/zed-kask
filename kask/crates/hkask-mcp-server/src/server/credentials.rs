@@ -133,6 +133,46 @@ pub fn resolve_db_passphrase(
     }
 }
 
+/// Parse a numeric env var, warning on malformed values.
+///
+/// A missing env var returns `default` silently ("not configured" is a
+/// legitimate state). A present-but-unparseable value also returns `default`
+/// but emits a `tracing::warn!` naming the env var and the malformed value so
+/// the operator can distinguish "not configured" from "configured but broken"
+/// (the silent-fallback trap from `.rules`).
+///
+/// Reference correct pattern — replaces the `.ok().and_then(|v| v.parse().ok())
+/// .unwrap_or(default)` anti-pattern found across MCP servers.
+///
+/// # Example
+/// ```no_run
+/// let ttl = hkask_mcp_server::parse_env_warn("HKASK_CACHE_TTL_SECS", 60u64);
+/// ```
+#[must_use = "the parsed value must be used"]
+pub fn parse_env_warn<T>(key: &str, default: T) -> T
+where
+    T: std::str::FromStr + std::fmt::Debug,
+    T::Err: std::fmt::Display,
+{
+    match std::env::var(key) {
+        Ok(raw) => match raw.parse::<T>() {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp.env",
+                    key,
+                    raw,
+                    error = %e,
+                    default = ?default,
+                    "env var failed to parse — falling back to default"
+                );
+                default
+            }
+        },
+        Err(_) => default,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

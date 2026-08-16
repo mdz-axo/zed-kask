@@ -361,15 +361,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 brave_api_key,
                 serpapi_key,
                 PortfolioManager::new(ctx.webid)?,
-                std::sync::Arc::new(std::sync::Mutex::new(
-                    match std::env::var("HKASK_CHRONIC_STALENESS_DAYS")
-                        .ok()
-                        .and_then(|v| v.parse::<u32>().ok())
-                    {
-                        Some(days) => LearningState::with_staleness_days(days),
-                        None => LearningState::default(),
-                    },
-                )),
+                std::sync::Arc::new(std::sync::Mutex::new({
+                    let days = hkask_mcp_server::parse_env_warn(
+                        "HKASK_CHRONIC_STALENESS_DAYS",
+                        LearningState::default().staleness_days(),
+                    );
+                    LearningState::with_staleness_days(days)
+                })),
                 superforecast::FermiDefaults::from_env(),
             ))
         },

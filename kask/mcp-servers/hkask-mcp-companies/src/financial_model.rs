@@ -23,6 +23,52 @@ use serde::{Deserialize, Serialize};
 
 // ── Historical data snapshot ───────────────────────────────────────────────
 
+/// Extract a numeric financial field from an API JSON entry, warning when the
+/// field is present but unparseable. A missing field returns 0.0 (legitimate
+/// "no data"); a present-but-wrong-type field (e.g. a string where a number is
+/// expected) also returns 0.0 but emits a `tracing::warn!` naming the field so
+/// the operator can detect API contract drift or data corruption rather than
+/// silently feeding zeros into DCF valuation math.
+fn parse_financial_field(entry: &serde_json::Value, field: &str) -> f64 {
+    match entry.get(field) {
+        Some(v) => match v.as_f64() {
+            Some(n) => n,
+            None => {
+                tracing::warn!(
+                    target: "hkask.mcp.companies.financial_model",
+                    field,
+                    value = %v,
+                    "financial field present but unparseable as f64 — falling back to 0.0"
+                );
+                0.0
+            }
+        },
+        None => 0.0,
+    }
+}
+
+/// Like `parse_financial_field` but with a custom fallback (e.g. 1.0 for
+/// pre-tax income, where 0 would cause a division-by-zero in the tax-rate
+/// computation).
+fn parse_financial_field_or(entry: &serde_json::Value, field: &str, fallback: f64) -> f64 {
+    match entry.get(field) {
+        Some(v) => match v.as_f64() {
+            Some(n) => n,
+            None => {
+                tracing::warn!(
+                    target: "hkask.mcp.companies.financial_model",
+                    field,
+                    value = %v,
+                    fallback,
+                    "financial field present but unparseable as f64 — falling back to {fallback}"
+                );
+                fallback
+            }
+        },
+        None => fallback,
+    }
+}
+
 /// Historical financial data extracted from API responses.
 #[derive(Debug, Clone)]
 pub struct HistoricalSnapshot {
@@ -64,23 +110,11 @@ impl HistoricalSnapshot {
                 .or_else(|| entry.get("date"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let rev = entry.get("revenue").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let c = entry
-                .get("costOfRevenue")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let d = entry
-                .get("depreciationAndAmortization")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let te = entry
-                .get("incomeTaxExpense")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            let pi = entry
-                .get("incomeBeforeTax")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(1.0);
+            let rev = parse_financial_field(entry, "revenue");
+            let c = parse_financial_field(entry, "costOfRevenue");
+            let d = parse_financial_field(entry, "depreciationAndAmortization");
+            let te = parse_financial_field(entry, "incomeTaxExpense");
+            let pi = parse_financial_field_or(entry, "incomeBeforeTax", 1.0);
 
             if year.is_empty() || rev == 0.0 {
                 continue;
@@ -111,17 +145,11 @@ impl HistoricalSnapshot {
 
             current_assets.push((
                 year.to_string(),
-                entry
-                    .get("totalCurrentAssets")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0),
+                parse_financial_field(entry, "totalCurrentAssets"),
             ));
             current_liabilities.push((
                 year.to_string(),
-                entry
-                    .get("totalCurrentLiabilities")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0),
+                parse_financial_field(entry, "totalCurrentLiabilities"),
             ));
             cash.push((
                 year.to_string(),
@@ -133,10 +161,7 @@ impl HistoricalSnapshot {
             ));
             long_term_debt.push((
                 year.to_string(),
-                entry
-                    .get("longTermDebt")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0),
+                parse_financial_field(entry, "longTermDebt"),
             ));
         }
 
@@ -151,10 +176,7 @@ impl HistoricalSnapshot {
             if year.is_empty() {
                 continue;
             }
-            let cap = entry
-                .get("capitalExpenditure")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
+            let cap = parse_financial_field(entry, "capitalExpenditure");
             capex.push((year.to_string(), cap.abs()));
         }
 

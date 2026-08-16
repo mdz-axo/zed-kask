@@ -130,18 +130,18 @@ impl ThresholdConfig {
     pub fn from_env() -> Self {
         let default = Self::default();
         Self {
-            simple_max: std::env::var("HKASK_OCR_SIMPLE_MAX")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(default.simple_max),
-            moderate_max: std::env::var("HKASK_OCR_MODERATE_MAX")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(default.moderate_max),
-            moderate_sample_rate: std::env::var("HKASK_OCR_SAMPLE_RATE")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(default.moderate_sample_rate),
+            simple_max: hkask_mcp_server::parse_env_warn(
+                "HKASK_OCR_SIMPLE_MAX",
+                default.simple_max,
+            ),
+            moderate_max: hkask_mcp_server::parse_env_warn(
+                "HKASK_OCR_MODERATE_MAX",
+                default.moderate_max,
+            ),
+            moderate_sample_rate: hkask_mcp_server::parse_env_warn(
+                "HKASK_OCR_SAMPLE_RATE",
+                default.moderate_sample_rate,
+            ),
             tuneable: std::env::var("HKASK_OCR_TUNEABLE")
                 .ok()
                 .map(|v| v == "true" || v == "1")
@@ -257,22 +257,22 @@ impl TriageConfig {
     /// `HKASK_OCR_*` threshold pattern in `lib.rs::run`.
     pub fn from_env() -> Self {
         Self {
-            text_native_min_words: std::env::var("HKASK_OCR_TRIAGE_TEXT_NATIVE_MIN")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(20),
-            min_image_size_pt: std::env::var("HKASK_OCR_TRIAGE_MIN_IMAGE_PT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(25.0),
-            full_page_image_min_pt: std::env::var("HKASK_OCR_TRIAGE_FULL_PAGE_PT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(500.0),
-            embedded_image_min_pt: std::env::var("HKASK_OCR_TRIAGE_EMBEDDED_IMAGE_PT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(150.0),
+            text_native_min_words: hkask_mcp_server::parse_env_warn(
+                "HKASK_OCR_TRIAGE_TEXT_NATIVE_MIN",
+                20,
+            ),
+            min_image_size_pt: hkask_mcp_server::parse_env_warn(
+                "HKASK_OCR_TRIAGE_MIN_IMAGE_PT",
+                25.0,
+            ),
+            full_page_image_min_pt: hkask_mcp_server::parse_env_warn(
+                "HKASK_OCR_TRIAGE_FULL_PAGE_PT",
+                500.0,
+            ),
+            embedded_image_min_pt: hkask_mcp_server::parse_env_warn(
+                "HKASK_OCR_TRIAGE_EMBEDDED_IMAGE_PT",
+                150.0,
+            ),
             tuneable: std::env::var("HKASK_OCR_TRIAGE_TUNEABLE")
                 .ok()
                 .map(|v| v == "true" || v == "1")

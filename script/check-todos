@@ -4,10 +4,19 @@ set -euo pipefail
 
 # Brackets are used around characters so these don't show up in normal search.
 pattern='tod[o]!|FIXM[E]'
+# Exclude documentation and template files that reference the todo macro
+# as a string in prose (coding-guideline descriptions, skill manifests). The
+# intent is to catch actual code stubs, not documentation that mentions the
+# macro by name. .md/.j2/.yaml/.yml are documentation surfaces; .rs/.ts/.js
+# etc. are source code and remain in scope.
 result=$(git grep --no-color --ignore-case --line-number --extended-regexp -e $pattern -- \
   ':(exclude).github/workflows/ci.yml' \
   ':(exclude)*criteria.md' \
-  ':(exclude)*prompt.md' || true)
+  ':(exclude)*prompt.md' \
+  ':(exclude)*.md' \
+  ':(exclude)*.j2' \
+  ':(exclude)*.yaml' \
+  ':(exclude)*.yml' || true)
 if [[ -n "${result}" ]]; then
   echo "${result}"
   exit 1

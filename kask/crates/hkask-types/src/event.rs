@@ -280,6 +280,8 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.skill.cascade.step_failed",
     "reg.skill.cascade.gate_passed",
     "reg.skill.cascade.gate_failed",
+    "reg.skill.cascade.parallel_joined",
+    "reg.skill.cascade.tool_batch_joined",
     // Convergence: cascade outcomes
     "reg.skill.convergence",
     "reg.skill.convergence.converged",
