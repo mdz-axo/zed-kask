@@ -399,7 +399,8 @@ impl ProviderPool {
         match self.exa {
             Some(ref exa) => exa.find_similar(url, num_results).await,
             None => Err(WebError::NoProviderConfigured(
-                "Exa provider not configured. Set HKASK_EXA_API_KEY to use web_find_similar.".to_string(),
+                "Exa provider not configured. Set HKASK_EXA_API_KEY to use web_find_similar."
+                    .to_string(),
             )),
         }
     }
@@ -701,9 +702,7 @@ mod tests {
         let result = pool.find_similar("https://example.com", 5).await;
         let err = match result {
             Err(e) => e,
-            Ok(_) => panic!(
-                "find_similar with no Exa provider must return Err, not Ok"
-            ),
+            Ok(_) => panic!("find_similar with no Exa provider must return Err, not Ok"),
         };
         // The kind must be PermissionDenied, not Unavailable — this is
         // the load-bearing assertion that distinguishes a credential gap

@@ -8,8 +8,8 @@
 //! - `types` — Core types: Board, Task, TaskSpec, TaskStatus, Priority, SpawnSpec, etc.
 //! - `service_impl` — KanbanService + submodules: comments, decompose, dejam, kata, phases, spawn, verification
 
-mod service_impl;
 pub(crate) mod mermaid;
+mod service_impl;
 pub mod types;
 
 // Common imports for submodule files that use `use super::*`

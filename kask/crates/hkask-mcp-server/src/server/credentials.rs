@@ -115,7 +115,7 @@ pub fn resolve_db_passphrase(
         Ok(passphrase) if !passphrase.is_empty() => Ok(passphrase),
         Ok(_) => Err(McpToolError::permission_denied(
             "HKASK_DB_PASSPHRASE resolved to an empty string. \
-             Set HKASK_DB_PASSPHRASE via the keychain or environment variable."
+             Set HKASK_DB_PASSPHRASE via the keychain or environment variable.",
         )),
         Err(error) => {
             tracing::warn!(

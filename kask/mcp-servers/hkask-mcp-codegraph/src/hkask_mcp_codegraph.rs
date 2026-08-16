@@ -886,13 +886,8 @@ mod tests {
                 _prompt: &str,
                 _parameters: &LLMParameters,
                 _tools: Option<&[hkask_types::ChatToolDefinition]>,
-            ) -> Pin<
-                Box<
-                    dyn Future<Output = Result<InferenceResult, InferenceError>>
-                        + Send
-                        + '_,
-                >,
-            > {
+            ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+            {
                 Box::pin(async {
                     Err(InferenceError::Generation(
                         "FailingEmbedPort: generate should not be reached".into(),
@@ -919,9 +914,7 @@ mod tests {
         let pipeline = IndexPipeline::new(GraphStore::open_in_memory().expect("in-memory store"));
         {
             let store = pipeline.store();
-            let file_id = store
-                .upsert_file("src/lib.rs", "h")
-                .expect("upsert_file");
+            let file_id = store.upsert_file("src/lib.rs", "h").expect("upsert_file");
             store
                 .insert_symbols(
                     &[Symbol {
@@ -973,7 +966,9 @@ mod tests {
             envelope.message,
         );
         assert!(
-            envelope.message.contains("Embedding failed for all batches"),
+            envelope
+                .message
+                .contains("Embedding failed for all batches"),
             "error message must explain that all embedding batches failed; got: {}",
             envelope.message,
         );

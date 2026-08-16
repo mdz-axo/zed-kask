@@ -34,9 +34,7 @@ impl MediaServer {
                 self.vision_port
                     .media_generate("remove_background", &media_params)
                     .await
-                    .map_err(|e| {
-                        classify_inference_error("Background removal failed", e)
-                    })
+                    .map_err(|e| classify_inference_error("Background removal failed", e))
                     .map(|result| {
                         crate::media_block::enrich_with_omc_and_provenance(
                             result,

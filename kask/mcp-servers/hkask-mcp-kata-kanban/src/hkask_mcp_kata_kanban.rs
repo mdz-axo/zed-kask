@@ -26,7 +26,9 @@ pub use kata::{
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
-use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool_semantic, resolve_db_passphrase};
+use hkask_mcp_server::server::{
+    McpToolError, ServerContext, execute_tool_semantic, resolve_db_passphrase,
+};
 use hkask_mcp_swarm::{
     LazyLocalSwarmRuntime, LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry,
 };
@@ -1453,7 +1455,9 @@ impl KanbanServer {
     /// expect: "I can export a kanban board I own as mermaid markdown" \[P3\]
     /// pre:  board_id is a valid board id owned by the caller
     /// post: returns the mermaid markdown plus a structural summary
-    #[tool(description = "Export a kanban board as mermaid kanban markdown (columns + task titles).")]
+    #[tool(
+        description = "Export a kanban board as mermaid kanban markdown (columns + task titles)."
+    )]
     pub async fn kanban_board_export(
         &self,
         Parameters(BoardExportRequest { board_id }): Parameters<BoardExportRequest>,
@@ -1468,9 +1472,7 @@ impl KanbanServer {
                     .service
                     .board_get(bid)
                     .map_err(map_kanban_error)?
-                    .ok_or_else(|| {
-                        McpToolError::not_found(format!("board {bid} not found"))
-                    })?;
+                    .ok_or_else(|| McpToolError::not_found(format!("board {bid} not found")))?;
                 if board.owner != self.webid {
                     return Err(McpToolError::permission_denied(format!(
                         "board {bid} is not owned by caller — cannot export"
@@ -1507,7 +1509,9 @@ impl KanbanServer {
     /// expect: "I can import mermaid kanban markdown as a new board" \[P3\]
     /// pre:  markdown contains a `kanban` directive and at least one `section`
     /// post: returns the new board id and a structural summary
-    #[tool(description = "Import mermaid kanban markdown as a new board with tasks in parsed columns.")]
+    #[tool(
+        description = "Import mermaid kanban markdown as a new board with tasks in parsed columns."
+    )]
     pub async fn kanban_board_import(
         &self,
         Parameters(BoardImportRequest {
@@ -1526,7 +1530,7 @@ impl KanbanServer {
                 idempotency_key.as_deref(),
                 async {
                     let mut parsed = kanban::mermaid::parse_mermaid_kanban(&markdown)
-                        .map_err(|e| McpToolError::invalid_argument(e))?;
+                        .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;
                     if parsed.columns.is_empty() {
                         return Err(McpToolError::invalid_argument(
                             "mermaid kanban markdown has no sections — nothing to import",

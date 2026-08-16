@@ -11,7 +11,9 @@
 //!   multi-chunk cluster into a single comprehensive passage, re-embeds
 //!   the consolidated text, and stores the new embedding in the DB.
 
-use crate::helpers::{map_corpus_io_error, map_database_error, map_memory_store_error, read_text_capped};
+use crate::helpers::{
+    map_corpus_io_error, map_database_error, map_memory_store_error, read_text_capped,
+};
 use crate::services::consolidation::{ChunkConsolidationRequest, ConsolidationService};
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,

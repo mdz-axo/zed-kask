@@ -574,9 +574,7 @@ impl MediaServer {
                     .vision_port
                     .generate_vision(&prompt, &[image_url], &params, Some(vision_model))
                     .await
-                    .map_err(|e| {
-                        classify_inference_error("Vision inference failed", e)
-                    })?;
+                    .map_err(|e| classify_inference_error("Vision inference failed", e))?;
 
                 Ok(serde_json::json!({"description": r.text.trim(), "style": style_str}))
             },

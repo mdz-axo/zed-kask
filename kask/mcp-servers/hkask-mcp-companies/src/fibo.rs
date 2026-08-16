@@ -123,7 +123,9 @@ pub fn tool_to_ontology(tool: &str) -> Option<&'static str> {
         "equity_duration" => Some(INTERNAL_RATE_OF_RETURN),
         // Forecast tools
         "calibrate_forecast" => Some(BRIER_SCORE),
-        "forecast_record" | "forecast_get" | "forecast_list" | "forecast_persist" => Some(FORECAST_ID),
+        "forecast_record" | "forecast_get" | "forecast_list" | "forecast_persist" => {
+            Some(FORECAST_ID)
+        }
         "result_feedback" => Some(BRIER_SCORE),
         // Analysis tools
         "company_screener" => Some(STOCK_SCREENER),

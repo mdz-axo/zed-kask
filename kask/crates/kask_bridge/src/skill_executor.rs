@@ -28,7 +28,6 @@ use std::path::Path;
 // `kask_bridge` depends on `agent_skills` to access `is_core_skill` for the
 // registry seeder's core-vs-user split.
 use agent::SkillExecutionError;
-use agent::SkillManifestExecutor;
 use agent_skills::is_core_skill;
 
 /// Context keys the runtime injects itself (not user-supplied params), excluded

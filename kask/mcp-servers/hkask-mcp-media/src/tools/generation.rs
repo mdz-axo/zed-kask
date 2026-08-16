@@ -40,9 +40,7 @@ impl MediaServer {
                     .vision_port
                     .media_generate("generate_image", &media_params)
                     .await
-                    .map_err(|e| {
-                        classify_inference_error("Image generation failed", e)
-                    })?;
+                    .map_err(|e| classify_inference_error("Image generation failed", e))?;
                 // Attach an OMC-tagged, provenance-carrying display hint so the
                 // media widget can dispatch the OMC-driven "Explain" affordance and
                 // compose-back the "I disagree" gesture.
@@ -100,9 +98,7 @@ impl MediaServer {
                     .vision_port
                     .media_generate("image_to_image", &media_params)
                     .await
-                    .map_err(|e| {
-                        classify_inference_error("Image transform failed", e)
-                    })?;
+                    .map_err(|e| classify_inference_error("Image transform failed", e))?;
                 let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
                 Ok(crate::media_block::enrich_with_omc_and_provenance(
                     result,
@@ -185,9 +181,7 @@ impl MediaServer {
                     .vision_port
                     .media_generate("generate_video", &media_params)
                     .await
-                    .map_err(|e| {
-                        classify_inference_error("Video generation failed", e)
-                    })?;
+                    .map_err(|e| classify_inference_error("Video generation failed", e))?;
                 let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
                 Ok(crate::media_block::enrich_with_omc_and_provenance(
                     result,

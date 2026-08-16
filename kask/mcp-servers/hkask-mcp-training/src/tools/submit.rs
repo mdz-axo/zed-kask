@@ -398,8 +398,8 @@ mod tests {
     use super::*;
     use crate::adapter::AdapterStore;
     use crate::dataset::DatasetPipeline;
-    use crate::providers::{HostProviderError, TrainingHost, TrainingHostId, TrainingJob};
     use crate::providers::types::PodStatus;
+    use crate::providers::{HostProviderError, TrainingHost, TrainingHostId, TrainingJob};
     use hkask_storage::database::sqlite::SqliteDriver;
     use hkask_types::WebID;
     use hkask_types::{InferenceError, InferencePort, InferenceResult, LLMParameters};
@@ -457,8 +457,7 @@ mod tests {
             let pool = SqliteDriver::in_memory_pool().expect("in-memory pool");
             Arc::new(SqliteDriver::new(pool))
         };
-        let adapter_store =
-            AdapterStore::from_driver(driver).expect("adapter store init");
+        let adapter_store = AdapterStore::from_driver(driver).expect("adapter store init");
         TrainingServer::new(
             WebID::new(),
             None, // store: Option<MemoryStore> — unused by training_submit
@@ -490,7 +489,9 @@ mod tests {
     // so it's a safe scratch location for test fixtures.
     #[tokio::test]
     async fn training_submit_returns_permission_denied_when_job_store_missing() {
-        let scratch_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("training_submit_test");
+        let scratch_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("training_submit_test");
         std::fs::create_dir_all(&scratch_dir).expect("create scratch dir");
         let cache_dir = scratch_dir.join("cache");
         std::fs::create_dir_all(&cache_dir).expect("create cache dir");

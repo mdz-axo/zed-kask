@@ -2236,7 +2236,9 @@ mod tests {
 
     impl CapturingRegulationSink {
         fn new() -> Self {
-            Self { records: std::sync::Mutex::new(Vec::new()) }
+            Self {
+                records: std::sync::Mutex::new(Vec::new()),
+            }
         }
 
         fn records(&self) -> Vec<serde_json::Value> {
@@ -2245,8 +2247,14 @@ mod tests {
     }
 
     impl RegulationSink for CapturingRegulationSink {
-        fn persist(&self, record: &RegulationRecord) -> Result<(), hkask_types::InfrastructureError> {
-            self.records.lock().unwrap().push(record.observation.clone());
+        fn persist(
+            &self,
+            record: &RegulationRecord,
+        ) -> Result<(), hkask_types::InfrastructureError> {
+            self.records
+                .lock()
+                .unwrap()
+                .push(record.observation.clone());
             Ok(())
         }
     }

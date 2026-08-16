@@ -266,10 +266,7 @@ impl LanguageModelInferencePort {
     /// resolved model is available for the capability check. If the model
     /// doesn't support `Any`, `Auto` is retained (the A2 empty-output guard
     /// catches that fallback case).
-    fn upgrade_tool_choice(
-        request: &mut LanguageModelRequest,
-        model: &Arc<dyn LanguageModel>,
-    ) {
+    fn upgrade_tool_choice(request: &mut LanguageModelRequest, model: &Arc<dyn LanguageModel>) {
         if request.tools.is_empty() {
             return;
         }

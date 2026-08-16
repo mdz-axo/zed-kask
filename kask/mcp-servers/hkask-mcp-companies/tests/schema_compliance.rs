@@ -17,12 +17,13 @@ use hkask_mcp_companies::types::{
     AttributionRequest, CalibrateForecastRequest, CharacteristicsRequest, CompanyTranscriptRequest,
     ComparableAnalysisRequest, DcfValuationRequest, EpValuationRequest, EquityDurationRequest,
     ExpectationsGapRequest, FileAttachRequest, FileDeleteRequest, FileListRequest,
-    ForecastGetRequest, ForecastListRequest, ForecastPersistRequest, ForecastRecordRequest, HistoricalRequest,
-    LedgerExportRequest, LedgerImportRequest, MonteCarloDcfRequest, NoteAddRequest,
-    NoteDeleteRequest, NoteListRequest, PortfolioCompareRequest, PortfolioNameRequest,
-    PortfolioReturnsRequest, ResearchSearchRequest, ResultFeedbackRequest, ReverseDcfRequest,
-    ScenarioAnalysisRequest, ScenarioImpactValuationRequest, ScreenerRequest, SearchRequest,
-    SensitivityAnalysisRequest, SymbolLimitRequest, SymbolRequest, TransactionNoteRequest,
+    ForecastGetRequest, ForecastListRequest, ForecastPersistRequest, ForecastRecordRequest,
+    HistoricalRequest, LedgerExportRequest, LedgerImportRequest, MonteCarloDcfRequest,
+    NoteAddRequest, NoteDeleteRequest, NoteListRequest, PortfolioCompareRequest,
+    PortfolioNameRequest, PortfolioReturnsRequest, ResearchSearchRequest, ResultFeedbackRequest,
+    ReverseDcfRequest, ScenarioAnalysisRequest, ScenarioImpactValuationRequest, ScreenerRequest,
+    SearchRequest, SensitivityAnalysisRequest, SymbolLimitRequest, SymbolRequest,
+    TransactionNoteRequest,
 };
 use hkask_mcp_server::find_boolean_schema_positions;
 use schemars::schema_for;
