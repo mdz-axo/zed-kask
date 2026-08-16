@@ -9,11 +9,13 @@
 //! target to enable fuzz testing (P5 Testing Discipline, P4 Clear Boundaries).
 
 pub mod card_contract;
+pub mod envelope;
 pub mod grounding;
 pub mod idempotency;
 pub mod kanban;
 pub mod kata;
 pub mod pko;
+pub mod rollup_trust;
 pub mod schema_validate;
 pub mod types;
 

@@ -54,11 +54,7 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 3. Verify dependency direction: dependencies are acyclic and point toward stability.
 4. Assess caller benefit: callers genuinely benefit from the abstraction (not pass-through).
 5. Check that depth-improvement recommendations are specific and actionable.
-6. Compute the convergence metric in [0,1]: start at 1.0, subtract for each satisfied check. 0.0 = converged (passes deletion test, ≤7 items, minimal interface); 0.15 = minor depth opportunities remain; 0.50 = significant shallow modules identified but not acted on; 1.00 = no depth analysis performed.
-7. Emit `re_entry_target` as a numeric step ordinal routing the loop to the failing step (1=assess, 2=delete, 3=design). When converged, the executor exits via the threshold check before reading `re_entry_target`.
-8. **Materiality guard**: if iteration ≥ 3 AND metric delta < 0.02 AND no committed changes, force `convergence_metric = 0.0` with blocker `irreducible_depth_gap`. The executor exits because 0.0 ≤ threshold.
-
-The convergence check consumes `primary_result` (assess), `delete_result`, and `design_result` for full-fidelity evaluation. When design is skipped (DELETE/MERGE recommendation), `design_result` is undefined and the convergence check focuses on deletion test and assessment results only. Convergence is detected deterministically via the Cauchy criterion.
+6. The convergence signal is the public-interface item count (`step_3_result.public_interface | length`). Convergence is detected deterministically via the Cauchy criterion: the executor tracks this signal across iterations and exits when the iterates have stopped moving (within `cauchy_epsilon` over `cauchy_window` iterations, minimum 2 iterations). No `re_entry_target` field is emitted — the `loop` step fixes `loop_target: 1` (re-enter at assess) and the Cauchy tracker decides when to stop. When the design step is skipped (DELETE/MERGE recommendation), `step_3_result` is undefined and the signal defaults to 0, which is stable — Cauchy fires after `min_iterations`.
 
 ## Registry Templates
 
