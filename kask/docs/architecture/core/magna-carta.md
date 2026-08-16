@@ -73,7 +73,7 @@ The Magna Carta is a **charter (OUGHT)** — it states the sovereignty principle
 > name they passed to `invoke`, so the check compared a caller-supplied value
 > against itself. `DelegationToken`, `panel_default_token`, `capabilities_match`,
 > and `ToolPortError::CapabilityDenied` no longer exist; `invoke` takes
-> `agent: WebID` for metering only. See `security/regressions/RR-0056.yaml`.
+> `agent: WebID` for metering only. See `kask/security/regressions/RR-0056.yaml`.
 >
 > There is no longer a single "enforcement membrane." Authority is the allowlist
 > rows above — boundaries whose list the caller being checked does not choose.

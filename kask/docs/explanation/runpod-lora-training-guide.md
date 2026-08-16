@@ -234,7 +234,7 @@ The residual base is stored in the adapter. When the library version changes
 **Fix**: Use EVA (`peft_init_lora_weights: eva`) instead. EVA uses
 activation-vector SVD (not weight-SVD), producing a standard portable LoRA
 adapter (A initialized with activation variance, B=0). See
-`corpus/lora/axolotl-lora.yaml` for the canonical EVA config.
+`kask/registry/templates/training/axolotl-lora.j2` for the canonical EVA config.
 
 **Detection**: If the adapter was trained with PiSSA and produces garbage on
 inference, check the transformers version mismatch. The fix is to retrain
@@ -438,7 +438,7 @@ status: VERIFIED
 | `registry/templates/training/trl-sft.j2` | TRL SFTTrainer Python script template |
 | `registry/templates/training/trl-preference.j2` | TRL DPO/KTO/ORPO/Reward Python script template |
 | `registry/templates/training/ludwig-lora.j2` | Ludwig YAML template |
-| `corpus/lora/axolotl-lora.yaml` | Canonical axolotl config (EVA, r=32) |
+| `kask/registry/templates/training/axolotl-lora.j2` | Canonical axolotl config (EVA, r=32) |
 | `docs/reference/lora-training-catalog.md` | LoRA method + gate catalog |
 | `.agents/skills/lora-training/SKILL.md` | lora-training skill |
 | `docs/post-mortem/2026-07-19-training-providers.md` | Post-mortem from $600 billing leak |

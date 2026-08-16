@@ -187,7 +187,7 @@ earnings_transcript(symbol, year?, quarter?, quarters_back=1, mode=fetch|segment
 
 ### (b) Listening template spec
 
-A YAML/JSON schema versioned in-repo (`kask/mcp-servers/hkask-mcp-companies/listening_template.yaml`
+A YAML/JSON schema versioned in-repo (`kask/registry/manifests/listening.yaml`
 or a skill asset). Each factor is anchored to the guidebook extraction + in-code
 fragments in A5 plus the operator's seam clarification — no invented factors.
 

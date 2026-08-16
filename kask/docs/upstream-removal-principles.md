@@ -61,7 +61,7 @@ Only the *provably unreachable* form survives as Category 4.
   L37 ("upstream update actions remain removed because upstream Zed's
   installer writes `zed*.app` into `~/.local` and can replace the user's real
   Zed"). Verified: both scripts exist at
-  `kask/scripts/build/check-{desktop-no-collision,zed-isolation}.sh`.
+  ``kask/scripts/build/check-desktop-no-collision.sh` and `kask/scripts/build/check-zed-isolation.sh``.
 - **Scope boundary:** Does NOT authorize removing upstream functionality
   merely because kask has a parallel feature — only *collision surface*
   (MIME types, keywords, URL scheme, install path, auto-update path). A kask

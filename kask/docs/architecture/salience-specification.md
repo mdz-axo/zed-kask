@@ -200,7 +200,7 @@ true coefficient with error bounded by O(1/√K).
 
 > **Path correction (2026-08-01 audit):** The prior version cited `embed.rs` and `compose.rs` as the integration surfaces. The actual call site for `compute_salience_batch` is `kask/mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs` (the corpus MCP server's `EmbedService::embed_corpus`), not `hkask-memory/src/embed.rs` (which does not exist). The `salience_min` retrieval filter is **implemented** in `kask/mcp-servers/hkask-mcp-corpus/src/compose.rs:79` (struct field), `:278` (filter logic: `if salience < retrieval.salience_min { skip }`), and `:851` (doc). §5.2 is the live design.
 
-### 5.1 Budget Gate (`hkask-mcp-corpus/src/corpus/embed/service.rs`)
+### 5.1 Budget Gate (`hkask-mcp-kask/mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs`)
 
 ```rust
 // In EmbedService::embed_corpus — kask/mcp-servers/hkask-mcp-corpus/src/corpus/embed/service.rs

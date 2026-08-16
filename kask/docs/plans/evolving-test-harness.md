@@ -133,7 +133,7 @@ artifact upload, no trace storage, no triage step.**
 
 ### 2.4 `qa-triage-cycle` manifest
 
-**Path:** `kask/registry/manifests/qa-triage-cycle.yaml` — a FlowDef process
+**Path:** `kask/registry/manifests/qa-triage-cycle.yaml` (deleted — design spec only) — a FlowDef process
 manifest (7 steps) executed by the `ManifestExecutor`.
 
 Step 1 runs `cargo test` across priority crates; step 2 classifies failures via
@@ -404,7 +404,7 @@ production test suite minus the files the proposer modified — CI runs the full
 suite, and any test the proposer didn't touch that now fails is a test-bug
 introduction (EIR).
 
-**Implementation:** `kask/scripts/test/stability-gate.sh` (Slice 2). Reads the
+**Implementation:** `kask/scripts/stability-gate.sh` (Slice 2). Reads the
 last `W+1 = 4` trace dirs (`<run-id-N−3>`, …, `<run-id-N>`) to compute W=3
 deltas for the Cauchy criterion and stall detector. Computes ECR/EIR/Acc from
 `metrics.json` (mutation score) + `failures/*/classifier.json` (EIR secondary).
@@ -434,7 +434,7 @@ pairwise refinement (N vs N−1), 3–5 iterations.
 
 **Path:** `.agents/skills/harness-optimize/SKILL.md` + registry templates in
 `kask/registry/templates/harness-optimize/` + a FlowDef manifest
-`kask/registry/manifests/harness-evolve-cycle.yaml`.
+`kask/registry/manifests/harness-evolve-cycle.yaml` (deleted — design spec only).
 
 **What it does:**
 
@@ -562,7 +562,7 @@ corrected.
 
 ### 3.7 Component 5 — `harness-evolve-cycle` FlowDef Manifest
 
-**Path:** `kask/registry/manifests/harness-evolve-cycle.yaml`.
+**Path:** `kask/registry/manifests/harness-evolve-cycle.yaml` (deleted — design spec only).
 
 A process manifest (FlowDef) orchestrating the full loop, reusing the
 `ManifestExecutor`. Steps:
@@ -1033,10 +1033,10 @@ changes.**
 
 ### Slice 2 — Stability gate computation
 
-**Scope:** `kask/scripts/test/stability-gate.sh` (new script); no crate changes.
+**Scope:** `kask/scripts/stability-gate.sh` (new script); no crate changes.
 
 **Changes:**
-- New script `kask/scripts/test/stability-gate.sh` that takes the last `W+1 = 4`
+- New script `kask/scripts/stability-gate.sh` that takes the last `W+1 = 4`
   run-ids (N−3, N−2, N−1, N) to compute W=3 deltas for the Cauchy criterion and
   stall detector. Reads their `metrics.json` + `failures/*/classifier.json`.
 - Runs `cargo mutants` (or a custom mutation pass) against the kask crates to
@@ -1078,7 +1078,7 @@ changes.**
 
 ### Slice 3 — `harness-evolve-cycle` FlowDef manifest
 
-**Scope:** `kask/registry/manifests/harness-evolve-cycle.yaml` (new manifest); no
+**Scope:** `kask/registry/manifests/harness-evolve-cycle.yaml` (deleted — design spec only) (new manifest); no
 crate changes.
 
 **Changes:**
@@ -1239,7 +1239,7 @@ maps each slice to its implementation location and its open fix.
 |-------|----------------|-----------------|
 | 1 — Trace filesystem + oracle taxonomy | `hkask-test-harness/src/hkask_test_harness.rs`; `scripts/test --trace`; `tests/oracle_and_trace.rs` | None (live) |
 | 2 — Stability gate | `kask/scripts/stability-gate.sh` | F1 (persist mutation_score), F3 (refuse convergence on absent metrics + reorder verdict), F7 (cost axis) |
-| 3 — `harness-evolve-cycle` manifest | `kask/registry/manifests/harness-evolve-cycle.yaml`; `kask/scripts/harness-evolve-cycle.sh` | F4 (bootstrap N−1 + persist history), F5 (qa-triage step or drop classifier EIR), F6 (enforce `terminal:false` binding) |
+| 3 — `harness-evolve-cycle` manifest | `kask/registry/manifests/harness-evolve-cycle.yaml` (deleted — design spec only); `kask/scripts/harness-evolve-cycle.sh` | F4 (bootstrap N−1 + persist history), F5 (qa-triage step or drop classifier EIR), F6 (enforce `terminal:false` binding) |
 | 4 — `harness-optimize` skill | `.agents/skills/harness-optimize/SKILL.md` | F6 (separation is a convention, not a gate) |
 | 5 — CyberneticsLoop sensors | `sensor_provider.rs` (`TestCoverageSensor`/`MutationScoreSensor`); `set_points.rs`; `signals.rs` | F1, F2 (sensors read fields absent from `metrics.json` → always `None`) |
 | 6 — CI evaluator | `.github/workflows/kask-ci.yml` (cargo-mutants + trace upload) | F2 (no coverage producer), F9 (doubled `kask/kask/traces/` path) |
