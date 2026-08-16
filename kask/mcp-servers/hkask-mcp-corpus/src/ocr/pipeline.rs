@@ -23,7 +23,6 @@ use image::DynamicImage;
 use crate::ocr::complexity::score_page_complexity;
 use crate::ocr::routing::{SamplingState, route_page};
 use crate::ocr::verification::verify_output;
-use hkask_types::concurrency::global_concurrency_limiter;
 
 /// Typed errors for OCR backend execution.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -184,23 +183,19 @@ async fn run_pipeline_parallel(
     max_concurrency: usize,
 ) -> PipelineOutcome {
     let start = Instant::now();
-    // Use the process-global concurrency limiter when wired (production), so
-    // OCR shares the global ceiling with skill cascades and MCP tool calls.
-    // Fall back to a local semaphore when no global limiter is wired (tests,
-    // standalone MCP server without the bridge). The local fallback preserves
-    // the prior per-pipeline behavior.
+    // OCR runs in a subprocess (`hkask-mcp-corpus` binary) whose `OnceLock` is
+    // distinct from the zed main process. The global concurrency limiter is
+    // never wired here — `global_concurrency_limiter()` always returns `None`
+    // in this process. Use a local per-pipeline semaphore bounded by
+    // `max_concurrency` (from `HKASK_OCR_CONCURRENCY`). The process-wide
+    // limiter lives in the zed process and gates skill cascades + MCP tool
+    // calls there; OCR's concurrency is bounded locally.
     //
-    // The global limiter may have a larger `max()` than `max_concurrency`
-    // (the per-pipeline cap from `HKASK_OCR_CONCURRENCY`). We use the
-    // per-pipeline cap as the buffer bound so a 1000-page book doesn't
-    // monopolize the global pool — `min(max_concurrency, global_max)`.
-    let (semaphore, _buffer_bound) = if let Some(global) = global_concurrency_limiter() {
-        let global_max = global.max() as usize;
-        let bound = max_concurrency.min(global_max);
-        (Arc::clone(&global.semaphore_ref()), bound)
-    } else {
-        (Arc::new(Semaphore::new(max_concurrency)), max_concurrency)
-    };
+    // If a future change embeds the corpus server in-process (no subprocess),
+    // re-evaluate: the global limiter could then be shared, but `on_throttle`
+    // would need wiring (currently OCR has no throttle backoff because
+    // `PipelineError` doesn't carry the inner `InferenceError`).
+    let semaphore = Arc::new(Semaphore::new(max_concurrency));
 
     // Pre-score and route all pages (synchronous, cheap)
     struct PageTask {
@@ -251,7 +246,6 @@ async fn run_pipeline_parallel(
         let llm = llm_model.map(|s| s.to_string());
         let completed = Arc::clone(&completed);
         let last_progress = Arc::clone(&last_progress);
-        let global_limiter = global_concurrency_limiter().cloned();
 
         join_set.spawn(async move {
             let _permit = sem.acquire().await;
@@ -265,17 +259,6 @@ async fn run_pipeline_parallel(
                 llm.as_deref(),
             )
             .await;
-
-            // Ramp the global limiter on success. Throttle back-off is not
-            // wired here because `PipelineError` doesn't carry the inner
-            // `InferenceError` (it's a high-level OCR failure type). A future
-            // refactor that threads `InferenceError` through `PipelineError`
-            // would add `on_throttle` on 429/503-class failures.
-            if result.is_some() {
-                if let Some(ref limiter) = global_limiter {
-                    limiter.on_success();
-                }
-            }
 
             // Progress: check after each page completes
             let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;

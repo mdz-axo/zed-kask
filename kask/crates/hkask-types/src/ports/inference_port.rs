@@ -10,20 +10,6 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-/// One prompt in a batch submitted to [`InferencePort::generate_batch`].
-///
-/// Each prompt carries its own message array, optional model override
-/// (e.g. `Some("OpenRouter/z-ai/glm-5.2:batch")` to route through the
-/// batch-optimized variant), and optional tool definitions for structured
-/// output. The batch is submitted as N independent calls — the default
-/// implementation fires them concurrently via `join_all`.
-#[derive(Debug, Clone)]
-pub struct BatchPrompt {
-    pub messages: Vec<ChatMessage>,
-    pub model_override: Option<String>,
-    pub tools: Option<Vec<ChatToolDefinition>>,
-}
-
 /// Future returned by [`InferencePort::embed`].
 ///
 /// Extracted as a named alias so the trait signature stays under clippy's
@@ -302,42 +288,6 @@ pub trait InferencePort: Send + Sync {
         })
     }
 
-    /// Submit N independent prompts as a batch. Returns results in input
-    /// order. The default fires N concurrent `generate_with_messages` calls
-    /// (client-side concurrency — each gated by the caller's concurrency
-    /// limiter). Providers that support server-side batch APIs (e.g.
-    /// OpenRouter's `:batch` model variants like `z-ai/glm-5.2:batch`)
-    /// override this to route through the batch endpoint — same chat
-    /// completions API, different model slug with batch-optimized pricing.
-    ///
-    /// The caller is responsible for gating concurrency — this method
-    /// does NOT acquire permits from the global `ConcurrencyLimiter`. The
-    /// caller wraps each prompt's future in `limiter.acquire()` before
-    /// calling this, or the override handles batching internally.
-    fn generate_batch(
-        &self,
-        prompts: &[BatchPrompt],
-        parameters: &LLMParameters,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<InferenceResult>, InferenceError>> + Send + '_>>
-    {
-        use futures_util::future::join_all;
-        let futures: Vec<_> = prompts
-            .iter()
-            .map(|p| {
-                self.generate_with_messages(
-                    &p.messages,
-                    parameters,
-                    p.model_override.as_deref(),
-                    p.tools.as_deref(),
-                )
-            })
-            .collect();
-        Box::pin(async move {
-            let results = join_all(futures).await;
-            results.into_iter().collect()
-        })
-    }
-
     /// Stream inference chunks. Default: yields single chunk from `generate()`. Override for SSE/streaming backends.
     fn generate_stream(
         &self,
@@ -533,14 +483,6 @@ impl InferencePort for Arc<dyn InferencePort> {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<InferenceResult>, InferenceError>> + Send + '_>>
     {
         self.as_ref().generate_n(p, pa, n)
-    }
-    fn generate_batch(
-        &self,
-        prompts: &[BatchPrompt],
-        pa: &LLMParameters,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<InferenceResult>, InferenceError>> + Send + '_>>
-    {
-        self.as_ref().generate_batch(prompts, pa)
     }
     fn generate_stream(
         &self,

@@ -34,14 +34,6 @@ pub const DEFAULT_OCR_MODEL: &str = "RunPod/kask-ocr";
 /// Matches `InferenceConfig::from_env()` default.
 pub const DEFAULT_FALLBACK_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 
-/// Batch-optimized variant of GLM-5.2 on OpenRouter. Same chat completions
-/// API, different model slug (`:batch` suffix) with batch-optimized pricing
-/// ($0.70/$2.20 per 1M tokens vs the standard variant). Used by
-/// `InferencePort::generate_batch` callers that want to route batch prompts
-/// through the cheaper batch endpoint. The model is resolved by OpenRouter's
-/// provider — no separate API endpoint, just a different model ID.
-pub const DEFAULT_BATCH_MODEL: &str = "OpenRouter/z-ai/glm-5.2:batch";
-
 /// Default TTS model — DeepInfra Kokoro-82B (DeepInfraBackend::generate_speech default).
 pub const DEFAULT_TTS_MODEL: &str = "DeepInfra/hexgrad/Kokoro-82M";
 
@@ -74,9 +66,4 @@ pub fn embedding_model() -> String {
 /// Resolve the OCR model: `HKASK_OCR_MODEL` → default.
 pub fn ocr_model() -> String {
     std::env::var("HKASK_OCR_MODEL").unwrap_or_else(|_| DEFAULT_OCR_MODEL.to_string())
-}
-
-/// Resolve the batch model: `HKASK_BATCH_MODEL` → default.
-pub fn batch_model() -> String {
-    std::env::var("HKASK_BATCH_MODEL").unwrap_or_else(|_| DEFAULT_BATCH_MODEL.to_string())
 }

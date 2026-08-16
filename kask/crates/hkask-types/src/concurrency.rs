@@ -93,8 +93,16 @@ impl ConcurrencyLimiter {
 
     /// Called after a throttle (429/503 only). Backs off one `step` (down
     /// to `step`, never below). The permit is released by the guard's Drop;
-    /// this only shrinks the pool for future calls. Idempotent under
-    /// concurrent throttle — `compare_exchange` prevents undershoot.
+    /// this shrinks the pool for future calls by removing `step` permits
+    /// from the semaphore via `forget_permits`. Idempotent under concurrent
+    /// throttle — `compare_exchange` prevents undershoot on `current`;
+    /// `forget_permits` saturates at the available count so it never goes
+    /// negative (in-flight permits are unaffected and return on drop).
+    ///
+    /// Without `forget_permits`, the semaphore retains its old permit count
+    /// and backoff is a no-op — the limiter *thinks* the pool shrank but the
+    /// semaphore still admits the old count. The next `on_success` would then
+    /// add permits on top of the un-shrunk semaphore, overshooting `max`.
     pub fn on_throttle(&self) {
         use std::sync::atomic::Ordering;
         let floor = self.step;
@@ -110,7 +118,16 @@ impl ConcurrencyLimiter {
                 Ordering::Release,
                 Ordering::Acquire,
             ) {
-                Ok(_) => return,
+                Ok(_) => {
+                    let removed = current - next;
+                    // Remove permits from the semaphore so backoff actually
+                    // reduces concurrency. `forget_permits` saturates at the
+                    // available count — if fewer than `removed` permits are
+                    // available (some are in-flight), it removes what it can;
+                    // the in-flight ones return on drop and don't get re-added.
+                    let _actually_removed = self.semaphore.forget_permits(removed as usize);
+                    return;
+                }
                 Err(actual) => current = actual,
             }
         }
@@ -124,16 +141,6 @@ impl ConcurrencyLimiter {
     /// The configured maximum.
     pub fn max(&self) -> u32 {
         self.max
-    }
-
-    /// Access the underlying semaphore `Arc` for consumers that need to
-    /// `acquire()` directly (e.g. the OCR pipeline's `JoinSet` spawn pattern,
-    /// which holds the permit across a `tokio::spawn` boundary). Prefer
-    /// `acquire()` + `on_success` / `on_throttle` for the standard pattern;
-    /// this is for consumers that integrate with their own concurrency
-    /// primitives and can't hold a `ConcurrencyPermit` across their spawn.
-    pub fn semaphore_ref(&self) -> &Arc<Semaphore> {
-        &self.semaphore
     }
 }
 
@@ -260,5 +267,77 @@ mod tests {
         l.on_success();
         // Now 8 permits total, 4 in use → 4 available.
         let _p5 = l.acquire().await;
+    }
+
+    #[tokio::test]
+    async fn on_throttle_removes_permits_from_semaphore() {
+        // Regression guard: `on_throttle` must call `forget_permits` so the
+        // semaphore's available count actually shrinks. Without it, backoff
+        // is a no-op — `current` decrements but the semaphore still admits
+        // the old count, and the next `on_success` overshoots `max`.
+        let l = limiter(96, 4);
+        // Ramp to 12.
+        l.on_success();
+        l.on_success();
+        assert_eq!(l.current(), 12);
+        assert_eq!(l.semaphore.available_permits(), 12);
+        // Throttle: 12 → 8.
+        l.on_throttle();
+        assert_eq!(l.current(), 8);
+        // The semaphore must reflect the shrink — this is the bug fix.
+        assert_eq!(
+            l.semaphore.available_permits(),
+            8,
+            "on_throttle must call forget_permits; without it the semaphore \
+             stays at 12 and backoff is a no-op"
+        );
+    }
+
+    #[tokio::test]
+    async fn on_throttle_does_not_overshoot_max_after_recovery() {
+        // Regression guard for the overshoot bug: after a throttle, a
+        // subsequent `on_success` must not add permits on top of the
+        // un-shrunk semaphore past `max`. The throttle removes permits from
+        // the available pool; in-flight permits are unaffected (they return
+        // on drop and are NOT re-added beyond the forgotten count).
+        //
+        // Scenario: ramp to max, acquire some, throttle, drop, success.
+        // The key invariant: `available_permits` never exceeds `current`.
+        let l = limiter(10, 4);
+        // Ramp to 10 (max).
+        l.on_success(); // 4 → 8
+        l.on_success(); // 8 → 10
+        assert_eq!(l.current(), 10);
+        assert_eq!(l.semaphore.available_permits(), 10);
+        // Acquire 4 (6 remain available).
+        let p1 = l.acquire().await;
+        let p2 = l.acquire().await;
+        let p3 = l.acquire().await;
+        let p4 = l.acquire().await;
+        assert_eq!(l.semaphore.available_permits(), 6);
+        // Throttle: 10 → 6. forget_permits(4) removes 4 from available (6 → 2).
+        l.on_throttle();
+        assert_eq!(l.current(), 6);
+        assert_eq!(
+            l.semaphore.available_permits(),
+            2,
+            "forget_permits must remove from available: 6 available - 4 forgotten = 2"
+        );
+        // Drop the 4 in-flight permits — they return to the semaphore.
+        drop(p1);
+        drop(p2);
+        drop(p3);
+        drop(p4);
+        // The semaphore now has 6 permits (2 remaining + 4 returned). Not 10.
+        assert_eq!(
+            l.semaphore.available_permits(),
+            6,
+            "after throttle + permit drop, available must be 6 (the new pool \
+             size), not 10 — otherwise backoff never takes effect"
+        );
+        // on_success ramps 6 → 10, adds 4 permits → 10. Does not overshoot.
+        l.on_success();
+        assert_eq!(l.current(), 10);
+        assert_eq!(l.semaphore.available_permits(), 10);
     }
 }
