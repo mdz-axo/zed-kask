@@ -32,6 +32,7 @@ one hit: the definition itself in `runtime.rs:670`. No code anywhere
 calls it.
 
 This means:
+
 - `SkillSpanStore` exists but is empty at runtime — no spans are ever
   recorded into it
 - `SkillFeedbackSpan::Outcome` and `SkillFeedbackSpan::OperatorFeedback`
@@ -88,7 +89,7 @@ expected value for a known input?). These are genuinely different checks.
 
 The test suite (`manifest_load_validation.rs`, `yaml_schema_validation.rs`)
 validates manifest structure at build time. But it doesn't validate skill
-*outputs* against expected values. The `ConvergenceTracker` checks
+_outputs_ against expected values. The `ConvergenceTracker` checks
 convergence metrics, not output accuracy. No existing mechanism does
 golden-output comparison.
 
@@ -126,6 +127,7 @@ It cannot exist until the emission path is wired.
 
 **Revised proposal:** The first step is wiring `record_skill_span` calls
 into the skill execution path. Specifically:
+
 1. `BridgeManifestExecutor::execute_skill` should call
    `record_skill_span(skill_name, "outcome", payload)` after the cascade
    completes (success or failure)
@@ -221,6 +223,7 @@ Operator rates result → record_skill_span("operator_feedback")
 ```
 
 **Loop integrity:** **Broken at two points.**
+
 1. `result_feedback` doesn't call `record_skill_span` — the feedback
    never reaches `SkillSpanStore`
 2. No drift detector exists — even if the data were there, no alerting
@@ -289,6 +292,7 @@ with a namespace string. But `ConvergenceTracker` lives in
 `hkask-templates` and has no dependency on `RegulationLedger` (which
 lives in `hkask-regulation`). The two crates are separate. The emission
 would require either:
+
 - `BridgeManifestExecutor` (which has access to both) calling
   `record_skill_span` after convergence check, or
 - A new dependency from `hkask-templates` on `hkask-regulation` (wrong
@@ -350,6 +354,7 @@ pub enum SkillExecutionError {
 ```
 
 **Rust idioms check:**
+
 - `&'static str` for `phase` is correct — phases are compile-time constants
 - `String` for `skill_name` and `message` is correct — they're dynamic
 - No `#[derive]` needed beyond `Debug, Clone]` — this is an error type,
@@ -367,6 +372,7 @@ useful for logging. Keep it.
 ### `FeedbackDriftDetector` → contracted to `MetacognitionLoop::feedback_trend`
 
 **Rust idioms check:**
+
 - Adding a method to `MetacognitionLoop` is simpler than a new struct
 - The method can borrow `&self.ledger` and query `SkillSpanStore` directly
 - No new allocation, no new struct, no new module
@@ -378,11 +384,12 @@ is simpler than a new detector struct.
 ### Golden-output validation in `output_schema.rs`
 
 **Rust idioms check:**
+
 - Adding `validate_golden_outputs` to `output_schema.rs` is correct —
   it's the output validation module
 - The function signature should be `fn validate_golden_outputs(
-  manifest: &BundleManifest, executor: &ManifestExecutor) ->
-  Result<GoldenOutputReport, GoldenOutputError>`
+manifest: &BundleManifest, executor: &ManifestExecutor) ->
+Result<GoldenOutputReport, GoldenOutputError>`
 - But wait — running the skill requires the executor, which requires
   inference and tools. This can't be a pure function in
   `output_schema.rs`. It needs to be async and take executor
@@ -409,6 +416,7 @@ loops are broken.
 **Fix:** In `BridgeManifestExecutor::execute_skill`, after the cascade
 completes (success or failure), call `record_skill_span` with the
 outcome payload. This requires:
+
 - Access to `RegulationLedger` from `BridgeManifestExecutor` (currently
   not held — need to add it as a field)
 - An outcome payload struct (skill name, success/failure, duration,
@@ -420,6 +428,7 @@ records to in-process `learning` state only. It needs to also call
 `record_skill_span` when the feedback is about a skill result (not just
 a data provider result). This requires `result_feedback` to have access
 to `RegulationLedger` — which means either:
+
 - Passing the ledger to the companies MCP server (cross-server
   dependency), or
 - Creating a separate skill-feedback MCP tool on the curator server
@@ -436,6 +445,7 @@ dependencies and uses the existing curator MCP infrastructure.
 one new MCP tool, emission calls at two points.
 
 **Files:**
+
 - `kask/crates/kask_bridge/src/skill_executor.rs` — add ledger field,
   emit outcome span
 - `kask/mcp-servers/hkask-mcp-curator/src/` — new
@@ -452,6 +462,7 @@ one new MCP tool, emission calls at two points.
 trait, bridge, and three callers.
 
 **Files:**
+
 - `crates/agent/src/tools/skill_tool.rs` — error enum, trait change
 - `kask/crates/kask_bridge/src/skill_executor.rs` — classify at failure
   points (lines 594, 597-645, 680)
@@ -471,6 +482,7 @@ acceptance rate. Alert via existing channel when declining.
 alert condition in `sense()`, configuration in `MetacognitionConfig`.
 
 **Files:**
+
 - `kask/crates/hkask-regulation/src/metacognition.rs` — add
   `feedback_trend` method, wire into `sense()`
 - `kask/crates/hkask-regulation/src/metacognition.rs` — add
@@ -489,6 +501,7 @@ results).
 skill-maintenance wiring.
 
 **Files:**
+
 - `kask/crates/hkask-templates/src/bundle/manifest.rs` — add field
 - `kask/crates/kask_bridge/src/skill_executor.rs` — add
   `validate_golden_outputs` method
@@ -498,29 +511,29 @@ skill-maintenance wiring.
 
 ## What Was Rejected
 
-| Proposal | Reason |
-|---|---|
-| `GoldenOutputFixture` struct with 4 fields | Contracted to `(String, String)` tuple — speculative generality |
-| 4 comparison strategies (`exact`, `json_subset`, `regex_match`, `mermaid_valid`) | Contracted to 1 (`exact`) — no existing skill needs them |
-| `golden_validation.rs` new module | Moved to `BridgeManifestExecutor` method — no new module needed |
-| `FeedbackDriftDetector` struct + `drift_detector.rs` module | Contracted to `MetacognitionLoop::feedback_trend` method — no new struct/module |
-| `partial_output: Option<String>` on `Runtime` error | Dropped — degraded success should return `Ok` with warning, not `Err` with partial data |
-| `drift_threshold` in `settings_content.rs` | Moved to `MetacognitionConfig` — regulation config lives with the loop, not in user-facing settings |
+| Proposal                                                                         | Reason                                                                                              |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `GoldenOutputFixture` struct with 4 fields                                       | Contracted to `(String, String)` tuple — speculative generality                                     |
+| 4 comparison strategies (`exact`, `json_subset`, `regex_match`, `mermaid_valid`) | Contracted to 1 (`exact`) — no existing skill needs them                                            |
+| `golden_validation.rs` new module                                                | Moved to `BridgeManifestExecutor` method — no new module needed                                     |
+| `FeedbackDriftDetector` struct + `drift_detector.rs` module                      | Contracted to `MetacognitionLoop::feedback_trend` method — no new struct/module                     |
+| `partial_output: Option<String>` on `Runtime` error                              | Dropped — degraded success should return `Ok` with warning, not `Err` with partial data             |
+| `drift_threshold` in `settings_content.rs`                                       | Moved to `MetacognitionConfig` — regulation config lives with the loop, not in user-facing settings |
 
 ## What Was Accepted (with revisions)
 
-| Proposal | Revision |
-|---|---|
-| Item 3: `SkillExecutionError` enum | Accepted with `phase: &'static str` and no `partial_output` |
-| Item 2: drift detection | Accepted as `MetacognitionLoop::feedback_trend` method, not new struct |
-| Item 1: golden-output validation | Accepted as `(String, String)` pairs, single comparison strategy, method on `BridgeManifestExecutor` |
+| Proposal                           | Revision                                                                                             |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Item 3: `SkillExecutionError` enum | Accepted with `phase: &'static str` and no `partial_output`                                          |
+| Item 2: drift detection            | Accepted as `MetacognitionLoop::feedback_trend` method, not new struct                               |
+| Item 1: golden-output validation   | Accepted as `(String, String)` pairs, single comparison strategy, method on `BridgeManifestExecutor` |
 
 ## What Was Added (not in original plan)
 
-| Addition | Reason |
-|---|---|
-| Step 0: Wire `record_skill_span` emission | Prerequisite — the store is empty, all feedback loops are broken |
-| `curator_record_feedback` MCP tool | Clean path for operator feedback to reach `SkillSpanStore` without cross-server dependencies |
+| Addition                                  | Reason                                                                                       |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Step 0: Wire `record_skill_span` emission | Prerequisite — the store is empty, all feedback loops are broken                             |
+| `curator_record_feedback` MCP tool        | Clean path for operator feedback to reach `SkillSpanStore` without cross-server dependencies |
 
 ## Revised Priority
 

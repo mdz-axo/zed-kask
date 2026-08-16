@@ -721,6 +721,17 @@ fn main() {
         // scope; the later reference at the MCP-launch block reuses this binding.
         let kask_settings_for_mcp = kask_bridge::KaskSettings::get_global(cx).clone();
 
+        // zed-kask: global inference concurrency limiter. Wire once at startup
+        // from `KaskGeneralSettings`. The limiter is process-global (one `Arc`
+        // shared across skill cascades, corpus OCR, MCP tool calls). Runtime
+        // changes to `max_concurrency` / `concurrency_step` do not take effect
+        // until restart (the `OnceLock` is set once) — matches the existing
+        // `set_manifest_executor` pattern.
+        kask_bridge::set_global_concurrency_limiter(
+            kask_settings_for_mcp.general.max_concurrency,
+            kask_settings_for_mcp.general.concurrency_step,
+        );
+
         // zed-kask: D28 — Standardized Artifact Storage.
         // Wire the canonical kask data-root threads DB path into the agent
         // crate's threads database. The path is `{kask_data_dir}/threads/

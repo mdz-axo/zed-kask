@@ -1491,6 +1491,10 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub data_dir: Option<String>,
 
+    /// Kask-wide general configuration: global inference concurrency + batching.
+    #[serde(default)]
+    pub general: Option<KaskGeneralSettingsContent>,
+
     /// MCP server configuration.
     #[serde(default)]
     pub mcp: Option<KaskMcpSettingsContent>,
@@ -1572,6 +1576,24 @@ pub struct KaskSettingsContent {
     /// the deployed `zed.dev` server having the kask route.
     #[serde(default)]
     pub collab: Option<KaskCollabSettingsContent>,
+}
+
+/// Kask-wide general configuration: global inference concurrency + batching.
+/// The limiter is process-global (one `Arc` shared across all consumers —
+/// skill cascades, corpus OCR, MCP tool calls). See `kask_bridge::concurrency`
+/// for the wiring.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskGeneralSettingsContent {
+    /// Maximum concurrent cloud inference provider calls across the whole
+    /// process — skills, corpus OCR, MCP tool calls, any consumer of the
+    /// global concurrency service. Default 96. Providers throttle at
+    /// different levels; OpenRouter and DeepInfra scale to this ceiling.
+    pub max_concurrency: Option<u32>,
+
+    /// Concurrency step — the ramp origin and increment. The limiter starts
+    /// at `concurrency_step` permits and adds `concurrency_step` per ramp
+    /// tick on success until `max_concurrency` or a throttle. Default 4.
+    pub concurrency_step: Option<u32>,
 }
 
 /// Local collab server configuration (the `"kask.collab"` section in

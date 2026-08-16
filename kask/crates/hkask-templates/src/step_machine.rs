@@ -17,6 +17,7 @@
 //! documented in `.rules`.
 
 use crate::budget::BudgetTracker;
+use crate::concurrency::ConcurrencyLimiter;
 use crate::convergence::{ConvergenceStatus, ConvergenceTracker};
 use crate::ports::Result;
 use crate::step_context::StepContext;
@@ -52,6 +53,13 @@ pub struct Infra {
     /// inference call. Empty when no stores are available or no chunks
     /// exceed the saliency floor.
     pub memory_snippets: Vec<MemorySnippet>,
+    /// Global inference concurrency limiter — process-wide, shared across
+    /// all consumers (skill cascades, corpus OCR, MCP tool calls). `None`
+    /// when the limiter is not wired (tests, pre-startup); callers must
+    /// skip gating when `None`. When `Some`, every cloud inference and tool
+    /// call acquires a permit before issuing and calls `on_success` /
+    /// `on_throttle` after completion.
+    pub concurrency_limiter: Option<Arc<ConcurrencyLimiter>>,
 }
 
 /// The deterministic step machine. Created per cascade run.

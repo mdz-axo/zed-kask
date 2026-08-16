@@ -80,6 +80,10 @@ pub struct ManifestExecutor {
     /// Long-term memory snippets. Injected into `Infra` for `execute_select`
     /// to prepend as a system message.
     memory_snippets: Vec<hkask_types::ports::memory_port::MemorySnippet>,
+    /// Global inference concurrency limiter. `None` when not wired (tests).
+    /// When `Some`, threaded into `Infra` so step actions can acquire permits
+    /// before cloud inference / tool calls.
+    concurrency_limiter: Option<Arc<crate::concurrency::ConcurrencyLimiter>>,
 }
 
 impl ManifestExecutor {
@@ -101,6 +105,7 @@ impl ManifestExecutor {
             title: None,
             prior_messages: Vec::new(),
             memory_snippets: Vec::new(),
+            concurrency_limiter: None,
         }
     }
 
@@ -146,6 +151,20 @@ impl ManifestExecutor {
     ) -> Self {
         self.prior_messages = prior_messages;
         self.memory_snippets = memory_snippets;
+        self
+    }
+
+    /// Wire the global inference concurrency limiter. Threaded into `Infra`
+    /// so step actions (`execute_parallel`, `execute_tool_invoke`,
+    /// `execute_select`) can acquire permits before issuing cloud inference
+    /// or tool calls. `None` (the default) means no gating — used by tests
+    /// and pre-startup paths.
+    #[must_use]
+    pub fn with_concurrency_limiter(
+        mut self,
+        limiter: Arc<crate::concurrency::ConcurrencyLimiter>,
+    ) -> Self {
+        self.concurrency_limiter = Some(limiter);
         self
     }
 
@@ -207,6 +226,7 @@ impl ManifestExecutor {
             title: self.title.clone(),
             prior_messages: self.prior_messages.clone(),
             memory_snippets: self.memory_snippets.clone(),
+            concurrency_limiter: self.concurrency_limiter.clone(),
         };
 
         let machine = StepMachine::new(

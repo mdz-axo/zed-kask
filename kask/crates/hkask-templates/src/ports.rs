@@ -100,6 +100,43 @@ impl TemplateError {
             Self::Database(_) | Self::Inference(_) | Self::Mcp(_) | Self::Timeout { .. }
         )
     }
+
+    /// Whether this error represents a provider-side throttle (429 / 503 /
+    /// rate-limit) that should cause the global concurrency limiter to back
+    /// off. Distinct from `is_transient`: a 400 validation error is
+    /// transient (the model may emit valid JSON on retry) but is NOT a
+    /// throttle — backing off the limiter on a deterministic failure would
+    /// shrink the pool for unrelated callers. Per `.rules`: error
+    /// classification must be per-variant, not blanket.
+    ///
+    /// The classifier is conservative: it string-matches the inner message
+    /// for HTTP status codes and rate-limit signals because `InferenceError`
+    /// variants carry a free-form `String`, not a typed HTTP status. A false
+    /// positive (treating a non-throttle as a throttle) only causes a
+    /// one-step backoff, which `on_success` reverses on the next call —
+    /// self-correcting. A false negative (missing a real throttle) leaves
+    /// the pool at its current size, which the next 429 will catch.
+    #[must_use]
+    pub fn is_throttle(&self) -> bool {
+        let message = match self {
+            Self::Inference(hkask_types::InferenceError::Connection(m))
+            | Self::Inference(hkask_types::InferenceError::Model(m))
+            | Self::Inference(hkask_types::InferenceError::Generation(m)) => m.as_str(),
+            Self::Mcp(err) => &err.to_string(),
+            // CircuitOpen is a sustained-breaker state, not a single throttle.
+            // Json / NotFound / Render / Manifest / Validation / Timeout /
+            // PathTraversal / SandboxViolation / SkillLoad / Frontmatter /
+            // Database are not throttles.
+            _ => return false,
+        };
+        let lower = message.to_ascii_lowercase();
+        lower.contains("429")
+            || lower.contains("503")
+            || lower.contains("rate limit")
+            || lower.contains("rate_limit")
+            || lower.contains("too many requests")
+            || lower.contains("throttl")
+    }
 }
 
 pub type Result<T> = std::result::Result<T, TemplateError>;
