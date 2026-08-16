@@ -9,6 +9,7 @@
 //! target to enable fuzz testing (P5 Testing Discipline, P4 Clear Boundaries).
 
 pub mod idempotency;
+pub mod grounding;
 pub mod kanban;
 pub mod kata;
 pub mod pko;
@@ -187,7 +188,19 @@ fn build_task_agent_card(
             system_prompt: Some(
                 "You are a task-execution agent spawned by the kata-kanban. \
                  Complete the assigned task using your declared skills. \
-                 Produce a concise result the spawning agent can record."
+                 \
+                 ## Output format \
+                 \
+                 Produce your response as a JSON object with these fields: \
+                 - \"deliverable_path\": the path of any file you wrote or edited (string, or null if none). \
+                 - \"test_verdict\": the result of running tests (string like \"pass: N ran, M failed\", or null if you did not run tests). \
+                 - \"summary\": a concise summary of what you did (string). \
+                 - \"approach\": a brief description of your approach (string). \
+                 \
+                 Only claim a deliverable_path if you actually called a file-writing tool \
+                 (edit_file, write_file, terminal) that succeeded. Only claim a test_verdict \
+                 if you actually ran tests via the terminal tool and it succeeded. \
+                 Do not fabricate file paths or test results."
                     .to_string(),
             ),
             skills: skills.to_vec(),
@@ -1258,7 +1271,7 @@ impl KanbanServer {
         let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
             McpToolError::unavailable(format!("local swarm runtime initialization failed: {e}"))
         })?;
-        let result = runtime
+        let mut result = runtime
             .delegate(agent, &task_text, credits_authorized, ceiling)
             .await
             .map_err(|e| {
@@ -1266,6 +1279,41 @@ impl KanbanServer {
                     "local swarm delegation failed: {e}"
                 ))
             })?;
+
+        // Rung 3 (Grounding): enforce the grounding contract for task agents.
+        // Parse the response as JSON, check which fields could have come from
+        // successful tool calls, null unsourced fields, scan narrative for
+        // leaked claims. The contract is hand-declared (paper §6) and covers
+        // only the "task" agent_type — other types get no grounding (None =
+        // not checked, paper Rule 5.3).
+        let grounding_contract = crate::grounding::task_agent_contract();
+        if agent.agent_type == grounding_contract.agent_type {
+            let output_json = serde_json::from_str::<serde_json::Value>(&result.response)
+                .unwrap_or(serde_json::Value::Null);
+            if output_json.is_object() {
+                let (grounding_result, cleaned) = crate::grounding::enforce_grounding(
+                    &grounding_contract,
+                    &output_json,
+                    &result.tool_calls,
+                    &result.response,
+                );
+                if !grounding_result.nulled_fields.is_empty() {
+                    tracing::warn!(
+                        target: "hkask.mcp.kata_kanban",
+                        task_id = %tid,
+                        agent_id = %result.agent_id,
+                        nulled_fields = ?grounding_result.nulled_fields,
+                        narrative_leaks = ?grounding_result.narrative_leaks,
+                        "grounding enforcement: nulled {} unsourced field(s), found {} narrative leak(s)",
+                        grounding_result.nulled_fields.len(),
+                        grounding_result.narrative_leaks.len(),
+                    );
+                }
+                // Replace the response with the cleaned JSON.
+                result.response = serde_json::to_string(&cleaned)
+                    .unwrap_or_else(|_| result.response.clone());
+            }
+        }
 
         let verdict = result.task_success.clone();
         if let Err(error) =

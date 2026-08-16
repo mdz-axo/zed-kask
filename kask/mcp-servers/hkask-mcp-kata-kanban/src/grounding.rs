@@ -197,7 +197,7 @@ pub fn enforce_grounding(
     let mut result = GroundingResult::default();
     let mut cleaned = output.clone();
 
-    if let serde_json::Value::Object(ref map) = output {
+    if let serde_json::Value::Object(map) = output {
         for (field, value) in map {
             let tag = match contract.field_sources.get(field) {
                 Some(sources) if sources.is_empty() => {
@@ -220,7 +220,7 @@ pub fn enforce_grounding(
                         let preview = truncate_preview(value);
                         result.nulled_fields.push(field.clone());
                         // Null the field in the cleaned output.
-                        if let serde_json::Value::Object(ref mut clean_map) = cleaned {
+                        if let serde_json::Value::Object(clean_map) = &mut cleaned {
                             clean_map.insert(field.clone(), serde_json::Value::Null);
                         }
                         // Scan narrative for the leaked value.
@@ -236,9 +236,6 @@ pub fn enforce_grounding(
                 }
                 None => {
                     // Field not in the contract — UncommissionedInference.
-                    // The model produced something the contract didn't
-                    // declare. Keep it, but mark it so the caller knows
-                    // it wasn't checked.
                     ProvenanceTag::UncommissionedInference
                 }
             };
