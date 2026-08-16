@@ -3,9 +3,11 @@ use std::collections::HashSet;
 use std::path::Path;
 
 /// Canonical action set enforced by the ManifestExecutor.
+/// `parallel` was added in K2 (concurrent sub-cascade branches) and is
+/// dispatched by `StepMachine::dispatch_action` alongside the original set.
 const CANONICAL_ACTIONS: &[&str] = &[
     "select", "populate", "compute", "execute", "feedback", "validate", "retrieve", "render",
-    "flowdef", "loop", "choice", "abort", "escalate",
+    "flowdef", "loop", "choice", "abort", "escalate", "parallel",
 ];
 
 /// Valid categories for a manifest in `registry/manifests/`.

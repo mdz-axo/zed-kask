@@ -256,7 +256,7 @@ fn company_research_flash_uses_canonical_actions_only() {
     let manifest = load_named_manifest("company-research-flash");
     let canonical: HashSet<&str> = [
         "select", "populate", "compute", "execute", "feedback", "validate", "retrieve", "render",
-        "flowdef", "loop", "choice", "abort", "escalate",
+        "flowdef", "loop", "choice", "abort", "escalate", "parallel",
     ]
     .iter()
     .copied()
@@ -404,7 +404,7 @@ fn company_research_deep_uses_canonical_actions_only() {
     let manifest = load_named_manifest("company-research-deep");
     let canonical: HashSet<&str> = [
         "select", "populate", "compute", "execute", "feedback", "validate", "retrieve", "render",
-        "flowdef", "loop", "choice", "abort", "escalate",
+        "flowdef", "loop", "choice", "abort", "escalate", "parallel",
     ]
     .iter()
     .copied()
