@@ -194,7 +194,7 @@ async fn run_pipeline_parallel(
     // (the per-pipeline cap from `HKASK_OCR_CONCURRENCY`). We use the
     // per-pipeline cap as the buffer bound so a 1000-page book doesn't
     // monopolize the global pool — `min(max_concurrency, global_max)`.
-    let (semaphore, buffer_bound) = if let Some(global) = global_concurrency_limiter() {
+    let (semaphore, _buffer_bound) = if let Some(global) = global_concurrency_limiter() {
         let global_max = global.max() as usize;
         let bound = max_concurrency.min(global_max);
         (Arc::clone(&global.semaphore_ref()), bound)
@@ -251,6 +251,7 @@ async fn run_pipeline_parallel(
         let llm = llm_model.map(|s| s.to_string());
         let completed = Arc::clone(&completed);
         let last_progress = Arc::clone(&last_progress);
+        let global_limiter = global_concurrency_limiter().cloned();
 
         join_set.spawn(async move {
             let _permit = sem.acquire().await;
@@ -264,6 +265,17 @@ async fn run_pipeline_parallel(
                 llm.as_deref(),
             )
             .await;
+
+            // Ramp the global limiter on success. Throttle back-off is not
+            // wired here because `PipelineError` doesn't carry the inner
+            // `InferenceError` (it's a high-level OCR failure type). A future
+            // refactor that threads `InferenceError` through `PipelineError`
+            // would add `on_throttle` on 429/503-class failures.
+            if result.is_some() {
+                if let Some(ref limiter) = global_limiter {
+                    limiter.on_success();
+                }
+            }
 
             // Progress: check after each page completes
             let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
