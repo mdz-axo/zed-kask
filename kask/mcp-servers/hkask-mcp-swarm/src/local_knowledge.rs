@@ -238,7 +238,7 @@ pub(crate) async fn record_delegation(
             serde_json::json!(pass),
             owner,
         )
-        .with_ontology(ontology.clone());
+        .with_ontology(ontology);
         h_mem.access.visibility = Visibility::Shared;
         if let Err(e) = store.store(h_mem) {
             tracing::warn!(

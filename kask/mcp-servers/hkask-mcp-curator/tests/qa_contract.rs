@@ -26,12 +26,21 @@ use std::sync::Arc;
 
 // ── Test harness ────────────────────────────────────────────────────────────
 
+/// Build an in-memory `VerificationStore` for the curator test server.
+/// The grounding tools query this store; in tests it is empty (no
+/// delegations have been recorded), so the trend/violations/coverage tools
+/// return empty results.
+fn test_verification_store() -> Arc<hkask_verification::VerificationStore> {
+    Arc::new(hkask_verification::VerificationStore::in_memory())
+}
+
 /// Build a CuratorServer with no stores — every store-backed tool returns
 /// permission_denied. This is the dependency-denial fixture.
 fn make_server_no_stores() -> CuratorServer {
     CuratorServer::new(
         WebID::new(),
         Arc::new(CuratorDb::for_tests(CuratorStores::empty())),
+        test_verification_store(),
     )
 }
 
@@ -53,6 +62,7 @@ fn make_server_with_stores() -> CuratorServer {
             regulation_store: Some(regulation_store),
             ..CuratorStores::empty()
         })),
+        test_verification_store(),
     )
 }
 
@@ -80,6 +90,7 @@ fn make_server_with_ontology_h_mem() -> CuratorServer {
             memory: Some(memory),
             ..CuratorStores::empty()
         })),
+        test_verification_store(),
     )
 }
 
@@ -101,6 +112,7 @@ fn make_server_with_embedding_free_memory() -> CuratorServer {
             memory: Some(memory),
             ..CuratorStores::empty()
         })),
+        test_verification_store(),
     )
 }
 
@@ -137,6 +149,7 @@ fn make_server_with_escalations(count: usize) -> (CuratorServer, Vec<String>) {
             regulation_store: Some(regulation_store),
             ..CuratorStores::empty()
         })),
+        test_verification_store(),
     );
     (server, ids)
 }
@@ -162,6 +175,7 @@ fn make_server_with_archive_events(count: usize) -> CuratorServer {
             regulation_store: Some(regulation_store),
             ..CuratorStores::empty()
         })),
+        test_verification_store(),
     )
 }
 
@@ -211,7 +225,7 @@ mod self_healing {
     #[tokio::test]
     async fn tools_recover_after_stores_heal() {
         let db = Arc::new(CuratorDb::for_tests(CuratorStores::empty()));
-        let server = CuratorServer::new(WebID::new(), db.clone());
+        let server = CuratorServer::new(WebID::new(), db.clone(), test_verification_store());
 
         // Down: permission_denied.
         let out = server
@@ -242,7 +256,7 @@ mod self_healing {
     #[tokio::test]
     async fn ping_reports_stores_down_then_up() {
         let db = Arc::new(CuratorDb::for_tests(CuratorStores::empty()));
-        let server = CuratorServer::new(WebID::new(), db.clone());
+        let server = CuratorServer::new(WebID::new(), db.clone(), test_verification_store());
 
         let out = server
             .curator_ping(params::<PingRequest>(serde_json::json!({})))
@@ -867,6 +881,7 @@ mod reg_query {
                 regulation_store: Some(regulation_store),
                 ..CuratorStores::empty()
             })),
+            test_verification_store(),
         );
 
         // Filter to `reg.pod` with a limit of 100. The SQL returns all 6

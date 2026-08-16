@@ -14,22 +14,17 @@ use serde::{Deserialize, Serialize};
 /// The scope for a grounding trend query. The central ledger is cross-tool
 /// and cross-server, so a single query can aggregate across every delegation
 /// source or filter to one.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrendScope {
     /// All delegations across all tools and agents.
+    #[default]
     Global,
     /// Delegations for a specific agent.
     ByAgent(String),
     /// Delegations from a specific source tool (e.g. "kanban_task_spawn",
     /// "swarm_delegate_local").
     BySource(String),
-}
-
-impl Default for TrendScope {
-    fn default() -> Self {
-        Self::Global
-    }
 }
 
 /// A grounding trend report aggregated across delegations.

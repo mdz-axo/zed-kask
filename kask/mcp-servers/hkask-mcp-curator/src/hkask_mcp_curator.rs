@@ -292,6 +292,13 @@ hkask_mcp_server::mcp_server!(
         /// four stores are read through `db.get()` on every tool call so a
         /// mid-process heal takes effect without a server restart.
         db: Arc<CuratorDb>,
+        /// Central grounding ledger — shared with hkask-mcp-kata-kanban and
+        /// hkask-mcp-swarm. The curator's grounding tools (`curator_grounding_trend`,
+        /// `curator_grounding_violations`, `curator_grounding_coverage`) query
+        /// this ledger to surface grounding trends to the operator (the
+        /// cybernetic feedback loop: enforcement → ledger → curator → user →
+        /// action → improved contracts → better enforcement).
+        verification_store: Arc<hkask_verification::VerificationStore>,
     }
 );
 
@@ -304,9 +311,9 @@ mod tool_surface_tests {
     // silently registers nothing (`cargo check` passes on an unwired orphan).
     // Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_10_registered_tools() {
+    fn tool_surface_is_exactly_13_registered_tools() {
         let n = CuratorServer::tool_router().list_all().len();
-        assert_eq!(n, 10, "curator registered tool surface changed; got {n}");
+        assert_eq!(n, 13, "curator registered tool surface changed; got {n}");
     }
 }
 
@@ -831,17 +838,167 @@ impl CuratorServer {
         })
         .await
     }
+
+    // ── Grounding ledger queries (verification ladder Rung 3) ────────────────
+    //
+    // These tools query the central verification ledger — the cross-tool,
+    // cross-server store of grounding records. Every MCP server that
+    // delegates to agents writes to this ledger via
+    // `VerificationStore::enforce_for_agent()`. The curator surfaces the
+    // trends to the operator, closing the cybernetic feedback loop:
+    // enforcement → ledger → curator → user → action → improved contracts.
+
+    /// Query the grounding trend from the central verification ledger.
+    /// Answers the paper's §4.1 question: "is this getting better?" The
+    /// lead metric is `delegations_with_zero_nulled` (deletion-resistant,
+    /// paper Rule 5.4). `delegations_without_contract` is the coverage gap
+    /// (paper §6: coverage is itself a metric, not a pass).
+    #[tool(
+        description = "Query the grounding trend from the central verification ledger. Answers the paper's §4.1 question: is this getting better? The lead metric is delegations_with_zero_nulled (deletion-resistant, paper Rule 5.4). delegations_without_contract is the coverage gap (paper §6). Returns Err when the ledger is unavailable (a DB outage must not collapse to an empty trend)."
+    )]
+    pub async fn curator_grounding_trend(
+        &self,
+        Parameters(req): Parameters<GroundingTrendToolRequest>,
+    ) -> String {
+        execute_tool(self, "curator_grounding_trend", async {
+            let scope = parse_grounding_scope(&req);
+            let report = self
+                .verification_store
+                .grounding_trend(&scope)
+                .map_err(|e| {
+                    McpToolError::unavailable(format!(
+                        "grounding trend query failed (verification ledger unavailable): {e}"
+                    ))
+                })?;
+            Ok(json!({
+                "trend": report,
+                "clean_rate": report.clean_rate(),
+                "coverage_rate": report.coverage_rate(),
+                "scope": scope_json(&scope),
+                "source": "central_verification_ledger",
+            }))
+        })
+        .await
+    }
+
+    /// Query recent grounding violations from the central verification
+    /// ledger. Returns delegations with nulled fields or narrative leaks,
+    /// sorted by timestamp descending. The operator uses this to see what
+    /// is failing right now and where to direct remediation (adjust
+    /// contracts, add tools, retire agents).
+    #[tool(
+        description = "Query recent grounding violations from the central verification ledger. Returns delegations with nulled fields or narrative leaks, sorted by timestamp descending. Defaults to the last 24 hours. Returns Err when the ledger is unavailable."
+    )]
+    pub async fn curator_grounding_violations(
+        &self,
+        Parameters(req): Parameters<GroundingViolationsToolRequest>,
+    ) -> String {
+        execute_tool(self, "curator_grounding_violations", async {
+            let scope = parse_grounding_scope(&GroundingTrendToolRequest {
+                scope: req.scope.clone(),
+                agent_name: req.agent_name.clone(),
+                source: req.source.clone(),
+            });
+            let since = match req.since.as_deref() {
+                Some(s) => chrono::DateTime::parse_from_rfc3339(s)
+                    .map_err(|e| {
+                        McpToolError::invalid_argument(format!(
+                            "invalid `since` timestamp (expected ISO 8601 / RFC 3339): {e}"
+                        ))
+                    })?
+                    .with_timezone(&chrono::Utc),
+                None => chrono::Utc::now() - chrono::Duration::hours(24),
+            };
+            let violations = self
+                .verification_store
+                .grounding_violations(since, &scope)
+                .map_err(|e| {
+                    McpToolError::unavailable(format!(
+                        "grounding violations query failed (verification ledger unavailable): {e}"
+                    ))
+                })?;
+            Ok(json!({
+                "violations": violations,
+                "count": violations.len(),
+                "since": since.to_rfc3339(),
+                "scope": scope_json(&scope),
+                "source": "central_verification_ledger",
+            }))
+        })
+        .await
+    }
+
+    /// Query the grounding coverage report from the central verification
+    /// ledger. Reports which agent types have grounding contracts vs. which
+    /// have delegations but no contract (the coverage gap, paper §6:
+    /// coverage is itself a metric, not a pass). The operator uses this to
+    /// see which agent types need a contract written.
+    #[tool(
+        description = "Query the grounding coverage report from the central verification ledger. Reports which agent types have grounding contracts vs. which have delegations but no contract (the coverage gap, paper §6). The operator uses this to see which agent types need a contract written."
+    )]
+    pub async fn curator_grounding_coverage(
+        &self,
+        Parameters(_req): Parameters<GroundingCoverageToolRequest>,
+    ) -> String {
+        execute_tool(self, "curator_grounding_coverage", async {
+            let global = hkask_verification::TrendScope::Global;
+            let report = self
+                .verification_store
+                .grounding_trend(&global)
+                .map_err(|e| McpToolError::unavailable(format!(
+                    "grounding coverage query failed (verification ledger unavailable): {e}"
+                )))?;
+            Ok(json!({
+                "total_delegations": report.total_delegations,
+                "delegations_with_contract": report.delegations_with_contract,
+                "delegations_without_contract": report.delegations_without_contract,
+                "coverage_rate": report.coverage_rate(),
+                "note": "Coverage gap = delegations_without_contract. Each is an agent_type with no grounding contract (paper §6: coverage is itself a metric, not a pass). Write a contract for the agent_type to close the gap.",
+                "source": "central_verification_ledger",
+            }))
+        })
+        .await
+    }
 }
 
 // ── Server startup ─────────────────────────────────────────────────────
 
 /// Map a governance `ServiceError` to the structured MCP wire error,
-/// preserving the semantic kind where the wire supports it (NotFound →
 /// not_found) instead of flattening everything to `internal`.
 fn to_tool_error(e: ServiceError) -> McpToolError {
     match e.kind() {
         ErrorKind::NotFound => McpToolError::not_found(e.to_string()),
         _ => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-fallback
+    }
+}
+
+/// Parse the grounding scope from a curator tool request. Maps the
+/// string-based scope parameter to the `TrendScope` enum. Defaults to
+/// `Global` when `scope` is `None` or unrecognized.
+fn parse_grounding_scope(req: &GroundingTrendToolRequest) -> hkask_verification::TrendScope {
+    match req.scope.as_deref().unwrap_or("global") {
+        "by_agent" => {
+            hkask_verification::TrendScope::ByAgent(req.agent_name.clone().unwrap_or_default())
+        }
+        "by_source" => {
+            hkask_verification::TrendScope::BySource(req.source.clone().unwrap_or_default())
+        }
+        _ => hkask_verification::TrendScope::Global,
+    }
+}
+
+/// Serialize a `TrendScope` to a JSON value for the tool response.
+fn scope_json(scope: &hkask_verification::TrendScope) -> serde_json::Value {
+    match scope {
+        hkask_verification::TrendScope::Global => json!({"kind": "global"}),
+        hkask_verification::TrendScope::ByAgent(agent) => json!({
+            "kind": "by_agent",
+            "agent_name": agent,
+        }),
+        hkask_verification::TrendScope::BySource(source) => json!({
+            "kind": "by_source",
+            "source": source,
+        }),
     }
 }
 
@@ -851,7 +1008,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::server::ServerContext| {
             let db = Arc::new(CuratorDb::from_context(&ctx));
-            Ok(CuratorServer::new(ctx.webid, db))
+            let verification_store = Arc::new(hkask_verification::VerificationStore::open());
+            Ok(CuratorServer::new(ctx.webid, db, verification_store))
         },
         vec![hkask_mcp_server::CredentialRequirement::optional(
             "HKASK_DB_PASSPHRASE",
