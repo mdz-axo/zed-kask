@@ -85,6 +85,7 @@ mod local_registry;
 mod local_runtime;
 mod local_swarms;
 mod local_tools;
+mod port_registry;
 pub mod request_types;
 mod sanitize;
 mod spend_gate;

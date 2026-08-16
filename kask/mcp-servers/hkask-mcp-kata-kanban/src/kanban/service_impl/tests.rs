@@ -345,6 +345,7 @@ fn task_record_delegation_writes_structured_fields() {
         tool_calls: vec![],
         executed_skills: vec![],
         task_success: None,
+        bind_matched: None,
     };
     let verdict = hkask_mcp_swarm::TaskSuccessVerdict {
         pass: true,
@@ -407,6 +408,7 @@ fn task_record_delegation_rejects_non_owner() {
         tool_calls: vec![],
         executed_skills: vec![],
         task_success: None,
+        bind_matched: None,
     };
     let result = svc.task_record_delegation(task.id, None, delegate_result, None, other);
     assert!(
