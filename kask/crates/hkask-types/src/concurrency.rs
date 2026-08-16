@@ -18,7 +18,7 @@
 //! Each tick fires on a successful call. The ramp reaches `max_concurrency`
 //! quickly under steady success and backs off one step on throttle.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::sync::Semaphore;
 
@@ -26,7 +26,16 @@ pub struct ConcurrencyLimiter {
     semaphore: Arc<Semaphore>,
     max: u32,
     step: u32,
-    current: std::sync::atomic::AtomicU32,
+    /// The logical pool size. Held in a `Mutex` (not an `AtomicU32`) because
+    /// `on_success`/`on_throttle` must update `current` AND modify the
+    /// semaphore (`add_permits`/`forget_permits`) atomically. With an atomic,
+    /// the CAS on `current` and the semaphore modification are separate steps,
+    /// and a concurrent call can interleave between them — causing the
+    /// semaphore to drift above `current` (see bug-hunt BUG-1). The lock is
+    /// held only in sync methods, never across an `await`, so `std::sync::Mutex`
+    /// is correct. Contention is negligible: `on_success`/`on_throttle` fire
+    /// once per inference call (which takes seconds), not per token.
+    current: Mutex<u32>,
 }
 
 /// A permit acquired from the limiter. Releases on drop.
@@ -44,7 +53,7 @@ impl ConcurrencyLimiter {
             semaphore: Arc::new(Semaphore::new(step as usize)),
             max,
             step,
-            current: std::sync::atomic::AtomicU32::new(step),
+            current: Mutex::new(step),
         }
     }
 
@@ -65,77 +74,59 @@ impl ConcurrencyLimiter {
     }
 
     /// Called after a successful call. Ramps up by `step` (capped at `max`)
-    /// if below the ceiling. Idempotent under concurrent success — uses
-    /// `compare_exchange` so concurrent `on_success` calls never overshoot.
+    /// if below the ceiling. The lock ensures `current` and the semaphore
+    /// are updated atomically — no concurrent `on_success` or `on_throttle`
+    /// can interleave between the `current` update and `add_permits`.
     pub fn on_success(&self) {
-        use std::sync::atomic::Ordering;
-        let mut current = self.current.load(Ordering::Acquire);
-        loop {
-            if current >= self.max {
-                return;
-            }
-            let next = (current + self.step).min(self.max);
-            match self.current.compare_exchange_weak(
-                current,
-                next,
-                Ordering::Release,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => {
-                    let added = next - current;
-                    self.semaphore.add_permits(added as usize);
-                    return;
-                }
-                Err(actual) => current = actual,
-            }
+        let mut current = self
+            .current
+            .lock()
+            .expect("concurrency limiter mutex poisoned");
+        if *current >= self.max {
+            return;
         }
+        let next = (*current + self.step).min(self.max);
+        let added = next - *current;
+        *current = next;
+        self.semaphore.add_permits(added as usize);
     }
 
     /// Called after a throttle (429/503 only). Backs off one `step` (down
     /// to `step`, never below). The permit is released by the guard's Drop;
     /// this shrinks the pool for future calls by removing `step` permits
-    /// from the semaphore via `forget_permits`. Idempotent under concurrent
-    /// throttle — `compare_exchange` prevents undershoot on `current`;
+    /// from the semaphore via `forget_permits`. The lock ensures `current`
+    /// and the semaphore are updated atomically — no concurrent `on_success`
+    /// can interleave between the `current` update and `forget_permits`,
+    /// which would cause the semaphore to drift above `current`.
+    ///
     /// `forget_permits` saturates at the available count so it never goes
     /// negative (in-flight permits are unaffected and return on drop).
-    ///
-    /// Without `forget_permits`, the semaphore retains its old permit count
-    /// and backoff is a no-op — the limiter *thinks* the pool shrank but the
-    /// semaphore still admits the old count. The next `on_success` would then
-    /// add permits on top of the un-shrunk semaphore, overshooting `max`.
     pub fn on_throttle(&self) {
-        use std::sync::atomic::Ordering;
+        let mut current = self
+            .current
+            .lock()
+            .expect("concurrency limiter mutex poisoned");
         let floor = self.step;
-        let mut current = self.current.load(Ordering::Acquire);
-        loop {
-            if current <= floor {
-                return;
-            }
-            let next = (current - self.step).max(floor);
-            match self.current.compare_exchange_weak(
-                current,
-                next,
-                Ordering::Release,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => {
-                    let removed = current - next;
-                    // Remove permits from the semaphore so backoff actually
-                    // reduces concurrency. `forget_permits` saturates at the
-                    // available count — if fewer than `removed` permits are
-                    // available (some are in-flight), it removes what it can;
-                    // the in-flight ones return on drop and don't get re-added.
-                    let _actually_removed = self.semaphore.forget_permits(removed as usize);
-                    return;
-                }
-                Err(actual) => current = actual,
-            }
+        if *current <= floor {
+            return;
         }
+        let next = (*current - self.step).max(floor);
+        let removed = *current - next;
+        *current = next;
+        // Remove permits from the semaphore so backoff actually reduces
+        // concurrency. `forget_permits` saturates at the available count —
+        // if fewer than `removed` permits are available (some are in-flight),
+        // it removes what it can; the in-flight ones return on drop and
+        // don't get re-added.
+        let _actually_removed = self.semaphore.forget_permits(removed as usize);
     }
 
     /// Current permit count (for observability and tests).
     pub fn current(&self) -> u32 {
-        self.current.load(std::sync::atomic::Ordering::Relaxed)
+        *self
+            .current
+            .lock()
+            .expect("concurrency limiter mutex poisoned")
     }
 
     /// The configured maximum.
@@ -339,5 +330,115 @@ mod tests {
         l.on_success();
         assert_eq!(l.current(), 10);
         assert_eq!(l.semaphore.available_permits(), 10);
+    }
+
+    // ── Bug-hunt probes ──────────────────────────────────────────────
+
+    /// Probe: invariant `available_permits + in_flight == current` must hold
+    /// after `on_success` while a permit is held. If `on_success` adds permits
+    /// to the semaphore while the current call's permit is still held, the
+    /// semaphore's total permit count temporarily exceeds `current` by the
+    /// number of in-flight permits. This is correct (the in-flight permits
+    /// will return on drop), but `available_permits` can momentarily exceed
+    /// `current - in_flight`, allowing a brief burst of concurrency above the
+    /// intended ceiling.
+    #[tokio::test]
+    async fn probe_on_success_while_permit_held_invariant() {
+        let l = limiter(10, 2);
+        // current=2, available=2, in_flight=0
+        assert_eq!(l.current(), 2);
+        assert_eq!(l.semaphore.available_permits(), 2);
+        // Acquire 2 (in_flight=2, available=0)
+        let p1 = l.acquire().await;
+        let p2 = l.acquire().await;
+        assert_eq!(l.semaphore.available_permits(), 0);
+        // on_success while holding: current 2→4, add_permits(2) → available=2
+        l.on_success();
+        assert_eq!(l.current(), 4);
+        assert_eq!(l.semaphore.available_permits(), 2);
+        // invariant: available + in_flight = current → 2 + 2 = 4. OK.
+        drop(p1);
+        assert_eq!(l.semaphore.available_permits(), 3);
+        // on_success again: current 4→6, add_permits(2) → available=5
+        l.on_success();
+        assert_eq!(l.current(), 6);
+        assert_eq!(l.semaphore.available_permits(), 5);
+        // invariant: 5 + 1 = 6 = current. OK.
+        drop(p2);
+        assert_eq!(l.semaphore.available_permits(), 6);
+    }
+
+    /// Probe: concurrent `on_success` + `on_throttle` race. Two threads call
+    /// `on_success` and `on_throttle` simultaneously. The `Mutex` ensures
+    /// `current` and the semaphore are updated atomically, so after the race
+    /// settles, `available_permits == current` (when no permits are in-flight).
+    #[tokio::test]
+    async fn probe_concurrent_on_success_and_on_throttle_race() {
+        let l = Arc::new(limiter(100, 10));
+        // Ramp to 50 first (4 on_success from 10: 10→20→30→40→50).
+        for _ in 0..4 {
+            l.on_success();
+        }
+        assert_eq!(l.current(), 50);
+        assert_eq!(l.semaphore.available_permits(), 50);
+        // Now race: 10 on_success + 10 on_throttle concurrently.
+        // Net effect should be 0 (10 up, 10 down), so current stays at 50.
+        // The invariant: available_permits == current (no permits in-flight).
+        let l1 = Arc::clone(&l);
+        let l2 = Arc::clone(&l);
+        let h1 = tokio::spawn(async move {
+            for _ in 0..10 {
+                l1.on_success();
+            }
+        });
+        let h2 = tokio::spawn(async move {
+            for _ in 0..10 {
+                l2.on_throttle();
+            }
+        });
+        h1.await.unwrap();
+        h2.await.unwrap();
+        // After the race, `current` should be 50 (10 up + 10 down, net 0).
+        // But the order is nondeterministic. The invariant we check:
+        // `available_permits == current` (no in-flight permits).
+        assert_eq!(
+            l.semaphore.available_permits(),
+            l.current() as usize,
+            "after concurrent on_success + on_throttle with no in-flight \
+             permits, available_permits must equal current"
+        );
+    }
+
+    /// Probe: `on_throttle` when `current > available` (permits in-flight).
+    /// `forget_permits` saturates at available. After in-flight permits
+    /// drop, does `available` exceed `current`?
+    #[tokio::test]
+    async fn probe_on_throttle_with_inflight_permits() {
+        let l = limiter(20, 5);
+        // Ramp to 20.
+        for _ in 0..3 {
+            l.on_success();
+        }
+        assert_eq!(l.current(), 20);
+        // Acquire 15 (5 available, 15 in-flight).
+        let mut permits = Vec::new();
+        for _ in 0..15 {
+            permits.push(l.acquire().await);
+        }
+        assert_eq!(l.semaphore.available_permits(), 5);
+        // Throttle: current 20→15. forget_permits(5) removes 5 from available (5→0).
+        l.on_throttle();
+        assert_eq!(l.current(), 15);
+        assert_eq!(l.semaphore.available_permits(), 0);
+        // Drop all 15 in-flight permits. They return to the semaphore.
+        // available should be 15 (the new pool size), not 20.
+        drop(permits);
+        assert_eq!(
+            l.semaphore.available_permits(),
+            15,
+            "after throttle + in-flight drop, available must be 15 (the new \
+             pool size), not 20 — the forgotten permits don't come back"
+        );
+        assert_eq!(l.current(), 15);
     }
 }
