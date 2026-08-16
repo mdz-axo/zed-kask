@@ -23,6 +23,7 @@ use image::DynamicImage;
 use crate::ocr::complexity::score_page_complexity;
 use crate::ocr::routing::{SamplingState, route_page};
 use crate::ocr::verification::verify_output;
+use hkask_types::concurrency::global_concurrency_limiter;
 
 /// Typed errors for OCR backend execution.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -183,7 +184,23 @@ async fn run_pipeline_parallel(
     max_concurrency: usize,
 ) -> PipelineOutcome {
     let start = Instant::now();
-    let semaphore = Arc::new(Semaphore::new(max_concurrency));
+    // Use the process-global concurrency limiter when wired (production), so
+    // OCR shares the global ceiling with skill cascades and MCP tool calls.
+    // Fall back to a local semaphore when no global limiter is wired (tests,
+    // standalone MCP server without the bridge). The local fallback preserves
+    // the prior per-pipeline behavior.
+    //
+    // The global limiter may have a larger `max()` than `max_concurrency`
+    // (the per-pipeline cap from `HKASK_OCR_CONCURRENCY`). We use the
+    // per-pipeline cap as the buffer bound so a 1000-page book doesn't
+    // monopolize the global pool — `min(max_concurrency, global_max)`.
+    let (semaphore, buffer_bound) = if let Some(global) = global_concurrency_limiter() {
+        let global_max = global.max() as usize;
+        let bound = max_concurrency.min(global_max);
+        (Arc::clone(&global.semaphore_ref()), bound)
+    } else {
+        (Arc::new(Semaphore::new(max_concurrency)), max_concurrency)
+    };
 
     // Pre-score and route all pages (synchronous, cheap)
     struct PageTask {

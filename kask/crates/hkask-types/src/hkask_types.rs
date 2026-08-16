@@ -4,6 +4,7 @@
 //!
 
 pub mod agent_paths;
+pub mod concurrency;
 pub mod corpus;
 pub mod crypto;
 pub mod curator;
