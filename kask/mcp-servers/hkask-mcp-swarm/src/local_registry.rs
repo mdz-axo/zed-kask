@@ -6,6 +6,58 @@
 //! loaded-empty via the `loaded` flag (the `.rules` trap on lazy-load caches).
 
 use crate::error::LocalSwarmError;
+use crate::port_registry::PortRegistry;
+
+/// Rung 1 (Presence): reject cards missing required structural fields.
+/// Each clause is falsifiable — see `test_presence_rejects_*`.
+/// Does NOT reject empty `accepts`/`produces` — that is the typing rung
+/// (Rung 2). Presence is about required structural fields, not port labels.
+pub fn validate_presence(card: &LocalAgentCard) -> Result<(), LocalSwarmError> {
+    if card.agent_id.trim().is_empty() {
+        return Err(LocalSwarmError::InvalidInput(
+            "agent_id must be non-empty".to_string(),
+        ));
+    }
+    if card.agent_type.trim().is_empty() {
+        return Err(LocalSwarmError::InvalidInput(
+            "agent_type must be non-empty".to_string(),
+        ));
+    }
+    if card
+        .capabilities
+        .system_prompt
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        return Err(LocalSwarmError::InvalidInput(
+            "system_prompt must be non-empty".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Rung 2 (Typing): every `accepts`/`produces` label must resolve to a
+/// registered type in `PortRegistry`. Unresolved labels are rejected at
+/// admission — the paper's "499 labels that match nothing" finding,
+/// prevented by construction. Empty `accepts`/`produces` are accepted
+/// (absence ≠ contradiction, paper Rule 5.3).
+pub fn validate_typing(
+    card: &LocalAgentCard,
+    registry: &PortRegistry,
+) -> Result<(), LocalSwarmError> {
+    for label in card.accepts.iter().chain(card.produces.iter()) {
+        if !registry.resolves(label) {
+            return Err(LocalSwarmError::InvalidInput(format!(
+                "agent '{}': port label '{}' does not resolve to a registered type; \
+                 see mcp/swarm/port_types.json",
+                card.agent_id, label
+            )));
+        }
+    }
+    Ok(())
+}
 
 /// A local agent card — the minimal subset of fermi's `AgentCard` we need for
 /// catalogue + future execution. Mirrors the JSON shape in
