@@ -48,13 +48,14 @@ flowchart TD
     SI -->|emitted_calls plan| SS
     SS -->|steering directive| CURATOR
     CURATOR -->|swarm_delegate_local| SWARM
-    SWARM -->|LocalDelegateResult| CURATOR
+    SWARM -->|Rung 3 Grounding<br/>Rung 4 Binding| SWARM
+    SWARM -->|LocalDelegateResult<br/>bind_matched| CURATOR
     CURATOR -->|delegate_results feedback| SI
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-001
-verified_date: 2026-08-14
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (tool_surface_is_exactly_53_registered_tools pins 53 = 27 ABW + 26 local); crates/swarm_panel/src/swarm_panel.rs; .agents/skills/swarm-intelligence/SKILL.md; .agents/skills/swarm-steering/SKILL.md
+verified_date: 2026-08-16
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (tool_surface_is_exactly_53_registered_tools pins 53 = 27 ABW + 26 local); crates/swarm_panel/src/swarm_panel.rs; .agents/skills/swarm-intelligence/SKILL.md; .agents/skills/swarm-steering/SKILL.md; kask/mcp-servers/hkask-mcp-kata-kanban/src/grounding.rs (enforce_grounding); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (check_bind)
 status: VERIFIED
 -->
