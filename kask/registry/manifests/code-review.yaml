@@ -217,6 +217,29 @@ steps:
       prior_review: "{{ prior_review | default({}) }}"
 
   - ordinal: 4
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      SEVERITY CONSISTENCY CHECK: verify that severity_counts internal
+      totals match the adjudicated_findings length. The sum of blockers +
+      should_fix + nit + fyi must equal adjudicated_findings.length. A
+      mismatch means the adjudicate step lost or invented findings — a
+      broken feedback loop. Returns 0 = consistent, 1 = inconsistent.
+      An inconsistent result pollutes the convergence signal, forcing a
+      re-run of the adjudicate step.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((findings (assoc "adjudicated_findings" step_3_result))
+              (counts (assoc "severity_counts" step_3_result)))
+          (let ((sum (+ (+ (assoc "blockers" counts) (assoc "should_fix" counts))
+                         (+ (assoc "nit" counts) (assoc "fyi" counts)))))
+            (if (= sum (length findings)) 0 1)))
+      env:
+        step_3_result: "{{ step_3_result }}"
+
+  - ordinal: 5
     action: select
     description: >
       REPORT (Fagan outputs). Produce a verdict driven by Blocker presence
@@ -239,7 +262,7 @@ steps:
       blocker_delta: "{{ step_3_result.blocker_delta | default(0) }}"
       prior_review: "{{ prior_review | default({}) }}"
 
-  - ordinal: 5
+  - ordinal: 6
     action: select
     description: >
       IMPLEMENT (Fagan rework — Act phase). Caller-gated via fix_mode. SKIPPED
@@ -261,28 +284,30 @@ steps:
     condition: "fix_mode == 'blockers' OR fix_mode == 'should_fix' OR fix_mode == 'all'"
     input_mapping:
       adjudicated_findings: "{{ step_3_result.adjudicated_findings | default([]) }}"
-      review: "{{ step_4_result.review | default({}) }}"
+      review: "{{ step_5_result.review | default({}) }}"
       fix_mode: "{{ fix_mode | default('none') }}"
       change_model: "{{ step_1_result.change_model | default({}) }}"
 
-  - ordinal: 6
+  - ordinal: 7
     action: compute
     compute_ref: lisp.eval
     description: >
       Compute structural-validity score from step 3's actual adjudicate
       output. The convergence signal is the weighted count of open findings:
-      severity_counts.blockers + 0.5 * severity_counts.should_fix. Lower =
-      more converged (zero open findings = converged clean). If severity_counts
-      or any count is absent, the form errors (no silent default), surfacing
-      a broken adjudicate step rather than masking it with a flat 1.0.
+      severity_counts.blockers + 0.5 * severity_counts.should_fix, plus the
+      consistency penalty from step 4 (0 = consistent, 1 = inconsistent).
+      An inconsistent adjudicate adds 100 to the signal, forcing a re-run.
+      If severity_counts or any count is absent, the form errors (no silent
+      default), surfacing a broken adjudicate step rather than masking it.
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
-      form: "(+ (assoc \"blockers\" (assoc \"severity_counts\" step_3_result)) (* 0.5 (assoc \"should_fix\" (assoc \"severity_counts\" step_3_result))))"
+      form: "(+ (+ (assoc \"blockers\" (assoc \"severity_counts\" step_3_result)) (* 0.5 (assoc \"should_fix\" (assoc \"severity_counts\" step_3_result)))) (* 100 step_4_result))"
       env:
         step_3_result: "{{ step_3_result }}"
+        step_4_result: "{{ step_4_result }}"
 
-  - ordinal: 7
+  - ordinal: 8
     action: loop
     description: >
       Re-enter the review cycle if convergence is not met. Routes the report's
@@ -293,10 +318,10 @@ steps:
     input_mapping:
       loop_target: "{{ 1 }}"
       prior_review:
-        next_review_focus: "{{ step_4_result.next_review_focus | default('') }}"
-        lessons_learned: "{{ step_4_result.lessons_learned | default([]) }}"
+        next_review_focus: "{{ step_5_result.next_review_focus | default('') }}"
+        lessons_learned: "{{ step_5_result.lessons_learned | default([]) }}"
         blockers: "{{ step_3_result.severity_counts.blockers | default(0) }}"
-      convergence_signal: "{{ step_6_result }}"
+      convergence_signal: "{{ step_7_result }}"
 
 error_handling:
   on_gas_exceeded: abort
