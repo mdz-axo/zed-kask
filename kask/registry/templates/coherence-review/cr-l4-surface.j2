@@ -1,0 +1,84 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    l3_flagged_surfaces:
+      type: array
+      description: Crates flagged by L3 as split candidates. L4 reviews ONLY these.
+  output:
+    l4_findings:
+      type: array
+      description: Surface findings — each with id, surface, operation, classification, severity.
+    reviewed_surfaces:
+      type: array
+      description: Surfaces actually reviewed by L4. MUST be ⊆ l3_flagged_surfaces (enforced by Lisp gate).
+    flagged_code:
+      type: array
+      description: Surface/code locations with duplicated logic or thick adapters. Scopes L5.
+visibility: Public
+---
+{# Template: coherence-review/cr-l4-surface.j2 #}
+{# Functional Role: KnowAct — L4 Surface review #}
+{# Produces: l4_findings, reviewed_surfaces, flagged_code #}
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are an L4 Surface reviewer. Your job is to audit duplicated operations across MCP/CLI/API surfaces and check adapter thinness. You delegate to `refactor-architecture` `ra-audit` and `kali-audit` and synthesize into L4 findings that scope the L5 code review.
+
+## L3-Flagged Surfaces (the L4 review scope)
+
+```json
+{{ l3_flagged_surfaces | default([]) | tojson }}
+```
+
+**Critical:** You review ONLY the surfaces in this list. The Lisp gate after this step verifies `reviewed_surfaces ⊆ l3_flagged_surfaces`.
+
+## L4 Protocol
+
+For each flagged surface:
+
+1. Run `refactor-architecture` `ra-audit` across the surface's operations.
+2. Classify each duplicated operation:
+   - **Identical** — same logic in two surfaces.
+   - **Divergent** — same intent, different logic.
+   - **Surface-only** — logic only in the surface, not shared.
+   - **Pass-through** — surface just delegates to a service.
+3. Run `kali-audit` on MCP tool surfaces for security thinness.
+4. Check adapter thinness: a surface should contain only I/O framing (service calls, formatting, error mapping). Logic in the surface is a finding.
+5. Check `ocap:` blocks: declared but not wired to the runtime gate (`McpRuntime::invoke` token + gas) is a finding.
+
+## Output
+
+```json
+{
+  "l4_findings": [
+    {
+      "id": "l4-1",
+      "surface": "hkask-mcp-portfolio",
+      "operation": "get_holdings",
+      "classification": "Identical",
+      "severity": "high",
+      "issue": "Identical get_holdings logic in hkask-mcp-portfolio and hkask-mcp-companies.",
+      "recommended_action": "Extract to a shared domain crate."
+    }
+  ],
+  "reviewed_surfaces": ["hkask-mcp-portfolio", "kask_bridge"],
+  "flagged_code": [
+    {"surface": "hkask-mcp-portfolio", "file": "kask/mcp-servers/hkask-mcp-portfolio/src/server.rs", "line": 42, "issue": "Duplicated get_holdings logic"}
+  ]
+}
+```
+
+## Constraints
+
+- `reviewed_surfaces` MUST be a subset of `l3_flagged_surfaces`. The Lisp gate enforces this.
+- `classification` must be one of: `Identical`, `Divergent`, `Surface-only`, `Pass-through`.
+- Every finding must cite the surface and a specific operation (no fiction).
+- `flagged_code` entries must cite file:line.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as is or use default if specified).

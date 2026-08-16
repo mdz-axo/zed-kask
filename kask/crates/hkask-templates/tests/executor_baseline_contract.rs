@@ -410,6 +410,265 @@ async fn parallel_step_joins_branch_results_in_order() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+// ── Parallel allSettled: no branch outcome silently dropped ──────────────
+
+/// Sub-manifest for `allSettled` branch 0: compute `(+ 1 10)` → 11.
+const ALLSETTLED_BRANCH_0_YAML: &str = "\
+manifest:
+  id: allsettled-branch-0
+  category: skill
+convergence:
+  max_iterations: 1
+  threshold: 0.5
+  convergence_field: convergence_signal
+  on_not_reached: abort
+gas:
+  cap: 10000
+rjoule:
+  cap: 10000
+steps:
+  - ordinal: 1
+    action: compute
+    compute_ref: lisp.eval
+    description: compute-0
+    input_mapping:
+      form: \"(+ 1 10)\"
+";
+
+/// Sub-manifest for `allSettled` branch 1: compute `(* 2 20)` → 40.
+const ALLSETTLED_BRANCH_1_YAML: &str = "\
+manifest:
+  id: allsettled-branch-1
+  category: skill
+convergence:
+  max_iterations: 1
+  threshold: 0.5
+  convergence_field: convergence_signal
+  on_not_reached: abort
+gas:
+  cap: 10000
+rjoule:
+  cap: 10000
+steps:
+  - ordinal: 1
+    action: compute
+    compute_ref: lisp.eval
+    description: compute-1
+    input_mapping:
+      form: \"(* 2 20)\"
+";
+
+/// Sub-manifest for `allSettled` branch 2: compute `(+ 3 30)` → 33.
+const ALLSETTLED_BRANCH_2_YAML: &str = "\
+manifest:
+  id: allsettled-branch-2
+  category: skill
+convergence:
+  max_iterations: 1
+  threshold: 0.5
+  convergence_field: convergence_signal
+  on_not_reached: abort
+gas:
+  cap: 10000
+rjoule:
+  cap: 10000
+steps:
+  - ordinal: 1
+    action: compute
+    compute_ref: lisp.eval
+    description: compute-2
+    input_mapping:
+      form: \"(+ 3 30)\"
+";
+
+/// Parent manifest: a single `parallel` step with 4 branches, one of which
+/// (branch 1) references a non-existent sub-manifest and will error with
+/// `TemplateError::NotFound`. `join: allSettled` opts into the Promise.allSettled
+/// discipline so successful branches are preserved.
+const ALLSETTLED_PARENT_YAML: &str = "\
+manifest:
+  id: allsettled-test
+  category: skill
+convergence:
+  max_iterations: 1
+  threshold: 0.5
+  convergence_field: convergence_signal
+  on_not_reached: abort
+gas:
+  cap: 10000
+rjoule:
+  cap: 10000
+steps:
+  - ordinal: 1
+    action: parallel
+    description: run four branches, one will error
+    input_mapping:
+      branches:
+        - template_ref: \"allsettled-branch-0\"
+        - template_ref: \"allsettled-branch-missing\"
+        - template_ref: \"allsettled-branch-1\"
+        - template_ref: \"allsettled-branch-2\"
+      join: allSettled
+";
+
+/// Pin: no branch outcome is silently dropped. 4 branches, branch 1 errors
+/// (missing sub-manifest → `TemplateError::NotFound`), branches 0/2/3 succeed.
+/// Under `join: allSettled`, the 3 successful results MUST be present in the
+/// output (under `results`), and the `errors` sidecar MUST record the failure.
+/// This guards against the first-error-abort regression (audit finding B1):
+/// the historical `list` mode dropped sibling outcomes on first `Err`.
+#[tokio::test]
+async fn parallel_allsettled_preserves_successful_branches_when_one_errors() {
+    // Write the 3 successful sub-manifests to a temp dir. Branch 1
+    // ("allsettled-branch-missing") is deliberately NOT written → its
+    // `load_from_disk` / `template_file` lookups fail → `TemplateError::NotFound`.
+    let tmp = std::env::temp_dir().join("hkask-parallel-allsettled-test-");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).expect("temp dir");
+    std::fs::write(
+        tmp.join("allsettled-branch-0.yaml"),
+        ALLSETTLED_BRANCH_0_YAML,
+    )
+    .expect("write branch-0");
+    std::fs::write(
+        tmp.join("allsettled-branch-1.yaml"),
+        ALLSETTLED_BRANCH_1_YAML,
+    )
+    .expect("write branch-1");
+    std::fs::write(
+        tmp.join("allsettled-branch-2.yaml"),
+        ALLSETTLED_BRANCH_2_YAML,
+    )
+    .expect("write branch-2");
+
+    let manifest = load(ALLSETTLED_PARENT_YAML);
+    let executor = ManifestExecutor::new(
+        Arc::new(NoopInferencePort),
+        Arc::new(NoopToolPort::new()),
+        LLMParameters::default(),
+    )
+    .with_template_base_path(tmp.clone());
+
+    let result = executor
+        .execute_manifest(&manifest, HashMap::new())
+        .await
+        .expect("allSettled manifest must execute despite one branch error");
+
+    let final_value = extract_final_step_result(&result);
+
+    // Under allSettled, the stored value is an object with `results` (the
+    // successful branch outcomes in branch_id order) and `errors` (the
+    // failure summaries). The 3 successful results MUST be present — this is
+    // the core invariant: no branch outcome is silently dropped.
+    let obj = final_value
+        .as_object()
+        .expect("allSettled result must be a Value::Object with results + errors");
+    let results = obj
+        .get("results")
+        .and_then(|v| v.as_array())
+        .expect("allSettled result must have a `results` array");
+    let errors = obj
+        .get("errors")
+        .and_then(|v| v.as_array())
+        .expect("allSettled result must have an `errors` array");
+
+    // 3 successful branches → 3 results, in branch_id order (0, 2, 3).
+    // The successful branches are 0, 2, 3 (branch 1 errored). Their results
+    // are the compute values: 11, 40, 33.
+    assert_eq!(
+        results.len(),
+        3,
+        "allSettled must preserve all 3 successful branch results, got {results:?}"
+    );
+    assert_eq!(results[0], Value::from(11), "branch 0 result must be 11");
+    assert_eq!(results[1], Value::from(40), "branch 2 result must be 40");
+    assert_eq!(results[2], Value::from(33), "branch 3 result must be 33");
+
+    // 1 failed branch → 1 error summary with a stable code.
+    assert_eq!(
+        errors.len(),
+        1,
+        "allSettled must record exactly 1 error for the failed branch, got {errors:?}"
+    );
+    let err_code = errors[0]
+        .as_object()
+        .and_then(|o| o.get("code"))
+        .and_then(|v| v.as_str())
+        .expect("error summary must have a `code` string");
+    assert_eq!(
+        err_code, "HKASK-SKILL-001",
+        "failed branch error code must be HKASK-SKILL-001 (NotFound)"
+    );
+
+    // Cleanup.
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Pin: under the default `join: list` mode, the first branch error still
+/// aborts the step (backward-compat contract). This guards against the
+/// allSettled migration accidentally changing the default behavior.
+#[tokio::test]
+async fn parallel_list_mode_aborts_on_first_error_backward_compat() {
+    let tmp = std::env::temp_dir().join("hkask-parallel-list-compat-test-");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).expect("temp dir");
+    std::fs::write(
+        tmp.join("allsettled-branch-0.yaml"),
+        ALLSETTLED_BRANCH_0_YAML,
+    )
+    .expect("write branch-0");
+    // branch-1 deliberately missing → NotFound
+    std::fs::write(
+        tmp.join("allsettled-branch-2.yaml"),
+        ALLSETTLED_BRANCH_2_YAML,
+    )
+    .expect("write branch-2");
+
+    // Same as ALLSETTLED_PARENT_YAML but `join: list` (the default).
+    let list_parent_yaml = "\
+manifest:
+  id: list-compat-test
+  category: skill
+convergence:
+  max_iterations: 1
+  threshold: 0.5
+  convergence_field: convergence_signal
+  on_not_reached: abort
+gas:
+  cap: 10000
+rjoule:
+  cap: 10000
+steps:
+  - ordinal: 1
+    action: parallel
+    description: run branches, one will error, list mode aborts
+    input_mapping:
+      branches:
+        - template_ref: \"allsettled-branch-0\"
+        - template_ref: \"allsettled-branch-missing\"
+        - template_ref: \"allsettled-branch-2\"
+      join: list
+";
+    let manifest = load(list_parent_yaml);
+    let executor = ManifestExecutor::new(
+        Arc::new(NoopInferencePort),
+        Arc::new(NoopToolPort::new()),
+        LLMParameters::default(),
+    )
+    .with_template_base_path(tmp.clone());
+
+    let result = executor.execute_manifest(&manifest, HashMap::new()).await;
+
+    // list mode: first Err aborts → the manifest execution returns Err.
+    assert!(
+        result.is_err(),
+        "list mode must abort on first branch error (backward-compat), got Ok: {:?}",
+        result.ok()
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 /// Opt-in tail-latency harness. Not run by default (it is slow and measures
 /// wall-clock, which is noisy under `cargo test` parallelism). Run explicitly:
 ///   cargo test --test executor_baseline_contract baseline_tail_latency -- --ignored --nocapture

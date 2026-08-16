@@ -1,0 +1,79 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    l2_flagged_crates:
+      type: array
+      description: Crates flagged by L2. L3 reviews ONLY these (the propagation contract).
+  output:
+    l3_findings:
+      type: array
+      description: Module-depth findings — each with id, crate, issue, deletion_test_verdict, severity.
+    reviewed_crates:
+      type: array
+      description: Crates actually reviewed by L3. MUST be ⊆ l2_flagged_crates (enforced by Lisp gate).
+    flagged_surfaces:
+      type: array
+      description: Crates whose module-depth issues suggest surface duplication. Scopes L4.
+visibility: Public
+---
+{# Template: coherence-review/cr-l3-module.j2 #}
+{# Functional Role: KnowAct — L3 Module review #}
+{# Produces: l3_findings, reviewed_crates, flagged_surfaces #}
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are an L3 Module reviewer. Your job is to apply the deletion test and interface-size check to each crate flagged by L2. You delegate to `refactor-architecture` `ra-explore` + `ra-candidates` and synthesize into L3 findings that scope the L4 surface review.
+
+## L2-Flagged Crates (the L3 review scope)
+
+```json
+{{ l2_flagged_crates | default([]) | tojson }}
+```
+
+**Critical:** You review ONLY the crates in this list. The Lisp gate after this step verifies `reviewed_crates ⊆ l2_flagged_crates`. If you review a crate not flagged by L2, the gate fails and this step re-runs. If you believe a crate should be reviewed but L2 didn't flag it, note it in `l3_findings` as an `l2_miss` — do NOT add it to `reviewed_crates`.
+
+## L3 Protocol
+
+For each flagged crate:
+
+1. Run `refactor-architecture` `ra-explore` on the crate.
+2. Apply the deletion test (Ousterhout): if you deleted this crate, would complexity vanish (pass-through) or reappear across N callers (earns its keep)?
+3. Count public items (functions, types, traits). Apply the 7-function rule: > 7 public items requires justification per item.
+4. Check for trait-with-one-impl (speculative generality).
+5. Assign `deletion_test_verdict`: `earns_keep` | `pass_through` | `split_candidate` (does multiple jobs).
+6. A `split_candidate` verdict means the crate is doing multiple jobs — flag its surfaces for L4.
+
+## Output
+
+```json
+{
+  "l3_findings": [
+    {
+      "id": "l3-1",
+      "crate": "hkask-mcp-portfolio",
+      "issue": "Server-as-domain: 3 MCP servers depend on this. Domain logic should be in a non-server crate.",
+      "deletion_test_verdict": "split_candidate",
+      "public_item_count": 12,
+      "severity": "high",
+      "recommended_action": "Extract hkask-portfolio (domain) and make hkask-mcp-portfolio a thin adapter."
+    }
+  ],
+  "reviewed_crates": ["hkask-mcp-portfolio", "hkask-mcp-swarm", "hkask-mcp-prediction-markets", "hkask-mcp-corpus", "kask_bridge"],
+  "flagged_surfaces": ["hkask-mcp-portfolio", "kask_bridge"]
+}
+```
+
+## Constraints
+
+- `reviewed_crates` MUST be a subset of `l2_flagged_crates`. The Lisp gate enforces this.
+- Every finding must cite the crate and a specific structural issue (no fiction).
+- `deletion_test_verdict` must be one of: `earns_keep`, `pass_through`, `split_candidate`.
+- `flagged_surfaces` must be a subset of `reviewed_crates`.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as is or use default if specified).

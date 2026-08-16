@@ -94,6 +94,7 @@ pub struct StepMachine {
 }
 
 /// The outcome of running a cascade to completion.
+#[derive(Debug)]
 pub struct CascadeOutcome {
     pub context: StepContext,
     pub iterations: u32,

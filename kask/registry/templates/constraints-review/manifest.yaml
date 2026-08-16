@@ -1,0 +1,59 @@
+# Template crate manifest for constraints-review skill
+# hKask v0.34.0
+
+crate:
+  name: constraints-review
+  version: "0.34.0"
+  description: >
+    Constraint-set coherence review. Elicits constraints from .rules,
+    DIVERGENCE.md, ADRs, and manifest ocap blocks; classifies each by force
+    (Prohibition/Guardrail/Guideline/Evidence/Hypothesis); gates against
+    floor/ceiling/maturity per Ashby requisite variety; measures drift
+    against the reference models in
+    kask/docs/architecture/review-reference-models.md. Produces a drift
+    score per constraint (0=aligned, 3=divergent with no exception).
+
+templates:
+  - id: constraints-review/cr-elicit
+    name: "Elicit constraints from .rules, DIVERGENCE.md, ADRs, ocap blocks"
+    path: cr-elicit.j2
+    type: KnowAct
+    description: >
+      Exhaustive capture of constraints from the project's constraint
+      sources. No classification — elicitation is capture only. Records
+      source file and line, constraint text, level (L1-L5), and the
+      failure mode it guards against.
+
+  - id: constraints-review/cr-classify
+    name: "Classify each constraint by force and identify enforcement point"
+    path: cr-classify.j2
+    type: KnowAct
+    description: >
+      Classify each elicited constraint by constraint force
+      (Prohibition/Guardrail/Guideline/Evidence/Hypothesis) using the
+      pragmatic-semantics hierarchy. Identify the enforcement point or
+      mark "not yet enforced." Flag advertised invariants with no
+      enforcement point as score-3 drift candidates.
+
+  - id: constraints-review/cr-gate
+    name: "Gate constraint set against floor/ceiling/maturity per level"
+    path: cr-gate.j2
+    type: KnowAct
+    description: >
+      For each level (L1-L5), check Ashby's requisite variety: does the
+      constraint set have enough variety to catch the failure modes at
+      that level? Floor check (under-constrained), ceiling check
+      (over-constrained), maturity check (unenforced constraints
+      reclassified or wired).
+
+  - id: constraints-review/cr-drift
+    name: "Measure drift against reference models, produce drift report"
+    path: cr-drift.j2
+    type: KnowAct
+    description: >
+      Compare each constraint against the reference models in
+      kask/docs/architecture/review-reference-models.md. Assign drift
+      score (0=aligned, 1=neutral, 2=divergent+documented, 3=divergent
+      no exception). Produce drift report with per-constraint scores,
+      per-level variety verdicts, and score-3 findings with recommended
+      actions.
