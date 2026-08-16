@@ -274,17 +274,46 @@ impl StepMachine {
         let messages =
             build_cascade_messages(&infra.prior_messages, &infra.memory_snippets, &prompt);
 
-        let (result_text, tool_calls, cost_usd, finish_reason) =
-            call_inference_stream_with_messages(
-                &infra.inference,
-                &messages,
-                &params,
-                tools,
-                timeout_dur,
-                node.ordinal,
-                infra.progress.as_deref(),
-            )
-            .await?;
+        // Gate the inference call with the global concurrency limiter. The
+        // permit is held across the cloud round-trip and released on drop
+        // (including on timeout — `tokio::time::timeout` drops the inner
+        // future, which drops the permit). `None` (tests, pre-startup) skips
+        // gating. This is the primary inference path — without it, N concurrent
+        // cascades each issuing `select` steps run unbounded against the
+        // provider, defeating the process-wide ceiling.
+        let _permit = if let Some(ref limiter) = infra.concurrency_limiter {
+            Some(limiter.acquire().await)
+        } else {
+            None
+        };
+
+        let inference_result = call_inference_stream_with_messages(
+            &infra.inference,
+            &messages,
+            &params,
+            tools,
+            timeout_dur,
+            node.ordinal,
+            infra.progress.as_deref(),
+        )
+        .await;
+
+        // Ramp the limiter based on the call outcome before propagating the
+        // error. `on_success` adds `step` permits (capped at `max`);
+        // `on_throttle` backs off one `step` (floored at `step`). Only
+        // 429/503-class errors back off — deterministic errors (parse, timeout)
+        // don't shrink the pool for unrelated callers. A timeout is neither a
+        // success (don't ramp up) nor a throttle (don't back off) — the
+        // limiter stays at its current size.
+        if let Some(ref limiter) = infra.concurrency_limiter {
+            match &inference_result {
+                Ok(_) => limiter.on_success(),
+                Err(e) if e.is_throttle() => limiter.on_throttle(),
+                _ => {}
+            }
+        }
+
+        let (result_text, tool_calls, cost_usd, finish_reason) = inference_result?;
 
         // Charge rJoule (USD cost).
         if let Some(cost) = cost_usd {
@@ -451,6 +480,14 @@ impl StepMachine {
         node: &crate::step_graph::StepNode,
         infra: &Infra,
     ) -> Result<Effect> {
+        // Batch path: when `mcp_batch` is present, invoke all tools concurrently,
+        // each gated by the global concurrency limiter. Results are collected
+        // into a `Value::Object` keyed by `entry.key` (defaulting to the tool
+        // name). Mutually exclusive with the single `mcp` path.
+        if let Some(ref batch) = node.mcp_batch {
+            return self.execute_tool_batch(node, batch, infra).await;
+        }
+
         let mcp_ref_raw = node.mcp.as_deref().ok_or_else(|| {
             TemplateError::Manifest(format!(
                 "Execute step {} has no mcp reference",
@@ -482,14 +519,24 @@ impl StepMachine {
                 )
             });
 
+        // Gate the tool call with the global concurrency limiter (same as
+        // `execute_select` and `execute_tool_batch`). MCP tools may call cloud
+        // backends, so they draw from the same process-wide pool. The permit is
+        // held across the call and released on drop (including on timeout).
+        let _permit = if let Some(ref limiter) = infra.concurrency_limiter {
+            Some(limiter.acquire().await)
+        } else {
+            None
+        };
+
         // Invoke the tool with a timeout. Without this, a hung MCP tool call
         // blocks the cascade forever — the tokio task has no external watchdog.
         let timeout_dur = effective_timeout(node.timeout_seconds);
-        let result =
+        let tool_result =
             match tokio::time::timeout(timeout_dur, invoke_tool(&infra.tools, &mcp_ref, input))
                 .await
             {
-                Ok(inner) => inner?,
+                Ok(inner) => inner,
                 Err(_elapsed) => {
                     return Err(TemplateError::Timeout {
                         step_ordinal: node.ordinal,
@@ -498,9 +545,137 @@ impl StepMachine {
                 }
             };
 
+        // Ramp the limiter based on the call outcome before propagating.
+        if let Some(ref limiter) = infra.concurrency_limiter {
+            match &tool_result {
+                Ok(_) => limiter.on_success(),
+                Err(e) if e.is_throttle() => limiter.on_throttle(),
+                _ => {}
+            }
+        }
+
+        let result = tool_result?;
+
         Ok(Effect::Stored {
             step_id: node.id,
             value: result,
+        })
+    }
+
+    /// **Tool batch** — invoke multiple MCP tools concurrently, each gated by
+    /// the global concurrency limiter. Results are collected into a
+    /// `Value::Object` keyed by `entry.key` (defaulting to the tool name).
+    /// All tools share one `tokio::time::timeout` (the step's
+    /// `timeout_seconds`) — a batch is one logical step, not N independent
+    /// steps with individual timeouts.
+    ///
+    /// Error semantics: if any tool fails, the step fails (the first error
+    /// propagates). A partial-success mode (collect errors per-key) is a
+    /// future extension. Gas is charged one iteration per tool (keeps the
+    /// gas model honest — a 6-tool batch costs 6 iterations, not 1).
+    pub(crate) async fn execute_tool_batch(
+        &mut self,
+        node: &crate::step_graph::StepNode,
+        batch: &[crate::bundle::manifest::McpBatchEntry],
+        infra: &Infra,
+    ) -> Result<Effect> {
+        use futures_util::future::join_all;
+
+        let timeout_dur = effective_timeout(node.timeout_seconds);
+        let limiter = infra.concurrency_limiter.clone();
+        let tools = Arc::clone(&infra.tools);
+
+        // Build the per-tool futures. Each acquires a permit from the global
+        // limiter before invoking, then calls `on_success` / `on_throttle`
+        // after. The permit is held for the call's lifetime.
+        let tool_futs = batch.iter().map(|entry| {
+            let mcp_ref_raw = entry.mcp.clone();
+            let input_mapping = entry.input_mapping.clone();
+            let key = entry.key.clone();
+            let limiter = limiter.clone();
+            let tools = Arc::clone(&tools);
+            let context = self.context.clone();
+            let template_renderer = infra.template_renderer.clone();
+
+            async move {
+                // Resolve ${variable} references in the MCP reference.
+                let mcp_ref = crate::template_renderer::TemplateRenderer::render_inline(
+                    &mcp_ref_raw,
+                    &context,
+                );
+
+                // Resolve the tool input.
+                let input: Value = input_mapping
+                    .as_ref()
+                    .map(|mapping| {
+                        crate::input_mapping::resolve_mapping_value(
+                            mapping,
+                            &context,
+                            &template_renderer,
+                        )
+                    })
+                    .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+
+                // Acquire a permit before issuing the call. When no limiter
+                // is wired (tests), skip gating.
+                let _permit = if let Some(ref limiter) = limiter {
+                    Some(limiter.acquire().await)
+                } else {
+                    None
+                };
+
+                let result = invoke_tool(&tools, &mcp_ref, input).await;
+
+                // Ramp the limiter based on the call outcome.
+                if let Some(ref limiter) = limiter {
+                    match &result {
+                        Ok(_) => limiter.on_success(),
+                        Err(e) if e.is_throttle() => limiter.on_throttle(),
+                        _ => {} // deterministic errors don't back off
+                    }
+                }
+
+                // Derive the result key: explicit `key` if provided, else the
+                // tool name (last segment of the mcp ref after `/` or `.`).
+                let result_key = key.unwrap_or_else(|| {
+                    mcp_ref_raw
+                        .rsplit(['/', '.'])
+                        .next()
+                        .unwrap_or(&mcp_ref_raw)
+                        .to_string()
+                });
+
+                result.map(|value| (result_key, value))
+            }
+        });
+
+        // Run all tool futures concurrently under one shared timeout.
+        let results = match tokio::time::timeout(timeout_dur, join_all(tool_futs)).await {
+            Ok(joined) => joined,
+            Err(_elapsed) => {
+                return Err(TemplateError::Timeout {
+                    step_ordinal: node.ordinal,
+                    elapsed_seconds: timeout_dur.as_secs(),
+                });
+            }
+        };
+
+        // Collect into a `Value::Object`, propagating the first error.
+        let mut map = serde_json::Map::new();
+        for result in results {
+            let (key, value) = result?;
+            map.insert(key, value);
+        }
+        let joined = Value::Object(map);
+
+        // Charge gas: one iteration per tool in the batch.
+        for _ in 0..batch.len() {
+            self.budget.charge_iteration();
+        }
+
+        Ok(Effect::Stored {
+            step_id: node.id,
+            value: joined,
         })
     }
 
@@ -670,11 +845,10 @@ impl StepMachine {
                 ))
             })?
             .clone();
-        let concurrency_cap = mapping
-            .get("concurrency_cap")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(branches.len() as u64)
-            .max(1) as usize;
+        // `concurrency_cap` is accepted for backward compat but ignored — the
+        // global `ConcurrencyLimiter` (wired via `Infra`) is the single source
+        // of truth for concurrency. When no limiter is wired (tests), fall back
+        // to `branches.len()` (unbounded) to preserve the prior behavior.
         let _join_mode = mapping
             .get("join")
             .and_then(|v| v.as_str())
@@ -688,6 +862,14 @@ impl StepMachine {
         let rjoule_remaining = self.budget.remaining_rjoule();
         let context_template = self.context.clone();
         let parent_manifest_id = self.manifest_id.clone();
+        // The global concurrency limiter gates how many branches run
+        // concurrently. `None` (tests, pre-startup) means unbounded —
+        // `buffer_unordered(branches.len())` preserves the prior behavior.
+        let concurrency_limiter = infra.concurrency_limiter.clone();
+        let buffer_bound = concurrency_limiter
+            .as_ref()
+            .map(|l| l.max() as usize)
+            .unwrap_or(branches.len());
 
         let branch_futs = branches.into_iter().enumerate().map(|(branch_id, spec)| {
             let shared_gas = Arc::clone(&shared_gas);
@@ -702,6 +884,13 @@ impl StepMachine {
                 .and_then(|v| v.as_str())
                 .map(String::from);
             async move {
+                // No branch-level permit: the global limiter gates the inner
+                // `execute_select` / `execute_tool_invoke` calls inside each
+                // branch's sub-cascade. Acquiring a branch permit here would
+                // double-count with the inner call's permit and deadlock (both
+                // draw from the same semaphore). The `buffer_bound` below caps
+                // how many branches are polled at once; the limiter caps how
+                // many inference calls those branches make concurrently.
                 let template_ref = template_ref.ok_or_else(|| {
                     TemplateError::Manifest(format!(
                         "Step {} (action 'parallel') branch {} has no \
@@ -761,15 +950,29 @@ impl StepMachine {
                     format!("{}::parallel", sub_manifest_id),
                 );
                 let outcome = sub_machine.run(infra).await?;
+                // No branch-level limiter ramp: the inner `execute_select` /
+                // `execute_tool_invoke` calls already call `on_success` /
+                // `on_throttle` on the shared limiter. Ramp here would
+                // double-count (one ramp per branch + one per inner call).
                 Ok::<(usize, CascadeOutcome), TemplateError>((branch_id, outcome))
             }
         });
 
-        // Bounded concurrency: poll up to `concurrency_cap` branch futures at
-        // once. `buffer_unordered` yields in completion order; we sort by
-        // `branch_id` below for a deterministic join.
+        // Bounded concurrency: poll up to `buffer_bound` branch futures at
+        // once. The `buffer_bound` is the upper limit on how many branches
+        // are polled concurrently; the global limiter (via the inner
+        // `execute_select` / `execute_tool_invoke` permits) gates the actual
+        // inference / tool-call concurrency. `buffer_unordered` yields in
+        // completion order; we sort by `branch_id` below for a deterministic
+        // join.
+        //
+        // Throttle handling: a branch that returns `Err` with a throttle-class
+        // error has already called `on_throttle` via the inner `execute_select`
+        // / `execute_tool_invoke` ramp logic. No outer wrapper is needed — the
+        // inner call is the first to see the error and backs off the limiter
+        // before the `?` propagates it out of the branch.
         let outcomes: Vec<(usize, CascadeOutcome)> = stream::iter(branch_futs)
-            .buffer_unordered(concurrency_cap)
+            .buffer_unordered(buffer_bound)
             .collect::<Vec<Result<(usize, CascadeOutcome)>>>()
             .await
             .into_iter()
@@ -1320,6 +1523,8 @@ pub(crate) async fn invoke_tool(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
 
     #[test]
     fn effective_timeout_substitutes_fallback_for_zero() {
@@ -1483,6 +1688,220 @@ mod tests {
             finish_reason.as_deref(),
             Some("stop"),
             "finish_reason threading is required for guard diagnostics"
+        );
+    }
+
+    // ── Concurrency limiter gating tests (B1 fix) ──────────────────────
+
+    /// A stub `InferencePort` that records peak concurrent `generate` calls.
+    /// Used to verify the global concurrency limiter gates `execute_select`
+    /// across concurrent cascades. Mirrors the OCR pipeline's
+    /// `ConcurrentExecutor.peak` pattern.
+    struct RecordingInference {
+        active: std::sync::atomic::AtomicUsize,
+        peak: std::sync::atomic::AtomicUsize,
+    }
+
+    impl RecordingInference {
+        fn new() -> Self {
+            Self {
+                active: std::sync::atomic::AtomicUsize::new(0),
+                peak: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn peak(&self) -> usize {
+            self.peak.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl InferencePort for RecordingInference {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = std::result::Result<
+                            hkask_types::InferenceResult,
+                            hkask_types::InferenceError,
+                        >,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            let active = &self.active;
+            let peak = &self.peak;
+            Box::pin(async move {
+                let count = active.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                peak.fetch_max(count, std::sync::atomic::Ordering::SeqCst);
+                // Sleep briefly to let other tasks acquire permits and overlap.
+                // `yield_now` alone is not enough — the first task may complete
+                // before the second acquires its permit.
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                active.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(hkask_types::InferenceResult {
+                    text: "{}".to_string(),
+                    model: "test".into(),
+                    usage: hkask_types::InferenceUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    finish_reason: "stop".into(),
+                    token_probabilities: None,
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    /// Minimal `ToolPort` stub for the limiter tests. Returns empty results;
+    /// the select-step tests don't invoke tools.
+    struct NoopToolPort;
+
+    impl hkask_capability::ToolPort for NoopToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: serde_json::Value,
+            _agent: hkask_types::WebID,
+        ) -> hkask_capability::ToolFuture<
+            'a,
+            std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
+        > {
+            Box::pin(async {
+                Err(hkask_capability::ToolPortError::NotFound(
+                    hkask_types::NotFound {
+                        entity_type: "tool".to_string(),
+                        id: "noop".to_string(),
+                    },
+                ))
+            })
+        }
+        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+            Box::pin(async { Vec::new() })
+        }
+        fn get_tool_info<'a>(
+            &'a self,
+            _tool_name: &'a str,
+        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+            Box::pin(async { None })
+        }
+    }
+
+    /// B1 regression guard: two concurrent cascades each with one `select`
+    /// step, sharing a limiter with `max_concurrency: 1`, must serialize their
+    /// inference calls (peak == 1). Without the `execute_select` gating fix,
+    /// both cascades issue inference concurrently (peak == 2), defeating the
+    /// process-wide ceiling.
+    #[tokio::test]
+    async fn execute_select_limiter_serializes_concurrent_cascades() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::concurrency::ConcurrencyLimiter;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new());
+        let limiter = Arc::new(ConcurrencyLimiter::new(1, 1));
+
+        // A minimal 1-step select manifest.
+        let manifest_yaml = r#"
+manifest:
+  id: test-select
+  category: skill
+steps:
+  - ordinal: 1
+    action: select
+    description: "Single select step"
+    template_ref: "Return a JSON object with a result key"
+convergence:
+  max_iterations: 1
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let make_executor = || {
+            ManifestExecutor::new(
+                inference.clone(),
+                Arc::new(NoopToolPort),
+                LLMParameters::default(),
+            )
+            .with_concurrency_limiter(limiter.clone())
+        };
+
+        // Run two cascades concurrently.
+        let e1 = make_executor();
+        let e2 = make_executor();
+        let (r1, r2) = tokio::join! {
+            e1.execute_manifest(&manifest, std::collections::HashMap::new()),
+            e2.execute_manifest(&manifest, std::collections::HashMap::new()),
+        };
+        r1.expect("cascade 1 succeeds");
+        r2.expect("cascade 2 succeeds");
+
+        assert_eq!(
+            inference.peak(),
+            1,
+            "max_concurrency: 1 must serialize the two cascades' select calls"
+        );
+    }
+
+    /// B1 regression guard: with `max_concurrency: 2`, the two concurrent
+    /// cascades' `select` calls overlap (peak == 2). This confirms the
+    /// limiter allows concurrency up to the ceiling, not just serializes.
+    #[tokio::test]
+    async fn execute_select_limiter_allows_concurrency_up_to_max() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::concurrency::ConcurrencyLimiter;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new());
+        let limiter = Arc::new(ConcurrencyLimiter::new(2, 2));
+
+        let manifest_yaml = r#"
+manifest:
+  id: test-select-2
+  category: skill
+steps:
+  - ordinal: 1
+    action: select
+    description: "Single select step"
+    template_ref: "Return a JSON object with a result key"
+convergence:
+  max_iterations: 1
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let make_executor = || {
+            ManifestExecutor::new(
+                inference.clone(),
+                Arc::new(NoopToolPort),
+                LLMParameters::default(),
+            )
+            .with_concurrency_limiter(limiter.clone())
+        };
+
+        let e1 = make_executor();
+        let e2 = make_executor();
+        let (r1, r2) = tokio::join! {
+            e1.execute_manifest(&manifest, std::collections::HashMap::new()),
+            e2.execute_manifest(&manifest, std::collections::HashMap::new()),
+        };
+        r1.expect("cascade 1 succeeds");
+        r2.expect("cascade 2 succeeds");
+
+        assert_eq!(
+            inference.peak(),
+            2,
+            "max_concurrency: 2 must allow both cascades' select calls to overlap"
         );
     }
 }

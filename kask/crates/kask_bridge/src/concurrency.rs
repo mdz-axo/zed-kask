@@ -1,39 +1,11 @@
-//! Process-global concurrency limiter wiring.
+//! Re-export of the global concurrency limiter wiring from `hkask-types`.
 //!
-//! Holds the `ConcurrencyLimiter` in a `OnceLock` so any consumer (skill
-//! cascades via `Infra`, corpus OCR, MCP tool calls, future callers) can
-//! acquire permits from one shared instance. The limiter is wired once at
-//! startup from `KaskSettings::general` (after `settings::init`).
-//!
-//! Per `.rules`: `OnceLock` hooks must warn on the `Err` branch of `set` —
-//! operators can't distinguish "not configured" from "configured but broken"
-//! without it. Runtime changes to `max_concurrency` / `concurrency_step` do
-//! NOT take effect until restart (the `OnceLock` is set once); this matches
-//! the existing `set_manifest_executor` pattern.
+//! The `ConcurrencyLimiter`, its process-global `OnceLock`, and the
+//! `set_global_concurrency_limiter` / `global_concurrency_limiter` accessors
+//! live in `hkask-types` so both `hkask-templates` (skill cascades) and
+//! `hkask-mcp-corpus` (OCR pipeline) can share one limiter instance. This
+//! module re-exports them so `kask_bridge` callers (and `main.rs`) can
+//! `use kask_bridge::set_global_concurrency_limiter` without a direct
+//! `hkask-types` path.
 
-use std::sync::{Arc, OnceLock};
-
-use hkask_templates::concurrency::ConcurrencyLimiter;
-
-static GLOBAL_LIMITER: OnceLock<Arc<ConcurrencyLimiter>> = OnceLock::new();
-
-/// Wire the global concurrency limiter from `KaskGeneralSettings`. Called
-/// once at startup after settings load. A second call warns and drops the
-/// new limiter — the previously-wired limiter remains active.
-pub fn set_global_concurrency_limiter(max_concurrency: u32, concurrency_step: u32) {
-    let limiter = Arc::new(ConcurrencyLimiter::new(max_concurrency, concurrency_step));
-    if GLOBAL_LIMITER.set(limiter).is_err() {
-        log::warn!(
-            "set_global_concurrency_limiter: hook already set — second wiring attempt \
-             dropped. The previously-wired limiter remains active. Restart the app to \
-             re-wire from a clean process."
-        );
-    }
-}
-
-/// Access the process-global concurrency limiter. Returns `None` before
-/// `set_global_concurrency_limiter` has run (tests, pre-startup). Callers
-/// must skip gating when `None`.
-pub fn global_concurrency_limiter() -> Option<&'static Arc<ConcurrencyLimiter>> {
-    GLOBAL_LIMITER.get()
-}
+pub use hkask_types::concurrency::{global_concurrency_limiter, set_global_concurrency_limiter};

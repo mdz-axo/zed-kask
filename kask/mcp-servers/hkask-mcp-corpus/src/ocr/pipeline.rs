@@ -183,6 +183,18 @@ async fn run_pipeline_parallel(
     max_concurrency: usize,
 ) -> PipelineOutcome {
     let start = Instant::now();
+    // OCR runs in a subprocess (`hkask-mcp-corpus` binary) whose `OnceLock` is
+    // distinct from the zed main process. The global concurrency limiter is
+    // never wired here — `global_concurrency_limiter()` always returns `None`
+    // in this process. Use a local per-pipeline semaphore bounded by
+    // `max_concurrency` (from `HKASK_OCR_CONCURRENCY`). The process-wide
+    // limiter lives in the zed process and gates skill cascades + MCP tool
+    // calls there; OCR's concurrency is bounded locally.
+    //
+    // If a future change embeds the corpus server in-process (no subprocess),
+    // re-evaluate: the global limiter could then be shared, but `on_throttle`
+    // would need wiring (currently OCR has no throttle backoff because
+    // `PipelineError` doesn't carry the inner `InferenceError`).
     let semaphore = Arc::new(Semaphore::new(max_concurrency));
 
     // Pre-score and route all pages (synchronous, cheap)
