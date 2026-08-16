@@ -9478,6 +9478,7 @@ dependencies = [
  "hkask-templates",
  "hkask-test-harness",
  "hkask-types",
+ "hkask-verification",
  "minijinja",
  "proptest",
  "rmcp",
@@ -9913,6 +9914,23 @@ dependencies = [
  "tracing",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "hkask-verification"
+version = "0.35.0"
+dependencies = [
+ "chrono",
+ "hkask-storage",
+ "hkask-test-harness",
+ "hkask-types",
+ "proptest",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
