@@ -240,10 +240,10 @@ mod tool_surface_tests {
     // silently registers nothing (`cargo check` passes on an unwired orphan).
     // Mirrors the swarm pin.
     #[test]
-    fn tool_surface_is_exactly_25_registered_tools() {
+    fn tool_surface_is_exactly_26_registered_tools() {
         let n = KanbanServer::tool_router().list_all().len();
         assert_eq!(
-            n, 25,
+            n, 26,
             "kata-kanban registered tool surface changed; got {n}"
         );
     }
@@ -1755,6 +1755,53 @@ impl KanbanServer {
                     .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
                 },
             ),
+        )
+        .await
+    }
+
+    /// Aggregate the grounding trend across all delegations recorded on a
+    /// board. Answers the paper's §4.1 question: "is this getting better?"
+    /// Reads the `grounding_summary` field from each task's `delegate_result`.
+    ///
+    /// The lead metric is `delegations_with_zero_nulled` — deletion-resistant
+    /// (paper Rule 5.4: a scoreboard that counts nulled fields falling can be
+    /// gamed by recording fewer delegations; counting delegations with zero
+    /// nulled fields cannot).
+    ///
+    /// `delegations_without_contract` is the coverage gap (paper §6: coverage
+    /// is itself a metric, not a pass). A delegation with `had_contract: false`
+    /// is a coverage gap, not a compliant delegation.
+    ///
+    /// contract: P3-svc-kanban-011
+    /// expect: "I can read the grounding trend for a board" \[P3\]
+    /// pre:  board_id is a valid board id
+    /// post: returns the grounding trend report, or an empty report if no
+    ///       delegations have been recorded
+    #[tool(
+        description = "Aggregate the grounding trend across all delegations recorded on a board. Answers the paper's §4.1 question: is this getting better? The lead metric is delegations_with_zero_nulled (deletion-resistant, paper Rule 5.4). delegations_without_contract is the coverage gap (paper §6: coverage is itself a metric, not a pass)."
+    )]
+    pub async fn kanban_grounding_trend(
+        &self,
+        Parameters(GroundingTrendRequest { board_id }): Parameters<GroundingTrendRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "kanban_grounding_trend",
+            kanban_type_to_pko("kanban_grounding_trend"),
+            async {
+                let bid = parse_board_id(&board_id)?;
+                let report = self
+                    .service
+                    .grounding_trend(bid)
+                    .map_err(map_kanban_error)?;
+                serde_json::to_value(serde_json::json!({
+                    "board_id": bid.to_string(),
+                    "trend": report,
+                    "source": "kanban_delegate_results",
+                    "note": "Primary trend for grounded delegations via kanban_task_spawn. For swarm_delegate_local delegations (no grounding), use swarm_grounding_trend.",
+                }))
+                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+            },
         )
         .await
     }
