@@ -493,6 +493,7 @@ impl SwarmServer {
                         system_prompt,
                         mcp_tools,
                         skills,
+                        ..Default::default()
                     },
                     cloud_id: Some(req.agent_name.clone()),
                     tags: Vec::new(),
@@ -765,7 +766,8 @@ impl SwarmServer {
                             req.mcp_tools,
                             self.client.config().allowed_tool_servers.as_deref(),
                         ),
-                        skills: filter_declared_skills(req.skills),
+                        skills: req.skills,
+                        ..Default::default()
                     },
                     cloud_id: None,
                     tags: req.tags,

@@ -71,13 +71,34 @@ steps:
     gas_cap: 2048
     timeout_seconds: 120
   - ordinal: 4
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence signal: the findings count from the report
+      step. Lower signal variance across iterations = convergence (Cauchy).
+      Using lisp.eval instead of a Jinja expression makes the computation
+      explicitly deterministic, budgeted (gas_cap: 100), and observable via
+      a reg.skill.supply-chain-sentinel span. Guards against a missing
+      findings field by returning 0 when absent.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((findings (assoc "findings" step_3_result)))
+          (if (is_null findings) 0 (length findings)))
+      env:
+        step_3_result: "{{ step_3_result | default({}) }}"
+
+  - ordinal: 5
     action: loop
     description: >
       Re-enter supply chain audit cycle if convergence is not met. Routes
       back to step 1 (scan manifests) to re-check dependencies.
     input_mapping:
       loop_target: "{{ 1 }}"
-      convergence_signal: "{{ step_3_result.findings | default([]) | length }}"
+      # Convergence signal from the deterministic lisp.eval compute step
+      # (step 4). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_4_result }}"
 
 # Registry invariant X4 (skill-maintenance): verified.
 # Manifest version: 0.35.0. Registry authoritative; SKILL.md is companion.

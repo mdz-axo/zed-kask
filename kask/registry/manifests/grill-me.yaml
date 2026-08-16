@@ -145,6 +145,25 @@ steps:
       level_coverage_defects: "{{ step_3_result | default([]) }}"
 
   - ordinal: 5
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence signal: the recommendation count from the
+      assessment step. Lower signal variance across iterations = convergence
+      (Cauchy). Using lisp.eval instead of a Jinja expression makes the
+      computation explicitly deterministic, budgeted (gas_cap: 100), and
+      observable via a reg.skill.grill-me span. Guards against a missing
+      recommendations field by returning 0 when absent.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((recs (assoc "recommendations" step_4_result)))
+          (if (is_null recs) 0 (length recs)))
+      env:
+        step_4_result: "{{ step_4_result | default({}) }}"
+
+  - ordinal: 6
     action: loop
     description: >
       Re-enter interrogation cycle if convergence is not met, recalibrating
@@ -155,9 +174,9 @@ steps:
       missing levels.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the recommendation count into convergence_signal so the Cauchy
-      # criterion can detect when the assessment has stopped moving.
-      convergence_signal: "{{ step_4_result.recommendations | default([]) | length }}"
+      # Convergence signal from the deterministic lisp.eval compute step
+      # (step 5). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_5_result }}"
 
 error_handling:
   on_gas_exceeded: abort

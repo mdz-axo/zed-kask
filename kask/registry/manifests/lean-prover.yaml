@@ -132,6 +132,25 @@ steps:
       erase_diagnostics: "{{ step_3_result }}"
 
   - ordinal: 5
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence signal: the counterexample count from the
+      refutation step. Lower signal variance across iterations = convergence
+      (Cauchy). Using lisp.eval instead of a Jinja expression makes the
+      computation explicitly deterministic, budgeted (gas_cap: 100), and
+      observable via a reg.skill.lean-prover span. Guards against a missing
+      counterexamples field by returning 0 when absent.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((cex (assoc "counterexamples" step_3_result)))
+          (if (is_null cex) 0 (length cex)))
+      env:
+        step_3_result: "{{ step_3_result | default({}) }}"
+
+  - ordinal: 6
     action: loop
     description: >
       Re-enter proof construction if counterexamples are still being found.
@@ -139,7 +158,9 @@ steps:
       from the refutation.
     input_mapping:
       loop_target: "{{ 2 }}"
-      convergence_signal: "{{ step_3_result.counterexamples | default([]) | length }}"
+      # Convergence signal from the deterministic lisp.eval compute step
+      # (step 5). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_5_result }}"
 
 error_handling:
   on_gas_exceeded: abort

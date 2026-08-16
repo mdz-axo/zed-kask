@@ -142,6 +142,12 @@ pub struct LocalAgentCapabilities {
     /// through create/clone/push as well.
     #[serde(default)]
     pub skills: Vec<String>,
+    /// Optional output contract for card-declared grounding (N1). When
+    /// present, the `grounding` sub-object is validated at admission by
+    /// `card_contract::validate`. When absent, the agent uses the
+    /// compiled grounding contract (e.g., `task_agent_contract()`).
+    #[serde(default)]
+    pub output_contract: Option<serde_json::Value>,
 }
 
 /// Reads agent cards from a local directory. Catalogue only — no execution.
@@ -244,6 +250,30 @@ impl LocalAgentRegistry {
                     "skipping agent card: typing check failed"
                 );
                 continue;
+            }
+            // Rung 3 (Card-declared grounding): if the card declares an
+            // output_contract.grounding, validate it at admission. A card
+            // that declares a grounding contract naming tools it doesn't
+            // have is a contract that protects nothing.
+            if let Some(ref oc) = card.capabilities.output_contract {
+                if let Some(grounding) = oc.get("grounding") {
+                    // Lightweight check: the full card_contract::validate
+                    // lives in kata-kanban (it can't live here because
+                    // kata-kanban depends on swarm, not vice versa). Here
+                    // we check that the grounding is an object and warn if
+                    // it's malformed. The full validation with tool-name
+                    // cross-referencing happens when the kata-kanban
+                    // server resolves the agent.
+                    if !grounding.is_object() {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            card_path = %card_path.display(),
+                            agent_id = %card.agent_id,
+                            "output_contract.grounding is not an object — skipping card"
+                        );
+                        continue;
+                    }
+                }
             }
             cards.push(card);
         }
@@ -910,6 +940,7 @@ mod tests {
                             system_prompt: Some("test prompt".to_string()),
                             mcp_tools: vec![],
                             skills: vec![],
+                            ..Default::default()
                         },
                         cloud_id,
                         tags: vec![],

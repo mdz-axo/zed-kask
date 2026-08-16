@@ -1109,6 +1109,29 @@ impl KanbanServer {
                             build_task_agent_card(tid, &task.title, &skills_for_agent)
                         });
 
+                    // Rung 3 (Card-declared grounding validation): if the
+                    // agent card declares an output_contract.grounding,
+                    // validate it. Every sourced entry must name a tool the
+                    // agent declares in mcp_tools. why is mandatory (≥40 chars).
+                    // Findings are logged at warn — they don't block the spawn,
+                    // but they surface contract defects.
+                    if let Some(ref oc) = agent.capabilities.output_contract {
+                        let findings = crate::card_contract::validate(
+                            oc.get("grounding"),
+                            &agent.capabilities.mcp_tools,
+                        );
+                        if !findings.is_empty() {
+                            tracing::warn!(
+                                target: "hkask.mcp.kata_kanban",
+                                task_id = %tid,
+                                agent_id = %agent.agent_id,
+                                findings = ?findings.iter().map(|f| f.message.as_str()).collect::<Vec<_>>(),
+                                "card-declared grounding contract has {} finding(s)",
+                                findings.len(),
+                            );
+                        }
+                    }
+
                     // P1: Try worktree-isolated spawn first. When the zed IPC bridge
                     // is available and a workspace with an AgentPanel is open, this
                     // creates a worktree-backed agent thread (isolated git worktree).
