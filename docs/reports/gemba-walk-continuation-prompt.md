@@ -14,11 +14,11 @@ The following infrastructure is wired and tested:
 
 ### Feedback signal channels (all emitting to `SkillSpanStore`)
 
-| Span | Emission point | Payload |
-|---|---|---|
-| `reg.skill.<id>.outcome` | `BridgeManifestExecutor::execute_skill` after cascade | `{success, skill_id, exit_kind, resume_text?}` |
-| `reg.skill.<id>.convergence` | `BridgeManifestExecutor::execute_skill` after cascade (success only) | `{iterations, exit_kind, converged}` |
-| `reg.skill.<id>.operator_feedback` | `RecordSkillFeedbackTool` → `record_operator_feedback` | `{disposition, comments, skill_name}` |
+| Span                               | Emission point                                                       | Payload                                        |
+| ---------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------- |
+| `reg.skill.<id>.outcome`           | `BridgeManifestExecutor::execute_skill` after cascade                | `{success, skill_id, exit_kind, resume_text?}` |
+| `reg.skill.<id>.convergence`       | `BridgeManifestExecutor::execute_skill` after cascade (success only) | `{iterations, exit_kind, converged}`           |
+| `reg.skill.<id>.operator_feedback` | `RecordSkillFeedbackTool` → `record_operator_feedback`               | `{disposition, comments, skill_name}`          |
 
 ### Drift detection (automated, in `MetacognitionLoop`)
 
@@ -53,9 +53,11 @@ The following infrastructure is wired and tested:
 The following sources inform the gemba walk skill design:
 
 ### 1. Microsoft Data Science — "Continuous improvement with agentic AI: Conducting a virtual gemba walk"
+
 (https://medium.com/data-science-at-microsoft/continuous-improvement-with-agentic-ai-conducting-a-virtual-gemba-walk-b39836f16301)
 
 Key patterns:
+
 - **Hierarchical multi-agent pattern**: coordinator delegates to
   specialized agents (data collection, analysis, optimization)
 - **7-step workflow**: problem definition → investigation plan → collect
@@ -67,9 +69,11 @@ Key patterns:
   potential resistance from employees
 
 ### 2. Chris Greenham — "Gemba AI Framework"
+
 (https://www.linkedin.com/posts/chris-greenham_the-gemba-ai-way-to-design-and-deploy-agentic-activity-7349017996629004288-2W0c)
 
 Key concepts:
+
 - **GODO-IT, TEPUI, TAPOIF** — unified language for design
 - **L1–L5 graduated maturity model** for autonomy
 - **TAPOIF lifecycle**: Thought → Action → Pause → Observation → Inform →
@@ -79,9 +83,11 @@ Key concepts:
 - Governance spans from strategy to real-time telemetry
 
 ### 3. Kevin Meyer — "The Gemba Was Always There. We Just Couldn't See It."
+
 (https://www.kevinmeyer.com/the-gemba-was-always-there-we-just-couldnt-see-it/)
 
 Key insight:
+
 - Knowledge work never had a real gemba — the work happened in people's
   heads, email threads, institutional memory
 - AI systems with visibility into workflows may be the first technology
@@ -92,9 +98,11 @@ Key insight:
   coordination overhead disguised as legitimate activity
 
 ### 4. GembaCore/gemba-core
+
 (https://github.com/GembaCore/gemba-core)
 
 Key architectural patterns:
+
 - **Two-plane architecture**: WorkPlane (data — work items, evidence) +
   OrchestrationPlane (agent sessions, dispatch)
 - **Spec-driven development**: spec.md is human-authored intent, beads are
@@ -106,9 +114,11 @@ Key architectural patterns:
   not a tool
 
 ### 5. C.H. Robinson — "What Is Lean AI?"
+
 (https://www.chrobinson.com/en-us/resources/blog/what-is-lean-ai/)
 
 Key principles:
+
 - **Start with a real problem, not a theoretical one**
 - **Test solutions, integrate human oversight, measure results**
 - **Continuous human feedback loop**: employees review outcomes and
@@ -131,6 +141,7 @@ The gemba-walk skill must:
 
 3. **Follow the six-phase gemba loop** from
    `docs/reports/gemba-loop-specification.md`:
+
    - Sense (automated, already running)
    - Prepare (Curator-assisted briefing — this is the skill's primary job)
    - Observe (interactive Q&A)
@@ -180,6 +191,7 @@ gemba-walk
 1. **How does the skill enumerate skill IDs?** The
    `skill_ids_with_feedback` method is on `RegulationLedger`, which is not
    an MCP tool. The skill can't call it directly. Options:
+
    - Add a `curator_skill_feedback_summary` MCP tool that returns all
      skills with feedback and their aggregate stats
    - Have the Curator agent (which has access to the ledger via its
@@ -189,6 +201,7 @@ gemba-walk
 
 2. **How does the skill handle the interactive Observe phase?** A skill
    cascade runs to completion — it can't pause for operator Q&A. Options:
+
    - The skill produces the briefing and recommendations in one pass, then
      the operator asks follow-up questions in the regular agent
      conversation (not within the skill cascade)

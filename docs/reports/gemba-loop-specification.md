@@ -6,14 +6,14 @@ Future work — specification, not yet implemented.
 
 ## Origin
 
-From analysis of Trooskens et al. (2026), *Compiled AI* (arXiv:2604.05150v2).
+From analysis of Trooskens et al. (2026), _Compiled AI_ (arXiv:2604.05150v2).
 The paper identifies two gaps: token economics as an explicit metric (gap 4)
 and the evolutionary system loop (gap 5). Both share a root cause: kask has
 feedback signal infrastructure but no structured human review process.
 
 ## The Gemba Concept
 
-From Lean management / Kaizen: *gemba* (現場, "the actual place") is the
+From Lean management / Kaizen: _gemba_ (現場, "the actual place") is the
 practice of going to where value is created to observe and improve. In kask's
 digital context, the "actual place" is the running cybernetic regulation
 system. The observer is the human operator with the Curator as companion.
@@ -51,7 +51,7 @@ operator feedback trend, amortization assessment.
 
 ## References
 
-- Trooskens, G., et al. (2026). *Compiled AI* (arXiv:2604.05150v2)
+- Trooskens, G., et al. (2026). _Compiled AI_ (arXiv:2604.05150v2)
 - `compiled-ai-gaps-review.md` — revised plan with verification
 - kask `RegulationLedger` — `kask/crates/hkask-regulation/src/runtime.rs`
 - kask `MetacognitionLoop` — `kask/crates/hkask-regulation/src/metacognition.rs`

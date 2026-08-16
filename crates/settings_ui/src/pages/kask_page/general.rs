@@ -9,11 +9,16 @@ pub(crate) fn render_general_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let (data_dir, tool_router): (String, kask_bridge::KaskToolRouterSettings) = raw
+    let (data_dir, tool_router, general): (
+        String,
+        kask_bridge::KaskToolRouterSettings,
+        kask_bridge::KaskGeneralSettings,
+    ) = raw
         .map(|c| {
             (
                 c.data_dir.unwrap_or_default(),
                 c.tool_router.map(Into::into).unwrap_or_default(),
+                c.general.map(Into::into).unwrap_or_default(),
             )
         })
         .unwrap_or_default();
@@ -45,6 +50,22 @@ pub(crate) fn render_general_page(
         tool_router.complex_word_threshold.to_string(),
         "tool_router",
         "complex_word_threshold",
+    );
+    let max_concurrency_input = kask_string_input(
+        "kask-general-max-concurrency",
+        "Max Concurrency",
+        "Default: 96",
+        general.max_concurrency.to_string(),
+        "general",
+        "max_concurrency",
+    );
+    let concurrency_step_input = kask_string_input(
+        "kask-general-concurrency-step",
+        "Concurrency Step",
+        "Default: 4",
+        general.concurrency_step.to_string(),
+        "general",
+        "concurrency_step",
     );
 
     v_flex()
@@ -109,6 +130,27 @@ pub(crate) fn render_general_page(
                 )
                 .child(threshold_input)
                 .child(complex_word_threshold_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(SettingsSectionHeader::new("Concurrency"))
+                .child(
+                    Label::new(
+                        "Global inference concurrency — the process-wide ceiling on \
+                         concurrent cloud inference provider calls. Applies to skill \
+                         cascades, corpus OCR, and MCP tool calls. The limiter starts \
+                         at the concurrency step and ramps up by the step on success \
+                         until the maximum or a provider throttle (429/503). Providers \
+                         throttle at different levels; OpenRouter and DeepInfra scale \
+                         to the ceiling. Changes require a restart to take effect.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(max_concurrency_input)
+                .child(concurrency_step_input),
         )
         .into_any_element()
 }

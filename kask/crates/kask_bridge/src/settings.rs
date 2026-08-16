@@ -12,11 +12,11 @@ use settings::{RegisterSetting, Settings};
 use settings_content::{
     KaskCodegraphSettingsContent, KaskCompaniesSettingsContent, KaskCondenserSettingsContent,
     KaskCorpusSettingsContent, KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent,
-    KaskDataServiceSettingsContent, KaskInferenceProvidersSettingsContent, KaskMcpSettingsContent,
-    KaskMediaSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
-    KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
-    KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
-    KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
+    KaskDataServiceSettingsContent, KaskGeneralSettingsContent,
+    KaskInferenceProvidersSettingsContent, KaskMcpSettingsContent, KaskMediaSettingsContent,
+    KaskMemorySettingsContent, KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent,
+    KaskResearchSettingsContent, KaskScenariosSettingsContent, KaskSettingsContent,
+    KaskSwarmSettingsContent, KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
 };
 
 use collections::HashMap;
@@ -42,6 +42,9 @@ pub struct KaskSettings {
     /// always receive a consistent data directory without requiring the
     /// operator to set environment variables manually.
     pub data_dir: String,
+
+    /// Kask-wide general configuration: global inference concurrency + batching.
+    pub general: KaskGeneralSettings,
 
     /// MCP server configuration — which of the 12 built-in servers to load.
     pub mcp: KaskMcpSettings,
@@ -99,6 +102,38 @@ pub struct KaskSettings {
     /// local collab server at startup so the kask extensions panel can fetch
     /// `/api/kask-skills` without depending on the deployed `zed.dev` server.
     pub collab: KaskCollabSettings,
+}
+
+/// Kask-wide general configuration: global inference concurrency + batching.
+/// The limiter is process-global (one `Arc` shared across all consumers —
+/// skill cascades, corpus OCR, MCP tool calls). See `kask_bridge::concurrency`
+/// for the wiring and `hkask_templates::concurrency` for the limiter impl.
+///
+/// `Default` is the single source of truth for defaults — `From<Content>`
+/// reads from it via `unwrap_or(default.field)`. Do not add
+/// `#[serde(default = ...)]` attributes here; `KaskSettings` is never
+/// deserialized directly (the settings system deserializes `SettingsContent`
+/// and converts via `From`).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct KaskGeneralSettings {
+    /// Maximum concurrent cloud inference provider calls across the whole
+    /// process. Default 96. Providers throttle at different levels;
+    /// OpenRouter and DeepInfra scale to this ceiling.
+    pub max_concurrency: u32,
+
+    /// Concurrency step — the ramp origin and increment. The limiter starts
+    /// at `concurrency_step` permits and adds `concurrency_step` per ramp
+    /// tick on success until `max_concurrency` or a throttle. Default 4.
+    pub concurrency_step: u32,
+}
+
+impl Default for KaskGeneralSettings {
+    fn default() -> Self {
+        Self {
+            max_concurrency: 96,
+            concurrency_step: 4,
+        }
+    }
 }
 
 /// MCP server load configuration.
@@ -1167,6 +1202,26 @@ impl From<KaskMcpSettingsContent> for KaskMcpSettings {
     }
 }
 
+impl From<KaskGeneralSettingsContent> for KaskGeneralSettings {
+    fn from(c: KaskGeneralSettingsContent) -> Self {
+        let default = Self::default();
+        // Treat 0 as "use default" — a user setting `max_concurrency: 0` would
+        // construct a limiter that admits no permits, deadlocking every
+        // inference call. Same for `concurrency_step: 0` (the ramp origin
+        // and increment must be ≥ 1).
+        Self {
+            max_concurrency: c
+                .max_concurrency
+                .filter(|&v| v > 0)
+                .unwrap_or(default.max_concurrency),
+            concurrency_step: c
+                .concurrency_step
+                .filter(|&v| v > 0)
+                .unwrap_or(default.concurrency_step),
+        }
+    }
+}
+
 impl From<KaskDataServiceSettingsContent> for KaskDataServiceSettings {
     fn from(c: KaskDataServiceSettingsContent) -> Self {
         let default = Self::default();
@@ -1426,6 +1481,7 @@ impl From<KaskSettingsContent> for KaskSettings {
     fn from(c: KaskSettingsContent) -> Self {
         Self {
             data_dir: c.data_dir.unwrap_or_default(),
+            general: c.general.map(Into::into).unwrap_or_default(),
             mcp: c.mcp.map(Into::into).unwrap_or_default(),
             data_services: c.data_services.map(Into::into).unwrap_or_default(),
             curator: c.curator.map(Into::into).unwrap_or_default(),

@@ -12,6 +12,7 @@
 pub mod budget;
 pub mod bundle;
 pub mod compute;
+pub mod concurrency;
 pub mod condition;
 pub mod convergence;
 pub mod executor;

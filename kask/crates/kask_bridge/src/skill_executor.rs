@@ -568,7 +568,19 @@ impl BridgeManifestExecutor {
             executor
         };
 
-        executor.with_cascade_context(prior_messages, memory_snippets)
+        let executor = executor.with_cascade_context(prior_messages, memory_snippets);
+
+        // Wire the global concurrency limiter into the cascade's `Infra` so
+        // step actions (`execute_parallel`, `execute_tool_invoke`,
+        // `execute_select`) can acquire permits before cloud inference / tool
+        // calls. `None` before startup wiring — callers skip gating.
+        let executor = if let Some(limiter) = crate::global_concurrency_limiter() {
+            executor.with_concurrency_limiter(Arc::clone(limiter))
+        } else {
+            executor
+        };
+
+        executor
     }
 }
 

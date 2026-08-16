@@ -10,6 +10,7 @@
 //! depends on hKask. This bridge is the only crate that depends on both sides.
 
 mod cascade_context;
+mod concurrency;
 mod condenser_bridge;
 mod context_injector;
 
@@ -24,6 +25,7 @@ mod settings;
 mod skill_executor;
 
 pub use cascade_context::{AgentCascadeContextProviderAdapter, BridgeCascadeContextProvider};
+pub use concurrency::{global_concurrency_limiter, set_global_concurrency_limiter};
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
 
@@ -62,9 +64,10 @@ pub use model_resolution::resolve_model_names;
 pub use settings::{
     KaskCodegraphSettings, KaskCollabSettings, KaskCompaniesSettings, KaskCondenserSettings,
     KaskCorpusSettings, KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings,
-    KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
-    KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings, KaskScenariosSettings,
-    KaskSettings, KaskSwarmSettings, KaskToolRouterSettings, KaskTrainingSettings, SwarmModeConfig,
+    KaskGeneralSettings, KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings,
+    KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
+    KaskScenariosSettings, KaskSettings, KaskSwarmSettings, KaskToolRouterSettings,
+    KaskTrainingSettings, SwarmModeConfig,
 };
 pub use skill_executor::{
     BridgeManifestExecutor, ProfileResolver, SnapshotProfileResolver, seed_registry_to_disk,
