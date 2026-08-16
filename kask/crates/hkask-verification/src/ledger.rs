@@ -309,7 +309,7 @@ impl VerificationStore {
                     && (!r.nulled_fields.is_empty() || !r.narrative_leaks.is_empty())
             })
             .collect();
-        violations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        violations.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
         Ok(violations)
     }
 
@@ -339,7 +339,6 @@ impl VerificationStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grounding::task_agent_contract;
     use serde_json::json;
 
     /// Build an in-memory `VerificationStore` for tests.

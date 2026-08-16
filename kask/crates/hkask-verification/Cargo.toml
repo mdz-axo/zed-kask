@@ -14,7 +14,6 @@ hkask-storage.workspace = true
 hkask-types.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-schemars = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
