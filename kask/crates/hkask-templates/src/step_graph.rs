@@ -102,6 +102,9 @@ pub struct StepNode {
     pub command: Option<Arc<str>>,
     /// Per-step failure handling.
     pub on_failure: Option<Arc<crate::bundle::manifest::OnFailureConfig>>,
+    /// Batch of MCP tool invocations to run concurrently. `None` for steps
+    /// that use `mcp` (single call) or non-tool actions.
+    pub mcp_batch: Option<Arc<Vec<crate::bundle::manifest::McpBatchEntry>>>,
 }
 
 /// A validated, addressable step graph. Built once from a `BundleManifest`;
@@ -179,6 +182,7 @@ impl StepGraph {
                 step_id_name: step.id.clone().map(Arc::from),
                 command: step.command.clone().map(Arc::from),
                 on_failure: step.on_failure.clone().map(Arc::new),
+                mcp_batch: step.mcp_batch.clone().map(Arc::new),
             });
         }
 
@@ -253,6 +257,7 @@ mod tests {
             id: None,
             command: None,
             on_failure: None,
+            mcp_batch: None,
         }
     }
 

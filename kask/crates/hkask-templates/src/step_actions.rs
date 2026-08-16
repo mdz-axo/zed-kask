@@ -451,6 +451,14 @@ impl StepMachine {
         node: &crate::step_graph::StepNode,
         infra: &Infra,
     ) -> Result<Effect> {
+        // Batch path: when `mcp_batch` is present, invoke all tools concurrently,
+        // each gated by the global concurrency limiter. Results are collected
+        // into a `Value::Object` keyed by `entry.key` (defaulting to the tool
+        // name). Mutually exclusive with the single `mcp` path.
+        if let Some(ref batch) = node.mcp_batch {
+            return self.execute_tool_batch(node, batch, infra).await;
+        }
+
         let mcp_ref_raw = node.mcp.as_deref().ok_or_else(|| {
             TemplateError::Manifest(format!(
                 "Execute step {} has no mcp reference",
@@ -501,6 +509,123 @@ impl StepMachine {
         Ok(Effect::Stored {
             step_id: node.id,
             value: result,
+        })
+    }
+
+    /// **Tool batch** — invoke multiple MCP tools concurrently, each gated by
+    /// the global concurrency limiter. Results are collected into a
+    /// `Value::Object` keyed by `entry.key` (defaulting to the tool name).
+    /// All tools share one `tokio::time::timeout` (the step's
+    /// `timeout_seconds`) — a batch is one logical step, not N independent
+    /// steps with individual timeouts.
+    ///
+    /// Error semantics: if any tool fails, the step fails (the first error
+    /// propagates). A partial-success mode (collect errors per-key) is a
+    /// future extension. Gas is charged one iteration per tool (keeps the
+    /// gas model honest — a 6-tool batch costs 6 iterations, not 1).
+    pub(crate) async fn execute_tool_batch(
+        &mut self,
+        node: &crate::step_graph::StepNode,
+        batch: &[crate::bundle::manifest::McpBatchEntry],
+        infra: &Infra,
+    ) -> Result<Effect> {
+        use futures_util::future::join_all;
+
+        let timeout_dur = effective_timeout(node.timeout_seconds);
+        let limiter = infra.concurrency_limiter.clone();
+        let tools = Arc::clone(&infra.tools);
+
+        // Build the per-tool futures. Each acquires a permit from the global
+        // limiter before invoking, then calls `on_success` / `on_throttle`
+        // after. The permit is held for the call's lifetime.
+        let tool_futs = batch.iter().map(|entry| {
+            let mcp_ref_raw = entry.mcp.clone();
+            let input_mapping = entry.input_mapping.clone();
+            let key = entry.key.clone();
+            let limiter = limiter.clone();
+            let tools = Arc::clone(&tools);
+            let context = self.context.clone();
+            let template_renderer = infra.template_renderer.clone();
+
+            async move {
+                // Resolve ${variable} references in the MCP reference.
+                let mcp_ref = crate::template_renderer::TemplateRenderer::render_inline(
+                    &mcp_ref_raw,
+                    &context,
+                );
+
+                // Resolve the tool input.
+                let input: Value = input_mapping
+                    .as_ref()
+                    .map(|mapping| {
+                        crate::input_mapping::resolve_mapping_value(
+                            mapping,
+                            &context,
+                            &template_renderer,
+                        )
+                    })
+                    .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+
+                // Acquire a permit before issuing the call. When no limiter
+                // is wired (tests), skip gating.
+                let _permit = if let Some(ref limiter) = limiter {
+                    Some(limiter.acquire().await)
+                } else {
+                    None
+                };
+
+                let result = invoke_tool(&tools, &mcp_ref, input).await;
+
+                // Ramp the limiter based on the call outcome.
+                if let Some(ref limiter) = limiter {
+                    match &result {
+                        Ok(_) => limiter.on_success(),
+                        Err(e) if e.is_throttle() => limiter.on_throttle(),
+                        _ => {} // deterministic errors don't back off
+                    }
+                }
+
+                // Derive the result key: explicit `key` if provided, else the
+                // tool name (last segment of the mcp ref after `/` or `.`).
+                let result_key = key.unwrap_or_else(|| {
+                    mcp_ref_raw
+                        .rsplit(['/', '.'])
+                        .next()
+                        .unwrap_or(&mcp_ref_raw)
+                        .to_string()
+                });
+
+                result.map(|value| (result_key, value))
+            }
+        });
+
+        // Run all tool futures concurrently under one shared timeout.
+        let results = match tokio::time::timeout(timeout_dur, join_all(tool_futs)).await {
+            Ok(joined) => joined,
+            Err(_elapsed) => {
+                return Err(TemplateError::Timeout {
+                    step_ordinal: node.ordinal,
+                    elapsed_seconds: timeout_dur.as_secs(),
+                });
+            }
+        };
+
+        // Collect into a `Value::Object`, propagating the first error.
+        let mut map = serde_json::Map::new();
+        for result in results {
+            let (key, value) = result?;
+            map.insert(key, value);
+        }
+        let joined = Value::Object(map);
+
+        // Charge gas: one iteration per tool in the batch.
+        for _ in 0..batch.len() {
+            self.budget.charge_iteration();
+        }
+
+        Ok(Effect::Stored {
+            step_id: node.id,
+            value: joined,
         })
     }
 

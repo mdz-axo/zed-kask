@@ -155,6 +155,29 @@ pub struct BundleManifestStep {
     /// skill-use reporting loop (Co-evolution Phase 2, Loop 2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_failure: Option<OnFailureConfig>,
+    /// Batch of MCP tool invocations to run concurrently. When present, the
+    /// executor invokes each tool in the batch in parallel (gated by the
+    /// global concurrency limiter), collects results into a `Value::Object`
+    /// keyed by `entry.key` (defaulting to the tool name), and stores the
+    /// object as the step result. Mutually exclusive with `mcp` — a step
+    /// declares either a single `mcp` call or an `mcp_batch`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_batch: Option<Vec<McpBatchEntry>>,
+}
+
+/// One entry in an `mcp_batch` step — a single MCP tool invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpBatchEntry {
+    /// The MCP tool reference (same format as `BundleManifestStep::mcp`).
+    pub mcp: String,
+    /// Input mapping for this tool call. Resolved against the step context
+    /// the same way as a single-call step's `input_mapping`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_mapping: Option<serde_json::Value>,
+    /// Key in the result object. Defaults to the tool name (the last segment
+    /// of the `mcp` reference after any `/` or `.`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }
 
 /// Per-step failure handling configuration for pipeline manifests.
