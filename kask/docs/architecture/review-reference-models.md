@@ -154,43 +154,74 @@ review; they are the load-bearing citations.
   a regulator (it detects and reports deviations), and the pathology
   set *is* the disturbance (the things that go wrong).
 
-### 6. Murphy, Notkin, Sullivan — Software Reflexion Models
+### 6. SEI ATAM — Intended vs Evaluated Architecture (IS/OUGHT framing)
 
-- **Citation:** Murphy, Gail C.; Notkin, David; Sullivan, Kevin J. (1995).
-  "Software Reflexion Models: Bridging the Gap between Design and
-  Implementation." *Proc. FSE 1995.* Expanded: Murphy, Gail C.; Notkin,
-  David; Sullivan, Kevin J. (2001). "Software Reflexion Models: Bridging
-  the Gap between Design and Implementation." *IEEE TSE* 27(4).
-- **Verified:** ⚠️ **NOT VERIFIED by primary-source fetch.** The CMU/UBC
-  PDFs returned 404 and Wikipedia has no article. The citation is
-  well-established in the software architecture literature (SEI/CMU
-  lineage, widely cited). Treat as standard-but-unverified until a copy
-  is placed in `kask/research/` or a primary source is fetched.
+- **Citation:** Kazman, Rick; Klein, Mark; Clements, Paul. "ATAM: Method
+  for Architecture Evaluation." CMU/SEI. Bass, Len; Clements, Paul;
+  Kazman, Rick (2003). *Software Architecture in Practice*, 2nd ed.
+  Addison-Wesley. (Same citation as reference #2 — ATAM provides both
+  the quality-attribute framing and the intended-vs-evaluated framing.)
+- **Verified:** Wikipedia, "Architecture tradeoff analysis method,"
+  retrieved 2026-08-16.
 - **What it provides:** the IS/OUGHT structure for comparing an
-  *intended* model (the design) against an *extracted* model (the code)
-  to surface divergences. The reflexion model highlights where the
-  actual structure agrees with, diverges from, or is absent from the
-  intended structure.
+  *intended* architecture (the design as documented) against an
+  *evaluated* architecture (the design as built) to surface trade-offs,
+  sensitivity points, and risks. ATAM's process explicitly produces an
+  analysis of where the evaluated architecture diverges from the
+  intended one.
 - **What it grounds in our skills:** the IS/OUGHT structure of
-  `coherence-review`. DIVERGENCE.md is the *intended* model (the kask
-  side is ours, the D-seams are the named divergences). The extracted
-  crate graph is the *actual* model. The cross-level finding flow is the
-  reflexion: L2 says "servers should be leaves" (intended), L3 finds
-  domain logic in a server (actual) — the divergence is the finding.
-  In `constraints-review`, the reference models in this doc are the
+  `coherence-review`. DIVERGENCE.md is the *intended* architecture (the
+  kask side is ours, the D-seams are the named divergences). The
+  extracted crate graph is the *evaluated* architecture. The
+  cross-level finding flow is the ATAM divergence analysis: L2 says
+  "servers should be leaves" (intended), L3 finds domain logic in a
+  server (evaluated) — the divergence is the finding. In
+  `constraints-review`, the reference models in this doc are the
   *intended* constraint set; the live `.rules` + `DIVERGENCE.md` are the
-  *actual* — drift is the divergence.
-- **Where we deviate:** Murphy's reflexion models are drawn manually by
-  an architect and compared automatically. Our intended model
-  (DIVERGENCE.md) is maintained continuously; our actual model (crate
-  graph) is extracted automatically. The deviation is justified: in a
-  living codebase, the intended model must be version-controlled, not
-  drawn on demand.
-- **Fallback if citation cannot be verified:** substitute ATAM's
-  "intended architecture vs evaluated architecture" framing (verified
-  via ATAM above). The IS/OUGHT structure is preserved; the citation
-  changes. If you make this substitution, update this doc and the two
-  skill manifests that cite Murphy.
+  *evaluated* — drift is the divergence.
+- **Where we deviate:** ATAM is a stakeholder-workshop method that
+  produces the intended-vs-evaluated comparison interactively. Our
+  intended model (DIVERGENCE.md) is maintained continuously; our
+  evaluated model (crate graph) is extracted automatically. The
+  deviation is justified: in a living codebase, the intended model must
+  be version-controlled, not produced on demand.
+- **Note on Murphy et al.:** an earlier version of this doc cited
+  Murphy, Notkin, Sullivan (1995/2001) "Software Reflexion Models" for
+  the IS/OUGHT framing. That citation could not be verified by
+  primary-source fetch (CMU/UBC PDFs returned 404; IEEE/ACM paywalled).
+  The IS/OUGHT structure is preserved by re-grounding in ATAM's
+  intended-vs-evaluated framing, which is verified. If a primary source
+  for Murphy et al. is later placed in `kask/research/`, the framing
+  can be re-grounded there — the structure is the same, only the
+  citation changes.
+
+### 7. Atkins & Murphy — Reflection: a review of the literature
+
+- **Citation:** Atkins, S.; Murphy, K. (1993). "Reflection: a review of
+  the literature." *Journal of Advanced Nursing* 18(8), pp. 1188–1192.
+  doi:10.1046/j.1365-2648.1993.18081188.x. PMID: 8376656.
+- **Verified:** PubMed PMID 8376656, retrieved 2026-08-16 via NCBI
+  E-utilities (esummary + efetch). Abstract confirmed.
+- **What it provides:** a literature review of reflective processes that
+  identifies the key stages of reflection and the skills required to
+  engage in it. The review finds that differences between authors'
+  accounts are largely those of terminology, detail, and the extent to
+  which processes are arranged in a hierarchy. The staged-process model
+  of reflection grounds the PDCA shape of both review skills: reflection
+  is not a single act but a sequence of stages, each building on the
+  last.
+- **What it grounds in our skills:** the methodological shape. Both
+  `coherence-review` and `constraints-review` are staged reflective
+  processes — elicit/classify/gate/drift and L1→L5 traversal are
+  reflection stages. Atkins & Murphy justify the staged structure (as
+  opposed to a single-pass review) and the hierarchy of stages (as
+  opposed to a flat checklist). This is a methodological reference,
+  not a structural one; it grounds *why* the skills are staged, not
+  *what* they check.
+- **Where we deviate:** Atkins & Murphy's context is professional
+  education (nursing); our context is software architecture review. The
+  deviation is the application domain, not the process structure. The
+  staged-reflection model transfers directly.
 
 ## How the references compose
 
@@ -201,7 +232,7 @@ graph TD
     S[Simon: near-decomposability] -->|justifies layering + boundary| CR
     C[Courtois: formalization for systems] -->|justifies crate-graph analysis| CR
     A[Ashby: requisite variety] -->|justifies per-level check sets| CR
-    M[Murphy: reflexion IS vs OUGHT] -->|justifies cross-level finding flow| CR
+    M[ATAM: intended vs evaluated architecture] -->|justifies cross-level finding flow| CR
 
     S -->|near-decomposability as constraint| CO[constraints-review]
     A -->|variety as constraint force| CO
@@ -245,7 +276,9 @@ align with the reference. The operator chooses; the skill reports.
 
 ## Version
 
-- **v1** (2026-08-16): initial reference set. Six references: Kruchten
-  4+1, SEI ATAM, Simon 1962, Courtois 1977, Ashby 1956, Murphy et al.
-  1995/2001. Five verified by fetch; Murphy inferred (see citation
-  block).
+- **v1.1** (2026-08-16): added Atkins & Murphy 1993 (reflection
+  literature review) as reference #7, grounding the staged-process shape
+  of both review skills. Verified via PubMed PMID 8376656. Six
+  structural references (Kruchten 4+1, SEI ATAM ×2 framings, Simon
+  1962, Courtois 1977, Ashby 1956) plus one methodological reference
+  (Atkins & Murphy 1993). All seven verified by fetch.

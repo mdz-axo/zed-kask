@@ -45,7 +45,7 @@ Read that doc. The load-bearing references and what they ground:
 3. **Simon near-decomposability** — justifies the kask/upstream boundary as a structural invariant. A constraint that weakens the boundary (e.g. allows upstream edits without a D-seam) diverges from Simon.
 4. **Courtois** — justifies crate-graph near-decomposability. A constraint that permits surface-to-surface deps diverges from Courtois.
 5. **Ashby requisite variety** — justifies per-level check sets. A level with one constraint for five failure modes diverges from Ashby.
-6. **Murphy reflexion models** — justifies the IS/OUGHT structure. A constraint set with no intended model (no DIVERGENCE.md, no reference doc) diverges from Murphy.
+6. **ATAM (intended vs evaluated)** — justifies the IS/OUGHT structure. A constraint set with no intended model (no DIVERGENCE.md, no reference doc) diverges from ATAM's intended-vs-evaluated framing.
 
 The calibration doc's "Where we deviate" sections document ACCEPTED deviations. A constraint that matches an accepted deviation is score-2, not score-3.
 
@@ -80,7 +80,7 @@ For each constraint, ask: does this constraint, if followed, produce a system th
 - **Ashby (requisite variety):** Does the constraint, combined with the others at its level, provide enough variety to catch the failure modes? If a level is below floor (from cr-gate), the constraints at that level collectively diverge from Ashby.
 - **ATAM (quality attributes):** Does the constraint map to a quality attribute at its level? If a constraint is level-agnostic (applies the same rule at all levels), it diverges from ATAM's per-attribute framing.
 - **4+1 (multiple views):** Does the constraint respect that different levels need different views? If a constraint collapses levels, it diverges.
-- **Murphy (IS/OUGHT):** Does the constraint have an intended model to compare against? If a constraint has no reference (no DIVERGENCE.md entry, no ADR, no reference doc citation), it diverges from Murphy's IS/OUGHT structure.
+- **ATAM (intended vs evaluated):** Does the constraint have an intended model to compare against? If a constraint has no reference (no DIVERGENCE.md entry, no ADR, no reference doc citation), it diverges from ATAM's IS/OUGHT structure.
 
 ### Score-3 findings are the drift signal
 

@@ -47,10 +47,11 @@ Load-bearing references (see the calibration doc for full citations):
 - **Simon's near-decomposability** — the kask/upstream boundary is a
   near-decomposability constraint. Grounds the constraint elicitation
   from `DIVERGENCE.md`.
-- **Murphy et al. reflexion models** — the reference models are the
-  *intended* constraint set; the live `.rules` are the *actual*. Drift is
-  the divergence. (⚠️ Murphy citation is inferred — see the calibration
-  doc.)
+- **SEI ATAM (intended vs evaluated)** — the reference models are the
+  *intended* constraint set; the live `.rules` are the *evaluated*. Drift
+  is the divergence. (See the calibration doc for the Murphy et al.
+  historical note — the IS/OUGHT framing was re-grounded in ATAM after
+  the Murphy citation could not be verified.)
 
 ## Instructions
 

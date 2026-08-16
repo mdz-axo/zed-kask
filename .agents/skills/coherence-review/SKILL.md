@@ -43,10 +43,12 @@ five-level structure and per-level convergence signals are justified by:
 - **Courtois** — formalizes the L2 crate-graph analysis.
 - **Ashby requisite variety** — justifies the per-level check sets (each
   level needs enough distinct checks to catch its failure modes).
-- **Murphy reflexion models** — justifies the IS/OUGHT structure:
-  DIVERGENCE.md is the intended model, the crate graph is the actual,
-  the cross-level finding flow is the reflexion. (⚠️ Murphy citation is
-  inferred — see the calibration doc.)
+- **SEI ATAM (intended vs evaluated)** — justifies the IS/OUGHT
+  structure: DIVERGENCE.md is the intended architecture, the crate graph
+  is the evaluated architecture, the cross-level finding flow is the
+  ATAM divergence analysis. (See the calibration doc for the Murphy
+  et al. historical note — the IS/OUGHT framing was re-grounded in ATAM
+  after the Murphy citation could not be verified.)
 
 ## The Five Levels
 

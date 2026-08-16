@@ -70,9 +70,6 @@ inputs:
       Explicit list of source paths to elicit from. Overrides the canonical
       set when provided.
 
-ledger:
-  span_namespace: reg.skill.constraints-review
-
 steps:
   # === ELICIT (steps 1-2) ===
   - ordinal: 1
