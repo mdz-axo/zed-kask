@@ -58,10 +58,6 @@ pub const CORE_SKILL_NAMES: &[&str] = &[
     "code-review",
     "essentialist",
     "refactor-architecture",
-    // Multi-level coherence + constraint-set review (anchored to
-    // kask/docs/architecture/review-reference-models.md)
-    "coherence-review",
-    "constraints-review",
     // Essentialist delegates
     "deep-module",
     "coding-guidelines",
