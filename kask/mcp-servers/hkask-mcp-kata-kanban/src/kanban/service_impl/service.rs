@@ -997,61 +997,6 @@ impl KanbanService {
         Ok(task)
     }
 
-    /// Aggregate the grounding trend across all delegations recorded on this
-    /// board. Answers the paper's §4.1 question: "is this getting better?"
-    /// Reads the `grounding_summary` field from each task's `delegate_result`.
-    ///
-    /// The lead metric is `delegations_with_zero_nulled` — deletion-resistant
-    /// (paper Rule 5.4: a scoreboard that counts nulled fields falling can be
-    /// gamed by recording fewer delegations; counting delegations with zero
-    /// nulled fields cannot).
-    ///
-    /// `delegations_without_contract` is the coverage gap (paper §6: coverage
-    /// is itself a metric, not a pass). A delegation with `had_contract: false`
-    /// is a coverage gap, not a compliant delegation.
-    ///
-    /// pre:  board_id refers to an existing board
-    /// post: returns the grounding trend report, or an empty report if no
-    ///       delegations have been recorded
-    #[must_use = "result must be used"]
-    pub fn grounding_trend(
-        &self,
-        board_id: BoardId,
-    ) -> Result<crate::grounding::GroundingTrendReport, KanbanError> {
-        let tasks = self.task_list(board_id, TaskFilter::all())?;
-        let mut report = crate::grounding::GroundingTrendReport::default();
-        for task in &tasks {
-            let Some(delegate_result) = &task.delegate_result else {
-                continue;
-            };
-            report.total_delegations += 1;
-            let Some(summary) = &delegate_result.grounding_summary else {
-                // `grounding_summary: None` = grounding did not run (no
-                // contract for this agent_type). Coverage gap, not a pass.
-                report.delegations_without_contract += 1;
-                continue;
-            };
-            if summary.had_contract {
-                report.delegations_with_contract += 1;
-                match summary.nulled_fields_count {
-                    Some(0) => report.delegations_with_zero_nulled += 1,
-                    Some(_) => report.delegations_with_nulled += 1,
-                    None => report.delegations_unmeasured += 1,
-                }
-                if matches!(summary.narrative_leaks_count, Some(c) if c > 0) {
-                    report.delegations_with_narrative_leaks += 1;
-                }
-            } else {
-                // `had_contract: false` — no grounding contract existed for
-                // this delegation's agent_type. Coverage gap, not a compliant
-                // delegation (paper §6: coverage is itself a metric, not a
-                // pass). Matches the swarm-side `grounding_trend` behavior.
-                report.delegations_without_contract += 1;
-            }
-        }
-        Ok(report)
-    }
-
     /// Delete a board and all its tasks.
     ///
     /// pre:  board_id is valid

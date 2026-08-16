@@ -481,7 +481,6 @@ impl LocalSwarmRuntime {
             task_success: None,
             bind_matched: None,
             raw_response: None,
-            grounding_summary: None,
         })
     }
 }
@@ -610,50 +609,6 @@ pub struct LocalDelegateResult {
     /// grounding did not run (non-task agent types or non-JSON output).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_response: Option<String>,
-    /// Rung 3 (Grounding summary): the counts from grounding enforcement,
-    /// populated when grounding ran (task agent_type + JSON output). `None`
-    /// means grounding did not run for this delegation (paper Rule 5.3:
-    /// absence ≠ verdict — not "compliant", just "not checked"). Downstream
-    /// consumers (the curator, swarm-intelligence ORIENT, the trend query)
-    /// read grounding status from this field without parsing the response
-    /// JSON. Carries the deletion-resistant scoreboard metric (paper §4.1):
-    /// `nulled_fields_count == 0` means the delegation was clean.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grounding_summary: Option<GroundingSummary>,
-}
-
-/// A compact grounding summary carried on `LocalDelegateResult` so
-/// downstream consumers can read grounding status without parsing the
-/// response JSON or the full envelope. Mirrors the counts in
-/// `grounding::GroundingResult` but as a lightweight serializable struct
-/// (the full `GroundingResult` carries `HashMap`s and `Vec`s of previews
-/// that are too heavy for every delegation result).
-///
-/// `had_contract` distinguishes "grounding ran and found no violations"
-/// (`had_contract: true`, counts `Some(0)`) from "grounding did not run"
-/// (`had_contract: false`, counts `None`) — the paper's Rule 5.3: absence
-/// is not a verdict. A delegation with `had_contract: false` is a coverage
-/// gap, not a pass.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    PartialEq,
-    Eq,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
-pub struct GroundingSummary {
-    /// Whether a grounding contract existed for this delegation's agent_type.
-    pub had_contract: bool,
-    /// Count of fields nulled as Unsourced. `None` = not measured (contract
-    /// ran but the count could not be extracted — never silently 0, per the
-    /// `.rules` no-`unwrap_or(0)` rule).
-    pub nulled_fields_count: Option<usize>,
-    /// Count of narrative leaks detected. `None` = not measured.
-    pub narrative_leaks_count: Option<usize>,
 }
 
 impl LocalDelegateResult {
@@ -945,7 +900,6 @@ mod accounting_honesty_tests {
             task_success: None,
             bind_matched: None,
             raw_response: None,
-            grounding_summary: None,
         };
         let json = serde_json::to_value(&result).expect("serialize");
         assert!(
@@ -971,7 +925,6 @@ mod accounting_honesty_tests {
             task_success: None,
             bind_matched: None,
             raw_response: None,
-            grounding_summary: None,
         };
         let json = serde_json::to_value(&result).expect("serialize");
         assert_eq!(

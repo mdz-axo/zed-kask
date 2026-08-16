@@ -28,9 +28,11 @@
 //! query reads all records and aggregates.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
+use hkask_storage::database::driver::DatabaseDriver;
+use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{HMem, HMemStore};
 use hkask_types::{HMemOntology, Visibility, WebID};
 use serde_json::Value;
@@ -75,6 +77,84 @@ impl VerificationStore {
             store,
             contracts: Mutex::new(contracts),
         }
+    }
+
+    /// Open a `VerificationStore` at the standard path
+    /// (`mcp/verification/grounding.db`), resolved under the hKask data dir.
+    /// Override via `HKASK_VERIFICATION_DB`. The passphrase is
+    /// `HKASK_VERIFICATION_PASSPHRASE` (default `"allostery"` for
+    /// pre-release — the verification ledger is shared across MCP server
+    /// processes via SQLite WAL mode and must be encrypted at rest in
+    /// production, but a fixed default lets local-only dev setups work
+    /// without configuration).
+    ///
+    /// Falls back to an in-memory store when the DB cannot be opened —
+    /// grounding enforcement still runs, but records do not persist across
+    /// restarts and the curator's trend queries see only this process's
+    /// delegations. The fallback logs a `warn!` so the operator can
+    /// distinguish "not configured" from "configured but broken."
+    pub fn open() -> Self {
+        let db_path = std::env::var("HKASK_VERIFICATION_DB").unwrap_or_else(|_| {
+            let relative = hkask_types::agent_paths::mcp_server_db("verification", "grounding");
+            let resolved = hkask_types::agent_paths::resolve_under_data_dir(&relative);
+            if let Some(parent) = resolved.parent()
+                && let Err(error) = std::fs::create_dir_all(parent)
+            {
+                tracing::warn!(
+                    target: "hkask.verification",
+                    %error,
+                    path = %parent.display(),
+                    "Failed to create verification DB directory — the subsequent DB open will surface the failure"
+                );
+            }
+            resolved.to_string_lossy().to_string()
+        });
+        let passphrase = std::env::var("HKASK_VERIFICATION_PASSPHRASE")
+            .unwrap_or_else(|_| "allostery".to_string());
+        match hkask_storage::open_or_repair(&db_path, &passphrase) {
+            Ok(db) => match db.sqlite_pool() {
+                Ok(pool) => {
+                    let driver: Arc<dyn DatabaseDriver> =
+                        Arc::new(SqliteDriver::new_labeled(pool, db_path.as_str()));
+                    match HMemStore::from_driver(driver) {
+                        Ok(store) => Self::new(store),
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "hkask.verification",
+                                %error,
+                                "Verification HMemStore init failed — falling back to in-memory. Grounding records will not persist across restarts."
+                            );
+                            Self::in_memory()
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "hkask.verification",
+                        %error,
+                        "Verification SQLite pool init failed — falling back to in-memory. Grounding records will not persist across restarts."
+                    );
+                    Self::in_memory()
+                }
+            },
+            Err(error) => {
+                tracing::warn!(
+                    target: "hkask.verification",
+                    %error,
+                    "Verification DB open failed — falling back to in-memory. Grounding records will not persist across restarts."
+                );
+                Self::in_memory()
+            }
+        }
+    }
+
+    /// Construct an in-memory `VerificationStore` for tests or as a
+    /// non-persistent fallback. Grounding enforcement still runs; records
+    /// do not persist across process restarts.
+    pub fn in_memory() -> Self {
+        let driver = SqliteDriver::in_memory_driver();
+        let store = HMemStore::from_driver(driver).expect("in-memory HMemStore");
+        Self::new(store)
     }
 
     /// Register a grounding contract for an agent_type. Extends coverage
@@ -260,15 +340,11 @@ impl VerificationStore {
 mod tests {
     use super::*;
     use crate::grounding::task_agent_contract;
-    use hkask_storage::SqliteDriver;
     use serde_json::json;
-    use std::sync::Arc;
 
     /// Build an in-memory `VerificationStore` for tests.
     fn test_store() -> VerificationStore {
-        let driver = SqliteDriver::in_memory_driver();
-        let store = HMemStore::from_driver(driver).expect("hmem store");
-        VerificationStore::new(store)
+        VerificationStore::in_memory()
     }
 
     #[test]
