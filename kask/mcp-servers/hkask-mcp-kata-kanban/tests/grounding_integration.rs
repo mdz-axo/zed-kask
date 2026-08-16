@@ -11,7 +11,7 @@
 #![cfg(test)]
 
 use hkask_mcp_kata_kanban::grounding::{self, ProvenanceTag};
-use hkask_mcp_swarm::{LocalAgentCard, LocalAgentCapabilities};
+use hkask_mcp_swarm::LocalAgentCard;
 
 // ── Grounding contract wiring tests ─────────────────────────────────────
 
