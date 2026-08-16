@@ -743,15 +743,19 @@ mod tests {
             "step 12 compute_ref must be swarm.second_order_monitor (C1)"
         );
 
-        // The loop step (ordinal 13) threads the accumulators + blame_count
+        // The loop step (ordinal 14) threads the accumulators + blame_count
         // back into context so the next iteration's DECIDE/ORIENT/CHECK/FILTER can
         // read them. A dropped binding silently disables a guard — this pins
         // the threading (the advertised-invariants trap).
+        //
+        // Ordinal shifted from 13 to 14 when a lisp.eval convergence-signal
+        // compute step was inserted at ordinal 13 (deterministic signal
+        // extraction from step_10_result.convergence_metric).
         let loop_step = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 13)
-            .expect("swarm-intelligence has a loop step (ordinal 13)");
+            .find(|s| s.ordinal == 14)
+            .expect("swarm-intelligence has a loop step (ordinal 14)");
         let loop_mapping = loop_step
             .input_mapping
             .as_ref()
@@ -827,14 +831,45 @@ mod tests {
         // returns iteration_log/failed_edits/influence_scores/fault_count, not
         // hypotenuse). A stale binding leaves the convergence tracker's
         // signal_history at a constant default and causes premature Cauchy
-        // convergence. Pin that the signal reads from step_10_result.
+        // convergence.
+        //
+        // The signal is now extracted by a lisp.eval compute step (ordinal 13)
+        // that reads step_10_result.convergence_metric deterministically. The
+        // loop step (ordinal 14) binds convergence_signal to step_13_result.
+        // Pin both sides: (1) the loop reads from the compute step, and (2)
+        // the compute step's env binds step_10_result.
         let conv_signal = loop_mapping
             .get("convergence_signal")
             .and_then(|v| v.as_str())
             .expect("loop step binds convergence_signal");
         assert!(
-            conv_signal.contains("step_10_result"),
-            "convergence_signal must read from the CHECK step (step_10_result), not a phantom field on the compute step — got {conv_signal}"
+            conv_signal.contains("step_13_result"),
+            "convergence_signal must read from the lisp.eval compute step (step_13_result) — got {conv_signal}"
+        );
+        let conv_compute = manifest
+            .steps
+            .iter()
+            .find(|s| s.ordinal == 13)
+            .expect("swarm-intelligence has a convergence-signal compute step (ordinal 13)");
+        assert_eq!(
+            conv_compute.action, "compute",
+            "step 13 must be a compute step"
+        );
+        assert_eq!(
+            conv_compute.compute_ref.as_deref(),
+            Some("lisp.eval"),
+            "step 13 compute_ref must be lisp.eval"
+        );
+        let conv_env = conv_compute
+            .input_mapping
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .and_then(|m| m.get("env"))
+            .and_then(|v| v.as_object())
+            .expect("step 13 has an env block");
+        assert!(
+            conv_env.contains_key("step_10_result"),
+            "step 13 env must bind step_10_result (the CHECK step)"
         );
     }
 

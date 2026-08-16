@@ -502,6 +502,26 @@ steps:
       cadence_every: 3
 
   - ordinal: 13
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence signal: the convergence_metric from the
+      CHECK step (step 10). Lower signal variance across iterations =
+      convergence (Cauchy). Using lisp.eval instead of a Jinja expression
+      makes the computation explicitly deterministic, budgeted
+      (gas_cap: 100), and observable via a reg.skill.swarm-intelligence
+      span. Guards against a missing convergence_metric field by returning
+      0 when absent.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((cm (assoc "convergence_metric" step_10_result)))
+          (if (is_null cm) 0 cm))
+      env:
+        step_10_result: "{{ step_10_result | default({}) }}"
+
+  - ordinal: 14
     action: loop
     description: >
       Re-enter the swarm-intelligence cycle if convergence is not met. Routes
@@ -518,7 +538,9 @@ steps:
         lessons_learned: "{{ step_10_result.lessons_learned | default([]) }}"
         next_focus: "{{ step_10_result.next_focus | default('') }}"
         second_order: "{{ step_12_result | default({}) }}"
-      convergence_signal: "{{ step_10_result.convergence_metric }}"
+      # Convergence signal from the deterministic lisp.eval compute step
+      # (step 13). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_13_result }}"
       iteration_log: "{{ step_11_result.iteration_log | default([]) }}"
       failed_edits: "{{ step_11_result.failed_edits | default([]) }}"
       influence_scores: "{{ step_11_result.influence_scores | default({}) }}"
