@@ -99,9 +99,7 @@ fn non_inference_template_refs() -> HashSet<String> {
                 if let Some(ref template_ref) = step.template_ref {
                     // Strip .j2 extension to match the path comparison
                     // in is_non_inference_template (which also strips .j2).
-                    let ref_no_ext = template_ref
-                        .strip_suffix(".j2")
-                        .unwrap_or(template_ref);
+                    let ref_no_ext = template_ref.strip_suffix(".j2").unwrap_or(template_ref);
                     exempt.insert(ref_no_ext.to_string());
                 }
             }
@@ -123,9 +121,7 @@ fn is_non_inference_template(path: &Path, exempt: &HashSet<String>) -> bool {
         Err(_) => return false,
     };
     let stem = relative.to_string_lossy().to_string();
-    let stem_no_ext = stem
-        .strip_suffix(".j2")
-        .unwrap_or(&stem);
+    let stem_no_ext = stem.strip_suffix(".j2").unwrap_or(&stem);
     exempt.contains(stem_no_ext)
 }
 

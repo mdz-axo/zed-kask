@@ -503,11 +503,14 @@ fn make_board_with_tasks_for_round_trip() -> (KanbanService, Board, WebID) {
     let done = svc
         .task_create(board.id, TaskSpec::new("Done Task".into()), owner)
         .expect("task Done");
-    svc.task_move(done.id, TaskStatus::Ready, owner).expect("move to Ready");
+    svc.task_move(done.id, TaskStatus::Ready, owner)
+        .expect("move to Ready");
     svc.task_move(done.id, TaskStatus::InProgress, owner)
         .expect("move to InProgress");
-    svc.task_move(done.id, TaskStatus::Review, owner).expect("move to Review");
-    svc.task_verify(done.id, "work complete", owner).expect("verify to Done");
+    svc.task_move(done.id, TaskStatus::Review, owner)
+        .expect("move to Review");
+    svc.task_verify(done.id, "work complete", owner)
+        .expect("verify to Done");
 
     (svc, board, owner)
 }
@@ -588,8 +591,7 @@ fn export_import_round_trip_preserves_board_structure() {
         // order so the comparison matches the parsed markdown's source order.
         new_titles.reverse();
         assert_eq!(
-            new_titles,
-            column.tasks,
+            new_titles, column.tasks,
             "task titles in column '{}' should match after round-trip",
             column.name
         );
@@ -618,7 +620,9 @@ fn export_import_round_trip_handles_special_characters() {
             .expect("task create");
     }
 
-    let tasks = svc.task_list(board.id, TaskFilter::all()).expect("task list");
+    let tasks = svc
+        .task_list(board.id, TaskFilter::all())
+        .expect("task list");
     let markdown = export_board_to_mermaid(&board, &tasks);
     let parsed = parse_mermaid_kanban(&markdown).expect("parse");
 
@@ -649,7 +653,9 @@ fn export_import_round_trip_preserves_column_order() {
         .board_create(owner, "Ordered Board", &columns)
         .expect("board create");
 
-    let tasks = svc.task_list(board.id, TaskFilter::all()).expect("task list");
+    let tasks = svc
+        .task_list(board.id, TaskFilter::all())
+        .expect("task list");
     let markdown = export_board_to_mermaid(&board, &tasks);
     let parsed = parse_mermaid_kanban(&markdown).expect("parse");
 
@@ -684,7 +690,7 @@ fn import_rejects_invalid_markdown() {
     );
     let err = result.expect_err("expected error");
     assert!(
-        err.contains("kanban"),
+        err.to_string().contains("kanban"),
         "error message should reference the missing `kanban` directive, got: {err}"
     );
 }
@@ -712,6 +718,11 @@ fn import_empty_board() {
         .board_create(owner, "Empty Imported Board", &columns)
         .expect("empty board create");
     assert_eq!(board.columns.len(), 1);
-    let tasks = svc.task_list(board.id, TaskFilter::all()).expect("task list");
-    assert!(tasks.is_empty(), "imported empty board should have no tasks");
+    let tasks = svc
+        .task_list(board.id, TaskFilter::all())
+        .expect("task list");
+    assert!(
+        tasks.is_empty(),
+        "imported empty board should have no tasks"
+    );
 }

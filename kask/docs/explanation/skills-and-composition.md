@@ -1,7 +1,7 @@
 ---
 title: "Skills and Composition"
 audience: [developers, operators, users]
-last_updated: 2026-08-14
+last_updated: 2026-08-15
 version: "0.34.0"
 status: "Active"
 domain: "Skill System"
@@ -399,13 +399,87 @@ When a skill is invoked in-process:
 
 ### Convergence (FlowDef Skills Only)
 
-FlowDef skills have a convergence threshold declared in their manifest. The PDCA cycle iterates until:
+FlowDef skills have a convergence block declared in their manifest. The PDCA cycle iterates until:
 
-1. The output delta between iterations falls below the convergence threshold, OR
-2. The energy budget is exhausted, OR
-3. The maximum iteration count is reached
+1. The convergence signal stabilizes below `cauchy_epsilon` over `cauchy_window`
+   iterations (Cauchy criterion), OR
+2. The energy budget is exhausted (`MaxedOut`), OR
+3. The maximum iteration count is reached (`max_iterations`)
 
-Convergence is validated by `FlowDefValidationReport` in `hkask-types::flowdef_validation`.
+The convergence mode is declared via `convergence_mode` in the manifest's
+`convergence:` block. Supported modes: `"cauchy"` (default — detects when
+the convergence signal stops moving), `""` (single-pass — no iteration),
+`"gap_or_cauchy_or_calibration"` (metacognition — three stop conditions).
+
+The convergence signal is typically produced by a `lisp.eval` `compute` step
+that deterministically computes a gap score from the LLM's output. The
+`ConvergenceTracker` in `hkask-templates` checks the signal against the
+Cauchy criterion.
+
+### Composition Principles for Optimal Skill Design
+
+Five principles discovered through the co-evolution of skills and MCP tools
+(Phase 1–3, 2026-08-15). Apply these when designing the PDCA shape and step
+sequence of any skill.
+
+#### 1. The Determinism Frontier
+
+Every skill has a boundary between deterministic steps (output fully
+determined by inputs) and probabilistic steps (LLM exercises judgment).
+Push as much work as possible to the deterministic side.
+
+- **`execute`** for MCP tool calls whose inputs are fully determined by prior
+  step outputs (financial data, codegraph queries, calibration reads).
+- **`compute`** (lisp.eval) for math, invariant checks, convergence signals.
+- **`select`** only for steps that require LLM judgment (synthesis, reasoning,
+  classification, prediction).
+
+The test: "Could a deterministic function produce this output from these
+inputs?" If yes, it should be `execute` or `compute`, not `select`.
+
+A skill with 0 `select` steps is above ceiling — it is a pipeline with no
+LLM judgment, not a skill (Conant-Ashby Good Regulator theorem: a regulator
+must model the system).
+
+#### 2. Persistence-Grounded Learning
+
+Every skill that produces forecasts, analyses, or recommendations should
+read its own prior outputs from MCP persistence before the cascade starts.
+This closes the feedback loop: the skill's current invocation is informed
+by its past performance.
+
+The pattern: `execute` step at ordinal 0 → read prior runs → thread into
+the first `select` step's `input_mapping`.
+
+#### 3. Failure Surfacing
+
+Every `execute` step must declare `on_failure: { action: report, resume: "..." }`.
+The `report` action calls `curator_report_skill_use_issue` before escalating
+— the Curator receives the skill name, tool name, step ordinal, and error.
+The `resume` text surfaces to the operator via `CascadeOutcome.resume_text`.
+
+Without `on_failure: report`, a failed `execute` step silently propagates as
+`TemplateError` and the operator sees `ExitKind::Escalated` with no context.
+
+#### 4. The Lisp Scaffold Pattern
+
+When an LLM step produces structured output with invariant properties (count,
+completeness, diversity, mutual exclusivity), follow it with a `lisp.eval`
+`compute` step that checks those invariants deterministically. The Lisp step's
+output (defect list or gap score) feeds the convergence signal.
+
+Pattern: LLM generates → Lisp checks → LLM repairs (on next iteration).
+
+#### 5. The Co-Evolution Loop
+
+Skills and MCP tools evolve together. Skills reveal MCP tool design issues
+(missing inputs, confusing schemas) via `on_failure: report`. The Curator
+reads skill-use reports and issues `EvolveMcpToolSchema` directives. MCP
+tools gain new capabilities that skills should adopt via `execute` steps.
+
+See [`skill-mcp-coevolution.md`](../plans/skill-mcp-coevolution.md) for the
+complete co-evolution plan and [`skill-mcp-integration.md`](skill-mcp-integration.md)
+for the two invocation patterns.
 
 ### Gas Consumption
 
@@ -433,6 +507,7 @@ Regulation span surface (agent panel) and look for `reg.tool.invoked`
 | `Skill 'X' not found` | Skill ID not in the loaded registry | List skills through the agent panel to see available IDs; ensure zed-kask was launched from the skill's project root |
 | `Inference failed` | Inference port error | Check inference backend configuration via zed-kask's `CredentialsProvider` (D9); ensure the provider API key is set |
 | `Template render error` | Jinja2 syntax error in skill template | Run the skill audit through the skill-maintenance tooling to detect template drift |
+| `ExitKind::Escalated` with `resume_text` | An `execute` or `compute` step failed after retries, and its `on_failure` config triggered `action: report` | Check the `resume_text` field in `CascadeOutcome` for the author's resume instruction; check the curator's memory for the `skill_use_issue` report |
 
 ---
 

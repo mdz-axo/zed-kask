@@ -40,9 +40,7 @@ impl MediaServer {
                         None,
                     )
                     .await
-                    .map_err(|e| {
-                        classify_inference_error("Voice design inference failed", e)
-                    })?;
+                    .map_err(|e| classify_inference_error("Voice design inference failed", e))?;
 
                 match serde_json::from_str::<serde_json::Value>(&r.text) {
                     Ok(v) => Ok(serde_json::json!({
@@ -94,9 +92,7 @@ impl MediaServer {
                 self.vision_port
                     .media_generate("generate_speech", &media_params)
                     .await
-                    .map_err(|e| {
-                        classify_inference_error("Speech generation failed", e)
-                    })
+                    .map_err(|e| classify_inference_error("Speech generation failed", e))
                     .map(|result| {
                         crate::media_block::enrich_with_omc_and_provenance(
                             result,
@@ -172,9 +168,7 @@ impl MediaServer {
                     .vision_port
                     .media_generate("transcribe", &media_params)
                     .await
-                    .map_err(|e| {
-                        classify_inference_error("Transcription failed", e)
-                    })?;
+                    .map_err(|e| classify_inference_error("Transcription failed", e))?;
 
                 let full_text = raw
                     .get("text")

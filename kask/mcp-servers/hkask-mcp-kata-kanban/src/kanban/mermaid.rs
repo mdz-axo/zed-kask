@@ -34,6 +34,14 @@
 
 use crate::kanban::{Board, ColumnDef, Task, TaskStatus};
 
+/// Errors returned by [`parse_mermaid_kanban`].
+#[derive(Debug, thiserror::Error)]
+pub enum MermaidParseError {
+    /// The markdown did not contain a `kanban` directive on its own line.
+    #[error("not a mermaid kanban block: missing `kanban` directive")]
+    MissingKanbanDirective,
+}
+
 /// A task reduced to the fields the mermaid format can carry: a slugified id
 /// (for renderers that benefit from unique node ids) and the title.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,10 +190,11 @@ pub fn export_board_to_mermaid_from_parts(
 
 /// Parse mermaid kanban markdown into a [`ParsedBoard`].
 ///
-/// Returns an error (as a `String`) if the markdown does not contain the
-/// `kanban` directive on its own line. The error message references `kanban`
-/// so callers can distinguish "not a kanban block" from other parse failures.
-pub fn parse_mermaid_kanban(markdown: &str) -> Result<ParsedBoard, String> {
+/// Returns [`MermaidParseError::MissingKanbanDirective`] if the markdown does
+/// not contain the `kanban` directive on its own line. The error message
+/// references `kanban` so callers can distinguish "not a kanban block" from
+/// other parse failures.
+pub fn parse_mermaid_kanban(markdown: &str) -> Result<ParsedBoard, MermaidParseError> {
     // Strip the ```mermaid ... ``` fence if present. We tolerate markdown
     // with or without the fence, and with or without leading/trailing
     // whitespace, but we require the `kanban` directive.
@@ -256,9 +265,7 @@ pub fn parse_mermaid_kanban(markdown: &str) -> Result<ParsedBoard, String> {
     }
 
     if !saw_kanban_directive {
-        return Err(
-            "not a mermaid kanban block: missing `kanban` directive".to_string(),
-        );
+        return Err(MermaidParseError::MissingKanbanDirective);
     }
 
     Ok(ParsedBoard { name, columns })
@@ -400,13 +407,26 @@ mod tests {
     fn export_then_parse_round_trips_structure() {
         let board_name = "Test Board";
         let columns = vec![
-            ("Backlog".to_string(), vec![
-                TaskSummary { id: "t_1".into(), title: escape_title("Task A") },
-                TaskSummary { id: "t_2".into(), title: escape_title("Task B") },
-            ]),
-            ("Done".to_string(), vec![
-                TaskSummary { id: "t_3".into(), title: escape_title("Task C") },
-            ]),
+            (
+                "Backlog".to_string(),
+                vec![
+                    TaskSummary {
+                        id: "t_1".into(),
+                        title: escape_title("Task A"),
+                    },
+                    TaskSummary {
+                        id: "t_2".into(),
+                        title: escape_title("Task B"),
+                    },
+                ],
+            ),
+            (
+                "Done".to_string(),
+                vec![TaskSummary {
+                    id: "t_3".into(),
+                    title: escape_title("Task C"),
+                }],
+            ),
         ];
         let markdown = export_board_to_mermaid_from_parts(board_name, &columns);
         assert!(markdown.starts_with("```mermaid\nkanban"));
@@ -429,7 +449,10 @@ mod tests {
         let result = parse_mermaid_kanban(md);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("kanban"), "error should mention kanban: {err}");
+        assert!(
+            err.to_string().contains("kanban"),
+            "error should mention kanban: {err}"
+        );
     }
 
     #[test]
@@ -455,9 +478,18 @@ mod tests {
         let parsed = ParsedBoard {
             name: None,
             columns: vec![
-                ParsedColumn { name: "Backlog".into(), tasks: vec![] },
-                ParsedColumn { name: "In Progress".into(), tasks: vec![] },
-                ParsedColumn { name: "Done".into(), tasks: vec![] },
+                ParsedColumn {
+                    name: "Backlog".into(),
+                    tasks: vec![],
+                },
+                ParsedColumn {
+                    name: "In Progress".into(),
+                    tasks: vec![],
+                },
+                ParsedColumn {
+                    name: "Done".into(),
+                    tasks: vec![],
+                },
             ],
         };
         let cols = columns_from_parsed(&parsed);
@@ -475,9 +507,18 @@ mod tests {
         let parsed = ParsedBoard {
             name: None,
             columns: vec![
-                ParsedColumn { name: "Icebox".into(), tasks: vec![] },
-                ParsedColumn { name: "Next".into(), tasks: vec![] },
-                ParsedColumn { name: "Now".into(), tasks: vec![] },
+                ParsedColumn {
+                    name: "Icebox".into(),
+                    tasks: vec![],
+                },
+                ParsedColumn {
+                    name: "Next".into(),
+                    tasks: vec![],
+                },
+                ParsedColumn {
+                    name: "Now".into(),
+                    tasks: vec![],
+                },
             ],
         };
         let cols = columns_from_parsed(&parsed);

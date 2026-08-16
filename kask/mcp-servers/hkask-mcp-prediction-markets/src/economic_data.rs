@@ -22,7 +22,9 @@ use serde_json::Value;
 pub enum EconomicDataError {
     #[error("invalid parameter: {0}")]
     InvalidParam(String),
-    #[error("HKASK_FRED_API_KEY not configured. Set HKASK_FRED_API_KEY via the keychain or environment variable.")]
+    #[error(
+        "HKASK_FRED_API_KEY not configured. Set HKASK_FRED_API_KEY via the keychain or environment variable."
+    )]
     MissingApiKey,
     #[error("{provider} API request failed: {detail}")]
     RequestFailed {

@@ -1345,13 +1345,11 @@ impl KanbanPanel {
             Err(error) => {
                 this.update(cx, |this, cx| {
                     this.fetching = false;
-                    this.error = Some(
-                        if error.is_retryable() {
-                            format!("Reconnecting to the kanban server… ({error})").into()
-                        } else {
-                            error.message().into()
-                        },
-                    );
+                    this.error = Some(if error.is_retryable() {
+                        format!("Reconnecting to the kanban server… ({error})").into()
+                    } else {
+                        error.message().into()
+                    });
                     cx.notify();
                 })
                 .log_err();
@@ -1682,16 +1680,16 @@ impl KanbanPanel {
                             this.export_board(cx);
                         }
                     }))
-                    .tooltip(Tooltip::text("Export board as mermaid markdown to clipboard"))
-                    .child(
-                        Icon::new(IconName::Download)
-                            .size(IconSize::Small)
-                            .color(if has_board {
-                                Color::Accent
-                            } else {
-                                Color::Muted
-                            }),
-                    ),
+                    .tooltip(Tooltip::text(
+                        "Export board as mermaid markdown to clipboard",
+                    ))
+                    .child(Icon::new(IconName::Download).size(IconSize::Small).color(
+                        if has_board {
+                            Color::Accent
+                        } else {
+                            Color::Muted
+                        },
+                    )),
             )
             .child(
                 div()
@@ -1704,7 +1702,9 @@ impl KanbanPanel {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.import_board(cx);
                     }))
-                    .tooltip(Tooltip::text("Import board from mermaid markdown in clipboard"))
+                    .tooltip(Tooltip::text(
+                        "Import board from mermaid markdown in clipboard",
+                    ))
                     .child(
                         Icon::new(IconName::Share)
                             .size(IconSize::Small)
@@ -2170,10 +2170,9 @@ impl SerializableItem for KanbanPanel {
 mod tests {
     use super::{
         ADVERTISED_KANBAN_TOOLS, BOARD_CREATE_TOOL, BOARD_DELETE_TOOL, BOARD_IMPORT_TOOL,
-        IDEMPOTENT_TOOLS, MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL,
-        TASK_DELETE_TOOL, TASK_SPAWN_TOOL, TASK_UPDATE_TOOL, attach_idempotency_key,
-        classify_kanban_fetch_error, is_idempotent_tool, mutation_retry_delay,
-        refresh_target, steer_system_prompt,
+        IDEMPOTENT_TOOLS, MAX_MUTATION_RETRIES, RefreshTarget, TASK_CREATE_TOOL, TASK_DELETE_TOOL,
+        TASK_SPAWN_TOOL, TASK_UPDATE_TOOL, attach_idempotency_key, classify_kanban_fetch_error,
+        is_idempotent_tool, mutation_retry_delay, refresh_target, steer_system_prompt,
     };
     use hkask_tool_invoker::InvokeError;
     use std::time::Duration;

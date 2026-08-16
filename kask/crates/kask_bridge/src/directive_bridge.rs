@@ -115,9 +115,7 @@ fn convert_evolution_type(
     ty: agent::SchemaEvolutionType,
 ) -> hkask_types::curator::SchemaEvolutionType {
     match ty {
-        agent::SchemaEvolutionType::AddField => {
-            hkask_types::curator::SchemaEvolutionType::AddField
-        }
+        agent::SchemaEvolutionType::AddField => hkask_types::curator::SchemaEvolutionType::AddField,
         agent::SchemaEvolutionType::RemoveField => {
             hkask_types::curator::SchemaEvolutionType::RemoveField
         }
@@ -282,7 +280,10 @@ mod tests {
             } => {
                 assert_eq!(server_name, "hkask-mcp-companies");
                 assert_eq!(tool_name, "dcf_valuation");
-                assert_eq!(evolution_type, hkask_types::curator::SchemaEvolutionType::AddField);
+                assert_eq!(
+                    evolution_type,
+                    hkask_types::curator::SchemaEvolutionType::AddField
+                );
                 assert_eq!(field_name, "wacc_override");
                 assert_eq!(new_type.as_deref(), Some("Option<f64>"));
                 assert!(rationale.contains("forensic-adjusted WACC"));

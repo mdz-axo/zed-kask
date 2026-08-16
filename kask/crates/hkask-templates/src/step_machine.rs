@@ -430,9 +430,7 @@ impl StepMachine {
                 Err(crate::ports::TemplateError::Timeout {
                     step_ordinal,
                     elapsed_seconds,
-                }) if attempt < max_retries
-                    && self.error_handling.on_timeout == "retry" =>
-                {
+                }) if attempt < max_retries && self.error_handling.on_timeout == "retry" => {
                     attempt += 1;
                     tracing::warn!(
                         target: "reg.skill.cascade.timeout_retry",
@@ -508,13 +506,12 @@ impl StepMachine {
                                     "failure_type": null,
                                 });
                                 // Best-effort: log if the report fails.
-                                if let Err(report_err) =
-                                    crate::step_actions::invoke_tool(
-                                        &infra.tools,
-                                        "curator_report_skill_use_issue",
-                                        report_input,
-                                    )
-                                    .await
+                                if let Err(report_err) = crate::step_actions::invoke_tool(
+                                    &infra.tools,
+                                    "curator_report_skill_use_issue",
+                                    report_input,
+                                )
+                                .await
                                 {
                                     tracing::warn!(
                                         target: "reg.skill.cascade.skill_use_issue_report_failed",

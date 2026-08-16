@@ -603,10 +603,10 @@ fn load_template_content(templates_dir: &Path, template_ref: &str) -> Option<Str
 }
 
 /// Find the step with a given ordinal in a manifest.
-fn find_step_by_ordinal<'a>(
-    manifest: &'a hkask_templates::bundle::manifest::BundleManifest,
+fn find_step_by_ordinal(
+    manifest: &hkask_templates::bundle::manifest::BundleManifest,
     ordinal: u32,
-) -> Option<&'a hkask_templates::bundle::manifest::BundleManifestStep> {
+) -> Option<&hkask_templates::bundle::manifest::BundleManifestStep> {
     manifest.steps.iter().find(|s| s.ordinal == ordinal)
 }
 
@@ -983,7 +983,7 @@ fn default_fallback_produces_full_replacement() {
     // by design (and the consumer handles it), annotate and increment.
     const WARNING_CEILING: usize = 0;
     assert!(
-        warnings.len() <= WARNING_CEILING,
+        warnings.len() == WARNING_CEILING,
         "{} default-fallback partial-overlay warnings (regression ceiling: {WARNING_CEILING}). \
          If the new warning is intentional (producer emits a partial overlay by design), \
          annotate it above and increment WARNING_CEILING.",
