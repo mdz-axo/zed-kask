@@ -144,23 +144,31 @@ capability_domains:
 skill_composition_capabilities:
   - id: determinism_frontier
     name: "Determinism frontier"
-    limit_type: floor
+    limit_type: floor_and_ceiling
     description: >
       The skill pushes deterministic work to execute/compute steps and uses
       select only for LLM judgment. A skill with select steps that could be
       execute or compute is below floor — it is paying LLM costs for work
-      that doesn't require judgment.
-    threshold: >
-      Floor: 0 select steps that could be execute/compute. Every select step
+      that doesn't require judgment. A skill with 0 select steps is above
+      ceiling — it is a pipeline with no LLM judgment, not a skill.
+    floor: >
+      0 select steps that could be execute/compute. Every select step
       must require LLM judgment (synthesis, reasoning, classification,
       prediction). The test: 'Could a deterministic function produce this
       output from these inputs?' If yes, it should be execute or compute.
+    ceiling: >
+      At least 1 select step. A skill with 0 select steps is a pipeline
+      (deterministic execution with no LLM judgment), not a skill. The
+      Conant-Ashby Good Regulator theorem requires the regulator to have
+      a model of the system — the select step IS the model. Without it,
+      the skill has no internal representation of its domain.
     evaluation_method: >
       For each select step, check whether its output could be produced
       deterministically from its inputs. If the step is 'search for X' →
       execute (codegraph_query). If the step is 'compute gap between A and B'
       → compute (lisp.eval). If the step is 'synthesize findings into a
-      narrative' → select (LLM judgment).
+      narrative' → select (LLM judgment). Also check: does the manifest
+      have at least 1 select step? If not, ceiling violation.
     examples:
       - "company-research-flash: 15 execute + 9 select (financial data is deterministic, analysis is judgment)"
       - "graph-audit: 6 execute + 4 select + 3 compute (codegraph queries deterministic, synthesis is judgment)"
@@ -224,6 +232,7 @@ skill_composition_capabilities:
       check output (defect count → convergence).
     prerequisites:
       - "determinism_frontier (the skill must already separate deterministic from probabilistic steps)"
+      - "failure_surfacing (compute step failures must be surfaced via on_failure: report — a lisp.eval step that fails silently is a broken feedback loop per .rules: no silent error collapse)"
     evaluation_method: >
       For each select step that produces structured output (JSON with fields
       that have count/completeness/diversity properties), check whether a
