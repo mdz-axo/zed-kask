@@ -1115,7 +1115,7 @@ The span taxonomy follows a hierarchical structured-logging convention.[^otel-sp
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-FW-005
 verified_date: 2026-07-24
-verified_against: mcp-servers/hkask-mcp-kata-kanban/src/kata.rs (execute:333-486), mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs (run_improvement_from:20-121 — single-pass for loop, no re-entry), mcp-servers/hkask-mcp-kata-kanban/src/kata/metrics.rs (capture_before/after:6-105, compute_improvement_signal:76-105), mcp-servers/hkask-mcp-kata-kanban/src/kata/manifest.rs (KataStep, KataManifest, convergence config), mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/status.rs (TaskStatus transitions), registry/manifests/kata-improvement.yaml (step definitions, convergence parameters, Regulation spans:150-160), crates/hkask-templates/src/executor.rs (execute_manifest:209-686 — convergence loop, check_convergence:746-799)
+verified_against: mcp-servers/hkask-mcp-kata-kanban/src/kata.rs (execute:333-486), mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs (run_improvement_from:20-121 — single-pass for loop, no re-entry), mcp-servers/hkask-mcp-kata-kanban/src/kata/metrics.rs (capture_before/after:6-105, compute_improvement_signal:76-105), mcp-servers/hkask-mcp-kata-kanban/src/kata/manifest.rs (KataStep, KataManifest, convergence config), kask/crates/hkask-types/src/kanban_status.rs (TaskStatus transitions), registry/manifests/kata-improvement.yaml (step definitions, convergence parameters, Regulation spans:150-160), crates/hkask-templates/src/executor.rs (execute_manifest:209-686 — convergence loop, check_convergence:746-799)
 status: VERIFIED (v3 — hkask-cli deleted; kata engine is library-level/test-only, not invoked in production — production kata execution is ManifestExecutor (D1) + kata skill manifests; convergence loop is ManifestExecutor concern)
 -->
 
@@ -1127,7 +1127,7 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is library-level/test-on
 - [`kata/improvement.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs) — `run_improvement_from()` single-pass step loop (L20-121)
 - [`executor.rs`](crates/hkask-templates/src/executor.rs) — `ManifestExecutor::execute_manifest()` convergence loop (L209-686), `check_convergence()` (L746-799)
 - [`kata/metrics.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata/metrics.rs) — before/after capture, signal computation (L6-133)
-- [`kanban/types/status.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/status.rs) — `TaskStatus` column-ordered transitions
+- [`kanban/types/status.rs`](kask/crates/hkask-types/src/kanban_status.rs) — `TaskStatus` column-ordered transitions
 - [`registry/manifests/kata-improvement.yaml`](registry/manifests/kata-improvement.yaml) — canonical step definitions, convergence params, Regulation spans
 
 
@@ -1162,7 +1162,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-FW-006
 verified_date: 2026-07-24
-verified_against: mcp-servers/hkask-mcp-kata-kanban/src/lib.rs:656-686 (kanban_task_kata_improvement calls task_improvement_prompt); mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/kata.rs:104-177 (task_improvement_prompt); mcp-servers/hkask-mcp-kata-kanban/src/kata.rs:334-498 (KataEngine::execute)
+verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:656-686 (kanban_task_kata_improvement calls task_improvement_prompt); mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/kata.rs:104-177 (task_improvement_prompt); mcp-servers/hkask-mcp-kata-kanban/src/kata.rs:334-498 (KataEngine::execute)
 status: VERIFIED (v3 — hkask-cli deleted; kata engine is library-level/test-only, not invoked in production; the kata-kanban MCP server exposes prompt-generation tools only; production kata execution is ManifestExecutor (D1) + kata skill manifests)
 -->
 
@@ -1216,7 +1216,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-FW-008
 verified_date: 2026-07-20
-verified_against: mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/status.rs:61-73 (can_transition_to), mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:820-843 (task_reopen), mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/dejam.rs:180-207 (task_gas_exhaust), mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:613-624 (task_claim status check)
+verified_against: kask/crates/hkask-types/src/kanban_status.rs:61-73 (can_transition_to), mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:820-843 (task_reopen), mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/dejam.rs:180-207 (task_gas_exhaust), mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:613-624 (task_claim status check)
 status: VERIFIED
 -->
 

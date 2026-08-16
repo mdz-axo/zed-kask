@@ -28,7 +28,7 @@ normative design, each recommendation carrying a `depends on` clause.
 
 `corpus_discover` (`tools/gather/mod.rs:81`) discovers an **academic author's** body of
 work: multi-source search (Semantic Scholar, arXiv, web, **YouTube transcripts via
-SerpAPI** — `include_transcripts` flag at L51, fetch at `corpus/discover/search.rs:242`),
+SerpAPI** — `include_transcripts` flag at L51, fetch at `kask/mcp-servers/hkask-mcp-corpus/src/corpus/discover/search.rs:242`),
 content extraction, `corpus.yaml` generation for `corpus_build_persona`. Supports
 `agentic` (fully automated) and `curated` (human-in-the-loop) modes.
 

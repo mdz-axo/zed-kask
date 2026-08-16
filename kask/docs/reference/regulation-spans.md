@@ -155,7 +155,7 @@ Additional QA namespaces in `CANONICAL_NAMESPACES` (emitted as tracing events, n
 
 ### 3.9 Skill Spans
 
-**File:** `kask/crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted by `kask/crates/hkask-templates/src/manifest_executor.rs` (skill execution via D1)
+**File:** `kask/crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted by `kask/crates/hkask-templates/src/executor.rs` (skill execution via D1)
 
 Skill lifecycle, registry, cascade, convergence, budget, provenance, profile-enforcement, routing, and discovery spans. All namespaced under `reg.skill.*`. Unlike other span types (which have dedicated Rust enums), skill spans are canonical namespace strings emitted as tracing events by the skill execution layer. The hierarchical `is_canonical()` function makes `reg.skill.<any-id>.*` valid without per-skill registration.
 
@@ -181,7 +181,7 @@ Skill lifecycle, registry, cascade, convergence, budget, provenance, profile-enf
 
 ### 3.10 Wallet Spans
 
-**File:** `kask/crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted as tracing events by `kask/crates/hkask-regulation/src/cybernetics_loop.rs` and `kask/crates/hkask-services-core/src/error/regulation_record.rs`
+**File:** `kask/crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted as tracing events by `kask/crates/hkask-regulation/src/cybernetics_loop.rs`
 
 Wallet spans are canonical namespace strings (not a dedicated `WalletSpan` enum). The `hkask-wallet` crate was deleted in the 2026-07-25 cleanup, and the residual crypto wallet ledger (`hkask-storage::wallet`), `hkask-regulation::WalletManager`/`Well`, and the `hkask-types::wallet_types` module (`RJoule`/`WalletConfig`/`GAS_PER_RJOULE`/…) were removed 2026-08-03 as dead-in-production. The `reg.wallet.*` namespace strings below are **retained** in `CANONICAL_NAMESPACES` for tracing-target stability; the only remaining emitters are the regulation loop's raw `reg.wallet` events for the `WalletBalanceLow`/`WalletKeyUnhealthy` reasons and `InfraSpan::WalletConversion` (which covers the `reg.wallet.conversion` namespace). The unrelated ABW wallet balance shown in the swarm panel is read from the ABW REST API, not from these spans.
 

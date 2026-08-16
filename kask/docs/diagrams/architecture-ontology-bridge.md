@@ -51,9 +51,9 @@ graph TD
     subgraph deleted["Deleted (rip-and-replace)"]
         old_dc["~~hkask-bridge-dublincore~~"]
         old_fibo_co["~~companies/fibo.rs~~"]
-        old_fibo_cu["~~corpus/bridge/fibo.rs~~"]
-        old_eso["~~corpus/bridge/eso.rs~~"]
-        old_golem["~~corpus/bridge/golem.rs~~"]
+        old_fibo_cu["~~kask/crates/hkask-bridge-ontology/src/fibo.rs~~"]
+        old_eso["~~kask/crates/hkask-bridge-ontology/src/eso.rs~~"]
+        old_golem["~~kask/crates/hkask-bridge-ontology/src/golem.rs~~"]
         old_omc["~~media/omc.rs (original, dead surface)~~"]
         old_ml["~~training/mlschema.rs~~"]
     end

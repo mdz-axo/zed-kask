@@ -172,7 +172,7 @@ On failure:
 
 ## Adapter Lifecycle via the Training MCP Server
 
-The training MCP server (`hkask-mcp-training`) exposes 8 tools for the training and adapter lifecycle. The former `kask adapter list/deploy/status/teardown` CLI commands have been removed. The `AdapterRouter` (in `mcp-servers/hkask-mcp-training/src/adapter/adapter_router/mod.rs`) implements the `AdapterPort` trait internally — endpoint deployment, status, and teardown are exposed through the `training_status` tool's auto-registration path and the `training_submit` retrain mode, not as standalone `adapter_*` MCP tools. The server's `run()` comment explicitly notes: "deployment, status, teardown — the MCP server no longer wraps these."[^mcp-spec-training]
+The training MCP server (`hkask-mcp-training`) exposes 8 tools for the training and adapter lifecycle. The former `kask adapter list/deploy/status/teardown` CLI commands have been removed. The `AdapterRouter` (in `kask/kask/mcp-servers/hkask-mcp-training/src/adapter/mod.rs`) implements the `AdapterPort` trait internally — endpoint deployment, status, and teardown are exposed through the `training_status` tool's auto-registration path and the `training_submit` retrain mode, not as standalone `adapter_*` MCP tools. The server's `run()` comment explicitly notes: "deployment, status, teardown — the MCP server no longer wraps these."[^mcp-spec-training]
 
 ### Training Tools
 
@@ -271,7 +271,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRAIN-002
 verified_date: 2026-07-10
-verified_against: corpus/chunks/chunks.jsonl; corpus/chunks/tagged_chunks.jsonl; corpus/qa_pairs/prompts_bloom.jsonl; corpus/qa_pairs/gen_bloom_all.jsonl; mcp-servers/hkask-mcp-corpus/src/tools/storage.rs; mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs; crates/hkask-types/src/pipeline_runner.rs; mcp-servers/hkask-mcp-training/src/providers/runpod.rs
+verified_against: (corpus artifacts are runtime outputs, not committed to the repo); kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs; kask/mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs; kask/crates/hkask-types/src/ (pipeline_runner.rs deleted — pipeline types moved to hkask-templates); kask/mcp-servers/hkask-mcp-training/src/providers/runpod.rs
 status: VERIFIED
 -->
 
@@ -318,7 +318,7 @@ The complete, aspirational corpus workflow is in [`corpus/pipeline-capabilities-
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRAIN-003
 verified_date: 2026-07-10
-verified_against: mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs; crates/hkask-types/src/pipeline_runner.rs:37-142; crates/hkask-types/src/pipeline_manifest.rs:49-91; crates/hkask-mcp/src/server/tool_span.rs:247-261
+verified_against: kask/mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs; kask/crates/hkask-types/src/ (pipeline_runner.rs deleted — pipeline types moved to hkask-templates):37-142; kask/crates/hkask-types/src/ (pipeline_manifest.rs deleted):49-91; kask/crates/hkask-mcp-server/src/server/tool_span.rs:247-261
 status: VERIFIED
 -->
 
@@ -397,7 +397,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRN-004
 verified_date: 2026-07-12
-verified_against: mcp-servers/hkask-mcp-training/src/adapter/mod.rs, crates/hkask-inference/src/lib.rs
+verified_against: kask/mcp-servers/hkask-mcp-training/src/adapter/mod.rs, kask/crates/hkask-inference/src/hkask_inference.rs
 status: VERIFIED
 -->
 
@@ -469,7 +469,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRN-005
 verified_date: 2026-07-12
-verified_against: mcp-servers/hkask-mcp-training/src/adapter/mod.rs, crates/hkask-inference/src/lib.rs
+verified_against: kask/mcp-servers/hkask-mcp-training/src/adapter/mod.rs, kask/crates/hkask-inference/src/hkask_inference.rs
 status: VERIFIED
 -->
 
@@ -652,7 +652,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRAIN-006
 verified_date: 2026-07-23
-verified_against: mcp-servers/hkask-mcp-training/src/providers/{types,runpod,deepinfra,nebius,harness,trl_harness}.rs
+verified_against: kask/mcp-servers/hkask-mcp-training/src/providers/{types,runpod,deepinfra,nebius,harness,trl_harness}.rs
 status: VERIFIED
 -->
 

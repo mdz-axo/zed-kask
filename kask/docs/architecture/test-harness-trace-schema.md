@@ -175,7 +175,7 @@ without scanning. The expedition ID is inside the JSON, not the filename.
 The payload below illustrates the **shape**; the finding is a worked example, not
 a live defect report. (The previous example asserted a `CapabilityDenied`
 variant, which no longer exists — the per-call capability gate on the invoke path
-was removed on 2026-08-12; see `security/regressions/RR-0056.yaml`. A charter
+was removed on 2026-08-12; see `kask/security/regressions/RR-0056.yaml`. A charter
 aimed at "governance bypass" on that path should now target the runaway-loop
 breaker and the tool allowlists, not authorization — and not the FIDES taint
 check either, which was deleted the same day as inert, RR-0053.)

@@ -445,21 +445,18 @@ Concept coverage is validated in the pipeline selection step — flags if critic
 
 The following Mermaid diagrams were inlined from the former `docs/diagrams/` directory per DOCUMENTATION_STANDARDS §1.
 
-### Memory Pipeline — Episodic → Semantic
+### Memory Pipeline — Current Architecture
 
-> **Superseded (2026-08-10):** The diagram and description below referenced the
-> deleted `EpisodicMemory` / `SemanticMemory` / `ConsentManager` /
-> `ConsolidationBridge` / `generate_narrative` architecture from the standalone
-> daemon era. The current memory system is a simpler vector + relational
-> lookup design. See:
->
-> - [Memory System Specification](../architecture/memory-system-specification.md) — the current architecture
-> - [Memory System — Why It Works This Way](./memory-system.md) — the explanation
-> - [Memory Ingest Sequence](../diagrams/sequence-memory-ingest.md) — the write-side diagram
-> - [Memory Recall Flow](../diagrams/flowchart-memory-recall.md) — the read-side diagram
-> - [Memory Store ERD](../diagrams/erd-memory-store.md) — the storage schema
->
-> The stale diagram is retained below for historical reference only.
+The memory system is a **vector embedding + relational lookup** store — no
+separate `EpisodicMemory`/`SemanticMemory` structs, no `ConsentManager`, no
+`ConsolidationBridge`, no `generate_narrative` loop. Those abstractions were
+removed when the standalone daemon was deleted. The episodic/semantic
+distinction is carried by the `HMemOntology` blob on each `h_mem` row.
+
+**Authoritative spec:** [Memory System Specification](../architecture/memory-system-specification.md).
+**Write-side diagram:** [Memory Ingest Sequence](../diagrams/sequence-memory-ingest.md).
+**Read-side diagram:** [Memory Recall Flow](../diagrams/flowchart-memory-recall.md).
+**Storage schema:** [Memory Store ERD](../diagrams/erd-memory-store.md).
 
 ### Visibility and Perspective Rules (current)
 
@@ -477,276 +474,25 @@ The following Mermaid diagrams were inlined from the former `docs/diagrams/` dir
 | No EAV match          | Seed new semantic hMem     | Decayed episodic confidence                       |
 | Episodic hMem expired | Soft-delete via `valid_to` | Source removed from episodic                      |
 
-```mermaid
-sequenceDiagram
-    participant Tool as Tool Call Handler
-    participant Bridge as Thread→Memory Bridge<br/>(D6 · in-process)
-    participant Narr as generate_narrative<br/>(every 10 experiences)
-    participant Epi as EpisodicMemory<br/>(Private · perspective-scoped)
-    participant Cons as ConsentManager<br/>(visibility gate)
-    participant Sem as SemanticMemory<br/>(Public · shared)
-    participant Bridge2 as ConsolidationBridge
-    participant Svc as ConsolidationService
-    participant Sq as SQLCipher<br/>(per-agent isolation)
-    participant Regulation as Regulation RegulationSink
-
-    rect rgb(245, 248, 252)
-        Note over Tool,Epi: Phase 1 — Tool Call Experience → Episodic Store
-
-        Tool->>+Bridge: store_experience(webid, entity, attribute, value, confidence)
-        Note over Tool: e.g., "moat_check"<br/>outcome="success"<br/>confidence=0.85
-        Bridge->>+Epi: record_experience() → store(h_mem)
-        Note over Epi: access.visibility = Private<br/>access.perspective = Some(agent_webid)
-
-        alt visibility is Shared or Public
-            Epi-->>Epi: EpisodicMemoryError::InvalidVisibility
-            Note over Epi: "Episodic memory is sovereign"<br/>— shared/public hMems rejected
-        else perspective is None
-            Epi-->>Epi: EpisodicMemoryError::MissingPerspective
-        else valid Private + perspective
-            Epi->>+Sq: h_mem_store.insert(&triple)
-            Sq-->>-Epi: Ok(())
-            Epi->>+Regulation: persist(RegulationRecord { span: reg.memory.encode.episodic_stored })
-            Regulation-->>-Epi: ()
-
-            Epi->>+Epi: storage_usage(perspective)
-            opt usage > 80% of budget
-                Note over Epi: (EpisodicLoop removed —<br/>budget throttling was aspirational)
-            end
-            opt usage > 100% of budget
-                Note over Epi: (EpisodicLoop removed —<br/>escalation was aspirational)
-            end
-        end
-    end
-
-    rect rgb(245, 252, 245)
-        Note over Tool,Narr: Phase 2 — Narrative Generation Trigger (every 10 experiences)
-
-        Bridge->>+Bridge: experience_count % 10 == 0?
-        alt trigger threshold reached
-            Bridge->>+Narr: tokio::spawn(generate_narrative)
-            Narr->>+Epi: query_for_deduped("mcp_session", perspective)
-            Note over Epi: Applies Wozniak-Gorzelanczyk decay:<br/>R(t) = exp(-t/S) where S=180 days
-            Epi->>+Epi: dedup_h_mems() — EAV hash dedup
-            Epi-->>-Narr: recent episodes (last 20, decayed)
-            Narr->>+Narr: build session log → inference prompt
-            Narr->>+Narr: inference.generate(prompt)
-            Note over Narr: LLM produces semantic observations
-            Narr->>+Sem: store(semantic_observation)<br/>(Shared/Public, no perspective)
-        end
-    end
-
-    rect rgb(255, 252, 240)
-        Note over Epi,Svc: Phase 3 — Consolidation Bridge (Episodic → Semantic)
-
-        Note over Bridge: Triggered by consolidation schedule<br/>(EpisodicLoop removed — was aspirational)
-        Bridge->>+Epi: consolidation_candidates(perspective, limit)
-        Note over Epi: Selects oldest/lowest<br/>effective-confidence hMems
-        Epi-->>-Bridge: Vec<hMem> (candidates)
-
-        loop each candidate hMem
-            Bridge->>+Bridge: Compute decayed confidence<br/>days_since = (now - recalled_at) / 86400<br/>episodic_c = confidence.memory_decay(days_since, S)
-
-            Bridge->>+Sem: find_existing_by_eav(triple)
-
-            alt EAV match found (combine)
-                Sem-->>-Bridge: Some(existing)
-                Bridge->>+Bridge: combined = combine_confidences(existing_c, episodic_c)
-                Bridge->>+Sem: update_confidence(id, value, combined)
-                Sem-->>-Bridge: Ok(())
-                Note over Bridge: Bayesian combined —<br/>existing semantic hMem updated
-            else No EAV match (seed)
-                Sem-->>-Bridge: None
-                Bridge->>+Bridge: new semantic hMem:<br/>· stripped perspective (None)<br/>· visibility → Shared/Public<br/>· confidence = episodic_c
-                Bridge->>+Sem: store_consolidated(triple)
-                Sem-->>-Bridge: Ok(())
-                Note over Bridge: New semantic hMem seeded
-            end
-
-            Bridge->>+Epi: expire_triple(&id)
-            Note over Epi: soft-delete via valid_to<br/>Frees episodic storage budget
-            Epi-->>-Bridge: Ok(())
-        end
-
-        Bridge-->>-Svc: ConsolidationOutcome { consolidated_count, deleted_count, failed_count }
-        Note over Bridge: tracing::info!(target: "reg.consolidation")
-    end
-
-    rect rgb(248, 245, 255)
-        Note over Svc,Sem: Phase 4 — ConsolidationService Cleanup
-
-        Svc->>+Svc: consolidate(perspective, request)
-        Svc->>+Bridge: bridge.consolidate(perspective, limit)
-        Bridge-->>-Svc: bridge_outcome
-
-        opt confidence_floor specified
-            Svc->>+Sem: low_confidence_h_mems(floor, MAX)
-            loop each low-confidence hMem
-                Svc->>+Sem: delete_h_mem(id)
-            end
-        end
-
-        opt max_semantic_triples specified
-            Svc->>+Sem: h_mem_count()
-            alt count > max
-                Svc->>+Sem: lowest_confidence_h_mems(count - max)
-                loop each lowest-confidence hMem
-                    Svc->>+Sem: delete_h_mem(id)
-                end
-            end
-        end
-    end
-
-    rect rgb(245, 248, 252)
-        Note over Cons,Sq: Visibility Gating — Private vs Public with SQLCipher Isolation
-
-        Note over Epi: Episodic Recall (Private)
-        Epi->>+Cons: has_consent(agent_webid, DataCategory)
-        alt consent denied
-            Cons-->>-Epi: false — fail-closed
-        else consent granted
-            Cons-->>-Epi: true
-            Epi->>+Sq: query_by_entity(entity)
-            Note over Sq: WHERE perspective = agent_webid<br/>(per-agent SQLCipher isolation)
-            Sq-->>-Epi: hMems (decayed + deduped)
-        end
-
-        Note over Sem: Semantic Recall (Public)
-        Sem->>+Sq: query_by_entity(entity)
-        Note over Sq: WHERE visibility IN (Shared, Public)<br/>AND perspective IS NULL<br/>(cross-agent accessible)
-        Sq-->>-Sem: hMems (deduped by EAV hash)
-        Note over Sem: recall_dedup::dedup_h_mems(filtered)
-    end
-```
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-COG-005
-verified_date: 2026-07-24
-verified_against: crates/hkask-memory/src/episodic.rs, crates/hkask-memory/src/consolidation_service.rs, crates/hkask-mcp-server/src/server/tool_span.rs (in-process experience callback, D6)
-status: SUPERSEDED 2026-08-10 — references deleted EpisodicMemory/SemanticMemory/ConsentManager/ConsolidationBridge. See ../architecture/memory-system-specification.md for the current architecture.
--->
-
-## Confidence Flow Through Pipeline
-
-```mermaid
-sequenceDiagram
-    participant Exp as Experience<br/>(raw confidence)
-    participant Epi as Episodic Store
-    participant Decay as Wozniak-Gorzelanczyk<br/>R(t)=exp(-t/S)
-    participant Bridge as ConsolidationBridge
-    participant Sem as Semantic Store
-
-    Exp->>+Epi: confidence = 0.85
-    Note over Epi: stored as-is (no decay at write)
-
-    Note over Epi,Decay: Time passes... days_since_recall = t
-
-    Epi->>+Decay: episodic_c = confidence × exp(-t/S)
-    Note over Decay: S = memory_life_days (default 180)
-
-    Decay-->>-Bridge: episodic_c (decayed)
-    Bridge->>+Sem: find_existing_by_eav()
-
-    alt EAV match
-        Sem-->>-Bridge: existing.confidence
-        Bridge->>+Bridge: combined = combine_confidences(existing_c, episodic_c)
-        Note over Bridge: Bayesian combination
-        Bridge->>+Sem: update_confidence(combined)
-    else No match
-        Bridge->>+Sem: store_consolidated(episodic_c)
-    end
-```
-
-## Per-Agent SQLCipher Isolation
-
-| Dimension          | Episodic                              | Semantic                                              |
-| ------------------ | ------------------------------------- | ----------------------------------------------------- |
-| Filter column      | `perspective = agent_webid`           | `visibility IN (Shared, Public)`                      |
-| Encryption         | Per-agent SQLCipher key               | Shared encryption key                                 |
-| Dedup strategy     | `recall_dedup::dedup_h_mems()`        | `recall_dedup::dedup_h_mems()`                        |
-| Confidence at read | Wozniak-Gorzelanczyk decay applied    | Wozniak-Gorzelanczyk decay applied                    |
-| Budget enforcement | (EpisodicLoop removed — aspirational) | `ConsolidationService` (confidence floor + max count) |
+The consolidation runs on a background timer via `MemoryConsolidator`
+(`kask/crates/hkask-memory/src/consolidation_service.rs`). It selects
+episodic h_mems, applies Wozniak-Gorzelanczyk decay (`R(t) = exp(-t/S)`,
+`S = memory_life_days` default 180), and either Bayesian-combines with an
+existing semantic h_mem (EAV match) or seeds a new one. Budget enforcement
+(confidence floor + max count pruning) is inside `MemoryConsolidator::consolidate`.
 
 ---
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-PL-003
-verified_date: 2026-07-02
-verified_against: >
-  crates/hkask-memory/src/episodic.rs:51-220 (EpisodicMemory, store, query_for_deduped, storage_usage),
-  (episodic_loop.rs removed — EpisodicLoop was aspirational, never constructed),
-  crates/hkask-memory/src/semantic.rs:61-175 (SemanticMemory, store, query_deduped with decay, store_consolidated),
-  crates/hkask-memory/src/consolidation.rs:26-179 (ConsolidationBridge, consolidate with dual-decay Bayesian combine),
-  crates/hkask-memory/src/consolidation_service.rs:10-100 (ConsolidationService, consolidate, cleanup),
-  crates/hkask-memory/src/recall_dedup.rs:10-57 (eav_hash, dedup_h_mems, BLAKE3),
-  (ports.rs removed — EpisodicStoragePort/SemanticStoragePort were aspirational),
-  (ExperienceCallback removed — record_experience trigger was unwired)
-status: VERIFIED
--->
 
 ## Cross-Reference
 
 | Reference                                                                                           | Description                                                                                                                               |
 | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| [`EpisodicMemory`](crates/hkask-memory/src/episodic.rs:51-220)                                      | Private, perspective-scoped memory with confidence decay                                                                                  |
-| [`SemanticMemory`](crates/hkask-memory/src/semantic.rs:61-175)                                      | Shared, public memory with confidence decay and similarity-augmented recall                                                               |
-| [`ConsolidationBridge`](crates/hkask-memory/src/consolidation.rs:26-168)                            | One-way episodic→semantic promotion with Bayesian combination                                                                             |
-| [`ConsolidationService`](crates/hkask-memory/src/consolidation_service.rs:10-100)                   | Combined consolidation + semantic cleanup                                                                                                 |
-| ~~`EpisodicLoop`~~ (removed — aspirational, never constructed)                                      | Cybernetic loop with budget regulation — was never constructed; budget enforcement moved to `ConsolidationService`                        |
-| [`recall_dedup`](crates/hkask-memory/src/recall_dedup.rs:10-57)                                     | BLAKE3 EAV-hash deduplication layer                                                                                                       |
-| ~~`MemoryPorts`~~ (removed — aspirational)                                                          | Episodic and Semantic storage port traits (`EpisodicStoragePort`/`SemanticStoragePort`) were aspirational and removed                     |
-| [`store_experience` / `generate_narrative`](crates/hkask-mcp-server/src/server/tool_span.rs:78-84)  | In-process experience recording (thread→memory bridge, D6) and narrative generation; the former daemon-based implementations were removed |
-| [`ToolSpanGuard` experience callback](crates/hkask-mcp-server/src/server/tool_span.rs:78-84)        | Experience callback wiring for tool span guards                                                                                           |
-| [Magna Carta P1](../reference/magna-carta.md#p1-user-sovereignty)                                   | User Sovereignty — episodic memory as sovereign first-person                                                                              |
-| Consent flow sequence (deleted — `sovereignty-and-ocap.md` removed 2026-07-24; recoverable via git) | Consent flow for visibility gating (DIAG-TO-006-CM)                                                                                       |
-| Regulation span emission sequence (inlined in `regulation-and-loops.md`)                            | Regulation span emission for memory encode spans (DIAG-TO-004)                                                                            |
-
-### Memory Remember — Template Cascade
-
-_Inlined from `docs/diagrams/flowchart-memory-remember.md`_
-
-# Memory Remember — Template Cascade
-
-FlowDef manifest for agent memory formation. Three-step cascade. The
-`operation-selector.j2` classifies and routes to episodic or semantic
-extraction; each step runs a single-model extraction pass.
-
-Related: `registry/manifests/memory_remember.yaml`, `crates/hkask-templates/src/executor.rs`
-
-```mermaid
-flowchart TD
-    OP([Agent Operation])
-    OS{operation-selector.j2\nClassify + Route}
-    EP["remember-episodic.j2\nFirst-Person Extraction"]
-    SE["remember-semantic.j2\nThird-Person Extraction"]
-    EM[("Episodic Memory\nPrivate, Agent-Scoped")]
-    SM[("Semantic Memory\nShared, Cross-Agent")]
-
-    OP --> OS
-    OS -->|episodic| EP
-    OS -->|semantic| SE
-    EP --> EM
-    SE --> SM
-
-    subgraph "Step 1: Classify"
-        OS
-    end
-
-    subgraph "Step 2: Episodic Extraction"
-        EP
-    end
-
-    subgraph "Step 3: Semantic Extraction"
-        SE
-    end
-```
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-COG-007
-verified_date: 2026-07-12
-verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.rs
-status: VERIFIED
--->
+| [`MemoryStore`](kask/crates/hkask-memory/src/memory_store.rs:78)                                    | Vector + relational lookup store — `store`, `store_embedding`, recall                                                                      |
+| [`MemoryConsolidator`](kask/crates/hkask-memory/src/consolidation_service.rs:45)                   | Episodic → semantic consolidation with Bayesian combine + budget pruning (renamed from `ConsolidationService`)                            |
+| [`recall_dedup`](kask/crates/hkask-memory/src/recall_dedup.rs:25-70)                                | BLAKE3 EAV-hash deduplication layer (`eav_hash`, `dedup_h_mems`)                                                                          |
+| [`ToolSpanGuard`](kask/crates/hkask-mcp-server/src/server/tool_span.rs:11)                         | Tool span guard for `reg.tool.*` emission (D6)                                                                                            |
+| [Memory System Specification](../architecture/memory-system-specification.md)                       | The authoritative memory architecture spec                                                                                               |
+| [Magna Carta P1](../architecture/core/magna-carta.md#principle-1-user-sovereignty)                  | User Sovereignty — episodic memory as sovereign first-person                                                                              |
 
 ### Classification-to-Memory Sequence
 
