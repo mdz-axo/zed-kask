@@ -3,7 +3,7 @@
 
 crate:
   name: tdd
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Test-driven development with red-green-refactor loop, MDS spec-anchored functional
     testing, and gap analysis. Builds features or fixes bugs one vertical slice at a

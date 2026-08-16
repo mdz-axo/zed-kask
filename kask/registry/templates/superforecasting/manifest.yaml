@@ -1,5 +1,5 @@
 # Template crate manifest for superforecasting skill
-# hKask v0.31.0
+# hKask v0.35.0
 #
 # Note: This crate declares 10 templates (8 Tetlock stages + 1 independent
 # quality gate + 1 convergence check), exceeding the 7-function surface
@@ -14,7 +14,7 @@
 
 crate:
   name: superforecasting
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Superforecasting pipeline following Tetlock's Good Judgment Project
     methodology. Eight-stage process from question triage through Fermi

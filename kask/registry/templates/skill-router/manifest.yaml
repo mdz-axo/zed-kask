@@ -1,9 +1,9 @@
 # Template crate manifest for skill-router skill
-# hKask v0.32.0
+# hKask v0.35.0
 
 crate:
   name: skill-router
-  version: "0.32.0"
+  version: "0.35.0"
   description: >
     Route tasks to installed skills. Given a task/slice description and the
     installed skill catalog, return ranked skill recommendations with fit

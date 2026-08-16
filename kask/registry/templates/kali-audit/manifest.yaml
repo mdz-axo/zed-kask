@@ -1,9 +1,9 @@
 # Template crate manifest for kali-audit skill
-# hKask v0.31.0
+# hKask v0.35.0
 
 crate:
   name: kali-audit
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML
     manifests, and supply chain for security vulnerabilities. Anchored to OWASP

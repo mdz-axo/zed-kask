@@ -3,7 +3,7 @@
 
 crate:
   name: pragmatic-semantics
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Epistemic discipline for classifying statements by certainty level,
     constraint force, and domain ontology anchoring. Distinguish IS from

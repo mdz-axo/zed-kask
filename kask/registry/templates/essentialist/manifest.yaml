@@ -3,7 +3,7 @@
 
 crate:
   name: essentialist
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     General-purpose recursive eliminative interrogation. Enforces "always take
     away, never add" through a 3-gate challenge loop (Exist → Surface → Contract)

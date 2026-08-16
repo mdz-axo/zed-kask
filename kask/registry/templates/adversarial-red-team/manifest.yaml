@@ -1,9 +1,9 @@
 # Template crate manifest for adversarial-red-team skill
-# hKask v0.31.0
+# hKask v0.35.0
 
 crate:
   name: adversarial-red-team
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Adversarial robustness testing with defense-layer awareness. Select targets,
     generate adversarial inputs across multiple categories (injection, hijacking,

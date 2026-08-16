@@ -3,7 +3,7 @@
 
 crate:
   name: grill-me
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Socratic interrogation skill. Tests deep understanding through escalating
     difficulty (Recall → Mechanism → Rationale → Edge Cases → Synthesis).

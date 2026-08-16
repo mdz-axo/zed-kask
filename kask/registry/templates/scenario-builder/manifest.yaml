@@ -1,9 +1,9 @@
 # Template crate manifest for scenario-builder skill
-# hKask v0.31.0
+# hKask v0.35.0
 
 crate:
   name: scenario-builder
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Scenario planning methodology following Schwartz's framework. Refines
     focal questions, maps key forces and macro-level driving forces, generates

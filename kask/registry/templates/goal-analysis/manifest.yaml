@@ -1,9 +1,9 @@
 # Template crate manifest for goal-analysis skill
-# hKask v0.30.0
+# hKask v0.35.0
 
 crate:
   name: goal-analysis
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Goal specification and verification. Extracts structured goals from user
     intent, judges completion via semantic evaluation or command execution,

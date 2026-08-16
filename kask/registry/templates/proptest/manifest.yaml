@@ -1,9 +1,9 @@
 # Template crate manifest for proptest skill
-# hKask v0.31.0
+# hKask v0.35.0
 
 crate:
   name: proptest
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Property-based testing skill. Identifies testable properties from a target
     function's contract, designs input strategies using the shared

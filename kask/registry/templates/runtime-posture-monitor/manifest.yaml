@@ -1,7 +1,7 @@
 # Registry manifest for runtime-posture-monitor skill
 crate:
   name: runtime-posture-monitor
-  version: "0.31.0"
+  version: "0.35.0"
   visibility: public
   description: >
     Runtime security posture monitoring skill for hKask. Observes runtime

@@ -3,7 +3,7 @@
 
 crate:
   name: coding-guidelines
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Behavioral guardrails for LLM coding based on Karpathy's four principles:
     Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution.
