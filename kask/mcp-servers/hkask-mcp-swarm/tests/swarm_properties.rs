@@ -64,6 +64,7 @@ fn arb_capabilities() -> BoxedStrategy<LocalAgentCapabilities> {
                     system_prompt,
                     mcp_tools,
                     skills,
+                    ..Default::default()
                 }
             },
         )

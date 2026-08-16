@@ -245,6 +245,27 @@ steps:
       observations: "{{ observations | default([]) }}"
 
   - ordinal: 7
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence signal: the eliminated-hypothesis count from
+      the elimination step. Lower signal variance across iterations =
+      convergence (Cauchy). Using lisp.eval instead of a Jinja expression
+      makes the computation explicitly deterministic, budgeted
+      (gas_cap: 100), and observable via a reg.skill.falsifiability span.
+      Guards against a missing eliminated field by returning 0 when absent —
+      when step 6 was skipped (hypothesis defects), the 0 does not cause
+      false convergence because loop_target re-enters at step 2.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((eliminated (assoc "eliminated" step_6_result)))
+          (if (is_null eliminated) 0 (length eliminated)))
+      env:
+        step_6_result: "{{ step_6_result | default({}) }}"
+
+  - ordinal: 8
     action: loop
     description: >
       Re-enter the elimination cycle if convergence is not met. On re-entry,
@@ -258,12 +279,9 @@ steps:
       # If hypothesis check failed, re-enter at hypothesize (step 2); else
       # re-enter at counterfactual (step 4) for convergence-driven refinement.
       loop_target: "{{ 2 if (step_3_result | default([]) | length > 0) else 4 }}"
-      # The convergence signal is the eliminated-hypothesis count from the
-      # elimination step. Cauchy converges when elimination stabilizes. When
-      # step 6 was skipped (hypothesis defects), the default([]) yields 0 —
-      # the loop re-enters at step 2 via loop_target, so the 0 does not cause
-      # false convergence.
-      convergence_signal: "{{ step_6_result.eliminated | default([]) | length }}"
+      # Convergence signal from the deterministic lisp.eval compute step
+      # (step 7). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_7_result }}"
 
 error_handling:
   on_gas_exceeded: abort

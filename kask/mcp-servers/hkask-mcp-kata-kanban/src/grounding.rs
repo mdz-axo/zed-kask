@@ -534,11 +534,12 @@ pub fn enforce_grounding(
             // paths (e.g., "deliverables" is a prefix of "deliverables[].path").
             // These are handled by pass 1 via array-path nulling; marking
             // them UncommissionedInference here would be a false positive.
-            if contract
-                .field_sources
-                .keys()
-                .any(|k| k.starts_with(field) && (k.len() == field.len() || k.as_bytes()[field.len()] == b'.' || k.as_bytes()[field.len()] == b'['))
-            {
+            if contract.field_sources.keys().any(|k| {
+                k.starts_with(field)
+                    && (k.len() == field.len()
+                        || k.as_bytes()[field.len()] == b'.'
+                        || k.as_bytes()[field.len()] == b'[')
+            }) {
                 continue;
             }
             let tag = match contract.field_sources.get(field) {
@@ -608,10 +609,9 @@ pub fn enforce_grounding(
             // Strategy 2: domain-specific leak rules.
             for (rule_block, rule) in NARRATIVE_LEAK_RULES {
                 if *rule_block == block && rule.matches(&haystack) {
-                    result.narrative_leaks.push((
-                        format!("{rule_block:?} rule matched"),
-                        field.clone(),
-                    ));
+                    result
+                        .narrative_leaks
+                        .push((format!("{rule_block:?} rule matched"), field.clone()));
                     break;
                 }
             }

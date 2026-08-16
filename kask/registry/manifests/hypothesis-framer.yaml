@@ -163,6 +163,31 @@ steps:
       pico_defects: "{{ step_3_result | default([]) }}"
 
   - ordinal: 5
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence signal: the misalignment count from the
+      operationalize step's alignment_check. Lower signal variance across
+      iterations = convergence (Cauchy). Using lisp.eval instead of a Jinja
+      expression makes the computation explicitly deterministic, budgeted
+      (gas_cap: 100), and observable via a reg.skill.hypothesis-framer span.
+      Guards against missing nested fields (alignment_check / misalignments)
+      by returning 0 when absent — when step 4 was skipped (PICO defects),
+      the 0 does not cause false convergence because loop_target re-enters
+      at step 2.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((ac (assoc "alignment_check" step_4_result)))
+          (if (is_null ac)
+              0
+              (let ((mis (assoc "misalignments" ac)))
+                (if (is_null mis) 0 (length mis)))))
+      env:
+        step_4_result: "{{ step_4_result | default({}) }}"
+
+  - ordinal: 6
     action: loop
     description: >
       Re-enter hypothesis-framer cycle if convergence is not met. NOTE: FINER (step 1)
@@ -177,12 +202,9 @@ steps:
       # If PICO check failed, re-enter at PICO (step 2); else re-enter at
       # operationalize (step 4) for convergence-driven refinement.
       loop_target: "{{ 2 if (step_3_result | default([]) | length > 0) else 4 }}"
-      # The convergence signal is the misalignment count from the
-      # operationalize step's alignment_check. Cauchy converges when the
-      # misalignment count stabilizes. When step 4 was skipped (PICO
-      # defects), the default([]) yields 0 — the loop re-enters at step 2
-      # via loop_target, so the 0 does not cause false convergence.
-      convergence_signal: "{{ step_4_result.alignment_check.misalignments | default([]) | length }}"
+      # Convergence signal from the deterministic lisp.eval compute step
+      # (step 5). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_5_result }}"
 
 error_handling:
   on_gas_exceeded: abort

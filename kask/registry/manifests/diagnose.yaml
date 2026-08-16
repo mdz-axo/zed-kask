@@ -251,6 +251,25 @@ steps:
       has_correct_seam: "{{ has_correct_seam | default(true) }}"
 
   - ordinal: 7
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence signal: the hypothesis-defect count from the
+      Lisp invariant check (step 4). Lower signal variance across iterations
+      = convergence (Cauchy). Using lisp.eval instead of a Jinja expression
+      makes the computation explicitly deterministic, budgeted
+      (gas_cap: 100), and observable via a reg.skill.diagnose span. Step 4
+      always runs, so the signal is always present; the guard returns 0 for
+      a null result (defensive — should not occur in practice).
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (if (is_null step_4_result) 0 (length step_4_result))
+      env:
+        step_4_result: "{{ step_4_result | default([]) }}"
+
+  - ordinal: 8
     action: loop
     description: >
       Re-enter diagnosis cycle if convergence is not met; re-hypothesise on
@@ -261,11 +280,9 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 3 if (step_4_result | default([]) | length > 0) else 5 }}"
-      # The convergence signal is the hypothesis-defect count from the Lisp
-      # invariant check (step 4). Cauchy converges when the defect count
-      # stabilizes (ideally at 0 — structurally sound hypotheses). Step 4
-      # always runs, so the signal is always present; no default needed.
-      convergence_signal: "{{ step_4_result | default([]) | length }}"
+      # Convergence signal from the deterministic lisp.eval compute step
+      # (step 7). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_7_result }}"
 
 error_handling:
   on_gas_exceeded: abort

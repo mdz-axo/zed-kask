@@ -230,13 +230,40 @@ steps:
 
   # ── Kata Step 10: Check Convergence (Act) ──
   - ordinal: 10
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence signal: the hypotenuse value from the
+      kata.hypotenuse compute step (step 8). Lower signal variance across
+      iterations = convergence (Cauchy). Using lisp.eval instead of a Jinja
+      expression makes the computation explicitly deterministic, budgeted
+      (gas_cap: 100), and observable via a reg.skill.sequential-inquiry
+      span. Guards against a missing hypotenuse field by returning 0 when
+      absent.
+
+      Note: the previous Jinja signal referenced step_7_result.hypotenuse,
+      but step 7 is kata.process_gap (returns process_gap, not hypotenuse).
+      The hypotenuse is computed at step 8. This lisp.eval step references
+      step_8_result, fixing the prior null-field read.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((h (assoc "hypotenuse" step_8_result)))
+          (if (is_null h) 0 h))
+      env:
+        step_8_result: "{{ step_8_result | default({}) }}"
+
+  - ordinal: 11
     action: loop
     description: >
       Re-enter Kata cycle if not converged. The executor automatically
       snapshots prev_step_N_result values for refinement.
     input_mapping:
       loop_target: "{{ 1 }}"
-      convergence_signal: "{{ step_7_result.hypotenuse }}"
+      # Convergence signal from the deterministic lisp.eval compute step
+      # (step 10). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_10_result }}"
 
 error_handling:
   on_gas_exceeded: abort

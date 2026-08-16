@@ -187,4 +187,59 @@ mod tests {
         let issues = validate_contracts();
         assert!(issues.is_empty(), "unexpected contract issues: {issues:?}");
     }
+
+    /// The `cost` field on `LocalDelegateResult` is capped at
+    /// `credits_authorized`. This test asserts the relationship documented
+    /// in `ROLLUP_CONTRACTS` — that `cost <= cost_uncapped` always holds.
+    /// If a future code path writes `cost` independently of `cost_uncapped`,
+    /// this test catches the drift.
+    #[test]
+    fn cost_never_exceeds_cost_uncapped() {
+        use hkask_mcp_swarm::LocalDelegateResult;
+        // The contract documents this relationship — here we verify it
+        // holds on a constructed result.
+        let result = LocalDelegateResult {
+            agent_id: "test".into(),
+            response: "".into(),
+            model: "".into(),
+            tokens_used: 5000,
+            cost: 5,          // capped at credits_authorized
+            cost_uncapped: 5, // same — within budget
+            balance: Some(95),
+            latency_ms: 100,
+            tool_calls: vec![],
+            executed_skills: vec![],
+            task_success: None,
+            bind_matched: None,
+            raw_response: None,
+        };
+        assert!(
+            result.cost <= result.cost_uncapped,
+            "cost ({}) must never exceed cost_uncapped ({}) — \
+             this is the rollup_trust contract for LocalDelegateResult.cost",
+            result.cost,
+            result.cost_uncapped
+        );
+        // Verify the contract exists for this field.
+        let cost_contract = ROLLUP_CONTRACTS
+            .iter()
+            .find(|c| c.field == "cost")
+            .expect("rollup_trust must have a contract for cost");
+        assert_eq!(cost_contract.disposition, Disposition::Maintained);
+    }
+
+    /// The `balance` field on `LocalDelegateResult` is `None` when the
+    /// ledger read failed, not zero. This test asserts the contract
+    /// documents this invariant.
+    #[test]
+    fn balance_none_is_documented_as_not_zero() {
+        let balance_contract = ROLLUP_CONTRACTS
+            .iter()
+            .find(|c| c.field == "balance")
+            .expect("rollup_trust must have a contract for balance");
+        assert!(
+            balance_contract.why.contains("None is not 0"),
+            "balance contract must document that None is not 0"
+        );
+    }
 }

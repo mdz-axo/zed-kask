@@ -65,13 +65,40 @@ steps:
       max_retries_per_gate: 3
 
   - ordinal: 2
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence signal: the items-removed count from the
+      essentialist 3-gate elimination report. Lower signal variance across
+      iterations = convergence (Cauchy). Using lisp.eval instead of a Jinja
+      expression makes the computation explicitly deterministic, budgeted
+      (gas_cap: 100), and observable via a reg.skill.essentialist span.
+      Guards against missing nested fields (elimination_report /
+      essentialism_score / items_removed) by returning 0 when absent — a
+      stable reading that lets Cauchy fire after min_iterations.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((report (assoc "elimination_report" step_1_result)))
+          (if (is_null report)
+              0
+              (let ((score (assoc "essentialism_score" report)))
+                (if (is_null score)
+                    0
+                    (let ((removed (assoc "items_removed" score)))
+                      (if (is_null removed) 0 removed))))))
+      env:
+        step_1_result: "{{ step_1_result | default({}) }}"
+
+  - ordinal: 3
     action: loop
     description: Re-enter elimination cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the items-removed count into convergence_signal so the Cauchy
-      # criterion can detect when eliminations have stopped.
-      convergence_signal: "{{ step_1_result.elimination_report.essentialism_score.items_removed | default(0) }}"
+      # Convergence signal from the deterministic lisp.eval compute step
+      # (step 2). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_2_result }}"
 
 error_handling:
   on_gas_exceeded: abort
