@@ -98,6 +98,50 @@ The contract is declared in `grounding::task_agent_contract()`:
 | `approach` | (empty — commissioned judgment) | Inferred — kept |
 | Any other field | (not in contract) | UncommissionedInference — kept, marked |
 
+### Card-declared grounding (N1)
+
+Third-party agents can self-declare their grounding contract in the agent
+card's `capabilities.output_contract.grounding` field. The `card_contract`
+module validates this at admission time:
+- Every `status` must be one of the closed set: `sourced`, `inferred`,
+  `narrative`, `unavailable`, `derived`.
+- Every `sourced` entry must name at least one tool the agent declares in
+  `mcp_tools`.
+- `derived` entries must name `from` (the sourced field they derive from).
+- `why` is mandatory (≥40 chars).
+
+### Schema validation (N3)
+
+A minimal JSON Schema validator (`schema_validate.rs`) with 7 supported
+keywords runs AFTER grounding, BEFORE the payload is consumed. Unsupported
+keywords are NOT a pass — a validator that silently ignores what it cannot
+interpret returns `valid` for a document it never checked.
+
+### Delegation-hop envelope (N2)
+
+The `envelope.rs` module carries the enforced payload, provenance stamps,
+and violations across agent-to-agent composition. Grounding survives the
+hop — the composition path (the one that matters for a fleet) is the
+protected one. The envelope is additive: existing keys are preserved
+byte-for-byte, and the envelope is added under its own key.
+
+### Truth rung (N4)
+
+The `rollup_trust.rs` module documents denormalised fields and their
+sources of truth. `cost` is capped at `credits_authorized`; `cost_uncapped`
+is the source of truth. `balance: None` is not 0 — a failed read is not a
+measured zero. The contract documents these relationships so a future code
+path that writes them separately is caught.
+
+### Narrative leak rules (N5)
+
+The `LeakRule` enum provides two matching strategies: `Word` (plain
+substring) and `Quantity` (requires a digit before the unit). The
+`Quantity` rule prevents the paper's Rule 5.2 failure: a plain `" gb"`
+needle matches "GBIF", so an honest summary citing its source was flagged
+as fabricating a genome size. The `Quantity` rule requires a digit before
+the unit, so "GBIF" does not match but "480 Mb" does.
+
 ## What is NOT grounded (stated plainly, per the paper's §6)
 
 - **The curator agent.** The curator is a native in-process agent

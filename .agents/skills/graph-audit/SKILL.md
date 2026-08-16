@@ -93,10 +93,15 @@ The skill delegates to the `hkask-mcp-codegraph` MCP server:
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility.
-- Gas cap: 100,000 per invocation. Maximum 3 iterations.
+- Gas cap: 100,000 per invocation. Maximum 10 iterations (min 2 before convergence check).
 - Traversal depth: `immediate-neighbors` (default), `transitive` (2-hop), `full` (recursive CTE).
 - Only report findings relevant to the goal - don't list every symbol in the graph.
 - Impact analysis should identify the riskiest change points.
 - Quality findings should be actionable, not just descriptive.
 - Jinja2 sandboxed execution: no arbitrary Python code when safety mode is enabled.
 - Registry is authoritative - when this SKILL.md disagrees with registry templates, the registry wins.
+
+## Known Limitations
+
+- **Workspace-only indexing (code/dual modes):** The `codegraph_structure` (step 2) and `codegraph_stats` (step 1) MCP tools operate on the indexed zed-kask workspace only. Against an external codebase that has not been indexed by `hkask-mcp-codegraph`, these tools time out (30s `timeout_seconds` in the manifest) and return no data. The `on_failure: report` fallback allows the cascade to proceed without index stats / PageRank data, but code-mode and dual-mode audits against external codebases will have degraded discovery. To audit an external codebase, either (a) index it first via `codegraph_reindex`, or (b) use semantic mode, which accepts any directed graph as input data and requires no MCP tools.
+- **`codegraph_impact` and `codegraph_reindex` not wired into PDCA steps:** These MCP tools are available on the `hkask-mcp-codegraph` server but are not referenced by any `execute` step in `manifest.yaml`. They can be invoked directly by an agent between cascade steps, but the manifest's convergent loop does not call them.

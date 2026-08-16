@@ -235,7 +235,7 @@ fn tool_was_called_but_failed(
 /// The provenance string to stamp on the document for a given tag.
 /// Follows Fermi's `PROV_*` vocabulary so consumers can read provenance
 /// without parsing the `GroundingResult`.
-fn provenance_stamp(tag: &ProvenanceTag) -> &'static str {
+pub fn provenance_stamp(tag: &ProvenanceTag) -> &'static str {
     match tag {
         ProvenanceTag::Sourced { .. } => "tool_verified",
         ProvenanceTag::Inferred => "model_inference",
@@ -364,6 +364,60 @@ fn truncate_preview(value: &serde_json::Value) -> String {
         s
     }
 }
+
+/// How a narrative leak needle is matched. Mirrors Fermi's `LeakRule`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeakRule {
+    /// A distinctive word. Plain substring match is safe.
+    Word(&'static str),
+    /// A unit that only implies a claim when a number precedes it.
+    /// This variant exists because a plain `" gb"` needle matches "GBIF" —
+    /// so an honest summary citing its own source was reported as leaking
+    /// a genome size. A check that fires on correct output is worse than
+    /// no check: it gets switched off (paper Rule 5.2).
+    Quantity(&'static str),
+}
+
+impl LeakRule {
+    /// Does this rule fire against an already-lowercased haystack?
+    pub fn matches(&self, haystack: &str) -> bool {
+        match self {
+            LeakRule::Word(w) => haystack.contains(w),
+            LeakRule::Quantity(unit) => {
+                let bytes = haystack.as_bytes();
+                let mut from = 0usize;
+                while let Some(rel) = haystack[from..].find(unit) {
+                    let at = from + rel;
+                    // Walk back over the separators a writer puts between a
+                    // number and its unit: "480 Mb", "420-480Mb", "~90 mya".
+                    let mut i = at;
+                    while i > 0 && matches!(bytes[i - 1], b' ' | b'-' | b'~' | 0xE2) {
+                        i -= 1;
+                    }
+                    if i > 0 && bytes[i - 1].is_ascii_digit() {
+                        return true;
+                    }
+                    from = at + unit.len();
+                }
+                false
+            }
+        }
+    }
+}
+
+/// Domain-specific narrative leak rules. Each entry is a (block, rule)
+/// pair: if the block is NOT sourced and the rule matches the narrative,
+/// it's a leak. Deliberately narrow, matched against a lowercased
+/// haystack. Extend per agent domain as each is brought under contract.
+pub const NARRATIVE_LEAK_RULES: &[(&str, LeakRule)] = &[
+    // File paths — a fabricated deliverable path restated in prose.
+    ("deliverable_path", LeakRule::Word("/src/")),
+    ("deliverable_path", LeakRule::Word("/home/")),
+    // Test verdicts — a fabricated test result restated in prose.
+    ("test_verdict", LeakRule::Word("all tests passed")),
+    ("test_verdict", LeakRule::Word("tests passed")),
+    ("test_verdict", LeakRule::Word("0 failed")),
+];
 
 /// Scan narrative text for mentions of a removed value. Returns the
 /// matching substring if found.
@@ -1239,6 +1293,48 @@ mod tests {
             ]
         });
         assert!(!path_has_claim(&doc_empty, "deliverables[].path"));
+    }
+
+    // ── N5: LeakRule::Quantity ─────────────────────────────────────────
+
+    #[test]
+    fn leak_rule_word_matches_substring() {
+        assert!(LeakRule::Word("/src/").matches("i wrote the file at /src/main.rs"));
+        assert!(!LeakRule::Word("/src/").matches("no path here"));
+    }
+
+    #[test]
+    fn leak_rule_quantity_matches_number_before_unit() {
+        // "480 mb" is a leak — a number precedes the unit.
+        assert!(LeakRule::Quantity("mb").matches("a genome of 480 mb"));
+        assert!(LeakRule::Quantity("mb").matches("~480mb"));
+        assert!(LeakRule::Quantity("mb").matches("420-480 mb"));
+    }
+
+    #[test]
+    fn leak_rule_quantity_does_not_match_word_containing_unit() {
+        // "GBIF" contains "gb" but no digit precedes it — NOT a leak.
+        // This is the paper's Rule 5.2 example: the first version used
+        // a plain " gb" needle which matched "GBIF", so an honest summary
+        // citing its source was flagged as fabricating a genome size.
+        assert!(!LeakRule::Quantity("gb").matches("gbif taxonomy"));
+        assert!(!LeakRule::Quantity("mb").matches("mb but no number"));
+    }
+
+    #[test]
+    fn leak_rule_quantity_matches_with_separators() {
+        // Separators between number and unit: space, dash, tilde.
+        assert!(LeakRule::Quantity("mya").matches("diverged ~90 mya"));
+        assert!(LeakRule::Quantity("mya").matches("90-100 mya"));
+    }
+
+    #[test]
+    fn narrative_leak_rules_table_is_nonempty() {
+        assert!(!NARRATIVE_LEAK_RULES.is_empty());
+        // Every block in the rules table should be a plausible field name.
+        for (block, _) in NARRATIVE_LEAK_RULES {
+            assert!(!block.is_empty(), "empty block name in leak rules");
+        }
     }
 
     // ── Property-based tests ─────────────────────────────────────────────
