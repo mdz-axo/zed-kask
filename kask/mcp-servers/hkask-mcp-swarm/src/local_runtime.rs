@@ -480,6 +480,7 @@ impl LocalSwarmRuntime {
             // from the executor-populated `delegate_results`.
             task_success: None,
             bind_matched: None,
+            raw_response: None,
         })
     }
 }
@@ -599,6 +600,15 @@ pub struct LocalDelegateResult {
     /// typing layer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bind_matched: Option<bool>,
+    /// The raw LLM response before grounding enforcement (paper §4:
+    /// "the raw response is retained. Not the digest."). When grounding
+    /// runs, `response` is replaced with the cleaned JSON (unsourced fields
+    /// nulled), but the raw response is kept here for audit and future
+    /// reprocessing — when a new tool is integrated, historical outputs
+    /// can be re-run through grounding to see what changes. `None` when
+    /// grounding did not run (non-task agent types or non-JSON output).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_response: Option<String>,
 }
 
 impl LocalDelegateResult {
@@ -889,6 +899,7 @@ mod accounting_honesty_tests {
             executed_skills: vec![],
             task_success: None,
             bind_matched: None,
+            raw_response: None,
         };
         let json = serde_json::to_value(&result).expect("serialize");
         assert!(
@@ -913,6 +924,7 @@ mod accounting_honesty_tests {
             executed_skills: vec![],
             task_success: None,
             bind_matched: None,
+            raw_response: None,
         };
         let json = serde_json::to_value(&result).expect("serialize");
         assert_eq!(

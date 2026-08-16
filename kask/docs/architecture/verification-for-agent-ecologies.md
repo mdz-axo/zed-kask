@@ -48,22 +48,33 @@ that converts `accepts`/`produces` labels from free strings into type references
 Typing is necessary and nowhere near sufficient — a schema makes a wrong field
 more credible, not less.
 
-## The five-valued grounding vocabulary
+## The six-valued grounding vocabulary
 
 The paper proposes a four-valued vocabulary (Sourced / Inferred / Narrative /
-Unsourced). We extend it to five values because our target agents
-(`kanban-task-*`) produce uncommissioned inferences — judgments the model
-produces that were not explicitly commissioned by the system prompt but are
-plausibly within the agent's scope. Collapsing these into `Unsourced` would null
-the agent's entire product.
+Unsourced). We extend it to six values because our target agents
+(`kanban-task-*`) produce uncommissioned inferences, and because platform
+code can derive values deterministically from sourced inputs. The `Derived`
+variant (adopted from Fermi's implementation) distinguishes reproducible
+computations from model inferences.
 
 | Value | Meaning | Disposition |
 |-------|---------|-------------|
-| **Sourced** | A named tool returned it | Keep, mark verified |
-| **Inferred** | Judgement over sourced inputs, by design (commissioned) | Keep, mark as inference |
-| **UncommissionedInference** | Model produced a judgment not explicitly commissioned but plausibly in scope | Keep, mark as uncommissioned, scan for unsupported claims |
-| **Narrative** | Prose | Keep, scan for claims it cannot support |
-| **Unsourced** | No tool could supply it | Null it, record what was removed (truncated preview) |
+| **Sourced** | A named tool returned it | Keep, mark verified (`tool_verified`) |
+| **Inferred** | Judgement over sourced inputs, by design (commissioned) | Keep, mark as inference (`model_inference`) |
+| **Derived** | Computed by platform code from a sourced value, deterministically | Keep, mark as derived (`platform_derived`) |
+| **UncommissionedInference** | Model produced a judgment not explicitly commissioned but plausibly in scope | Keep, mark as uncommissioned (`uncommissioned_inference`) |
+| **Narrative** | Prose | Keep, scan for claims it cannot support (`narrative`) |
+| **Unsourced** | No tool could supply it | Null it, record what was removed (`unavailable_no_tool_source` or `tool_no_match`) |
+
+The `Unsourced` variant carries a `tool_failed: bool` flag distinguishing
+"tool was called but failed" (`tool_no_match` — transient, retry) from "no tool
+was called" (`unavailable_no_tool_source` — capability gap, wire up the tool).
+This distinction, adopted from Fermi's implementation, gives the operator
+different remediation paths.
+
+Provenance is stamped on the document as `<field>_provenance` keys, so
+downstream consumers (the curator, ORIENT) can see grounding status without
+parsing the `GroundingResult`.
 
 The distinction: a file path is a fact sitting in a source the agent did not
 consult (Unsourced); a threat level is a judgment the agent was commissioned to

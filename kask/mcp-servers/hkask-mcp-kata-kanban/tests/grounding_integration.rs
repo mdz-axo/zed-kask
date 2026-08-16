@@ -29,6 +29,7 @@ fn task_agent_contract_declares_expected_fields() {
 
     // deliverable_path must be sourced from file-writing tools.
     let dp_sources = contract.field_sources["deliverable_path"]
+        .sources
         .iter()
         .map(|s| s.as_str())
         .collect::<Vec<_>>();
@@ -37,12 +38,12 @@ fn task_agent_contract_declares_expected_fields() {
     assert!(dp_sources.contains(&"zed/terminal"));
 
     // test_verdict must be sourced from terminal.
-    let tv_sources = &contract.field_sources["test_verdict"];
+    let tv_sources = &contract.field_sources["test_verdict"].sources;
     assert!(tv_sources.contains(&"zed/terminal".to_string()));
 
     // summary and approach are Inferred (empty source lists).
-    assert!(contract.field_sources["summary"].is_empty());
-    assert!(contract.field_sources["approach"].is_empty());
+    assert!(contract.field_sources["summary"].sources.is_empty());
+    assert!(contract.field_sources["approach"].sources.is_empty());
 }
 
 /// When the agent produces JSON with a deliverable_path but no file-writing

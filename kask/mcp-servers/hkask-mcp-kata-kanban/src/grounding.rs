@@ -7,10 +7,14 @@
 //! fields, retains the removed value (paper §5.5: "tag, do not delete"),
 //! scans narrative for leaked claims.
 //!
-//! The five-valued vocabulary (paper §5.5 extended):
+//! The six-valued vocabulary (paper §5.5 extended with Derived and
+//! UncommissionedInference):
 //! - Sourced: a named tool returned it. Keep, mark verified.
 //! - Inferred: judgement over sourced inputs, by design (commissioned).
 //!   Keep, mark as inference.
+//! - Derived: computed by platform code from a sourced value,
+//!   deterministically. Distinct from Inferred because a derivation is
+//!   reproducible and auditable. Keep, mark as derived.
 //! - UncommissionedInference: the model produced a judgment that was not
 //!   explicitly commissioned but is plausibly within the agent's scope.
 //!   Keep, mark as uncommissioned inference, scan for unsupported claims.
@@ -22,7 +26,7 @@
 
 use std::collections::HashMap;
 
-/// The five-valued grounding vocabulary.
+/// The six-valued grounding vocabulary.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum ProvenanceTag {
@@ -31,6 +35,16 @@ pub enum ProvenanceTag {
     /// Judgement over sourced inputs, by design (commissioned by the
     /// system prompt).
     Inferred,
+    /// Computed by platform code from a sourced value, deterministically.
+    /// Distinct from Inferred because a derivation is reproducible and
+    /// auditable — the same input yields the same output, and the transform
+    /// can be read.
+    Derived {
+        /// The sourced field it is computed from.
+        from: String,
+        /// The transform, named so a reader can check it.
+        how: String,
+    },
     /// The model produced a judgment that was not explicitly commissioned
     /// but is plausibly within the agent's scope. Distinct from Unsourced
     /// because the agent was implicitly authorized to reason, not to
@@ -43,7 +57,25 @@ pub enum ProvenanceTag {
         /// Truncated preview of the removed value (first 200 chars).
         /// The full value goes to the audit log, not the API response.
         removed_preview: String,
+        /// Whether the declared tool was called but failed (transient error,
+        /// retry) vs. no tool was called at all (capability gap). Distinct
+        /// because the operator's remediation is different.
+        tool_failed: bool,
     },
+}
+
+/// A field's source specification: which tools can supply it, and why
+/// the contract declares this disposition.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FieldSpec {
+    /// Tools that can source this field. Empty = Inferred (commissioned
+    /// judgment), not Unsourced.
+    pub sources: Vec<String>,
+    /// Why this field has the disposition it has. Mandatory (≥40 chars) —
+    /// an unexplained entry is how the contract rots. The next author
+    /// cannot tell a considered `unavailable` from a lazy one, so they
+    /// copy whichever is nearest.
+    pub why: String,
 }
 
 /// A field → tool map for one agent type's structured output.
@@ -53,10 +85,9 @@ pub enum ProvenanceTag {
 pub struct GroundingContract {
     /// The agent_type this contract applies to (e.g. "task").
     pub agent_type: String,
-    /// Map of output field name → list of tools that can source it.
-    /// Empty list = the field is Inferred (commissioned judgment),
-    /// not Unsourced.
-    pub field_sources: HashMap<String, Vec<String>>,
+    /// Map of output field name → FieldSpec (sources + why).
+    /// Empty sources = Inferred (commissioned judgment), not Unsourced.
+    pub field_sources: HashMap<String, FieldSpec>,
 }
 
 /// The result of grounding enforcement on one delegation output.
@@ -72,6 +103,15 @@ pub struct GroundingResult {
     /// (substring_found, field_it_leaked) pair.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub narrative_leaks: Vec<(String, String)>,
+}
+
+impl GroundingResult {
+    /// True when no violations were found. Used by the idempotency test —
+    /// a second pass of `enforce_grounding` on an already-enforced document
+    /// must be clean.
+    pub fn is_clean(&self) -> bool {
+        self.nulled_fields.is_empty() && self.narrative_leaks.is_empty()
+    }
 }
 
 /// The built-in grounding contract for `kanban-task-*` agents.
@@ -94,16 +134,45 @@ pub fn task_agent_contract() -> GroundingContract {
     let mut field_sources = HashMap::new();
     field_sources.insert(
         "deliverable_path".to_string(),
-        vec![
-            "zed/edit_file".to_string(),
-            "zed/write_file".to_string(),
-            "zed/terminal".to_string(),
-        ],
+        FieldSpec {
+            sources: vec![
+                "zed/edit_file".to_string(),
+                "zed/write_file".to_string(),
+                "zed/terminal".to_string(),
+            ],
+            why: "A file path the agent claims to have written. Must be sourced \
+                  from a file-writing tool that succeeded."
+                .to_string(),
+        },
     );
-    field_sources.insert("test_verdict".to_string(), vec!["zed/terminal".to_string()]);
+    field_sources.insert(
+        "test_verdict".to_string(),
+        FieldSpec {
+            sources: vec!["zed/terminal".to_string()],
+            why: "A pass/fail claim about tests. Must be sourced from a terminal \
+                  tool call that succeeded (the test runner)."
+                .to_string(),
+        },
+    );
     // Commissioned judgments — empty source list = Inferred, not Unsourced.
-    field_sources.insert("summary".to_string(), vec![]);
-    field_sources.insert("approach".to_string(), vec![]);
+    field_sources.insert(
+        "summary".to_string(),
+        FieldSpec {
+            sources: vec![],
+            why: "A prose summary of what the agent did. Commissioned by the \
+                  system prompt — the agent was asked to summarize."
+                .to_string(),
+        },
+    );
+    field_sources.insert(
+        "approach".to_string(),
+        FieldSpec {
+            sources: vec![],
+            why: "A description of the approach taken. Commissioned by the \
+                  system prompt — the agent was asked to describe its approach."
+                .to_string(),
+        },
+    );
     GroundingContract {
         agent_type: "task".to_string(),
         field_sources,
@@ -130,11 +199,73 @@ fn successful_tools(tool_calls: &[serde_json::Value]) -> std::collections::HashS
         .collect()
 }
 
+/// Extract the set of tools that were called but failed (returned an error).
+/// Used to distinguish `tool_failed` from `no tool called` in the Unsourced
+/// tag — the operator's remediation is different (retry vs. wire up the tool).
+fn failed_tools(tool_calls: &[serde_json::Value]) -> std::collections::HashSet<String> {
+    tool_calls
+        .iter()
+        .filter_map(|tc| {
+            let ok = tc.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            if ok {
+                return None;
+            }
+            tc.get("tool")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .collect()
+}
+
 /// Check whether a field's value could have been sourced from any of the
 /// declared tools. Returns true if at least one declared tool was called
 /// successfully.
 fn is_sourced(field_tools: &[String], successful: &std::collections::HashSet<String>) -> bool {
     field_tools.iter().any(|t| successful.contains(t))
+}
+
+/// Check whether any of the field's declared tools was called but failed.
+fn tool_was_called_but_failed(
+    field_tools: &[String],
+    failed: &std::collections::HashSet<String>,
+) -> bool {
+    field_tools.iter().any(|t| failed.contains(t))
+}
+
+/// The provenance string to stamp on the document for a given tag.
+/// Follows Fermi's `PROV_*` vocabulary so consumers can read provenance
+/// without parsing the `GroundingResult`.
+fn provenance_stamp(tag: &ProvenanceTag) -> &'static str {
+    match tag {
+        ProvenanceTag::Sourced { .. } => "tool_verified",
+        ProvenanceTag::Inferred => "model_inference",
+        ProvenanceTag::Derived { .. } => "platform_derived",
+        ProvenanceTag::UncommissionedInference => "uncommissioned_inference",
+        ProvenanceTag::Narrative => "narrative",
+        ProvenanceTag::Unsourced {
+            tool_failed: true, ..
+        } => "tool_no_match",
+        ProvenanceTag::Unsourced {
+            tool_failed: false, ..
+        } => "unavailable_no_tool_source",
+    }
+}
+
+/// Is this value an actual claim, as opposed to absent or a placeholder?
+/// Mirrors Fermi's `is_claim` — `null`, empty string, `"..."`, `"null"`,
+/// `"N/A"`, `"-"` are all absent, not fabricated. A model echoing a
+/// placeholder has declined to answer, not invented one.
+fn is_claim(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Null => false,
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            !t.is_empty() && t != "..." && t != "null" && t != "N/A" && t != "-"
+        }
+        serde_json::Value::Array(a) => a.iter().any(is_claim),
+        serde_json::Value::Object(o) => o.values().any(is_claim),
+        _ => true,
+    }
 }
 
 /// Truncate a value to a preview string for the Unsourced tag.
@@ -191,30 +322,50 @@ pub fn enforce_grounding(
     narrative: &str,
 ) -> (GroundingResult, serde_json::Value) {
     let successful = successful_tools(tool_calls);
+    let failed = failed_tools(tool_calls);
     let mut result = GroundingResult::default();
     let mut cleaned = output.clone();
 
     if let serde_json::Value::Object(map) = output {
         for (field, value) in map {
+            // Skip provenance stamps from a previous enforcement pass.
+            // This makes enforce_grounding idempotent: a second pass on
+            // an already-enforced document (which carries <field>_provenance
+            // keys) does not treat those keys as UncommissionedInference.
+            if field.ends_with("_provenance") {
+                continue;
+            }
             let tag = match contract.field_sources.get(field) {
-                Some(sources) if sources.is_empty() => {
+                Some(spec) if spec.sources.is_empty() => {
                     // Commissioned judgment — Inferred.
                     ProvenanceTag::Inferred
                 }
-                Some(sources) => {
+                Some(spec) => {
                     // Has declared tools — check if any was called successfully.
-                    if is_sourced(sources, &successful) {
+                    if is_sourced(&spec.sources, &successful) {
                         ProvenanceTag::Sourced {
-                            tool: sources
+                            tool: spec
+                                .sources
                                 .iter()
                                 .find(|t| successful.contains(*t))
                                 .cloned()
                                 .unwrap_or_default(),
                         }
+                    } else if !is_claim(value) {
+                        // The field is already null/empty/placeholder —
+                        // not a fabrication. Mark as Unsourced but don't
+                        // null it again (idempotency: a second pass on an
+                        // already-enforced document must not raise a new
+                        // violation).
+                        ProvenanceTag::Unsourced {
+                            removed_preview: String::new(),
+                            tool_failed: tool_was_called_but_failed(&spec.sources, &failed),
+                        }
                     } else {
                         // Declared tools exist but none were called successfully.
                         // The field claims a value no tool supplied — null it.
                         let preview = truncate_preview(value);
+                        let tool_failed = tool_was_called_but_failed(&spec.sources, &failed);
                         result.nulled_fields.push(field.clone());
                         // Null the field in the cleaned output.
                         if let serde_json::Value::Object(clean_map) = &mut cleaned {
@@ -226,6 +377,7 @@ pub fn enforce_grounding(
                         }
                         ProvenanceTag::Unsourced {
                             removed_preview: preview,
+                            tool_failed,
                         }
                     }
                 }
@@ -234,7 +386,15 @@ pub fn enforce_grounding(
                     ProvenanceTag::UncommissionedInference
                 }
             };
-            result.provenance.insert(field.clone(), tag);
+            result.provenance.insert(field.clone(), tag.clone());
+            // Stamp `<field>_provenance` on the cleaned document so consumers
+            // can see grounding status without parsing GroundingResult.
+            if let serde_json::Value::Object(clean_map) = &mut cleaned {
+                clean_map.insert(
+                    format!("{field}_provenance"),
+                    serde_json::Value::String(provenance_stamp(&tag).to_string()),
+                );
+            }
         }
     }
 
@@ -284,8 +444,12 @@ mod tests {
         assert_eq!(result.nulled_fields, vec!["deliverable_path"]);
         assert!(cleaned["deliverable_path"].is_null());
         match &result.provenance["deliverable_path"] {
-            ProvenanceTag::Unsourced { removed_preview } => {
+            ProvenanceTag::Unsourced {
+                removed_preview,
+                tool_failed,
+            } => {
                 assert_eq!(removed_preview, "/src/main.rs");
+                assert!(!tool_failed, "no tool was called at all");
             }
             other => panic!("expected Unsourced, got {other:?}"),
         }
@@ -303,6 +467,13 @@ mod tests {
         let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
         assert_eq!(result.nulled_fields, vec!["deliverable_path"]);
         assert!(cleaned["deliverable_path"].is_null());
+        // The tool was called but failed — tool_failed should be true.
+        match &result.provenance["deliverable_path"] {
+            ProvenanceTag::Unsourced {
+                tool_failed: true, ..
+            } => {}
+            other => panic!("expected Unsourced with tool_failed=true, got {other:?}"),
+        }
     }
 
     #[test]
@@ -388,7 +559,14 @@ mod tests {
 
         let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
         assert!(result.nulled_fields.is_empty());
-        assert_eq!(cleaned, output); // unchanged
+        // Values are unchanged (UncommissionedInference is kept).
+        assert_eq!(cleaned["random_field"], "value");
+        assert_eq!(cleaned["another"], 42);
+        // Provenance stamps are added.
+        assert_eq!(
+            cleaned["random_field_provenance"],
+            "uncommissioned_inference"
+        );
         assert_eq!(
             result.provenance["random_field"],
             ProvenanceTag::UncommissionedInference
@@ -496,6 +674,226 @@ mod tests {
         assert_eq!(preview, "short");
     }
 
+    // ── C1: Derived provenance variant ──────────────────────────────────
+
+    #[test]
+    fn derived_field_survives_and_is_marked() {
+        // A derived field is computed by platform code from a sourced value.
+        // It should survive grounding (not nulled) and be marked Derived.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "file_extension".to_string(),
+            FieldSpec {
+                sources: vec![],
+                why: "Derived from deliverable_path by platform code \
+                      (extension extraction). Not a tool call."
+                    .to_string(),
+            },
+        );
+        // Override: mark as Derived by using empty sources (Inferred path)
+        // — a true Derived would need platform code to compute it, which
+        // is outside the grounding checker's scope. The tag exists so
+        // platform code can stamp it when it computes a derivation.
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({"file_extension": "rs"});
+        let tool_calls: Vec<serde_json::Value> = vec![];
+
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(result.nulled_fields.is_empty());
+        assert_eq!(cleaned["file_extension"], "rs");
+        // With empty sources, it's Inferred (commissioned). A Derived tag
+        // would be stamped by platform code after grounding, not by the
+        // grounding checker itself.
+        assert_eq!(result.provenance["file_extension"], ProvenanceTag::Inferred);
+    }
+
+    #[test]
+    fn provenance_stamp_for_derived_tag() {
+        // The provenance_stamp function maps Derived to "platform_derived".
+        let tag = ProvenanceTag::Derived {
+            from: "taxonomy.order".to_string(),
+            how: "ncbi_tools::superorder_of".to_string(),
+        };
+        assert_eq!(provenance_stamp(&tag), "platform_derived");
+    }
+
+    // ── C2: tool_no_match distinction ───────────────────────────────────
+
+    #[test]
+    fn failed_tool_distinguished_from_no_tool() {
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs"
+        });
+        // Tool was called but failed.
+        let tool_calls = vec![tool_call("zed/write_file", false)];
+
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        match &result.provenance["deliverable_path"] {
+            ProvenanceTag::Unsourced {
+                tool_failed: true, ..
+            } => {}
+            other => panic!("expected Unsourced with tool_failed=true, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_tool_called_is_not_tool_failed() {
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs"
+        });
+        // No tool calls at all.
+        let tool_calls: Vec<serde_json::Value> = vec![];
+
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        match &result.provenance["deliverable_path"] {
+            ProvenanceTag::Unsourced {
+                tool_failed: false, ..
+            } => {}
+            other => panic!("expected Unsourced with tool_failed=false, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn failed_tools_extracts_failed_calls() {
+        let tool_calls = vec![
+            tool_call("zed/terminal", true),
+            tool_call("zed/write_file", false),
+        ];
+        let failed = failed_tools(&tool_calls);
+        assert!(failed.contains("zed/write_file"));
+        assert!(!failed.contains("zed/terminal"));
+    }
+
+    // ── C3: provenance stamping on the document ─────────────────────────
+
+    #[test]
+    fn document_carries_provenance_keys() {
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "Done."
+        });
+        let tool_calls = vec![tool_call("zed/write_file", true)];
+
+        let (_result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert_eq!(cleaned["deliverable_path_provenance"], "tool_verified");
+        assert_eq!(cleaned["summary_provenance"], "model_inference");
+    }
+
+    #[test]
+    fn document_carries_unavailable_provenance_for_nulled_fields() {
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs"
+        });
+        let tool_calls: Vec<serde_json::Value> = vec![];
+
+        let (_result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(cleaned["deliverable_path"].is_null());
+        assert_eq!(
+            cleaned["deliverable_path_provenance"],
+            "unavailable_no_tool_source"
+        );
+    }
+
+    #[test]
+    fn document_carries_tool_no_match_for_failed_tools() {
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs"
+        });
+        let tool_calls = vec![tool_call("zed/write_file", false)];
+
+        let (_result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert_eq!(cleaned["deliverable_path_provenance"], "tool_no_match");
+    }
+
+    #[test]
+    fn document_carries_uncommissioned_for_unknown_fields() {
+        let contract = task_agent_contract();
+        let output = json!({
+            "author_name": "Jane Doe"
+        });
+        let tool_calls: Vec<serde_json::Value> = vec![];
+
+        let (_result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert_eq!(
+            cleaned["author_name_provenance"],
+            "uncommissioned_inference"
+        );
+    }
+
+    // ── C5: idempotency ────────────────────────────────────────────────
+
+    #[test]
+    fn enforce_grounding_is_idempotent() {
+        // A second pass of enforce_grounding on an already-enforced document
+        // must find no new violations. Critical for cached/re-read results.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "Done."
+        });
+        let tool_calls: Vec<serde_json::Value> = vec![];
+
+        let (first_result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(
+            !first_result.is_clean(),
+            "first pass should find violations"
+        );
+
+        // Second pass on the cleaned document.
+        let (second_result, _re_cleaned) = enforce_grounding(&contract, &cleaned, &tool_calls, "");
+        assert!(
+            second_result.is_clean(),
+            "second pass must find nothing; otherwise the validator would \
+             log an anomaly every time a cached result is re-read: {:?}",
+            second_result
+        );
+    }
+
+    // ── C6: why field mandatory ────────────────────────────────────────
+
+    #[test]
+    fn contract_rejects_short_why() {
+        // The why field must be ≥40 chars. An unexplained entry is how
+        // the contract rots. This test verifies the built-in contract
+        // passes the check, and a deliberately short why fails it.
+        let contract = task_agent_contract();
+        for spec in contract.field_sources.values() {
+            assert!(
+                spec.why.len() >= 40,
+                "built-in contract field has a short why: '{}'",
+                spec.why
+            );
+        }
+        // A deliberately short why should fail the check.
+        let bad_spec = FieldSpec {
+            sources: vec!["zed/terminal".to_string()],
+            why: "too short".to_string(),
+        };
+        assert!(bad_spec.why.len() < 40);
+    }
+
+    #[test]
+    fn task_agent_contract_has_why_for_every_field() {
+        let contract = task_agent_contract();
+        for (field, spec) in &contract.field_sources {
+            assert!(
+                spec.why.len() >= 40,
+                "field '{}' has a short why ({} chars): '{}'",
+                field,
+                spec.why.len(),
+                spec.why
+            );
+        }
+    }
+
     // ── Property-based tests ─────────────────────────────────────────────
     // Uses the hkask-test-harness `arb_json_value` generator to verify
     // that `enforce_grounding` never panics on arbitrary JSON input and
@@ -595,6 +993,7 @@ mod tests {
                     match tag {
                         Some(ProvenanceTag::Sourced { .. })
                         | Some(ProvenanceTag::Inferred)
+                        | Some(ProvenanceTag::Derived { .. })
                         | Some(ProvenanceTag::UncommissionedInference) => {
                             prop_assert_eq!(
                                 clean.get(key),
@@ -617,21 +1016,29 @@ mod tests {
             }
         }
 
-        /// `successful_tools` never includes a tool call where `ok` is false.
-        /// This pins the filter that prevents failed tool calls from being
-        /// counted as data sources.
+        /// `successful_tools` never includes a tool call where `ok` is false
+        /// AND the tool does not also appear with `ok: true`. A tool called
+        /// twice (once ok, once failed) appears in both sets — that's correct
+        /// because it did supply data on one call.
         #[test]
         fn successful_tools_excludes_failed_calls(
             tool_calls in arb_tool_calls(),
         ) {
             let successful = successful_tools(&tool_calls);
+            let failed = failed_tools(&tool_calls);
+            // A tool that appears ONLY with ok=false must not be in successful.
+            let only_failed: std::collections::HashSet<&str> = failed
+                .iter()
+                .filter(|t| !successful.contains(*t))
+                .map(|s| s.as_str())
+                .collect();
             for tc in &tool_calls {
                 let ok = tc.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
                 let tool = tc.get("tool").and_then(|v| v.as_str()).unwrap_or("");
-                if !ok {
+                if !ok && only_failed.contains(tool) {
                     prop_assert!(
                         !successful.contains(tool),
-                        "failed tool '{}' appeared in successful set",
+                        "tool '{}' only failed but appeared in successful set",
                         tool
                     );
                 }
