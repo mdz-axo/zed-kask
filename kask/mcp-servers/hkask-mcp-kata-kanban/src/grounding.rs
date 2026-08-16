@@ -534,11 +534,12 @@ pub fn enforce_grounding(
             // paths (e.g., "deliverables" is a prefix of "deliverables[].path").
             // These are handled by pass 1 via array-path nulling; marking
             // them UncommissionedInference here would be a false positive.
+            // An exact match (field == contract key) is NOT skipped — it
+            // is the field itself, not a prefix.
             if contract.field_sources.keys().any(|k| {
-                k.starts_with(field)
-                    && (k.len() == field.len()
-                        || k.as_bytes()[field.len()] == b'.'
-                        || k.as_bytes()[field.len()] == b'[')
+                k.len() > field.len()
+                    && k.starts_with(field)
+                    && (k.as_bytes()[field.len()] == b'.' || k.as_bytes()[field.len()] == b'[')
             }) {
                 continue;
             }

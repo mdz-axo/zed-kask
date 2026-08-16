@@ -243,6 +243,28 @@ steps:
         task: "{{ task }}"
 
   - ordinal: 8
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence signal: the convergence_metric from the
+      verification compute step (step 5). Lower signal variance across
+      iterations = convergence (Cauchy). Using lisp.eval instead of a Jinja
+      expression makes the computation explicitly deterministic, budgeted
+      (gas_cap: 100), and observable via a reg.skill.upstream-rebase span.
+      Guards against a missing convergence_metric field by returning 0 when
+      absent — the previous Jinja default(0.0) would silently disable
+      convergence detection on a compute failure; this lisp.eval step
+      surfaces the failure instead.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((cm (assoc "convergence_metric" step_5_result)))
+          (if (is_null cm) 0 cm))
+      env:
+        step_5_result: "{{ step_5_result | default({}) }}"
+
+  - ordinal: 9
     action: loop
     description: >
       Re-enter at step 4 (execute) if verification failed. The loop converges
@@ -252,7 +274,9 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 4 }}"
-      convergence_signal: "{{ step_5_result.convergence_metric | default(0.0) }}"
+      # Convergence signal from the deterministic lisp.eval compute step
+      # (step 8). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_8_result }}"
 
 error_handling:
   on_gas_exceeded: abort
