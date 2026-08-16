@@ -465,6 +465,10 @@ pub struct CreateLocalAgentRequest {
     pub visibility: String,
     /// Valence / personality parameters. Optional.
     pub valence: Option<ValenceInput>,
+    /// Optional output contract for card-declared grounding (N1). When
+    /// present, the `grounding` sub-object is validated at admission.
+    #[serde(default)]
+    pub output_contract: Option<serde_json::Value>,
 }
 
 /// Parallel multi-agent fan-out (Cybernetic Swarm Plan — PSO social term).

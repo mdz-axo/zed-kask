@@ -767,7 +767,7 @@ impl SwarmServer {
                             self.client.config().allowed_tool_servers.as_deref(),
                         ),
                         skills: req.skills,
-                        ..Default::default()
+                        output_contract: req.output_contract,
                     },
                     cloud_id: None,
                     tags: req.tags,

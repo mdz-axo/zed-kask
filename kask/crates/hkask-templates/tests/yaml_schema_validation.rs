@@ -535,11 +535,13 @@ fn kanban_task_management_manifest_loads_with_execute_steps() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load kanban-task-management manifest: {e}"));
 
-    // 13 select steps + 5 execute steps + 1 loop step = 19 total.
+    // 13 select steps + 5 execute steps + 1 compute step + 1 loop step = 20 total.
+    // The compute step (lisp.eval) extracts the convergence signal
+    // deterministically from the last completed phase's result.
     assert_eq!(
         manifest.steps.len(),
-        19,
-        "expected 19 steps after Co-evolution Phase 1 (5 execute steps added)"
+        20,
+        "expected 20 steps after Co-evolution Phase 1 (5 execute steps + 1 lisp.eval convergence-signal step)"
     );
 
     // Five execute steps, each condition-gated on a triage phase.
@@ -612,13 +614,15 @@ fn kanban_task_management_manifest_loads_with_execute_steps() {
         );
     }
 
-    // The loop step (ordinal 19) must reference the final phase outputs.
+    // The loop step (ordinal 20) must reference the final phase outputs.
+    // Ordinal shifted from 19 to 20 when a lisp.eval convergence-signal
+    // compute step was inserted at ordinal 19.
     let loop_step = manifest
         .steps
         .iter()
         .find(|s| s.action == "loop")
         .expect("manifest must have a loop step");
-    assert_eq!(loop_step.ordinal, 19, "loop step should be ordinal 19");
+    assert_eq!(loop_step.ordinal, 20, "loop step should be ordinal 20");
 }
 
 /// Verify the swarm-intelligence manifest loads correctly after Co-evolution
@@ -643,11 +647,13 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load swarm-intelligence manifest: {e}"));
 
-    // 5 select steps + 2 compute steps + 4 execute steps + 1 loop step + 1 choice = 13 total.
+    // 5 select steps + 3 compute steps + 4 execute steps + 1 loop step + 1 choice = 14 total.
+    // The third compute step (lisp.eval) extracts the convergence signal
+    // deterministically from the CHECK step's convergence_metric field.
     assert_eq!(
         manifest.steps.len(),
-        13,
-        "expected 13 steps after Co-evolution Phase 1 (4 execute steps added)"
+        14,
+        "expected 14 steps after Co-evolution Phase 1 (4 execute steps + 1 lisp.eval convergence-signal step)"
     );
 
     // Four execute steps, each condition-gated on mode.
@@ -713,14 +719,17 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
         );
     }
 
-    // The loop step (ordinal 13) must reference step_10_result (CHECK) and
-    // re-enter at step 1 (state-fetch) so execute steps re-run each iteration.
+    // The loop step (ordinal 14) must reference the convergence-signal
+    // compute step (step 13, which reads step_10_result) and re-enter at
+    // step 1 (state-fetch) so execute steps re-run each iteration.
+    // Ordinal shifted from 13 to 14 when a lisp.eval convergence-signal
+    // compute step was inserted at ordinal 13.
     let loop_step = manifest
         .steps
         .iter()
         .find(|s| s.action == "loop")
         .expect("manifest must have a loop step");
-    assert_eq!(loop_step.ordinal, 13, "loop step should be ordinal 13");
+    assert_eq!(loop_step.ordinal, 14, "loop step should be ordinal 14");
     let loop_mapping = loop_step
         .input_mapping
         .as_ref()
@@ -765,11 +774,13 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load gemba-walk manifest: {e}"));
 
-    // 3 execute steps + 3 select steps + 1 loop step = 7 total.
+    // 3 execute steps + 3 select steps + 1 compute step + 1 loop step = 8 total.
+    // The compute step (lisp.eval) extracts the convergence signal
+    // deterministically from the synthesize step's briefing_complete field.
     assert_eq!(
         manifest.steps.len(),
-        7,
-        "expected 7 steps: algedonic_log → escalations → consult → synthesize → present → recommend → loop"
+        8,
+        "expected 8 steps: algedonic_log → escalations → consult → synthesize → present → recommend → compute → loop"
     );
 
     // Verify step ordinals are sequential starting at 1.
@@ -859,13 +870,15 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
         "step 6 must reference gemba-walk/recommend-actions"
     );
 
-    // Verify the loop step (ordinal 7) re-enters at step 4 (synthesize).
+    // Verify the loop step (ordinal 8) re-enters at step 4 (synthesize).
+    // Ordinal shifted from 7 to 8 when a lisp.eval convergence-signal
+    // compute step was inserted at ordinal 7.
     let loop_step = manifest
         .steps
         .iter()
         .find(|s| s.action == "loop")
         .expect("manifest must have a loop step");
-    assert_eq!(loop_step.ordinal, 7, "loop step should be ordinal 7");
+    assert_eq!(loop_step.ordinal, 8, "loop step should be ordinal 8");
     let loop_mapping = loop_step
         .input_mapping
         .as_ref()
