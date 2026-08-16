@@ -36,11 +36,15 @@ pub const DEFAULT_EMBEDDING_DIM: usize = 1024;
 /// the server re-implemented the same env-var parsing with a hardcoded `1024`
 /// fallback, which would drift if `DEFAULT_EMBEDDING_DIM` changed.
 pub fn resolve_embedding_dim() -> usize {
-    std::env::var("HKASK_EMBEDDING_DIM")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|&d: &usize| d > 0)
-        .unwrap_or(DEFAULT_EMBEDDING_DIM)
+    let parsed = hkask_mcp_server::parse_env_warn("HKASK_EMBEDDING_DIM", DEFAULT_EMBEDDING_DIM);
+    if parsed == 0 {
+        tracing::warn!(
+            target: "hkask.mcp.codegraph",
+            "HKASK_EMBEDDING_DIM resolved to 0 — falling back to default {DEFAULT_EMBEDDING_DIM}"
+        );
+        return DEFAULT_EMBEDDING_DIM;
+    }
+    parsed
 }
 
 /// Initialize the code graph schema in a SQLite connection.

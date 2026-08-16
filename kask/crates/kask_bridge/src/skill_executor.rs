@@ -501,25 +501,37 @@ impl BridgeManifestExecutor {
         if !context.contains_key("tts_model") {
             context.insert(
                 "tts_model".into(),
-                Value::String(std::env::var("HKASK_MEDIA_TTS_MODEL").unwrap_or_default()),
+                Value::String(std::env::var("HKASK_MEDIA_TTS_MODEL").unwrap_or_else(|_| {
+                    hkask_inference::model_constants::DEFAULT_TTS_MODEL.to_string()
+                })),
             );
         }
         if !context.contains_key("stt_model") {
             context.insert(
                 "stt_model".into(),
-                Value::String(std::env::var("HKASK_MEDIA_STT_MODEL").unwrap_or_default()),
+                Value::String(std::env::var("HKASK_MEDIA_STT_MODEL").unwrap_or_else(|_| {
+                    hkask_inference::model_constants::DEFAULT_STT_MODEL.to_string()
+                })),
             );
         }
         if !context.contains_key("vision_model") {
             context.insert(
                 "vision_model".into(),
-                Value::String(std::env::var("HKASK_MEDIA_VISION_MODEL").unwrap_or_default()),
+                Value::String(
+                    std::env::var("HKASK_MEDIA_VISION_MODEL").unwrap_or_else(|_| {
+                        hkask_inference::model_constants::DEFAULT_VISION_MODEL.to_string()
+                    }),
+                ),
             );
         }
         if !context.contains_key("image_gen_model") {
             context.insert(
                 "image_gen_model".into(),
-                Value::String(std::env::var("HKASK_MEDIA_IMAGE_GEN_MODEL").unwrap_or_default()),
+                Value::String(
+                    std::env::var("HKASK_MEDIA_IMAGE_GEN_MODEL").unwrap_or_else(|_| {
+                        hkask_inference::model_constants::DEFAULT_IMAGE_GEN_MODEL.to_string()
+                    }),
+                ),
             );
         }
     }

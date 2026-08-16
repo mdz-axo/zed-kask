@@ -1712,9 +1712,16 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         "hkask-mcp-research",
         SERVER_VERSION,
         |ctx: ServerContext| {
-            let parse_env_u64 = |k: &str| std::env::var(k).ok().and_then(|s| s.parse::<u64>().ok());
-            let parse_env_usize =
-                |k: &str| std::env::var(k).ok().and_then(|s| s.parse::<usize>().ok());
+            let cache_ttl = hkask_mcp_server::parse_env_warn(
+                "HKASK_WEB_CACHE_TTL_SECS",
+                DEFAULT_CACHE_TTL_SECS,
+            )
+            .min(MAX_CACHE_TTL_SECS);
+            let cache_max = hkask_mcp_server::parse_env_warn(
+                "HKASK_WEB_CACHE_MAX_ENTRIES",
+                DEFAULT_CACHE_MAX_ENTRIES,
+            )
+            .min(MAX_CACHE_MAX_ENTRIES);
 
             let pool = build_provider_pool(&ctx.credentials).map_err(|e| {
                 hkask_mcp_server::McpError::UnexpectedResponse {
@@ -1722,13 +1729,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     detail: e.to_string(),
                 }
             })?;
-
-            let cache_ttl = parse_env_u64("HKASK_WEB_CACHE_TTL_SECS")
-                .map(|s| s.min(MAX_CACHE_TTL_SECS))
-                .unwrap_or(DEFAULT_CACHE_TTL_SECS);
-            let cache_max = parse_env_usize("HKASK_WEB_CACHE_MAX_ENTRIES")
-                .map(|s| s.min(MAX_CACHE_MAX_ENTRIES))
-                .unwrap_or(DEFAULT_CACHE_MAX_ENTRIES);
 
             let rss_db = {
                 // D28 — Standardized Artifact Storage. Default DB path is

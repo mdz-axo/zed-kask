@@ -535,10 +535,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         .unwrap_or_default(),
                     runpod_gpu_type_id: std::env::var("RUNPOD_GPU_TYPE_ID")
                         .unwrap_or_default(),
-                    runpod_container_disk_gb: std::env::var("RUNPOD_CONTAINER_DISK_GB")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(0),
+                    runpod_container_disk_gb: hkask_mcp_server::parse_env_warn(
+                        "RUNPOD_CONTAINER_DISK_GB",
+                        0u32,
+                    ),
                     runpod_docker_image: std::env::var("RUNPOD_DOCKER_IMAGE")
                         .unwrap_or_default(),
                 };

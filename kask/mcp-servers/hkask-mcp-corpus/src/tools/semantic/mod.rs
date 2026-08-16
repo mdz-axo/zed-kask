@@ -697,7 +697,13 @@ static CORPUS_DB_PASSPHRASE: std::sync::OnceLock<Option<String>> = std::sync::On
 /// the first call wins; subsequent calls are no-ops (the `OnceLock` is set
 /// once at construction and never changed).
 pub(crate) fn set_corpus_db_passphrase(passphrase: Option<String>) {
-    let _ = CORPUS_DB_PASSPHRASE.set(passphrase);
+    if CORPUS_DB_PASSPHRASE.set(passphrase).is_err() {
+        tracing::warn!(
+            target: "hkask.mcp.corpus",
+            "set_corpus_db_passphrase: hook already set — second wiring attempt \
+             dropped. The previously-wired passphrase remains active."
+        );
+    }
 }
 
 pub(crate) fn default_corpus_passphrase() -> String {

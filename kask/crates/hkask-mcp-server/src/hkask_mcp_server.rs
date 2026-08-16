@@ -18,7 +18,7 @@ pub mod server;
 
 pub use server::{
     CapabilityTier, CredentialRequirement, McpError, ServerContext, ToolContext, execute_tool,
-    load_dotenv, resolve_credential, resolve_db_passphrase, run_stdio_server,
+    load_dotenv, parse_env_warn, resolve_credential, resolve_db_passphrase, run_stdio_server,
     run_stdio_server_with_preloaded, validate_identifier, validate_path,
     validate_tool_url_permissive, validate_tool_url_with_dns,
 };
