@@ -177,11 +177,35 @@ impl HkaskSettings {
     /// post: returns effective max tokens per chunk (env > settings > default 256)
     #[must_use]
     pub fn chunk_max_tokens(&self) -> usize {
-        std::env::var("HKASK_CHUNK_MAX_TOKENS")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-            .filter(|n| *n > 0)
-            .unwrap_or(self.chunk_max_tokens)
+        // A malformed or non-positive numeric env var must warn, not silently
+        // fall back — an operator cannot distinguish "not configured" from
+        // "configured but broken" otherwise (`.rules` failure-signal trap).
+        // Mirrors the `HKASK_OCR_CONCURRENCY` reference in `hkask-mcp-corpus`.
+        match std::env::var("HKASK_CHUNK_MAX_TOKENS") {
+            Ok(raw) => match raw.parse::<usize>() {
+                Ok(n) if n > 0 => n,
+                Ok(_non_positive) => {
+                    tracing::warn!(
+                        target: "hkask.services.settings",
+                        value = %raw,
+                        "HKASK_CHUNK_MAX_TOKENS must be > 0 — falling back to {default}",
+                        default = self.chunk_max_tokens
+                    );
+                    self.chunk_max_tokens
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "hkask.services.settings",
+                        value = %raw,
+                        error = %e,
+                        "HKASK_CHUNK_MAX_TOKENS malformed — falling back to {default}",
+                        default = self.chunk_max_tokens
+                    );
+                    self.chunk_max_tokens
+                }
+            },
+            Err(_) => self.chunk_max_tokens,
+        }
     }
 
     /// Save settings to `~/.config/hkask/settings.json`.

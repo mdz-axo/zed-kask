@@ -484,7 +484,7 @@ impl PortfolioManager {
                     "buys": pb.total_buys,
                     "sells": pb.total_sells,
                 })),
-                (None, None) => unreachable!(),
+                (None, None) => continue,
             }
         }
 

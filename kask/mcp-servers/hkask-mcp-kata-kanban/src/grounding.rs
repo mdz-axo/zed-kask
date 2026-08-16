@@ -100,10 +100,7 @@ pub fn task_agent_contract() -> GroundingContract {
             "zed/terminal".to_string(),
         ],
     );
-    field_sources.insert(
-        "test_verdict".to_string(),
-        vec!["zed/terminal".to_string()],
-    );
+    field_sources.insert("test_verdict".to_string(), vec!["zed/terminal".to_string()]);
     // Commissioned judgments — empty source list = Inferred, not Unsourced.
     field_sources.insert("summary".to_string(), vec![]);
     field_sources.insert("approach".to_string(), vec![]);
@@ -224,9 +221,7 @@ pub fn enforce_grounding(
                             clean_map.insert(field.clone(), serde_json::Value::Null);
                         }
                         // Scan narrative for the leaked value.
-                        if let Some(leak) =
-                            scan_narrative_for_leak(narrative, &preview, field)
-                        {
+                        if let Some(leak) = scan_narrative_for_leak(narrative, &preview, field) {
                             result.narrative_leaks.push(leak);
                         }
                         ProvenanceTag::Unsourced {
@@ -324,10 +319,7 @@ mod tests {
             cleaned["summary"],
             "I completed the task by writing a new module."
         );
-        assert_eq!(
-            result.provenance["summary"],
-            ProvenanceTag::Inferred
-        );
+        assert_eq!(result.provenance["summary"], ProvenanceTag::Inferred);
     }
 
     #[test]
@@ -426,10 +418,7 @@ mod tests {
 
         let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
         assert!(result.nulled_fields.is_empty());
-        assert_eq!(
-            cleaned["test_verdict"],
-            "pass: 3 tests ran, 0 failed"
-        );
+        assert_eq!(cleaned["test_verdict"], "pass: 3 tests ran, 0 failed");
         match &result.provenance["test_verdict"] {
             ProvenanceTag::Sourced { tool } => {
                 assert_eq!(tool, "zed/terminal");
@@ -517,9 +506,7 @@ mod tests {
     /// Generate a tool_calls summary entry: {"tool": <string>, "ok": <bool>}.
     fn arb_tool_call() -> BoxedStrategy<serde_json::Value> {
         ("[a-z][a-z0-9_/]*", any::<bool>())
-            .prop_map(|(tool, ok)| {
-                json!({ "tool": tool, "ok": ok })
-            })
+            .prop_map(|(tool, ok)| json!({ "tool": tool, "ok": ok }))
             .boxed()
     }
 

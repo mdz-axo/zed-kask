@@ -328,7 +328,19 @@ impl MediaServer {
                 let caption_text = captions.join(" ");
                 self.embed_text(&caption_text).await?
             } else {
-                unreachable!();
+                // Invariant: the early return at line 303 handles the
+                // `text.is_none() && image_index.is_none()` case, so exactly
+                // one is `Some` here. `debug_assert!` documents the invariant
+                // without panicking in release builds if a future refactor
+                // breaks the precondition.
+                debug_assert!(
+                    false,
+                    "gallery_find_similar: both text and image_index are None \
+                     despite the early return; this is a regression"
+                );
+                return Err(McpToolError::invalid_argument(
+                    "Provide either 'text' or 'image_index' (not both).",
+                ));
             };
 
             // Collect captions for all images in the gallery

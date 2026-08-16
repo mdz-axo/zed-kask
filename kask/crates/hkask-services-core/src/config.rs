@@ -156,10 +156,25 @@ impl ServiceConfig {
             })?;
         let db_passphrase = db_passphrase.to_string();
 
-        let memory_life_days = std::env::var("HKASK_MEMORY_LIFE_DAYS")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(DEFAULT_MEMORY_LIFE_DAYS);
+        // A malformed numeric env var must warn, not silently fall back — an
+        // operator cannot distinguish "not configured" from "configured but
+        // broken" otherwise (`.rules` failure-signal trap). Mirrors the
+        // canonical `parse_memory_life_days` in `kask_bridge/src/memory.rs`.
+        let memory_life_days = match std::env::var("HKASK_MEMORY_LIFE_DAYS") {
+            Ok(raw) => match raw.parse::<f64>() {
+                Ok(days) => days,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "hkask.services.config",
+                        value = %raw,
+                        error = %e,
+                        "HKASK_MEMORY_LIFE_DAYS malformed — falling back to default {DEFAULT_MEMORY_LIFE_DAYS}"
+                    );
+                    DEFAULT_MEMORY_LIFE_DAYS
+                }
+            },
+            Err(_) => DEFAULT_MEMORY_LIFE_DAYS,
+        };
         Ok(Self {
             db_path,
             db_passphrase,
@@ -194,10 +209,24 @@ impl ServiceConfig {
         let template_cache_path = std::env::var("HKASK_TEMPLATE_CACHE_PATH")
             .unwrap_or_else(|_| default_template_cache_path());
         let memory_db_path = std::env::var("HKASK_MEMORY_DB_PATH").ok();
-        let memory_life_days = std::env::var("HKASK_MEMORY_LIFE_DAYS")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(DEFAULT_MEMORY_LIFE_DAYS);
+        // A malformed numeric env var must warn, not silently fall back (`.rules`
+        // failure-signal trap). Mirrors `from_env` and the canonical
+        // `parse_memory_life_days` in `kask_bridge/src/memory.rs`.
+        let memory_life_days = match std::env::var("HKASK_MEMORY_LIFE_DAYS") {
+            Ok(raw) => match raw.parse::<f64>() {
+                Ok(days) => days,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "hkask.services.config",
+                        value = %raw,
+                        error = %e,
+                        "HKASK_MEMORY_LIFE_DAYS malformed — falling back to default {DEFAULT_MEMORY_LIFE_DAYS}"
+                    );
+                    DEFAULT_MEMORY_LIFE_DAYS
+                }
+            },
+            Err(_) => DEFAULT_MEMORY_LIFE_DAYS,
+        };
         Self {
             db_path,
             db_passphrase,
