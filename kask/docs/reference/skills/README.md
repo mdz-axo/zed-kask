@@ -25,17 +25,17 @@ mds_categories: [domain, composition]
 
 ---
 
-## Registry counts (verified 2026-08-15)
+## Registry counts (verified 2026-08-16)
 
 | Surface                                               | Count  | Notes                                                                                        |
 | ----------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------- |
-| FlowDef manifests (`kask/registry/manifests/*.yaml`)  | **67** | All `category: skill` — **1:1 with SKILL.md dirs**                                           |
-| Template crates (`kask/registry/templates/*/`)        | **70** | Includes crates consumed from Rust rather than a manifest (`docproc`, `training`, `heal`)    |
-| SKILL.md directories (`.agents/skills/*/`, repo root) | **64** | Every directory contains a `SKILL.md`                                                        |
+| FlowDef manifests (`kask/registry/manifests/*.yaml`)  | **69** | All `category: skill` — **1:1 with SKILL.md dirs**                                           |
+| Template crates (`kask/registry/templates/*/`)        | **72** | Includes crates consumed from Rust rather than a manifest (`docproc`, `training`, `heal`)    |
+| SKILL.md directories (`.agents/skills/*/`, repo root) | **69** | Every directory contains a `SKILL.md`                                                        |
 
 **Category rule:** only `category: skill` manifests exist in
 `registry/manifests/`, and each **must** have a matching
-`.agents/skills/<name>/SKILL.md` companion. The 67 manifests and 64 SKILL.md
+`.agents/skills/<name>/SKILL.md` companion. The 69 manifests and 69 SKILL.md
 directories are in exact 1:1 correspondence, enforced by
 `every_skill_md_has_a_process_manifest` and `every_skill_manifest_has_a_skill_md`
 (`hkask-templates/tests/skill_companion_consistency.rs`). Note: a naive
@@ -105,7 +105,7 @@ for the three feedback loops.
 
 ---
 
-## Core Development (13 skills)
+## Core Development (15 skills)
 
 | Skill                   | Type  | Purpose                                                                                                                                                                                                                                                                          | Artifacts                                                                                     |
 | ----------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
@@ -117,6 +117,8 @@ for the three feedback loops.
 | `code-review`           | Skill | Convergent code review of a change against its stated spec: scope → multi-axis perspectives → adjudicate → report → optional implement                                                                                                                                           | `registry/manifests/code-review.yaml` · `registry/templates/code-review/`                     |
 | `deep-module`           | Skill | Module design via Ousterhout's deletion test and interface minimalism (≤7 public functions)                                                                                                                                                                                      | `registry/manifests/deep-module.yaml` · `registry/templates/deep-module/`                     |
 | `refactor-architecture` | Skill | End-to-end architecture refactoring: discover friction, rank candidates, walk design tree, audit duplication, plan strangler-fig migration, verify integrity. Merged from improve-codebase-architecture + refactor-service-layer + strangler-fig.                                | `registry/manifests/refactor-architecture.yaml` · `registry/templates/refactor-architecture/` |
+| `coherence-review`     | Skill | Multi-level coherence review: walks L1–L5 (Boundary, Crate graph, Module, Surface, Code) in order, propagating findings between levels. Synthesizes a single coherence report with cross-level finding flow. Anchored to `kask/docs/architecture/review-reference-models.md`.     | `registry/manifests/coherence-review.yaml` · `registry/templates/coherence-review/`           |
+| `constraints-review`   | Skill | Constraint-set coherence review: elicits constraints from `.rules`, `DIVERGENCE.md`, ADRs, and `ocap` blocks; classifies by force; gates against floor/ceiling/maturity per Ashby requisite variety; measures drift against the reference models. Produces a drift score per constraint (0=aligned, 3=divergent). | `registry/manifests/constraints-review.yaml` · `registry/templates/constraints-review/`       |
 | `idiomatic-rust`        | Skill | Type-driven Rust design through Graydon Hoare's principles                                                                                                                                                                                                                       | `registry/manifests/idiomatic-rust.yaml` · `registry/templates/idiomatic-rust/`               |
 | `idiomatic-lisp`        | Skill | Idiomatic Lisp design through McCarthy/Sussman/Graham principles (homoiconicity, metacircularity, data-as-program) with REPL evaluation as the extrinsic oracle                                                                                                                  | `registry/manifests/idiomatic-lisp.yaml` · `registry/templates/idiomatic-lisp/`               |
 | `task-breakdown`        | Skill | Convergent planning: vertical task slicing with acceptance criteria, checkpoints, and skill_match_query routing                                                                                                                                                                  | `registry/manifests/task-breakdown.yaml` · `registry/templates/task-breakdown/`               |

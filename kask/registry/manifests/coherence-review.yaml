@@ -65,9 +65,6 @@ inputs:
     default: "full"
     description: "D-seam scope for L1: full or a subset (e.g. D1-D10)."
 
-ledger:
-  span_namespace: reg.skill.coherence-review
-
 steps:
   # === L1 BOUNDARY (steps 1-2) ===
   - ordinal: 1
@@ -155,7 +152,7 @@ steps:
                   ((or (is_null metric) (< metric 0) (> metric 1))
                    (list "FAIL" (append defects (list "graph_health_metric out of [0,1]"))))
                   ((> (length defects) 0) (list "FAIL" defects))
-                  (t (list "ok" 0)))))))
+                  (t (list "ok" 0))))))))
       env:
         step_3_result: "{{ step_3_result }}"
 
@@ -335,7 +332,7 @@ steps:
                 (let ((defects (check_subset l5_reviewed l4_flagged (check_type findings (list)))))
                   (cond
                     ((> (length defects) 0) (list "FAIL" defects))
-                    (t (list "ok" 0)))))))))
+                    (t (list "ok" 0))))))))))))
       env:
         step_7_result: "{{ step_7_result }}"
         step_9_result: "{{ step_9_result }}"
@@ -389,7 +386,7 @@ steps:
                        (cond
                          ((> (length defects) 0) (list "FAIL" defects))
                          (t (list "ok" 0))))
-                      (t (list "FAIL" (append defects (list (concat "invalid coherence_verdict: " verdict))))))))))))
+                      (t (list "FAIL" (append defects (list (concat "invalid coherence_verdict: " verdict)))))))))))))
       env:
         step_11_result: "{{ step_11_result }}"
 
