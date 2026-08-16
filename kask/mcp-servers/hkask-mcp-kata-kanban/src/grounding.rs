@@ -268,6 +268,92 @@ fn is_claim(v: &serde_json::Value) -> bool {
     }
 }
 
+/// Split a dotted path, turning `foo[]` into `foo` + `[]`.
+/// Mirrors Fermi's `segments` function — needed for array path support
+/// (C8), so contracts can address fields inside arrays like
+/// `deliverables[].path`.
+fn segments(path: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    for seg in path.split('.') {
+        if let Some(name) = seg.strip_suffix("[]") {
+            out.push(name);
+            out.push("[]");
+        } else {
+            out.push(seg);
+        }
+    }
+    out
+}
+
+/// Collect every value a path selects. A `[]` segment means "each element
+/// of this array", so `deliverables[].path` selects the path of every
+/// deliverable. Needed because agents with list-valued output would
+/// silently pass a contract that can only address top-level scalars.
+/// Mirrors Fermi's `select` function.
+fn select<'a>(doc: &'a serde_json::Value, segs: &[&str]) -> Vec<&'a serde_json::Value> {
+    let Some((head, rest)) = segs.split_first() else {
+        return vec![doc];
+    };
+    if *head == "[]" {
+        return match doc.as_array() {
+            Some(items) => items.iter().flat_map(|it| select(it, rest)).collect(),
+            None => vec![],
+        };
+    }
+    match doc.get(head) {
+        Some(v) => select(v, rest),
+        None => vec![],
+    }
+}
+
+/// Does any value this path selects constitute a claim?
+fn path_has_claim(doc: &serde_json::Value, path: &str) -> bool {
+    select(doc, &segments(path)).iter().any(is_claim)
+}
+
+/// Null every value the path selects, returning the non-null ones removed.
+/// Mirrors Fermi's `null_all` — null rather than removed so an absent key
+/// is distinguishable from a serialisation bug.
+fn null_all(doc: &mut serde_json::Value, segs: &[&str]) -> Vec<serde_json::Value> {
+    let Some((head, rest)) = segs.split_first() else {
+        if doc.is_null() {
+            return vec![];
+        }
+        return vec![std::mem::replace(doc, serde_json::Value::Null)];
+    };
+    if *head == "[]" {
+        return match doc.as_array_mut() {
+            Some(items) => {
+                items.iter_mut().flat_map(|it| null_all(it, rest)).collect()
+            }
+            None => vec![],
+        };
+    }
+    match doc.get_mut(head) {
+        Some(v) => null_all(v, rest),
+        None => vec![],
+    }
+}
+
+/// Null the value at a dotted path (which may contain `[]` segments),
+/// returning what was there. For array paths, all elements are nulled
+/// and returned as a single `Value::Array` violation.
+fn null_path(doc: &mut serde_json::Value, path: &str) -> Option<serde_json::Value> {
+    let removed = null_all(doc, &segments(path));
+    match removed.len() {
+        0 => None,
+        1 => removed.into_iter().next(),
+        _ => Some(serde_json::Value::Array(removed)),
+    }
+}
+
+/// Top-level block a dotted path belongs to. `deliverables[].path` belongs
+/// to block `deliverables`. Mirrors Fermi's `block_of`.
+fn block_of(path: &str) -> &str {
+    let head = path.split('.').next().unwrap_or(path);
+    head.strip_suffix("[]").unwrap_or(head)
+}
+
 /// Truncate a value to a preview string for the Unsourced tag.
 fn truncate_preview(value: &serde_json::Value) -> String {
     let s = match value {
