@@ -425,8 +425,9 @@ Each slice is end-to-end testable; acceptance criteria are stated, not implied.
 
 6. **Corpus integration**: **COMPLETE.** The `entity_ref_prefix` is carried on
    each `TranscriptRecord` (wired into the tool output, not a standalone
-   function). The pipeline sequence is documented in
-   `kask/docs/explanation/corpus-ingestion-probe.md`. Negative accept probed:
+   function). The pipeline sequence is `corpus_chunk` → `corpus_tag_chunks`
+   → `corpus_embed` → `corpus_extract_triples` → centroid grouping →
+   `corpus_query` (see `company-corpus-design.md` §B3). Negative accept probed:
    `corpus_cache` writes via `std::fs::write` with no size limit — full-length
    FMP blobs (~51k chars) cache without truncation.
 

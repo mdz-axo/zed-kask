@@ -379,7 +379,7 @@ The kask panel (D10) was removed — the chat panel was redundant with the agent
 
 When a skill is invoked in-process:
 
-1. **Lookup** — The skill ID is resolved against the loaded registry of `SkillDef` entries. The `BridgeManifestExecutor::has_manifest()` check determines whether a `registry/manifests/<name>.yaml` exists; if so, the cascade runs. If not, the `SkillTool` returns the no-manifest envelope (body injection is disabled in zed-kask — the SKILL.md body is never injected).
+1. **Lookup** — The skill ID is resolved against the loaded registry of `Skill` entries (from `agent_skills`). The `BridgeManifestExecutor::has_manifest()` check (`kask/crates/kask_bridge/src/skill_executor.rs`) determines whether a `registry/manifests/<name>.yaml` exists on disk; if so, the cascade runs. If not, the `SkillTool` returns the no-manifest envelope (body injection is disabled in zed-kask — the SKILL.md body is never injected).
 2. **Task injection** — The user's task (from `SkillToolInput.task`) is injected into the cascade context as `task` so templates can reference `{{ task }}` instead of running blind.
 3. **Template rendering** — The skill's Jinja2 template is rendered with the provided context variables.
 4. **System prompt prepended** — A tool-awareness preamble is added:
@@ -394,7 +394,7 @@ When a skill is invoked in-process:
    ```
 
 5. **Inference** — The rendered template is sent to the inference port with `temperature: 0.3`, `max_tokens: 2048`. (The former guard layer, D4, was removed 2026-08-10.)
-6. **Final-result extraction** — The `BridgeManifestExecutor` extracts the final step result via `extract_final_step_result()`, which parses the ordinal from `step_N_result` keys and picks the highest (HashMap iteration order is randomized, so `values().last()` would pick an arbitrary step).
+6. **Final-result extraction** — The `BridgeManifestExecutor` extracts the final step result via `extract_final_step_result(&outcome)` (`hkask-templates/src/executor.rs`), which reads the machine-tracked `CascadeOutcome.last_result_step` — the highest `StepId` that stored a result during the cascade, tracked by the machine in `apply_effect`. This is O(1) and deterministic by construction (no randomized HashMap iteration). The prior ordinal-keyed HashMap scan was retired (K5).
 7. **Regulation span** — `reg.tool.skill_execute` is emitted with the skill ID and result.
 
 ### Convergence (FlowDef Skills Only)
@@ -477,9 +477,9 @@ Skills and MCP tools evolve together. Skills reveal MCP tool design issues
 reads skill-use reports and issues `EvolveMcpToolSchema` directives. MCP
 tools gain new capabilities that skills should adopt via `execute` steps.
 
-See [`skill-mcp-coevolution.md`](../plans/skill-mcp-coevolution.md) for the
-complete co-evolution plan and [`skill-mcp-integration.md`](skill-mcp-integration.md)
-for the two invocation patterns.
+See [`skill-mcp-integration.md`](skill-mcp-integration.md) §Co-Evolution Patterns
+for the three feedback loops (calibration, skill-use reporting, persistence-grounded learning)
+and the two invocation patterns.
 
 ### Gas Consumption
 
@@ -487,8 +487,10 @@ Skill execution is bounded by **two independent budgets**:
 
 1. **Per-agent call cap (System A)** — every governed MCP tool call via
    `McpRuntime::invoke` charges one call against the agent's `CallCap`
-   (`CallCapManager::can_proceed` + `charge`). The cap resets to its ceiling each
-   regulation tick. An agent with no registered cap is denied fail-closed.
+   (`CallCapManager::charge_metered` → `CallMeterOutcome`). The cap resets to its ceiling each
+   regulation tick. An agent with no registered cap is **auto-registered** at
+   `DEFAULT_RUNAWAY_CALL_CEILING` (10 000) and the wiring gap is logged — a
+   missing seed is a wiring omission, not an authorization decision (RR-0057).
 2. **Per-cascade budget (System B)** — the cascade runs against a
    `BudgetTracker` declared in the skill manifest's `gas:`/`rjoule:` blocks:
    `gas` is charged per `select` iteration (`charge_iteration`), and `rJoule` is

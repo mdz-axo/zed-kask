@@ -1,8 +1,8 @@
 ---
 title: "Skill, Template, and Bundle Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-08-05
-version: "0.32.3"
+last_updated: 2026-08-15
+version: "0.34.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]
@@ -25,17 +25,17 @@ mds_categories: [domain, composition]
 
 ---
 
-## Registry counts (verified 2026-08-14)
+## Registry counts (verified 2026-08-15)
 
 | Surface                                               | Count  | Notes                                                                                        |
 | ----------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------- |
-| FlowDef manifests (`kask/registry/manifests/*.yaml`)  | **64** | All `category: skill` — **1:1 with SKILL.md dirs**                                           |
-| Template crates (`kask/registry/templates/*/`)        | **68** | Includes crates consumed from Rust rather than a manifest (`docproc`, `training`, `heal`)    |
+| FlowDef manifests (`kask/registry/manifests/*.yaml`)  | **67** | All `category: skill` — **1:1 with SKILL.md dirs**                                           |
+| Template crates (`kask/registry/templates/*/`)        | **70** | Includes crates consumed from Rust rather than a manifest (`docproc`, `training`, `heal`)    |
 | SKILL.md directories (`.agents/skills/*/`, repo root) | **64** | Every directory contains a `SKILL.md`                                                        |
 
 **Category rule:** only `category: skill` manifests exist in
 `registry/manifests/`, and each **must** have a matching
-`.agents/skills/<name>/SKILL.md` companion. The 64 manifests and 64 SKILL.md
+`.agents/skills/<name>/SKILL.md` companion. The 67 manifests and 64 SKILL.md
 directories are in exact 1:1 correspondence, enforced by
 `every_skill_md_has_a_process_manifest` and `every_skill_manifest_has_a_skill_md`
 (`hkask-templates/tests/skill_companion_consistency.rs`). Note: a naive
@@ -76,6 +76,24 @@ Reconciliation notes:
   - `logo-builder` — **the name-mismatch trap.** It contains no `.j2` or `.yaml` templates at all; its `manifest.yaml` registers four `media/*` entries via `path: ../media/…`. Because `build.rs` keys `MANIFEST_YAMLS` on the *directory name*, deleting the directory would silently drop those four registry entries. It is a fully live skill (`.agents/skills/logo-builder/SKILL.md` + `kask/registry/manifests/logo-builder.yaml`).
 
   A name-based orphan check would flag all four. Resolve actual `template_ref`/`path:` values and grep Rust and `kask/security/regressions/` before concluding anything here is dead.
+
+### Composition Principles (verified 2026-08-15)
+
+Five composition principles discovered through the co-evolution of skills and
+MCP tools. All 11 migrated skills satisfy these principles:
+
+| Principle | Limit type | Threshold | Skills satisfying |
+|-----------|------------|-----------|-------------------|
+| Determinism frontier | Floor + Ceiling | ≥1 deterministic step + ≥1 select step | 11/11 |
+| Persistence-grounded learning | Floor | ≥1 persistence read at ordinal 0 (if skill produces forecasts) | 7/7 |
+| Failure surfacing | Floor | 100% of execute steps have on_failure: report | 11/11 |
+| Lisp scaffold | Maturity gate | lisp.eval invariant checks after structured LLM output | 8/11 |
+| Co-evolution loop | Maturity gate | on_failure: report signals flow to Curator | 11/11 |
+
+See [`skills-and-composition.md`](../explanation/skills-and-composition.md)
+§Composition Principles for the five principles reference and
+[`skill-mcp-integration.md`](../explanation/skill-mcp-integration.md) §Co-Evolution Patterns
+for the three feedback loops.
 
 ---
 

@@ -341,6 +341,7 @@ classDiagram
         +exit_kind: ExitKind
         +last_result_step: Option~StepId~
         +budget_snapshot: BudgetSnapshot
+        +resume_text: Option~String~
     }
     class Infra {
         +inference: Arc~InferencePort~
@@ -362,8 +363,9 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TMPL-004
-verified_date: 2026-08-13
+verified_date: 2026-08-15
 verified_against: kask/crates/hkask-templates/src/step_machine.rs:34,45,66; kask/crates/hkask-templates/src/step_graph.rs:51,65,79,103; kask/crates/hkask-templates/src/budget.rs:33
+verified_fields: context, iterations, exit_kind, last_result_step, budget_snapshot, resume_text
 status: VERIFIED
 -->
 
@@ -396,6 +398,17 @@ Each action returns an `Effect` (`step_actions.rs:27`), which the machine
 merges with the node's static `ControlFlow` via `merge_control_flow`
 (`step_machine.rs:459`). The effect wins if it specifies a jump/re-enter/exit;
 otherwise the node's static flow is used.
+
+### Per-Step Failure Handling
+
+Every step can declare an `on_failure` config with:
+- `action: "report"` — calls `curator_report_skill_use_issue` (best-effort),
+  then escalates with `ExitKind::Escalated`. The `resume` text is surfaced via
+  `CascadeOutcome.resume_text`.
+- `action: "halt"` or `"escalate"` — escalates without reporting.
+
+The `dispatch_with_retry` handler checks `on_failure` for ALL step types
+(not just `execute`), after retries are exhausted.
 
 ### Compute primitives
 
