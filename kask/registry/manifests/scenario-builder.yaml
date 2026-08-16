@@ -1,5 +1,5 @@
 # Scenario Planning Process Manifest
-# ℏKask v0.34.0 — Schwartz scenario planning as convergent PDCA
+# ℏKask v0.35.0 — Schwartz scenario planning as convergent PDCA
 #
 # Co-evolution Phase 1 + Phase 2: three native MCP execute steps close the
 # calibration loop and add persistence-grounded learning:
@@ -20,7 +20,7 @@ manifest:
     implications, computes convergence, and iterates until scenario set and
     indicators are decision-ready.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

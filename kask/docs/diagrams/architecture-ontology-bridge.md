@@ -2,7 +2,7 @@
 title: "Ontology Bridge Architecture"
 audience: [developers, architects, agents]
 last_updated: 2026-08-05
-version: "0.34.0"
+version: "0.35.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, curation]

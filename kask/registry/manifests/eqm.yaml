@@ -1,5 +1,5 @@
 # EQM Process Manifest
-# ℏKask v0.34.0 — Explanation Quality Markers as convergent measurement instrument
+# ℏKask v0.35.0 — Explanation Quality Markers as convergent measurement instrument
 #
 # Measurement instrument for forecast-rationale quality. Scores rationales
 # against the 60 EQMs from Karvetski et al. (2026) via the
@@ -34,7 +34,7 @@ manifest:
     to drive rationale improvement) and kata-improvement (which consumes
     the before/after delta for forecaster-level learning).
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

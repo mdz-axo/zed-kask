@@ -1,5 +1,5 @@
 # Skill Bundler Process Manifest
-# ℏKask v0.34.0 — PKO RDF graph synthesis: decimate + fuse + recompose PDCA loops
+# ℏKask v0.35.0 — PKO RDF graph synthesis: decimate + fuse + recompose PDCA loops
 # Template type: FlowDef — goal → compose → synthesize → validate → converge → evolve → loop
 # Dual-axis ontological anchoring per P5.4 (PKO + DC+BIBO)
 
@@ -14,7 +14,7 @@ manifest:
     validates structural and ontological rules, computes convergence, evolves on
     goal delta, and iterates until the composite is optimally formed.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

@@ -1,5 +1,5 @@
 # EQM Improvement Process Manifest
-# ℏKask v0.34.0 — Reverse-engineer quality forecasts as Improvement Kata PDCA
+# ℏKask v0.35.0 — Reverse-engineer quality forecasts as Improvement Kata PDCA
 #
 # Improvement instrument for forecast rationales. Reverse-engineers the
 # reasoning patterns the 60 EQMs (Karvetski et al. 2026) specify. PDCA loop
@@ -44,7 +44,7 @@ manifest:
     fabricates. Composes with eqm (measurement) and kata-improvement
     (forecaster-level learning across forecasts).
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

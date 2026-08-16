@@ -1,10 +1,10 @@
 # Template crate manifest for the kask-seam-audit skill
-# hKask v0.34.0
+# hKask v0.35.0
 # Encodes the Kask↔Zed seam audit engagement as a reproducible FlowDef process.
 
 crate:
   name: kask-seam-audit
-  version: "0.34.0"
+  version: "0.35.0"
   description: >
     Convergent multi-skill audit of the zed-kask Kask↔Zed seam (DIVERGENCE.md
     D1–D24). Three tracks — kali-audit (security), refactor-architecture

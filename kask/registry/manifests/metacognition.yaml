@@ -1,5 +1,5 @@
 # Metacognition Process Manifest
-# ℏKask v0.34.0 — Self-reflective reasoning as Improvement Kata PDCA
+# ℏKask v0.35.0 — Self-reflective reasoning as Improvement Kata PDCA
 #
 # Generalizable: any userpod — curator, bot, agent, or ensemble member — can
 # invoke this skill to perform metacognitive reasoning. The skill follows the
@@ -30,7 +30,7 @@ manifest:
     sequence), iterate stabilization (Cauchy criterion), or prediction
     calibration (Brier score). Any userpod may invoke this skill.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

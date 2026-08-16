@@ -1,5 +1,5 @@
 # Sequential Inquiry Process Manifest
-# ℏKask v0.34.0 — Compound inquiry as Improvement Kata PDCA
+# ℏKask v0.35.0 — Compound inquiry as Improvement Kata PDCA
 #
 # The inquiry follows the Toyota Improvement Kata: grasp the current
 # understanding, establish the target understanding, predict which
@@ -24,7 +24,7 @@ manifest:
     Convergence is detected deterministically: gap closure, Cauchy
     (iterates stabilized), or calibration (Brier score).
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

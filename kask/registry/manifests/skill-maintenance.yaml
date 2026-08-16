@@ -1,5 +1,5 @@
 # Skill Maintenance Process Manifest
-# hKask v0.34.0 — Registry health maintenance as PDCA
+# hKask v0.35.0 — Registry health maintenance as PDCA
 #
 # Corpus-level maintenance: audit staleness, check coverage gaps, compute
 # convergence, iterate until critical maintenance blockers are reduced.
@@ -16,7 +16,7 @@ manifest:
     checks coverage gaps, computes convergence, and iterates until critical
     maintenance blockers are reduced below threshold.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

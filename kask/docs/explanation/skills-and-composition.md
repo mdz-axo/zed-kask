@@ -2,7 +2,7 @@
 title: "Skills and Composition"
 audience: [developers, operators, users]
 last_updated: 2026-08-15
-version: "0.34.0"
+version: "0.35.0"
 status: "Active"
 domain: "Skill System"
 mds_categories: [domain, composition, lifecycle, trust]

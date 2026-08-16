@@ -1,5 +1,5 @@
 # Task Breakdown Process Manifest
-# hKask v0.34.0 — Convergent plan generation anchored on target conditions
+# hKask v0.35.0 — Convergent plan generation anchored on target conditions
 #
 # Target-condition anchoring (v0.35.0 redesign):
 #   The skill anchors on a TARGET CONDITION — the goal, end state, or outcome the
@@ -74,7 +74,7 @@ manifest:
     process-axis anchors. Distinct from kanban-task-management (single-pass board
     populate) and tdd (consumes the plan one vertical slice at a time).
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   # Layer A opt-in: enforce the declared `inputs` contract at the skill-execution

@@ -1,5 +1,5 @@
 # Gemba Walk Process Manifest
-# ℏKask v0.34.0 — Human-in-the-loop guided evolution of the cybernetic regulation system.
+# ℏKask v0.35.0 — Human-in-the-loop guided evolution of the cybernetic regulation system.
 #
 # Implements the Prepare and Present phases of the gemba loop
 # (docs/reports/gemba-loop-specification.md). A single-pass briefing
@@ -35,7 +35,7 @@ manifest:
     with per-skill digest and proposed refinement actions for operator
     approval. Implements the Prepare and Present phases of the gemba loop.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

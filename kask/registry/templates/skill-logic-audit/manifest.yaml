@@ -1,9 +1,9 @@
 # Template crate manifest for skill-logic-audit skill
-# hKask v0.34.0
+# hKask v0.35.0
 
 crate:
   name: skill-logic-audit
-  version: "0.34.0"
+  version: "0.35.0"
   description: >
     Bounded dual-layer logic audit of .j2 templates and manifest.yaml files
     against their stated goals. Loads the annotated goal block, generates

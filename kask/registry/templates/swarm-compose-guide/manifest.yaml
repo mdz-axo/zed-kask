@@ -1,5 +1,5 @@
 # Template crate manifest for swarm-compose-guide skill
-# hKask v0.34.0
+# hKask v0.35.0
 #
 # Note: this skill references a template in the swarm-intelligence crate
 # (swarm-intelligence/swarm-compose-guide.j2). The crate manifest is kept
@@ -8,7 +8,7 @@
 
 crate:
   name: swarm-compose-guide
-  version: "0.34.0"
+  version: "0.35.0"
   description: >
     Agent/swarm composition authoring and validation aid. Given partial form
     inputs, renders the swarm-compose-guide Jinja2 guidance template and

@@ -1,5 +1,5 @@
 # Kask-Seam-Audit Process Manifest
-# ℏKask v0.34.0 — Kask↔Zed seam security + architecture + UI audit as convergent PDCA
+# ℏKask v0.35.0 — Kask↔Zed seam security + architecture + UI audit as convergent PDCA
 #
 # Encodes the multi-skill audit-and-refactor engagement over the zed-kask seam
 # (DIVERGENCE.md D1–D24). Three Do tracks (kali-audit / refactor-architecture /
@@ -57,7 +57,7 @@ manifest:
     non-D-seam touch. Every finding cites file:line; missing evidence is
     deferred with a reason, never fabricated.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
 
