@@ -107,6 +107,21 @@ This is iteration N+1. The previous iteration produced:
 No prior iteration — this is a first pass. Build the registry from scratch.
 {% endif %}
 
+{% if prior_evaluations %}
+## Prior Evaluations (from curator_memory_recall)
+
+The curator's memory contains prior capability evaluations from previous
+invocations. Use these to detect improvement or regression.
+
+```json
+{{ prior_evaluations | tojson }}
+```
+
+- Compare prior verdicts to current findings: has the target system improved?
+- Prior `capability_lessons` may indicate which evaluation approaches worked.
+- Prior `verdict_signatures` may indicate which verdicts were metric-sensitive.
+{% endif %}
+
 ## Step 1 — Select Registry Source and Domain
 
 First, identify the **capability domain** (psychological, economic, compute,
