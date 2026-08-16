@@ -499,6 +499,30 @@ not an OpenAI-compatible chat endpoint).
 The collab server is launched directly by zed-kask (not via `mcp_env()`), so
 there are no `collab.*`-derived env vars.
 
+### Runtime Tuning
+
+These env vars tune internal runtime behavior — connection healing, health
+checks, and resource caps. They are read once at startup and cached for the
+process lifetime. Unset or unparseable values fall back to documented defaults
+(with a `warn!` on parse failure).
+
+| Env Var | Default | Notes |
+|---------|---------|-------|
+| `HKASK_MCP_RECONNECT_COOLDOWN_SECS` | `5` | Min interval between reconnect attempts for the same MCP server. Bounds crash-loop damage. |
+| `HKASK_MCP_STARTUP_MAX_RETRIES` | `3` | Max retry attempts when an MCP server fails to start (spawn or handshake). |
+| `HKASK_MCP_STARTUP_INITIAL_BACKOFF_MS` | `500` | Initial backoff (ms) for startup retries. Doubles each attempt. |
+| `HKASK_MCP_STARTUP_MAX_BACKOFF_SECS` | `10` | Cap on startup retry backoff (seconds). |
+| `HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS` | `60` | Interval between proactive MCP server health checks. |
+| `HKASK_MCP_MAX_HEALTH_FAILURES` | `3` | Max consecutive health-check failures before the supervisor stops auto-healing. |
+| `HKASK_MCP_MAX_READ_BYTES` | `33554432` (32 MiB) | Read size cap for `read_capped` (CWE-400). 0 is rejected (would block all reads). |
+| `HKASK_TEMPLATE_CACHE_PATH` | Platform cache dir | Template cache directory. Default: `$XDG_CACHE_HOME/hkask/templates` (Linux), `~/Library/Caches/hkask/templates` (macOS). |
+| `HKASK_MEMORY_LIFE_DAYS` | `180` | Memory retention in days (≈6 months). Controls decay constant in the Bayesian forgetting model. |
+| `HKASK_CHUNK_MAX_TOKENS` | `256` | Max tokens per chunk for document chunking (≈192 words, paragraph-level). |
+
+The regulation history caps (`max_regulation_history`, `max_skill_span_history`)
+are configurable via the `HKASK_REG_CONFIG` YAML file, not env vars. See
+`SetPointsConfig` in `hkask-regulation/src/set_points.rs`.
+
 ## Footnotes
 
 [^mcp-spec-settings]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification

@@ -142,6 +142,14 @@ steps:
       symbol: "{{ ticker }}"
       mode: "earnings"
       quarters_back: 4
+    on_failure:
+      action: report
+      resume: >
+        company_transcript failed — the companies MCP server may be down or
+        the credential is missing. The COMPANY synthesis (step 6) proceeds
+        without the transcript; Self-View and Management Skill will rely on
+        web_search context only. Restart the server via sync_kask_mcp_servers
+        and re-invoke.
 
   - ordinal: 2
     action: execute
@@ -153,6 +161,13 @@ steps:
     timeout_seconds: 120
     input_mapping:
       symbol: "{{ ticker }}"
+    on_failure:
+      action: report
+      resume: >
+        dcf_valuation failed — the companies MCP server may be down. The
+        COMPANY synthesis (step 6) proceeds without the DCF model; Financial
+        Profile will rely on comparable_analysis (step 3) only. Restart the
+        server via sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 3
     action: execute
@@ -164,6 +179,13 @@ steps:
     timeout_seconds: 120
     input_mapping:
       symbol: "{{ ticker }}"
+    on_failure:
+      action: report
+      resume: >
+        comparable_analysis failed — the companies MCP server may be down.
+        The COMPANY synthesis (step 6) proceeds without peer comparables;
+        Financial Profile will rely on dcf_valuation (step 2) only. Restart
+        the server via sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 4
     action: execute
@@ -189,6 +211,13 @@ steps:
     timeout_seconds: 90
     input_mapping:
       url: "{{ step_4_result.results[0].url }}"
+    on_failure:
+      action: report
+      resume: >
+        web_extract failed — the web MCP server may be down. The COMPANY
+        synthesis (step 6) proceeds without the verbatim IR page content;
+        Self-View will rely on web_search snippets only. Restart the server
+        via sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 6
     action: select
@@ -370,6 +399,14 @@ steps:
       subject: "{{ ticker }} 5 10 20 year future scenarios digital transformation"
       time_horizon: "20 years"
       context: "{{ step_7_result.rotated_board.business_franchise | default(step_6_result.company_board.business_franchise) | default('') }}"
+    on_failure:
+      action: report
+      resume: >
+        scenario_build failed — the scenario MCP server may be down. The
+        IMAGINE synthesis (step 13) proceeds without the structured scenario
+        tree; the economic trajectory (step 12) and IMAGINE template will
+        generate scenarios without the event-tree scaffold. Restart the server
+        via sync_kask_mcp_servers and re-invoke.
 
   # ── Step 11: ECONOMIC TRAJECTORY — falling-cost / Coase / adjacent possible ──
   # Economically-anchored imagination scaffold. Identifies the falling cost,

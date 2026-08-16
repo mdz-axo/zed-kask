@@ -10,7 +10,163 @@
 use crate::ports::{Result, TemplateError};
 use serde_json::Value;
 
-/// Dispatch a `compute_ref` string to the matching `hkask_forecast` primitive.
+/// Split a transcript into numbered chunks by speaker turns or paragraph
+/// boundaries. Each chunk has a `chunk_id` (sequential number as string)
+/// and `text` (the chunk content). The splitting heuristic:
+/// 1. If the transcript has speaker markers (lines starting with a name
+///    followed by `:`), split by speaker turns.
+/// 2. Otherwise, split by double-newline (paragraph boundaries).
+/// 3. If no paragraph breaks, split by single newlines.
+/// 4. If the transcript is a single line, return it as one chunk.
+///
+/// This is the pre-splitting step that makes the retrieve-cite-verify
+/// process possible — the model searches numbered chunks, not raw text, so
+/// each piece of evidence can reference a specific chunk_id for mechanical
+/// verification.
+fn chunk_transcript(transcript: &str) -> Vec<Value> {
+    let lines: Vec<&str> = transcript.lines().collect();
+    // Detect speaker markers: lines matching `Name Name:` or `Name:` at the
+    // start. If ≥2 such lines exist, split by speaker turns.
+    let speaker_marker_count = lines
+        .iter()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            if let Some(colon_pos) = trimmed.find(':') {
+                let name = &trimmed[..colon_pos];
+                !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == ' ' || c == '.' || c == '-')
+            } else {
+                false
+            }
+        })
+        .count();
+    let chunks: Vec<String> = if speaker_marker_count >= 2 {
+        // Split by speaker turns: accumulate lines until the next speaker marker.
+        let mut chunks = Vec::new();
+        let mut current = String::new();
+        for line in &lines {
+            let trimmed = line.trim_start();
+            let is_speaker = trimmed.find(':').is_some_and(|pos| {
+                let name = &trimmed[..pos];
+                !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == ' ' || c == '.' || c == '-')
+            });
+            if is_speaker && !current.is_empty() {
+                chunks.push(current.trim().to_string());
+                current.clear();
+            }
+            if !current.is_empty() {
+                current.push('\n');
+            }
+            current.push_str(line);
+        }
+        if !current.trim().is_empty() {
+            chunks.push(current.trim().to_string());
+        }
+        chunks
+    } else if transcript.contains("\n\n") {
+        // Split by double-newline (paragraph boundaries).
+        transcript
+            .split("\n\n")
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect()
+    } else if transcript.contains('\n') {
+        // Split by single newlines.
+        transcript
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect()
+    } else {
+        // Single line — return as one chunk.
+        vec![transcript.trim().to_string()]
+    };
+    chunks
+        .into_iter()
+        .enumerate()
+        .map(|(idx, text)| {
+            serde_json::json!({
+                "chunk_id": (idx + 1).to_string(),
+                "text": text,
+            })
+        })
+        .collect()
+}
+
+/// Verify that every evidence item in the model output has a `quote` that is
+/// a substring of the chunk referenced by `chunk_id`. This is the mechanical
+/// enforcement of the no-fabrication invariant — the process verifies, not
+/// the model.
+///
+/// The model output is expected to be a JSON object with sections, each
+/// containing `evidence` arrays. Each evidence item has `chunk_id`, `quote`,
+/// and optionally `char_start`. This function walks the entire output
+/// recursively, finds all objects with both `chunk_id` and `quote` fields,
+/// and verifies the substring check. Evidence items that fail are marked
+/// `verified: false` with a `verification_error` field; passing items are
+/// marked `verified: true`.
+///
+/// Returns the model output with verification annotations added. The
+/// downstream consumer (the manifest's convergence check or the LENS audit)
+/// can reject verdicts with `verified: false` evidence.
+fn verify_citations(
+    model_output: &Value,
+    chunk_texts: &std::collections::HashMap<String, String>,
+) -> Value {
+    let mut output = model_output.clone();
+    verify_citations_recursive(&mut output, chunk_texts);
+    output
+}
+
+/// Recursively walk a JSON value and verify all evidence items (objects with
+/// both `chunk_id` and `quote` fields).
+fn verify_citations_recursive(
+    value: &mut Value,
+    chunk_texts: &std::collections::HashMap<String, String>,
+) {
+    match value {
+        Value::Object(obj) => {
+            // Check if this object is an evidence item (has both chunk_id and quote).
+            let chunk_id = obj
+                .get("chunk_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let quote = obj
+                .get("quote")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let (Some(chunk_id), Some(quote)) = (chunk_id, quote) {
+                let verified = chunk_texts
+                    .get(&chunk_id)
+                    .is_some_and(|text| text.contains(&quote));
+                obj.insert("verified".to_string(), Value::Bool(verified));
+                if !verified {
+                    let reason = if chunk_texts.contains_key(&chunk_id) {
+                        format!("quote not found as substring in chunk {}", chunk_id)
+                    } else {
+                        format!("chunk_id {} not found in transcript chunks", chunk_id)
+                    };
+                    obj.insert("verification_error".to_string(), Value::String(reason));
+                }
+            }
+            // Recurse into all object values.
+            for (_, v) in obj.iter_mut() {
+                verify_citations_recursive(v, chunk_texts);
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                verify_citations_recursive(item, chunk_texts);
+            }
+        }
+        _ => {}
+    }
+}
 ///
 /// The `input` JSON object carries the function's arguments, bound from prior
 /// step results by `execute_compute`. Returns the function's result as a JSON
@@ -55,6 +211,21 @@ fn shell_exec(command: &str, cwd: &str) -> Result<Value> {
     }))
 }
 
+/// Dispatch a `compute_ref` string to the matching `hkask_forecast` primitive.
+///
+/// The `input` JSON object carries the function's arguments, bound from prior
+/// step results by `execute_compute`. Returns the function's result as a JSON
+/// value consumable by downstream steps.
+///
+/// Supported `compute_ref` values (must match the conformance contract in
+/// `registry/templates/superforecasting/README.md`):
+/// - `calibrate_from_fermi` — in: `{questions: [{question, estimate, confidence}, ...]}`
+/// - `outside_view_adjustment` — in: `{base_rate, inside_estimate, reference_count}`
+/// - `bayesian_update` — in: `{prior, evidence_likelihood, evidence_base_rate}`
+/// - `apply_calibration_adjustment` — in: `{prior, overconfidence_bias}`
+/// - `brier_score` — in: `{probability, outcome_occurred}`
+/// - `brier_score_multi` — in: `{probabilities: [f64], outcomes: [bool]}`
+/// - `brier_interpretation` — in: `{score}`
 pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
     use hkask_forecast as forecast;
     let get_f64 = |key: &str| -> Result<f64> {
@@ -759,6 +930,75 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                 "rejected": rejected,
             }))
         }
+        // ── Listening skill compute primitives ──
+        //
+        // These implement the no-fabrication retrieve-cite-verify process
+        // from the listening skill (MAIA v3 earnings-call analysis). The
+        // transcript is pre-split into numbered chunks (chunk_transcript),
+        // the model searches the chunks and cites what it found, and a
+        // post-processing step verifies each cited substring is present in
+        // the referenced chunk (verify_citations). The model cannot
+        // fabricate a quote because the process never gives it a "write a
+        // quote" step — only a "find a quote and point to it" step.
+        "listening.chunk_transcript" => {
+            let transcript = input
+                .get("transcript")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if transcript.is_empty() {
+                return Ok(serde_json::json!({
+                    "transcript_chunks": [],
+                    "prior_transcript_chunks": [],
+                }));
+            }
+            let chunks = chunk_transcript(transcript);
+            // Also chunk prior transcripts if provided (for cross-period
+            // comparison). Each prior transcript is chunked independently.
+            let prior_chunks = input
+                .get("prior_transcripts")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .map(|t| {
+                            let text = t.as_str().unwrap_or("");
+                            if text.is_empty() {
+                                Vec::new()
+                            } else {
+                                chunk_transcript(text)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Ok(serde_json::json!({
+                "transcript_chunks": chunks,
+                "prior_transcript_chunks": prior_chunks,
+            }))
+        }
+        "listening.verify_citations" => {
+            let model_output = input.get("model_output").cloned().unwrap_or(Value::Null);
+            let chunks = input
+                .get("transcript_chunks")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            // Build a lookup: chunk_id → chunk text.
+            let mut chunk_texts: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            for chunk in &chunks {
+                if let (Some(id), Some(text)) = (
+                    chunk.get("chunk_id").and_then(|v| v.as_str()),
+                    chunk.get("text").and_then(|v| v.as_str()),
+                ) {
+                    chunk_texts.insert(id.to_string(), text.to_string());
+                }
+            }
+            // Walk the model output and verify every evidence item's quote
+            // is a substring of the referenced chunk. Reject any verdict
+            // whose evidence fails the substring check.
+            let verified = verify_citations(&model_output, &chunk_texts);
+            Ok(verified)
+        }
         // ── Lisp evaluation primitive ──
         //
         // Deterministic evaluation of a Lisp form against a JSON environment.
@@ -813,7 +1053,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
             shell_exec(command, cwd)
         }
         other => Err(TemplateError::Manifest(format!(
-            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation, kata.object_gap, kata.process_gap, kata.hypotenuse, kata.prediction_vs_result, lisp.eval, shell.exec, swarm.converge_accumulate, swarm.second_order_monitor",
+            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation, kata.object_gap, kata.process_gap, kata.hypotenuse, kata.prediction_vs_result, lisp.eval, shell.exec, swarm.converge_accumulate, swarm.second_order_monitor, swarm.filter_proposed_moves, listening.chunk_transcript, listening.verify_citations",
             other
         ))),
     }
@@ -1138,6 +1378,214 @@ mod tests {
     fn dispatch_unknown_ref_errors() {
         let input = serde_json::json!({});
         assert!(dispatch_compute("nonexistent_fn", &input).is_err());
+    }
+
+    // ── listening.chunk_transcript tests ──
+
+    #[test]
+    fn dispatch_listening_chunk_transcript_speaker_turns() {
+        let transcript = "Satya Nadella: We are growing.\nAmy Hood: Revenue is up.\nSatya Nadella: Azure is strong.";
+        let input = serde_json::json!({"transcript": transcript});
+        let result = dispatch_compute("listening.chunk_transcript", &input).unwrap();
+        let chunks = result.get("transcript_chunks").unwrap().as_array().unwrap();
+        assert_eq!(chunks.len(), 3, "3 speaker turns → 3 chunks");
+        // Each chunk has chunk_id and text
+        for (idx, chunk) in chunks.iter().enumerate() {
+            let id = chunk.get("chunk_id").unwrap().as_str().unwrap();
+            assert_eq!(id, (idx + 1).to_string());
+            let text = chunk.get("text").unwrap().as_str().unwrap();
+            assert!(!text.is_empty());
+        }
+        // First chunk contains the speaker marker
+        assert!(
+            chunks[0]
+                .get("text")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("Satya Nadella")
+        );
+    }
+
+    #[test]
+    fn dispatch_listening_chunk_transcript_paragraphs() {
+        let transcript = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
+        let input = serde_json::json!({"transcript": transcript});
+        let result = dispatch_compute("listening.chunk_transcript", &input).unwrap();
+        let chunks = result.get("transcript_chunks").unwrap().as_array().unwrap();
+        assert_eq!(chunks.len(), 3, "3 paragraphs → 3 chunks");
+    }
+
+    #[test]
+    fn dispatch_listening_chunk_transcript_single_line() {
+        let transcript = "Single line transcript.";
+        let input = serde_json::json!({"transcript": transcript});
+        let result = dispatch_compute("listening.chunk_transcript", &input).unwrap();
+        let chunks = result.get("transcript_chunks").unwrap().as_array().unwrap();
+        assert_eq!(chunks.len(), 1, "single line → 1 chunk");
+    }
+
+    #[test]
+    fn dispatch_listening_chunk_transcript_empty() {
+        let input = serde_json::json!({"transcript": ""});
+        let result = dispatch_compute("listening.chunk_transcript", &input).unwrap();
+        let chunks = result.get("transcript_chunks").unwrap().as_array().unwrap();
+        assert!(chunks.is_empty(), "empty transcript → 0 chunks");
+    }
+
+    #[test]
+    fn dispatch_listening_chunk_transcript_prior_transcripts() {
+        let transcript = "Speaker A: Hello.\nSpeaker B: Hi.";
+        let prior = "Prior Speaker: Old news.";
+        let input = serde_json::json!({
+            "transcript": transcript,
+            "prior_transcripts": [prior]
+        });
+        let result = dispatch_compute("listening.chunk_transcript", &input).unwrap();
+        let prior_chunks = result
+            .get("prior_transcript_chunks")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            prior_chunks.len(),
+            1,
+            "1 prior transcript → 1 array of chunks"
+        );
+        let first_prior = prior_chunks[0].as_array().unwrap();
+        assert_eq!(first_prior.len(), 1, "prior has 1 speaker turn");
+    }
+
+    // ── listening.verify_citations tests ──
+
+    #[test]
+    fn dispatch_listening_verify_citations_pass() {
+        let chunks = serde_json::json!([
+            {"chunk_id": "1", "text": "We are raising revenue guidance for the quarter."},
+            {"chunk_id": "2", "text": "Azure capacity is expanding rapidly."}
+        ]);
+        let model_output = serde_json::json!({
+            "margin_trajectory": {
+                "evidence": [
+                    {"chunk_id": "1", "quote": "raising revenue guidance", "char_start": 7}
+                ]
+            }
+        });
+        let input = serde_json::json!({
+            "model_output": model_output,
+            "transcript_chunks": chunks
+        });
+        let result = dispatch_compute("listening.verify_citations", &input).unwrap();
+        let evidence = result
+            .get("margin_trajectory")
+            .unwrap()
+            .get("evidence")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(
+            evidence[0].get("verified").unwrap(),
+            &serde_json::json!(true)
+        );
+        assert!(evidence[0].get("verification_error").is_none());
+    }
+
+    #[test]
+    fn dispatch_listening_verify_citations_fail_quote_not_in_chunk() {
+        let chunks = serde_json::json!([
+            {"chunk_id": "1", "text": "We are raising revenue guidance."}
+        ]);
+        let model_output = serde_json::json!({
+            "section": {
+                "evidence": [
+                    {"chunk_id": "1", "quote": "fabricated quote not in transcript"}
+                ]
+            }
+        });
+        let input = serde_json::json!({
+            "model_output": model_output,
+            "transcript_chunks": chunks
+        });
+        let result = dispatch_compute("listening.verify_citations", &input).unwrap();
+        let evidence = result
+            .get("section")
+            .unwrap()
+            .get("evidence")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            evidence[0].get("verified").unwrap(),
+            &serde_json::json!(false)
+        );
+        assert!(evidence[0].get("verification_error").is_some());
+    }
+
+    #[test]
+    fn dispatch_listening_verify_citations_fail_chunk_not_found() {
+        let chunks = serde_json::json!([
+            {"chunk_id": "1", "text": "Some text."}
+        ]);
+        let model_output = serde_json::json!({
+            "evidence": [
+                {"chunk_id": "99", "quote": "Some text."}
+            ]
+        });
+        let input = serde_json::json!({
+            "model_output": model_output,
+            "transcript_chunks": chunks
+        });
+        let result = dispatch_compute("listening.verify_citations", &input).unwrap();
+        let evidence = result.get("evidence").unwrap().as_array().unwrap();
+        assert_eq!(
+            evidence[0].get("verified").unwrap(),
+            &serde_json::json!(false)
+        );
+        let err = evidence[0]
+            .get("verification_error")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(err.contains("not found"));
+    }
+
+    #[test]
+    fn dispatch_listening_verify_citations_nested_evidence() {
+        let chunks = serde_json::json!([
+            {"chunk_id": "1", "text": "Azure is growing fast."},
+            {"chunk_id": "2", "text": "Germany datacenter is on track."}
+        ]);
+        // Evidence nested in multiple sections, some pass, some fail.
+        let model_output = serde_json::json!({
+            "sections": [
+                {
+                    "name": "moat",
+                    "evidence": [
+                        {"chunk_id": "1", "quote": "growing fast"},
+                        {"chunk_id": "2", "quote": "fabricated"}
+                    ]
+                }
+            ]
+        });
+        let input = serde_json::json!({
+            "model_output": model_output,
+            "transcript_chunks": chunks
+        });
+        let result = dispatch_compute("listening.verify_citations", &input).unwrap();
+        let evidence = result.get("sections").unwrap().as_array().unwrap()[0]
+            .get("evidence")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            evidence[0].get("verified").unwrap(),
+            &serde_json::json!(true)
+        );
+        assert_eq!(
+            evidence[1].get("verified").unwrap(),
+            &serde_json::json!(false)
+        );
     }
 
     #[test]

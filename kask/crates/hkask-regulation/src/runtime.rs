@@ -32,6 +32,7 @@ use std::sync::Arc;
 
 // MAX_REGULATION_HISTORY and MAX_SKILL_SPAN_HISTORY moved to
 // set_points::DEFAULT_MAX_*_HISTORY. Test-compatibility alias below.
+#[cfg(test)]
 const MAX_SKILL_SPAN_HISTORY: usize = crate::set_points::DEFAULT_MAX_SKILL_SPAN_HISTORY;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;

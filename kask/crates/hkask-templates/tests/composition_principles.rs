@@ -34,14 +34,19 @@ use std::path::Path;
 /// referencing one of these does not need an `env` binding.
 const LISP_BUILTINS: &[&str] = &[
     "+", "-", "*", "/", "=", "!=", "<", "<=", ">", ">=", "car", "cdr", "cons", "list", "length",
-    "nth", "reverse", "is_null", "numberp", "listp", "assoc", "append", "string=", "concat",
+    "nth", "reverse", "is_null", "numberp", "listp", "assoc", "append", "string=", "concat", "abs",
+    "sqrt", "eq", "member",
 ];
 
 /// Special forms recognized by `eval_special_form` — these are language
 /// constructs, not function calls, and are always available.
 const LISP_SPECIAL_FORMS: &[&str] = &[
-    "quote", "if", "let", "lambda", "define", "begin", "and", "or", "not",
+    "quote", "if", "let", "lambda", "define", "begin", "and", "or", "not", "cond",
 ];
+
+/// Root-env constants — symbols bound in `Env::new_root()` that are neither
+/// builtins nor special forms. `t` is the canonical truth constant.
+const LISP_ROOT_CONSTANTS: &[&str] = &["t"];
 
 /// Recursively collect all symbol names referenced in a parsed Lisp form,
 /// excluding symbols that are locally bound within the form (via `let`,
@@ -230,6 +235,38 @@ fn collect_symbol_references(
 /// Existing warnings should be reviewed: if the symbol is genuinely
 /// `define`d (scope-tracking limitation), annotate it; if it's genuinely
 /// unbound, fix the form.
+///
+/// Category A (scope-tracking false positives — DO NOT fix, leave ceiling
+/// unchanged). All are `let`/`lambda` bindings or `define`d functions inside
+/// nested `begin`/`if` blocks. The real evaluator resolves them via env
+/// mutation; the test's scope tracker doesn't propagate `define` from nested
+/// blocks back to the enclosing scope.
+///   - lisp-scaffold-reasoning.yaml step 2: `h`, `lk`, `hyp-text` (let bindings
+///     inside a lambda inside a begin)
+///   - eqm-improvement.yaml step 7: `compute-gap`, `find-curr` (define'd
+///     functions inside nested let/begin)
+///   - eqm-improvement.yaml step 8: `find-align` (define'd function)
+///   - eqm-improvement.yaml step 9: `find-score` (define'd function)
+///   - eqm.yaml step 5: `compute-mean-delta` (define'd function)
+///   - kask-seam-audit.yaml step 2: `p`, `v` (let bindings inside nested
+///     lambda/begin)
+///   - kask-seam-audit.yaml step 7: `f` (let binding inside nested lambda)
+///   - kask-seam-audit.yaml step 12: `fo`, `r`, `fp`, `hard-stop-obj`, `test`,
+///     `wk` (let bindings / lambda params inside nested begin/if)
+///   - kask-seam-audit.yaml step 14: `f` (let binding inside nested lambda)
+///
+/// Category B (genuinely unbound — FIXED in the lisp interpreter / manifest):
+///   - `member` → added to default_builtins() (company-research-deep step 10)
+///   - `cond` → added as special form (company-research-deep step 17,
+///     company-research-flash step 26)
+///   - `eq` → added to default_builtins() (company-research-deep step 17,
+///     company-research-flash step 26)
+///   - `t` → bound to Bool(true) in Env::new_root() (cond default clause)
+///   - `sqrt` → added to default_builtins() (eqm-improvement step 7)
+///   - `abs` → added to default_builtins() (eqm step 5)
+///   - `env` → fixed in idiomatic-rust.yaml step 4 (was referencing the env
+///     block key as a symbol; form rewritten to reference env-bound symbols
+///     directly)
 #[test]
 fn lisp_eval_form_symbols_are_bound() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -242,6 +279,7 @@ fn lisp_eval_form_symbols_are_bound() {
 
     let builtins: HashSet<&str> = LISP_BUILTINS.iter().copied().collect();
     let special_forms: HashSet<&str> = LISP_SPECIAL_FORMS.iter().copied().collect();
+    let root_constants: HashSet<&str> = LISP_ROOT_CONSTANTS.iter().copied().collect();
 
     let mut warnings = Vec::new();
     let mut checked = 0;
@@ -315,9 +353,10 @@ fn lisp_eval_form_symbols_are_bound() {
                 let is_builtin = builtins.contains(sym.as_str());
                 let is_special = special_forms.contains(sym.as_str());
                 let is_env = env_keys.contains(sym);
-                if !is_builtin && !is_special && !is_env {
+                let is_root_constant = root_constants.contains(sym.as_str());
+                if !is_builtin && !is_special && !is_env && !is_root_constant {
                     warnings.push(format!(
-                        "{fname} step {}: lisp.eval form references symbol '{}' which is not a builtin, special form, or env binding — resolves to null at runtime",
+                        "{fname} step {}: lisp.eval form references symbol '{}' which is not a builtin, special form, root constant, or env binding — resolves to null at runtime",
                         step.ordinal, sym
                     ));
                 }
@@ -333,17 +372,20 @@ fn lisp_eval_form_symbols_are_bound() {
         eprintln!("  WARN: {w}");
     }
 
-    // Regression ceiling: the current warning count reflects pre-existing
-    // forms where the scope tracker cannot fully resolve `define`d functions
-    // inside nested `if`/`begin` blocks. The test fails if the count
-    // INCREASES — any new unbound symbol is a potential silent-null bug.
+    // Regression ceiling: the current warning count reflects Category A
+    // scope-tracking false positives (see the annotation above). All
+    // Category B (genuinely unbound) symbols have been fixed — `member`,
+    // `cond`, `eq`, `t`, `sqrt`, `abs` were added to the lisp interpreter,
+    // and `env` in idiomatic-rust.yaml step 4 was fixed in the manifest.
+    // The test fails if the count INCREASES — any new unbound symbol is a
+    // potential silent-null bug.
     //
     // To fix an existing warning:
     // - If the symbol is genuinely `define`d (scope-tracking limitation),
     //   annotate it above and the ceiling stays.
-    // - If the symbol is genuinely unbound (not defined anywhere in the
-    //   form), fix the form — it resolves to null at runtime.
-    const WARNING_CEILING: usize = 53;
+    // - If it's genuinely unbound (not defined anywhere in the form), fix
+    //   the form — it resolves to null at runtime.
+    const WARNING_CEILING: usize = 18;
     assert!(
         warnings.len() <= WARNING_CEILING,
         "{} lisp.eval unbound-symbol warnings (regression ceiling: {WARNING_CEILING}). \
@@ -371,12 +413,13 @@ fn lisp_eval_form_symbols_are_bound() {
 /// latter is a heuristic — a condition referencing the result implies the
 /// manifest author anticipated the result's presence and is gating on it.
 ///
-/// This is a ceiling-gated diagnostic: the current count reflects
-/// pre-existing MCP steps without failure handling. The test fails if the
-/// count *increases* — any new MCP step without failure handling is a
-/// potential silent-null-propagation bug that should be reviewed before
-/// merging. Existing violations should be retrofitted with `on_failure`
-/// or a downstream condition, and the ceiling decremented as they are fixed.
+/// This is a hard-error gate: all MCP steps must have failure handling. The
+/// previous ceiling-gated approach (21 warnings) has been fully resolved —
+/// every MCP step across all manifests now has an `on_failure: { action:
+/// report, resume: "..." }` block that surfaces the failure via
+/// curator_report_skill_use_issue before the pipeline resumes with a null
+/// result. Any new MCP step without failure handling is a silent-null-
+/// propagation bug and must be fixed before merging.
 #[test]
 fn mcp_steps_have_failure_handling() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -446,20 +489,13 @@ fn mcp_steps_have_failure_handling() {
         eprintln!("  WARN: {w}");
     }
 
-    // Regression ceiling: the current warning count reflects pre-existing
-    // MCP steps without failure handling. The test fails if the count
-    // INCREASES — any new MCP step without failure handling is a potential
-    // silent-null-propagation bug.
-    //
-    // To fix an existing violation: add `on_failure: { action: report, resume:
-    // "..." }` to the MCP step, or add a downstream `condition` that checks
-    // `step_N_result`. Then decrement the ceiling.
-    const WARNING_CEILING: usize = 21;
+    // Hard-error gate: all MCP steps must have failure handling. The previous
+    // ceiling-gated approach (21 warnings) has been fully resolved. Any new
+    // MCP step without failure handling is a silent-null-propagation bug.
     assert!(
-        warnings.len() <= WARNING_CEILING,
-        "{} mcp: failure-handling warnings (regression ceiling: {WARNING_CEILING}). \
-         If the new warning is intentional (the MCP call cannot fail, or failure
-         is handled elsewhere), annotate it above and increment WARNING_CEILING.",
+        warnings.is_empty(),
+        "{} mcp: failure-handling warnings — every MCP step must have on_failure or a downstream condition. \
+         Add `on_failure: {{ action: report, resume: \"...\" }}` to the MCP step, or add a downstream `condition` that checks `step_N_result`.",
         warnings.len()
     );
 }

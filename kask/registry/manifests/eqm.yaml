@@ -132,6 +132,14 @@ steps:
       rationale: "{{ item.rationale }}"
       forecast_probability: "{{ item.forecast_probability | default(null) }}"
       question: "{{ item.question | default(null) }}"
+    on_failure:
+      action: report
+      resume: >
+        market_score_rationale failed — the prediction-markets MCP server
+        may be down or the credential is missing. EQM scoring cannot proceed
+        without the external score; the composite will be null and downstream
+        convergence will surface the gap. Restart the server via
+        sync_kask_mcp_servers and re-invoke.
 
   # ── Phase 3: AGGREGATE — forecast-level + forecaster-level composite ──
   - ordinal: 3
