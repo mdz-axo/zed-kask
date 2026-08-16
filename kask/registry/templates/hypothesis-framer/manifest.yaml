@@ -1,9 +1,9 @@
 # Template crate manifest for hypothesis-framer skill
-# hKask v0.30.0
+# hKask v0.35.0
 
 crate:
   name: hypothesis-framer
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Research question framing and hypothesis formulation using FINER criteria
     and PICO process. Evaluates broad research topics through Feasibility,

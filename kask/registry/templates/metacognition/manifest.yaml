@@ -1,9 +1,9 @@
 # Template crate manifest for metacognition skill
-# hKask v0.31.0
+# hKask v0.35.0
 
 crate:
   name: metacognition
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     General-purpose metacognitive reasoning templates. Decomposes goals into
     sub-goals, self-assesses progress, calibrates strategy based on prior

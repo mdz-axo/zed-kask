@@ -2,7 +2,7 @@
 title: "Reference Documentation — Index"
 audience: [developers, operators, agents]
 last_updated: 2026-08-04
-version: "0.32.3"
+version: "0.35.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain]

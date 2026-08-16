@@ -1,9 +1,9 @@
 # Template crate manifest for heal skill
-# hKask v0.31.0
+# hKask v0.35.0
 
 crate:
   name: heal
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Self-healing templates for error classification, configuration recovery,
     and transient retry handling. Provides structured error diagnosis and

@@ -1,9 +1,9 @@
 # Template crate manifest for improv skill
-# hKask v0.31.0
+# hKask v0.35.0
 
 crate:
   name: improv
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Composable interaction grammar for hKask agents. Five improv modes
     (Plussing, Yes And, Yes But, Freestyling, Riffing) provide

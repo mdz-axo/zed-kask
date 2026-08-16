@@ -1,10 +1,10 @@
 # Template crate manifest for graph-audit skill
-# hKask v0.31.0
+# hKask v0.35.0
 # Merged from codegraph + semantic-graph-audit + zoom-out (context-expansion)
 
 crate:
   name: graph-audit
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Unified graph analysis templates. Code mode: discover, query, analyze,
     and assemble context from the code graph. Semantic mode: classify, analyze,

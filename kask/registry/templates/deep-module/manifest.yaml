@@ -1,9 +1,9 @@
 # Template crate manifest for deep-module skill
-# hKask v0.31.0
+# hKask v0.35.0
 
 crate:
   name: deep-module
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Module design discipline based on John Ousterhout's "A Philosophy of Software
     Design." Apply the deletion test to evaluate whether a module deserves to exist:

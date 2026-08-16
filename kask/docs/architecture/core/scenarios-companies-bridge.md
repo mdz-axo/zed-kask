@@ -2,7 +2,7 @@
 title: "Scenarios ↔ Companies Bridge"
 audience: [developers, architects]
 last_updated: 2026-08-04
-version: "0.31.2"
+version: "0.35.0"
 status: "Active"
 domain: "MCP Servers"
 mds_categories: [domain, composition]
@@ -11,7 +11,7 @@ mds_categories: [domain, composition]
 # Scenarios ↔ Companies Bridge
 
 **Diataxis type:** Architecture
-**Status:** Active (v0.31.2)
+**Status:** Active (v0.35.0)
 **Related:** `mcp-servers/hkask-mcp-scenarios` (scenario forecasting), `mcp-servers/hkask-mcp-companies` (financial modeling)
 
 ## Purpose

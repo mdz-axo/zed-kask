@@ -1,9 +1,9 @@
 # Template crate manifest for gradient-hunter skill
-# hKask v0.31.0
+# hKask v0.35.0
 
 crate:
   name: gradient-hunter
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Find steep gradients between populated and unpopulated regions of a
     codebase/telemetry/test field and investigate the reason for the gradient.

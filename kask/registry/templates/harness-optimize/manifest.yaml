@@ -1,6 +1,6 @@
 crate:
   name: harness-optimize
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Suite-level test harness proposer. Reads raw execution traces from the
     trace filesystem, identifies under-tested areas via mutation analysis,

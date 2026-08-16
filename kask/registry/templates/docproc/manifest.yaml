@@ -1,9 +1,9 @@
 # Template crate manifest for docproc skill
-# hKask v0.31.0
+# hKask v0.35.0
 
 crate:
   name: docproc
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Document processing templates for hierarchical memory extraction,
     ontology tagging, QA generation, prompt building, consolidation,

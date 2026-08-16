@@ -1,11 +1,11 @@
 # Template crate manifest for diataxis-diagram skill
-# hKask v0.31.0
+# hKask v0.35.0
 # Diataxis diagramming — anchored in https://diataxis.fr/ methodology
 # Mermaid syntax — anchored in https://mermaid.js.org/
 
 crate:
   name: diataxis-diagram
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Generate Mermaid diagrams from code using Diataxis methodology. Convergent
     PDCA loop: classify target and diagram type, extract entities from source,

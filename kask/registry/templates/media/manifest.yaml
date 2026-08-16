@@ -1,9 +1,9 @@
 # Template crate manifest for media skill
-# hKask v0.30.0
+# hKask v0.35.0
 
 crate:
   name: media
-  version: "0.31.0"
+  version: "0.35.0"
   description: >
     Vision LLM-powered media analysis and generation. Classifies photographic
     style, genre, and era; generates scene descriptions in multiple modes;

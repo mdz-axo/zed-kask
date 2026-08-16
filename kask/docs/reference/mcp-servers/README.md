@@ -2,7 +2,7 @@
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-08-05
-version: "0.32.2"
+version: "0.35.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -11,7 +11,7 @@ mds_categories: [composition, domain]
 # MCP Server Registry
 
 **Diataxis type:** Reference
-**Status:** Active (v0.32.2)
+**Status:** Active (v0.35.0)
 
 > Built-in MCP servers shipped with hKask and launched by zed-kask's `context_server`
 > host as child processes over stdio. Each server is a thin surface over domain crates. The binary
