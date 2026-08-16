@@ -1409,6 +1409,58 @@ mod embedding_tests {
         }
     }
 
+    // zed-kask: D13/D8 — pinning test for max_tokens propagation.
+    // The model_override propagation tests above pin that the override reaches
+    // the channel. This test pins that the cascade's output budget
+    // (parameters.max_tokens) reaches the LanguageModelRequest.max_tokens
+    // field. Without this, a refactor could silently revert to
+    // `max_tokens: None` (Default), causing OpenRouter to reserve the model's
+    // full output window and return 400 on every cascade call — the exact
+    // regression the D13/D8 comment at build_request (inference.rs:473)
+    // describes.
+    #[test]
+    fn build_request_propagates_max_tokens_to_language_model_request() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
+        let (stream_tx, _stream_rx) =
+            tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
+        let port = LanguageModelInferencePort { tx, stream_tx };
+
+        let mut params = LLMParameters::default();
+        params.max_tokens = 4096;
+
+        let messages = vec![ChatMessage::user("hello".to_string())];
+        let req = port.build_request(&messages, &params, None);
+
+        assert_eq!(
+            req.max_tokens,
+            Some(4096),
+            "build_request must propagate parameters.max_tokens to \
+             LanguageModelRequest.max_tokens — without this, providers fall back \
+             to the model's full context window (D13/D8 regression)"
+        );
+    }
+
+    #[test]
+    fn build_request_propagates_default_max_tokens() {
+        // The default LLMParameters::max_tokens is 2048. Pin that the default
+        // also propagates (not just non-default values) so a change to the
+        // default constant is caught.
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
+        let (stream_tx, _stream_rx) =
+            tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
+        let port = LanguageModelInferencePort { tx, stream_tx };
+
+        let params = LLMParameters::default();
+        let messages = vec![ChatMessage::user("hello".to_string())];
+        let req = port.build_request(&messages, &params, None);
+
+        assert_eq!(
+            req.max_tokens,
+            Some(params.max_tokens as u64),
+            "default max_tokens must also propagate to LanguageModelRequest"
+        );
+    }
+
     // ── generate_stream_with_model override propagation ──
     //
     // The default trait impl of `generate_stream_with_model` falls back to

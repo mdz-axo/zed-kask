@@ -1981,6 +1981,103 @@ mod tests {
         );
     }
 
+    // zed-kask: D25 — pinning test for the execute_select truncation refusal.
+    // The stream-level test above (call_inference_stream_threads_finish_reason_length)
+    // only asserts that finish_reason is threaded out of call_inference_stream.
+    // This test exercises the full execute_select path: when finish_reason is
+    // "length" AND output_schema is set AND no structured tool call was emitted,
+    // execute_select must return Err containing "truncated at max_tokens" — not
+    // silently parse the partial text as JSON. Without this test, a refactor
+    // could revert the refusal guard (step_actions.rs:345) and re-introduce the
+    // silent-truncated-output bug the D25 comment describes.
+    #[tokio::test]
+    async fn execute_select_refuses_truncated_structured_output() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        // A stub InferencePort that returns a truncated result: finish_reason
+        // "length", no tool calls, partial JSON text. This is the exact shape
+        // that triggers the D25 refusal guard in execute_select.
+        struct TruncationInference;
+        impl InferencePort for TruncationInference {
+            fn generate(
+                &self,
+                _prompt: &str,
+                _parameters: &LLMParameters,
+                _tools: Option<&[ChatToolDefinition]>,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = std::result::Result<
+                                hkask_types::InferenceResult,
+                                hkask_types::InferenceError,
+                            >,
+                        > + Send
+                        + '_,
+                >,
+            > {
+                let result = hkask_types::InferenceResult {
+                    text: "{\"partial\":".to_string(),
+                    model: "test".into(),
+                    usage: hkask_types::InferenceUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    finish_reason: "length".into(),
+                    token_probabilities: None,
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                    cost_usd: None,
+                };
+                Box::pin(async move { Ok(result) })
+            }
+        }
+
+        let inference = Arc::new(TruncationInference) as Arc<dyn InferencePort>;
+        let executor =
+            ManifestExecutor::new(inference, Arc::new(NoopToolPort), LLMParameters::default());
+
+        // A 1-step select manifest with output_schema set. The output_schema
+        // is what activates the D25 refusal guard — without it, a truncated
+        // generation falls through to parse_json_response on the partial text.
+        let manifest_yaml = r#"
+manifest:
+  id: test-truncation-refusal
+  category: skill
+steps:
+  - ordinal: 1
+    action: select
+    description: "Structured output step"
+    template_ref: "Return a JSON object with a result key"
+    output_schema:
+      type: object
+      properties:
+        result:
+          type: string
+      required: [result]
+convergence:
+  max_iterations: 1
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let result = executor
+            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .await;
+
+        let err = result.expect_err(
+            "execute_select must refuse a truncated structured-output generation, \
+             not silently parse partial text as JSON",
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("truncated at max_tokens"),
+            "error must mention truncation; got: {msg}"
+        );
+    }
+
     /// A2: empty-output guard. When the model returns no text and no tool
     /// call, `execute_select` must surface an actionable error naming the
     /// finish_reason and likely causes — not the cryptic
