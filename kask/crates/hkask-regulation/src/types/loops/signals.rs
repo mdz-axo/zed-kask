@@ -87,15 +87,6 @@ pub enum SignalMetric {
     /// Read from the latest trace run's `metrics.json` `mutation_score`.
     /// Set-point: mutation_score_floor (default 0.50).
     MutationScore,
-    /// Estimated token cost of injected tool schemas (Cybernetics Loop 6).
-    /// Measured as serialized tool-schema bytes / 4 (industry-standard
-    /// ~4 chars/token heuristic for English JSON). Closes the feedback loop
-    /// on tool-schema bloat — without this signal, a regression that adds
-    /// 50K tokens of MCP tool schemas before reasoning begins is invisible
-    /// to the regulator (the `.rules` `unwrap_or(0)` trap on sense inputs).
-    /// Observational: no substitution ladder; Notify is terminal.
-    /// Set-point: tool_schema_token_ceiling (default 12_000).
-    ToolSchemaTokens,
 }
 
 impl std::fmt::Display for SignalMetric {
@@ -144,7 +135,6 @@ impl SignalMetric {
             SignalMetric::ToolReliability => "tool_reliability",
             SignalMetric::TestCoverage => "test_coverage",
             SignalMetric::MutationScore => "mutation_score",
-            SignalMetric::ToolSchemaTokens => "tool_schema_tokens",
         }
     }
 }

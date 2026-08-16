@@ -129,17 +129,6 @@ pub const DEFAULT_COVERAGE_FLOOR: f64 = 0.70;
 /// Cybernetics Loop's `MutationScoreSensor` produces a signal.
 pub const DEFAULT_MUTATION_SCORE_FLOOR: f64 = 0.50;
 
-/// Default tool-schema token ceiling (12_000 tokens ≈ 48KB of JSON).
-///
-/// When the estimated token cost of injected tool schemas exceeds this,
-/// the Cybernetics Loop's `ToolSchemaTokenSensor` produces a signal.
-/// The article "Architecting Autonomous AI Systems" (Bhargava, 2026)
-/// quantifies that a single GitHub MCP server can inject 50K+ tokens
-/// of schema before reasoning begins — the "needle in a haystack" problem.
-/// 12K tokens is a conservative ceiling that leaves headroom for the
-/// system prompt and conversation context in a 128K-token window.
-pub const DEFAULT_TOOL_SCHEMA_TOKEN_CEILING: f64 = 12_000.0;
-
 /// Default maximum regulation cycles retained for history queries.
 ///
 /// Bounds memory growth in long-running sessions. An operator running a
