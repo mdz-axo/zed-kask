@@ -479,8 +479,51 @@ impl LocalSwarmRuntime {
             // evaluator against `response`. Left `None` here; ORIENT reads it
             // from the executor-populated `delegate_results`.
             task_success: None,
+            bind_matched: None,
         })
     }
+}
+
+/// Classify the request shape for the bind check (Rung 4). This heuristic
+/// has no correct setting — widen it and it swallows structured ports,
+/// narrow it and it misses real declarations. It exists only because
+/// uncontrolled strings exist. Its deletion is the success condition for
+/// the typing layer. Logged at `warn!` but not serialized onto the result.
+pub(crate) fn classify_request(task: &str) -> &'static str {
+    let trimmed = task.trim();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        "json"
+    } else if trimmed.contains('\n') && trimmed.len() > 200 {
+        "structured"
+    } else {
+        "prose"
+    }
+}
+
+/// Rung 4 (Binding): does the classified request match any declared
+/// `accepts` label? Returns `None` when the agent declares no `accepts`
+/// (absence ≠ contradiction, paper Rule 5.3). `text` is treated as a
+/// universal accept — an agent declaring `accepts: ["text"]` matches
+/// any request classification.
+pub(crate) fn check_bind(card: &crate::local_registry::LocalAgentCard, task: &str) -> Option<bool> {
+    if card.accepts.is_empty() {
+        return None;
+    }
+    let classification = classify_request(task);
+    let matched = card
+        .accepts
+        .iter()
+        .any(|a| a == classification || a == "text");
+    if !matched {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            agent_id = %card.agent_id,
+            classification,
+            declared_accepts = ?card.accepts,
+            "bind check mismatch: request classification does not match any declared accept"
+        );
+    }
+    Some(matched)
 }
 
 /// Maximum agents dispatched in a single `swarm_fanout_local` call (Cybernetic
@@ -546,6 +589,16 @@ pub struct LocalDelegateResult {
     /// response shape is unchanged for callers that ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_success: Option<TaskSuccessVerdict>,
+    /// Rung 4 (Binding): whether the request classification matched at least
+    /// one declared `accepts` label. `None` = not checked (no `accepts`
+    /// declared — absence ≠ contradiction, paper Rule 5.3). `Some(true)` =
+    /// match. `Some(false)` = mismatch (recorded, not fatal — the paper's
+    /// "absence ≠ contradiction"). The classification heuristic itself is
+    /// logged at `warn!` but not serialized — it has no correct setting
+    /// (paper Rule 5.2) and its deletion is the success condition for the
+    /// typing layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind_matched: Option<bool>,
 }
 
 impl LocalDelegateResult {
@@ -835,6 +888,7 @@ mod accounting_honesty_tests {
             tool_calls: vec![],
             executed_skills: vec![],
             task_success: None,
+            bind_matched: None,
         };
         let json = serde_json::to_value(&result).expect("serialize");
         assert!(
@@ -858,6 +912,7 @@ mod accounting_honesty_tests {
             tool_calls: vec![],
             executed_skills: vec![],
             task_success: None,
+            bind_matched: None,
         };
         let json = serde_json::to_value(&result).expect("serialize");
         assert_eq!(
@@ -865,5 +920,76 @@ mod accounting_honesty_tests {
             Some(-12),
             "accumulated local spend must survive serialization as a negative number"
         );
+    }
+
+    // ── Rung 4 (Binding) tests ───────────────────────────────────────────
+
+    use crate::local_registry::LocalAgentCard;
+
+    #[test]
+    fn classify_request_detects_json() {
+        assert_eq!(classify_request("{\"key\": \"value\"}"), "json");
+        assert_eq!(classify_request("[1, 2, 3]"), "json");
+    }
+
+    #[test]
+    fn classify_request_detects_structured() {
+        let long_multiline = "line one\nline two\nline three\nline four\nline five\nline six\nline seven\nline eight\nline nine\nline ten\nline eleven\nline twelve\nline thirteen\nline fourteen\nline fifteen\nline sixteen\nline seventeen\nline eighteen\nline nineteen\nline twenty\nline twenty-one\nline twenty-two\nline twenty-three\nline twenty-four\nline twenty-five\nline twenty-six\nline twenty-seven\nline twenty-eight\nline twenty-nine\nline thirty";
+        assert_eq!(classify_request(long_multiline), "structured");
+    }
+
+    #[test]
+    fn classify_request_detects_prose() {
+        assert_eq!(classify_request("Summarize this file."), "prose");
+        assert_eq!(classify_request("short text"), "prose");
+    }
+
+    #[test]
+    fn check_bind_matches_json_to_json_accept() {
+        let card = LocalAgentCard {
+            agent_id: "test".to_string(),
+            agent_type: "test".to_string(),
+            accepts: vec!["json".to_string()],
+            capabilities: Default::default(),
+            ..Default::default()
+        };
+        assert_eq!(check_bind(&card, "{\"key\": \"value\"}"), Some(true));
+    }
+
+    #[test]
+    fn check_bind_mismatches_prose_to_json_accept() {
+        let card = LocalAgentCard {
+            agent_id: "test".to_string(),
+            agent_type: "test".to_string(),
+            accepts: vec!["json".to_string()],
+            capabilities: Default::default(),
+            ..Default::default()
+        };
+        assert_eq!(check_bind(&card, "summarize this file"), Some(false));
+    }
+
+    #[test]
+    fn check_bind_returns_none_when_no_accepts_declared() {
+        let card = LocalAgentCard {
+            agent_id: "test".to_string(),
+            agent_type: "test".to_string(),
+            accepts: vec![],
+            capabilities: Default::default(),
+            ..Default::default()
+        };
+        assert_eq!(check_bind(&card, "anything"), None);
+    }
+
+    #[test]
+    fn check_bind_text_accepts_anything() {
+        let card = LocalAgentCard {
+            agent_id: "test".to_string(),
+            agent_type: "test".to_string(),
+            accepts: vec!["text".to_string()],
+            capabilities: Default::default(),
+            ..Default::default()
+        };
+        assert_eq!(check_bind(&card, "any prose at all"), Some(true));
+        assert_eq!(check_bind(&card, "{\"json\": true}"), Some(true));
     }
 }

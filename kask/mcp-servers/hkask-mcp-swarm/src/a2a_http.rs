@@ -463,7 +463,10 @@ mod tests {
                 accepts: vec![],
                 produces: vec![],
                 dependencies: Default::default(),
-                capabilities: LocalAgentCapabilities::default(),
+                capabilities: LocalAgentCapabilities {
+                    system_prompt: Some("test".to_string()),
+                    ..Default::default()
+                },
                 cloud_id: None,
                 tags: vec![],
                 visibility: String::new(),

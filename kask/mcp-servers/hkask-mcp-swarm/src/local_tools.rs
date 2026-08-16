@@ -80,12 +80,19 @@ impl SwarmServer {
                     req.agent_name
                 ))
             })?;
+            // Rung 4 (Binding): check the request against the agent's declared
+            // `accepts` labels. Recorded, not fatal — the paper's "absence ≠
+            // contradiction". `None` = no accepts declared; `Some(false)` =
+            // mismatch (logged at warn).
+            let bind_matched = crate::local_runtime::check_bind(&agent, &req.task);
             // Execute via the local runtime.
             let ceiling = self.client.config().max_credits_per_dispatch;
-            let result = runtime
+            let mut result = runtime
                 .delegate(&agent, &req.task, req.credits_authorized, ceiling)
                 .await
                 .map_err(map_local_swarm_error)?;
+            // Stamp the bind check result onto the delegation result.
+            result.bind_matched = bind_matched;
             // Stigmergy (ACO pheromone trail): record the delegation's
             // performance annotation to the agent's prefix-scoped semantic
             // memory. The SENSE phase can read these via

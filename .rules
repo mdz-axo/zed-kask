@@ -106,6 +106,13 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Stale diagnostics after bulk edits: the crate's lib root is authoritative, not individual-file diagnostics. Don't retry stale diagnostics or fix phantom errors.
 * LLM-improves-against-LLM-scored-target loops can game the scorer. Three mitigations required: ground in real sources, preserve load-bearing properties, validate against external ground truth.
 
+# Agent ecology verification (paper: "Verification for Agent Ecologies")
+
+* A grounding check that has never been falsified is inert. Every verification contract clause must have a test that breaks it and shows the check going red. Generalizes the existing "every `// zed-kask:` comment needs a test" rule to verification contracts.
+* Absence in a delegation result is `Unknown`, not `0.0` or `false`. A `task_success: None` means "not checked," not "failed." A `bind_matched: None` means "no accepts declared," not "mismatch." A `grounding: None` means "no contract," not "compliant." Generalizes the existing `unwrap_or(0)` rule to delegation verdicts. Systems that collapse absence into success accumulate unexamined things that look examined.
+* After the `PortRegistry` lands (`hkask-mcp-swarm/src/port_registry.rs`), port labels (`accepts`/`produces` on `LocalAgentCard`) are type references, not free strings. Every label must resolve to a registered type. A new label requires a registry entry in the same PR.
+* The `classify_request` heuristic in `local_runtime.rs` has no correct setting — widen it and it swallows structured ports, narrow it and it misses real declarations. Its deletion is the success condition for the typing layer. Do not tighten it without removing it — a half-tightened heuristic is worse than a coarse one because it over-reaches on honest input (paper Rule 5.2).
+
 # kask registry guidelines
 
 * Convergence-check `primary_result` must incorporate ALL substantive step results, not just the first. Exception: single-step skills can use `step_1_result` directly.
