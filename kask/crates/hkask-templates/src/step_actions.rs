@@ -13,6 +13,7 @@ use crate::step_graph::{ExitKind, StepId};
 use crate::step_machine::{CascadeOutcome, Infra, StepMachine};
 use crate::template_renderer::InferenceBlock;
 use futures_util::StreamExt;
+use futures_util::future::FutureExt;
 use futures_util::stream;
 use hkask_capability::ToolPort;
 use hkask_types::ChatToolDefinition;
@@ -573,6 +574,16 @@ impl StepMachine {
     /// propagates). A partial-success mode (collect errors per-key) is a
     /// future extension. Gas is charged one iteration per tool (keeps the
     /// gas model honest — a 6-tool batch costs 6 iterations, not 1).
+    ///
+    /// Join mode (read from `input_mapping.join`):
+    ///   - `list` (default, backward-compat): Promise.all — first tool `Err`
+    ///     aborts the batch. Sibling tool results are dropped.
+    ///   - `allSettled`: Promise.allSettled (ECMA-262 §27.2.4.2) — collect
+    ///     every tool outcome, store Ok results under `results` with an
+    ///     `errors` sidecar. No tool outcome is silently dropped. Gas is
+    ///     charged on both paths (the wave already ran every tool).
+    /// Gas is charged one iteration per tool on BOTH the success and error
+    /// paths — previously the error path returned early and under-charged.
     pub(crate) async fn execute_tool_batch(
         &mut self,
         node: &crate::step_graph::StepNode,
@@ -597,7 +608,7 @@ impl StepMachine {
             let context = self.context.clone();
             let template_renderer = infra.template_renderer.clone();
 
-            async move {
+            let tool_future = async move {
                 // Resolve ${variable} references in the MCP reference.
                 let mcp_ref = crate::template_renderer::TemplateRenderer::render_inline(
                     &mcp_ref_raw,
@@ -646,36 +657,168 @@ impl StepMachine {
                 });
 
                 result.map(|value| (result_key, value))
-            }
+            };
+            // Wrap each tool future in `catch_unwind` so a panic in a tool
+            // invocation is converted to a typed `TemplateError` instead of
+            // unwinding the batch. Without this, a panic in one tool propagates
+            // through `join_all` and drops all other in-flight tool futures
+            // (their permits release via RAII, but their results are lost, and
+            // the regulation layer sees a panic, not a typed error). The
+            // `AssertUnwindSafe` wrapper is sound here because the tool future's
+            // captures (`Arc` clones, `context`) are not mutated across the
+            // unwind boundary — the panic aborts the tool, the captures are
+            // dropped, and the batch continues with the other tools.
+            std::panic::AssertUnwindSafe(tool_future)
+                .catch_unwind()
+                .map(move |join_result| match join_result {
+                    Ok(inner) => inner,
+                    Err(panic_payload) => {
+                        let panic_msg = panic_payload
+                            .downcast_ref::<String>()
+                            .map(String::as_str)
+                            .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+                            .unwrap_or("<non-string panic payload>");
+                        tracing::error!(
+                            target: "reg.skill.cascade.tool_batch_joined",
+                            step_ordinal = node.ordinal,
+                            panic_message = panic_msg,
+                            "tool batch entry panicked — converted to typed error"
+                        );
+                        Err(TemplateError::Manifest(format!(
+                            "Step {} (action 'mcp_batch') tool panicked: {panic_msg}",
+                            node.ordinal,
+                        )))
+                    }
+                })
         });
 
         // Run all tool futures concurrently under one shared timeout.
+        let batch_started = std::time::Instant::now();
         let results = match tokio::time::timeout(timeout_dur, join_all(tool_futs)).await {
             Ok(joined) => joined,
             Err(_elapsed) => {
+                tracing::warn!(
+                    target: "reg.skill.cascade.tool_batch_joined",
+                    step_ordinal = node.ordinal,
+                    tool_count = batch.len(),
+                    ok_count = 0,
+                    err_count = 0,
+                    elapsed_ms = batch_started.elapsed().as_millis(),
+                    "tool batch timed out"
+                );
                 return Err(TemplateError::Timeout {
                     step_ordinal: node.ordinal,
                     elapsed_seconds: timeout_dur.as_secs(),
                 });
             }
         };
+        let elapsed_ms = batch_started.elapsed().as_millis();
 
-        // Collect into a `Value::Object`, propagating the first error.
-        let mut map = serde_json::Map::new();
-        for result in results {
-            let (key, value) = result?;
-            map.insert(key, value);
-        }
-        let joined = Value::Object(map);
-
-        // Charge gas: one iteration per tool in the batch.
+        // Charge gas: one iteration per tool in the batch. Charged on BOTH
+        // the success and error paths — previously gas was under-charged on
+        // the error path (the early `?` returned before this loop ran), which
+        // made the gas model dishonest (a 6-tool batch that failed after 5
+        // tools completed charged 0 iterations).
         for _ in 0..batch.len() {
             self.budget.charge_iteration();
         }
 
+        // Join mode: `list` (default, backward-compat) = Promise.all — first
+        // Err aborts. `allSettled` = Promise.allSettled — collect every tool
+        // outcome, store Ok results with an `errors` sidecar. Read from the
+        // step's `input_mapping.join` (same convention as `execute_parallel`).
+        let join_mode = node
+            .input_mapping
+            .as_ref()
+            .and_then(|m| m.get("join"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("list");
+
+        let tool_count = results.len();
+        let (oks, errs): (Vec<_>, Vec<_>) = results.into_iter().partition(Result::is_ok);
+
+        // Observability at the consolidation boundary — closes the regulation
+        // loop's sense input. Fires on both success and error paths.
+        tracing::info!(
+            target: "reg.skill.cascade.tool_batch_joined",
+            step_ordinal = node.ordinal,
+            tool_count,
+            ok_count = oks.len(),
+            err_count = errs.len(),
+            elapsed_ms = elapsed_ms,
+            join_mode = join_mode,
+            "REG tool batch joined"
+        );
+
+        // `list` mode (default): Promise.all semantics. First Err aborts.
+        if join_mode == "list" {
+            let mut map = serde_json::Map::new();
+            for result in oks {
+                let (key, value) = result.unwrap();
+                map.insert(key, value);
+            }
+            if let Some(first_err) = errs.into_iter().next() {
+                return Err(first_err.unwrap_err());
+            }
+            return Ok(Effect::Stored {
+                step_id: node.id,
+                value: Value::Object(map),
+            });
+        }
+
+        // `allSettled` mode: Promise.allSettled semantics. No tool outcome is
+        // silently dropped. If every tool failed, propagate the first error.
+        // Otherwise store the partial result + an `errors` sidecar.
+        if oks.is_empty() {
+            let first_err = errs.into_iter().next().unwrap().unwrap_err();
+            tracing::warn!(
+                target: "reg.skill.cascade.tool_batch_joined",
+                step_ordinal = node.ordinal,
+                error_code = first_err.code(),
+                "all tools in batch failed — propagating first error"
+            );
+            return Err(first_err);
+        }
+
+        let mut map = serde_json::Map::new();
+        for result in oks {
+            let (key, value) = result.unwrap();
+            map.insert(key, value);
+        }
+        if errs.is_empty() {
+            return Ok(Effect::Stored {
+                step_id: node.id,
+                value: Value::Object(map),
+            });
+        }
+
+        let err_summaries: Vec<Value> = errs
+            .iter()
+            .map(|e| {
+                let err = e.as_ref().unwrap_err();
+                Value::Object(serde_json::Map::from_iter([
+                    ("code".to_string(), Value::String(err.code().to_string())),
+                    ("message".to_string(), Value::String(err.to_string())),
+                ]))
+            })
+            .collect();
+        tracing::warn!(
+            target: "reg.skill.cascade.tool_batch_joined",
+            step_ordinal = node.ordinal,
+            ok_count = map.len(),
+            err_count = err_summaries.len(),
+            "tool batch completed with partial failures — successful results preserved"
+        );
+        // Move the successful results under a `results` key and attach the
+        // errors sidecar. Downstream steps read `results.<key>` for the
+        // successful tools and `errors` for the failures.
+        let ok_results = Value::Object(std::mem::replace(&mut map, serde_json::Map::new()));
+        let mut out = serde_json::Map::new();
+        out.insert("results".to_string(), ok_results);
+        out.insert("errors".to_string(), Value::Array(err_summaries));
         Ok(Effect::Stored {
             step_id: node.id,
-            value: joined,
+            value: Value::Object(out),
         })
     }
 
@@ -845,14 +988,18 @@ impl StepMachine {
                 ))
             })?
             .clone();
-        // `concurrency_cap` is accepted for backward compat but ignored — the
-        // global `ConcurrencyLimiter` (wired via `Infra`) is the single source
-        // of truth for concurrency. When no limiter is wired (tests), fall back
-        // to `branches.len()` (unbounded) to preserve the prior behavior.
-        let _join_mode = mapping
+        // `join` selects the consolidation discipline:
+        //   - `list` (default, backward-compat): Promise.all semantics — the
+        //     first branch `Err` aborts the wave. Sibling outcomes are dropped.
+        //   - `allSettled`: Promise.allSettled semantics (ECMA-262 §27.2.4.2) —
+        //     collect every branch outcome, store Ok results with an `errors`
+        //     sidecar. No sibling outcome is silently dropped. See the
+        //     consolidation block below for the full rationale.
+        let join_mode = mapping
             .get("join")
             .and_then(|v| v.as_str())
-            .unwrap_or("list");
+            .unwrap_or("list")
+            .to_string();
         // Drop `mapping` — everything below is owned, no borrows from locals.
         drop(mapping);
 
@@ -883,7 +1030,12 @@ impl StepMachine {
                 .get("template_ref")
                 .and_then(|v| v.as_str())
                 .map(String::from);
-            async move {
+            // Clone `branch_id` for the panic handler — the `async move` block
+            // below moves `branch_id` into the branch future, so the
+            // `catch_unwind` map closure needs its own copy to name the branch
+            // in the panic error message.
+            let branch_id_for_panic = branch_id;
+            let branch_future = async move {
                 // No branch-level permit: the global limiter gates the inner
                 // `execute_select` / `execute_tool_invoke` calls inside each
                 // branch's sub-cascade. Acquiring a branch permit here would
@@ -955,7 +1107,41 @@ impl StepMachine {
                 // `on_throttle` on the shared limiter. Ramp here would
                 // double-count (one ramp per branch + one per inner call).
                 Ok::<(usize, CascadeOutcome), TemplateError>((branch_id, outcome))
-            }
+            };
+            // Wrap each branch future in `catch_unwind` so a panic in a
+            // branch's sub-cascade is converted to a typed `TemplateError`
+            // instead of unwinding the parent. Without this, a panic in one
+            // branch propagates through `buffer_unordered` and drops all
+            // other in-flight branches (their permits release via RAII, but
+            // their partial results and gas-charged work are lost, and the
+            // regulation layer sees a panic, not a typed error). The
+            // `AssertUnwindSafe` wrapper is sound here because the branch
+            // future's captures (`Arc` clones, `Infra`) are not mutated across
+            // the unwind boundary — the panic aborts the branch, the captures
+            // are dropped, and the parent continues with the other branches.
+            std::panic::AssertUnwindSafe(branch_future)
+                .catch_unwind()
+                .map(move |join_result| match join_result {
+                    Ok(inner) => inner,
+                    Err(panic_payload) => {
+                        let panic_msg = panic_payload
+                            .downcast_ref::<String>()
+                            .map(String::as_str)
+                            .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+                            .unwrap_or("<non-string panic payload>");
+                        tracing::error!(
+                            target: "reg.skill.cascade.parallel_joined",
+                            step_ordinal = step_ordinal,
+                            branch_id = branch_id_for_panic,
+                            panic_message = panic_msg,
+                            "parallel branch panicked — converted to typed error"
+                        );
+                        Err(TemplateError::Manifest(format!(
+                            "Step {} (action 'parallel') branch {} panicked: {panic_msg}",
+                            step_ordinal, branch_id_for_panic,
+                        )))
+                    }
+                })
         });
 
         // Bounded concurrency: poll up to `buffer_bound` branch futures at
@@ -971,34 +1157,180 @@ impl StepMachine {
         // / `execute_tool_invoke` ramp logic. No outer wrapper is needed — the
         // inner call is the first to see the error and backs off the limiter
         // before the `?` propagates it out of the branch.
-        let outcomes: Vec<(usize, CascadeOutcome)> = stream::iter(branch_futs)
-            .buffer_unordered(buffer_bound)
-            .collect::<Vec<Result<(usize, CascadeOutcome)>>>()
+        //
+        // Join mode (the `join` field parsed above):
+        //   - `list` (default, backward-compat): Promise.all semantics — the
+        //     first branch `Err` aborts the wave and propagates. Sibling
+        //     outcomes are dropped. This is the historical contract.
+        //   - `allSettled`: Promise.allSettled semantics (ECMA-262 §27.2.4.2)
+        //     — collect every branch outcome (Ok and Err), store the Ok
+        //     results with an `errors` sidecar, and emit a `reg.*` span. No
+        //     sibling outcome is silently dropped. The wave already runs every
+        //     branch to completion under `buffer_unordered` (it polls all
+        //     before `.collect` returns), so `allSettled` costs nothing extra —
+        //     `list` was paying for it and throwing the results away.
+        let wave_started = std::time::Instant::now();
+        // Per-wave timeout: mirrors `execute_tool_batch`. Without this, a
+        // branch whose sub-cascade hangs (e.g., an inference call with no
+        // per-step timeout) blocks the wave until the outer cascade times out.
+        // `node.timeout_seconds` is the step-level budget for the whole wave.
+        // On timeout, in-flight branches are dropped; their inner permits
+        // release via RAII (`OwnedSemaphorePermit` Drop). Partial results are
+        // lost (the wave did not complete) — surfaced as a typed `Timeout`.
+        let wave_timeout = effective_timeout(node.timeout_seconds);
+        let settled: Vec<std::result::Result<(usize, CascadeOutcome), TemplateError>> =
+            match tokio::time::timeout(
+                wave_timeout,
+                stream::iter(branch_futs)
+                    .buffer_unordered(buffer_bound)
+                    .collect::<Vec<_>>(),
+            )
             .await
-            .into_iter()
-            .collect::<Result<Vec<_>>>()?;
-        let mut ordered = outcomes;
+            {
+                Ok(joined) => joined,
+                Err(_elapsed) => {
+                    tracing::warn!(
+                        target: "reg.skill.cascade.parallel_joined",
+                        step_ordinal = node.ordinal,
+                        branch_count = 0,
+                        ok_count = 0,
+                        err_count = 0,
+                        elapsed_ms = wave_started.elapsed().as_millis(),
+                        join_mode = join_mode,
+                        "parallel wave timed out"
+                    );
+                    return Err(TemplateError::Timeout {
+                        step_ordinal: node.ordinal,
+                        elapsed_seconds: wave_timeout.as_secs(),
+                    });
+                }
+            };
+        let elapsed_ms = wave_started.elapsed().as_millis();
+
+        let branch_count = settled.len();
+        let (oks, errs): (Vec<_>, Vec<_>) = settled.into_iter().partition(Result::is_ok);
+
+        // Observability at the consolidation boundary — closes the regulation
+        // loop's sense input. Fires on both success and error paths so the
+        // regulation layer can see per-wave branch_count / ok_count / err_count
+        // and the wave duration. Without this span, a branch error that drops
+        // sibling outcomes is invisible to `reg.*` consumers.
+        tracing::info!(
+            target: "reg.skill.cascade.parallel_joined",
+            step_ordinal = node.ordinal,
+            branch_count,
+            ok_count = oks.len(),
+            err_count = errs.len(),
+            elapsed_ms = elapsed_ms,
+            join_mode = join_mode,
+            "REG parallel wave joined"
+        );
+
+        // `list` mode (default): Promise.all semantics. The first Err aborts
+        // the step. rJoule from completed branches is settled before
+        // propagating so the parent's budget doesn't underreport (the branches
+        // already charged gas to the shared `Arc<AtomicU64>`; rJoule is
+        // settled post-wave and was previously lost on this path).
+        if join_mode == "list" {
+            if let Some(first_err) = errs.into_iter().next() {
+                // Settle rJoule from completed branches even on the error path —
+                // they charged gas to the shared atomic; rJoule must follow.
+                let sum_rjoule: f64 = oks
+                    .iter()
+                    .filter_map(|r| r.as_ref().ok())
+                    .map(|(_, o)| o.budget_snapshot.rjoule_used)
+                    .sum();
+                self.budget.charge_rjoule(sum_rjoule);
+                return Err(first_err.unwrap_err());
+            }
+            let mut ordered: Vec<(usize, CascadeOutcome)> =
+                oks.into_iter().map(|r| r.unwrap()).collect();
+            ordered.sort_by_key(|(id, _)| *id);
+            let branch_results: Vec<Value> = ordered
+                .iter()
+                .map(|(_, o)| crate::executor::extract_final_step_result(o))
+                .collect();
+            let sum_rjoule: f64 = ordered
+                .iter()
+                .map(|(_, o)| o.budget_snapshot.rjoule_used)
+                .sum();
+            self.budget.charge_rjoule(sum_rjoule);
+            return Ok(Effect::Stored {
+                step_id: node.id,
+                value: Value::Array(branch_results),
+            });
+        }
+
+        // `allSettled` mode: Promise.allSettled semantics. No sibling outcome
+        // is silently dropped. If every branch failed, propagate the first
+        // error (no partial result is meaningful). Otherwise store the partial
+        // result + an `errors` sidecar so downstream steps and the operator
+        // can see what survived.
+        if oks.is_empty() {
+            let first_err = errs.into_iter().next().unwrap().unwrap_err();
+            tracing::warn!(
+                target: "reg.skill.cascade.parallel_joined",
+                step_ordinal = node.ordinal,
+                error_code = first_err.code(),
+                "all parallel branches failed — propagating first error"
+            );
+            return Err(first_err);
+        }
+
+        let mut ordered: Vec<(usize, CascadeOutcome)> =
+            oks.into_iter().map(|r| r.unwrap()).collect();
         ordered.sort_by_key(|(id, _)| *id);
 
-        // Deterministic join: results in branch_id order. `list` mode (first
-        // cut) → Value::Array.
-        let branch_results: Vec<Value> = ordered
-            .iter()
-            .map(|(_, o)| crate::executor::extract_final_step_result(o))
-            .collect();
-        let joined = Value::Array(branch_results);
-
-        // After the wave: parent rJoule = sum of branch rJoule. Gas already in
-        // the shared `Arc<AtomicU64>` (branches charged it during the wave).
+        // Settle rJoule from completed branches (was missing on the error
+        // path — branches charged gas to the shared `Arc<AtomicU64>`; rJoule
+        // is settled post-wave).
         let sum_rjoule: f64 = ordered
             .iter()
             .map(|(_, o)| o.budget_snapshot.rjoule_used)
             .sum();
         self.budget.charge_rjoule(sum_rjoule);
 
+        // Build the result. If any branch errored, attach an `errors` sidecar
+        // and emit a warn so the deviation is visible. The successful results
+        // remain in `results` (branch_id order).
+        if errs.is_empty() {
+            let branch_results: Vec<Value> = ordered
+                .iter()
+                .map(|(_, o)| crate::executor::extract_final_step_result(o))
+                .collect();
+            return Ok(Effect::Stored {
+                step_id: node.id,
+                value: Value::Array(branch_results),
+            });
+        }
+
+        let branch_results: Vec<Value> = ordered
+            .iter()
+            .map(|(_, o)| crate::executor::extract_final_step_result(o))
+            .collect();
+        let err_summaries: Vec<Value> = errs
+            .iter()
+            .map(|e| {
+                let err = e.as_ref().unwrap_err();
+                Value::Object(serde_json::Map::from_iter([
+                    ("code".to_string(), Value::String(err.code().to_string())),
+                    ("message".to_string(), Value::String(err.to_string())),
+                ]))
+            })
+            .collect();
+        tracing::warn!(
+            target: "reg.skill.cascade.parallel_joined",
+            step_ordinal = node.ordinal,
+            ok_count = ordered.len(),
+            err_count = err_summaries.len(),
+            "parallel wave completed with partial failures — successful results preserved"
+        );
+        let mut map = serde_json::Map::new();
+        map.insert("results".to_string(), Value::Array(branch_results));
+        map.insert("errors".to_string(), Value::Array(err_summaries));
         Ok(Effect::Stored {
             step_id: node.id,
-            value: joined,
+            value: Value::Object(map),
         })
     }
 

@@ -1,0 +1,68 @@
+# Template crate manifest for coherence-review skill
+# hKask v0.34.0
+
+crate:
+  name: coherence-review
+  version: "0.34.0"
+  description: >
+    Multi-level coherence review. Walks L1-L5 (Boundary, Crate graph,
+    Module, Surface, Code) in order, propagating findings between levels.
+    Synthesizes a single coherence report with cross-level finding flow.
+    Anchored to kask/docs/architecture/review-reference-models.md.
+
+templates:
+  - id: coherence-review/cr-l1-boundary
+    name: "L1: D-seam integrity via kask-seam-audit"
+    path: cr-l1-boundary.j2
+    type: KnowAct
+    description: >
+      L1 Boundary review. Run kask-seam-audit on the DIVERGENCE.md D-seam
+      surface. Check every // zed-kask: comment has a D-seam + test. Check
+      D-seam numbering gaps. Produce L1 findings that scope the L2 review.
+
+  - id: coherence-review/cr-l2-crate-graph
+    name: "L2: crate graph health via graph-audit semantic mode"
+    path: cr-l2-crate-graph.j2
+    type: KnowAct
+    description: >
+      L2 Crate graph review. Run graph-audit in semantic mode on the kask
+      crate graph. Check zero cycles, zero surface-to-surface deps, no
+      god-crates, layering holds. Produce L2 findings that scope the L3
+      review.
+
+  - id: coherence-review/cr-l3-module
+    name: "L3: module depth via refactor-architecture ra-explore"
+    path: cr-l3-module.j2
+    type: KnowAct
+    description: >
+      L3 Module review. For each crate flagged by L2, run
+      refactor-architecture ra-explore + ra-candidates. Apply the deletion
+      test. Check interface size. Produce L3 findings that scope the L4
+      review.
+
+  - id: coherence-review/cr-l4-surface
+    name: "L4: surface duplication via ra-audit + kali-audit"
+    path: cr-l4-surface.j2
+    type: KnowAct
+    description: >
+      L4 Surface review. Run refactor-architecture ra-audit across
+      MCP/CLI/API surfaces. Classify duplicated operations. Run kali-audit
+      on MCP tool surfaces. Produce L4 findings that scope the L5 review.
+
+  - id: coherence-review/cr-l5-code
+    name: "L5: code correctness via code-review"
+    path: cr-l5-code.j2
+    type: KnowAct
+    description: >
+      L5 Code review. For each surface/crate flagged by L4, run
+      code-review. Check correctness, silent-error patterns, test pass.
+      Produce L5 findings.
+
+  - id: coherence-review/cr-synthesize
+    name: "Synthesize cross-level coherence report"
+    path: cr-synthesize.j2
+    type: KnowAct
+    description: >
+      Synthesize findings across L1-L5 into a single coherence report.
+      Make the cross-level finding flow explicit. Produce overall
+      coherence verdict.
