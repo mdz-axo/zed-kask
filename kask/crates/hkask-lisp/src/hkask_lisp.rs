@@ -10,9 +10,10 @@
 //! - JSON objects become association lists — the classic Lisp data structure
 //!
 //! The interpreter supports a minimal but practical Lisp subset:
-//!   Special forms: quote, if, let, lambda, define, begin, and, or, not
+//!   Special forms: quote, if, let, lambda, define, begin, and, or, not, cond
 //!   Built-in functions: car, cdr, cons, list, length, nth, reverse,
-//!     +, -, *, /, =, !=, <, <=, >, >=, is_null, numberp, assoc
+//!     +, -, *, /, =, !=, <, <=, >, >=, is_null, numberp, assoc, append,
+//!     string=, concat, abs, sqrt, eq, member
 //!
 //! # Infix Operator Notation
 //!
@@ -183,6 +184,11 @@ impl Env {
         for (name, f) in default_builtins() {
             vars.insert(name.to_string(), LispValue::NativeFunc(f));
         }
+        // `t` is the canonical truth constant — bound in the root env so it
+        // resolves to Bool(true) when referenced as a bare symbol (e.g. the
+        // default clause of `cond`: `(t default)`). A `let` binding named `t`
+        // shadows it, which is correct Lisp behavior.
+        vars.insert("t".to_string(), LispValue::Bool(true));
         Env { vars, parent: None }
     }
 
@@ -634,6 +640,38 @@ fn eval_special_form(
             let v = eval_with_budget(env, &args[0], budget)?;
             Ok(LispValue::Bool(!is_truthy(&v)))
         }
+        // `cond` — multi-clause conditional. Each clause is (test body...);
+        // the first clause whose test is truthy has its body evaluated and
+        // the result returned. A clause whose test is the symbol `t` (or the
+        // literal `true`) is always taken — the standard default-clause idiom.
+        // If no clause matches, returns Nil.
+        //
+        // Form: (cond (test1 body1...) (test2 body2...) ... (t default...))
+        // This is the standard Lisp `cond`; it desugars to nested `if` but is
+        // far more readable for multi-branch verdict dispatch (e.g.
+        // company-research convergence checks).
+        "cond" => {
+            for clause in args {
+                let clause_items = match clause {
+                    LispValue::List(cl) => cl.to_vec(),
+                    _ => {
+                        return Err(LispError::Runtime("cond clause must be a list".into()));
+                    }
+                };
+                if clause_items.is_empty() {
+                    continue;
+                }
+                let test = eval_with_budget(env.clone(), &clause_items[0], budget)?;
+                if is_truthy(&test) {
+                    let mut result = LispValue::Nil;
+                    for body_form in &clause_items[1..] {
+                        result = eval_with_budget(env.clone(), body_form, budget)?;
+                    }
+                    return Ok(result);
+                }
+            }
+            Ok(LispValue::Nil)
+        }
         _ => {
             let func = env
                 .borrow()
@@ -742,6 +780,24 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
         // Non-string args error. Use this to build defect labels from field
         // names (e.g. (concat "missing_" key)).
         ("concat", concat_fn),
+        // Absolute value. (abs x) returns the magnitude of a numeric arg.
+        // Used by convergence-gap forms that need a symmetric delta.
+        ("abs", abs_fn),
+        // Square root. (sqrt x) returns the principal root of a numeric arg.
+        // Used by marker-space hypotenuse computations (eqm-improvement step 7).
+        // Returns a Float.
+        ("sqrt", sqrt_fn),
+        // Generic equality. (eq a b) returns true iff a and b are structurally
+        // equal (delegates to LispValue::PartialEq). This is the value-equality
+        // counterpart to `=` (numeric) and `string=` (string-only). Distinct
+        // from `=` because `=` errors on non-numbers; `eq` accepts any value
+        // type and returns false for mismatched types. Used by `cond` clauses
+        // comparing string verdicts.
+        ("eq", eq_fn),
+        // List membership. (member x list) returns true iff x is structurally
+        // equal to an element of `list`. Nil list returns false. Used by the
+        // GORILLA maturity-blocks check (company-research-deep step 10).
+        ("member", member_fn),
     ]
 }
 
@@ -1102,6 +1158,67 @@ fn concat_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, L
     Ok(LispValue::String(combined))
 }
 
+/// Absolute value: `(abs x)` returns the magnitude of a numeric arg.
+/// Preserves Int vs Float: `(abs -3)` → `3` (Int), `(abs -3.5)` → `3.5` (Float).
+fn abs_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+    if args.len() != 1 {
+        return Err(LispError::Arity("abs expects 1 arg".into()));
+    }
+    match &args[0] {
+        LispValue::Int(i) => Ok(LispValue::Int(i.wrapping_abs())),
+        LispValue::Float(f) => Ok(LispValue::Float(f.abs())),
+        _ => Err(LispError::TypeError {
+            expected: "number".into(),
+            actual: type_of(&args[0]),
+        }),
+    }
+}
+
+/// Square root: `(sqrt x)` returns the principal root as a Float.
+/// Negative input errors (no complex numbers). Used by marker-space
+/// hypotenuse computations.
+fn sqrt_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+    if args.len() != 1 {
+        return Err(LispError::Arity("sqrt expects 1 arg".into()));
+    }
+    let f = as_f64(&args[0])?;
+    if f < 0.0 {
+        return Err(LispError::Runtime(format!("sqrt of negative number {f}")));
+    }
+    Ok(LispValue::Float(f.sqrt()))
+}
+
+/// Generic equality: `(eq a b)` returns true iff a and b are structurally
+/// equal (delegates to `LispValue::PartialEq`). Accepts any value type and
+/// returns false for mismatched types — distinct from `=` (numeric, errors on
+/// non-numbers) and `string=` (string-only). Used by `cond` clauses comparing
+/// string verdicts where the author wants a single equality operator.
+fn eq_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+    if args.len() != 2 {
+        return Err(LispError::Arity("eq expects 2 args".into()));
+    }
+    Ok(LispValue::Bool(args[0] == args[1]))
+}
+
+/// List membership: `(member x list)` returns true iff `x` is structurally
+/// equal to an element of `list`. Nil list returns false. Non-list second
+/// arg errors. Used by the GORILLA maturity-blocks check.
+fn member_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+    if args.len() != 2 {
+        return Err(LispError::Arity("member expects 2 args".into()));
+    }
+    let list = as_list(&args[1])?;
+    if list.is_nil() {
+        return Ok(LispValue::Bool(false));
+    }
+    for item in list.to_vec() {
+        if item == args[0] {
+            return Ok(LispValue::Bool(true));
+        }
+    }
+    Ok(LispValue::Bool(false))
+}
+
 // ── JSON interop ────────────────────────────────────────────────────────────
 
 /// Convert a `serde_json::Value` into a `LispValue`.
@@ -1393,6 +1510,123 @@ mod tests {
         let env = json!({"step_1_result": {"likelihood": "high"}});
         let form = r#"(string= (assoc "likelihood" step_1_result) "high")"#;
         assert_eq!(eval_sandboxed(form, &env).unwrap(), json!(true));
+    }
+
+    #[test]
+    fn test_abs_builtin() {
+        // Positive int unchanged
+        assert_eq!(eval_sandboxed("(abs 5)", &json!({})).unwrap(), json!(5));
+        // Negative int → positive
+        assert_eq!(eval_sandboxed("(abs -5)", &json!({})).unwrap(), json!(5));
+        // Negative float → positive float
+        assert_eq!(
+            eval_sandboxed("(abs -3.5)", &json!({})).unwrap(),
+            json!(3.5)
+        );
+        // Non-number errors
+        assert!(eval_sandboxed("(abs \"x\")", &json!({})).is_err());
+        // Arity
+        assert!(eval_sandboxed("(abs 1 2)", &json!({})).is_err());
+    }
+
+    #[test]
+    fn test_sqrt_builtin() {
+        assert_eq!(eval_sandboxed("(sqrt 4)", &json!({})).unwrap(), json!(2.0));
+        assert_eq!(eval_sandboxed("(sqrt 0)", &json!({})).unwrap(), json!(0.0));
+        // Negative input errors
+        assert!(eval_sandboxed("(sqrt -1)", &json!({})).is_err());
+        // Non-number errors
+        assert!(eval_sandboxed("(sqrt \"x\")", &json!({})).is_err());
+        // Arity
+        assert!(eval_sandboxed("(sqrt 1 2)", &json!({})).is_err());
+    }
+
+    #[test]
+    fn test_eq_builtin() {
+        // Strings
+        assert_eq!(
+            eval_sandboxed(r#"(eq "done" "done")"#, &json!({})).unwrap(),
+            json!(true)
+        );
+        assert_eq!(
+            eval_sandboxed(r#"(eq "done" "continue")"#, &json!({})).unwrap(),
+            json!(false)
+        );
+        // Numbers (eq delegates to PartialEq; Int vs Float with same value are NOT equal)
+        assert_eq!(eval_sandboxed("(eq 1 1)", &json!({})).unwrap(), json!(true));
+        // Mismatched types → false (not an error, unlike `=`)
+        assert_eq!(
+            eval_sandboxed(r#"(eq 1 "1")"#, &json!({})).unwrap(),
+            json!(false)
+        );
+        // Arity
+        assert!(eval_sandboxed("(eq 1)", &json!({})).is_err());
+    }
+
+    #[test]
+    fn test_member_builtin() {
+        let env = json!({"blocks": ["obvious_problem", "choke_point"]});
+        // Present
+        assert_eq!(
+            eval_sandboxed(r#"(member "obvious_problem" blocks)"#, &env).unwrap(),
+            json!(true)
+        );
+        // Absent
+        assert_eq!(
+            eval_sandboxed(r#"(member "invisible_gorilla" blocks)"#, &env).unwrap(),
+            json!(false)
+        );
+        // Nil list → false
+        assert_eq!(
+            eval_sandboxed(r#"(member "x" nil)"#, &json!({})).unwrap(),
+            json!(false)
+        );
+        // Non-list second arg errors
+        assert!(eval_sandboxed("(member \"x\" 5)", &json!({})).is_err());
+        // Arity
+        assert!(eval_sandboxed("(member \"x\")", &json!({})).is_err());
+    }
+
+    #[test]
+    fn test_t_constant() {
+        // `t` is bound to Bool(true) in the root env
+        assert_eq!(eval_sandboxed("t", &json!({})).unwrap(), json!(true));
+        // `t` as a cond test (the canonical use)
+        let form = r#"(cond ((eq v "done") 0.0) (t 1.0))"#;
+        let env = json!({"v": "other"});
+        assert_eq!(eval_sandboxed(form, &env).unwrap(), json!(1.0));
+        // `t` can be shadowed by a let binding (correct Lisp behavior)
+        assert_eq!(
+            eval_sandboxed("(let ((t 42)) t)", &json!({})).unwrap(),
+            json!(42)
+        );
+    }
+
+    #[test]
+    fn test_cond_special_form() {
+        // First matching clause wins
+        let form = r#"(cond ((eq v "done") 0.0) ((eq v "continue") 0.5) (t 1.0))"#;
+        let env_done = json!({"v": "done"});
+        assert_eq!(eval_sandboxed(form, &env_done).unwrap(), json!(0.0));
+        let env_cont = json!({"v": "continue"});
+        assert_eq!(eval_sandboxed(form, &env_cont).unwrap(), json!(0.5));
+        // Default clause via `t`
+        let env_other = json!({"v": "blocked"});
+        assert_eq!(eval_sandboxed(form, &env_other).unwrap(), json!(1.0));
+        // No matching clause and no `t` → Nil
+        let form_no_default = r#"(cond ((eq v "done") 0.0) ((eq v "continue") 0.5))"#;
+        assert_eq!(
+            eval_sandboxed(form_no_default, &env_other).unwrap(),
+            json!(null)
+        );
+        // `true` literal also works as an always-true test
+        let form_true = r#"(cond ((eq v "done") 0.0) (true 1.0))"#;
+        assert_eq!(eval_sandboxed(form_true, &env_other).unwrap(), json!(1.0));
+        // Empty cond → Nil
+        assert_eq!(eval_sandboxed("(cond)", &json!({})).unwrap(), json!(null));
+        // Multi-body clause: last body form is the result
+        let form_multi = r#"(cond ((eq v "done") 1 2 3) (t 0))"#;
+        assert_eq!(eval_sandboxed(form_multi, &env_done).unwrap(), json!(3));
     }
 
     #[test]

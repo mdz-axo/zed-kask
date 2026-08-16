@@ -226,7 +226,8 @@ given query, because they can disagree:
 - Gas cap: 120,000 per invocation. Maximum 3 iterations.
 - The capability definition must be declared before elicitation — different definitions produce different verdicts.
 - The attenuation rule is inviolable: authority may only narrow without re-authorization. Widening requires explicit re-authorization with a recorded warrant.
-- The metric-stability check is mandatory — a verdict that flips under a different metric is a mirage [^mirage-2023], not a capability finding.
+- The metric-stability check is mandatory — a verdict that flips under a different metric is a mirage [mirage-2023], not a capability finding.
+- **Self-evaluation**: The capabilities-reasoner practices what it preaches — it has 1 execute step (curator_memory_recall at ordinal 0 for persistence-grounded learning), 2 compute steps (lisp.eval for structural manifest analysis and convergence check), 5 select steps (LLM judgment for registry, elicitation, evaluation, reasoning, reporting), and on_failure: report on all execute and compute steps. It is above floor on all five composition principles.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
 
 ## References

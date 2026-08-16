@@ -1,6 +1,16 @@
 # Capabilities Reasoner Process Manifest
 # ℏKask v0.34.0 — Capability reasoning as phased PDCA
-# Decomposed into: Register → Elicit → Evaluate → Reason → Report → Convergence
+# Decomposed into: Persistence → Register → Elicit → Structural Check → Evaluate → Reason → Report → Convergence
+#
+# v0.34.0 refinement (capabilities-reasoner-refinement plan):
+#   1. Added ordinal 0 execute step (curator_memory_recall) — persistence-grounded
+#      learning: reads prior evaluations before the cascade starts.
+#   2. Added ordinal 3 compute step (lisp.eval) — deterministic structural
+#      manifest analysis: checks execute/select/compute step counts, ceiling
+#      violation (0 select steps), floor violation (0 deterministic steps).
+#      This is the determinism frontier principle applied to the reasoner itself.
+#   3. Added on_failure: report to the convergence compute step (ordinal 7) —
+#      lisp_scaffold depends on failure_surfacing per the prerequisite DAG.
 #
 # Substrate ontology: the convergent insight — monotone capability sets bounded
 # by floor (Nussbaum [nussbaum-2000]) and ceiling (AIP/Akselrod [aip-2026,
@@ -10,13 +20,15 @@
 # ceiling it is unconstrained expansion; without the attenuation rule it
 # permits silent widening.
 #
-# Three capability domains:
+# Four capability domains:
 #   - PSYCHOLOGICAL (Dunning [kruger-dunning-1999]): metacognitive gap —
 #     skills to perform = skills to evaluate. Self-assessment unreliable.
 #   - ECONOMIC (Sen [sen-1999], Nussbaum [nussbaum-2000]): feasible
 #     functionings; conversion factors; floor thresholds.
 #   - COMPUTE (Miller [miller-2006], AIP [aip-2026]): object-capability;
 #     authority only attenuates; no ambient authority.
+#   - SKILL_COMPOSITION (kask co-evolution): five composition principles
+#     with floor/ceiling/maturity-gate thresholds for evaluating kask skills.
 #
 # Surface ontologies (5 capability definitions from ML evaluation):
 #   - Task-performance (BIG-bench, HELM)
@@ -33,6 +45,8 @@
 # Feedback loop: register accepts prior_iteration (capability_lessons,
 # verdict_signatures, next_registry_focus) and consumes it to refine the
 # registry. Convergence emits next_registry_focus when not converged.
+# Ordinal 0 reads prior evaluations from the curator's memory, closing
+# the persistence-grounded learning loop.
 
 manifest:
   id: capabilities-reasoner
@@ -125,6 +139,32 @@ ledger:
   span_namespace: reg.skill.capabilities-reasoner
 
 steps:
+  # ── Fix 4: Persistence-grounded learning at ordinal 0 ──
+  # Read prior evaluations from the curator's memory before the cascade
+  # starts. This closes the persistence-grounded learning loop: the
+  # reasoner knows its past verdicts and can detect improvement or
+  # regression. on_failure: report surfaces a broken memory channel
+  # without blocking the evaluation.
+  - ordinal: 0
+    action: execute
+    description: >
+      Read prior capability evaluations from the curator's memory via
+      curator_memory_recall MCP tool. Deterministic. Returns prior verdicts,
+      capability_lessons, and verdict_signatures from previous iterations.
+      Feeds the register step (step 1) so the reasoner knows its past
+      evaluations and can detect improvement or regression.
+    mcp: curator_memory_recall
+    gas_cap: 2000
+    timeout_seconds: 60
+    on_failure:
+      action: report
+      resume: >
+        curator_memory_recall failed — prior evaluations are not available.
+        The reasoner proceeds without prior context; each evaluation is
+        context-free.
+    input_mapping:
+      entity: "skill_use_issue:capabilities-reasoner"
+
   - ordinal: 1
     action: select
     description: >
@@ -137,6 +177,7 @@ steps:
       provided, load and validate it. When absent, build from scratch
       via variety engineering (delegate to pragmatic-cybernetics).
       Consumes prior_iteration when present (feedback loop closure).
+      Consumes prior_evaluations from step 0 (persistence-grounded learning).
     renderer: minijinja
     template_ref: capabilities-reasoner/capability-register
     gas_cap: 6144
@@ -147,6 +188,7 @@ steps:
       registry_seed: "{{ registry_seed | default({}) }}"
       prior_iteration: "{{ prior_iteration | default({}) }}"
       skill_manifests: "{{ skill_manifests | default([]) }}"
+      prior_evaluations: "{{ step_0_result | default({}) }}"
 
   - ordinal: 2
     action: select
@@ -176,7 +218,69 @@ steps:
       capability_definition: "{{ capability_definition }}"
       registry: "{{ step_1_result }}"
 
+  # ── Fix 3: Deterministic structural manifest analysis via lisp.eval ──
+  # This is the determinism frontier principle applied to the reasoner
+  # itself: structural property checks (step counts, on_failure coverage)
+  # are deterministic and should not be LLM-mediated. The Lisp form
+  # traverses the target manifest's JSON representation and checks:
+  #   - 0 select steps → ceiling violation (pipeline, not skill)
+  #   - 0 execute + 0 compute steps → below floor (no deterministic steps)
+  # The result feeds the evaluate step (step 4) as structural_analysis.
   - ordinal: 3
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic structural manifest analysis. Checks the target
+      manifest's step structure against the determinism frontier's
+      floor and ceiling thresholds. Returns a list of structural defect
+      strings (empty = no structural defects). This is the lisp scaffold
+      pattern: deterministic checks on structural properties that the LLM
+      cannot reliably self-evaluate (Dunning-Kruger gap).
+    gas_cap: 100
+    timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        The structural manifest analysis (lisp.eval) failed — the Lisp
+        form could not parse or the env binding is missing. The
+        evaluation proceeds without structural analysis; the LLM
+        evaluate step (step 4) must perform both structural and semantic
+        checks, which is less reliable.
+    input_mapping:
+      form: >
+        (let ((manifest target_manifest))
+          (let ((steps (assoc "steps" manifest)))
+            (let ((n (length steps)))
+              (if (= n 0)
+                  (list "empty_manifest")
+                  (begin
+                    (define count-action
+                      (lambda (ss action-name acc)
+                        (if (is_null ss)
+                            acc
+                            (let ((s (car ss)))
+                              (let ((a (assoc "action" s)))
+                                (if (string= a action-name)
+                                    (count-action (cdr ss) action-name (+ acc 1))
+                                    (count-action (cdr ss) action-name acc)))))))
+                    (define n-execute (count-action steps "execute" 0))
+                    (define n-select (count-action steps "select" 0))
+                    (define n-compute (count-action steps "compute" 0))
+                    (define structural-defects
+                      (append
+                        (if (and (= n-select 0) (> n 0))
+                            (list "zero_select_steps_ceiling_violation")
+                            (list))
+                        (if (and (= n-execute 0) (= n-compute 0))
+                            (list "no_deterministic_steps_below_floor")
+                            (list))))
+                    structural-defects)))))
+      env:
+        target_manifest: "{{ step_2_result | default({}) }}"
+      max_steps: 10000
+      max_depth: 32
+
+  - ordinal: 4
     action: select
     description: >
       Compare elicited capabilities against the registry's three limit
@@ -187,7 +291,9 @@ steps:
       prerequisites satisfied? → block if not. Delegates to falsifiability
       for counterfactual capability claims ("if the system had
       capability X, what would it be able to do?") and to graph-audit
-      for prerequisite DAG traversal.
+      for prerequisite DAG traversal. Consumes the structural analysis
+      from step 3 (deterministic checks) alongside the elicited
+      capabilities from step 2 (LLM-mediated elicitation).
     renderer: minijinja
     template_ref: capabilities-reasoner/capability-evaluate
     gas_cap: 6144
@@ -196,8 +302,9 @@ steps:
       registry: "{{ step_1_result }}"
       elicited_capabilities: "{{ step_2_result.elicited_capabilities | default([]) }}"
       target_system: "{{ target_system }}"
+      structural_analysis: "{{ step_3_result | default([]) }}"
 
-  - ordinal: 4
+  - ordinal: 5
     action: select
     description: >
       Determine interventions under the object-capability attenuation
@@ -215,10 +322,10 @@ steps:
     gas_cap: 4096
     timeout_seconds: 150
     input_mapping:
-      evaluations: "{{ step_3_result.evaluations | default([]) }}"
+      evaluations: "{{ step_4_result.evaluations | default([]) }}"
       registry: "{{ step_1_result }}"
 
-  - ordinal: 5
+  - ordinal: 6
     action: select
     description: >
       Compile per-capability verdicts into a structured report. Each
@@ -233,15 +340,19 @@ steps:
     gas_cap: 4096
     timeout_seconds: 150
     input_mapping:
-      evaluations: "{{ step_3_result.evaluations | default([]) }}"
-      interventions: "{{ step_4_result.interventions | default([]) }}"
+      evaluations: "{{ step_4_result.evaluations | default([]) }}"
+      interventions: "{{ step_5_result.interventions | default([]) }}"
       registry: "{{ step_1_result }}"
 
-  - ordinal: 6
+  # ── Fix 2: on_failure: report on the convergence compute step ──
+  # lisp_scaffold depends on failure_surfacing per the prerequisite DAG.
+  # A compute step that fails silently is a broken feedback loop — the
+  # operator sees ExitKind::Escalated with no failure classification.
+  - ordinal: 7
     action: compute
     compute_ref: lisp.eval
     description: >
-      Compute structural-validity score from step 5's actual report output.
+      Compute structural-validity score from step 6's actual report output.
       The convergence signal is the count of unresolved verdicts (expand +
       restrict + block) from verdict_summary — verdicts that require action
       and may be metric-sensitive (mirage candidates). Lower = more converged.
@@ -249,18 +360,24 @@ steps:
       default), surfacing metric-instability rather than masking it.
     gas_cap: 100
     timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        The convergence check (lisp.eval) failed — the Lisp form could not
+        parse or the env binding is missing. The cascade cannot determine
+        convergence; it escalates without a convergence signal.
     input_mapping:
-      form: "(+ (+ (assoc \"expand\" (assoc \"verdict_summary\" step_5_result)) (assoc \"restrict\" (assoc \"verdict_summary\" step_5_result))) (assoc \"block\" (assoc \"verdict_summary\" step_5_result)))"
+      form: "(+ (+ (assoc \"expand\" (assoc \"verdict_summary\" step_6_result)) (assoc \"restrict\" (assoc \"verdict_summary\" step_6_result))) (assoc \"block\" (assoc \"verdict_summary\" step_6_result)))"
       env:
-        step_5_result: "{{ step_5_result }}"
+        step_6_result: "{{ step_6_result }}"
       max_steps: 10000
       max_depth: 32
 
-  - ordinal: 7
+  - ordinal: 8
     action: loop
     description: >
       Re-enter capabilities-reasoner cycle if convergence is not met.
-      Routes step_7_result.next_registry_focus back to step 1 as
+      Routes step_6_result.next_registry_focus back to step 1 as
       prior_iteration.next_registry_focus, along with the report's
       capability_lessons and verdict_signatures, closing the feedback
       loop. Non-convergence typically means verdicts are metric-
@@ -269,10 +386,10 @@ steps:
     input_mapping:
       loop_target: "{{ 1 }}"
       prior_iteration:
-        capability_lessons: "{{ step_5_result.capability_lessons | default([]) }}"
-        verdict_signatures: "{{ step_5_result.verdict_signatures | default([]) }}"
-        next_registry_focus: "{{ step_5_result.next_registry_focus | default('') }}"
-      convergence_signal: "{{ step_6_result }}"
+        capability_lessons: "{{ step_6_result.capability_lessons | default([]) }}"
+        verdict_signatures: "{{ step_6_result.verdict_signatures | default([]) }}"
+        next_registry_focus: "{{ step_6_result.next_registry_focus | default('') }}"
+      convergence_signal: "{{ step_7_result }}"
 
 error_handling:
   on_gas_exceeded: abort

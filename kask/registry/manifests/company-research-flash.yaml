@@ -175,6 +175,13 @@ steps:
     input_mapping:
       symbol: "{{ ticker }}"
       query: "{{ step_1_result.research_query | default(ticker ~ ' business model competitive position') }}"
+    on_failure:
+      action: report
+      resume: >
+        research_search failed — the companies MCP server may be down or
+        the credential is missing. INTEL synthesis (step 4) proceeds without
+        fundamental research data; data_gaps will surface the missing context.
+        Restart the server via sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 3
     action: execute
@@ -189,6 +196,13 @@ steps:
       query: "{{ ticker }} {{ catalyst | default('') }} news"
       strategy: "news"
       num_results: 20
+    on_failure:
+      action: report
+      resume: >
+        web_search failed — the web MCP server may be down or the credential
+        is missing. INTEL synthesis (step 4) proceeds without the news mosaic;
+        data_gaps will surface the missing context. Restart the server via
+        sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 4
     action: select
@@ -261,6 +275,14 @@ steps:
       symbol: "{{ ticker }}"
       mode: "earnings"
       quarters_back: 4
+    on_failure:
+      action: report
+      resume: >
+        company_transcript failed — the companies MCP server may be down or
+        the credential is missing. The listening skill (step 7) cannot run
+        without the transcript; the forensic full audit will proceed without
+        the listening verdict. Restart the server via sync_kask_mcp_servers
+        and re-invoke.
 
   - ordinal: 7
     action: flowdef
@@ -314,6 +336,14 @@ steps:
       subject: "{{ ticker }} critical factors Bull Base Bear"
       scenario_type: "equity_thesis"
       context: "{{ step_4_result.business_model | default('') }}"
+    on_failure:
+      action: report
+      resume: >
+        scenario_build failed — the scenario MCP server may be down. The
+        CRITICAL FACTOR synthesis (step 10) proceeds without the scenario
+        tree; the critical-factor template will generate scenarios without
+        the structured event tree. Restart the server via
+        sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 10
     action: select
@@ -355,6 +385,14 @@ steps:
       symbol: "{{ ticker }}"
       mode: "earnings"
       quarters_back: 4
+    on_failure:
+      action: report
+      resume: >
+        company_transcript failed — the companies MCP server may be down or
+        the credential is missing. The FORENSIC full audit (step 12) proceeds
+        without the transcript; management profile will rely on intel_bundle
+        context only. Restart the server via sync_kask_mcp_servers and
+        re-invoke.
 
   - ordinal: 12
     action: select
@@ -390,6 +428,13 @@ steps:
     timeout_seconds: 120
     input_mapping:
       symbol: "{{ ticker }}"
+    on_failure:
+      action: report
+      resume: >
+        dcf_valuation failed — the companies MCP server may be down. The
+        VALUATION synthesis (step 17) proceeds without the DCF model; the
+        valuation template will apply the L1/L2 fallback hierarchy. Restart
+        the server via sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 14
     action: execute
@@ -402,6 +447,13 @@ steps:
     timeout_seconds: 120
     input_mapping:
       symbol: "{{ ticker }}"
+    on_failure:
+      action: report
+      resume: >
+        comparable_analysis failed — the companies MCP server may be down.
+        The VALUATION synthesis (step 17) proceeds without peer comparables;
+        the valuation template will apply the L1/L2 fallback hierarchy.
+        Restart the server via sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 15
     action: execute
@@ -414,6 +466,13 @@ steps:
     timeout_seconds: 120
     input_mapping:
       symbol: "{{ ticker }}"
+    on_failure:
+      action: report
+      resume: >
+        expectations_gap failed — the companies MCP server may be down. The
+        VALUATION synthesis (step 17) proceeds without the expectations gap
+        analysis; the valuation template will apply the L1/L2 fallback
+        hierarchy. Restart the server via sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 16
     action: execute
@@ -430,6 +489,14 @@ steps:
       symbol: "{{ ticker }}"
       scenario_tree: "{{ step_9_result | tojson }}"
       impact_mappings: "{{ step_10_result.impact_mappings | default([]) | tojson }}"
+    on_failure:
+      action: report
+      resume: >
+        scenario_impact_valuation failed — the companies MCP server may be
+        down. The VALUATION synthesis (step 17) proceeds without the
+        scenario-weighted price target; the valuation template will apply
+        the L1/L2 fallback hierarchy. Restart the server via
+        sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 17
     action: select
@@ -498,6 +565,13 @@ steps:
     timeout_seconds: 90
     input_mapping:
       limit: 50
+    on_failure:
+      action: report
+      resume: >
+        market_check_resolutions failed — the prediction-markets MCP server
+        may be down. The KATA calibration loop (step 21) proceeds without
+        resolved outcomes; the calibration gap will surface as 1.0 (maximum).
+        Restart the server via sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 20
     action: execute
@@ -512,6 +586,13 @@ steps:
     timeout_seconds: 90
     input_mapping:
       bucket: "economics"
+    on_failure:
+      action: report
+      resume: >
+        market_calibration failed — the prediction-markets MCP server may
+        be down. The KATA calibration loop (step 21) proceeds without the
+        Brier score; the calibration gap will surface as 1.0 (maximum).
+        Restart the server via sync_kask_mcp_servers and re-invoke.
 
   # ── Step 21: KATA — metacognition calibration gap measurement (v0.36.0) ──
   # Cross-skill adapter: company-research/kata-calibration-measure adapts
@@ -594,6 +675,14 @@ steps:
     input_mapping:
       question: "Will {{ ticker }} outperform the market over the next 12 months?"
       limit: 10
+    on_failure:
+      action: report
+      resume: >
+        market_match failed — the prediction-markets MCP server may be down.
+        The LENS synthesis (step 25) proceeds without the outside-view
+        market-implied probabilities; the LENS audit will note the missing
+        outside view. Restart the server via sync_kask_mcp_servers and
+        re-invoke.
 
   - ordinal: 24
     action: execute
@@ -609,6 +698,13 @@ steps:
     input_mapping:
       question: "Is the investment thesis for {{ ticker }} supported by the evidence?"
       artifacts: "{{ step_3_result.results | default([]) }}"
+    on_failure:
+      action: report
+      resume: >
+        evaluate_evidence failed — the research MCP server may be down. The
+        LENS synthesis (step 25) proceeds without the evidence quality audit;
+        the LENS audit will note the missing evidence evaluation. Restart
+        the server via sync_kask_mcp_servers and re-invoke.
 
   # ── Step 23: LENS — five-framework audit (LLM synthesis) ──
   - ordinal: 25

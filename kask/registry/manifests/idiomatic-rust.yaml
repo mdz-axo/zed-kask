@@ -187,18 +187,14 @@ steps:
       let, if, and assoc for safe JSON field extraction.
     input_mapping:
       form: >
-        (let ((critique (assoc "critique_score" env))
-              (confirmed (assoc "compiler_confirmed_count" env))
-              (unresolved (assoc "unresolved_count" env))
-              (total (assoc "total_findings" env)))
-          (let ((cs (if (numberp critique) critique 1.0))
-                (cc (if (numberp confirmed) confirmed 0))
-                (uc (if (numberp unresolved) unresolved 0))
-                (tt (if (numberp total) total 1)))
+        (let ((cs (if (numberp critique_score) critique_score 1.0))
+              (cc (if (numberp compiler_confirmed_count) compiler_confirmed_count 0))
+              (uc (if (numberp unresolved_count) unresolved_count 0))
+              (tt (if (numberp total_findings) total_findings 1)))
             (let ((tt (if (= tt 0) 1 tt)))
               (+ (* cs 0.5)
                  (* (/ cc tt) 0.3)
-                 (* (- 1 (/ uc tt)) 0.2)))))
+                 (* (- 1 (/ uc tt)) 0.2))))
       env:
         critique_score: "{{ step_3_result.critique_score | default(1.0) }}"
         compiler_confirmed_count: "{{ step_3_result.compiler_confirmed_count | default(0) }}"

@@ -158,6 +158,13 @@ steps:
       rationale: "{{ rationale }}"
       forecast_probability: "{{ forecast_probability }}"
       question: "{{ question }}"
+    on_failure:
+      action: report
+      resume: >
+        market_score_rationale failed — the prediction-markets MCP server
+        may be down or the credential is missing. The current-condition
+        scores are unavailable; the kata loop cannot measure the gap without
+        them. Restart the server via sync_kask_mcp_servers and re-invoke.
 
   # ── Kata Step 3: Establish Target Condition ──
   - ordinal: 3
@@ -242,6 +249,13 @@ steps:
       rationale: "{{ step_5_result.improved_rationale }}"
       forecast_probability: "{{ forecast_probability }}"
       question: "{{ question }}"
+    on_failure:
+      action: report
+      resume: >
+        market_score_rationale failed — the prediction-markets MCP server
+        may be down or the credential is missing. The re-score (Brier
+        outcome) is unavailable; the convergence check will surface the gap.
+        Restart the server via sync_kask_mcp_servers and re-invoke.
 
   # ── Kata Step 7: Compute Marker-Space Gap (Check) ──
   # Deterministic lisp.eval: distance from current scores to target scores.

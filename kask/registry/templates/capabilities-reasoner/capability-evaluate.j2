@@ -5,6 +5,7 @@ contract:
     registry: object
     elicited_capabilities: array
     target_system: object
+    structural_analysis: array|null
   output:
     evaluations: array
     floor_violations: array
@@ -69,6 +70,26 @@ You are a capabilities reasoner. Evaluate elicited capabilities against the regi
 ```json
 {{ target_system | tojson }}
 ```
+
+{% if structural_analysis %}
+## Structural Analysis (from lisp.eval deterministic check)
+
+The deterministic structural manifest analysis found the following defects:
+
+```json
+{{ structural_analysis | tojson }}
+```
+
+- `zero_select_steps_ceiling_violation`: the manifest has 0 select steps —
+  it is a pipeline, not a skill (Conant-Ashby: a regulator needs a model).
+- `no_deterministic_steps_below_floor`: the manifest has 0 execute and 0
+  compute steps — all work is LLM-mediated (below floor on determinism).
+- `empty_manifest`: the manifest has 0 steps — not a valid skill.
+
+These structural defects are deterministic findings — they do not require
+LLM judgment to confirm. Incorporate them into the evaluation alongside
+the LLM-mediated semantic checks below.
+{% endif %}
 
 ## Step 1 — Floor Check (Nussbaum)
 

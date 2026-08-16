@@ -677,11 +677,10 @@ fn main() {
         // completes. Spans emitted before the upgrade are dropped — the
         // same degradation the previous LedgerSink had (it broadcast to a
         // subscriber bus with zero subscribers).
-        let regulation_ledger = std::sync::Arc::new(tokio::sync::RwLock::new(
-            hkask_regulation::RegulationLedger::default(),
-        ));
-
         // zed-kask: D3/D6/D8 — F3: alert channel + regulation ledger + event sink.
+        // The ledger is constructed after `set_points` is loaded (below) so that
+        // history caps (`max_regulation_history`, `max_skill_span_history`) are
+        // wired from YAML config. See `RegulationLedger::with_set_points`.
         // Create the alert channel: CyberneticsLoop sends alerts →
         // MetacognitionLoop receives them. This closes the feedback loop.
         let (alert_tx, alert_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -769,6 +768,16 @@ fn main() {
         let algedonic_threshold = kask_settings_for_mcp.curator.algedonic_threshold;
         let scaled = hkask_regulation::DEFAULT_VARIETY_MAX_DEFICIT * (1.0 - algedonic_threshold);
         set_points.variety_max_deficit = scaled.max(1.0);
+        // zed-kask: D3/D6/D8 — F3: regulation ledger constructed with set_points
+        // so history caps (max_regulation_history, max_skill_span_history) are
+        // configurable via YAML. Previously constructed with `::default()` which
+        // used hardcoded caps.
+        let regulation_ledger = std::sync::Arc::new(tokio::sync::RwLock::new(
+            hkask_regulation::RegulationLedger::with_set_points(
+                hkask_regulation::DEFAULT_VARIETY_MAX_DEFICIT as u64,
+                &set_points,
+            ),
+        ));
         // zed-kask: D3/D8 — CuratorDirective channel wiring.
         // Create the channel: the Curator's `curator_directive` tool sends
         // directives via the sink, and the CyberneticsLoop's `process_inbox`
