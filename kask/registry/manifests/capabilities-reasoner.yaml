@@ -1,8 +1,8 @@
 # Capabilities Reasoner Process Manifest
-# ℏKask v0.34.0 — Capability reasoning as phased PDCA
+# ℏKask v0.35.0 — Capability reasoning as phased PDCA
 # Decomposed into: Persistence → Register → Elicit → Structural Check → Evaluate → Reason → Report → Convergence
 #
-# v0.34.0 refinement (capabilities-reasoner-refinement plan):
+# v0.35.0 refinement (capabilities-reasoner-refinement plan):
 #   1. Added ordinal 0 execute step (curator_memory_recall) — persistence-grounded
 #      learning: reads prior evaluations before the cascade starts.
 #   2. Added ordinal 3 compute step (lisp.eval) — deterministic structural
@@ -65,7 +65,7 @@ manifest:
     authorization), and converges via metric-stability check (verdicts
     must survive metric change — the mirage paper's counterpoint).
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

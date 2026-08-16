@@ -1,5 +1,5 @@
 # Company Research — Deep Pipeline Process Manifest
-# ℏKask v0.34.0 — EFRA-AI research pipeline (agents 10–13) as convergent flowdef
+# ℏKask v0.35.0 — EFRA-AI research pipeline (agents 10–13) as convergent flowdef
 #
 # Design: kask/docs/plans/efra-ai-to-kask-company-research-skill.md
 #
@@ -51,7 +51,7 @@ manifest:
     are native `action: execute` steps; templates do LLM synthesis over
     their outputs. Converges on THESIS investment_grade verdict.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

@@ -1,5 +1,5 @@
 # Code Review Process Manifest
-# hKask v0.34.0 — Convergent code review as phased PDCA
+# hKask v0.35.0 — Convergent code review as phased PDCA
 # Phased: scope → perspectives → adjudicate → report → implement (gated) → convergence-check → loop
 #
 # Ontological anchors (the shape emerges from these, NOT from a generic template):
@@ -42,7 +42,7 @@ manifest:
     blocker_delta stabilization (Cauchy). Comprehensive-by-default; variety via
     delegation, not modes. Emits reg.codereview.* spans. capability-gated.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   # Layer A opt-in: enforce the declared `inputs` contract at the skill-execution

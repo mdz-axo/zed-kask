@@ -1,5 +1,5 @@
 # Template crate manifest for eqm skill
-# hKask v0.34.0
+# hKask v0.35.0
 #
 # Measurement instrument for forecast-rationale quality. Scores rationales
 # against the 60 EQMs from Karvetski et al. (2026) via the
@@ -10,7 +10,7 @@
 
 crate:
   name: eqm
-  version: "0.34.0"
+  version: "0.35.0"
   description: >
     Explanation Quality Markers measurement instrument. Scores forecast
     rationales against the 60 EQMs from Karvetski et al. (2026, Forecasting

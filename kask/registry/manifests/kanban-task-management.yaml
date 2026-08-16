@@ -1,5 +1,5 @@
 # Kanban Task Management Skill (unified)
-# hKask v0.34.0 — Decompose + Delegate + Operate in one skill
+# hKask v0.35.0 — Decompose + Delegate + Operate in one skill
 #
 # Three phases of kanban task management, triaged at runtime:
 #   Phase 1 (Decompose): gather-context → decompose-tasks → review-tasks → populate-board
@@ -53,7 +53,7 @@ manifest:
     LLM-judgment tool calls remain agent-mediated. Ontology: PKO — board =
     pko:Procedure, task = pko:Step.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
 

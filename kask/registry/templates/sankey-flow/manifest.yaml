@@ -1,10 +1,10 @@
 # Template crate manifest for sankey-flow skill
-# hKask v0.34.0
+# hKask v0.35.0
 # Example-anchored Sankey diagramming — match, adapt, render
 
 crate:
   name: sankey-flow
-  version: "0.34.0"
+  version: "0.35.0"
   description: >
     Example-anchored Sankey flow diagramming. Matches a natural-language prompt
     against a library of canonical Sankey examples (income statement, budget,

@@ -1,5 +1,5 @@
 # Idiomatic Rust Process Manifest
-# hKask v0.34.0 — Convergent inquiry into Rust design quality
+# hKask v0.35.0 — Convergent inquiry into Rust design quality
 # Graydon Hoare's principles as the operating system
 #
 # Compiler grounding: this skill uses rust-analyzer (via the agent's
@@ -31,7 +31,7 @@ manifest:
     is the oracle that prevents the LLM from confidently proposing designs
     the borrow checker would reject.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

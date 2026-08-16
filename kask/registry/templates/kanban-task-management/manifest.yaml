@@ -1,5 +1,5 @@
 # Template crate manifest for kanban-task-management skill (unified)
-# hKask v0.34.0 — Merged decomposition + delegation + management into one skill
+# hKask v0.35.0 — Merged decomposition + delegation + management into one skill
 #
 # Three phases of kanban task management, triaged at runtime:
 #   Phase 1 (Decompose): gather-context → decompose-tasks → review-tasks → populate-board
@@ -11,7 +11,7 @@
 
 crate:
   name: kanban-task-management
-  version: "0.34.0"
+  version: "0.35.0"
   description: >
     Unified kanban task management: decompose projects into tasks, delegate
     tasks to subagents, and monitor/coordinate boards. Three phases triaged

@@ -1,5 +1,5 @@
 # Skill Router Process Manifest
-# ℏKask v0.34.0 — Task-to-skill matching as convergent PDCA
+# ℏKask v0.35.0 — Task-to-skill matching as convergent PDCA
 #
 # Publishes the skill-router template crate (kask/registry/templates/skill-router/)
 # as an installable skill. The match step (skill-router-match) ranks installed
@@ -24,7 +24,7 @@ manifest:
     task-breakdown's decompose phase, which emits skill_match_query per slice;
     skill-router consumes those queries.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

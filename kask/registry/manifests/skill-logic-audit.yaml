@@ -1,5 +1,5 @@
 # Skill Logic Audit Process Manifest
-# hKask v0.34.0 — Bounded dual-layer logic audit of .j2 templates as PDCA
+# hKask v0.35.0 — Bounded dual-layer logic audit of .j2 templates as PDCA
 #
 # Unfolded from skill-maintenance (originally folded 2026-07-25, unfolded
 # 2026-08-14). The two skills share no steps, no data flow, and no convergence
@@ -17,7 +17,7 @@ manifest:
     with unified diff, presents to the user for accept/reject/counter-proposal,
     and iterates until the proposal confidence stabilizes.
   functional_role: flowdef
-  version: "0.34.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true
