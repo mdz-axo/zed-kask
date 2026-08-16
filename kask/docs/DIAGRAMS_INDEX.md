@@ -1,8 +1,8 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [maintainers, agents]
-last_updated: 2026-08-14
-version: "0.32.1"
+last_updated: 2026-08-15
+version: "0.34.0"
 status: "Active"
 domain: "documentation"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -23,6 +23,7 @@ The Diataxis documentation set (`docs/diataxis/`) carries ~40 per-crate diagrams
 | Diagram ID  | Description                                                                                                                | Now Inline In                        | Verified Against                                                                   | Status                                  |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------- | --------------------------------------- |
 | DIAG-DC-CAP | hKask Capability — `ToolPort` / `ToolInfo` / `ToolPortError` class model, plus the call-meter outcomes. **Re-scoped twice on 2026-08-12:** the `DelegationToken` triple and `is_valid_for` went with the vacuous per-call gate (RR-0056), and `ToolTaint` / `ToolInfo.taint` went with the inert FIDES gate (RR-0053 — `tool_taint.rs` no longer exists) | `diagrams/class-hkask-capability.md` | `crates/hkask-capability/src/tool_port.rs`, `crates/hkask-capability/src/token_types.rs`, `crates/hkask-capability/src/hkask_capability.rs`, `crates/hkask-mcp/src/runtime.rs` | ✅ UPDATED 2026-08-12 |
+| DIAG-ARCH-SKILL-MCP-LISP | Skill ↔ MCP ↔ Lisp capabilities seam — architecture diagram of the three coupled surfaces (skill system D1, MCP server wiring D3, Lisp capabilities layer). Anchored to `SkillTool`, `ManifestExecutor`, `BridgeManifestExecutor`, `StepMachine`, `dispatch_compute`, `hkask_lisp::eval_sandboxed_with_budget`, `LazyToolRouter`, `ToolPort`, `McpRuntime`, `CallCapManager`, `unwrap_tool_envelope`, and the 13 on-disk MCP servers | `diagrams/architecture-skill-mcp-lisp-seam.md` | `crates/agent/src/tools/skill_tool.rs`, `kask/crates/hkask-templates/src/executor.rs`, `kask/crates/kask_bridge/src/skill_executor.rs`, `kask/crates/hkask-templates/src/step_machine.rs`, `kask/crates/hkask-templates/src/compute.rs`, `kask/crates/hkask-lisp/`, `crates/agent/src/tool_router.rs`, `kask/crates/hkask-capability/src/tool_port.rs`, `kask/crates/hkask-mcp/src/runtime.rs`, `kask/crates/hkask-regulation/src/energy.rs`, `kask/crates/hkask-types/src/tool_response.rs`, `kask/crates/kask_bridge/src/mcp_servers.rs` | ✅ VERIFIED 2026-08-15 |
 
 ## 2. Interface & Composition Diagrams
 
@@ -34,6 +35,8 @@ The Diataxis documentation set (`docs/diataxis/`) carries ~40 per-crate diagrams
 | DIAG-IC-TYPES  | hkask-types composition-root sequence — LanguageModelInferencePort / OnceLock hooks / BridgeManifestExecutor                                                        | `diataxis/hkask-types/explanation.md`                                       | `crates/hkask-types/`, `crates/kask_bridge/`                                                                                                                                                                | ✅ SURVIVES 2026-08-03 (diataxis)                              |
 | DIAG-ONT-001   | Ontology Bridge Architecture — single shared crate `hkask-bridge-ontology` owning all vocabulary + domain-selection logic; all MCP servers depend on it; no ontology lives inside a server | `diagrams/architecture-ontology-bridge.md`                                  | `crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`, `crates/hkask-bridge-ontology/src/axis.rs`                                                                                                     | ✅ VERIFIED 2026-08-05                                         |
 | DIAG-ONT-002   | Ontology Domain-Selection Flow — `select_ontology_anchor(domain)` → FIBO/ESO/GOLEM/OMC/ML-Schema/SUMO/PKO/Core                                                                             | `diagrams/architecture-ontology-bridge.md`                                  | `crates/hkask-bridge-ontology/src/axis.rs:select_ontology_anchor`                                                                                                                                           | ✅ VERIFIED 2026-08-05                                         |
+| DIAG-FLOW-SKILL-INVOCATION | Skill Invocation — Cascade and Final-Result Extraction Flow. `SkillTool` resolves `SkillManifestExecutor` at invocation time → `BridgeManifestExecutor` → `ManifestExecutor::execute_manifest_into` → `StepMachine` cascade → `extract_final_step_result` reads machine-tracked `last_result_step` (O(1), deterministic — K5 retired the HashMap scan) | `diagrams/flowchart-skill-invocation.md` | `crates/agent/src/tools/skill_tool.rs` (`SkillTool`, `SkillManifestExecutor`, `manifest_executor_resolver`), `crates/agent/src/agent.rs` (`MANIFEST_EXECUTOR` OnceLock, `set_manifest_executor`), `kask/crates/hkask-templates/src/executor.rs` (`execute_manifest_into`, `extract_final_step_result`), `kask/crates/hkask-templates/src/step_machine.rs` (`StepMachine`, `last_result_step`, `CascadeOutcome`), `kask/crates/hkask-templates/src/hkask_templates.rs` (crate-root re-exports), `kask/crates/kask_bridge/src/skill_executor.rs` (`BridgeManifestExecutor`) | ✅ VERIFIED 2026-08-15 |
+| DIAG-SEQ-MCP-TOOL-CALL | MCP Tool Call — `LazyToolRouter` (built-in bypass) → `McpRuntime::invoke` (metering gate, not authorization) → `unwrap_tool_envelope`. Covers the `apply_router_bypassing_built_ins` built-in bypass, the `CallMeterOutcome` branches (Charged / AutoRegistered / CeilingReached), and the `{"content": value}` envelope seam | `diagrams/sequence-mcp-tool-call.md` | `crates/agent/src/tool_router.rs` (`LazyToolRouter`, `apply_router_bypassing_built_ins`), `crates/agent/src/thread.rs` (`enabled_tools`), `kask/crates/hkask-capability/src/tool_port.rs` (`ToolPort`, `ToolPortError::EnergyBudgetExceeded`), `kask/crates/hkask-mcp/src/runtime.rs` (`impl ToolPort for McpRuntime`, `charge_call_metered`), `kask/crates/hkask-regulation/src/energy.rs` (`CallMeterOutcome`, `CallCapManager`), `kask/crates/hkask-types/src/tool_response.rs` (`unwrap_tool_envelope`) | ✅ VERIFIED 2026-08-15 |
 
 ## 3. Trust & Observability Diagrams
 
@@ -41,6 +44,7 @@ The Diataxis documentation set (`docs/diataxis/`) carries ~40 per-crate diagrams
 | --------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
 | DIAG-TO-SPAN    | Regulation Span Lifecycle — Emission → Storage → Query → Decay (WeightedEvent EMA)                                          | `reference/regulation-spans.md` §4        | `crates/hkask-regulation/src/runtime.rs`, `crates/hkask-storage/src/regulation_store.rs`, `crates/hkask-types/src/event.rs` | ✅ SURVIVES 2026-08-03 (path confirmed) |
 | DIAG-TO-NUEVENT | Nu-Event Semantics — emitter → RegulationRecord → RegulationSink → RegulationArchive → sensors/CyberneticsLoop/CurationLoop | `explanation/cognition-and-replica.md` §2 | `crates/hkask-regulation/src/runtime.rs`, `crates/hkask-types/src/event.rs`                                                 | ✅ SURVIVES 2026-08-03 (path confirmed) |
+| DIAG-ERD-CREDENTIAL-RESOLUTION | Credential Resolution Chain — `ctx.credentials` → `resolve_credential` (env → keychain) → `kask://credentials/hkask_db_passphrase` mirror, including the `nudge_mcp_servers` re-sync edge. Covers the 2-tier `resolve_db_passphrase` chain, the `mirror_provisioned_db_passphrase` deferred-task ordering, and the `nudge_mcp_servers` → `SettingsStore` observer → `sync_kask_mcp_runtime_servers` → `build_mcp_server_env` restart path | `diagrams/erd-credential-resolution.md` | `kask/crates/hkask-mcp-server/src/server/credentials.rs` (`resolve_credential`, `resolve_db_passphrase`), `kask/crates/hkask-mcp-server/src/server/context.rs` (`ServerContext::resolve_db_credential`), `kask/crates/hkask-keystore/src/keychain.rs` (`resolve_db_passphrase`, `resolve_db_passphrase_string`), `kask/crates/kask_bridge/src/identity.rs` (`mirror_provisioned_db_passphrase`), `crates/settings_ui/src/pages/kask_page.rs` (`nudge_mcp_servers`, `write_credential`, `delete_credential`), `crates/zed/src/main.rs` (`db_passphrase_mirror_task`) | ✅ VERIFIED 2026-08-15 |
 
 ## 4. Persistence & Lifecycle Diagrams
 
@@ -150,20 +154,24 @@ The `docs/diataxis/` set carries one diagram per artifact across 10 crates (`hka
 
 ## 17. Summary
 
-**Surviving diagram inventory (2026-08-05):**
+**Surviving diagram inventory (2026-08-15):**
 
 | Location                                                                                                             | Count   |
 | -------------------------------------------------------------------------------------------------------------------- | ------- |
-| `docs/diagrams/` standalone (swarm + capability + invoke-gate + prediction-markets + 6 viz widgets + 2 kanban state) | 17      |
+| `docs/diagrams/` standalone (swarm + capability + invoke-gate + prediction-markets + 6 viz widgets + 2 kanban state + 4 skill/MCP/credential seam diagrams) | 21      |
 | `docs/explanation/` (cognition-and-replica, training-and-adapters, skills-and-composition)                           | ~12     |
 | `docs/reference/mcp-servers/` (README, companies, scenarios, condenser, swarm)                                       | 5       |
 | `docs/reference/regulation-spans.md`                                                                                 | 1       |
 | `docs/architecture/` (MDS ×4, DOCUMENTATION_STANDARDS ×1)                                                            | 5       |
 | `docs/plans/` (cybernetic-swarm ×3, evolving-test-harness)                                                           | 4       |
 | `docs/diataxis/` (10 crates × ~4)                                                                                    | ~40     |
-| **Total surviving**                                                                                                  | **~84** |
+| **Total surviving**                                                                                                  | **~88** |
 
 **Removed from this registry (2026-08-03):** all "PARENT DELETED" / "removed — host status report" entries (~26 diagrams whose parents were deleted in the 2026-07-24 cleanup). Recoverable via git history.
+
+**New seam diagrams (2026-08-15):** 4 reference-quadrant diagrams added under `docs/diagrams/` — `architecture-skill-mcp-lisp-seam.md` (the three-surface seam), `flowchart-skill-invocation.md` (cascade + `extract_final_step_result` / `last_result_step`), `sequence-mcp-tool-call.md` (`LazyToolRouter` built-in bypass → `McpRuntime::invoke` metering → `unwrap_tool_envelope`), and `erd-credential-resolution.md` (`ctx.credentials` → keychain → `nudge_mcp_servers` re-sync). All four cite grep-verified symbols.
+
+**Deleted plans (2026-08-15):** `plans/skill-mcp-coevolution.md`, `plans/capabilities-reasoner-refinement.md`, and `plans/efra-ai-to-kask-company-research-skill.md` were removed — their proposed work landed (the 11 migrated skills, the `EvolveMcpToolSchema` directive, and the `company-research-flash`/`company-research-deep` skills all exist in `kask/registry/manifests/`). `explanation/corpus-ingestion-probe.md` was removed — a historical "Slice 6 probe complete" report. Recoverable via git history.
 
 **Widgets (D18):** 6 viz-widget class diagrams added under `docs/diagrams/` (class-hkask-viz-core, class-hkask-media-widget, class-hkask-graph-widget, class-hkask-kanban-widget, class-hkask-portfolio-widget, class-hkask-scenarios-widget). The kanban widget diagram was re-verified 2026-08-09 after Wave 1/S9 (move_controller.rs extracted) and Wave 2/B3+S8 (card detail popover + WIP limits).
 

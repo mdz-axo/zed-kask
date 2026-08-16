@@ -209,7 +209,9 @@ async fn web_search_rejects_empty_query_via_parameters_seam() {
 }
 
 // REQ: rss_list_subscriptions rejects when no RSS DB is configured (P5).
-// expect: without an RSS database, returns kind=unavailable.
+// expect: without an RSS database, returns kind=permission_denied (missing
+// credential — see .rules "Missing credentials must surface as
+// McpToolError::permission_denied").
 #[tokio::test]
 async fn rss_list_subscriptions_rejects_without_db_via_parameters_seam() {
     let server = test_server();
@@ -218,17 +220,19 @@ async fn rss_list_subscriptions_rejects_without_db_via_parameters_seam() {
             .expect("deserialize ListSubscriptionsRequest");
     let out = server.rss_list_subscriptions(Parameters(req)).await;
     let kind = error_kind(&out).expect("expected error kind for missing RSS db");
-    assert_eq!(kind, "unavailable", "got: {out}");
+    assert_eq!(kind, "permission_denied", "got: {out}");
 }
 
 // REQ: rss_export_opml rejects when no RSS DB is configured (P5).
-// expect: without an RSS database, returns kind=unavailable.
+// expect: without an RSS database, returns kind=permission_denied (missing
+// credential — see .rules "Missing credentials must surface as
+// McpToolError::permission_denied").
 #[tokio::test]
 async fn rss_export_opml_rejects_without_db_via_parameters_seam() {
     let server = test_server();
     let out = server.rss_export_opml().await;
     let kind = error_kind(&out).expect("expected error kind for missing RSS db");
-    assert_eq!(kind, "unavailable", "got: {out}");
+    assert_eq!(kind, "permission_denied", "got: {out}");
 }
 
 // ── N4: SearchStrategy::News with no News providers returns unavailable ────

@@ -1,7 +1,7 @@
 ---
 title: "Skill ↔ MCP Tool Integration"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-08-14
+last_updated: 2026-08-15
 version: "0.34.0"
 status: "Active"
 domain: "Skill System"
@@ -78,7 +78,7 @@ invocation — no `template_ref` is needed. The `eqm` skill uses this pattern
 ## Which action names route to MCP tool invocation?
 
 The `StepMachine::dispatch_action` in
-`kask/crates/hkask-templates/src/step_machine.rs` (lines 362–366) routes these
+`kask/crates/hkask-templates/src/step_machine.rs` (lines 378–389) routes these
 actions to `execute_tool_invoke`:
 
 ```rust
@@ -189,11 +189,12 @@ tool call is required and its inputs are deterministic.
 
 All claims in this document are grounded in:
 
-- `kask/crates/hkask-templates/src/step_machine.rs` lines 362–366 — action dispatch
-- `kask/crates/hkask-templates/src/step_actions.rs` lines 420–470 — `execute_tool_invoke`
-- `kask/crates/hkask-templates/src/step_actions.rs` lines 1266–1279 — `invoke_tool` helper
-- `kask/crates/hkask-templates/src/bundle/manifest.rs` lines 56–141 — `BundleManifestStep` struct (the `mcp:` field)
-- `kask/crates/hkask-templates/src/executor.rs` lines 62–63 — `ToolPort` wiring
+- `kask/crates/hkask-templates/src/step_machine.rs` lines 378–389 — action dispatch (`execute` / `feedback` / `validate` / `retrieve` → `execute_tool_invoke`)
+- `kask/crates/hkask-templates/src/step_actions.rs` lines 447–451 — `execute_tool_invoke`
+- `kask/crates/hkask-templates/src/step_actions.rs` lines 1298–1308 — `invoke_tool` helper
+- `kask/crates/hkask-templates/src/bundle/manifest.rs` — `BundleManifestStep` struct (the `mcp:` field)
+- `kask/crates/hkask-templates/src/executor.rs` — `ManifestExecutor::execute_manifest_into` (returns typed `CascadeOutcome`; callers extract via `extract_final_step_result`)
+- `kask/crates/hkask-templates/src/hkask_templates.rs:36` — `pub use executor::extract_final_step_result` (crate-root re-export; downstream crates must match on `hkask_templates::extract_final_step_result`, not the submodule path)
 - `kask/crates/hkask-templates/tests/manifest_compliance.rs` line 6 — canonical action list
 - `kask/crates/hkask-templates/tests/manifest_properties.rs` line 131 — `select` with `mcp:` validation
 - `kask/crates/hkask-templates/tests/pipeline_manifest_parse_test.rs` lines 74–82 — `execute` steps require `mcp:`
@@ -201,3 +202,67 @@ All claims in this document are grounded in:
 - `kask/corpus/pipeline-capabilities-researcher.yaml` — live `execute`-step pipeline (13 execute + 12 gate steps)
 - `kask/crates/hkask-capability/src/tool_port.rs` — `ToolPort` trait and `ToolPortError`
 - `crates/zed/src/main.rs` lines 1210–1214 — `tool_port` construction and wiring
+- `kask/crates/hkask-templates/src/step_machine.rs` — `dispatch_with_retry` checks
+  `on_failure` for all step types (not just gates); `"report"` arm calls
+  `curator_report_skill_use_issue` via `invoke_tool` (best-effort), then escalates.
+  `resume_text` field on `CascadeOutcome` surfaces the resume instruction.
+- `kask/crates/hkask-templates/src/bundle/manifest.rs` — `OnFailureConfig` with
+  `action: "report"` and `resume` text; `validate()` accepts ordinal 0 as a
+  valid starting ordinal (pre-processing step pattern).
+- `kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs` — `forecast_persist`
+  tool for pre-computed price targets; `forecast_record` gracefully falls back
+  to Brier-only scoring when the snapshot doesn't contain a full `StoredForecast`.
+- `crates/agent/src/tools/curator_tools.rs` — `CuratorDirectiveRequest::EvolveMcpToolSchema`
+  variant for co-evolution directives targeting MCP tool schemas.
+- `kask/crates/hkask-regulation/src/cybernetics_loop.rs` — `apply_evolve_mcp_tool_schema`
+  handler persists the evolution request to the regulation ledger.
+
+## Co-Evolution Patterns
+
+The `execute` step pattern enables three feedback loops that co-evolve skills
+and MCP tools:
+
+### The Calibration Loop (Forecast → Outcome → Brier → Calibrate)
+
+Skills that produce forecasts persist them via `scenario_score` (execute step).
+When outcomes resolve, `forecast_record` scores the forecast (Brier score).
+The next invocation reads prior Brier scores via `scenario_calibration`
+(execute step at ordinal 0) and adjusts its predictions.
+
+Wired in: `superforecasting` (steps 18, 16), `scenario-builder` (step 1),
+`metacognition` (step 0), `company-research-flash` (steps 0, 26).
+
+### The Skill-Use Reporting Loop (Skill → Curator → MCP Evolution)
+
+When an `execute` step fails, its `on_failure: { action: report }` config calls
+`curator_report_skill_use_issue` with the skill name, tool name, step ordinal,
+and error. The Curator reads these reports via `curator_memory_recall` and
+issues `EvolveMcpToolSchema` directives to evolve the MCP tool's schema.
+
+The `resume_text` field on `CascadeOutcome` surfaces the author's resume
+instruction to the operator — they see not just `ExitKind::Escalated` but
+also what was lost and how to proceed.
+
+### The Persistence-Grounded Learning Loop (Skill → MCP Persistence → Skill)
+
+Each migrated skill reads prior runs from MCP persistence at the start of
+each invocation:
+
+| Skill | MCP tool | What it reads |
+|-------|----------|---------------|
+| `superforecasting` | `scenario_calibration` | Brier score history, overconfidence bias |
+| `scenario-builder` | `scenario_calibration` | Calibration curve |
+| `metacognition` | `scenario_calibration` | Overconfidence bias for prediction calibration |
+| `kata-improvement` | `kanban_board_list` + `kanban_task_list` | Prior PDCA cycles |
+| `company-research-flash` | `forecast_list` | Prior price targets |
+| `swarm-intelligence` | `swarm_get_swarm` / `swarm_get_local_swarm` | Prior swarm state |
+| `graph-audit` | `codegraph_stats` + `codegraph_structure` | Index statistics, top symbols |
+| `bug-hunt` | `codegraph_analysis` | Pre-computed quality findings |
+| `diagnose` | `codegraph_impact` | Blast radius for the bug's location |
+| `capabilities-reasoner` | `curator_memory_recall` | Prior capability evaluations |
+
+See [`skills-and-composition.md`](skills-and-composition.md) §Composition Principles
+for the five co-evolution principles (determinism frontier, persistence-grounded
+learning, failure surfacing, lisp scaffold, co-evolution loop) and the
+[`skill-mcp-integration.md`](skill-mcp-integration.md) §Co-Evolution Patterns
+for the three feedback loops (calibration, skill-use reporting, persistence-grounded learning).

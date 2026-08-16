@@ -1,7 +1,7 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-14
+last_updated: 2026-08-15
 version: "0.34.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -56,13 +56,13 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document                                                                                   | Description                                                                   |
 | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| [`explanation/skills-and-composition.md`](explanation/skills-and-composition.md)           | Skill anatomy, invocation, composition.                                       |
+| [`explanation/skills-and-composition.md`](explanation/skills-and-composition.md)           | Skill anatomy, invocation, composition, and the five composition principles (determinism frontier, persistence-grounded learning, failure surfacing, lisp scaffold, co-evolution loop).                                       |
+| [`explanation/skill-mcp-integration.md`](explanation/skill-mcp-integration.md)           | How flowdef steps invoke MCP tools natively via `action: execute` — the two invocation patterns, the action dispatch table, and the three co-evolution feedback loops. |
 | [`explanation/memory-system.md`](explanation/memory-system.md)                             | **Memory system** — why vector + relational, the entity_ref bug, decay model. |
 | [`explanation/abw-swarm-orchestration.md`](explanation/abw-swarm-orchestration.md)         | Agent Bestiary World swarm orchestration design.                              |
 | [`explanation/cognition-and-replica.md`](explanation/cognition-and-replica.md)             | Scenario forecasting, ν-event semantics, Companies server.                    |
 | [`explanation/companies-mcp.md`](explanation/companies-mcp.md)                             | Companies MCP server how-to.                                                  |
 | [`explanation/company-corpus-design.md`](explanation/company-corpus-design.md)             | Company corpus design (discovery → ontology-anchored KG → RAG).               |
-| [`explanation/corpus-ingestion-probe.md`](explanation/corpus-ingestion-probe.md)           | Corpus ingestion probe (slice 6).                                             |
 | [`explanation/earnings-transcript-analysis-design.md`](explanation/earnings-transcript-analysis-design.md) | Earnings-call transcript analysis design.                       |
 | [`explanation/forecasting-and-scenarios.md`](explanation/forecasting-and-scenarios.md)     | Forecasting across skill, library, and scenarios layers.                      |
 | [`explanation/ontology-anchored-embedding.md`](explanation/ontology-anchored-embedding.md) | Tag→embed corpus pipeline.                                                    |
