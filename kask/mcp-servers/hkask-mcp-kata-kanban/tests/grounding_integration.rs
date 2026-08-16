@@ -56,9 +56,12 @@ fn grounding_nulls_deliverable_path_when_no_tool_called() {
     });
     let tool_calls: Vec<serde_json::Value> = vec![];
 
-    let (result, cleaned) =
-        grounding::enforce_grounding(&contract, &output, &tool_calls, "");
-    assert!(result.nulled_fields.contains(&"deliverable_path".to_string()));
+    let (result, cleaned) = grounding::enforce_grounding(&contract, &output, &tool_calls, "");
+    assert!(
+        result
+            .nulled_fields
+            .contains(&"deliverable_path".to_string())
+    );
     assert!(cleaned["deliverable_path"].is_null());
     // summary is Inferred — kept.
     assert_eq!(cleaned["summary"], "I wrote the file.");
@@ -78,8 +81,7 @@ fn grounding_keeps_deliverable_path_when_tool_succeeded() {
         "ok": true
     })];
 
-    let (result, cleaned) =
-        grounding::enforce_grounding(&contract, &output, &tool_calls, "");
+    let (result, cleaned) = grounding::enforce_grounding(&contract, &output, &tool_calls, "");
     assert!(result.nulled_fields.is_empty());
     assert_eq!(cleaned["deliverable_path"], "/src/main.rs");
     match &result.provenance["deliverable_path"] {
@@ -106,8 +108,7 @@ fn grounding_nulls_test_verdict_when_no_terminal_call() {
         "ok": true
     })];
 
-    let (result, cleaned) =
-        grounding::enforce_grounding(&contract, &output, &tool_calls, "");
+    let (result, cleaned) = grounding::enforce_grounding(&contract, &output, &tool_calls, "");
     assert!(result.nulled_fields.contains(&"test_verdict".to_string()));
     assert!(cleaned["test_verdict"].is_null());
     // summary is Inferred — kept.
@@ -142,8 +143,7 @@ fn grounding_marks_uncommissioned_inference_but_keeps() {
     });
     let tool_calls: Vec<serde_json::Value> = vec![];
 
-    let (result, cleaned) =
-        grounding::enforce_grounding(&contract, &output, &tool_calls, "");
+    let (result, cleaned) = grounding::enforce_grounding(&contract, &output, &tool_calls, "");
     assert!(result.nulled_fields.is_empty());
     assert_eq!(cleaned["author_name"], "Jane Doe");
     assert_eq!(
@@ -161,8 +161,7 @@ fn grounding_noop_for_prose_output() {
     let output = serde_json::Value::String("just prose".to_string());
     let tool_calls: Vec<serde_json::Value> = vec![];
 
-    let (result, cleaned) =
-        grounding::enforce_grounding(&contract, &output, &tool_calls, "");
+    let (result, cleaned) = grounding::enforce_grounding(&contract, &output, &tool_calls, "");
     assert!(result.provenance.is_empty());
     assert!(result.nulled_fields.is_empty());
     assert_eq!(cleaned, output);

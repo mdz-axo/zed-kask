@@ -8,8 +8,8 @@
 //! The KanbanServer struct and tool methods are exported from the library
 //! target to enable fuzz testing (P5 Testing Discipline, P4 Clear Boundaries).
 
-pub mod idempotency;
 pub mod grounding;
+pub mod idempotency;
 pub mod kanban;
 pub mod kata;
 pub mod pko;
@@ -1310,8 +1310,8 @@ impl KanbanServer {
                     );
                 }
                 // Replace the response with the cleaned JSON.
-                result.response = serde_json::to_string(&cleaned)
-                    .unwrap_or_else(|_| result.response.clone());
+                result.response =
+                    serde_json::to_string(&cleaned).unwrap_or_else(|_| result.response.clone());
             }
         }
 

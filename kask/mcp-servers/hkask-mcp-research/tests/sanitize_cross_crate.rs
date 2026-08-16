@@ -15,6 +15,15 @@ proptest! {
     /// P1 invariant: for any body with a secret prefix, the sanitized output
     /// must not contain the secret after [REDACTED]. Cross-crate verification
     /// that the `pub fn sanitize_error_body` API works from downstream crates.
+    ///
+    /// Mirrors the in-crate `sanitize_redacts_every_secret_prefix` property:
+    /// checking `!sanitized.contains(&secret)` is unsound because the secret
+    /// alphabet `[A-Za-z0-9+/=_-]` overlaps the `[a-z ]` filler, so the secret
+    /// string can coincidentally reappear in prefix_text/suffix_text (e.g.
+    /// secret="h" with suffix_text=" h") — a false positive. The redactor
+    /// consumes prefix+token as a unit, so "prefix gone" entails "secret
+    /// consumed", and the redactor re-scans the whole body so a prefix
+    /// coincidentally present in the filler is redacted too.
     #[test]
     fn cross_crate_sanitize_redacts_secrets(
         prefix_idx in 0usize..SECRET_PREFIXES.len(),
@@ -25,21 +34,11 @@ proptest! {
         let prefix = SECRET_PREFIXES[prefix_idx];
         let body = format!("{prefix_text}{prefix}{secret}{suffix_text}");
         let sanitized = sanitize_error_body(&body);
-        let redacted_pos = sanitized.find("[REDACTED]");
-        if let Some(pos) = redacted_pos {
-            let after = &sanitized[pos + "[REDACTED]".len()..];
-            prop_assert!(
-                !after.contains(&secret),
-                "secret '{}' survived after [REDACTED] for prefix '{}': sanitized={:?}",
-                secret, prefix, sanitized
-            );
-        } else {
-            prop_assert!(
-                !sanitized.contains(&secret),
-                "no [REDACTED] marker and secret '{}' survived for prefix '{}': sanitized={:?}",
-                secret, prefix, sanitized
-            );
-        }
+        prop_assert!(
+            !sanitized.contains(prefix),
+            "prefix '{}' survived redaction: body={:?} sanitized={:?}",
+            prefix, body, sanitized
+        );
     }
 
     /// P4 panic-freedom: sanitize_error_body must never panic on any input

@@ -778,8 +778,10 @@ mod tests {
                 "agent_type": "test",
                 "produces": ["text", "json"],
                 "capabilities": { "system_prompt": "test" }
-            }).to_string(),
-        ).unwrap();
+            })
+            .to_string(),
+        )
+        .unwrap();
         std::fs::create_dir_all(dir.join("agent_b")).unwrap();
         std::fs::write(
             dir.join("agent_b").join("agent_card.json"),
@@ -788,8 +790,10 @@ mod tests {
                 "agent_type": "test",
                 "produces": ["task_result"],
                 "capabilities": { "system_prompt": "test" }
-            }).to_string(),
-        ).unwrap();
+            })
+            .to_string(),
+        )
+        .unwrap();
 
         let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
         registry.load().expect("load");
@@ -826,8 +830,10 @@ mod tests {
                 "agent_type": "test",
                 "produces": ["text"],
                 "capabilities": { "system_prompt": "test" }
-            }).to_string(),
-        ).unwrap();
+            })
+            .to_string(),
+        )
+        .unwrap();
 
         let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
         registry.load().expect("load");

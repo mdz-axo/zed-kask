@@ -31,7 +31,10 @@ impl PortRegistry {
     /// or the file is absent.
     pub fn builtin() -> Self {
         Self {
-            types: BUILTIN_PORT_TYPES.iter().map(|s| (*s).to_string()).collect(),
+            types: BUILTIN_PORT_TYPES
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
         }
     }
 
@@ -135,7 +138,10 @@ mod tests {
         assert!(registry.resolves("text"));
         assert!(registry.resolves("json"));
         assert!(registry.resolves("custom_type"));
-        assert!(!registry.resolves("task_result"), "task_result not in custom file");
+        assert!(
+            !registry.resolves("task_result"),
+            "task_result not in custom file"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -158,7 +164,10 @@ mod tests {
         std::fs::write(&path, "[]").unwrap();
 
         let registry = PortRegistry::load_or_builtin(path.to_string_lossy().as_ref());
-        assert!(registry.resolves("text"), "empty file falls back to built-in");
+        assert!(
+            registry.resolves("text"),
+            "empty file falls back to built-in"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -172,7 +181,10 @@ mod tests {
         std::fs::write(&path, "not valid json {{{").unwrap();
 
         let registry = PortRegistry::load_or_builtin(path.to_string_lossy().as_ref());
-        assert!(registry.resolves("text"), "unparseable file falls back to built-in");
+        assert!(
+            registry.resolves("text"),
+            "unparseable file falls back to built-in"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
