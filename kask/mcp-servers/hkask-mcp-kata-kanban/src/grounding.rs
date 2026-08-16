@@ -506,4 +506,149 @@ mod tests {
         let preview = truncate_preview(&short);
         assert_eq!(preview, "short");
     }
+
+    // ── Property-based tests ─────────────────────────────────────────────
+    // Uses the hkask-test-harness `arb_json_value` generator to verify
+    // that `enforce_grounding` never panics on arbitrary JSON input and
+    // preserves key invariants.
+
+    use proptest::prelude::*;
+
+    /// Generate a tool_calls summary entry: {"tool": <string>, "ok": <bool>}.
+    fn arb_tool_call() -> BoxedStrategy<serde_json::Value> {
+        ("[a-z][a-z0-9_/]*", any::<bool>())
+            .prop_map(|(tool, ok)| {
+                json!({ "tool": tool, "ok": ok })
+            })
+            .boxed()
+    }
+
+    /// Generate a vec of tool_calls.
+    fn arb_tool_calls() -> BoxedStrategy<Vec<serde_json::Value>> {
+        prop::collection::vec(arb_tool_call(), 0..8).boxed()
+    }
+
+    proptest! {
+        /// `enforce_grounding` never panics on arbitrary JSON output + tool_calls.
+        /// This is the baseline robustness property — the grounding checker is
+        /// on the hot path of every task-agent delegation and must not crash.
+        #[test]
+        fn enforce_grounding_never_panics(
+            output in hkask_test_harness::arb_json_value(),
+            tool_calls in arb_tool_calls(),
+            narrative in "[a-zA-Z0-9 /._-]{0,200}",
+        ) {
+            let contract = task_agent_contract();
+            let result = std::panic::catch_unwind(|| {
+                enforce_grounding(&contract, &output, &tool_calls, &narrative)
+            });
+            prop_assert!(result.is_ok(), "panicked on output={output}, tool_calls={tool_calls:?}");
+        }
+
+        /// Nulled fields are always a subset of the output's keys. The
+        /// grounding check must never null a field that doesn't exist in
+        /// the output, and must never null a field that is Sourced or
+        /// Inferred.
+        #[test]
+        fn nulled_fields_are_subset_of_output_keys(
+            output in hkask_test_harness::arb_json_value(),
+            tool_calls in arb_tool_calls(),
+        ) {
+            let contract = task_agent_contract();
+            let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+            let output_keys: std::collections::HashSet<String> = match &output {
+                serde_json::Value::Object(map) => {
+                    map.keys().map(|k| k.to_string()).collect()
+                }
+                _ => std::collections::HashSet::new(),
+            };
+            for nulled in &result.nulled_fields {
+                prop_assert!(
+                    output_keys.contains(nulled),
+                    "nulled field '{}' not in output keys {:?}",
+                    nulled, output_keys
+                );
+            }
+        }
+
+        /// Every nulled field has an Unsourced provenance tag. A field
+        /// that is Sourced, Inferred, or UncommissionedInference must not
+        /// appear in nulled_fields.
+        #[test]
+        fn nulled_fields_have_unsourced_provenance(
+            output in hkask_test_harness::arb_json_value(),
+            tool_calls in arb_tool_calls(),
+        ) {
+            let contract = task_agent_contract();
+            let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+            for nulled in &result.nulled_fields {
+                let tag = result.provenance.get(nulled);
+                prop_assert!(
+                    matches!(tag, Some(ProvenanceTag::Unsourced { .. })),
+                    "nulled field '{}' has provenance {:?}, expected Unsourced",
+                    nulled, tag
+                );
+            }
+        }
+
+        /// The cleaned output preserves Sourced and Inferred fields
+        /// unchanged. Only Unsourced fields are nulled.
+        #[test]
+        fn cleaned_output_preserves_sourced_and_inferred_fields(
+            output in hkask_test_harness::arb_json_value(),
+            tool_calls in arb_tool_calls(),
+        ) {
+            let contract = task_agent_contract();
+            let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+            if let (serde_json::Value::Object(orig), serde_json::Value::Object(clean)) =
+                (&output, &cleaned)
+            {
+                for (key, orig_value) in orig {
+                    let tag = result.provenance.get(key);
+                    match tag {
+                        Some(ProvenanceTag::Sourced { .. })
+                        | Some(ProvenanceTag::Inferred)
+                        | Some(ProvenanceTag::UncommissionedInference) => {
+                            prop_assert_eq!(
+                                clean.get(key),
+                                Some(orig_value),
+                                "field '{}' was modified despite non-Unsourced provenance",
+                                key
+                            );
+                        }
+                        Some(ProvenanceTag::Unsourced { .. }) => {
+                            prop_assert_eq!(
+                                clean.get(key),
+                                Some(&serde_json::Value::Null),
+                                "Unsourced field '{}' was not nulled in cleaned output",
+                                key
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        /// `successful_tools` never includes a tool call where `ok` is false.
+        /// This pins the filter that prevents failed tool calls from being
+        /// counted as data sources.
+        #[test]
+        fn successful_tools_excludes_failed_calls(
+            tool_calls in arb_tool_calls(),
+        ) {
+            let successful = successful_tools(&tool_calls);
+            for tc in &tool_calls {
+                let ok = tc.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                let tool = tc.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+                if !ok {
+                    prop_assert!(
+                        !successful.contains(tool),
+                        "failed tool '{}' appeared in successful set",
+                        tool
+                    );
+                }
+            }
+        }
+    }
 }
