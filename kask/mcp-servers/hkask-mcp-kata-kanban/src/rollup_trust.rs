@@ -212,6 +212,7 @@ mod tests {
             task_success: None,
             bind_matched: None,
             raw_response: None,
+            grounding_summary: None,
         };
         assert!(
             result.cost <= result.cost_uncapped,
