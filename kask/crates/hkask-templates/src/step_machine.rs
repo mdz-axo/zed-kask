@@ -226,7 +226,12 @@ impl StepMachine {
             }
 
             // Execute steps until we hit a Reenter, Exit, or the end of the graph.
-            match self.run_pass(&infra).await? {
+            // Clone `infra` by value into `run_pass` so the resulting future owns
+            // its `Infra` (no `&Infra` borrow crossing `.await`). rustc's HRTB
+            // `Send` check rejects futures that hold `&Infra` across awaits when
+            // the outer future is `tokio::spawn`ed; owning the value sidesteps it.
+            // `run` keeps its own `infra` for the title/progress callbacks above.
+            match self.run_pass(infra.clone()).await? {
                 PassResult::Reenter(target) => {
                     // Convergence check — exactly one place, not four.
                     self.context.read_convergence_signal();
@@ -278,7 +283,7 @@ impl StepMachine {
 
     /// Run one pass through the graph — from the current PC until we hit a
     /// `Reenter`, `Exit`, or run out of steps.
-    async fn run_pass(&mut self, infra: &Infra) -> Result<PassResult> {
+    async fn run_pass(&mut self, infra: Infra) -> Result<PassResult> {
         loop {
             // Clone the node to avoid holding an immutable borrow of `self.graph`
             // across the mutable `dispatch_action` call. After K4 the heavy
@@ -308,7 +313,7 @@ impl StepMachine {
 
             // Profile enforcement (proposer/evaluator separation).
             if let Some(ref profile_name) = node.profile {
-                if self.is_terminal_available(infra).await {
+                if self.is_terminal_available(infra.clone()).await {
                     return Err(crate::ports::TemplateError::Manifest(format!(
                         "Step {} declares profile '{}' but the `terminal` tool is available. \
                          This violates proposer/evaluator separation.",
@@ -324,7 +329,9 @@ impl StepMachine {
             // The retry uses the same timeout (the manifest's per-step
             // `timeout_seconds`); a longer timeout on retry would require a
             // separate field, which the schema doesn't have today.
-            let effect = self.dispatch_with_retry(&node, infra).await?;
+            let effect = self
+                .dispatch_with_retry(node.clone(), infra.clone())
+                .await?;
 
             // Determine control flow: merge the effect with the node's static flow.
             // Done BEFORE apply_effect because apply_effect takes effect by value.
@@ -369,10 +376,15 @@ impl StepMachine {
     /// not a 100-line block.
     async fn dispatch_action(
         &mut self,
-        node: &crate::step_graph::StepNode,
-        infra: &Infra,
+        node: crate::step_graph::StepNode,
+        infra: Infra,
     ) -> Result<crate::step_actions::Effect> {
-        match node.action.as_ref() {
+        // Extract the action into an owned `String` before matching. The match
+        // would otherwise hold an immutable borrow of `node` (via
+        // `node.action.as_ref()`) across the arms, preventing the `node` move
+        // into the async arms below.
+        let action = node.action.to_string();
+        match action.as_str() {
             "abort" => Ok(crate::step_actions::Effect::Exit(ExitKind::Converged)),
             "escalate" => {
                 let reason = node.description.clone();
@@ -384,8 +396,11 @@ impl StepMachine {
                 );
                 Ok(crate::step_actions::Effect::Exit(ExitKind::Escalated))
             }
-            "choice" => self.execute_choice(node),
-            "loop" => self.execute_loop(node, infra),
+            // Sync arms: borrow `node`/`infra` — no await, no move needed.
+            "choice" => self.execute_choice(&node),
+            "loop" => self.execute_loop(&node, &infra),
+            // Async arms: move `node`/`infra` by value so each future owns them
+            // and is `Send + 'static` under `tokio::spawn`.
             "select" => self.execute_select(node, infra).await,
             "populate" => self.execute_populate(node, infra).await,
             "compute" => self.execute_compute(node, infra).await,
@@ -421,8 +436,8 @@ impl StepMachine {
     /// invariant with no enforcement point for execute/select/compute steps).
     async fn dispatch_with_retry(
         &mut self,
-        node: &crate::step_graph::StepNode,
-        infra: &Infra,
+        node: crate::step_graph::StepNode,
+        infra: Infra,
     ) -> Result<crate::step_actions::Effect> {
         let max_retries = if self.error_handling.on_timeout == "retry"
             || self.error_handling.on_parse_failure == "retry"
@@ -434,7 +449,7 @@ impl StepMachine {
 
         let mut attempt: u32 = 0;
         loop {
-            match self.dispatch_action(node, infra).await {
+            match self.dispatch_action(node.clone(), infra.clone()).await {
                 Ok(effect) => return Ok(effect),
                 Err(crate::ports::TemplateError::Timeout {
                     step_ordinal,
@@ -505,7 +520,7 @@ impl StepMachine {
                                 // The report is best-effort — if the curator
                                 // MCP server is down, the escalation still
                                 // proceeds (the resume text is logged).
-                                let tool_name = node.mcp.as_deref().unwrap_or("");
+                                let tool_name = node.mcp.as_deref().unwrap_or("").to_string();
                                 let report_input = serde_json::json!({
                                     "skill_name": self.manifest_id,
                                     "tool_name": tool_name,
@@ -515,9 +530,14 @@ impl StepMachine {
                                     "failure_type": null,
                                 });
                                 // Best-effort: log if the report fails.
+                                // Clone `infra.tools` into a standalone local
+                                // before the await — rustc's HRTB `Send` check
+                                // rejects a `&infra.tools` borrow held across an
+                                // `.await` under `tokio::spawn`.
+                                let tools = infra.tools.clone();
                                 if let Err(report_err) = crate::step_actions::invoke_tool(
-                                    &infra.tools,
-                                    "curator_report_skill_use_issue",
+                                    tools,
+                                    "curator_report_skill_use_issue".to_string(),
                                     report_input,
                                 )
                                 .await
@@ -655,11 +675,16 @@ impl StepMachine {
     }
 
     /// Check whether the `terminal` tool is available (for profile enforcement).
-    async fn is_terminal_available(&self, infra: &Infra) -> bool {
+    async fn is_terminal_available(&self, infra: Infra) -> bool {
         match &infra.terminal_check {
             Some(check) => check(),
             None => {
-                let available = infra.tools.discover_tools().await;
+                // Clone `infra.tools` into a standalone local before the await —
+                // `discover_tools` returns a future borrowing `&self`, and
+                // rustc's HRTB `Send` check rejects a `&infra.tools` borrow
+                // held across `.await` under `tokio::spawn`.
+                let tools = infra.tools.clone();
+                let available = tools.discover_tools().await;
                 available.iter().any(|t| t == "terminal")
             }
         }
