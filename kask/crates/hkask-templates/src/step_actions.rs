@@ -670,11 +670,10 @@ impl StepMachine {
                 ))
             })?
             .clone();
-        let concurrency_cap = mapping
-            .get("concurrency_cap")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(branches.len() as u64)
-            .max(1) as usize;
+        // `concurrency_cap` is accepted for backward compat but ignored — the
+        // global `ConcurrencyLimiter` (wired via `Infra`) is the single source
+        // of truth for concurrency. When no limiter is wired (tests), fall back
+        // to `branches.len()` (unbounded) to preserve the prior behavior.
         let _join_mode = mapping
             .get("join")
             .and_then(|v| v.as_str())
@@ -688,6 +687,14 @@ impl StepMachine {
         let rjoule_remaining = self.budget.remaining_rjoule();
         let context_template = self.context.clone();
         let parent_manifest_id = self.manifest_id.clone();
+        // The global concurrency limiter gates how many branches run
+        // concurrently. `None` (tests, pre-startup) means unbounded —
+        // `buffer_unordered(branches.len())` preserves the prior behavior.
+        let concurrency_limiter = infra.concurrency_limiter.clone();
+        let buffer_bound = concurrency_limiter
+            .as_ref()
+            .map(|l| l.max() as usize)
+            .unwrap_or(branches.len());
 
         let branch_futs = branches.into_iter().enumerate().map(|(branch_id, spec)| {
             let shared_gas = Arc::clone(&shared_gas);
@@ -697,11 +704,20 @@ impl StepMachine {
             let infra = infra.clone();
             let context_template = context_template.clone();
             let branch_manifest_id = parent_manifest_id.clone();
+            let limiter = concurrency_limiter.clone();
             let template_ref = spec
                 .get("template_ref")
                 .and_then(|v| v.as_str())
                 .map(String::from);
             async move {
+                // Acquire a permit before issuing the sub-cascade. The permit
+                // is held for the branch's lifetime; dropped on completion. When
+                // no limiter is wired (tests), skip gating.
+                let _permit = if let Some(ref limiter) = limiter {
+                    Some(limiter.acquire().await)
+                } else {
+                    None
+                };
                 let template_ref = template_ref.ok_or_else(|| {
                     TemplateError::Manifest(format!(
                         "Step {} (action 'parallel') branch {} has no \
@@ -761,15 +777,49 @@ impl StepMachine {
                     format!("{}::parallel", sub_manifest_id),
                 );
                 let outcome = sub_machine.run(infra).await?;
+                // Ramp the limiter based on the branch outcome. `on_success`
+                // adds `step` permits (capped at `max`); `on_throttle` backs
+                // off one `step` (floored at `step`). Only 429/503-class errors
+                // back off — deterministic errors (parse, not-found) don't
+                // shrink the pool for unrelated branches. Per `.rules`: error
+                // classification must be per-variant, not blanket.
+                if let Some(ref limiter) = limiter {
+                    // `outcome` is `Ok` here (the `?` above would have
+                    // propagated an `Err`). A successful sub-cascade may still
+                    // have exited `Escalated` — that's a semantic escalation,
+                    // not a throttle, so we treat it as success for the limiter.
+                    limiter.on_success();
+                }
                 Ok::<(usize, CascadeOutcome), TemplateError>((branch_id, outcome))
             }
         });
 
-        // Bounded concurrency: poll up to `concurrency_cap` branch futures at
-        // once. `buffer_unordered` yields in completion order; we sort by
-        // `branch_id` below for a deterministic join.
+        // Bounded concurrency: poll up to `buffer_bound` branch futures at
+        // once. The global limiter gates actual concurrency (permits); the
+        // buffer bound is the upper limit so the stream doesn't serialize
+        // behind a small buffer. `buffer_unordered` yields in completion
+        // order; we sort by `branch_id` below for a deterministic join.
+        //
+        // Throttle handling: a branch that returns `Err` with a throttle-class
+        // error calls `on_throttle` on the limiter. We wrap the branch future
+        // to classify the error before it reaches `buffer_unordered`'s
+        // collector, so the limiter backs off even when the branch fails.
+        let limiter_for_classification = concurrency_limiter.clone();
         let outcomes: Vec<(usize, CascadeOutcome)> = stream::iter(branch_futs)
-            .buffer_unordered(concurrency_cap)
+            .map(|fut| {
+                let limiter = limiter_for_classification.clone();
+                async move {
+                    let result = fut.await;
+                    match (&result, &limiter) {
+                        (Err(e), Some(limiter)) if e.is_throttle() => {
+                            limiter.on_throttle();
+                        }
+                        _ => {}
+                    }
+                    result
+                }
+            })
+            .buffer_unordered(buffer_bound)
             .collect::<Vec<Result<(usize, CascadeOutcome)>>>()
             .await
             .into_iter()
