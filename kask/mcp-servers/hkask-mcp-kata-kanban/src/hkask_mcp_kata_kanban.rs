@@ -1291,6 +1291,9 @@ impl KanbanServer {
             let output_json = serde_json::from_str::<serde_json::Value>(&result.response)
                 .unwrap_or(serde_json::Value::Null);
             if output_json.is_object() {
+                // Retain the raw response before grounding overwrites it
+                // (paper §4: "the raw response is retained. Not the digest.").
+                let raw_response = result.response.clone();
                 let (grounding_result, cleaned) = crate::grounding::enforce_grounding(
                     &grounding_contract,
                     &output_json,
@@ -1309,9 +1312,12 @@ impl KanbanServer {
                         grounding_result.narrative_leaks.len(),
                     );
                 }
-                // Replace the response with the cleaned JSON.
+                // Replace the response with the cleaned JSON (with provenance
+                // stamps and nulled unsourced fields).
                 result.response =
                     serde_json::to_string(&cleaned).unwrap_or_else(|_| result.response.clone());
+                // Retain the raw response for audit and future reprocessing.
+                result.raw_response = Some(raw_response);
             }
         }
 
