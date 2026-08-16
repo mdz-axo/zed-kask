@@ -204,8 +204,8 @@ impl StepMachine {
     /// The only probabilistic action.
     pub(crate) async fn execute_select(
         &mut self,
-        node: &crate::step_graph::StepNode,
-        infra: &Infra,
+        node: crate::step_graph::StepNode,
+        infra: Infra,
     ) -> Result<Effect> {
         // Apply input_mapping.
         if let Some(ref mapping) = node.input_mapping {
@@ -218,7 +218,7 @@ impl StepMachine {
 
         // Render the template.
         let (prompt, raw_template_content, inference_block) =
-            render_step_template_with_raw(node, &self.context, infra)?;
+            render_step_template_with_raw(&node, &self.context, &infra)?;
 
         // Resolve output schema for structured tool calling.
         let output_schema = crate::output_schema::resolve_output_schema(
@@ -228,8 +228,7 @@ impl StepMachine {
         let structured_tool = output_schema
             .as_ref()
             .map(|schema| crate::output_schema::build_structured_output_tool(schema.clone()));
-        let tools: Option<&[ChatToolDefinition]> =
-            structured_tool.as_ref().map(std::slice::from_ref);
+        let tools: Option<Vec<ChatToolDefinition>> = structured_tool.map(|tool| vec![tool]);
 
         // Merge per-step inference parameters from the template's `[inference]`
         // block over the default params. Templates declare temperature,
@@ -288,14 +287,22 @@ impl StepMachine {
             None
         };
 
+        // Clone the `Arc`-backed fields into standalone owned locals before the
+        // await. rustc's higher-ranked `Send` check rejects futures that hold a
+        // borrow of a struct field (`&infra.inference`, `&infra.progress`)
+        // across an `.await` when the outer future is `tokio::spawn`ed and the
+        // async fn has a `&mut self` lifetime parameter — even though the
+        // pointees are `Send + Sync`. Borrowing a standalone local sidesteps it.
+        let inference = infra.inference.clone();
+        let progress = infra.progress.clone();
         let inference_result = call_inference_stream_with_messages(
-            &infra.inference,
-            &messages,
-            &params,
+            inference,
+            messages,
+            params,
             tools,
             timeout_dur,
             node.ordinal,
-            infra.progress.as_deref(),
+            progress,
         )
         .await;
 
@@ -395,8 +402,8 @@ impl StepMachine {
     /// **Populate** — render a template with the accumulated context.
     pub(crate) async fn execute_populate(
         &mut self,
-        node: &crate::step_graph::StepNode,
-        infra: &Infra,
+        node: crate::step_graph::StepNode,
+        infra: Infra,
     ) -> Result<Effect> {
         // Apply input_mapping.
         if let Some(ref mapping) = node.input_mapping {
@@ -407,7 +414,7 @@ impl StepMachine {
             );
         }
 
-        let populated = render_step_template(node, &self.context, infra)?;
+        let populated = render_step_template(&node, &self.context, &infra)?;
 
         Ok(Effect::StoredNamed {
             step_id: node.id,
@@ -419,12 +426,16 @@ impl StepMachine {
     /// **Compute** — invoke a deterministic compute primitive.
     pub(crate) async fn execute_compute(
         &mut self,
-        node: &crate::step_graph::StepNode,
-        infra: &Infra,
+        node: crate::step_graph::StepNode,
+        infra: Infra,
     ) -> Result<Effect> {
         let compute_ref = node.compute_ref.as_deref().ok_or_else(|| {
             TemplateError::Manifest(format!("Compute step {} has no compute_ref", node.ordinal))
         })?;
+        // Clone to an owned `String` so the `&str` borrow of `node.compute_ref`
+        // doesn't live in the async fn's future type (rustc's HRTB `Send` check
+        // rejects `&str` from a struct field under `tokio::spawn`).
+        let compute_ref = compute_ref.to_string();
 
         let input: Value = node
             .input_mapping
@@ -447,12 +458,12 @@ impl StepMachine {
             })
             .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
 
-        let result = crate::compute::dispatch_compute(compute_ref, &input)?;
+        let result = crate::compute::dispatch_compute(&compute_ref, &input)?;
 
         tracing::info!(
             target: "reg.skill.cascade.compute",
             ordinal = node.ordinal,
-            compute_ref = compute_ref,
+            compute_ref = %compute_ref,
             "REG"
         );
 
@@ -465,10 +476,10 @@ impl StepMachine {
     /// **Render** — render a template without inference.
     pub(crate) async fn execute_render(
         &mut self,
-        node: &crate::step_graph::StepNode,
-        infra: &Infra,
+        node: crate::step_graph::StepNode,
+        infra: Infra,
     ) -> Result<Effect> {
-        let rendered = render_step_template(node, &self.context, infra)?;
+        let rendered = render_step_template(&node, &self.context, &infra)?;
         Ok(Effect::Stored {
             step_id: node.id,
             value: Value::String(rendered),
@@ -478,15 +489,18 @@ impl StepMachine {
     /// **Execute** — invoke an MCP tool with parameters bound from context.
     pub(crate) async fn execute_tool_invoke(
         &mut self,
-        node: &crate::step_graph::StepNode,
-        infra: &Infra,
+        node: crate::step_graph::StepNode,
+        infra: Infra,
     ) -> Result<Effect> {
         // Batch path: when `mcp_batch` is present, invoke all tools concurrently,
         // each gated by the global concurrency limiter. Results are collected
         // into a `Value::Object` keyed by `entry.key` (defaulting to the tool
         // name). Mutually exclusive with the single `mcp` path.
-        if let Some(ref batch) = node.mcp_batch {
-            return self.execute_tool_batch(node, batch, infra).await;
+        // Clone `mcp_batch` out of `node` so `node` can be moved by value into
+        // `execute_tool_batch` — `ref batch` would hold an immutable borrow of
+        // `node` across the move.
+        if let Some(batch) = node.mcp_batch.clone() {
+            return self.execute_tool_batch(node, (*batch).clone(), infra).await;
         }
 
         let mcp_ref_raw = node.mcp.as_deref().ok_or_else(|| {
@@ -495,10 +509,14 @@ impl StepMachine {
                 node.ordinal
             ))
         })?;
+        // Clone to an owned `String` so the `&str` borrow of `node.mcp` doesn't
+        // live in the async fn's future type (HRTB `Send` check under
+        // `tokio::spawn`).
+        let mcp_ref_raw = mcp_ref_raw.to_string();
 
         // Resolve ${variable} references in the MCP reference.
         let mcp_ref =
-            crate::template_renderer::TemplateRenderer::render_inline(mcp_ref_raw, &self.context);
+            crate::template_renderer::TemplateRenderer::render_inline(&mcp_ref_raw, &self.context);
 
         // Resolve the tool input.
         let input: Value = node
@@ -532,11 +550,13 @@ impl StepMachine {
 
         // Invoke the tool with a timeout. Without this, a hung MCP tool call
         // blocks the cascade forever — the tokio task has no external watchdog.
+        // Clone `infra.tools` into a standalone owned local before the await so
+        // the borrow is of a local, not of `infra.tools` (rustc's HRTB `Send`
+        // check rejects field borrows held across `.await` under `tokio::spawn`).
         let timeout_dur = effective_timeout(node.timeout_seconds);
+        let tools = infra.tools.clone();
         let tool_result =
-            match tokio::time::timeout(timeout_dur, invoke_tool(&infra.tools, &mcp_ref, input))
-                .await
-            {
+            match tokio::time::timeout(timeout_dur, invoke_tool(tools, mcp_ref, input)).await {
                 Ok(inner) => inner,
                 Err(_elapsed) => {
                     return Err(TemplateError::Timeout {
@@ -586,9 +606,9 @@ impl StepMachine {
     /// paths — previously the error path returned early and under-charged.
     pub(crate) async fn execute_tool_batch(
         &mut self,
-        node: &crate::step_graph::StepNode,
-        batch: &[crate::bundle::manifest::McpBatchEntry],
-        infra: &Infra,
+        node: crate::step_graph::StepNode,
+        batch: Vec<crate::bundle::manifest::McpBatchEntry>,
+        infra: Infra,
     ) -> Result<Effect> {
         use futures_util::future::join_all;
 
@@ -609,69 +629,68 @@ impl StepMachine {
             let template_renderer = infra.template_renderer.clone();
 
             let tool_future = async move {
-                // Resolve ${variable} references in the MCP reference.
-                let mcp_ref = crate::template_renderer::TemplateRenderer::render_inline(
-                    &mcp_ref_raw,
-                    &context,
-                );
+                // Wrap the tool call in `catch_unwind` INSIDE the async block so
+                // the `Box<dyn Any + Send>` panic payload is consumed here, not
+                // held in the outer future's type. rustc's HRTB `Send` check
+                // rejects `Box<dyn Any + Send>` held across the `tokio::spawn`
+                // boundary (the `Any` trait requires `'static`, so
+                // `Box<dyn Any + Send + 'a>` for non-static `'a` is not Send).
+                let inner = std::panic::AssertUnwindSafe(async {
+                    // Resolve ${variable} references in the MCP reference.
+                    let mcp_ref = crate::template_renderer::TemplateRenderer::render_inline(
+                        &mcp_ref_raw,
+                        &context,
+                    );
 
-                // Resolve the tool input.
-                let input: Value = input_mapping
-                    .as_ref()
-                    .map(|mapping| {
-                        crate::input_mapping::resolve_mapping_value(
-                            mapping,
-                            &context,
-                            &template_renderer,
-                        )
-                    })
-                    .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+                    // Resolve the tool input.
+                    let input: Value = input_mapping
+                        .as_ref()
+                        .map(|mapping| {
+                            crate::input_mapping::resolve_mapping_value(
+                                mapping,
+                                &context,
+                                &template_renderer,
+                            )
+                        })
+                        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
 
-                // Acquire a permit before issuing the call. When no limiter
-                // is wired (tests), skip gating.
-                let _permit = if let Some(ref limiter) = limiter {
-                    Some(limiter.acquire().await)
-                } else {
-                    None
-                };
+                    // Acquire a permit before issuing the call. When no limiter
+                    // is wired (tests), skip gating.
+                    let _permit = if let Some(ref limiter) = limiter {
+                        Some(limiter.acquire().await)
+                    } else {
+                        None
+                    };
 
-                let result = invoke_tool(&tools, &mcp_ref, input).await;
+                    let result = invoke_tool(tools, mcp_ref, input).await;
 
-                // Ramp the limiter based on the call outcome.
-                if let Some(ref limiter) = limiter {
-                    match &result {
-                        Ok(_) => limiter.on_success(),
-                        Err(e) if e.is_throttle() => limiter.on_throttle(),
-                        _ => {} // deterministic errors don't back off
+                    // Ramp the limiter based on the call outcome.
+                    if let Some(ref limiter) = limiter {
+                        match &result {
+                            Ok(_) => limiter.on_success(),
+                            Err(e) if e.is_throttle() => limiter.on_throttle(),
+                            _ => {} // deterministic errors don't back off
+                        }
                     }
-                }
 
-                // Derive the result key: explicit `key` if provided, else the
-                // tool name (last segment of the mcp ref after `/` or `.`).
-                let result_key = key.unwrap_or_else(|| {
-                    mcp_ref_raw
-                        .rsplit(['/', '.'])
-                        .next()
-                        .unwrap_or(&mcp_ref_raw)
-                        .to_string()
-                });
-
-                result.map(|value| (result_key, value))
-            };
-            // Wrap each tool future in `catch_unwind` so a panic in a tool
-            // invocation is converted to a typed `TemplateError` instead of
-            // unwinding the batch. Without this, a panic in one tool propagates
-            // through `join_all` and drops all other in-flight tool futures
-            // (their permits release via RAII, but their results are lost, and
-            // the regulation layer sees a panic, not a typed error). The
-            // `AssertUnwindSafe` wrapper is sound here because the tool future's
-            // captures (`Arc` clones, `context`) are not mutated across the
-            // unwind boundary — the panic aborts the tool, the captures are
-            // dropped, and the batch continues with the other tools.
-            std::panic::AssertUnwindSafe(tool_future)
+                    result
+                })
                 .catch_unwind()
-                .map(move |join_result| match join_result {
-                    Ok(inner) => inner,
+                .await;
+
+                match inner {
+                    Ok(result) => {
+                        // Derive the result key: explicit `key` if provided, else the
+                        // tool name (last segment of the mcp ref after `/` or `.`).
+                        let result_key = key.unwrap_or_else(|| {
+                            mcp_ref_raw
+                                .rsplit(['/', '.'])
+                                .next()
+                                .unwrap_or(&mcp_ref_raw)
+                                .to_string()
+                        });
+                        result.map(|value| (result_key, value))
+                    }
                     Err(panic_payload) => {
                         let panic_msg = panic_payload
                             .downcast_ref::<String>()
@@ -689,7 +708,9 @@ impl StepMachine {
                             node.ordinal,
                         )))
                     }
-                })
+                }
+            };
+            tool_future
         });
 
         // Run all tool futures concurrently under one shared timeout.
@@ -825,8 +846,8 @@ impl StepMachine {
     /// **FlowDef** — recursively execute a sub-manifest as a nested cascade.
     pub(crate) async fn execute_flowdef(
         &mut self,
-        node: &crate::step_graph::StepNode,
-        infra: &Infra,
+        node: crate::step_graph::StepNode,
+        infra: Infra,
     ) -> Result<Effect> {
         let template_ref = node.template_ref.as_deref().ok_or_else(|| {
             TemplateError::Manifest(format!(
@@ -834,10 +855,14 @@ impl StepMachine {
                 node.ordinal
             ))
         })?;
+        // Clone to an owned `String` so the `&str` borrow of `node.template_ref`
+        // doesn't live in the async fn's future type (HRTB `Send` check under
+        // `tokio::spawn`).
+        let template_ref = template_ref.to_string();
 
         // Resolve {{key}} references from context.
         let template_ref =
-            crate::template_renderer::TemplateRenderer::render_inline(template_ref, &self.context);
+            crate::template_renderer::TemplateRenderer::render_inline(&template_ref, &self.context);
 
         // Load the sub-manifest YAML.
         let manifest_yaml = if let Ok(content) = infra
@@ -963,8 +988,8 @@ impl StepMachine {
     /// not completion order.
     pub(crate) async fn execute_parallel(
         &mut self,
-        node: &crate::step_graph::StepNode,
-        infra: &Infra,
+        node: crate::step_graph::StepNode,
+        infra: Infra,
     ) -> Result<Effect> {
         let step_ordinal = node.ordinal;
         let mapping = node.input_mapping.as_deref().cloned().ok_or_else(|| {
@@ -1036,93 +1061,89 @@ impl StepMachine {
             // in the panic error message.
             let branch_id_for_panic = branch_id;
             let branch_future = async move {
-                // No branch-level permit: the global limiter gates the inner
-                // `execute_select` / `execute_tool_invoke` calls inside each
-                // branch's sub-cascade. Acquiring a branch permit here would
-                // double-count with the inner call's permit and deadlock (both
-                // draw from the same semaphore). The `buffer_bound` below caps
-                // how many branches are polled at once; the limiter caps how
-                // many inference calls those branches make concurrently.
-                let template_ref = template_ref.ok_or_else(|| {
-                    TemplateError::Manifest(format!(
-                        "Step {} (action 'parallel') branch {} has no \
-                         template_ref.",
-                        step_ordinal, branch_id,
-                    ))
-                })?;
-                let template_ref = crate::template_renderer::TemplateRenderer::render_inline(
-                    &template_ref,
-                    &context_template,
-                );
-                let manifest_yaml = if let Ok(content) = infra
-                    .template_renderer
-                    .load_from_disk(&template_ref, step_ordinal)
-                {
-                    content
-                } else if let Some(content) = crate::template_yaml_file(&template_ref) {
-                    content.to_string()
-                } else if let Some(content) = crate::template_file(&template_ref) {
-                    content.to_string()
-                } else {
-                    return Err(TemplateError::NotFound(hkask_types::NotFound {
-                        entity_type: "parallel sub-manifest".to_string(),
-                        id: format!(
-                            "Step {} parallel branch {}: sub-manifest '{}' \
-                             not found",
-                            step_ordinal, branch_id, template_ref,
-                        ),
-                    }));
-                };
-                let sub_manifest = crate::manifest_loader::load_manifest_from_yaml(&manifest_yaml)
+                // Wrap the branch sub-cascade in `catch_unwind` INSIDE the
+                // async block so the `Box<dyn Any + Send>` panic payload is
+                // consumed here, not held in the outer future's type (HRTB
+                // `Send` check under `tokio::spawn`).
+                let inner = std::panic::AssertUnwindSafe(async {
+                    // No branch-level permit: the global limiter gates the inner
+                    // `execute_select` / `execute_tool_invoke` calls inside each
+                    // branch's sub-cascade. Acquiring a branch permit here would
+                    // double-count with the inner call's permit and deadlock (both
+                    // draw from the same semaphore). The `buffer_bound` below caps
+                    // how many branches are polled at once; the limiter caps how
+                    // many inference calls those branches make concurrently.
+                    let template_ref = template_ref.ok_or_else(|| {
+                        TemplateError::Manifest(format!(
+                            "Step {} (action 'parallel') branch {} has no \
+                             template_ref.",
+                            step_ordinal, branch_id,
+                        ))
+                    })?;
+                    let template_ref = crate::template_renderer::TemplateRenderer::render_inline(
+                        &template_ref,
+                        &context_template,
+                    );
+                    let manifest_yaml = if let Ok(content) = infra
+                        .template_renderer
+                        .load_from_disk(&template_ref, step_ordinal)
+                    {
+                        content
+                    } else if let Some(content) = crate::template_yaml_file(&template_ref) {
+                        content.to_string()
+                    } else if let Some(content) = crate::template_file(&template_ref) {
+                        content.to_string()
+                    } else {
+                        return Err(TemplateError::NotFound(hkask_types::NotFound {
+                            entity_type: "parallel sub-manifest".to_string(),
+                            id: format!(
+                                "Step {} parallel branch {}: sub-manifest '{}' \
+                                 not found",
+                                step_ordinal, branch_id, template_ref,
+                            ),
+                        }));
+                    };
+                    let sub_manifest = crate::manifest_loader::load_manifest_from_yaml(
+                        &manifest_yaml,
+                    )
                     .map_err(|e| {
                         TemplateError::Manifest(format!(
                             "Step {} parallel branch {}: failed to parse \
-                             sub-manifest '{}': {}",
+                                 sub-manifest '{}': {}",
                             step_ordinal, branch_id, template_ref, e,
                         ))
                     })?;
-                let sub_budget = crate::budget::BudgetTracker::from_remaining_shared(
-                    Arc::clone(&shared_gas),
-                    gas_cap,
-                    rjoule_remaining,
-                );
-                let sub_convergence =
-                    crate::convergence::ConvergenceTracker::new(&sub_manifest.convergence);
-                let sub_graph = crate::step_graph::StepGraph::new(
-                    &sub_manifest.steps,
-                    sub_manifest.convergence.max_iterations,
-                );
-                let sub_manifest_id = branch_manifest_id.clone();
-                let sub_machine = StepMachine::new(
-                    sub_graph,
-                    context_template.clone(),
-                    sub_budget,
-                    sub_convergence,
-                    sub_manifest.error_handling.clone(),
-                    format!("{}::parallel", sub_manifest_id),
-                );
-                let outcome = sub_machine.run(infra).await?;
-                // No branch-level limiter ramp: the inner `execute_select` /
-                // `execute_tool_invoke` calls already call `on_success` /
-                // `on_throttle` on the shared limiter. Ramp here would
-                // double-count (one ramp per branch + one per inner call).
-                Ok::<(usize, CascadeOutcome), TemplateError>((branch_id, outcome))
-            };
-            // Wrap each branch future in `catch_unwind` so a panic in a
-            // branch's sub-cascade is converted to a typed `TemplateError`
-            // instead of unwinding the parent. Without this, a panic in one
-            // branch propagates through `buffer_unordered` and drops all
-            // other in-flight branches (their permits release via RAII, but
-            // their partial results and gas-charged work are lost, and the
-            // regulation layer sees a panic, not a typed error). The
-            // `AssertUnwindSafe` wrapper is sound here because the branch
-            // future's captures (`Arc` clones, `Infra`) are not mutated across
-            // the unwind boundary — the panic aborts the branch, the captures
-            // are dropped, and the parent continues with the other branches.
-            std::panic::AssertUnwindSafe(branch_future)
+                    let sub_budget = crate::budget::BudgetTracker::from_remaining_shared(
+                        Arc::clone(&shared_gas),
+                        gas_cap,
+                        rjoule_remaining,
+                    );
+                    let sub_convergence =
+                        crate::convergence::ConvergenceTracker::new(&sub_manifest.convergence);
+                    let sub_graph = crate::step_graph::StepGraph::new(
+                        &sub_manifest.steps,
+                        sub_manifest.convergence.max_iterations,
+                    );
+                    let sub_manifest_id = branch_manifest_id.clone();
+                    let sub_machine = StepMachine::new(
+                        sub_graph,
+                        context_template.clone(),
+                        sub_budget,
+                        sub_convergence,
+                        sub_manifest.error_handling.clone(),
+                        format!("{}::parallel", sub_manifest_id),
+                    );
+                    let outcome = sub_machine.run(infra).await?;
+                    // No branch-level limiter ramp: the inner `execute_select` /
+                    // `execute_tool_invoke` calls already call `on_success` /
+                    // `on_throttle` on the shared limiter. Ramp here would
+                    // double-count (one ramp per branch + one per inner call).
+                    Ok::<(usize, CascadeOutcome), TemplateError>((branch_id, outcome))
+                })
                 .catch_unwind()
-                .map(move |join_result| match join_result {
-                    Ok(inner) => inner,
+                .await;
+                match inner {
+                    Ok(result) => result,
                     Err(panic_payload) => {
                         let panic_msg = panic_payload
                             .downcast_ref::<String>()
@@ -1141,7 +1162,9 @@ impl StepMachine {
                             step_ordinal, branch_id_for_panic,
                         )))
                     }
-                })
+                }
+            };
+            branch_future
         });
 
         // Bounded concurrency: poll up to `buffer_bound` branch futures at
@@ -1348,19 +1371,24 @@ impl StepMachine {
     /// a `TemplateError::Manifest`.
     pub(crate) async fn execute_gate(
         &mut self,
-        node: &crate::step_graph::StepNode,
-        _infra: &Infra,
+        node: crate::step_graph::StepNode,
+        _infra: Infra,
     ) -> Result<Effect> {
         let command = node.command.as_deref().ok_or_else(|| {
             TemplateError::Manifest(format!("Gate step {} has no `command` field", node.ordinal))
         })?;
+        // `command` borrows `node.command`; clone to an owned `String` so the
+        // borrow doesn't cross the `.output()` await (rustc's HRTB `Send` check
+        // rejects `&str` from a struct field held across `.await` under
+        // `tokio::spawn`).
+        let command = command.to_string();
 
         let timeout_dur = effective_timeout(node.timeout_seconds);
         let output = match tokio::time::timeout(
             timeout_dur,
             tokio::process::Command::new("sh")
                 .arg("-c")
-                .arg(command)
+                .arg(&command)
                 .output(),
         )
         .await
@@ -1624,13 +1652,13 @@ fn format_cascade_memory_context(snippets: &[MemorySnippet]) -> String {
 /// the full conversation (memory + prior turns + template) as proper
 /// role-tagged messages.
 async fn call_inference_stream_with_messages(
-    inference: &Arc<dyn InferencePort>,
-    messages: &[ChatMessage],
-    params: &LLMParameters,
-    tools: Option<&[ChatToolDefinition]>,
+    inference: Arc<dyn InferencePort + 'static>,
+    messages: Vec<ChatMessage>,
+    params: LLMParameters,
+    tools: Option<Vec<ChatToolDefinition>>,
     timeout: std::time::Duration,
     step_ordinal: u32,
-    progress: Option<&(dyn Fn(&str) + Send + Sync)>,
+    progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 ) -> Result<(
     String,
     Vec<hkask_types::StructuredToolCall>,
@@ -1648,10 +1676,11 @@ async fn call_inference_stream_with_messages(
         timeout
     };
 
-    let stream = inference.generate_stream_with_messages(messages, params, None, tools);
+    let stream =
+        inference.generate_stream_with_messages(&messages, &params, None, tools.as_deref());
 
     let (full_text, tool_calls, cost_usd, finish_reason) =
-        match tokio::time::timeout(timeout, async {
+        match tokio::time::timeout(timeout, async move {
             let mut full_text = String::new();
             let mut accumulated_tool_calls = Vec::new();
             let mut accumulated_cost_usd: Option<f64> = None;
@@ -1661,7 +1690,7 @@ async fn call_inference_stream_with_messages(
                 match chunk_result {
                     Ok(chunk) => {
                         if !chunk.reasoning_delta.is_empty() {
-                            if let Some(progress) = progress {
+                            if let Some(progress) = progress.as_ref() {
                                 progress(&chunk.reasoning_delta);
                             }
                         }
@@ -1724,13 +1753,13 @@ async fn call_inference_stream_with_messages(
 /// aware variant that carries prior-turn + memory context).
 #[allow(dead_code)]
 async fn call_inference_stream(
-    inference: &Arc<dyn InferencePort>,
+    inference: &Arc<dyn InferencePort + 'static>,
     prompt: &str,
     params: &LLMParameters,
     tools: Option<&[ChatToolDefinition]>,
     timeout: std::time::Duration,
     step_ordinal: u32,
-    progress: Option<&(dyn Fn(&str) + Send + Sync)>,
+    progress: Option<&Arc<dyn Fn(&str) + Send + Sync>>,
 ) -> Result<(
     String,
     Vec<hkask_types::StructuredToolCall>,
@@ -1831,11 +1860,11 @@ async fn call_inference_stream(
 /// had stopped emitting — so the block could never fire. Restoring the gate
 /// means first giving tools real taint labels and propagating taint on write.
 pub(crate) async fn invoke_tool(
-    tools: &Arc<dyn ToolPort>,
-    tool_name: &str,
+    tools: Arc<dyn ToolPort + 'static>,
+    tool_name: String,
     input: Value,
 ) -> Result<Value> {
-    let tool_info = tools.get_tool_info(tool_name).await.ok_or_else(|| {
+    let tool_info = tools.get_tool_info(&tool_name).await.ok_or_else(|| {
         TemplateError::NotFound(hkask_types::NotFound {
             entity_type: "tool".to_string(),
             id: tool_name.to_string(),
@@ -1847,7 +1876,7 @@ pub(crate) async fn invoke_tool(
     let executor_webid = hkask_types::WebID::from_persona(b"manifest-executor");
 
     tools
-        .invoke(&tool_info.server_id, tool_name, input, executor_webid)
+        .invoke(&tool_info.server_id, &tool_name, input, executor_webid)
         .await
         .map_err(|error| TemplateError::Mcp(Box::new(error)))
 }
