@@ -82,14 +82,6 @@ extend-exclude = [
     # evidence — typos flags its own example list. It is documentation of the
     # remediation, not prose to be checked.
     "kask/docs/plans/ci-typos-buf-jobs.md",
-    # Two files carry the telemetry span operation name `manifest_unparseable`
-    # / `reg.skill.manifest.unparseable` — registered reg.* identifiers, not
-    # prose. The codebase standard is `unparsable` (45:1 in prose); these two
-    # tokens are the only `unparseable` survivors and renaming them is a
-    # breaking span-name change. Excluding the files keeps the prose standard
-    # enforceable without churning the telemetry contract.
-    "kask/crates/hkask-templates/src/skill_loader.rs",
-    "kask/crates/hkask-types/src/event.rs",
 ]
 
 [default]
@@ -182,11 +174,13 @@ Lokal = "Lokal"
 # Both "unparseable" and "unparsable" are attested in major dictionaries
 # (Merriam-Webster, OED). The codebase prose standard is "unparsable" (45:1);
 # "unparseable" survives only as: (a) the codegraph Complexity::Unparseable
-# enum variant (serialized to DB as {"Unparseable"}), (b) the reg.skill.manifest.unparseable
-# canonical span name and manifest_unparseable telemetry operation (excluded
-# files above), (c) SQL/template strings matching the DB-stored enum value,
-# and (d) upstream Zed code (crates/swarm_panel, crates/collab) outside our
-# remediation scope.
+# enum variant (serialized to DB as {"Unparseable"}), (b) SQL/template
+# strings matching the DB-stored enum value, and (c) upstream Zed code
+# (crates/swarm_panel, crates/collab) outside our remediation scope.
+# The reg.skill.manifest telemetry span names were renamed to `unparsable`
+# on 2026-08-17 (ci-sweep follow-up issue #5) — no consumer filtered on the
+# old `unparseable` names, so the rename was safe and the per-file typos
+# exclusions for skill_loader.rs / event.rs were dropped.
 unparseable = "unparseable"
 Unparseable = "Unparseable"
 # RunPod GraphQL API field name — upstream spells it "Celcius". We cannot
