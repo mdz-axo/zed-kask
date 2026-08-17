@@ -179,6 +179,16 @@ FALS = "FALS"
 ETO = "ETO"
 # German word in a metacognition template.
 Lokal = "Lokal"
+# Both "unparseable" and "unparsable" are attested in major dictionaries
+# (Merriam-Webster, OED). The codebase prose standard is "unparsable" (45:1);
+# "unparseable" survives only as: (a) the codegraph Complexity::Unparseable
+# enum variant (serialized to DB as {"Unparseable"}), (b) the reg.skill.manifest.unparseable
+# canonical span name and manifest_unparseable telemetry operation (excluded
+# files above), (c) SQL/template strings matching the DB-stored enum value,
+# and (d) upstream Zed code (crates/swarm_panel, crates/collab) outside our
+# remediation scope.
+unparseable = "unparseable"
+Unparseable = "Unparseable"
 # RunPod GraphQL API field name — upstream spells it "Celcius". We cannot
 # rename it without breaking the API query.
 Celcius = "Celcius"

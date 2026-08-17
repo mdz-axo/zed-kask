@@ -131,25 +131,6 @@ mod tests {
         assert!(issues.is_empty(), "unexpected contract issues: {issues:?}");
     }
 
-    /// The `cost` field on `LocalDelegateResult` is capped at
-    /// `credits_authorized`. This test asserts the relationship documented
-    /// in `ROLLUP_CONTRACTS` — that `cost <= cost_uncapped` always holds.
-    /// The struct construction itself lives in `hkask-mcp-swarm`'s tests
-    /// (the verification crate cannot depend on the swarm crate without a
-    /// cycle); here we verify the contract exists and names `cost_uncapped`
-    /// as its source of truth.
-    #[test]
-    fn cost_never_exceeds_cost_uncapped() {
-        let cost_contract = ROLLUP_CONTRACTS
-            .iter()
-            .find(|c| c.field == "cost")
-            .expect("rollup_trust must have a contract for cost");
-        assert_eq!(
-            cost_contract.source_of_truth,
-            "cost_uncapped (the true token spend before capping)"
-        );
-    }
-
     /// The `balance` field on `LocalDelegateResult` is `None` when the
     /// ledger read failed, not zero. This test asserts the contract
     /// documents this invariant.

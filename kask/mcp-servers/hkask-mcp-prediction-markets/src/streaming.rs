@@ -45,7 +45,7 @@ pub enum MarketEvent {
     Other,
 }
 
-/// Parse one WS text frame into a MarketEvent. Unparseable frames and
+/// Parse one WS text frame into a MarketEvent. Unparsable frames and
 /// heartbeats (`{}`) return None — never an error (a stream must not die
 /// on a heartbeat or an unknown new event type).
 pub fn parse_frame(frame: &str) -> Option<MarketEvent> {

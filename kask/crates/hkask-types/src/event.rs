@@ -302,7 +302,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.skill.frontmatter.missing",
     // Manifest: registry manifest errors (F-03 fix)
     "reg.skill.manifest",
-    "reg.skill.manifest.unparseable",
+    "reg.skill.manifest.unparsable",
     "reg.skill.manifest.absent",
     "reg.skill.manifest.unreadable",
     // Routing: skill-to-task matching (skill-router)

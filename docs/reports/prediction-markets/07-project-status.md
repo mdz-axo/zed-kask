@@ -81,7 +81,7 @@ workstream "done" rather than "paused."**
    underconfidence correction (arXiv:2602.19520) is applied in code, not left
    to the LLM consumer (closes the consumer-adherence gap mechanically).
 5. **No fabrication anywhere** — 50-50 resolutions, thin overlaps, sparse CMP
-   coverage, and unparseable deadlines all degrade to explicit
+   coverage, and unparsable deadlines all degrade to explicit
    null/stale/refusal, never a synthesized value.
 
 ## Artifacts (the full record)
