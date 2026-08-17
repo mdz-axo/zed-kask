@@ -595,6 +595,15 @@ impl StepMachine {
             }
         }
 
+        // Record the tool call for grounding enforcement (Phase 5). The
+        // summary shape matches `LocalDelegateResult.tool_calls`:
+        // `{"tool": "server/tool_name", "ok": true/false}`. Recorded
+        // before the `?` so both success and failure paths are captured.
+        self.tool_calls.push(serde_json::json!({
+            "tool": mcp_ref,
+            "ok": tool_result.is_ok(),
+        }));
+
         let result = tool_result?;
 
         Ok(Effect::Stored {
@@ -754,6 +763,17 @@ impl StepMachine {
             }
         };
         let elapsed_ms = batch_started.elapsed().as_millis();
+
+        // Record tool calls for grounding enforcement (Phase 5). Each batch
+        // entry is recorded with its MCP ref and success/failure status.
+        // The results vec is in the same order as the batch entries (join_all
+        // preserves order).
+        for (entry, result) in batch.iter().zip(results.iter()) {
+            self.tool_calls.push(serde_json::json!({
+                "tool": entry.mcp,
+                "ok": result.is_ok(),
+            }));
+        }
 
         // Charge gas: one iteration per tool in the batch. Charged on BOTH
         // the success and error paths — previously gas was under-charged on

@@ -162,20 +162,76 @@ steps:
         and escalation signals, but the skill performance channel is a
         primary input — its absence should be investigated.
 
-  # ── ANALYZE: Synthesize the structured briefing ──────────────────────
-  # TAPOIF Observation: retrieve and structure the answers from the three
-  # signal channels into a coherent briefing.
+  # ── GATHER: Query grounding trend from the verification ledger ──────
+  # TAPOIF Action: collect grounding health signals (clean rate, coverage
+  # rate, violation counts) so the briefing surfaces whether grounding is
+  # improving or degrading. The lead metric is delegations_with_zero_nulled
+  # (deletion-resistant, paper Rule 5.4).
   - ordinal: 4
+    action: execute
+    description: >
+      Query the global grounding trend from the central verification ledger.
+      The trend report includes delegations_with_zero_nulled (the lead
+      metric — deletion-resistant), clean_rate, coverage_rate, and violation
+      counts. This answers the paper's §4.1 question: is grounding getting
+      better? When the ledger is unavailable, the tool returns an error —
+      the gemba walk must not silently omit grounding health.
+    mcp: curator_grounding_trend
+    gas_cap: 1024
+    timeout_seconds: 30
+    input_mapping:
+      scope: "global"
+    on_failure:
+      action: report
+      resume: >
+        The grounding trend query failed. The verification ledger may be
+        down or the curator MCP server may not have the verification store
+        wired. Check curator_status and the HKASK_VERIFICATION_DB path.
+        The gemba walk can proceed with the other signal channels, but
+        grounding health is a primary input — its absence means the
+        operator cannot see whether grounding is improving.
+
+  # ── GATHER: Query grounding coverage from the verification ledger ────
+  # TAPOIF Action: collect the coverage gap report — which agent types
+  # have delegations but no grounding contract (paper §6).
+  - ordinal: 5
+    action: execute
+    description: >
+      Query the grounding coverage report from the central verification
+      ledger. The report lists each agent type that has received delegations,
+      with counts of delegations_with_contract vs. delegations_without_contract.
+      Agent types with delegations but no contract are coverage gaps (paper §6).
+      The operator uses this to see which agent types need a contract written.
+    mcp: curator_grounding_coverage
+    gas_cap: 1024
+    timeout_seconds: 30
+    on_failure:
+      action: report
+      resume: >
+        The grounding coverage query failed. The verification ledger may
+        be down or the curator MCP server may not have the verification
+        store wired. Check curator_status and the HKASK_VERIFICATION_DB
+        path. The gemba walk can proceed with the other signal channels,
+        but coverage gaps are a primary input — their absence means the
+        operator cannot see which agent types lack grounding contracts.
+
+  # ── ANALYZE: Synthesize the structured briefing ──────────────────────
+  # TAPOIF Observation: retrieve and structure the answers from the five
+  # signal channels into a coherent briefing.
+  - ordinal: 6
     action: select
     description: >
-      Synthesize the three signal channels (algedonic, escalations, memory)
-      into a structured briefing. The briefing has four sections: (1) system
-      health summary, (2) algedonic alert digest, (3) escalation backlog
-      digest, (4) per-skill performance digest. Each per-skill entry
-      includes issue count, recent failure patterns, and a health
-      classification (healthy / watch / intervene). The briefing explicitly
-      notes when skill feedback spans (outcome, operator_feedback) are not
-      available via MCP — this is a known gap, not a silent omission.
+      Synthesize the five signal channels (algedonic, escalations, memory,
+      grounding trend, grounding coverage) into a structured briefing. The
+      briefing has five sections: (1) system health summary, (2) algedonic
+      alert digest, (3) escalation backlog digest, (4) per-skill performance
+      digest, (5) grounding health digest. Each per-skill entry includes
+      issue count, recent failure patterns, and a health classification
+      (healthy / watch / intervene). The grounding health digest includes
+      clean_rate, coverage_rate, trend direction, and top coverage gaps.
+      The briefing explicitly notes when skill feedback spans (outcome,
+      operator_feedback) are not available via MCP — this is a known gap,
+      not a silent omission.
     renderer: minijinja
     template_ref: gemba-walk/synthesize-briefing
     gas_cap: 4096
@@ -186,21 +242,23 @@ steps:
       algedonic_result: "{{ step_1_result }}"
       escalations_result: "{{ step_2_result }}"
       memory_result: "{{ step_3_result }}"
+      grounding_trend_result: "{{ step_4_result }}"
+      grounding_coverage_result: "{{ step_5_result }}"
 
   # ── PRESENT: Render the conversational briefing ──────────────────────
   # TAPOIF Inform: present the findings to the operator as a readable
   # summary with structured tables.
-  - ordinal: 5
+  - ordinal: 7
     action: select
     description: >
       Render the structured briefing as a conversational summary with
       structured tables per skill. The summary opens with a one-paragraph
       system health overview, then the algedonic alert table, then the
-      escalation backlog table, then the per-skill performance table.
-      Each table is followed by a brief narrative interpretation. The
-      presentation closes with a prompt for the operator to ask follow-up
-      questions in the regular conversation (the Observe phase happens
-      outside the skill cascade).
+      escalation backlog table, then the per-skill performance table, then
+      the grounding health table. Each table is followed by a brief
+      narrative interpretation. The presentation closes with a prompt for
+      the operator to ask follow-up questions in the regular conversation
+      (the Observe phase happens outside the skill cascade).
     renderer: minijinja
     template_ref: gemba-walk/present-briefing
     gas_cap: 4096
@@ -208,21 +266,24 @@ steps:
     input_mapping:
       task: "{{ task }}"
       focus_skill: "{{ focus_skill | default('') }}"
-      briefing: "{{ step_4_result }}"
+      briefing: "{{ step_6_result }}"
 
   # ── RECOMMEND: Propose actions for operator approval ─────────────────
   # TAPOIF Follow-up: track decisions. The skill proposes, the operator
   # decides (human-in-the-loop design principle).
-  - ordinal: 6
+  - ordinal: 8
     action: select
     description: >
       Propose refinement actions for operator approval. For each skill with
       a "watch" or "intervene" classification, propose one of: curator_directive
       (threshold/budget adjustment), skill-maintenance (artifact refinement),
       validate_golden_outputs (for deterministic skills), direct edit
-      (manifest/template fix), or no action (observe further). The proposals
-      are recommendations, not autonomous actions — the operator reviews and
-      decides which to execute in the regular conversation.
+      (manifest/template fix), or no action (observe further). Additionally,
+      propose grounding-specific actions: register a contract for agent
+      types with delegations but no contract, review recent violations
+      when the clean rate dropped, or investigate narrative leaks. The
+      proposals are recommendations, not autonomous actions — the operator
+      reviews and decides which to execute in the regular conversation.
     renderer: minijinja
     template_ref: gemba-walk/recommend-actions
     gas_cap: 4096
@@ -230,15 +291,15 @@ steps:
     input_mapping:
       task: "{{ task }}"
       focus_skill: "{{ focus_skill | default('') }}"
-      briefing: "{{ step_4_result }}"
+      briefing: "{{ step_6_result }}"
 
   # ── LOOP: Convergence check ─────────────────────────────────────────
-  - ordinal: 7
+  - ordinal: 9
     action: compute
     compute_ref: lisp.eval
     description: >
       Deterministic convergence signal: the briefing_complete flag from the
-      synthesize step (step 4), as a numeric value (1 = complete, 0 =
+      synthesize step (step 6), as a numeric value (1 = complete, 0 =
       incomplete). Lower signal variance across iterations = convergence
       (Cauchy). Using lisp.eval instead of a Jinja expression makes the
       computation explicitly deterministic, budgeted (gas_cap: 100), and
@@ -250,12 +311,12 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((bc (assoc "briefing_complete" step_4_result)))
+        (let ((bc (assoc "briefing_complete" step_6_result)))
           (if (is_null bc) 0 (if (string= bc "true") 1 (if (= bc true) 1 0))))
       env:
-        step_4_result: "{{ step_4_result | default({}) }}"
+        step_6_result: "{{ step_6_result | default({}) }}"
 
-  - ordinal: 8
+  - ordinal: 10
     action: loop
     description: >
       Re-enter the cascade if the briefing has not converged (the synthesize
@@ -265,10 +326,10 @@ steps:
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: "{{ 4 }}"
+      loop_target: "{{ 6 }}"
       # Convergence signal from the deterministic lisp.eval compute step
-      # (step 7). No default(1.0): a Lisp failure must surface.
-      convergence_signal: "{{ step_7_result }}"
+      # (step 9). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_9_result }}"
 
 error_handling:
   on_gas_exceeded: abort
