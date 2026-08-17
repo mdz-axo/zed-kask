@@ -825,7 +825,6 @@ mod tests {
     }
 
     #[test]
-    :   #[test]
     fn research_and_narrator_contracts_are_registered() {
         let store = test_store();
         let contracts = store.contracts.lock().unwrap();

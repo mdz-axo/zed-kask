@@ -2000,7 +2000,7 @@ mod tests {
         );
         assert_eq!(
             cleaned.get("deliverable_path"),
-            Some(&Value::Null),
+            Some(&serde_json::Value::Null),
             "nulled field must be null in cleaned output"
         );
     }
