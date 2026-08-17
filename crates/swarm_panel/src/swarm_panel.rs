@@ -882,11 +882,27 @@ impl SwarmPanel {
             // returned a 401 body containing "no API key" text for a key that
             // WAS configured but rejected — the panel showed "no ABW API key
             // configured" even though the key was present.
-            let key_configured = self.cloud_authenticated.unwrap_or(false);
-            let status: SharedString = if key_configured {
-                format!("Cloud swarms unavailable — ABW rejected the API key: {message}. Check the key in Settings > Kask > Swarm.").into()
-            } else {
-                "Cloud swarms unavailable — no ABW API key configured. Local agents and swarms still work. Set HKASK_ABW_API_KEY or add it in Settings > Kask > Swarm.".into()
+            //
+            // Race: `cloud_authenticated` is set by the `swarm_list_agents`
+            // fetch (spawn 1), which runs in parallel with this `swarm_get_swarm`
+            // fetch (spawn 2). If the swarms fetch fails before the agents
+            // fetch completes, `cloud_authenticated` is still `None`. Treating
+            // `None` as `false` (key not configured) would show "no ABW API key
+            // configured" even when the key IS configured — exactly the user's
+            // complaint. When `None`, use a neutral message that does not claim
+            // the key is missing; the next `fetch_all` cycle (or the agents
+            // fetch completing in this cycle) will refresh `cloud_authenticated`
+            // and the retry/manual-refresh will produce the precise message.
+            let status: SharedString = match self.cloud_authenticated {
+                Some(true) => format!(
+                    "Cloud swarms unavailable — ABW rejected the API key: {message}. \
+                     Check the key in Settings > Kask > Swarm."
+                ).into(),
+                Some(false) => "Cloud swarms unavailable — no ABW API key configured. \
+                 Local agents and swarms still work. Set HKASK_ABW_API_KEY or add it \
+                 in Settings > Kask > Swarm.".into(),
+                None => "Cloud swarms unavailable — API key status not yet confirmed. \
+                 Local agents and swarms still work. Retry to refresh.".into(),
             };
             self.swarms_error = Some(status);
             log::warn!("swarm-panel: swarm list unavailable (agents-only mode): {message}");

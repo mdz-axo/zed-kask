@@ -30,14 +30,26 @@ impl SwarmPanel {
             return;
         };
 
-        // 3 spawn groups: combined agents (cloud→local→balance), cloud
-        // swarms, local swarms. The local agents fetch is chained inside the
-        // combined agents task — not a separate spawn — to prevent a race
-        // where the cloud fetch's `retain` wipes Synced/Local entries the
-        // local fetch just added (the local fetch reads the filesystem and
-        // completes first, then the cloud fetch's retain removes all agent
-        // entries, replacing them with fresh Cloud-only ones).
-        self.in_flight = 3;
+        // 2 spawn groups: combined agents+swarms (cloud agents → cloud swarms
+        // → local agents → local balance → local swarms) and local swarms.
+        //
+        // The cloud swarms fetch (`swarm_get_swarm`, which calls
+        // `require_auth`) is sequenced AFTER the cloud agents fetch
+        // (`swarm_list_agents`, which returns the `authenticated` field) so
+        // `cloud_authenticated` is always set before
+        // `handle_swarm_fetch_failure` runs. Without this ordering, a parallel
+        // `swarm_get_swarm` failure could race ahead of `swarm_list_agents` and
+        // hit `handle_swarm_fetch_failure` while `cloud_authenticated` is still
+        // `None` — producing a misleading "API key status not yet confirmed"
+        // message even when the key IS configured.
+        //
+        // The local agents fetch is chained inside the same task (not a separate
+        // spawn) to prevent a race where the cloud fetch's `retain` wipes
+        // Synced/Local entries the local fetch just added (the local fetch
+        // reads the filesystem and completes first, then the cloud fetch's
+        // retain removes all agent entries, replacing them with fresh
+        // Cloud-only ones).
+        self.in_flight = 2;
         self.agents_error = None;
         self.swarms_error = None;
         // Reset the server-reported API-key status so a stale `true` from a
@@ -128,6 +140,31 @@ impl SwarmPanel {
                                     // rather than inferring it from the
                                     // `swarm_get_swarm` error message.
                                     this.cloud_authenticated = response.authenticated;
+                                    // If the swarms fetch (parallel spawn) already
+                                    // failed with `permission_denied` while
+                                    // `cloud_authenticated` was still `None`, it
+                                    // set a transient "not yet confirmed" placeholder.
+                                    // Now that we know the real status, re-evaluate
+                                    // the swarms error so the operator sees the
+                                    // precise message ("no key" vs "key rejected")
+                                    // without waiting for the next fetch cycle.
+                                    if let Some(err) = &this.swarms_error
+                                        && err.as_ref().contains("not yet confirmed")
+                                    {
+                                        let key_configured =
+                                            this.cloud_authenticated.unwrap_or(false);
+                                        this.swarms_error = Some(
+                                            if key_configured {
+                                                "Cloud swarms unavailable — ABW rejected the API key. \
+                                                 Check the key in Settings > Kask > Swarm.".into()
+                                            } else {
+                                                "Cloud swarms unavailable — no ABW API key configured. \
+                                                 Local agents and swarms still work. \
+                                                 Set HKASK_ABW_API_KEY or add it in \
+                                                 Settings > Kask > Swarm.".into()
+                                            },
+                                        );
+                                    }
                                     let agents = response
                                         .agents
                                         .into_iter()
@@ -190,158 +227,21 @@ impl SwarmPanel {
                 })
                 .ok();
 
-                // 2. Local agents (chained after cloud agents so cloud entries
-                // are in `this.entries` before the merge). This fetch reads the
-                // local filesystem, not ABW — it always succeeds if the MCP
-                // server is running. Local agents are merged with cloud agents:
-                // if a local agent's `cloud_swarm_id` matches a cloud agent's id, the
-                // cloud agent is upgraded to `Synced` and the local agent is
-                // dropped (the cloud card is the display row; the local card is
-                // the execution target for local mode).
-                let local_result = invoker
-                    .invoke_tool(SWARM_SERVER, "swarm_list_local_agents", json!({}))
-                    .await;
-                this.update(cx, |this, cx| {
-                    match local_result {
-                        Ok(output) => {
-                            // The server returns tool errors as an Ok string
-                            // carrying the `{"error": ..., "kind": ...}`
-                            // envelope. `swarm_list_local_agents` reads the
-                            // local filesystem and does not call `require_auth`,
-                            // so a `permission_denied` here would be a server
-                            // bug — but it must not be silently swallowed.
-                            // Without this check, an error envelope falls through
-                            // to the `LocalAgentListResponse` parse, fails (no
-                            // `agents` field), and the `if let Some(response)`
-                            // block is skipped — local agents silently disappear
-                            // with no error surfaced. Mirrors the `swarm_get_swarm`
-                            // and `swarm_list_agents` seams.
-                            if let Some(err) = parse_tool_error(&output) {
-                                log::warn!(
-                                    "swarm-panel: local agents fetch returned a server error: {} ({:?})",
-                                    err.message, err.kind
-                                );
-                                // Do NOT set `agents_error` — local agents are a
-                                // secondary fetch, and a server-side error here
-                                // should not clobber a successful cloud agents
-                                // list. The cloud agents fetch owns the
-                                // `agents_error` slot; this is logged only.
-                                cx.notify();
-                                return;
-                            }
-                            let parsed = parse_tool_response(&output).and_then(|c| {
-                                serde_json::from_value::<LocalAgentListResponse>(c).ok()
-                            });
-                            if let Some(response) = parsed {
-                                let local_agents = response.agents;
-                                // Mark cloud agents that have a matching local card as Synced.
-                                let local_ids: std::collections::HashSet<String> =
-                                    local_agents.iter().map(|a| a.agent_id.clone()).collect();
-                                let local_cloud_swarm_ids: std::collections::HashSet<String> =
-                                    local_agents
-                                        .iter()
-                                        .filter_map(|a| a.cloud_swarm_id.clone())
-                                        .collect();
-                                for entry in this.entries.iter_mut() {
-                                    if let SwarmEntry::Agent(card) = entry
-                                        && (local_ids.contains(&card.id)
-                                            || local_cloud_swarm_ids.contains(&card.id))
-                                    {
-                                        card.source = AgentSource::Synced;
-                                    }
-                                }
-                                // Add local-only agents (no matching cloud id) as Local entries.
-                                let existing_cloud_swarm_ids: std::collections::HashSet<String> =
-                                    this.entries
-                                        .iter()
-                                        .filter_map(|e| match e {
-                                            SwarmEntry::Agent(c)
-                                                if c.source != AgentSource::Local =>
-                                            {
-                                                Some(c.id.clone())
-                                            }
-                                            _ => None,
-                                        })
-                                        .collect();
-                                for local in local_agents {
-                                    // Skip if already present as a cloud/synced agent.
-                                    if existing_cloud_swarm_ids.contains(&local.agent_id)
-                                        || local_cloud_swarm_ids.contains(&local.agent_id)
-                                    {
-                                        continue;
-                                    }
-                                    this.entries.push(SwarmEntry::Agent(AgentCard {
-                                        id: local.agent_id,
-                                        agent_type: local.agent_type,
-                                        description: local.description,
-                                        author: String::new(),
-                                        executions: 0,
-                                        updated_at: None,
-                                        source: AgentSource::Local,
-                                    }));
-                                }
-                                this.filter_entries(cx);
-                            }
-                        }
-                        Err(err) => {
-                            // Local agents fetch failure is not fatal — the panel
-                            // still shows cloud agents. A transport loss is worth a
-                            // warn (it means the whole server is gone, so the cloud
-                            // list is stale too); anything else stays at debug.
-                            if err.is_retryable() {
-                                log::warn!(
-                                    "swarm-panel: local agents fetch lost the MCP transport: {err}"
-                                );
-                            } else {
-                                log::debug!(
-                                    "swarm-panel: local agents fetch failed (non-fatal): {err}"
-                                );
-                            }
-                        }
-                    }
-                    cx.notify();
-                })
-                .ok();
-
-                // 3. Local ledger balance (independent of the agent lists, but
-                // kept in the same task for simplicity). A failure leaves the
-                // balance unknown (None), never a fabricated zero.
-                let balance_result = invoker
-                    .invoke_tool(SWARM_SERVER, "swarm_balance_local", json!({}))
-                    .await;
-                this.update(cx, |this, cx| {
-                    this.in_flight = this.in_flight.saturating_sub(1);
-                    match balance_result {
-                        Ok(output) => {
-                            let parsed = parse_tool_response(&output);
-                            if let Some(content) = parsed {
-                                this.spend.local_balance =
-                                    content.get("balance").and_then(|b| b.as_i64());
-                            }
-                        }
-                        Err(err) => {
-                            log::debug!(
-                                "swarm-panel: local balance fetch failed (non-fatal): {err}"
-                            );
-                        }
-                    }
-                    cx.notify();
-                })
-                .ok();
-            }
-        })
-        .detach();
-
-        // Swarms (requires the ABW API key).
-        cx.spawn({
-            let invoker = invoker.clone();
-            async move |this, cx| {
-                let result = invoker
+                // 2. Cloud swarms (`swarm_get_swarm`). Sequenced AFTER the cloud
+                // agents fetch so `cloud_authenticated` is set before
+                // `handle_swarm_fetch_failure` runs — without this ordering, a
+                // parallel `swarm_get_swarm` failure could race ahead of
+                // `swarm_list_agents` and hit the failure handler while
+                // `cloud_authenticated` is still `None`, producing a misleading
+                // "API key status not yet confirmed" message even when the key
+                // IS configured. `swarm_get_swarm` is the one tool that calls
+                // `require_auth`, so it owns the API-key warning surface.
+                let swarm_result = invoker
                     .invoke_tool(SWARM_SERVER, "swarm_get_swarm", json!({}))
                     .await;
                 this.update(cx, |this, cx| {
                     this.in_flight = this.in_flight.saturating_sub(1);
-                    match result {
+                    match swarm_result {
                         Ok(output) => {
                             if let Some(b) = extract_wallet_balance(&output) {
                                 this.spend.wallet_balance = Some(b);
@@ -448,6 +348,145 @@ impl SwarmPanel {
                     cx.notify();
                 })
                 .ok();
+
+                // 3. Local agents (chained after cloud agents+swarms so cloud
+                // entries are in `this.entries` before the merge). This fetch
+                // reads the local filesystem, not ABW — it always succeeds if
+                // the MCP server is running. Local agents are merged with cloud
+                // agents: if a local agent's `cloud_swarm_id` matches a cloud
+                // agent's id, the cloud agent is upgraded to `Synced` and the
+                // local agent is dropped (the cloud card is the display row;
+                // the local card is the execution target for local mode).
+                let local_result = invoker
+                    .invoke_tool(SWARM_SERVER, "swarm_list_local_agents", json!({}))
+                    .await;
+                this.update(cx, |this, cx| {
+                    match local_result {
+                        Ok(output) => {
+                            // The server returns tool errors as an Ok string
+                            // carrying the `{"error": ..., "kind": ...}`
+                            // envelope. `swarm_list_local_agents` reads the
+                            // local filesystem and does not call `require_auth`,
+                            // so a `permission_denied` here would be a server
+                            // bug — but it must not be silently swallowed.
+                            // Without this check, an error envelope falls through
+                            // to the `LocalAgentListResponse` parse, fails (no
+                            // `agents` field), and the `if let Some(response)`
+                            // block is skipped — local agents silently disappear
+                            // with no error surfaced. Mirrors the `swarm_get_swarm`
+                            // and `swarm_list_agents` seams.
+                            if let Some(err) = parse_tool_error(&output) {
+                                log::warn!(
+                                    "swarm-panel: local agents fetch returned a server error: {} ({:?})",
+                                    err.message, err.kind
+                                );
+                                // Do NOT set `agents_error` — local agents are a
+                                // secondary fetch, and a server-side error here
+                                // should not clobber a successful cloud agents
+                                // list. The cloud agents fetch owns the
+                                // `agents_error` slot; this is logged only.
+                                cx.notify();
+                                return;
+                            }
+                            let parsed = parse_tool_response(&output).and_then(|c| {
+                                serde_json::from_value::<LocalAgentListResponse>(c).ok()
+                            });
+                            if let Some(response) = parsed {
+                                let local_agents = response.agents;
+                                // Mark cloud agents that have a matching local card as Synced.
+                                let local_ids: std::collections::HashSet<String> =
+                                    local_agents.iter().map(|a| a.agent_id.clone()).collect();
+                                let local_cloud_swarm_ids: std::collections::HashSet<String> =
+                                    local_agents
+                                        .iter()
+                                        .filter_map(|a| a.cloud_swarm_id.clone())
+                                        .collect();
+                                for entry in this.entries.iter_mut() {
+                                    if let SwarmEntry::Agent(card) = entry
+                                        && (local_ids.contains(&card.id)
+                                            || local_cloud_swarm_ids.contains(&card.id))
+                                    {
+                                        card.source = AgentSource::Synced;
+                                    }
+                                }
+                                // Add local-only agents (no matching cloud id) as Local entries.
+                                let existing_cloud_swarm_ids: std::collections::HashSet<String> =
+                                    this.entries
+                                        .iter()
+                                        .filter_map(|e| match e {
+                                            SwarmEntry::Agent(c)
+                                                if c.source != AgentSource::Local =>
+                                            {
+                                                Some(c.id.clone())
+                                            }
+                                            _ => None,
+                                        })
+                                        .collect();
+                                for local in local_agents {
+                                    // Skip if already present as a cloud/synced agent.
+                                    if existing_cloud_swarm_ids.contains(&local.agent_id)
+                                        || local_cloud_swarm_ids.contains(&local.agent_id)
+                                    {
+                                        continue;
+                                    }
+                                    this.entries.push(SwarmEntry::Agent(AgentCard {
+                                        id: local.agent_id,
+                                        agent_type: local.agent_type,
+                                        description: local.description,
+                                        author: String::new(),
+                                        executions: 0,
+                                        updated_at: None,
+                                        source: AgentSource::Local,
+                                    }));
+                                }
+                                this.filter_entries(cx);
+                            }
+                        }
+                        Err(err) => {
+                            // Local agents fetch failure is not fatal — the panel
+                            // still shows cloud agents. A transport loss is worth a
+                            // warn (it means the whole server is gone, so the cloud
+                            // list is stale too); anything else stays at debug.
+                            if err.is_retryable() {
+                                log::warn!(
+                                    "swarm-panel: local agents fetch lost the MCP transport: {err}"
+                                );
+                            } else {
+                                log::debug!(
+                                    "swarm-panel: local agents fetch failed (non-fatal): {err}"
+                                );
+                            }
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+
+                // 4. Local ledger balance (independent of the agent lists, but
+                // kept in the same task for simplicity). A failure leaves the
+                // balance unknown (None), never a fabricated zero.
+                let balance_result = invoker
+                    .invoke_tool(SWARM_SERVER, "swarm_balance_local", json!({}))
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.in_flight = this.in_flight.saturating_sub(1);
+                    match balance_result {
+                        Ok(output) => {
+                            let parsed = parse_tool_response(&output);
+                            if let Some(content) = parsed {
+                                this.spend.local_balance =
+                                    content.get("balance").and_then(|b| b.as_i64());
+                            }
+                        }
+                        Err(err) => {
+                            log::debug!(
+                                "swarm-panel: local balance fetch failed (non-fatal): {err}"
+                            );
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
             }
         })
         .detach();
@@ -458,6 +497,9 @@ impl SwarmPanel {
         // backend-mode toggle can filter the browse list to local swarms only
         // — previously local swarms were never fetched, so the Local toggle
         // showed an empty swarm list even when local swarms existed on disk.
+        // Runs as a separate spawn (parallel with the combined agents+swarms
+        // task) because it reads the local filesystem and has no dependency on
+        // `cloud_authenticated` or the cloud fetch ordering.
         cx.spawn({
             let invoker = invoker.clone();
             async move |this, cx| {

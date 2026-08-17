@@ -104,13 +104,26 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((skills (assoc "skills" (assoc "bundle_manifest" step_2_result)))
-              (names step_2_input_skill_names)
-              (n (length names)))
-          (if (= n 0)
-              0.0
-              (/ (length (filter (lambda (nm) (member nm (map (lambda (s) (assoc "name" s)) skills)) names)))
-                 (* 1.0 n))))
+        (begin
+          (define skill-names
+            (lambda (skills)
+              (if (is_null skills)
+                  (list)
+                  (cons (assoc "name" (car skills)) (skill-names (cdr skills))))))
+          (define count-matches
+            (lambda (names snames)
+              (if (is_null names)
+                  0
+                  (if (member (car names) snames)
+                      (+ 1 (count-matches (cdr names) snames))
+                      (count-matches (cdr names) snames)))))
+          (let ((skills (assoc "skills" (assoc "bundle_manifest" step_2_result)))
+                (names step_2_input_skill_names)
+                (n (length step_2_input_skill_names)))
+            (if (= n 0)
+                0.0
+                (/ (count-matches names (skill-names skills))
+                   (* 1.0 n)))))
       env:
         step_2_result: "{{ step_2_result }}"
         step_2_input_skill_names: "{{ skill_names }}"

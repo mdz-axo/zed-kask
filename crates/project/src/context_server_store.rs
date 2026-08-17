@@ -779,6 +779,11 @@ impl ContextServerStore {
     /// relying on some request to carry a typed error back to a caller — is
     /// what lets any post-initialize 401 move the server into `AuthRequired`
     /// instead of leaving it `Running` with a dead client.
+    ///
+    /// zed-kask: D-seam — non-auth transport deaths now move the server to
+    /// `Stopped` state so `maintain_servers` can restart it. Previously, a
+    /// non-auth death left the server in `Running` state with a dead client,
+    /// causing every subsequent tool call to fail with no self-healing.
     fn watch_transport_shutdown(
         this: WeakEntity<Self>,
         server: Arc<ContextServer>,
@@ -792,8 +797,25 @@ impl ContextServerStore {
         };
         cx.spawn(async move |cx| {
             let Some(www_authenticate) = shutdown.await else {
-                // Non-auth transport deaths leave the server state untouched,
-                // as they did before this watch existed.
+                // Non-auth transport death: move the server to Stopped so
+                // maintain_servers can restart it on the next sync cycle.
+                // Without this, the server stays in Running state with a dead
+                // client, and every tool call fails silently.
+                let server_id = server.id();
+                log::warn!(
+                    "Context server '{}' transport shut down (non-auth) — moving to Stopped for self-healing",
+                    server_id.0
+                );
+                this.update(cx, |this, cx| {
+                    if let Some(state) = this.servers.get(&server_id) {
+                        if matches!(state, ContextServerState::Running { .. }) {
+                            this.stop_server(&server_id, cx).log_err();
+                            // Trigger maintain_servers to restart the server
+                            this.available_context_servers_changed(cx);
+                        }
+                    }
+                })
+                .log_err();
                 return;
             };
             this.update(cx, |this, cx| {
