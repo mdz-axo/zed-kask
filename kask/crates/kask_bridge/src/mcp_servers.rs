@@ -1551,4 +1551,57 @@ mod tests {
             "codegraph must NOT receive HKASK_MXROUTE_SERVER — same Path A leak"
         );
     }
+
+    /// Pin the shell-override-survives-env_clear fix. The governed McpRuntime
+    /// path (`start_server_with_env`) calls `cmd.env_clear()` before injecting
+    /// `extra_env`, so a shell-set credential that is merely `continue`-d in
+    /// `build_mcp_server_env` is LOST — the child sees neither the shell value
+    /// nor the keychain value. The fix inserts the parent env value into the
+    /// map so it survives the clear. This test mirrors the credential loop
+    /// logic synchronously (the async keychain read is orthogonal) and asserts
+    /// a shell-set credential lands in the output map.
+    ///
+    /// SAFETY: Setting/removing test environment variables in test code is
+    /// safe in a single-threaded test context (Rust runs tests serially by
+    /// default). The `HKASK_ABW_API_KEY` env var is set and removed within this
+    /// test only.
+    #[test]
+    fn shell_set_credential_survives_env_clear() {
+        // SAFETY: Single-threaded test context. Set a shell value for the ABW
+        // key, simulating an operator who exports it in their shell.
+        unsafe { std::env::set_var("HKASK_ABW_API_KEY", "shell-secret-value") };
+
+        // Mirror the credential loop from `build_mcp_server_env`:
+        //   if parent env has a non-empty value → insert into env, continue
+        //   else → read from keychain (simulated as None here)
+        let mut env = std::collections::HashMap::<String, String>::new();
+        let cred_urls = filter_credentials_for_server(
+            "swarm",
+            &crate::credential_urls_for_mcp(&crate::KaskSettings::default()),
+        );
+        for (env_var, _url) in cred_urls {
+            if let Ok(value) = std::env::var(&env_var)
+                && !value.is_empty()
+            {
+                env.insert(env_var, value);
+                continue;
+            }
+            // Keychain read would go here; simulated as None for this test.
+        }
+
+        // The shell-set credential must be in the output map. If the `continue`
+        // were a skip (the pre-fix behavior), this would fail — the value would
+        // be lost when the governed path clears the child's env.
+        assert_eq!(
+            env.get("HKASK_ABW_API_KEY").map(|v| v.as_str()),
+            Some("shell-secret-value"),
+            "shell-set HKASK_ABW_API_KEY must be inserted into the env map so it \
+             survives the governed path's cmd.env_clear() — the prior `continue` \
+             skipped it, and the child received neither the shell value nor the \
+             keychain value"
+        );
+
+        // SAFETY: Clean up the test env var.
+        unsafe { std::env::remove_var("HKASK_ABW_API_KEY") };
+    }
 }

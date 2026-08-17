@@ -40,6 +40,11 @@ impl SwarmPanel {
         self.in_flight = 3;
         self.agents_error = None;
         self.swarms_error = None;
+        // Reset the server-reported API-key status so a stale `true` from a
+        // prior fetch doesn't suppress the "no API key" warning if the key
+        // was removed and the server restarted without it. The next
+        // `swarm_list_agents` response refreshes it.
+        self.cloud_authenticated = None;
         cx.notify();
 
         // Agents: cloud first, then local (chained). The local agents fetch
@@ -82,8 +87,22 @@ impl SwarmPanel {
                                     );
                                     this.schedule_fetch_retry(cx);
                                 } else {
-                                    this.agents_error =
-                                        Some(format!("Failed to list agents: {}", err.message).into());
+                                    // `swarm_list_agents` is keyless (the ABW
+                                    // `/agents` catalogue endpoint is open), so a
+                                    // non-retryable error here is NOT an API-key
+                                    // problem. Do NOT set `agents_error` — that
+                                    // would clobber the local agents fetch (which
+                                    // runs next in this task) by showing a cloud
+                                    // error even when local agents load fine. The
+                                    // `swarm_get_swarm` fetch owns the API-key
+                                    // warning surface (it is the one tool that
+                                    // calls `require_auth`). Log the cloud agents
+                                    // failure at warn so it is visible without
+                                    // blocking the local list.
+                                    log::warn!(
+                                        "swarm-panel: cloud agents fetch failed (non-retryable, local agents still load): {} ({:?})",
+                                        err.message, err.kind
+                                    );
                                 }
                                 this.filter_entries(cx);
                                 cx.notify();
@@ -100,6 +119,15 @@ impl SwarmPanel {
                                 .and_then(|c| serde_json::from_value::<AgentListResponse>(c).ok());
                             match parsed {
                                 Some(response) => {
+                                    // Read the API-key status from the same source
+                                    // the MCP server uses (`is_authenticated()` →
+                                    // `ctx.credentials.get("HKASK_ABW_API_KEY")`).
+                                    // The `authenticated` field is the server's
+                                    // own report, so the panel's "no API key"
+                                    // warning reflects the server's actual state
+                                    // rather than inferring it from the
+                                    // `swarm_get_swarm` error message.
+                                    this.cloud_authenticated = response.authenticated;
                                     let agents = response
                                         .agents
                                         .into_iter()
@@ -144,8 +172,16 @@ impl SwarmPanel {
                                 );
                                 this.schedule_fetch_retry(cx);
                             } else {
-                                this.agents_error =
-                                    Some(format!("Failed to list agents: {err}").into());
+                                // Non-retryable transport error on the keyless
+                                // `swarm_list_agents` call. Do NOT set
+                                // `agents_error` — the local agents fetch (next
+                                // in this task) must still be able to populate
+                                // the list without a cloud error clobbering it.
+                                // The `swarm_get_swarm` fetch owns the API-key
+                                // warning surface.
+                                log::warn!(
+                                    "swarm-panel: cloud agents fetch failed (non-retryable, local agents still load): {err}"
+                                );
                             }
                             this.filter_entries(cx);
                         }
