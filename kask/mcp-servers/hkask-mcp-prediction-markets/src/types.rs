@@ -144,7 +144,7 @@ pub struct MarketRecord {
     pub deadline: String,
     /// Fractional years from the record's `last_update` to `deadline`
     /// (negative when the deadline is past). None when either timestamp is
-    /// unparseable — never a fabricated number.
+    /// unparsable — never a fabricated number.
     pub time_to_maturity: Option<f64>,
     pub probability: f64,
     pub probability_method: ProbabilityMethod,
@@ -265,7 +265,7 @@ pub fn reliability_tier(
 
 /// Structural volatility flags per 2607.08199: vol rises near the deadline
 /// and near coin-flip prices. Days-to-deadline is computed by the caller
-/// (None when the deadline is unparseable → only the coin-flip check runs).
+/// (None when the deadline is unparsable → only the coin-flip check runs).
 pub fn structural_flag(probability: f64, days_to_deadline: Option<f64>) -> StructuralFlag {
     let near_coinflip = (probability - 0.5).abs() < 0.10;
     let near_deadline = days_to_deadline.is_some_and(|d| d < 7.0);
@@ -334,8 +334,8 @@ fn make_ontology(
 const DAYS_PER_YEAR: f64 = 365.25;
 
 /// Fractional years between an RFC3339 deadline and a reference instant.
-/// Deadline in the past → negative. Unparseable deadline → None (the
-/// unparseable-deadline warning is emitted once, at assembly time).
+/// Deadline in the past → negative. Unparsable deadline → None (the
+/// unparsable-deadline warning is emitted once, at assembly time).
 pub fn years_between(deadline: &str, reference: &chrono::DateTime<chrono::Utc>) -> Option<f64> {
     let parsed = chrono::DateTime::parse_from_rfc3339(deadline).ok()?;
     Some(
@@ -401,11 +401,11 @@ struct RecordParts {
 fn assemble(parts: RecordParts, calibration: Calibration) -> MarketRecord {
     let time_to_maturity = years_between(&parts.deadline, &parts.maturity_reference);
     if time_to_maturity.is_none() {
-        // An unparseable deadline degrades duration semantics for this
+        // An unparsable deadline degrades duration semantics for this
         // record (no near-deadline vol flag, excluded from ladder tenors);
         // the warn lets an operator tell that apart from a far deadline.
         tracing::warn!(
-            "unparseable deadline '{}' for market {} — time_to_maturity is None",
+            "unparsable deadline '{}' for market {} — time_to_maturity is None",
             parts.deadline,
             parts.market_id,
         );

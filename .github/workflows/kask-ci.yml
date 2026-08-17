@@ -235,6 +235,30 @@ jobs:
       - name: Check for unused dependencies (cargo-machete)
         run: cargo machete
 
+  # Spelling and proto-format gates. These run locally via ./script/clippy
+  # (when the tools are installed and GITHUB_ACTIONS is unset) but were not
+  # previously enforced in CI — a typo or proto-format drift could merge
+  # without signal. Both are fast (<15s) and need no toolchain or cache.
+  typos:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: typos
+      - name: Check for spelling errors
+        run: typos --config typos.toml
+
+  buf:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bufbuild/buf-setup-action@v1
+      - name: Lint protobuf
+        run: buf lint crates/proto/proto
+      - name: Check protobuf formatting
+        run: buf format --diff --exit-code crates/proto/proto
+
   # The nightly `unused_crate_dependencies` lint catches a class that
   # `cargo machete` cannot: a dep in `[dependencies]` that the lib target
   # never `use`s (e.g. `tokio` declared for the bin's `#[tokio::main]`

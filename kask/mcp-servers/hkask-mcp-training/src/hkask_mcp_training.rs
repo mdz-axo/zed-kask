@@ -274,7 +274,7 @@ impl TrainingServer {
                     target: "hkask.training.completion.check",
                     job_id = %job_id,
                     error = %e,
-                    "Completion manifest not found or unparseable (training may still be in progress, or the manifest is malformed)"
+                    "Completion manifest not found or unparsable (training may still be in progress, or the manifest is malformed)"
                 );
                 None
             }

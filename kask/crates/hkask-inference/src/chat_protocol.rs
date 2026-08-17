@@ -404,11 +404,11 @@ pub fn parse_sse_stream(
 ) -> Vec<Result<InferenceStreamChunk, InferenceError>> {
     let mut chunks: Vec<Result<InferenceStreamChunk, InferenceError>> = Vec::new();
     // Track parse failures so a stream where *every* non-trivial line is
-    // unparseable (provider changed schema, returned an HTML error page, etc.)
+    // unparsable (provider changed schema, returned an HTML error page, etc.)
     // is not silently masked as a clean empty-then-stop. The per-line `continue`
     // is correct for SSE (malformed lines are expected), but a 100% failure rate
     // means the consumer would see a synthesized "stop" chunk with no signal that
-    // the stream was entirely unparseable (F10 — loop not closed).
+    // the stream was entirely unparsable (F10 — loop not closed).
     let mut lines_seen: usize = 0;
     let mut parse_failures: usize = 0;
     let mut first_offending_line: Option<&str> = None;
@@ -471,7 +471,7 @@ pub fn parse_sse_stream(
 
     if chunks.is_empty() {
         // If every non-trivial line failed to parse, the stream was entirely
-        // unparseable — warn so an operator can distinguish "provider returned
+        // unparsable — warn so an operator can distinguish "provider returned
         // an empty stream" from "provider changed schema / returned an error page."
         // The synthesized stop chunk below is still emitted (the consumer contract
         // expects at least one chunk), but the warn closes the observability loop.
@@ -963,9 +963,9 @@ data: [DONE]
     // pins the behavioral contract: the synthesized chunk is emitted, and the
     // function does not panic. The warn itself is verified by the parse-failure
     // counter logic (if `lines_seen > 0 && parse_failures == lines_seen`, the
-    // warn fires — this test exercises that path with a fully-unparseable body).
+    // warn fires — this test exercises that path with a fully-unparsable body).
     #[test]
-    fn parse_sse_stream_synthesizes_stop_when_all_lines_unparseable() {
+    fn parse_sse_stream_synthesizes_stop_when_all_lines_unparsable() {
         // An HTML error page — every line fails to parse as SSE JSON.
         let body = "<html><body>503 Service Unavailable</body></html>";
         let chunks = parse_sse_stream(body, "test-model");
@@ -973,7 +973,7 @@ data: [DONE]
         assert_eq!(
             chunks.len(),
             1,
-            "must synthesize one stop chunk for an unparseable stream"
+            "must synthesize one stop chunk for an unparsable stream"
         );
         let chunk = chunks[0].as_ref().expect("synthesized chunk is Ok");
         assert_eq!(chunk.model, "test-model");
@@ -984,7 +984,7 @@ data: [DONE]
         );
     }
 
-    // F10 — a stream with a mix of parseable and unparseable lines must not
+    // F10 — a stream with a mix of parseable and unparsable lines must not
     // warn (partial failure is normal for SSE). Only a 100% failure rate fires
     // the warn. This test pins that a single good chunk suppresses the warn.
     #[test]

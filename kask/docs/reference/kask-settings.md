@@ -503,7 +503,7 @@ there are no `collab.*`-derived env vars.
 
 These env vars tune internal runtime behavior — connection healing, health
 checks, and resource caps. They are read once at startup and cached for the
-process lifetime. Unset or unparseable values fall back to documented defaults
+process lifetime. Unset or unparsable values fall back to documented defaults
 (with a `warn!` on parse failure).
 
 | Env Var | Default | Notes |

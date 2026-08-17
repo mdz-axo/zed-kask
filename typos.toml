@@ -118,7 +118,22 @@ extend-ignore-re = [
     # Mermaid CSS class name for state diagram composites
     "composit",
     # Used in truncating tests to ensure byte-length vs char like in café
-    "caf…"
+    "caf…",
+    # Closure params and short identifiers in code: |anc| (ancestor), |iy|
+    # (income_yearly), nd (Lisp count-not-done var), strat (strategy var).
+    # These are handled as extend-words too; the regex is a belt-and-suspenders
+    # for any case where the token appears without word boundaries.
+    "\\banc\\b",
+    "\\biy\\b",
+    "\\bnd\\b",
+    "\\bstrat\\b",
+    # Suffix lists in salience.rs: -ful, -ment, -ance, -ence.
+    "\\bful\\b",
+    "\\bment\\b",
+    # mis- prefix compounds: mis-classified, mis-sourced, mis-flag.
+    "mis-",
+    # vim :bd[elete] command syntax (optional spelling).
+    "elete",
 ]
 
 [default.extend-words]
@@ -130,3 +145,61 @@ beizer = "beizer"
 ratatui = "ratatui"
 # OT = Optimality Theory (linguistics), used in the pragmatic-semantics skill.
 OT = "OT"
+# Adam Pease — ontology author (SUMO, Ontology Portal).
+Pease = "Pease"
+# FIBO ontology namespace fragment (fibo-fnd-... = Foundations).
+fnd = "fnd"
+# Financial abbreviation for "shares" in economic-profit tooling.
+Shs = "Shs"
+# LoRA adapter matrix: W + (α/r)·BA.
+BA = "BA"
+# TCP congestion control: Additive Increase Multiplicative Decrease.
+AIMD = "AIMD"
+# Year-over-Year (financial).
+YOY = "YOY"
+# scap = screen capture crate.
+scap = "scap"
+Scap = "Scap"
+# Acceptable spelling variants.
+invokable = "invokable"
+writeable = "writeable"
+overrideable = "overrideable"
+# Mermaid diagram node IDs (CFR_FRON, FALS, etc.).
+FRON = "FRON"
+FALS = "FALS"
+# ETO = Environment-Task-Operator (research framework).
+ETO = "ETO"
+# German word in a metacognition template.
+Lokal = "Lokal"
+# Both "unparseable" and "unparsable" are attested in major dictionaries
+# (Merriam-Webster, OED). Used 77× consistently across the codebase as a
+# deliberate word choice — not a typo.
+unparseable = "unparseable"
+Unparseable = "Unparseable"
+# RunPod GraphQL API field name — upstream spells it "Celcius". We cannot
+# rename it without breaking the API query.
+Celcius = "Celcius"
+# clonable: acceptable variant spelling (cloneable / clonable).
+clonable = "clonable"
+# These appear in doc comments as intentional examples of typos
+# (e.g. "a typo like `visibilty` would be silently accepted").
+visibilty = "visibilty"
+intger = "intger"
+calibraton = "calibraton"
+appliable = "appliable"
+# cenarios: appears as the tail of **S**cenarios in a SCAD mnemonic where
+# the leading S is bolded separately.
+cenarios = "cenarios"
+# grep -rPn flag (Perl regex + line numbers).
+Pn = "Pn"
+# Lisp variable in hypothesis-framer manifest: (let ((mis ...)) ...)
+mis = "mis"
+# null in is_null / SQL contexts.
+null = "null"
+# SQL fragments in test fixtures and schema comments.
+UPDAT = "UPDAT"
+DELET = "DELET"
+INSER = "INSER"
+BVE = "BVE"
+# Test data fragment in text crate tests.
+Iz = "Iz"

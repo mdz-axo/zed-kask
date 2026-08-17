@@ -136,7 +136,7 @@ pub fn resolve_db_passphrase(
 /// Parse a numeric env var, warning on malformed values.
 ///
 /// A missing env var returns `default` silently ("not configured" is a
-/// legitimate state). A present-but-unparseable value also returns `default`
+/// legitimate state). A present-but-unparsable value also returns `default`
 /// but emits a `tracing::warn!` naming the env var and the malformed value so
 /// the operator can distinguish "not configured" from "configured but broken"
 /// (the silent-fallback trap from `.rules`).

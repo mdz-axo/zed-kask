@@ -189,7 +189,7 @@ pub struct KalshiCatalogRecord {
 
 impl KalshiCatalogRecord {
     /// Yes-leg probability from the bid/ask midpoint. Falls back to whichever
-    /// side is present. Returns None when both are unparseable — never a
+    /// side is present. Returns None when both are unparsable — never a
     /// fabricated probability.
     fn yes_probability(&self) -> Option<f64> {
         let bid = parse_fp_str(&self.yes_bid);
@@ -386,7 +386,7 @@ fn build_oriented_constituents(
             }
             None => {
                 rejections.push(format!(
-                    "{}: unparseable close_time '{}'",
+                    "{}: unparsable close_time '{}'",
                     adapter.market_id, adapter.close_time
                 ));
                 continue;

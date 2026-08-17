@@ -718,8 +718,10 @@ pub struct TaskSuccessVerdict {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use hkask_ledger::Ledger;
     use hkask_storage::database::sqlite::SqliteDriver;
+    use hkask_verification::GroundingResult;
 
     /// The ledger operations `delegate` performs, without the inference port.
     ///
@@ -845,6 +847,123 @@ mod tests {
             balance(&ledger),
             70,
             "a funded ledger still nets out to remaining credits"
+        );
+    }
+
+    /// `apply_grounding` replaces `response` with the cleaned JSON and retains
+    /// the raw response when grounding ran. Pins the stamping contract that was
+    /// previously duplicated byte-for-byte across `swarm_delegate_local` and
+    /// `swarm_execute_plan_local`, and is now also used by
+    /// `swarm_fanout_local` and `swarm_pipeline_local`.
+    #[test]
+    fn apply_grounding_stamps_cleaned_response_and_retains_raw_when_grounding_ran() {
+        let mut result = LocalDelegateResult {
+            agent_id: "test_agent".to_string(),
+            response: "{\"deliverable_path\": \"/src/fabricated.rs\"}".to_string(),
+            model: "test-model".to_string(),
+            tokens_used: 100,
+            cost: 1,
+            cost_uncapped: 1,
+            balance: Some(99),
+            latency_ms: 50,
+            tool_calls: vec![],
+            executed_skills: vec![],
+            task_success: None,
+            bind_matched: None,
+            raw_response: None,
+        };
+        let outcome = EnforcementOutcome {
+            result: Some(GroundingResult::default()),
+            cleaned: serde_json::json!({"deliverable_path": serde_json::Value::Null}),
+            raw_response: "{\"deliverable_path\": \"/src/fabricated.rs\"}".to_string(),
+            was_object: true,
+        };
+        result.apply_grounding(outcome);
+        assert_eq!(
+            result.response, "{\"deliverable_path\":null}",
+            "response must be the cleaned JSON (unsourced fields nulled)"
+        );
+        assert_eq!(
+            result.raw_response.as_deref(),
+            Some("{\"deliverable_path\": \"/src/fabricated.rs\"}"),
+            "raw_response must retain the pre-cleaning original"
+        );
+    }
+
+    /// `apply_grounding` retains the raw response but does NOT replace
+    /// `response` when the output was a JSON object but no contract existed
+    /// (coverage-gap case). The verification store wrote a coverage-gap record;
+    /// the caller keeps the original response.
+    #[test]
+    fn apply_grounding_retains_raw_response_on_coverage_gap() {
+        let original = "{\"summary\": \"did the work\"}";
+        let mut result = LocalDelegateResult {
+            agent_id: "test_agent".to_string(),
+            response: original.to_string(),
+            model: "test-model".to_string(),
+            tokens_used: 100,
+            cost: 1,
+            cost_uncapped: 1,
+            balance: Some(99),
+            latency_ms: 50,
+            tool_calls: vec![],
+            executed_skills: vec![],
+            task_success: None,
+            bind_matched: None,
+            raw_response: None,
+        };
+        let outcome = EnforcementOutcome {
+            result: None,
+            cleaned: serde_json::Value::Null,
+            raw_response: original.to_string(),
+            was_object: true,
+        };
+        result.apply_grounding(outcome);
+        assert_eq!(
+            result.response, original,
+            "response must be unchanged when grounding did not run (coverage gap)"
+        );
+        assert_eq!(
+            result.raw_response.as_deref(),
+            Some(original),
+            "raw_response must still be retained for audit on a coverage gap"
+        );
+    }
+
+    /// `apply_grounding` does nothing when the output was not a JSON object
+    /// and grounding did not run. Neither `response` nor `raw_response` changes.
+    #[test]
+    fn apply_grounding_does_nothing_on_non_object_output() {
+        let original = "plain prose response";
+        let mut result = LocalDelegateResult {
+            agent_id: "test_agent".to_string(),
+            response: original.to_string(),
+            model: "test-model".to_string(),
+            tokens_used: 100,
+            cost: 1,
+            cost_uncapped: 1,
+            balance: Some(99),
+            latency_ms: 50,
+            tool_calls: vec![],
+            executed_skills: vec![],
+            task_success: None,
+            bind_matched: None,
+            raw_response: None,
+        };
+        let outcome = EnforcementOutcome {
+            result: None,
+            cleaned: serde_json::Value::Null,
+            raw_response: original.to_string(),
+            was_object: false,
+        };
+        result.apply_grounding(outcome);
+        assert_eq!(
+            result.response, original,
+            "response must be unchanged when output was not a JSON object"
+        );
+        assert!(
+            result.raw_response.is_none(),
+            "raw_response must not be set when output was not a JSON object"
         );
     }
 }

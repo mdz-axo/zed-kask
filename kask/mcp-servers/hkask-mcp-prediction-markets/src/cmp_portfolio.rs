@@ -408,7 +408,7 @@ pub fn check_eligibility(
     // Maturity window.
     let days = input
         .days_to_expiration
-        .ok_or_else(|| reject("unparseable expiration — maturity unknown".into()))?;
+        .ok_or_else(|| reject("unparsable expiration — maturity unknown".into()))?;
     let (lo, hi) = maturity_window(target_days, config);
     if days < lo || days > hi {
         return Err(reject(format!(

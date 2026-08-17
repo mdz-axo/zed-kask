@@ -43,7 +43,7 @@ use crate::{
 
 /// Borrowed OCR + index state drawn from a `CorpusServer`.
 ///
-/// `ConvertService` holds the cheaply-clonable state (inference router, OCR
+/// `ConvertService` holds the cheaply-cloneable state (inference router, OCR
 /// model, thresholds, pipeline executor) by value and the shared mutable
 /// accumulators (`cv_accumulator`, `index`) by reference, since `CorpusServer`'s
 /// struct definition (the `mcp_server!` macro) cannot change to wrap them in

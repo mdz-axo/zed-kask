@@ -689,7 +689,7 @@ impl HMemStore {
     // with SQLite's `json_extract`. Every query is guarded by
     // `ontology_is_json()`: SQLite raises "malformed JSON" on a bad blob,
     // which would abort the whole query and blind every ontology recall
-    // rather than just excluding the bad row. The guard makes an unparseable
+    // rather than just excluding the bad row. The guard makes an unparsable
     // blob mean "unanchored" — the same reading `row_to_h_mem` already gives
     // it — instead of a hard failure.
 
@@ -1026,7 +1026,7 @@ mod tests {
     }
 
     /// A malformed `ontology` blob must EXCLUDE only its own row, never fail
-    /// the query. SQLite aborts the whole statement on unparseable JSON
+    /// the query. SQLite aborts the whole statement on unparsable JSON
     /// ("malformed JSON"), so without the `ontology_is_json()` guard a
     /// single bad row — written by an older binary, a migration, or direct
     /// SQL — would blind every ontology recall in the database, not just

@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 // ── Historical data snapshot ───────────────────────────────────────────────
 
 /// Extract a numeric financial field from an API JSON entry, warning when the
-/// field is present but unparseable. A missing field returns 0.0 (legitimate
+/// field is present but unparsable. A missing field returns 0.0 (legitimate
 /// "no data"); a present-but-wrong-type field (e.g. a string where a number is
 /// expected) also returns 0.0 but emits a `tracing::warn!` naming the field so
 /// the operator can detect API contract drift or data corruption rather than
@@ -38,7 +38,7 @@ fn parse_financial_field(entry: &serde_json::Value, field: &str) -> f64 {
                     target: "hkask.mcp.companies.financial_model",
                     field,
                     value = %v,
-                    "financial field present but unparseable as f64 — falling back to 0.0"
+                    "financial field present but unparsable as f64 — falling back to 0.0"
                 );
                 0.0
             }
@@ -60,7 +60,7 @@ fn parse_financial_field_or(entry: &serde_json::Value, field: &str, fallback: f6
                     field,
                     value = %v,
                     fallback,
-                    "financial field present but unparseable as f64 — falling back to {fallback}"
+                    "financial field present but unparsable as f64 — falling back to {fallback}"
                 );
                 fallback
             }

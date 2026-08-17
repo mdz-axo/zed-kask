@@ -280,7 +280,7 @@ async fn extract_per_page_images(
 }
 
 /// Parse a single `pdfimages -list` row into (page, signal) if the row is a
-/// visible image (not a soft-mask). Returns `None` for headers/unparseable rows.
+/// visible image (not a soft-mask). Returns `None` for headers/unparsable rows.
 fn parse_image_row(line: &str, config: &TriageConfig) -> Option<(usize, PageImageSignal)> {
     let cols: Vec<&str> = line.split_whitespace().collect();
     if cols.len() < 13 {

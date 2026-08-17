@@ -346,7 +346,7 @@ bash kask/scripts/check-skill-span-namespace.sh               # OK: 64 skill man
     Cited for extension without modification. The overlay channel specialises the base prompt without editing it, which is what keeps upstream's base changes mergeable.
 
 [^fowler-vendor-branch]: Fowler, M. (2020). *Patterns for managing source code branches: Vendor branch*. https://martinfowler.com/articles/branching-patterns.html#vendor-branch.
-    Cited for the vendor-branch pattern and the practice of making local deviations from an upstream baseline explicit and re-appliable; §7's per-divergence pinning tests are the mechanical form of that record.
+    Cited for the vendor-branch pattern and the practice of making local deviations from an upstream baseline explicit and re-applicable; §7's per-divergence pinning tests are the mechanical form of that record.
 
 [^popper-1959]: Popper, K. (1959). *The logic of scientific discovery*. Hutchinson. https://doi.org/10.4324/9780203994627.
     Cited for falsifiability as the test of a claim's content. §8 gives commands that can refute this document's assertions rather than restating them as conclusions.

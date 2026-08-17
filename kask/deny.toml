@@ -17,7 +17,7 @@ ignore = [
     # `advisory-not-detected` and proc-macro-error2 is absent from Cargo.lock
     # (`grep -c 'name = "proc-macro-error2"' Cargo.lock` -> 0). The stacksafe-macro
     # chain it cited no longer pulls it. This was also the line whose doubled quote
-    # made the whole config unparseable, so the dead entry was load-bearing for a
+    # made the whole config unparsable, so the dead entry was load-bearing for a
     # total policy outage. Re-add only if the advisory is actually detected again.
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained but has no safe upgrade; required transitively by current lopdf and imageproc for PDF/font processing. Reviewed 2026-07-22 — re-review 2026-10-22." },
     # Upstream-Zed transitive advisories (verified 2026-08-04: every reverse-dep

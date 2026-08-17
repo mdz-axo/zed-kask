@@ -519,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_and_validate_tags_rejects_unparseable_response() {
+    fn parse_and_validate_tags_rejects_unparsable_response() {
         assert!(parse_and_validate_tags("no json here at all").is_none());
     }
 

@@ -554,7 +554,7 @@ fn extract_input_keys(template_content: &str) -> HashSet<String> {
 }
 
 /// Extract the type string for a specific `contract.output` field.
-/// Returns None if the field doesn't exist or the contract is unparseable.
+/// Returns None if the field doesn't exist or the contract is unparsable.
 fn extract_contract_output_field_type(template_content: &str, field: &str) -> Option<String> {
     let separator_pos = template_content.find("\n---\n")?;
     let frontmatter = &template_content[..separator_pos];

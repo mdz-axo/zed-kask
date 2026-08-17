@@ -277,7 +277,7 @@ pub fn convert_market_record(
         // error (same no-fabrication posture as the contract's
         // resolved_outcome gate).
         ScenarioError::EmptyInput(format!(
-            "market '{}' has unparseable deadline '{}' ({e}) — refusing to fabricate one",
+            "market '{}' has unparsable deadline '{}' ({e}) — refusing to fabricate one",
             record.market_id, record.deadline
         ))
     })?;

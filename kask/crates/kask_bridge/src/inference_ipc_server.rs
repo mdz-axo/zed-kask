@@ -1509,13 +1509,13 @@ mod tests {
 
     /// M4: a line carrying an unknown `method` variant fails to deserialize as
     /// an `InferenceRequest` and is *skipped* (the protocol writes no response
-    /// for unparseable lines — see `handle_connection`). The connection
+    /// for unparsable lines — see `handle_connection`). The connection
     /// survives, and a subsequent valid request is answered. `InferenceMethod`
     /// is a closed enum (no `#[serde(other)]`), so an unknown method string is
     /// a parse failure, not a dispatchable variant; this test pins the actual
     /// behavior rather than fabricating an error response.
     #[tokio::test]
-    async fn handle_connection_skips_unparseable_line() {
+    async fn handle_connection_skips_unparsable_line() {
         let (client, server) = tokio::net::UnixStream::pair().expect("socket pair");
         let port: Arc<dyn InferencePort> = Arc::new(StubInferencePort::new("after-skip"));
         let list_models_tx = dummy_list_models_tx();

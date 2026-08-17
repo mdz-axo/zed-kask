@@ -130,7 +130,7 @@ impl GammaMarket {
         Self::decode_string_array(&self.outcomes)
     }
 
-    /// Outcome prices decoded and parsed; unparseable entries are dropped
+    /// Outcome prices decoded and parsed; unparsable entries are dropped
     /// (index alignment with names is preserved for parseable prefixes).
     pub fn prices(&self) -> Vec<f64> {
         Self::decode_string_array(&self.outcome_prices)

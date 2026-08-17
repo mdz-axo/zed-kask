@@ -29,11 +29,11 @@ pub fn rrf_score(k: u64, ranks: &[usize]) -> f64 {
 ///
 /// Supports: "3 days ago", "2 weeks ago", ISO dates like "2024-01-15",
 /// fuzzy dates like "Jan 15, 2024", and "published ..." prefixes.
-/// Returns -1.0 for unparseable input.
+/// Returns -1.0 for unparsable input.
 ///
 /// pre:  age is a valid &str
 /// post: returns days as f64 (≥ 0.0 for valid dates)
-/// post: returns -1.0 for unparseable or empty input
+/// post: returns -1.0 for unparsable or empty input
 pub fn parse_age_to_days(age: &str) -> f64 {
     let lower = age.to_lowercase();
     let lower = lower.trim();
