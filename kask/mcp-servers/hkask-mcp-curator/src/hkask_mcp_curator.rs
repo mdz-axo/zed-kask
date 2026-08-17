@@ -861,7 +861,11 @@ impl CuratorServer {
         Parameters(req): Parameters<GroundingTrendToolRequest>,
     ) -> String {
         execute_tool(self, "curator_grounding_trend", async {
-            let scope = parse_grounding_scope(&req);
+            let scope = parse_grounding_scope(
+                req.scope.as_deref(),
+                req.agent_name.as_deref(),
+                req.source.as_deref(),
+            );
             let report = self
                 .verification_store
                 .grounding_trend(&scope)
@@ -894,11 +898,11 @@ impl CuratorServer {
         Parameters(req): Parameters<GroundingViolationsToolRequest>,
     ) -> String {
         execute_tool(self, "curator_grounding_violations", async {
-            let scope = parse_grounding_scope(&GroundingTrendToolRequest {
-                scope: req.scope.clone(),
-                agent_name: req.agent_name.clone(),
-                source: req.source.clone(),
-            });
+            let scope = parse_grounding_scope(
+                req.scope.as_deref(),
+                req.agent_name.as_deref(),
+                req.source.as_deref(),
+            );
             let since = match req.since.as_deref() {
                 Some(s) => chrono::DateTime::parse_from_rfc3339(s)
                     .map_err(|e| {
@@ -941,19 +945,23 @@ impl CuratorServer {
         Parameters(_req): Parameters<GroundingCoverageToolRequest>,
     ) -> String {
         execute_tool(self, "curator_grounding_coverage", async {
-            let global = hkask_verification::TrendScope::Global;
-            let report = self
+            let entries = self
                 .verification_store
-                .grounding_trend(&global)
+                .grounding_coverage()
                 .map_err(|e| McpToolError::unavailable(format!(
                     "grounding coverage query failed (verification ledger unavailable): {e}"
                 )))?;
+            let total: usize = entries.iter().map(|e| e.total_delegations).sum();
+            let with_contract: usize = entries.iter().map(|e| e.delegations_with_contract).sum();
+            let without_contract: usize = entries.iter().map(|e| e.delegations_without_contract).sum();
+            let coverage_rate = if total == 0 { None } else { Some(with_contract as f64 / total as f64) };
             Ok(json!({
-                "total_delegations": report.total_delegations,
-                "delegations_with_contract": report.delegations_with_contract,
-                "delegations_without_contract": report.delegations_without_contract,
-                "coverage_rate": report.coverage_rate(),
-                "note": "Coverage gap = delegations_without_contract. Each is an agent_type with no grounding contract (paper §6: coverage is itself a metric, not a pass). Write a contract for the agent_type to close the gap.",
+                "agent_types": entries,
+                "total_delegations": total,
+                "delegations_with_contract": with_contract,
+                "delegations_without_contract": without_contract,
+                "coverage_rate": coverage_rate,
+                "note": "Coverage gap = delegations_without_contract per agent_type. Each is an agent_type with no grounding contract (paper §6: coverage is itself a metric, not a pass). Write a contract for the agent_type to close the gap.",
                 "source": "central_verification_ledger",
             }))
         })
@@ -972,16 +980,20 @@ fn to_tool_error(e: ServiceError) -> McpToolError {
     }
 }
 
-/// Parse the grounding scope from a curator tool request. Maps the
+/// Parse the grounding scope from scope/agent_name/source fields. Maps the
 /// string-based scope parameter to the `TrendScope` enum. Defaults to
 /// `Global` when `scope` is `None` or unrecognized.
-fn parse_grounding_scope(req: &GroundingTrendToolRequest) -> hkask_verification::TrendScope {
-    match req.scope.as_deref().unwrap_or("global") {
+fn parse_grounding_scope(
+    scope: Option<&str>,
+    agent_name: Option<&str>,
+    source: Option<&str>,
+) -> hkask_verification::TrendScope {
+    match scope.unwrap_or("global") {
         "by_agent" => {
-            hkask_verification::TrendScope::ByAgent(req.agent_name.clone().unwrap_or_default())
+            hkask_verification::TrendScope::ByAgent(agent_name.unwrap_or_default().to_string())
         }
         "by_source" => {
-            hkask_verification::TrendScope::BySource(req.source.clone().unwrap_or_default())
+            hkask_verification::TrendScope::BySource(source.unwrap_or_default().to_string())
         }
         _ => hkask_verification::TrendScope::Global,
     }

@@ -100,36 +100,21 @@ impl SwarmServer {
             // ledger, and returns the result + cleaned JSON. Previously
             // `swarm_delegate_local` did not run grounding — the coverage
             // gap was invisible. Now every delegating tool enforces.
-            let output_json = serde_json::from_str::<serde_json::Value>(&result.response)
-                .unwrap_or(serde_json::Value::Null);
-            let raw_response = result.response.clone();
-            let (grounding_result, cleaned) = self.verification_store.enforce_for_agent(
+            let outcome = self.verification_store.enforce_and_stamp(
                 "swarm_delegate_local",
                 &req.agent_name,
                 &agent.agent_type,
-                &output_json,
-                &result.tool_calls,
                 &result.response,
+                &result.tool_calls,
             );
-            if let Some(ref gr) = grounding_result {
-                if !gr.nulled_fields.is_empty() {
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        agent_name = %req.agent_name,
-                        nulled_fields = ?gr.nulled_fields,
-                        narrative_leaks = ?gr.narrative_leaks,
-                        "grounding enforcement: nulled {} unsourced field(s), found {} narrative leak(s)",
-                        gr.nulled_fields.len(),
-                        gr.narrative_leaks.len(),
-                    );
-                }
+            if outcome.result.is_some() {
                 result.response =
-                    serde_json::to_string(&cleaned).unwrap_or_else(|_| result.response.clone());
-                result.raw_response = Some(raw_response);
-            } else if output_json.is_object() {
+                    serde_json::to_string(&outcome.cleaned).unwrap_or_else(|_| result.response.clone());
+                result.raw_response = Some(outcome.raw_response);
+            } else if outcome.was_object {
                 // No contract for this agent_type — the verification store
                 // wrote a coverage-gap record. Retain the raw response.
-                result.raw_response = Some(raw_response);
+                result.raw_response = Some(outcome.raw_response);
             }
             // Stigmergy (ACO pheromone trail): record the delegation's
             // performance annotation to the agent's prefix-scoped semantic
@@ -1407,34 +1392,19 @@ impl SwarmServer {
                             // Rung 3 (Grounding): enforce via the central
                             // verification ledger (same as
                             // `swarm_delegate_local`).
-                            let output_json = serde_json::from_str::<serde_json::Value>(&r.response)
-                                .unwrap_or(serde_json::Value::Null);
-                            let raw_response = r.response.clone();
-                            let (grounding_result, cleaned) = self.verification_store.enforce_for_agent(
+                            let outcome = self.verification_store.enforce_and_stamp(
                                 "swarm_execute_plan_local",
                                 &entry.agent_name,
                                 &agent.agent_type,
-                                &output_json,
-                                &r.tool_calls,
                                 &r.response,
+                                &r.tool_calls,
                             );
-                            if let Some(ref gr) = grounding_result {
-                                if !gr.nulled_fields.is_empty() {
-                                    tracing::warn!(
-                                        target: "hkask.mcp.swarm",
-                                        agent_name = %entry.agent_name,
-                                        nulled_fields = ?gr.nulled_fields,
-                                        narrative_leaks = ?gr.narrative_leaks,
-                                        "grounding enforcement (plan): nulled {} unsourced field(s), found {} narrative leak(s)",
-                                        gr.nulled_fields.len(),
-                                        gr.narrative_leaks.len(),
-                                    );
-                                }
-                                r.response =
-                                    serde_json::to_string(&cleaned).unwrap_or_else(|_| r.response.clone());
-                                r.raw_response = Some(raw_response);
-                            } else if output_json.is_object() {
-                                r.raw_response = Some(raw_response);
+                            if outcome.result.is_some() {
+                                r.response = serde_json::to_string(&outcome.cleaned)
+                                    .unwrap_or_else(|_| r.response.clone());
+                                r.raw_response = Some(outcome.raw_response);
+                            } else if outcome.was_object {
+                                r.raw_response = Some(outcome.raw_response);
                             }
                             // Record stigmergy (same as swarm_delegate_local).
                             local_knowledge::record_delegation(

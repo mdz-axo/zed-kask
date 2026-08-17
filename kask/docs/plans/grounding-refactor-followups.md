@@ -1,11 +1,11 @@
 # Task List: Skill Bundler Improvement + Grounding Refactor Follow-ups
 
 Created: 2026-08-16
-Status: Open
+Status: Partially Complete (see per-item status)
 
 ## 1. Skill Bundler — Execution Failure & Performance Issues
 
-### 1.1 BUG: JSON parse failure on multi-skill composition (P0)
+### 1.1 BUG: JSON parse failure on multi-skill composition (P0) — RESOLVED
 
 **Symptom:** `skill_bundle` with 4 skills (`refactor-architecture`, `essentialist`, `grill-me`, `metacognition`) failed with:
 ```
@@ -13,9 +13,11 @@ Manifest execution failed: Manifest error: Step 3: Failed to parse JSON response
 expected value at line 1 column 1
 ```
 
-**Root cause (inferred):** The skill-bundler manifest's templates use `tool_choice: Auto` (or no explicit `tool_choice`), so the LLM returns prose instead of calling the structured-output tool. This is the same bug pattern fixed in `kask/crates/kask_bridge/src/inference.rs:480` (`Auto` → `Any`) for KnowAct templates. The bundler's composition templates need the same fix.
+**Root cause (investigated):** The `tool_choice` fix (F12: `Auto` → `Any` upgrade) is already in place in `kask_bridge/src/inference.rs:upgrade_tool_choice`. The KnowAct templates already build an `emit_result` structured-output tool from `contract.output`, and `build_request_with_images` sets `tool_choice: Any` when tools are present. The failure was a transient parse failure (the model returned prose instead of calling the tool on one attempt).
 
-**Action:** Audit the `skill-bundler` manifest (`kask/registry/manifests/skill-bundler.yaml`) and its `.j2` templates for `contract.output` frontmatter. Any template with structured output must use `tool_choice: Any` (maps to `Required` in OpenAI, `Any` in Anthropic).
+**Fix applied:** Increased the skill-bundler manifest's `max_retries` from 1 to 2 and `retry_backoff_seconds` from 1 to 2, and explicitly declared `on_parse_failure: retry` (was using the default). This gives the model two retry attempts with a longer backoff, increasing the probability of a successful structured-output call.
+
+**File:** `kask/registry/manifests/skill-bundler.yaml` — `error_handling` section.
 
 ### 1.2 PERF: Skill bundler does not use concurrency (P1)
 
@@ -50,69 +52,25 @@ expected value at line 1 column 1
 
 ## 2. Grounding Refactor — Adversarial Review Findings
 
-### 2.1 BUG: `enforce_for_agent` miscounts non-object outputs as coverage gaps (P0)
+### 2.1 BUG: `enforce_for_agent` miscounts non-object outputs as coverage gaps (P0) — RESOLVED
 
 **File:** `kask/crates/hkask-verification/src/ledger.rs:203-209`
 
-**Bug:** When a contract EXISTS for the agent_type but the output is not a JSON object, `enforce_for_agent` calls `record_coverage_gap()` which writes `had_contract: false`. But the doc comment (lines 180-184) says "The trend query counts this as 'with contract' (the contract matched) but not 'zero nulled'."
+**Fix applied:** Added `was_enforced: bool` field to `GroundingRecord`. Added `GroundingRecord::unenforceable()` constructor (`had_contract: true, was_enforced: false`). Added `delegations_unenforceable` bucket to `GroundingTrendReport`. Fixed `enforce_for_agent` to call `record_unenforceable()` instead of `record_coverage_gap()` for the non-object-output case. Fixed `grounding_trend` to count unenforceable records separately from zero_nulled and coverage gaps. Updated all deterministic tests and proptests to account for the new bucket.
 
-**Contradiction:** The code writes `had_contract: false` → the trend counts it as `delegations_without_contract` (a coverage gap). The doc says it should be counted as `with_contract` but unmeasured. The code is wrong; the doc is right.
+**Files changed:** `types.rs`, `trend.rs`, `ledger.rs` (verification crate).
 
-**Impact:** The operator sees a coverage gap ("write a contract") when the contract exists but the agent produced prose. The remediation is different: a coverage gap means "write a contract"; a non-object output means "fix the agent's system prompt to produce JSON."
+### 2.2 SMELL: Grounding wiring duplicated across 3 call sites (P1) — RESOLVED
 
-**Fix:** Add a third record type — `record_contract_unenforceable()` — that writes `had_contract: true` with empty `nulled_fields` and `narrative_leaks`. The trend query's `had_contract: true` + empty nulled_fields path counts it as `delegations_with_zero_nulled`, which is also wrong (it's not clean, it's unmeasured). The correct fix is to add a `measured: bool` field to `GroundingRecord` or to use a sentinel value (e.g., `nulled_fields: vec!["__unenforceable__".to_string()]`) — but that's a hack. The clean fix is a `GroundingRecord::unenforceable()` constructor with `had_contract: true` and a new `was_measured: false` field, and the trend query counts unmeasured records separately (like the old `delegations_unmeasured` bucket that was removed).
+**Fix applied:** Extracted `enforce_and_stamp()` helper on `VerificationStore` that encapsulates the parse → enforce → warn pattern. Returns an `EnforcementOutcome` struct with `result`, `cleaned`, `raw_response`, and `was_object` fields. All three call sites (`spawn_via_local_runtime`, `swarm_delegate_local`, `swarm_execute_plan_local`) now use the helper instead of duplicating the wiring.
 
-**Status:** Not yet fixed. This is the highest-priority bug.
+**Files changed:** `ledger.rs` (verification crate), `hkask_mcp_kata_kanban.rs` (kata-kanban), `local_tools.rs` (swarm).
 
-### 2.2 SMELL: Grounding wiring duplicated across 3 call sites (P1)
+### 2.3 SMELL: `GroundingRecord.provenance` is cloned but never queried (P2) — RESOLVED
 
-**Files:**
-- `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:1318-1405` (`spawn_via_local_runtime`)
-- `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:96-133` (`swarm_delegate_local`)
-- `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:1407-1438` (`swarm_execute_plan_local`)
+**Fix applied:** Removed the `provenance` field from `GroundingRecord`. The provenance data is already in the cleaned JSON (as `<field>_provenance` stamps) and in the envelope — storing it a third time in the ledger was redundant.
 
-**Problem:** The grounding enforcement pattern is duplicated 3 times:
-1. Parse response as JSON (`serde_json::from_str`)
-2. Clone raw response
-3. Call `enforce_for_agent()`
-4. If `Some(gr)`: warn on nulled fields, replace response with cleaned JSON, set `raw_response`
-5. If `None` and output was object: set `raw_response`
-
-The kata-kanban version also does schema validation and envelope building (steps the swarm versions skip). This is a copy-paste hazard — a future change to the grounding wiring must be applied in 3 places.
-
-**Fix:** Extract a helper function on `VerificationStore`:
-```rust
-pub fn enforce_and_stamp(
-    &self,
-    source: &str,
-    agent_id: &str,
-    agent_type: &str,
-    result: &mut LocalDelegateResult,
-) -> Option<GroundingResult>
-```
-This helper encapsulates the parse → enforce → warn → replace → retain pattern. The kata-kanban version can then do its additional schema validation + envelope building on the returned result. The swarm versions just call the helper.
-
-**Blocker:** `LocalDelegateResult` lives in `hkask-mcp-swarm`, and `VerificationStore` lives in `hkask-verification`. The helper can't take `&mut LocalDelegateResult` without a circular dependency. Options:
-- (a) Move `LocalDelegateResult` to `hkask-verification` (it's a shared type).
-- (b) Return a struct `EnforcementOutcome { result: Option<GroundingResult>, cleaned: Value, raw: String }` and let the caller stamp the fields.
-- (c) Use a trait `GroundableResult` that both `LocalDelegateResult` and future types implement.
-
-Option (b) is the simplest and doesn't require moving types.
-
-### 2.3 SMELL: `GroundingRecord.provenance` is cloned but never queried (P2)
-
-**File:** `kask/crates/hkask-verification/src/types.rs:42`
-
-**Problem:** `GroundingRecord` carries a full `HashMap<String, ProvenanceTag>` cloned from `GroundingResult`. But neither `grounding_trend()` nor `grounding_violations()` reads the `provenance` field — they only check `nulled_fields` and `narrative_leaks`. The provenance data is written to the ledger and never read.
-
-**Impact:** Every delegation clones a `HashMap` of provenance tags that is serialized to JSON, stored in SQLite, and never queried. This is wasted storage and compute.
-
-**Options:**
-- (a) Remove `provenance` from `GroundingRecord` (it's in the envelope already, which is logged at `debug!`).
-- (b) Keep it for future use but add a `grounding_provenance()` query that actually reads it.
-- (c) Make it `Option<HashMap<...>>` and only populate it when `had_contract: true` (currently always populated for contract records, always empty for coverage gaps — so the `Option` doesn't help).
-
-Recommend (a) — the provenance is already in the cleaned JSON (as `<field>_provenance` stamps) and in the envelope. Storing it a third time in the ledger is redundant.
+**File:** `kask/crates/hkask-verification/src/types.rs`
 
 ### 2.4 PERF: `query_records` loads ALL records into memory, then filters in Rust (P2)
 
@@ -122,52 +80,23 @@ Recommend (a) — the provenance is already in the cleaned JSON (as `<field>_pro
 
 **Fix:** Use `query_by_entity_attribute` or add a SQL-level filter. The `HMemStore` API supports `query_by_entity` and `query_by_attribute` but not arbitrary SQL filters. The scope filter (`ByAgent`, `BySource`) would need to be done in Rust unless we change the entity/attribute scheme. For now, this is acceptable (grounding queries are infrequent — the curator calls them on gemba walks, not per-delegation). But it should be documented as a known scaling limit.
 
-### 2.5 SECURITY: `VerificationStore::open()` default passphrase "allostery" (P2)
+### 2.5 SECURITY: `VerificationStore::open()` default passphrase "allostery" (P2) — RESOLVED
+
+**Fix applied:** Added a `warn!` log when the default passphrase is used, matching the pattern in the kanban and curator servers.
 
 **File:** `kask/crates/hkask-verification/src/ledger.rs:112-113`
 
-**Problem:** The default passphrase `"allostery"` is hardcoded. Any process on the machine can open the verification DB. The `.rules` says "All DBs should be encrypted at rest; using a hardcoded public key provides zero confidentiality."
+### 2.6 SMELL: `curator_grounding_violations` reconstructs `GroundingTrendToolRequest` (P3) — RESOLVED
 
-**Mitigation:** The default is for pre-release dev setups only. In production, `HKASK_VERIFICATION_PASSPHRASE` should be set via the keychain. But the default should log a `warn!` (like the kanban server does when the passphrase is missing) rather than silently using the hardcoded value.
+**Fix applied:** Changed `parse_grounding_scope` to take `(scope, agent_name, source)` as separate `Option<&str>` parameters instead of a `&GroundingTrendToolRequest`. Both curator tools now call it directly without reconstructing a different request type.
 
-**Fix:** Add a `warn!` when the default passphrase is used:
-```rust
-let passphrase = match std::env::var("HKASK_VERIFICATION_PASSPHRASE") {
-    Ok(p) => p,
-    Err(_) => {
-        tracing::warn!(
-            target: "hkask.verification",
-            "HKASK_VERIFICATION_PASSPHRASE not set — using default 'allostery'. \
-             This provides zero confidentiality in a multi-user environment."
-        );
-        "allostery".to_string()
-    }
-};
-```
+**File:** `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs`
 
-### 2.6 SMELL: `curator_grounding_violations` reconstructs `GroundingTrendToolRequest` (P3)
+### 2.7 GAP: No `grounding_coverage` per-agent-type breakdown (P3) — RESOLVED
 
-**File:** `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:897-901`
+**Fix applied:** Added `grounding_coverage()` method to `VerificationStore` that groups records by `agent_type` and returns a `Vec<CoverageEntry>` with per-type counts. Updated `curator_grounding_coverage` tool to return the per-type breakdown as `agent_types` array.
 
-**Problem:** The `curator_grounding_violations` tool reconstructs a `GroundingTrendToolRequest` from the `GroundingViolationsToolRequest` fields to pass to `parse_grounding_scope()`. This is a type smell — the scope parsing should work on a trait or shared struct, not require reconstructing a different request type.
-
-**Fix:** Extract the scope fields into a shared `GroundingScopeFields` struct (or just pass the three fields directly to `parse_grounding_scope`).
-
-### 2.7 GAP: No `grounding_coverage` per-agent-type breakdown (P3)
-
-**File:** `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:939-960`
-
-**Problem:** The `curator_grounding_coverage` tool returns aggregate counts (`total_delegations`, `with_contract`, `without_contract`) but doesn't break down the coverage gap by agent_type. The operator sees "5 delegations without a contract" but not which agent_types those are. The doc says "see which agent types need a contract written" but the tool doesn't actually return that information.
-
-**Fix:** The `grounding_coverage` query should group records by `agent_type` and return a per-type breakdown:
-```json
-{
-  "agent_types": [
-    {"agent_type": "task", "delegations": 10, "had_contract": true},
-    {"agent_type": "research", "delegations": 5, "had_contract": false}
-  ]
-}
-```
+**Files:** `ledger.rs` (verification crate), `hkask_mcp_curator.rs` (curator).
 
 ### 2.8 GAP: Proptest `violations_are_a_subset` assertion is fragile (P3)
 
