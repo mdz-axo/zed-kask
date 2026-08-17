@@ -11,8 +11,8 @@ mds_categories: [composition, trust, lifecycle, curation]
 # Swarm MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-swarm`
-**Tools:** 53 — 27 ABW + 26 local, **both sets always exposed in either mode**
-(pinned by `tool_surface_is_exactly_53_registered_tools`,
+**Tools:** 52 — 27 ABW + 25 local, **both sets always exposed in either mode**
+(pinned by `tool_surface_is_exactly_52_registered_tools`,
 `src/hkask_mcp_swarm.rs:361`)
 **Modes:** `kask.swarm.mode` selects the substrate — `abw` (default, ABW REST) or `local` (zed-kask's local substrate)
 **ABW auth:** ABW Pro-tier API key (`Authorization: Bearer`), injected as `HKASK_ABW_API_KEY`

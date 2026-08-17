@@ -90,11 +90,11 @@ through the global `ToolInvoker` hook → `McpRuntime` (metered + span-emitting;
 capability-match this line originally credited was removed 2026-08-12 as vacuous,
 RR-0056), never ad-hoc HTTP from the UI.
 
-### 3.3 Tool surface (53 tools)
+### 3.3 Tool surface (52 tools)
 
-The swarm server exposes **53 tools** — 27 ABW + 26 local — **both sets always
+The swarm server exposes **52 tools** — 27 ABW + 25 local — **both sets always
 registered in either mode** (`kask.swarm.mode` selects the substrate, not the
-surface; pinned by `tool_surface_is_exactly_53_registered_tools`). The full
+surface; pinned by `tool_surface_is_exactly_52_registered_tools`). The full
 tool-by-tool reference lives in
 [`reference/mcp-servers/swarm.md`](../reference/mcp-servers/swarm.md); the tool
 names are generated at build time from `pub(crate) async fn swarm_*`

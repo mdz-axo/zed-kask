@@ -8,11 +8,11 @@ domain: "Swarm"
 mds_categories: [domain]
 ---
 
-# Swarm Systems — Reference: The 53-Tool Surface and Components
+# Swarm Systems — Reference: The 52-Tool Surface and Components
 
 A reference for the `hkask-mcp-swarm` tool surface, the panel components, and
-the two skills. The surface is pinned by `tool_surface_is_exactly_53_registered_tools`
-(`hkask_mcp_swarm.rs:361-434`) — 27 ABW + 26 local, both sets always
+the two skills. The surface is pinned by `tool_surface_is_exactly_52_registered_tools`
+(`hkask_mcp_swarm.rs:361-434`) — 27 ABW + 25 local, both sets always
 registered in either mode; `kask.swarm.mode` selects the substrate, not the
 surface.
 
@@ -177,8 +177,8 @@ Source: `local_tools.rs:42-1395` (router at `:41`), `ledger_tools.rs:20-119`
 (router at `:20`), `knowledge_tools.rs:12` (router at `:12`),
 `a2a_tools.rs:12` (router at `:12`). The combined router is
 `cloud_router + ledger_router + local_router + a2a_router + knowledge_router`
-(`hkask_mcp_swarm.rs:132-140`). The 53-tool surface is pinned by
-`tool_surface_is_exactly_53_registered_tools` (`hkask_mcp_swarm.rs:361-434`).
+(`hkask_mcp_swarm.rs:132-140`). The 52-tool surface is pinned by
+`tool_surface_is_exactly_52_registered_tools` (`hkask_mcp_swarm.rs:361-434`).
 
 ## Data model
 
