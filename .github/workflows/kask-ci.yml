@@ -157,7 +157,7 @@ jobs:
 
   # Added 2026-08-12 (kali-audit pass 7). Before this job existed, cargo-deny was
   # never run in CI, so a doubled quote in kask/deny.toml made the ENTIRE
-  # supply-chain policy unparseable-and-inert with no signal at all. The explicit
+  # supply-chain policy unparsable-and-inert with no signal at all. The explicit
   # `--config` matters: cargo-deny only auto-discovers deny.toml at the workspace
   # root, and a bare `cargo deny check` here silently falls back to defaults and
   # reports every documented ignore as an error.
@@ -245,7 +245,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: taiki-e/install-action@v2
         with:
-          tool: typos
+          # Pinned to match the version developers run locally, so CI and
+          # local agree on what counts as a typo. taiki-e/install-action@v2
+          # fetches the latest release tag by default; bump this explicitly
+          # when upgrading, same discipline as cargo-machete@0.9.2 above.
+          tool: typos@v1.49.0
       - name: Check for spelling errors
         run: typos --config typos.toml
 
@@ -253,7 +257,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: bufbuild/buf-setup-action@v1
+      # Pinned to the v1.50.0 release commit (a47c93e0b1648d5651a065437926377d060baa99)
+      # rather than the floating @v1 major tag. A new buf release can surface
+      # new lint findings and break CI without a code change; pinning makes
+      # upgrades an explicit, reviewable bump. Same discipline as cargo-machete.
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99  # v1.50.0
       - name: Lint protobuf
         run: buf lint crates/proto/proto
       - name: Check protobuf formatting

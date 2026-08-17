@@ -316,7 +316,7 @@ impl SkillLoader {
                 // F-03: malformed manifest is a real error, not a silent default.
                 tracing::warn!(
                     target: "reg.skill.lifecycle",
-                    operation = "manifest_unparseable",
+                    operation = "manifest_unparsable",
                     skill_id = %id,
                     error = %e,
                     "registry manifest.yaml is malformed — defaulting to KnowAct"

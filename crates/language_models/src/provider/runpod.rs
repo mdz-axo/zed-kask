@@ -233,10 +233,6 @@ impl RunpodLanguageModelProvider {
         let api_url = Self::api_url_from_settings(cx);
         Arc::new(RunpodLanguageModel {
             id: LanguageModelId::from(model.name.clone()),
-            display_name: model
-                .display_name
-                .clone()
-                .unwrap_or_else(|| model.name.clone()),
             endpoint_url: endpoint_url(&api_url, &model.endpoint_id),
             supports_images: model.supports_images,
             max_tokens: model.max_tokens,
@@ -355,14 +351,14 @@ impl LanguageModelProvider for RunpodLanguageModelProvider {
 
 pub struct RunpodLanguageModel {
     id: LanguageModelId,
-    display_name: String,
     /// Per-model OpenAI-compatible endpoint URL:
     /// `https://api.runpod.io/v2/{endpoint_id}/openai/v1`.
     endpoint_url: String,
     supports_images: bool,
     max_tokens: u64,
     max_output_tokens: Option<u64>,
-    /// The endpoint name, used as the OpenAI `model` field in requests.
+    /// The endpoint name, used as the OpenAI `model` field in requests and as
+    /// the `LanguageModel::name()` (the resolution key).
     model_name: String,
     state: Entity<State>,
     http_client: Arc<dyn HttpClient>,

@@ -64,6 +64,13 @@ impl LazyLocalSwarmRuntime {
             })
             .await
     }
+
+    /// Pre-populate the runtime with a pre-built instance (test-only).
+    /// Skips the async `new` path (which resolves real inference/tool ports).
+    #[cfg(test)]
+    pub fn set_runtime(&self, runtime: LocalSwarmRuntime) {
+        let _ = self.inner.set(runtime);
+    }
 }
 
 /// The initialized local swarm runtime — ledger + agent executor.
@@ -159,7 +166,6 @@ impl LocalSwarmRuntime {
     /// Ensures the operator account exists (same as `new`) so `balance`/
     /// `fund`/`debit` work out of the box.
     #[cfg(test)]
-    #[expect(dead_code)]
     pub(crate) fn with_deps(
         ledger: hkask_ledger::Ledger,
         inference: std::sync::Arc<dyn hkask_types::InferencePort>,
