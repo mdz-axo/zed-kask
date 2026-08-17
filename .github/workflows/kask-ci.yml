@@ -13,10 +13,13 @@ on:
     branches: ['**']
   schedule:
     # Weekly allowlist-drift audit (Sundays 09:00 UTC). Runs typos WITHOUT the
-    # extend-words/extend-exclude allowlists and reports new findings as a
+    # extend-words / extend-exclude allowlists and reports new findings as a
     # warning issue, not a CI failure. Makes allowlist accumulation visible
     # without breaking per-PR CI. See `typos-allowlist-audit` job below.
     - cron: '0 9 * * 0'
+  # Manual trigger for the allowlist audit — lets fork maintainers run the
+  # audit on demand (scheduled workflows are disabled by default on forks).
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -257,6 +260,20 @@ jobs:
       - name: "Verify the mcp-tool-tests gate can actually fail"
         run: cd kask && bash scripts/check-mcp-tool-tests-selftest.sh
 
+  string-errors-selftest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Verify the string-errors gate can actually fail"
+        run: cd kask && bash scripts/check-string-errors-selftest.sh
+
+  reg-canonical-selftest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Verify the reg-canonical gate can actually fail"
+        run: cd kask && bash scripts/check-reg-canonical-selftest.sh
+
   unsafe-forbid:
     runs-on: ubuntu-24.04
     steps:
@@ -373,7 +390,7 @@ jobs:
   # the unallowlisted typos include the false positives the allowlist exists
   # to suppress. The value is the DELTA between runs, not the absolute count.
   typos-allowlist-audit:
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

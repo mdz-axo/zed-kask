@@ -5,7 +5,7 @@ open questions and improvements a human should triage. They are not
 blocking — the sweep passed and the three regressions are fixed — but
 they represent residual gaps worth resolving.
 
-**Status (updated 2026-08-17):** All 7 issues resolved. See per-issue notes.
+**Status (updated 2026-08-17):** All 7 issues resolved. Three residual follow-up questions from the kata-improvement cycles are also resolved (see "Residual Follow-Up Questions" section at end).
 
 ## 1. Pin `typos` and `buf` versions in CI jobs
 
@@ -90,3 +90,45 @@ Both self-tests are wired into CI as dedicated jobs (`reg-creep-selftest`, `fore
 **Fix:** Add a periodic review (e.g., quarterly) that re-runs typos without the allowlist and reviews new findings. Or add a CI job that runs typos without the allowlist on a schedule (not per-PR) and reports new findings as warnings, not failures.
 
 **Resolved (2026-08-17):** Weekly scheduled CI job `typos-allowlist-audit` added to `.github/workflows/kask-ci.yml`. Runs on cron `0 9 * * 0` (Sundays 09:00 UTC), gated on `github.event_name == 'schedule'` so it never fires on push/PR. The job runs typos and surfaces findings as job output with `continue-on-error: true` (non-blocking). The value is the delta between runs — new findings may indicate a real typo that matches an allowlisted word. The job header explains the triage protocol.
+
+---
+
+# Residual Follow-Up Questions (Kata Improvement Cycles)
+
+Three residual questions were identified after the initial 7 issues were resolved. Each was run through a 4-step Improvement Kata cycle (Understand Direction → Grasp Current Condition → Establish Target → Experiment). All three are now resolved.
+
+## RFQ-1: Is the `extend-words` allowlist redundant with `extend-ignore-re`?
+
+**Kata cycle (2026-08-17):**
+
+- **Direction:** Determine whether the 36 `extend-words` entries are redundant with the 26 `extend-ignore-re` regexes, and if so, prune them to reduce the allowlist surface.
+- **Current condition:** Measured: 0 of 36 `extend-words` entries are matched by any `extend-ignore-re` regex (Python regex test). The audit config (regexes only, no words) surfaces 229 findings that the `extend-words` allowlist suppresses. The entries are NOT redundant.
+- **Target:** Verify each entry is still needed (the word still appears in source) and prune dead entries.
+- **Experiment:** For each `extend-words` entry, grep the source tree for the word. Result: all 36 entries are alive (every word appears in source). 0 entries can be pruned.
+
+**Resolved:** The `extend-words` allowlist is fully load-bearing, not redundant. No pruning is possible. The audit job (now fixed — see RFQ-2) will surface any new typos that match allowlisted words.
+
+## RFQ-2: The `typos-allowlist-audit` job was a no-op (critical bug)
+
+**Kata cycle (2026-08-17):**
+
+- **Direction:** Verify the weekly audit job actually surfaces suppressed findings.
+- **Current condition:** The job used `typos --config typos-audit.toml` WITHOUT `--isolated`. Testing revealed that `--config` does NOT disable implicit config file loading — typos still reads `typos.toml` from the cwd and applies its `extend-words` allowlist. The audit was a no-op: it found 0 findings even though 229 exist.
+- **Target:** The audit must surface the 229 findings the allowlist suppresses.
+- **Experiment:** Add `--isolated` to the audit command. Re-test.
+
+**Resolved:** The audit command is now `typos --isolated --config typos-audit.toml --exclude typos-audit.toml`. Verified: it surfaces 229 findings (the exact words the `extend-words` allowlist suppresses). The `typos-audit.toml` config was also updated to carry the `extend-exclude` paths (path-based exclusions are policy, not allowlist) so the audit only surfaces word-allowlist findings, not path-excluded noise.
+
+## RFQ-3: Self-tests for the remaining gates + scheduled workflow on forks
+
+**Kata cycle (2026-08-17):**
+
+- **Direction:** Add self-tests for the remaining gates that lack them, and make the audit job accessible on forks.
+- **Current condition:** 3 of 13 gates had self-tests. The audit job only ran on `schedule` events (disabled by default on forks).
+- **Target:** 11/13 gates with self-tests (the remaining 2 have strong alternative oracles). Audit job triggerable manually on forks.
+- **Experiment:** Added 8 new self-tests (6 via sub-agent for count-based gates, 2 manually for grep-based gates). Added `workflow_dispatch` trigger to the audit job.
+
+**Resolved:**
+- Self-test coverage: 3/13 → 11/13. The 2 remaining gates are `check-lora-training-regressions` (covered by the shared `lib-regressions.sh` self-test) and `check-unused-deps` (uses the compiler as oracle). All 11 self-tests pass; all 13 original gates pass against the real codebase.
+- The `typos-allowlist-audit` job now accepts `workflow_dispatch` as well as `schedule`, so fork maintainers can run it on demand.
+- One gate bug was found and fixed during self-test development: `check-mcp-servers.sh` had an unreachable empty-list guard (under `set -euo pipefail`, the `grep -vE` on an empty list exits 1 and aborts before the guard fires). Added `|| true` to the extraction greps so an empty list reaches the guard. This is a bug fix that makes the gate behave as documented.

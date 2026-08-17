@@ -11,6 +11,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Overridable scan roots so the self-test (check-string-errors-selftest.sh)
+# can point the gate at a temp tree with a synthetic violation. Defaults to
+# the production source roots.
+SCAN_DIRS=( ${SCAN_DIRS:-crates/hkask-* mcp-servers/hkask-*} )
+
 FAIL=0
 TMPFILE=$(mktemp)
 trap 'rm -f "$TMPFILE"' EXIT
@@ -27,7 +32,7 @@ trap 'rm -f "$TMPFILE"' EXIT
 # never matched on variants, so `String` is the correct type, not an
 # anti-pattern. The discarded-error `oracle_inconclusive` was converted to
 # `Option<JsonValue>`; only the verdict-message case remains `String`.
-grep -rn -- 'Result<' crates/hkask-* mcp-servers/hkask-* \
+grep -rn -- 'Result<' "${SCAN_DIRS[@]}" \
     --include='*.rs' \
     --exclude-dir=target \
     2>/dev/null \
