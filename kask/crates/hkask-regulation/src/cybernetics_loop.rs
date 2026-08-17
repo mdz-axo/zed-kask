@@ -43,8 +43,9 @@ use crate::regulation_policy::{
     extract_deficit_threshold,
 };
 use crate::types::loops::{
-    ActionDecision, ActionType, CurationInput, Deviation, ImpactReport, LoopId, LoopMetrics,
-    RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric, TriggerOrigin,
+    ActionDecision, ActionType, CurationInput, Deviation, DeviationDirection, ImpactReport,
+    LoopId, LoopMetrics, RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric,
+    TriggerOrigin,
 };
 use crate::types::loops::{BudgetOption, RegulationData};
 
@@ -341,7 +342,7 @@ impl CyberneticsLoop {
     /// post: returns Self for chaining
     #[must_use = "builder methods must be chained or assigned"]
     pub fn with_verification_store(
-        self,
+        mut self,
         store: Arc<hkask_verification::VerificationStore>,
     ) -> Self {
         self.set_verification_store(store);
@@ -2445,5 +2446,148 @@ mod tests {
             })
             .await;
         // No assertion needed — the test passes if it doesn't panic.
+    }
+
+    // ── Grounding regulation action tests (verification ladder Rung 3) ──
+
+    /// Helper: build a CyberneticsLoop for testing `build_regulation_action`.
+    /// Uses a minimal ledger with default set-points.
+    fn loop_for_grounding_tests() -> CyberneticsLoop {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        CyberneticsLoop::new(ledger)
+    }
+
+    #[tokio::test]
+    async fn build_action_for_grounding_clean_rate_degraded() {
+        let loop_instance = loop_for_grounding_tests();
+        let dev = Deviation {
+            signal: Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::GroundingCleanRate,
+                0.5, // clean_rate
+                0.8, // floor (set-point)
+            ),
+            magnitude: 0.3,
+            direction: DeviationDirection::BelowSetPoint,
+        };
+        let proposed = regulation_policy::ProposedAction {
+            target: LoopId::Curation,
+            action_type: ActionType::Escalate,
+            reason: RegulationReason::GroundingCleanRateDegraded,
+        };
+        let action = loop_instance
+            .build_regulation_action(&dev, &proposed)
+            .await
+            .expect("action must be built for grounding clean rate degraded");
+        assert_eq!(action.target, LoopId::Curation);
+        assert_eq!(action.action_type, ActionType::Escalate);
+        assert_eq!(action.metric_name.as_deref(), Some("grounding_clean_rate"));
+        // Verify the RegulationData variant.
+        match &action.parameters.data {
+            RegulationData::GroundingCleanRateDegraded {
+                clean_rate, floor, ..
+            } => {
+                assert!((clean_rate - 0.5).abs() < 1e-9);
+                assert!((floor - 0.8).abs() < 1e-9);
+            }
+            other => panic!("expected GroundingCleanRateDegraded, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn build_action_for_grounding_coverage_degraded() {
+        let loop_instance = loop_for_grounding_tests();
+        let dev = Deviation {
+            signal: Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::GroundingCoverageRate,
+                0.3, // coverage_rate
+                0.5, // floor
+            ),
+            magnitude: 0.2,
+            direction: DeviationDirection::BelowSetPoint,
+        };
+        let proposed = regulation_policy::ProposedAction {
+            target: LoopId::Curation,
+            action_type: ActionType::Escalate,
+            reason: RegulationReason::GroundingCoverageDegraded,
+        };
+        let action = loop_instance
+            .build_regulation_action(&dev, &proposed)
+            .await
+            .expect("action must be built for grounding coverage degraded");
+        assert_eq!(action.target, LoopId::Curation);
+        assert_eq!(action.action_type, ActionType::Escalate);
+        assert_eq!(
+            action.metric_name.as_deref(),
+            Some("grounding_coverage_rate")
+        );
+        match &action.parameters.data {
+            RegulationData::GroundingCoverageDegraded {
+                coverage_rate,
+                floor,
+            } => {
+                assert!((coverage_rate - 0.3).abs() < 1e-9);
+                assert!((floor - 0.5).abs() < 1e-9);
+            }
+            other => panic!("expected GroundingCoverageDegraded, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn build_action_for_grounding_violation_delta_increased() {
+        let loop_instance = loop_for_grounding_tests();
+        let dev = Deviation {
+            signal: Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::GroundingViolationDelta,
+                3.0, // delta = +3
+                0.0, // set-point = 0
+            ),
+            magnitude: 3.0,
+            direction: DeviationDirection::AboveSetPoint,
+        };
+        let proposed = regulation_policy::ProposedAction {
+            target: LoopId::Curation,
+            action_type: ActionType::Escalate,
+            reason: RegulationReason::GroundingViolationDeltaIncreased,
+        };
+        let action = loop_instance
+            .build_regulation_action(&dev, &proposed)
+            .await
+            .expect("action must be built for grounding violation delta");
+        assert_eq!(action.target, LoopId::Curation);
+        assert_eq!(action.action_type, ActionType::Escalate);
+        assert_eq!(
+            action.metric_name.as_deref(),
+            Some("grounding_violation_delta")
+        );
+        match &action.parameters.data {
+            RegulationData::GroundingViolationDeltaIncreased { delta, .. } => {
+                assert_eq!(*delta, 3);
+            }
+            other => panic!("expected GroundingViolationDeltaIncreased, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn with_verification_store_registers_three_sensors() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let store = Arc::new(hkask_verification::VerificationStore::in_memory());
+        let loop_instance = CyberneticsLoop::new(ledger).with_verification_store(store);
+        // The sensor registry should have the 3 default sensors (energy,
+        // variety, test coverage, mutation score) + 3 grounding sensors = 7.
+        // But the default build registers 4 (energy, variety, test coverage,
+        // mutation score), so with 3 grounding sensors = 7 total.
+        let provider_names = loop_instance.sensor_registry.provider_names();
+        let grounding_count = provider_names
+            .iter()
+            .filter(|n| n.contains("GroundingSensor"))
+            .count();
+        assert_eq!(
+            grounding_count, 3,
+            "expected 3 GroundingSensor instances, got {}: {:?}",
+            grounding_count, provider_names
+        );
     }
 }

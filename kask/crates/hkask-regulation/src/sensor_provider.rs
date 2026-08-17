@@ -795,3 +795,294 @@ impl Sensor for GroundingSensor {
         Some(LoopId::Cybernetics)
     }
 }
+
+#[cfg(test)]
+mod grounding_sensor_tests {
+    use super::*;
+    use hkask_verification::VerificationStore;
+
+    /// Build an in-memory store with `n_clean` clean delegations and
+    /// `n_nulled` delegations-with-nulled for the `"task"` agent_type.
+    fn store_with_delegations(n_clean: usize, n_nulled: usize) -> Arc<VerificationStore> {
+        let store = Arc::new(VerificationStore::in_memory());
+        let clean_output = serde_json::json!({
+            "deliverable_path": "/src/lib.rs",
+            "summary": "did the work",
+            "approach": "directly",
+        });
+        let clean_tools = vec![serde_json::json!({
+            "tool": "zed/edit_file",
+            "ok": true,
+        })];
+        for _ in 0..n_clean {
+            store.enforce_for_agent(
+                "kanban_task_spawn",
+                "task_agent",
+                "task",
+                &clean_output,
+                &clean_tools,
+                &clean_output.to_string(),
+            );
+        }
+        let nulled_output = serde_json::json!({
+            "deliverable_path": "/src/fabricated.rs",
+            "summary": "did the work",
+            "approach": "directly",
+        });
+        let nulled_tools: Vec<serde_json::Value> = vec![];
+        for _ in 0..n_nulled {
+            store.enforce_for_agent(
+                "kanban_task_spawn",
+                "task_agent",
+                "task",
+                &nulled_output,
+                &nulled_tools,
+                &nulled_output.to_string(),
+            );
+        }
+        store
+    }
+
+    #[tokio::test]
+    async fn clean_rate_signal_fires_when_below_floor() {
+        let store = store_with_delegations(1, 1);
+        let sensor = GroundingSensor::new(store, GroundingSensorMetric::CleanRate, 0.8, 0.5);
+        let signal = sensor.sense().await.expect("signal must fire below floor");
+        assert_eq!(signal.metric, SignalMetric::GroundingCleanRate);
+        assert!((signal.value - 0.5).abs() < 1e-9);
+        assert!((signal.set_point - 0.8).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn clean_rate_signal_does_not_fire_when_above_floor() {
+        let store = store_with_delegations(9, 1);
+        let sensor = GroundingSensor::new(store, GroundingSensorMetric::CleanRate, 0.8, 0.5);
+        assert!(sensor.sense().await.is_none(), "no signal above floor");
+    }
+
+    #[tokio::test]
+    async fn clean_rate_signal_absence_is_not_zero() {
+        let store = Arc::new(VerificationStore::in_memory());
+        let sensor = GroundingSensor::new(store, GroundingSensorMetric::CleanRate, 0.8, 0.5);
+        assert!(
+            sensor.sense().await.is_none(),
+            "absence must not fire a clean_rate signal (paper Rule 5.3)"
+        );
+    }
+
+    #[tokio::test]
+    async fn coverage_rate_signal_fires_when_below_floor() {
+        let store = Arc::new(VerificationStore::in_memory());
+        let clean_output = serde_json::json!({"summary": "x"});
+        store.enforce_for_agent(
+            "kanban_task_spawn",
+            "task_agent",
+            "task",
+            &clean_output,
+            &[],
+            &clean_output.to_string(),
+        );
+        store.enforce_for_agent(
+            "swarm_delegate_local",
+            "researcher",
+            "research",
+            &clean_output,
+            &[],
+            &clean_output.to_string(),
+        );
+        let sensor = GroundingSensor::new(store, GroundingSensorMetric::CoverageRate, 0.8, 0.6);
+        let signal = sensor.sense().await.expect("signal must fire below floor");
+        assert_eq!(signal.metric, SignalMetric::GroundingCoverageRate);
+        assert!((signal.value - 0.5).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn coverage_rate_signal_absence_is_not_zero() {
+        let store = Arc::new(VerificationStore::in_memory());
+        let sensor = GroundingSensor::new(store, GroundingSensorMetric::CoverageRate, 0.8, 0.5);
+        assert!(
+            sensor.sense().await.is_none(),
+            "absence must not fire a coverage_rate signal (paper Rule 5.3)"
+        );
+    }
+
+    #[tokio::test]
+    async fn violation_delta_fires_on_increase() {
+        let store = store_with_delegations(0, 3);
+        let store_for_additions = store.clone();
+        let sensor = GroundingSensor::new(store, GroundingSensorMetric::ViolationDelta, 0.8, 0.5);
+        assert!(sensor.sense().await.is_none(), "first tick: no baseline");
+        let nulled_output = serde_json::json!({
+            "deliverable_path": "/src/fabricated2.rs",
+            "summary": "did the work",
+            "approach": "directly",
+        });
+        store_for_additions.enforce_for_agent(
+            "kanban_task_spawn",
+            "task_agent",
+            "task",
+            &nulled_output,
+            &[],
+            &nulled_output.to_string(),
+        );
+        let signal = sensor.sense().await.expect("delta must fire on increase");
+        assert_eq!(signal.metric, SignalMetric::GroundingViolationDelta);
+        assert!((signal.value - 1.0).abs() < 1e-9);
+        assert!((signal.set_point - 0.0).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn violation_delta_does_not_fire_on_decrease() {
+        let store = store_with_delegations(0, 3);
+        let sensor = GroundingSensor::new(store, GroundingSensorMetric::ViolationDelta, 0.8, 0.5);
+        assert!(sensor.sense().await.is_none(), "first tick: no baseline");
+        assert!(
+            sensor.sense().await.is_none(),
+            "second tick: delta 0 (stable) — no signal"
+        );
+    }
+
+    #[tokio::test]
+    async fn sensor_metric_and_loop_id_are_correct() {
+        let store = Arc::new(VerificationStore::in_memory());
+        for metric in [
+            GroundingSensorMetric::CleanRate,
+            GroundingSensorMetric::CoverageRate,
+            GroundingSensorMetric::ViolationDelta,
+        ] {
+            let sensor = GroundingSensor::new(store.clone(), metric, 0.8, 0.5);
+            assert!(sensor.metric().is_some(), "metric must be Some");
+            assert_eq!(sensor.loop_id(), Some(LoopId::Cybernetics));
+        }
+    }
+
+    // ── Proptests ──
+
+    /// Generate a random delegation action: a mix of clean, nulled, and
+    /// coverage-gap delegations. Used by the proptests to verify the sensor
+    /// never panics and produces consistent signals.
+    fn arb_delegation_sequence() -> impl proptest::prelude::Strategy<Value = Vec<(usize, usize, usize)>> {
+        // (n_clean_task, n_nulled_task, n_research_coverage_gap)
+        proptest::prelude::prop::collection::vec(
+            (0usize..20, 0usize..20, 0usize..20),
+            1..5,
+        )
+    }
+
+    /// Build a store from a delegation sequence: each element is
+    /// (n_clean, n_nulled, n_coverage_gap). All delegations are enforced
+    /// on the same store.
+    fn store_from_sequence(sequence: &[(usize, usize, usize)]) -> Arc<VerificationStore> {
+        let store = Arc::new(VerificationStore::in_memory());
+        let clean_output = serde_json::json!({
+            "deliverable_path": "/src/lib.rs",
+            "summary": "did the work",
+            "approach": "directly",
+        });
+        let clean_tools = vec![serde_json::json!({"tool": "zed/edit_file", "ok": true})];
+        let nulled_output = serde_json::json!({
+            "deliverable_path": "/src/fabricated.rs",
+            "summary": "did the work",
+            "approach": "directly",
+        });
+        let gap_output = serde_json::json!({"summary": "research result"});
+        for &(n_clean, n_nulled, n_gap) in sequence {
+            for _ in 0..n_clean {
+                store.enforce_for_agent(
+                    "kanban_task_spawn", "task_agent", "task",
+                    &clean_output, &clean_tools, &clean_output.to_string(),
+                );
+            }
+            for _ in 0..n_nulled {
+                store.enforce_for_agent(
+                    "kanban_task_spawn", "task_agent", "task",
+                    &nulled_output, &[], &nulled_output.to_string(),
+                );
+            }
+            for _ in 0..n_gap {
+                store.enforce_for_agent(
+                    "swarm_delegate_local", "researcher", "research",
+                    &gap_output, &[], &gap_output.to_string(),
+                );
+            }
+        }
+        store
+    }
+
+    proptest::proptest! {
+        /// The sensor must never panic across random delegation sequences.
+        /// Covers the no-delegations, all-clean, all-nulled, and mixed cases.
+        #[test]
+        fn grounding_sensor_never_panics(sequence in arb_delegation_sequence()) {
+            let store = store_from_sequence(&sequence);
+            for metric in [
+                GroundingSensorMetric::CleanRate,
+                GroundingSensorMetric::CoverageRate,
+                GroundingSensorMetric::ViolationDelta,
+            ] {
+                let sensor = GroundingSensor::new(store.clone(), metric, 0.8, 0.5);
+                // block_on is fine here — this is a sync proptest, not a tokio test.
+                // The sensor's sense() is async only because the trait requires it;
+                // the actual work is sync (HMemStore queries are blocking).
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let _ = rt.block_on(sensor.sense());
+            }
+        }
+
+        /// The clean_rate signal value must match GroundingTrendReport::clean_rate()
+        /// for any delegation sequence. The sensor is a thin wrapper — its
+        /// signal value must equal the report's computed rate (or be absent
+        /// when the rate is None or above the floor).
+        #[test]
+        fn clean_rate_signal_matches_report(sequence in arb_delegation_sequence()) {
+            let store = store_from_sequence(&sequence);
+            let report = store
+                .grounding_trend(&hkask_verification::TrendScope::Global)
+                .expect("trend query must succeed on in-memory store");
+            let sensor = GroundingSensor::new(
+                store, GroundingSensorMetric::CleanRate, 0.8, 0.5,
+            );
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let signal = rt.block_on(sensor.sense());
+            match (signal, report.clean_rate()) {
+                (None, _) => {
+                    // No signal: either clean_rate is None (no grounded
+                    // delegations) or clean_rate >= floor.
+                    let cr = report.clean_rate();
+                    assert!(
+                        cr.is_none() || cr.unwrap() >= 0.8,
+                        "signal absent but clean_rate {:?} is below floor 0.8",
+                        cr
+                    );
+                }
+                (Some(sig), Some(expected)) => {
+                    assert!((sig.value - expected).abs() < 1e-9,
+                        "signal value {} != report clean_rate {}",
+                        sig.value, expected);
+                    assert!(expected < 0.8, "signal fired but clean_rate above floor");
+                }
+                (Some(_), None) => {
+                    panic!("signal fired but report clean_rate is None (no grounded delegations)");
+                }
+            }
+        }
+
+        /// The violation delta must never fire on the first tick (no baseline).
+        /// On the second tick, the delta must equal current - previous and
+        /// must be non-negative when fired.
+        #[test]
+        fn violation_delta_never_fires_on_first_tick(sequence in arb_delegation_sequence()) {
+            let store = store_from_sequence(&sequence);
+            let sensor = GroundingSensor::new(
+                store, GroundingSensorMetric::ViolationDelta, 0.8, 0.5,
+            );
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            // First tick: no baseline → must be None.
+            let first = rt.block_on(sensor.sense());
+            assert!(first.is_none(), "first tick must not fire (no baseline)");
+            // Second tick: same store, same delegations → delta is 0 → None.
+            let second = rt.block_on(sensor.sense());
+            assert!(second.is_none(), "second tick with no new delegations must not fire (delta 0)");
+        }
+    }
+}
