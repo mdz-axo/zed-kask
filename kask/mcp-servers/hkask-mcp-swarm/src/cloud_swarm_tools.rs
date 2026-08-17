@@ -23,6 +23,52 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 // any internal callers can reach them at the crate root.
 pub use crate::cloud_swarm::{build_create_agent_card, extract_execute_response};
 
+/// Recursively scan a JSON value for "accepts" and "produces" arrays of
+/// strings, returning any labels that do not resolve in the PortRegistry.
+/// Used by  to catch decorative port labels in composed
+/// team manifests (paper: labels that match nothing).
+fn validate_app_port_labels(
+    data: &serde_json::Value,
+    registry: &crate::port_registry::PortRegistry,
+) -> Vec<String> {
+    let mut unresolved = Vec::new();
+    collect_unresolved_ports(data, registry, &mut unresolved);
+    unresolved.sort();
+    unresolved.dedup();
+    unresolved
+}
+
+fn collect_unresolved_ports(
+    value: &serde_json::Value,
+    registry: &crate::port_registry::PortRegistry,
+    unresolved: &mut Vec<String>,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, val) in map {
+                if key == "accepts" || key == "produces" {
+                    if let Some(arr) = val.as_array() {
+                        for item in arr {
+                            if let Some(label) = item.as_str() {
+                                if !registry.resolves(label) {
+                                    unresolved.push(label.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                collect_unresolved_ports(val, registry, unresolved);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                collect_unresolved_ports(item, registry, unresolved);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[tool_router(router = cloud_swarm_router, vis = "pub")]
 impl SwarmServer {
     /// Browse the ABW agent catalogue. Works without an API key.
@@ -1291,10 +1337,34 @@ impl SwarmServer {
                     .await
                     .map_err(SwarmError::into_tool_error)?;
 
-                Ok(self
-                    .client
-                    .with_wallet(sanitize_workspace_payload(data))
-                    .await)
+                // Rung 2 (Typing): validate port labels in the App manifest
+                // against the local PortRegistry. ABW composed the team — we
+                // check that every accepts/produces label in the manifest
+                // resolves to a registered type. Unresolved labels are
+                // "decorative" (the paper: labels that match nothing).
+                // Non-fatal: the app is already created by ABW, but the
+                // operator sees the warning so they can fix the team composition.
+                let unresolved_ports = validate_app_port_labels(
+                    &data,
+                    self.local_registry.port_registry(),
+                );
+                let mut response = sanitize_workspace_payload(data);
+                if !unresolved_ports.is_empty() {
+                    tracing::warn!(
+                        target: "hkask.swarm.create_app",
+                        session_id = %req.session_id,
+                        unresolved = ?unresolved_ports,
+                        "App manifest contains port labels that do not resolve to registered types"
+                    );
+                    if let serde_json::Value::Object(ref mut map) = response {
+                        map.insert(
+                            "port_validation_warnings".to_string(),
+                            serde_json::json!(unresolved_ports),
+                        );
+                    }
+                }
+
+                Ok(self.client.with_wallet(response).await)
             },
         )
         .await

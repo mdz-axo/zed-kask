@@ -25,15 +25,40 @@
 - [x] Updated `policy_no_match_for_unregistered_metric` to include new metrics
 - [x] Updated `default_substitution_ladders_empty_for_observational_metrics` to include grounding metrics
 - [x] Clippy clean across all affected crates
-- [x] All 102 tests in `hkask-regulation` pass
+- [x] All 112 tests in `hkask-regulation` pass
 
-## Priority 2: Algedonic alerts for grounding spikes
+### Adversarial review fixes (DONE)
+- [x] #1: `verify_impact` now handles grounding actions — re-senses from `VerificationStore`, classifies Accept/Stage/Block, feeds stagnation detector
+- [x] #2: Fixed doc comment referencing non-existent `for_metric` → `new`
+- [x] #3: Fixed `read_trend` doc — clarified 3x DB query per tick
+- [x] #4: Removed hardcoded `current_nulled`/`previous_nulled` from `GroundingViolationDeltaIncreased` — delta is the actionable signal
+- [x] #5: Removed `coverage_rate: -1.0` sentinel from `GroundingCleanRateDegraded` — coverage is a separate signal
+- [x] #6: Extended `extract_deficit_threshold` for grounding variants — meaningful deficit/threshold values in escalation queue
+- [x] #7: Added `grounding_clean_rate`/`grounding_coverage_rate` to `HealthSnapshot`; wired `VerificationStore` into `MetacognitionLoop`; surfaced in `BridgeMetacognitionProvider` JSON
+- [x] #8: Documented 3x DB query as known scaling limit with suggested future optimizations
+- [x] #9: Documented `SensorBus` vs `SensorRegistry` pattern as consistent with existing sensors
+- [x] #10: Added 3 `route_action_as_alert` grounding message tests (one per variant)
+- [x] #11: Fixed misleading substitution ladder comment (grounding = Escalate terminal, not Notify)
+- [x] #12: Fixed by removing the `coverage_rate` field (Finding #5)
+- [x] Added `verification_store` field to `CyberneticsLoop` struct for `verify_impact` re-sensing
+- [x] Added 2 `verify_impact` grounding tests (handles action, skips when store not wired)
+- [x] Added 4 `extract_deficit_threshold` grounding tests (clean_rate, coverage, delta, clamps negative)
+- [x] Wired `VerificationStore` into `MetacognitionLoop` via `with_verification_store` builder
+- [x] Updated `BridgeMetacognitionProvider` JSON to include grounding fields
+- [x] All 543 tests pass across all affected crates; clippy clean
 
-- [ ] Read the algedonic alert system in `hkask-mcp-curator` (the `curator_algedonic_log` tool and the `RuntimeAlert` struct)
-- [ ] Verify the regulation decide phase (Priority 1) fires alerts via `route_action_as_alert` — the grounding reasons already route to `Escalate → Curation`, which `route_action_as_alert` converts to a `RuntimeAlert`. This may already be wired by Priority 1.
-- [ ] Add a grounding-specific alert message in `route_action_as_alert` (or verify the generic efferent message is sufficient)
-- [ ] Add env-configurable thresholds: `HKASK_GROUNDING_CLEAN_RATE_FLOOR` (done in Priority 1), `HKASK_GROUNDING_COVERAGE_RATE_FLOOR` (done in Priority 1)
-- [ ] Tests: verify a grounding violation spike produces an alert in the escalation queue
+## Priority 2: Algedonic alerts for grounding spikes (DONE — wired by Priority 1)
+
+The grounding reasons route to `Escalate → Curation`, which `route_action_as_alert` converts to a `RuntimeAlert` with grounding-specific messages. The alert reaches:
+- The escalation queue (`persist_alert_to_queue`) — reviewable via `curator_escalations`
+- The live alerts channel (`alerts_tx`) → `MetacognitionLoop` → toast sink → user
+- The `RegulationArchive` fallback when the live channel is down
+
+The `extract_deficit_threshold` function now produces meaningful deficit/threshold values for grounding variants (not 0,0). The `error_context` JSON in the escalation queue carries these values.
+
+Env-configurable thresholds (`HKASK_GROUNDING_CLEAN_RATE_FLOOR`, `HKASK_GROUNDING_COVERAGE_RATE_FLOOR`) are wired in Priority 1 with `log::warn!` on parse failure.
+
+Tests: `tick_with_grounding_violations_produces_escalate_alert` + 3 `route_action_as_alert` message tests verify the full alert path.
 
 ## Priority 3: Gemba walk integration
 
@@ -42,16 +67,23 @@
 - [ ] Add a "Grounding Health" section to the briefing templates
 - [ ] Add proposed refinement actions for grounding coverage gaps and clean rate degradation
 
-## Priority 4: Expand the contract registry — more agent types
+## Priority 4: Expand the contract registry — more agent types (DONE)
 
-- [ ] Inventory agent types in `LocalAgentRegistry` — find all `agent_type` values in use
-- [ ] Read agent cards' system prompts to understand output shapes per type
-- [ ] Add `research_agent_contract()` — sources field, findings, summary
-- [ ] Add `creative_agent_contract()` — content, summary (both inferred)
-- [ ] Add `analysis_agent_contract()` — analysis, data_points, summary
-- [ ] Register contracts in `KanbanServer::run()` and `SwarmServer::run()`
-- [ ] Verify card-declared contract lookup in `enforce_for_agent()` (check before registry fallback)
-- [ ] Tests: one per new contract (with falsification test per the "check that has never been falsified is inert" rule) — 3+ tests
+### Done
+- [x] Inventoried agent types: `"task"` (kanban), `"research"` (swarm default), `"narrator"` (local agent card), `"sentiment"` (test-only)
+- [x] Added `research_agent_contract()` — `sources` field sourced from search tools; `findings`/`summary` inferred
+- [x] Added `narrator_agent_contract()` — `content`/`summary` both inferred (commissioned judgment)
+- [x] Registered both contracts in `VerificationStore::new()` (auto-registered at construction)
+- [x] Re-exported `research_agent_contract` and `narrator_agent_contract` from crate root
+- [x] 7 new tests: `why` validation (2), falsification (sources nulled without tool, sources kept with tool, findings/summary inferred, content/summary inferred, uncommissioned file_path kept not nulled)
+- [x] 1 registration test: `research_and_narrator_contracts_are_registered`
+- [x] Fixed existing tests that used `"research"` as a coverage-gap agent_type (now has a contract)
+- [x] All 139 tests in `hkask-verification` pass; 551 total across all affected crates; clippy clean
+
+### Not done (deferred)
+- [ ] `creative_agent_contract()` — low priority (no creative agents in use locally)
+- [ ] `analysis_agent_contract()` — low priority (no analysis agents in use locally)
+- [ ] Card-declared contract lookup in `enforce_for_agent()` — verify before registry fallback (may already be wired via `card_contract::validate`)
 
 ## Priority 5: Skill cascade grounding
 

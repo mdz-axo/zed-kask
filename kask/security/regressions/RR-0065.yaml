@@ -1,0 +1,28 @@
+id: RR-0065
+title: "git dependencies must pin to an immutable 40-hex rev, not a mutable tag"
+surface: supply-chain
+cwe: CWE-1357
+owasp_llm_2025: LLM02
+atlas_tactic: AML.TA0010
+nist_ssdf: PW.4.1
+discovered_in: crates/mermaid_render/Cargo.toml (merman used mutable tag = "v0.7.0-with-patches")
+discovered_by: supply-chain-sentinel
+discovered_at: 2026-08-16
+severity: medium
+detection:
+  kind: grep
+  # Detect tag = "..." inside any workspace Cargo.toml. A mutable tag can be
+  # force-moved upstream; only Cargo.lock prevents drift, so the manifest is
+  # not the source of truth. Require rev = "<40-hex-sha>" (immutable) instead.
+  pattern: 'tag\s*=\s*"'
+  # Scan every Cargo.toml in the whole workspace (gate runs from kask/, so ..
+  # is the workspace root).
+  include: "--include=Cargo.toml .."
+mitigation: "Replace tag = \"<tag>\" with rev = \"<full-40-hex-sha>\". The resolved SHA is in Cargo.lock (the fragment after # in the source URL). After changing the manifest, run cargo build so Cargo.lock records the rev-pinned source line, then verify with: grep -A3 'name = \"<crate>\"' Cargo.lock."
+source: "https://cwe.mitre.org/data/definitions/1357.html"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced
+taxonomy_mapping:
+  osc_r_tactic: "Persistence"
+  osc_r_technique: "Mutable dependency reference"
+  osc_r_categories: ["OpenSourceSecurity"]

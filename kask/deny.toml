@@ -143,11 +143,13 @@ unknown-git = "deny"
 # decision, not a routine change.
 #
 # Known pin weaknesses, tracked rather than silently allowed:
-#   - crates/mermaid_render: merman uses a MUTABLE `tag = "v0.7.0-with-patches"`,
-#     force-movable upstream; only Cargo.lock prevents drift. Prefer a `rev`.
-#   - crates/etw_tracing: wprcontrol uses an abbreviated 7-char `rev = "cd811f7"`;
-#     prefer the full 40-hex SHA (Cargo.lock resolves it to
-#     cd811f7d744f65291e13131b1d907fda63ed91a1).
+#   - crates/etw_tracing: wprcontrol was a 7-char `rev = "cd811f7"`; expanded to
+#     the full 40-hex SHA `cd811f7d744f65291e13131b1d907fda63ed91a1` on 2026-08-16
+#     (RR-0065 now enforces immutable revs and forbids mutable tags workspace-wide).
+#   - crates/mermaid_render: merman was a MUTABLE `tag = "v0.7.0-with-patches"`;
+#     converted to `rev = "a3ed8d9f3fd1d74c802f25ed9edd501743796504"` on 2026-08-16
+#     (same commit the tag pointed at — verified via Cargo.lock). RR-0065 prevents
+#     re-introduction of mutable tags.
 allow-git = [
     "https://github.com/camdencheek/tree-sitter-go-mod",
     "https://github.com/KillTheMule/nvim-rs",

@@ -179,6 +179,99 @@ pub fn task_agent_contract() -> GroundingContract {
     }
 }
 
+/// The built-in grounding contract for `research` agents.
+///
+/// Research agents are delegated to via `swarm_delegate_local` or
+/// `swarm_create_agent` with `agent_type: "research"`. Their output may
+/// include:
+/// - `sources`: a list of sources the agent claims to have found. Must be
+///   sourced from a `research_search`, `web_search`, `web_extract`, or
+///   `fetch` tool call that succeeded.
+/// - `findings`: a prose summary of what the agent found. Inferred — the
+///   agent was commissioned to analyze and report.
+/// - `summary`: a prose summary. Inferred.
+///
+/// Any other field is UncommissionedInference (kept, marked) unless it
+/// matches a tool's output (Sourced) or has no possible source (Unsourced,
+/// nulled).
+pub fn research_agent_contract() -> GroundingContract {
+    let mut field_sources = HashMap::new();
+    field_sources.insert(
+        "sources".to_string(),
+        FieldSpec {
+            sources: vec![
+                "zed/research_search".to_string(),
+                "zed/web_search".to_string(),
+                "zed/web_extract".to_string(),
+                "zed/fetch".to_string(),
+            ],
+            why: "A list of sources the agent claims to have found. Must be \
+                  sourced from a research or web search tool that succeeded."
+                .to_string(),
+        },
+    );
+    field_sources.insert(
+        "findings".to_string(),
+        FieldSpec {
+            sources: vec![],
+            why: "A prose summary of what the agent found. Commissioned by \
+                  the system prompt — the agent was asked to analyze and report."
+                .to_string(),
+        },
+    );
+    field_sources.insert(
+        "summary".to_string(),
+        FieldSpec {
+            sources: vec![],
+            why: "A prose summary of the research. Commissioned by the \
+                  system prompt — the agent was asked to summarize."
+                .to_string(),
+        },
+    );
+    GroundingContract {
+        agent_type: "research".to_string(),
+        field_sources,
+    }
+}
+
+/// The built-in grounding contract for `narrator` agents.
+///
+/// Narrator agents produce prose content (stories, descriptions, narratives).
+/// Their output may include:
+/// - `content`: the main prose output. Inferred — the agent was commissioned
+///   to produce this content.
+/// - `summary`: a prose summary. Inferred.
+///
+/// Both fields are commissioned judgments (Inferred), not Unsourced. The
+/// contract exists so narrator delegations are grounded (not coverage gaps)
+/// and so any fabricated file paths or tool-sourced claims in the output are
+/// caught by the grounding check.
+pub fn narrator_agent_contract() -> GroundingContract {
+    let mut field_sources = HashMap::new();
+    field_sources.insert(
+        "content".to_string(),
+        FieldSpec {
+            sources: vec![],
+            why: "The main prose output. Commissioned by the system prompt — \
+                  the agent was asked to produce narrative content."
+                .to_string(),
+        },
+    );
+    field_sources.insert(
+        "summary".to_string(),
+        FieldSpec {
+            sources: vec![],
+            why: "A prose summary of the narrative. Commissioned by the \
+                  system prompt — the agent was asked to summarize."
+                .to_string(),
+        },
+    );
+    GroundingContract {
+        agent_type: "narrator".to_string(),
+        field_sources,
+    }
+}
+
 /// Extract the set of tools that successfully returned data from the
 /// `tool_calls` summary on a `LocalDelegateResult`.
 ///
@@ -1637,5 +1730,158 @@ mod tests {
             result.is_clean(),
             "empty string must produce a clean result"
         );
+    }
+
+    // ── Research agent contract ──
+
+    #[test]
+    fn research_agent_contract_has_why_for_every_field() {
+        let contract = research_agent_contract();
+        for (field, spec) in &contract.field_sources {
+            assert!(
+                spec.why.len() >= 40,
+                "field '{}' has a short why ({} chars): '{}'",
+                field,
+                spec.why.len(),
+                spec.why
+            );
+        }
+    }
+
+    #[test]
+    fn research_agent_contract_sources_field_nulled_when_no_search_tool_called() {
+        // Falsification test: the `sources` field must be nulled when no
+        // search tool was called. This is the check that proves the contract
+        // is enforced — without it, the contract is inert.
+        let contract = research_agent_contract();
+        let output = json!({
+            "sources": ["https://example.com/fabricated"],
+            "findings": "some analysis",
+            "summary": "research complete"
+        });
+        let (result, cleaned) = enforce_grounding(&contract, &output, &[], &output.to_string());
+        assert!(
+            result.nulled_fields.contains(&"sources".to_string()),
+            "sources must be nulled when no search tool was called"
+        );
+        assert_eq!(
+            cleaned.get("sources"),
+            Some(&json!(null)),
+            "sources must be null in cleaned output"
+        );
+    }
+
+    #[test]
+    fn research_agent_contract_sources_field_kept_when_search_tool_succeeded() {
+        let contract = research_agent_contract();
+        let output = json!({
+            "sources": ["https://example.com/real"],
+            "findings": "some analysis",
+            "summary": "research complete"
+        });
+        let tool_calls = vec![json!({"tool": "zed/web_search", "ok": true})];
+        let (result, cleaned) =
+            enforce_grounding(&contract, &output, &tool_calls, &output.to_string());
+        assert!(
+            !result.nulled_fields.contains(&"sources".to_string()),
+            "sources must NOT be nulled when web_search succeeded"
+        );
+        assert_eq!(
+            cleaned.get("sources"),
+            Some(&json!(vec!["https://example.com/real"])),
+            "sources must be preserved in cleaned output"
+        );
+    }
+
+    #[test]
+    fn research_agent_contract_findings_and_summary_are_inferred() {
+        // `findings` and `summary` are commissioned judgments (empty source
+        // list = Inferred). They must NOT be nulled even when no tools were
+        // called — the agent was asked to produce them.
+        let contract = research_agent_contract();
+        let output = json!({
+            "findings": "the analysis shows...",
+            "summary": "research complete"
+        });
+        let (result, cleaned) = enforce_grounding(&contract, &output, &[], &output.to_string());
+        assert!(
+            !result.nulled_fields.contains(&"findings".to_string()),
+            "findings must NOT be nulled (commissioned judgment)"
+        );
+        assert!(
+            !result.nulled_fields.contains(&"summary".to_string()),
+            "summary must NOT be nulled (commissioned judgment)"
+        );
+        assert_eq!(
+            cleaned.get("findings"),
+            Some(&json!("the analysis shows..."))
+        );
+        assert_eq!(cleaned.get("summary"), Some(&json!("research complete")));
+    }
+
+    // ── Narrator agent contract ──
+
+    #[test]
+    fn narrator_agent_contract_has_why_for_every_field() {
+        let contract = narrator_agent_contract();
+        for (field, spec) in &contract.field_sources {
+            assert!(
+                spec.why.len() >= 40,
+                "field '{}' has a short why ({} chars): '{}'",
+                field,
+                spec.why.len(),
+                spec.why
+            );
+        }
+    }
+
+    #[test]
+    fn narrator_agent_contract_content_and_summary_are_inferred() {
+        // Both `content` and `summary` are commissioned judgments. They must
+        // NOT be nulled even when no tools were called.
+        let contract = narrator_agent_contract();
+        let output = json!({
+            "content": "Once upon a time...",
+            "summary": "a story about time"
+        });
+        let (result, cleaned) = enforce_grounding(&contract, &output, &[], &output.to_string());
+        assert!(
+            !result.nulled_fields.contains(&"content".to_string()),
+            "content must NOT be nulled (commissioned judgment)"
+        );
+        assert!(
+            !result.nulled_fields.contains(&"summary".to_string()),
+            "summary must NOT be nulled (commissioned judgment)"
+        );
+        assert_eq!(cleaned.get("content"), Some(&json!("Once upon a time...")));
+        assert_eq!(cleaned.get("summary"), Some(&json!("a story about time")));
+    }
+
+    #[test]
+    fn narrator_agent_contract_unsourced_file_path_is_uncommissioned() {
+        // A fabricated file path in the output (not in the contract) is
+        // treated as UncommissionedInference (kept, marked) — not Unsourced
+        // (nulled). The contract only nulls fields that are declared with
+        // source tools but have no matching tool call. Undeclared fields are
+        // kept as uncommissioned inferences.
+        let contract = narrator_agent_contract();
+        let output = json!({
+            "content": "Once upon a time...",
+            "summary": "a story about time",
+            "file_path": "/output/story.txt"
+        });
+        let (result, cleaned) = enforce_grounding(&contract, &output, &[], &output.to_string());
+        // file_path is NOT nulled — it's uncommissioned, not unsourced.
+        assert!(
+            !result.nulled_fields.contains(&"file_path".to_string()),
+            "file_path must NOT be nulled (uncommissioned, not unsourced)"
+        );
+        // But it IS marked as uncommissioned in the provenance.
+        assert_eq!(
+            result.provenance.get("file_path"),
+            Some(&ProvenanceTag::UncommissionedInference)
+        );
+        // The value is preserved.
+        assert_eq!(cleaned.get("file_path"), Some(&json!("/output/story.txt")));
     }
 }

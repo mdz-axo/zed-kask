@@ -83,7 +83,7 @@ fn arb_local_agent_card() -> BoxedStrategy<LocalAgentCard> {
     let produces = arb_string_vec(6, 24);
     let deps = arb_dependencies();
     let caps = arb_capabilities();
-    let cloud_id = prop::option::of(arb_short_string(24));
+    let cloud_swarm_id = prop::option::of(arb_short_string(24));
     let tags = arb_string_vec(6, 24);
     let visibility = arb_short_string(16);
 
@@ -95,7 +95,7 @@ fn arb_local_agent_card() -> BoxedStrategy<LocalAgentCard> {
         produces,
         deps,
         caps,
-        cloud_id,
+        cloud_swarm_id,
         tags,
         visibility,
     )
@@ -108,7 +108,7 @@ fn arb_local_agent_card() -> BoxedStrategy<LocalAgentCard> {
                 produces,
                 dependencies,
                 capabilities,
-                cloud_id,
+                cloud_swarm_id,
                 tags,
                 visibility,
             )| {
@@ -120,7 +120,7 @@ fn arb_local_agent_card() -> BoxedStrategy<LocalAgentCard> {
                     produces,
                     dependencies,
                     capabilities,
-                    cloud_id,
+                    cloud_swarm_id,
                     tags,
                     visibility,
                     ..Default::default()
@@ -181,7 +181,7 @@ proptest! {
             produces: Vec::new(),
             dependencies: LocalAgentDependencies::default(),
             capabilities: LocalAgentCapabilities::default(),
-            cloud_id: None,
+            cloud_swarm_id: None,
             ..Default::default()
         };
 

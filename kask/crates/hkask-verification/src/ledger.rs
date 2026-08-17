@@ -39,8 +39,8 @@ use serde_json::Value;
 
 use crate::error::VerificationError;
 use crate::grounding::{
-    GroundingContract, GroundingResult, enforce_grounding, scan_narrative_for_leaks,
-    task_agent_contract,
+    GroundingContract, GroundingResult, enforce_grounding, narrator_agent_contract,
+    research_agent_contract, scan_narrative_for_leaks, task_agent_contract,
 };
 use crate::trend::{GroundingTrendReport, TrendScope};
 use crate::types::GroundingRecord;
@@ -72,8 +72,12 @@ impl VerificationStore {
     /// agent_type.
     pub fn new(store: HMemStore) -> Self {
         let mut contracts = HashMap::new();
-        let default_contract = task_agent_contract();
-        contracts.insert(default_contract.agent_type.clone(), default_contract);
+        let task_contract = task_agent_contract();
+        contracts.insert(task_contract.agent_type.clone(), task_contract);
+        let research_contract = research_agent_contract();
+        contracts.insert(research_contract.agent_type.clone(), research_contract);
+        let narrator_contract = narrator_agent_contract();
+        contracts.insert(narrator_contract.agent_type.clone(), narrator_contract);
         Self {
             store,
             contracts: Mutex::new(contracts),
@@ -610,8 +614,8 @@ mod tests {
         let output = json!({"summary": "done"});
         let (result, cleaned) = store.enforce_for_agent(
             "swarm_delegate_local",
-            "researcher",
-            "research", // no contract for "research"
+            "sentiment_agent",
+            "sentiment", // no contract for "sentiment"
             &output,
             &[],
             "done",
@@ -672,11 +676,11 @@ mod tests {
             &tool_calls,
             "done",
         );
-        // Swarm delegation — coverage gap (research agent_type, no contract).
+        // Swarm delegation — coverage gap (unknown agent_type, no contract).
         store.enforce_for_agent(
             "swarm_delegate_local",
-            "researcher",
-            "research",
+            "custom_agent",
+            "unknown_agent_type",
             &json!({"summary": "research done"}),
             &[],
             "research done",
@@ -736,17 +740,17 @@ mod tests {
     #[test]
     fn register_contract_extends_coverage() {
         let store = test_store();
-        // No contract for "research" initially.
+        // No contract for "custom_analysis" initially.
         let (result, _) = store.enforce_for_agent(
             "swarm_delegate_local",
-            "researcher",
-            "research",
+            "analyst",
+            "custom_analysis",
             &json!({"summary": "done"}),
             &[],
             "done",
         );
         assert!(result.is_none());
-        // Register a contract for "research".
+        // Register a contract for "custom_analysis".
         let mut field_sources = std::collections::HashMap::new();
         field_sources.insert(
             "summary".to_string(),
@@ -756,14 +760,14 @@ mod tests {
             },
         );
         store.register_contract(GroundingContract {
-            agent_type: "research".to_string(),
+            agent_type: "custom_analysis".to_string(),
             field_sources,
         });
         // Now grounding runs.
         let (result, _) = store.enforce_for_agent(
             "swarm_delegate_local",
-            "researcher",
-            "research",
+            "analyst",
+            "custom_analysis",
             &json!({"summary": "done"}),
             &[],
             "done",
@@ -780,6 +784,28 @@ mod tests {
         let contract = &contracts["task"];
         assert!(contract.field_sources.contains_key("deliverable_path"));
         assert!(contract.field_sources.contains_key("test_verdict"));
+    }
+
+    #[test]
+    fn research_and_narrator_contracts_are_registered() {
+        let store = test_store();
+        let contracts = store.contracts.lock().unwrap();
+        assert!(
+            contracts.contains_key("research"),
+            "research contract must be registered at construction"
+        );
+        assert!(
+            contracts["research"].field_sources.contains_key("sources"),
+            "research contract must have a sources field"
+        );
+        assert!(
+            contracts.contains_key("narrator"),
+            "narrator contract must be registered at construction"
+        );
+        assert!(
+            contracts["narrator"].field_sources.contains_key("content"),
+            "narrator contract must have a content field"
+        );
     }
 
     #[test]
