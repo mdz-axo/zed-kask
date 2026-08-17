@@ -335,15 +335,16 @@ impl SkillRegistryIndex for SqliteRegistry {
             .pool
             .get()
             .map_err(|e| RegistryError::Other(format!("pool connection failed: {e}")))?;
-        if let Err(e) = conn.execute(
+        conn.execute(
             "INSERT OR REPLACE INTO skills (id, domain, word_act, flow_def, know_act, polarity, content_hash, visibility, zone, namespace) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![skill.id, skill.domain.as_str(), skill.word_act, skill.flow_def, skill.know_act,
                 skill.polarity.as_ref().map(|p| p.as_str()), skill.content_hash,
                 skill.visibility.as_str(), skill.zone.as_str(), skill.namespace],
-        ) {
+        ).map_err(|e| {
             tracing::error!(target: "hkask.templates", error = %e, skill_id = %skill.id, "register_skill: INSERT failed");
-        }
+            RegistryError::Other(format!("register_skill INSERT failed: {e}"))
+        })?;
         Ok(())
     }
 
@@ -372,9 +373,10 @@ impl SkillRegistryIndex for SqliteRegistry {
             .pool
             .get()
             .map_err(|e| RegistryError::Other(format!("pool connection failed: {e}")))?;
-        if let Err(e) = conn.execute("DELETE FROM skills WHERE id = ?1", params![id]) {
+        conn.execute("DELETE FROM skills WHERE id = ?1", params![id]).map_err(|e| {
             tracing::error!(target: "hkask.templates", error = %e, id = %id, "remove_skill: DELETE failed");
-        }
+            RegistryError::Other(format!("remove_skill DELETE failed: {e}"))
+        })?;
         Ok(skill)
     }
 }
@@ -386,33 +388,31 @@ impl BundleRegistryIndex for SqliteRegistry {
         &mut self,
         bundle: BundleManifest,
     ) -> std::result::Result<(), crate::ports::TemplateError> {
-        let manifest_json = match serde_json::to_string(&bundle) {
-            Ok(j) => j,
-            Err(e) => {
-                tracing::error!(target: "hkask.templates", error = %e, bundle_id = %bundle.id, "register_bundle: serialize failed");
-                return Ok(());
-            }
-        };
+        let manifest_json = serde_json::to_string(&bundle).map_err(|e| {
+            tracing::error!(target: "hkask.templates", error = %e, bundle_id = %bundle.id, "register_bundle: serialize failed");
+            crate::ports::TemplateError::Manifest(format!("register_bundle serialize failed for '{bundle_id}': {e}", bundle_id = bundle.id))
+        })?;
         let conn = self.pool.get().map_err(|e| {
             crate::ports::TemplateError::Database(hkask_types::InfrastructureError::Io(format!(
                 "pool connection failed: {e}"
             )))
         })?;
-        if let Err(e) = conn.execute("INSERT OR REPLACE INTO bundles (id, name, description, version, editor, visibility, manifest_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)", params![bundle.id, bundle.name, bundle.description, bundle.version, bundle.editor, bundle.visibility.as_str(), manifest_json]) {
+        conn.execute("INSERT OR REPLACE INTO bundles (id, name, description, version, editor, visibility, manifest_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)", params![bundle.id, bundle.name, bundle.description, bundle.version, bundle.editor, bundle.visibility.as_str(), manifest_json]).map_err(|e| {
             tracing::error!(target: "hkask.templates", error = %e, bundle_id = %bundle.id, "register_bundle: INSERT failed");
-            return Ok(());
-        }
-        if let Err(e) = conn.execute(
+            crate::ports::TemplateError::Manifest(format!("register_bundle INSERT failed for '{bundle_id}': {e}", bundle_id = bundle.id))
+        })?;
+        conn.execute(
             "DELETE FROM bundle_skills WHERE bundle_id = ?1",
             params![bundle.id],
-        ) {
+        ).map_err(|e| {
             tracing::error!(target: "hkask.templates", error = %e, bundle_id = %bundle.id, "register_bundle: DELETE bundle_skills failed");
-            return Ok(());
-        }
+            crate::ports::TemplateError::Manifest(format!("register_bundle DELETE bundle_skills failed for '{bundle_id}': {e}", bundle_id = bundle.id))
+        })?;
         for (position, skill) in bundle.skills.iter().enumerate() {
-            if let Err(e) = conn.execute("INSERT INTO bundle_skills (bundle_id, skill_id, polarity, manifest_ref, content_hash, position) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![bundle.id, skill.id, Some(skill.polarity.as_str()), skill.manifest_ref, skill.content_hash, position as i64]) {
+            conn.execute("INSERT INTO bundle_skills (bundle_id, skill_id, polarity, manifest_ref, content_hash, position) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![bundle.id, skill.id, Some(skill.polarity.as_str()), skill.manifest_ref, skill.content_hash, position as i64]).map_err(|e| {
                 tracing::error!(target: "hkask.templates", error = %e, bundle_id = %bundle.id, skill_id = %skill.id, "register_bundle: INSERT bundle_skills failed");
-            }
+                crate::ports::TemplateError::Manifest(format!("register_bundle INSERT bundle_skills failed for '{bundle_id}' skill '{skill_id}': {e}", bundle_id = bundle.id, skill_id = skill.id))
+            })?;
         }
         Ok(())
     }
@@ -498,15 +498,17 @@ impl BundleRegistryIndex for SqliteRegistry {
                 "pool connection failed: {e}"
             )))
         })?;
-        if let Err(e) = conn.execute(
+        conn.execute(
             "DELETE FROM bundle_skills WHERE bundle_id = ?1",
             params![id],
-        ) {
+        ).map_err(|e| {
             tracing::error!(target: "hkask.templates", error = %e, id = %id, "remove_bundle: DELETE bundle_skills failed");
-        }
-        if let Err(e) = conn.execute("DELETE FROM bundles WHERE id = ?1", params![id]) {
+            crate::ports::TemplateError::Manifest(format!("remove_bundle DELETE bundle_skills failed for '{id}': {e}"))
+        })?;
+        conn.execute("DELETE FROM bundles WHERE id = ?1", params![id]).map_err(|e| {
             tracing::error!(target: "hkask.templates", error = %e, id = %id, "remove_bundle: DELETE bundles failed");
-        }
+            crate::ports::TemplateError::Manifest(format!("remove_bundle DELETE bundles failed for '{id}': {e}"))
+        })?;
         Ok(bundle)
     }
 
@@ -555,9 +557,28 @@ impl SqliteRegistry {
         if let Some(ch) = content_hash {
             skill = skill.with_content_hash(ch);
         }
-        skill = skill
-            .with_visibility(Visibility::parse_str(&visibility_str).unwrap_or(Visibility::Private));
-        skill = skill.with_zone(SkillZone::parse_str(&zone_str).unwrap_or(SkillZone::Private));
+        let visibility = Visibility::parse_str(&visibility_str).unwrap_or_else(|| {
+            tracing::warn!(
+                target: "hkask.templates",
+                skill_id = %id,
+                visibility_str = %visibility_str,
+                "row_to_skill: unknown visibility string — defaulting to Private. \
+                 A corrupted visibility column reads as Private; the operator cannot \
+                 distinguish 'intentionally Private' from 'corrupted' without this warn."
+            );
+            Visibility::Private
+        });
+        skill = skill.with_visibility(visibility);
+        let zone = SkillZone::parse_str(&zone_str).unwrap_or_else(|| {
+            tracing::warn!(
+                target: "hkask.templates",
+                skill_id = %id,
+                zone_str = %zone_str,
+                "row_to_skill: unknown zone string — defaulting to Private."
+            );
+            SkillZone::Private
+        });
+        skill = skill.with_zone(zone);
         if let Some(ns) = namespace {
             skill = skill.with_namespace(ns);
         }
