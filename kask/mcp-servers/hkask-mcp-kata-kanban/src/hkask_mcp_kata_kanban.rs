@@ -1109,6 +1109,31 @@ impl KanbanServer {
                             build_task_agent_card(tid, &task.title, &skills_for_agent)
                         });
 
+                    // Phase 7: Surface coverage gaps at spawn time. When an
+                    // expert agent is reused and its agent_type has no
+                    // grounding contract in the verification store, log a
+                    // warning naming the agent_type. This surfaces the gap
+                    // at spawn time, not just in the trend query — the
+                    // operator can register a contract before the next
+                    // delegation. Card-declared contracts (checked below)
+                    // may still provide grounding even when the registry has
+                    // no contract for this agent_type.
+                    if !self.verification_store.has_contract(&agent.agent_type)
+                        && agent.capabilities.output_contract.as_ref().and_then(|oc| oc.get("grounding")).is_none()
+                    {
+                        tracing::warn!(
+                            target: "hkask.mcp.kata_kanban",
+                            task_id = %tid,
+                            agent_id = %agent.agent_id,
+                            agent_type = %agent.agent_type,
+                            "expert agent reused with agent_type '{}' that has no grounding contract \
+                             and no card-declared grounding. Outputs will not be checked for fabricated \
+                             values. Register a contract via VerificationStore::register_contract for \
+                             this agent_type, or declare an output_contract.grounding on the agent card.",
+                            agent.agent_type,
+                        );
+                    }
+
                     // Rung 3 (Card-declared grounding validation): if the
                     // agent card declares an output_contract.grounding,
                     // validate it. Every sourced entry must name a tool the

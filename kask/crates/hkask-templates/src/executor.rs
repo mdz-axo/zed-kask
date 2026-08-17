@@ -343,6 +343,7 @@ mod tests {
                 rjoule_enabled: false,
             },
             resume_text: None,
+            tool_calls: Vec::new(),
         }
     }
 

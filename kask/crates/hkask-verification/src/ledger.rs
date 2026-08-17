@@ -180,6 +180,16 @@ impl VerificationStore {
         contracts.insert(contract.agent_type.clone(), contract);
     }
 
+    /// Check whether a grounding contract is registered for the given
+    /// agent_type. Used by callers (e.g. `kanban_task_spawn`) to surface
+    /// coverage gaps at spawn time — a warning when an expert agent is
+    /// reused and its agent_type has no contract. This is a read-only
+    /// check; it does not write a record.
+    pub fn has_contract(&self, agent_type: &str) -> bool {
+        let contracts = self.contracts.lock().expect("contracts mutex poisoned");
+        contracts.contains_key(agent_type)
+    }
+
     /// Enforce grounding for a delegation and record the result to the
     /// central ledger. Returns `(Option<GroundingResult>, cleaned_json)`.
     ///
@@ -773,6 +783,32 @@ mod tests {
             "done",
         );
         assert!(result.is_some(), "contract registered → grounding runs");
+    }
+
+    #[test]
+    fn has_contract_returns_true_for_registered_types() {
+        let store = test_store();
+        // Default contracts registered in `new()`.
+        assert!(store.has_contract("task"));
+        assert!(store.has_contract("research"));
+        assert!(store.has_contract("narrator"));
+        // No contract for unregistered types.
+        assert!(!store.has_contract("sentiment"));
+        assert!(!store.has_contract("custom_analysis"));
+        // After registration, has_contract returns true.
+        let mut field_sources = std::collections::HashMap::new();
+        field_sources.insert(
+            "summary".to_string(),
+            crate::grounding::FieldSpec {
+                sources: vec![],
+                why: "A prose summary commissioned by the system prompt.".to_string(),
+            },
+        );
+        store.register_contract(GroundingContract {
+            agent_type: "sentiment".to_string(),
+            field_sources,
+        });
+        assert!(store.has_contract("sentiment"));
     }
 
     #[test]

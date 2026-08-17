@@ -750,17 +750,21 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
 /// the gemba loop (docs/reports/gemba-loop-specification.md). It is a
 /// single-pass briefing generator — not an interactive session.
 ///
-/// Step structure (7 steps):
+/// Step structure (10 steps):
 ///   - Step 1: execute (curator_algedonic_log) — SENSE
 ///   - Step 2: execute (curator_escalations) — GATHER
 ///   - Step 3: execute (curator_consult) — GATHER
-///   - Step 4: select (synthesize-briefing) — ANALYZE
-///   - Step 5: select (present-briefing) — PRESENT
-///   - Step 6: select (recommend-actions) — RECOMMEND
-///   - Step 7: loop — convergence check
+///   - Step 4: execute (curator_grounding_trend) — GATHER
+///   - Step 5: execute (curator_grounding_coverage) — GATHER
+///   - Step 6: select (synthesize-briefing) — ANALYZE
+///   - Step 7: select (present-briefing) — PRESENT
+///   - Step 8: select (recommend-actions) — RECOMMEND
+///   - Step 9: compute (lisp.eval) — convergence check
+///   - Step 10: loop — re-enter if not converged
 ///
-/// Three execute steps call existing curator MCP tools. Three select steps
-/// render Jinja2 templates. One loop step bounds the cascade.
+/// Five execute steps call existing curator MCP tools. Three select steps
+/// render Jinja2 templates. One compute step extracts the convergence
+/// signal. One loop step bounds the cascade.
 #[test]
 fn gemba_walk_manifest_loads_with_correct_structure() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -774,13 +778,15 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load gemba-walk manifest: {e}"));
 
-    // 3 execute steps + 3 select steps + 1 compute step + 1 loop step = 8 total.
+    // 5 execute steps + 3 select steps + 1 compute step + 1 loop step = 10 total.
     // The compute step (lisp.eval) extracts the convergence signal
     // deterministically from the synthesize step's briefing_complete field.
+    // Steps 4-5 (grounding trend + coverage) were added in Phase 3 to close
+    // the human-in-the-loop feedback loop for grounding health.
     assert_eq!(
         manifest.steps.len(),
-        8,
-        "expected 8 steps: algedonic_log → escalations → consult → synthesize → present → recommend → compute → loop"
+        10,
+        "expected 10 steps: algedonic_log → escalations → consult → grounding_trend → grounding_coverage → synthesize → present → recommend → compute → loop"
     );
 
     // Verify step ordinals are sequential starting at 1.
@@ -792,7 +798,7 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
         );
     }
 
-    // Verify the three execute steps call the expected curator MCP tools.
+    // Verify the five execute steps call the expected curator MCP tools.
     let execute_steps: Vec<_> = manifest
         .steps
         .iter()
@@ -800,8 +806,8 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
         .collect();
     assert_eq!(
         execute_steps.len(),
-        3,
-        "manifest must have 3 execute steps (curator MCP tool calls)"
+        5,
+        "manifest must have 5 execute steps (curator MCP tool calls)"
     );
     assert_eq!(
         execute_steps[0].ordinal, 1,
@@ -827,6 +833,24 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
         Some("curator_consult"),
         "step 3 must call curator_consult"
     );
+    assert_eq!(
+        execute_steps[3].ordinal, 4,
+        "curator_grounding_trend at ordinal 4"
+    );
+    assert_eq!(
+        execute_steps[3].mcp.as_deref(),
+        Some("curator_grounding_trend"),
+        "step 4 must call curator_grounding_trend"
+    );
+    assert_eq!(
+        execute_steps[4].ordinal, 5,
+        "curator_grounding_coverage at ordinal 5"
+    );
+    assert_eq!(
+        execute_steps[4].mcp.as_deref(),
+        Some("curator_grounding_coverage"),
+        "step 5 must call curator_grounding_coverage"
+    );
 
     // Every execute step must have on_failure (no silent collapse to defaults).
     for step in &execute_steps {
@@ -849,36 +873,36 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
         "manifest must have 3 select steps (Jinja2 template rendering)"
     );
     assert_eq!(
-        select_steps[0].ordinal, 4,
-        "synthesize-briefing at ordinal 4"
+        select_steps[0].ordinal, 6,
+        "synthesize-briefing at ordinal 6"
     );
     assert_eq!(
         select_steps[0].template_ref.as_deref(),
         Some("gemba-walk/synthesize-briefing"),
-        "step 4 must reference gemba-walk/synthesize-briefing"
+        "step 6 must reference gemba-walk/synthesize-briefing"
     );
-    assert_eq!(select_steps[1].ordinal, 5, "present-briefing at ordinal 5");
+    assert_eq!(select_steps[1].ordinal, 7, "present-briefing at ordinal 7");
     assert_eq!(
         select_steps[1].template_ref.as_deref(),
         Some("gemba-walk/present-briefing"),
-        "step 5 must reference gemba-walk/present-briefing"
+        "step 7 must reference gemba-walk/present-briefing"
     );
-    assert_eq!(select_steps[2].ordinal, 6, "recommend-actions at ordinal 6");
+    assert_eq!(select_steps[2].ordinal, 8, "recommend-actions at ordinal 8");
     assert_eq!(
         select_steps[2].template_ref.as_deref(),
         Some("gemba-walk/recommend-actions"),
-        "step 6 must reference gemba-walk/recommend-actions"
+        "step 8 must reference gemba-walk/recommend-actions"
     );
 
-    // Verify the loop step (ordinal 8) re-enters at step 4 (synthesize).
-    // Ordinal shifted from 7 to 8 when a lisp.eval convergence-signal
-    // compute step was inserted at ordinal 7.
+    // Verify the loop step (ordinal 10) re-enters at step 6 (synthesize).
+    // Ordinal shifted from 8 to 10 when two grounding execute steps were
+    // inserted at ordinals 4-5 (Phase 3: gemba walk grounding integration).
     let loop_step = manifest
         .steps
         .iter()
         .find(|s| s.action == "loop")
         .expect("manifest must have a loop step");
-    assert_eq!(loop_step.ordinal, 8, "loop step should be ordinal 8");
+    assert_eq!(loop_step.ordinal, 10, "loop step should be ordinal 10");
     let loop_mapping = loop_step
         .input_mapping
         .as_ref()
@@ -889,8 +913,8 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
         .and_then(|v| v.as_str())
         .expect("loop step has loop_target");
     assert!(
-        loop_target.contains("4"),
-        "loop_target must re-enter at step 4 (synthesize-briefing), got: {loop_target}"
+        loop_target.contains("6"),
+        "loop_target must re-enter at step 6 (synthesize-briefing), got: {loop_target}"
     );
 
     // Verify the convergence block uses the Cauchy model with a generous

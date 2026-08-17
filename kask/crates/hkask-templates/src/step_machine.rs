@@ -91,6 +91,13 @@ pub struct StepMachine {
     pub(crate) last_result_step: Option<StepId>,
     /// Matryoshka recursion depth. Only incremented by `FlowDefAction`.
     pub(crate) depth: u8,
+    /// Tool calls made during this cascade (execute steps only). Each entry
+    /// is `{"tool": "server/tool_name", "ok": true/false}` — same shape as
+    /// `LocalDelegateResult.tool_calls`. Surfaced on `CascadeOutcome` so the
+    /// skill executor can run grounding checks (Phase 5: skill cascade
+    /// grounding). Sub-cascade tool calls (from `execute_parallel` branches)
+    /// are tracked by their own `StepMachine`, not merged here.
+    pub(crate) tool_calls: Vec<serde_json::Value>,
 }
 
 /// The outcome of running a cascade to completion.
@@ -107,6 +114,12 @@ pub struct CascadeOutcome {
     /// model-initiated exits. Operators read this to understand why the
     /// cascade escalated and how to resume.
     pub resume_text: Option<String>,
+    /// Tool calls made during this cascade (execute steps only). Each entry
+    /// is `{"tool": "server/tool_name", "ok": true/false}` — same shape as
+    /// `LocalDelegateResult.tool_calls`. Surfaced for grounding enforcement
+    /// (Phase 5: skill cascade grounding). Empty when no execute steps ran
+    /// or all tool calls failed before recording.
+    pub tool_calls: Vec<serde_json::Value>,
 }
 
 impl StepMachine {
@@ -131,6 +144,7 @@ impl StepMachine {
             last_result_step: None,
             depth: 0,
             resume_text: None,
+            tool_calls: Vec::new(),
         }
     }
 
@@ -278,6 +292,7 @@ impl StepMachine {
             last_result_step: self.last_result_step,
             budget_snapshot,
             resume_text: self.resume_text.take(),
+            tool_calls: std::mem::take(&mut self.tool_calls),
         })
     }
 
