@@ -40,6 +40,27 @@ pub const ENTRY: StepId = 0;
 /// process manifest).
 pub const MAX_STEPS: usize = 4096;
 
+/// Hard-enforce the step capacity cap. Returns `Err` if the manifest exceeds
+/// `MAX_STEPS` steps. Called by `execute_manifest_into` (the public entry
+/// point) and by `execute_flowdef` / `execute_parallel` (the sub-cascade paths)
+/// so the gate fires in **all three** orchestration paths, not just the
+/// top-level one. Previously the sub-cascade paths got only the advisory
+/// `tracing::warn!` from `StepGraph::new`, which was an open loop — a
+/// sub-cascade could exceed the cap and run to completion.
+///
+/// The `context` string names where the gate fired (e.g. `"manifest 'foo'"`
+/// or `"Step 5 flowdef sub-manifest 'bar'"`) so the error message tells the
+/// operator which path tripped the gate.
+pub fn check_step_cap(step_count: usize, context: &str) -> Result<(), crate::ports::TemplateError> {
+    if step_count > MAX_STEPS {
+        return Err(crate::ports::TemplateError::Manifest(format!(
+            "{context} has {step_count} steps — exceeds the capacity cap of {MAX_STEPS}. \
+             Remediation: split the manifest, or raise the cap in `step_graph::MAX_STEPS`."
+        )));
+    }
+    Ok(())
+}
+
 /// How a step hands control to the next step.
 ///
 /// This is the *static* control flow declared by the step's position and

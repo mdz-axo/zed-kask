@@ -779,16 +779,20 @@ mod tests {
         assert_eq!(model_name.as_deref(), Some("allenai/olmOCR-2-7B-1025"));
 
         // Verify the discovery function populates served_model_name from MODEL_NAME.
+        // `model_name` is moved into `served_model_name` (no clone needed — it
+        // is not used after this struct literal). The `display_name` borrows it
+        // via `.as_ref()` before the move.
+        let display_name = model_name
+            .as_ref()
+            .map(|mn| format!("{} ({})", endpoint.name, mn));
         let available = AvailableModel {
             name: endpoint.name.clone(),
-            display_name: model_name
-                .as_ref()
-                .map(|mn| format!("{} ({})", endpoint.name, mn)),
+            display_name,
             endpoint_id: endpoint.id.clone(),
             max_tokens: 32_768,
             max_output_tokens: None,
             supports_images: false,
-            served_model_name: model_name.clone(),
+            served_model_name: model_name,
         };
         assert_eq!(
             available.served_model_name.as_deref(),

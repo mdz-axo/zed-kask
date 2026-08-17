@@ -656,7 +656,7 @@ impl StepMachine {
                 // the result has a routing field, jump to the target.
                 if let Some(ref branching) = node.branching {
                     let field_name = node.branching_field.as_deref().unwrap_or("routing");
-                    let result_key = format!("step_{}_result", node.ordinal);
+                    let result_key = crate::step_context::StepContext::result_key(node.ordinal);
                     if let Some(routing) = self
                         .context
                         .lookup(&result_key)

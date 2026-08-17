@@ -11,7 +11,7 @@ use crate::budget::BudgetTracker;
 use crate::convergence::ConvergenceTracker;
 use crate::ports::{Result, TemplateError};
 use crate::step_context::StepContext;
-use crate::step_graph::{MAX_STEPS, StepGraph};
+use crate::step_graph::StepGraph;
 use crate::step_machine::{CascadeOutcome, Infra, StepMachine};
 use crate::template_renderer::TemplateRenderer;
 use hkask_types::json_extract as llm_json;
@@ -201,16 +201,14 @@ impl ManifestExecutor {
         initial_context: HashMap<String, Value>,
     ) -> Result<CascadeOutcome> {
         // (K5) hard-enforce the capacity cap at the public entry point. The
-        // advisory `tracing::warn!` in `StepGraph::new` remains for the flowdef
-        // sub-cascade path; this is the operator-facing hard gate.
-        if manifest.steps.len() > MAX_STEPS {
-            return Err(TemplateError::Manifest(format!(
-                "Manifest '{}' has {} steps — exceeds the capacity cap of {}. Remediation: split the manifest, or raise the cap in `step_graph::MAX_STEPS`.",
-                manifest.id,
-                manifest.steps.len(),
-                MAX_STEPS,
-            )));
-        }
+        // advisory `tracing::warn!` in `StepGraph::new` remains for the
+        // diagnostic; `check_step_cap` is the operator-facing hard gate,
+        // shared with the flowdef/parallel sub-cascade paths so the gate
+        // fires in all three orchestration paths.
+        crate::step_graph::check_step_cap(
+            manifest.steps.len(),
+            &format!("manifest '{}'", manifest.id),
+        )?;
         let graph = StepGraph::new(&manifest.steps, manifest.convergence.max_iterations);
         let context = StepContext::new(initial_context);
         let budget = BudgetTracker::new(&manifest.gas, &manifest.rjoule);

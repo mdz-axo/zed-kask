@@ -982,6 +982,19 @@ impl StepMachine {
                 ))
             })?;
 
+        // Hard-enforce the step capacity cap on the sub-cascade. Previously
+        // this path got only the advisory `tracing::warn!` from
+        // `StepGraph::new` — an open loop where a sub-cascade could exceed
+        // the cap and run to completion. The gate now fires in all three
+        // orchestration paths (executor, flowdef, parallel).
+        crate::step_graph::check_step_cap(
+            sub_manifest.steps.len(),
+            &format!(
+                "Step {} flowdef sub-manifest '{}'",
+                node.ordinal, template_ref
+            ),
+        )?;
+
         // Cap the sub-cascade's budget to the parent's remaining budget.
         let sub_gas_cap = (sub_manifest.gas.cap as u64).min(self.budget.remaining_gas());
         let sub_rjoule_cap_f64 =
@@ -1202,6 +1215,16 @@ impl StepMachine {
                             step_ordinal, branch_id, template_ref, e,
                         ))
                     })?;
+                    // Hard-enforce the step capacity cap on each parallel
+                    // branch's sub-cascade. Previously this path got only the
+                    // advisory `tracing::warn!` from `StepGraph::new`.
+                    crate::step_graph::check_step_cap(
+                        sub_manifest.steps.len(),
+                        &format!(
+                            "Step {} parallel branch {} sub-manifest '{}'",
+                            step_ordinal, branch_id, template_ref
+                        ),
+                    )?;
                     let sub_budget = crate::budget::BudgetTracker::from_remaining_shared(
                         Arc::clone(&shared_gas),
                         gas_cap,
