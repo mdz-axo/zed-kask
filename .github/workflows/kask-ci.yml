@@ -315,11 +315,12 @@ jobs:
         run: cd kask && bash scripts/check-unused-deps.sh
 
   # Weekly audit of the typos allowlist (follow-up issue #7). The per-PR
-  # `typos` job enforces the allowlist; this job runs typos WITHOUT the
-  # `[default.extend-words]` and `[files] extend-exclude` allowlists and
-  # reports the delta as a warning. Each exclusion is a potential future
-  # false-negative — a new typo matching an allowlisted word would be silently
-  # missed. This job makes accumulation visible without breaking per-PR CI.
+  # `typos` job enforces the allowlist; this job runs typos with a DERIVED
+  # config that strips the `[default.extend-words]` and `[files] extend-exclude`
+  # sections, exposing every finding the allowlist currently suppresses.
+  # Each exclusion is a potential future false-negative — a new typo that
+  # matches an allowlisted word would be silently missed. This job makes
+  # accumulation visible without breaking per-PR CI.
   #
   # Runs only on schedule (not on push/PR) to avoid noise. Findings are
   # surfaced as job output for manual triage — the job never fails, because
@@ -334,9 +335,15 @@ jobs:
         with:
           tool: typos@v1.49.0
       - name: "Run typos WITHOUT the allowlist (warning-only — review the delta)"
-        # --words / --files flags disable the extend-words / extend-exclude
-        # sections, exposing every finding the allowlist currently suppresses.
+        # Run typos with --isolated (ignore implicit config files like typos.toml)
+        # and --config typos-audit.toml (the policy-only config that has
+        # extend-ignore-re regexes but NO extend-words / extend-exclude).
+        # This surfaces every finding the allowlist suppresses.
         # continue-on-error makes the job non-blocking; the output is the signal.
+        #
+        # CRITICAL: --config alone does NOT disable implicit config loading.
+        # Without --isolated, typos still reads typos.toml from the cwd and
+        # applies its extend-words allowlist, making the audit a no-op.
         continue-on-error: true
         run: |
           echo "## Typos allowlist audit (weekly)"
@@ -344,7 +351,8 @@ jobs:
           echo "Review the DELTA from last week — new entries may indicate a"
           echo "real typo that matches an allowlisted word."
           echo ""
-          typos --config typos.toml --format json 2>/dev/null | head -200 || true
+          echo "--- findings (suppressed by allowlist) ---"
+          typos --isolated --config typos-audit.toml --exclude typos-audit.toml --format json . 2>/dev/null | head -200 || true
           echo ""
           echo "(Job is non-blocking. Triage new findings and either fix the typo"
           echo "or confirm the allowlist entry is still justified.)"

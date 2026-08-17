@@ -18,6 +18,7 @@
 # Exit: 0 = all targets registered (exact match), 1 = unregistered targets found
 
 set -euo pipefail
+cd "$(dirname "$0")/.."
 
 # Scan roots for `target: "reg.*"` strings. Overridable so the self-test
 # (check-reg-creep-selftest.sh) can point the gate at a temp tree with a

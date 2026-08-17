@@ -1,0 +1,75 @@
+# Minimal typos config for the weekly allowlist-audit job.
+#
+# This config is the POLICY layer only: it carries the [files] base settings
+# and the [default] extend-ignore-re regexes (which suppress code-identifier
+# false positives that are policy, not allowlist). It deliberately OMITS:
+#   - [default.extend-words]  — the per-word allowlist
+#   - [files] extend-exclude  — the per-path exclusions
+#
+# The weekly `typos-allowlist-audit` CI job runs `typos --config typos.toml`
+# (the full config, with allowlist) for per-PR enforcement, and
+# `typos --config typos-audit.toml` (this file, without allowlist) for the
+# weekly delta audit. The delta between runs surfaces new findings the
+# allowlist is suppressing — a new typo matching an allowlisted word would
+# be silently missed by the per-PR job but visible in the weekly audit.
+#
+# Keep this file in sync with the policy sections of typos.toml. When you add
+# a new extend-ignore-re regex to typos.toml, add it here too. The
+# extend-words / extend-exclude sections should NEVER be mirrored here —
+# that would defeat the audit.
+
+[files]
+ignore-files = true
+ignore-hidden = false
+
+[default]
+check-filename = true
+extend-ignore-re = [
+    # PNG is a file format, not a typo
+    "PNG",
+    'cl\[ist]',
+    '\[lan\]guage',
+    '"ba"',
+    "doas",
+    # ProtoLS crate with tree-sitter Protobuf grammar.
+    "protols",
+    # x11rb SelectionNotifyEvent struct field
+    "requestor",
+    # macOS version
+    "Big Sur",
+    # Not an actual typo but an intentionally invalid color, in `color_extractor`
+    "#fof",
+    # Stripped version of reserved keyword `type`
+    "typ",
+    # AMD GPU Services
+    "ags",
+    # AMD GPU Services
+    "AGS",
+    # "noet" is a vim variable (ideally to ignore locally)
+    "noet",
+    # Yarn Plug'n'Play
+    "PnP",
+    # `image` crate method: Delay::from_numer_denom_ms
+    "numer",
+    # Abbreviation for foreignObject in mermaid SVG processing
+    "fo",
+    # Mermaid CSS class name for state diagram composites
+    "composit",
+    # Used in truncating tests to ensure byte-length vs char like in café
+    "caf…",
+    # Closure params and short identifiers in code: |anc| (ancestor), |iy|
+    # (income_yearly), nd (Lisp count-not-done var), strat (strategy var).
+    # These are handled as extend-words too; the regex is a belt-and-suspenders
+    # for any case where the token appears without word boundaries.
+    "\\banc\\b",
+    "\\biy\\b",
+    "\\bnd\\b",
+    "\\bstrat\\b",
+    # Suffix lists in salience.rs: -ful, -ment, -ance, -ence.
+    "\\bful\\b",
+    "\\bment\\b",
+    # mis- prefix compounds: mis-classified, mis-sourced, mis-flag.
+    "mis-",
+    # vim :bd[elete] command syntax (optional spelling).
+    "elete",
+]
