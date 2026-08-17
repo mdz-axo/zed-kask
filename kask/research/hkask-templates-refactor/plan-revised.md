@@ -159,10 +159,24 @@ Re-ranked by leverage × locality × testability, informed by the six reviews.
 Essentialist verdicts (G1/G2/G3) and idiomatic-rust Hoare assessments are
 noted where load-bearing.
 
-### CAND-1a (Strong) — Collapse the local registry trait layer
+### CAND-1a (Deferred) — Collapse the local registry trait layer
+
+**Status: Deferred pending operator decision.** The audit confirmed `Registry`
+has zero external consumers (grep-verified: only `bootstrap_test.rs:12`).
+However, `bootstrap_test.rs` is a real build-time safety net — it verifies that
+`build.rs` correctly discovers and embeds manifests via `Registry::bootstrap()`.
+`SqliteRegistry` doesn't have a `bootstrap()` method (it's a runtime registry,
+not a compile-time one). Deleting `Registry` requires either:
+- (a) adding `SqliteRegistry::bootstrap()` that seeds from `MANIFEST_YAMLS`, or
+- (b) rewriting `bootstrap_test.rs` to seed a `SqliteRegistry` from
+  `MANIFEST_YAMLS` inline and assert against it.
+
+Both are non-trivial. The prior seam-audit's strangler-fig migration plan
+(L67-76) said "Migrate `bootstrap_test.rs` to assert against `SqliteRegistry`
+directly" but didn't specify which option. **Operator decision needed.**
 
 **Files:** `registry.rs`, `registry_sqlite.rs`, `bundle/mod.rs` (trait def),
-`hkask_templates.rs` (re-exports).
+`hkask_templates.rs` (re-exports), `tests/bootstrap_test.rs`.
 
 **Problem:** `Registry` (in-memory) has zero external consumers (grep-verified:
 only `bootstrap_test.rs:12`). `BundleRegistryIndex` trait has 2 impls but one
@@ -321,7 +335,20 @@ this); `execute_flowdef` and `execute_parallel` shrink by ~40 lines each;
 `SubCascade` struct ≤ 200 lines; `Box::pin` preserved; cancellation over-charge
 logged.
 
-### CAND-3-minimal (Worth exploring) — Extract `call_inference_stream*` only
+### CAND-3-minimal (Deferred) — Extract `call_inference_stream*` only
+
+**Status: Deferred.** The audit found `call_inference_stream` is dead in
+production (`#[allow(dead_code)]`) but pinned by 2 `// zed-kask: D25` tests
+(`call_inference_stream_threads_finish_reason_length`,
+`execute_select_empty_output_guard_pins_stream_shape`). The "dedup" is really
+"delete the dead one + keep the live one (`call_inference_stream_with_messages`)."
+
+Deleting `call_inference_stream` would remove the D25 pinning tests' target.
+The tests pin finish_reason propagation, which `_with_messages` also has — the
+tests could be rewritten to use `_with_messages`, but that's a test rewrite,
+not a simple deletion. Given low leverage (the dedup is cosmetic — the two
+functions share a body but one is dead) and the `.rules` "keep changes minimal,"
+this is deferred pending operator decision on whether to rewrite the D25 tests.
 
 **Files:** `step_actions.rs` → new `inference.rs`.
 
@@ -699,21 +726,36 @@ isolation test (step 3 above) closes this loop.
 ≤ 2; zero dead effect variants; zero dead modules; `cargo test --workspace`
 clean.
 
-### CAND-11 (Speculative) — Inline pass-through wrappers
+### CAND-11 (Partially complete) — Inline pass-through wrappers
 
-**Files:** `concurrency.rs`, `bundle/cascade.rs`, `step_actions.rs:1557,54`,
-`bundle/manifest.rs:204`, `bundle/composition.rs:84-109`, `executor.rs:189`.
+**Status: F1, F2, F4 are FIXED.** F1 (`concurrency.rs`) deleted, 3 import
+sites updated to use `hkask_types::concurrency` directly. F2
+(`bundle/cascade.rs`) deleted, `CascadePhase` inlined into `bundle/manifest.rs`,
+re-exported via `bundle/mod.rs`. F4 (`render_minijinja`) deleted, 3 tests
+rewritten to use `TemplateRenderer::new(...).render(...)` directly.
 
-**Problem:** F1, F2, F5, F6, F7, F8, F9 — pass-through wrappers that fail the
-deletion test.
+**Remaining (lower priority):**
+- F5 (`render_step_template`) — 7-line pass-through discarding 2 of 3 return
+  values. Inline at 2 call sites.
+- F6 (`apply_input_mapping`) — 12-line pass-through over `Value::Object`.
+  Inline at 4 call sites.
+- F7 (`phase_str`) — one-line delegate to `self.phase.as_str()`. Now inlined
+  into `manifest.rs` (since `CascadePhase` is there). **Done as part of F2.**
+- F8 (three `*_str()` methods on `BundleConflict`/`BundleComplementarity`) —
+  one-line delegates. Inline at call sites.
+- F9 (`execute_manifest` borrowed) — pass-through to `execute_manifest_into`
+  via `self.clone()`. Test ergonomics only; bridge uses `_into` exclusively.
+  **Keep** — the test ergonomics value is real.
 
-**Solution:** Inline each into its sole consumer. Delete the wrapper. **For F4
-(`render_minijinja`): delete, don't inline — callers should hold a
-`TemplateRenderer` directly** (idiomatic-rust finding).
+**Files:** `concurrency.rs` (deleted), `bundle/cascade.rs` (deleted),
+`template_renderer.rs` (F4 deleted, tests rewritten), `bundle/manifest.rs`
+(CascadePhase inlined), `bundle/mod.rs` (re-export updated),
+`executor.rs` + `step_machine.rs` (imports updated),
+`tests/concurrency_properties.rs` (import updated),
+`output_schema.rs` + `step_graph.rs` (test imports updated).
 
-**Essentialist verdict:** G1/G2/G3 PASS for all (pass-through wrappers).
-
-**Success criteria:** 7 wrappers inlined/deleted; `cargo test` clean.
+**Success criteria:** ✅ F1 deleted; ✅ F2 deleted + CascadePhase inlined;
+✅ F4 deleted + tests rewritten; ✅ `cargo test` clean; ✅ `./script/clippy` clean.
 
 ### CAND-12 (Worth exploring, pairs with CAND-3-minimal) — Typed `StepResultKey`
 

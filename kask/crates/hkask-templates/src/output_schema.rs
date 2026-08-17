@@ -206,8 +206,8 @@ pub(crate) fn build_structured_output_tool(schema: Value) -> ChatToolDefinition 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bundle::cascade::CascadePhase;
     use crate::bundle::manifest::BundleManifestStep;
+    use crate::bundle::manifest::CascadePhase;
 
     #[test]
     fn extract_contract_output_parses_simple_types() {

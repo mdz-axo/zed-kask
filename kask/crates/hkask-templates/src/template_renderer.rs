@@ -435,26 +435,6 @@ fn build_environment(base_path: &Path) -> minijinja::Environment<'static> {
     env
 }
 
-/// Render a template using minijinja (full Jinja2 syntax).
-///
-/// This is the one-shot entry point for callers that do not own a
-/// `TemplateRenderer` (notably `input_mapping::resolve_mapping_value` and
-/// tests). Production renders go through `TemplateRenderer::render`, which
-/// reuses a cached `Environment` and avoids rebuilding it per call.
-///
-/// Supports `{% for %}`, `{{ var }}`, `| filter`, `{% if %}`, `{% include %}`
-/// etc. The main template is registered under the synthetic name `"step"`;
-/// `{% include "path/frag.j2" %}` references resolve relative to
-/// `template_base_path`.
-pub fn render_minijinja(
-    template: &str,
-    context: &StepContext,
-    template_base_path: &Path,
-) -> Result<String> {
-    let renderer = TemplateRenderer::new(template_base_path.to_path_buf());
-    renderer.render(template, context)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,14 +443,15 @@ mod tests {
     // ── Path traversal regression tests (CWE-22) ──────────────────────────
 
     #[test]
-    fn render_minijinja_rejects_include_traversal() {
+    fn render_rejects_include_traversal() {
         let tmp = std::env::temp_dir().join("hkask-renderer-include-traversal-test");
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join("legit.j2"), "hello").unwrap();
 
         let malicious_template = r#"{% include "../../../etc/passwd" %}"#;
         let ctx = StepContext::new(HashMap::new());
-        let result = render_minijinja(malicious_template, &ctx, &tmp);
+        let renderer = TemplateRenderer::new(tmp.clone());
+        let result = renderer.render(malicious_template, &ctx);
         assert!(
             result.is_err(),
             "expected render error for traversal include, got: {result:?}"
@@ -480,13 +461,14 @@ mod tests {
     }
 
     #[test]
-    fn render_minijinja_rejects_backslash_include_traversal() {
+    fn render_rejects_backslash_include_traversal() {
         let tmp = std::env::temp_dir().join("hkask-renderer-backslash-include-test");
         std::fs::create_dir_all(&tmp).unwrap();
 
         let malicious_template = r#"{% include "..\\..\\etc\\passwd" %}"#;
         let ctx = StepContext::new(HashMap::new());
-        let result = render_minijinja(malicious_template, &ctx, &tmp);
+        let renderer = TemplateRenderer::new(tmp.clone());
+        let result = renderer.render(malicious_template, &ctx);
         assert!(
             result.is_err(),
             "expected render error for backslash traversal, got: {result:?}"
@@ -496,14 +478,15 @@ mod tests {
     }
 
     #[test]
-    fn render_minijinja_allows_legit_include() {
+    fn render_allows_legit_include() {
         let tmp = std::env::temp_dir().join("hkask-renderer-legit-include-test");
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join("fragment.j2"), "world").unwrap();
 
         let template = r#"hello {% include "fragment.j2" %}"#;
         let ctx = StepContext::new(HashMap::new());
-        let result = render_minijinja(template, &ctx, &tmp);
+        let renderer = TemplateRenderer::new(tmp.clone());
+        let result = renderer.render(template, &ctx);
         assert!(
             result.is_ok(),
             "legitimate include should succeed, got: {result:?}"

@@ -83,7 +83,7 @@ pub struct ManifestExecutor {
     /// Global inference concurrency limiter. `None` when not wired (tests).
     /// When `Some`, threaded into `Infra` so step actions can acquire permits
     /// before cloud inference / tool calls.
-    concurrency_limiter: Option<Arc<crate::concurrency::ConcurrencyLimiter>>,
+    concurrency_limiter: Option<Arc<hkask_types::concurrency::ConcurrencyLimiter>>,
 }
 
 impl ManifestExecutor {
@@ -162,7 +162,7 @@ impl ManifestExecutor {
     #[must_use]
     pub fn with_concurrency_limiter(
         mut self,
-        limiter: Arc<crate::concurrency::ConcurrencyLimiter>,
+        limiter: Arc<hkask_types::concurrency::ConcurrencyLimiter>,
     ) -> Self {
         self.concurrency_limiter = Some(limiter);
         self

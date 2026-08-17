@@ -31,7 +31,7 @@
 
 use std::sync::Arc;
 
-use hkask_templates::concurrency::ConcurrencyLimiter;
+use hkask_types::concurrency::ConcurrencyLimiter;
 use proptest::prelude::*;
 
 /// Arbitrary `(max, step)` pair with the constraints the constructor enforces:

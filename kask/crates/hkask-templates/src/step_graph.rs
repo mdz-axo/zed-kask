@@ -233,8 +233,8 @@ impl StepGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bundle::cascade::CascadePhase;
     use crate::bundle::manifest::BundleManifestStep;
+    use crate::bundle::manifest::CascadePhase;
 
     fn step(ordinal: u32, action: &str) -> BundleManifestStep {
         BundleManifestStep {

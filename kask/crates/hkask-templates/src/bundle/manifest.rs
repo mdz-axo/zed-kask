@@ -9,7 +9,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::cascade::CascadePhase;
 use super::composition::{BundleComplementarity, BundleConflict};
 use super::config::{
     BundleAuditConfig, BundleGasConfig, BundleLedgerConfig, ConvergenceConfig, ErrorHandlingConfig,
@@ -17,6 +16,29 @@ use super::config::{
 };
 use hkask_types::SkillPolarity;
 use hkask_types::Visibility;
+
+/// Cascade phase — where a step sits in the Pre/Core/Post pipeline.
+///
+/// Inlined from `bundle/cascade.rs` (F2 pass-through sweep — the module was
+/// a 23-line file for a 3-variant enum with one consumer, this file).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum CascadePhase {
+    Pre,
+    #[default]
+    Core,
+    Post,
+}
+
+// as_str pre:  self is a valid CascadePhase variant
+// as_str post: returns PascalCase string ("Pre", "Core", "Post")
+// parse_str pre:  s is PascalCase or lowercase ("Pre"/"pre", "Core"/"core", "Post"/"post")
+// parse_str post: returns Some(CascadePhase) if s matches; None otherwise
+hkask_types::enum_str_ops!(CascadePhase, {
+    Pre => ("Pre", "pre"),
+    Core => ("Core", "core"),
+    Post => ("Post", "post"),
+});
 
 /// Default concurrency for step execution within a PDCA iteration.
 const DEFAULT_CONCURRENCY: u32 = 32;
