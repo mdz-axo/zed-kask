@@ -72,9 +72,20 @@ extend-exclude = [
     "crates/edit_prediction_cli/evals/",
     # Tests contain `baˇr` that cause `"ba" should be "by" or "be".`-like false-positives
     "crates/editor/src/document_symbols.rs",
+
+    # Research artifacts contain proper nouns (esports team names, player
+    # handles, locales) that typos flags as false positives. These are data,
+    # not prose. ~3048 of 3376 typos findings live here.
+    "tasks/",
+    "assets/",
+    # This plan doc enumerates typo examples (real and false-positive) as
+    # evidence — typos flags its own example list. It is documentation of the
+    # remediation, not prose to be checked.
+    "kask/docs/plans/ci-typos-buf-jobs.md",
 ]
 
 [default]
+check-filename = true
 extend-ignore-re = [
     # PNG is a file format, not a typo
     "PNG",
@@ -109,4 +120,13 @@ extend-ignore-re = [
     # Used in truncating tests to ensure byte-length vs char like in café
     "caf…"
 ]
-check-filename = true
+
+[default.extend-words]
+# Boris Beizer — software testing theorist (Software Testing Techniques, 1990).
+# Used across the bug-hunt skill and test-harness docs.
+Beizer = "Beizer"
+beizer = "beizer"
+# ratatui is a real Rust crate (terminal UI framework).
+ratatui = "ratatui"
+# OT = Optimality Theory (linguistics), used in the pragmatic-semantics skill.
+OT = "OT"

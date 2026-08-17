@@ -5,13 +5,10 @@
 //! nothing is rejected at admission — the paper's "499 labels that match
 //! nothing" finding, prevented by construction.
 //!
-//! The registry is designed to be file-backed (`mcp/swarm/port_types.json`),
-//! but the file-backed load path is **not yet enforced** — `run()` constructs
-//! the registry via `PortRegistry::builtin()`. The `load_or_builtin` and
-//! `with_port_registry` helpers exist for future wiring but have only test
-//! callers today. When the file path is absent, the built-in seed is used.
-//! The built-in seed contains the labels already in use by existing cards and
-//! by `build_task_agent_card` in the kata-kanban server.
+//! The registry is seeded from `BUILTIN_PORT_TYPES` (the labels already in
+//! use by existing cards and by `build_task_agent_card` in the kata-kanban
+//! server). Runtime extension is via `register_type`; file-backed loading
+//! is not wired (no production caller existed).
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -54,77 +51,30 @@ pub struct PortTypeEntry {
 
 /// Built-in port types derived from existing cards (the paper's "start with
 /// what's already in use"). These are the only labels that can form a seam
-/// today. The operator can extend via `mcp/swarm/port_types.json` (not yet
-/// enforced — see module docs).
+/// today.
 ///
 /// Upgrade hazard: cards using labels not in this set (e.g. `"query"`,
 /// `"analysis"` from prior versions) are silently skipped on load after
-/// upgrade. The `load()` warn names the rejected label; operators must either
-/// add the label to `port_types.json` (once file-backed loading is wired) or
+/// upgrade. The `load()` warn names the rejected label; operators must
 /// update the card to use a built-in label.
 pub const BUILTIN_PORT_TYPES: &[&str] = &["text", "json", "task", "task_result"];
 
 /// Registered port types. A port label is a reference to a type, not a free
-/// string. The registry is a JSON file the operator can extend
-/// (`mcp/swarm/port_types.json`). When the file is absent, the built-in seed
-/// is used.
+/// string. The registry is seeded from `BUILTIN_PORT_TYPES`; operators extend
+/// it by adding labels to the built-in set (a code change) or by calling
+/// `register_type` at runtime.
 pub struct PortRegistry {
     types: HashMap<String, PortTypeEntry>,
 }
 
 impl PortRegistry {
-    /// Construct from the built-in seed. Used when no file path is provided
-    /// or the file is absent.
+    /// Construct from the built-in seed.
     pub fn builtin() -> Self {
         Self {
             types: BUILTIN_PORT_TYPES
                 .iter()
                 .map(|s| ((*s).to_string(), PortTypeEntry::default()))
                 .collect(),
-        }
-    }
-
-    /// Load from a JSON file containing an array of type strings, falling back
-    /// to the built-in seed if the file is absent. The fallback emits a
-    /// `warn!` naming the missing path — the operator cannot distinguish
-    /// "no registry file" from "registry file loaded" without it.
-    pub fn load_or_builtin(path: &str) -> Self {
-        match std::fs::read_to_string(path) {
-            Ok(contents) => match serde_json::from_str::<Vec<String>>(&contents) {
-                Ok(labels) => {
-                    let types: HashMap<String, PortTypeEntry> = labels
-                        .into_iter()
-                        .map(|l| (l, PortTypeEntry::default()))
-                        .collect();
-                    if types.is_empty() {
-                        tracing::warn!(
-                            target: "hkask.mcp.swarm",
-                            path = %path,
-                            "port_types.json is empty — falling back to built-in seed"
-                        );
-                        return Self::builtin();
-                    }
-                    Self { types }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        path = %path,
-                        %e,
-                        "failed to parse port_types.json — falling back to built-in seed"
-                    );
-                    Self::builtin()
-                }
-            },
-            Err(_) => {
-                tracing::warn!(
-                    target: "hkask.mcp.swarm",
-                    path = %path,
-                    "port_types.json not found — using built-in seed ({:?})",
-                    BUILTIN_PORT_TYPES
-                );
-                Self::builtin()
-            }
         }
     }
 

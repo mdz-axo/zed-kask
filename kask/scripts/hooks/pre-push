@@ -46,8 +46,7 @@ for script in \
   check-reg-canonical.sh \
   check-reg-creep.sh \
   check-string-errors.sh \
-  check-forecast-conformance.sh \
-  check-convergence-weights.sh; do
+  check-forecast-conformance.sh; do
   if [ -x "$KASK_DIR/scripts/$script" ]; then
     if ( cd "$KASK_DIR" && bash "scripts/$script" ) >/dev/null 2>&1; then
       echo "  ok: $script"

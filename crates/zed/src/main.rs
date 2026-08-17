@@ -1326,6 +1326,21 @@ fn main() {
                 });
                 db_passphrase_mirror_task.await;
 
+                // D29: mirror the RunPod API key from the kask credential store
+                // (`kask://credentials/runpod`) to the Zed keychain under the
+                // RunPod provider's `api_url` (`https://api.runpod.io`). The
+                // RunPod `LanguageModelProvider`'s `ApiKeyState` reads from the
+                // Zed keychain, not the kask store — without this mirror, a key
+                // set via the kask settings UI is invisible to the RunPod
+                // provider. Detached (not `.await`ed) because the RunPod provider
+                // re-checks the keychain on each `authenticate`/settings change,
+                // so a brief window before the mirror completes is acceptable.
+                let runpod_key_mirror_task = cx.update(|cx| {
+                    let credentials_provider = zed_credentials_provider::global(cx);
+                    kask_bridge::mirror_runpod_api_key(&credentials_provider, cx)
+                });
+                runpod_key_mirror_task.await;
+
                 // Hoisted to the outer scope so the IPC server (started later
                 // in the `cx.update` block) can access it. Set inside the
                 // `match provision_result` below.
