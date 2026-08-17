@@ -22,7 +22,7 @@
 //! - `DeepInfra/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra (cloud)
 //! - `OpenRouter/openai/gpt-4o` → OpenRouter (cloud)
 //! - `ollama/qwen3:8b` → Ollama (local)
-//! - `RunPod/kask-ocr` → RunPod (vision/OCR only — not available for chat)
+//! - `RunPod/allenai/olmocr-2-7b-1025` → RunPod (OLMOCR-2 vision/OCR via serverless vLLM endpoint)
 //! - No prefix → default provider (configurable, default: DeepInfra)
 
 use serde::{Deserialize, Serialize};
