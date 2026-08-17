@@ -45,21 +45,17 @@ echo ""
 OCR_PROMPT="Return the plain text representation of this document as if you were reading it naturally. Render the entire document in markdown format, including all headings, body text, and tables. Do not include any extra text or commentary."
 
 # Build the JSON payload using jq to handle the base64 image safely
-PAYLOAD=$(jq -n \
-  --arg img_b64 "$IMAGE_B64" \
-  --arg prompt "$OCR_PROMPT" \
-  '{
-    model: "kask-ocr",
-    messages: [{
-      role: "user",
-      content: [
-        {type: "text", text: $prompt},
-        {type: "image_url", image_url: {url: ("data:image/png;base64," + $img_b64)}}
-      ]
-    }],
-    max_tokens: 8192,
-    temperature: 0.0
-  }')
+# Build the payload JSON file directly (base64 is too large for jq argv)
+# The model name is the vLLM model ID, not the endpoint name.
+# kask-ocr is the endpoint name; the actual model is allenai/olmocr-2-7b-1025.
+OCR_MODEL="allenai/olmocr-2-7b-1025"
+PAYLOAD_FILE="/tmp/kask-ocr-payload.json"
+{
+  echo -n '{"model":"'"$OCR_MODEL"'","messages":[{"role":"user","content":[{"type":"text","text":"'"$OCR_PROMPT"'"},{"type":"image_url","image_url":{"url":"data:image/png;base64,'
+  echo -n "$IMAGE_B64"
+  echo -n '"}}]}],"max_tokens":8192,"temperature":0.0}'
+} > "$PAYLOAD_FILE"
+PAYLOAD="@$PAYLOAD_FILE"
 
 # ── Single request function ────────────────────────────────────────────────
 # Sends one OCR request and writes a result line to a temp file.
@@ -91,7 +87,7 @@ send_request() {
   fi
 }
 export -f send_request
-export PAYLOAD API_KEY REST_BASE REQUEST_TIMEOUT
+export PAYLOAD API_KEY REST_BASE REQUEST_TIMEOUT PAYLOAD_FILE
 
 # ── Test a concurrency level ──────────────────────────────────────────────
 test_concurrency() {
