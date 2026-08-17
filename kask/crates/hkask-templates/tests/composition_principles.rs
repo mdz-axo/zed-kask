@@ -298,7 +298,7 @@ fn lisp_eval_form_symbols_are_bound() {
         }
         let manifest = match load_manifest_from_yaml(&yaml) {
             Ok(m) => m,
-            Err(_) => continue,
+            Err(e) => panic!("manifest {:?} failed to parse: {e}", path),
         };
         let fname = path.file_name().unwrap().to_string_lossy();
 
@@ -447,7 +447,7 @@ fn mcp_steps_have_failure_handling() {
         }
         let manifest = match load_manifest_from_yaml(&yaml) {
             Ok(m) => m,
-            Err(_) => continue,
+            Err(e) => panic!("manifest {:?} failed to parse: {e}", path),
         };
         let fname = path.file_name().unwrap().to_string_lossy();
 
@@ -539,7 +539,7 @@ fn calibration_mode_min_iterations_gate() {
         }
         let manifest = match load_manifest_from_yaml(&yaml) {
             Ok(m) => m,
-            Err(_) => continue,
+            Err(e) => panic!("manifest {:?} failed to parse: {e}", path),
         };
         let fname = path.file_name().unwrap().to_string_lossy();
         let conv = &manifest.convergence;
@@ -627,7 +627,7 @@ fn convergence_mode_combinations_are_valid() {
         }
         let manifest = match load_manifest_from_yaml(&yaml) {
             Ok(m) => m,
-            Err(_) => continue,
+            Err(e) => panic!("manifest {:?} failed to parse: {e}", path),
         };
         let fname = path.file_name().unwrap().to_string_lossy();
         let mode = &manifest.convergence.convergence_mode;
@@ -737,7 +737,7 @@ fn compute_step_input_mapping_covers_primitive_inputs() {
         }
         let manifest = match load_manifest_from_yaml(&yaml) {
             Ok(m) => m,
-            Err(_) => continue,
+            Err(e) => panic!("manifest {:?} failed to parse: {e}", path),
         };
         let fname = path.file_name().unwrap().to_string_lossy();
 
@@ -832,7 +832,7 @@ fn shell_exec_only_in_skill_category_manifests() {
         }
         let manifest = match load_manifest_from_yaml(&yaml) {
             Ok(m) => m,
-            Err(_) => continue,
+            Err(e) => panic!("manifest {:?} failed to parse: {e}", path),
         };
         let fname = path.file_name().unwrap().to_string_lossy();
 

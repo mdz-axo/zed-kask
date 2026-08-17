@@ -145,4 +145,67 @@ mod tests {
         assert_eq!(report.delegations_with_nulled, 0);
         assert_eq!(report.delegations_with_narrative_leaks, 0);
     }
+
+    /// Deletion-resistance at the report level (paper Rule 5.4): the lead
+    /// metric `delegations_with_zero_nulled` is a raw count. Increasing
+    /// `delegations_with_nulled` (the violation count) does not change the
+    /// count of clean delegations. This is what makes the count deletion-
+    /// resistant — it cannot be gamed by hiding or removing violations.
+    ///
+    /// In contrast, `clean_rate` is a ratio that depends on the denominator
+    /// (`zero_nulled + nulled`). Adding violations decreases it; removing
+    /// violations increases it. This is why the trend report leads with the
+    /// count, not the rate.
+    #[test]
+    fn delegations_with_zero_nulled_count_is_deletion_resistant() {
+        let clean_only = GroundingTrendReport {
+            total_delegations: 3,
+            delegations_with_contract: 3,
+            delegations_without_contract: 0,
+            delegations_unenforceable: 0,
+            delegations_with_zero_nulled: 3,
+            delegations_with_nulled: 0,
+            delegations_with_narrative_leaks: 0,
+        };
+        // 3 clean, 0 violations → clean_rate = 1.0
+        assert_eq!(clean_only.delegations_with_zero_nulled, 3);
+        assert_eq!(clean_only.clean_rate(), Some(1.0));
+
+        // Now add 2 violations (simulating a card with nulled fields).
+        let with_violations = GroundingTrendReport {
+            total_delegations: 5,
+            delegations_with_contract: 5,
+            delegations_without_contract: 0,
+            delegations_unenforceable: 0,
+            delegations_with_zero_nulled: 3, // UNCHANGED — still 3 clean
+            delegations_with_nulled: 2,
+            delegations_with_narrative_leaks: 0,
+        };
+        // The count is unchanged: 3 clean delegations are still 3 clean
+        // delegations, regardless of how many violations exist.
+        assert_eq!(
+            with_violations.delegations_with_zero_nulled, clean_only.delegations_with_zero_nulled,
+            "delegations_with_zero_nulled must not change when violations are added"
+        );
+        // But the ratio dropped: clean_rate = 3 / (3 + 2) = 0.6
+        assert!((with_violations.clean_rate().unwrap() - 0.6).abs() < 1e-9);
+
+        // If the violations were removed (simulating card retirement that
+        // hides violations), the count stays at 3 but the ratio goes back
+        // to 1.0 — proving the ratio is gameable while the count is not.
+        let after_retirement = GroundingTrendReport {
+            total_delegations: 3,
+            delegations_with_contract: 3,
+            delegations_without_contract: 0,
+            delegations_unenforceable: 0,
+            delegations_with_zero_nulled: 3, // Still 3
+            delegations_with_nulled: 0,      // Violations hidden
+            delegations_with_narrative_leaks: 0,
+        };
+        assert_eq!(
+            after_retirement.delegations_with_zero_nulled, clean_only.delegations_with_zero_nulled,
+            "count unchanged whether violations are present or hidden"
+        );
+        assert_eq!(after_retirement.clean_rate(), Some(1.0));
+    }
 }

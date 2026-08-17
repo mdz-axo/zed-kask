@@ -766,8 +766,8 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                 })
                 .collect();
             let sensor_truth_divergence = if measured.len() >= 3 {
-                let d_improving = measured.windows(2).all(|w| w[1].0 <= w[0].0 + f64::EPSILON);
-                let s_declining = measured.windows(2).all(|w| w[1].1 <= w[0].1 + f64::EPSILON);
+                let d_improving = measured.windows(2).all(|w| w[1].0 <= w[0].0);
+                let s_declining = measured.windows(2).all(|w| w[1].1 <= w[0].1);
                 d_improving && s_declining
             } else {
                 false
@@ -2998,6 +2998,38 @@ mod tests {
                 .get("sensor_truth_divergence")
                 .and_then(|v| v.as_bool())
                 .unwrap()
+        );
+        assert_eq!(
+            result
+                .get("recommendation")
+                .and_then(|v| v.as_str())
+                .unwrap(),
+            "go_see"
+        );
+    }
+
+    // EPSILON-removal regression: the non-increasing check uses exact `<=`,
+    // not `<` with an f64::EPSILON tolerance. Equal values (not strictly
+    // decreasing) must still count as non-increasing. With d = [0.3, 0.3, 0.3]
+    // and s = [0.5, 0.5, 0.5], both d_improving and s_declining are true — the
+    // sensor is filtering truth even though neither signal is strictly moving.
+    #[test]
+    fn swarm_second_order_monitor_equal_values_are_non_increasing() {
+        let input = serde_json::json!({
+            "iteration_log": [
+                {"d": 0.3, "s": 0.5, "deficit_class": "a", "decision_action": "hire"},
+                {"d": 0.3, "s": 0.5, "deficit_class": "a", "decision_action": "hire"},
+                {"d": 0.3, "s": 0.5, "deficit_class": "a", "decision_action": "hire"}
+            ],
+            "loop_window": 3
+        });
+        let result = dispatch_compute("swarm.second_order_monitor", &input).unwrap();
+        assert!(
+            result
+                .get("sensor_truth_divergence")
+                .and_then(|v| v.as_bool())
+                .unwrap(),
+            "equal values are non-increasing under <=, so divergence must fire"
         );
         assert_eq!(
             result

@@ -369,12 +369,13 @@ impl StepMachine {
                         failure_mode = "truncated",
                         "Step truncated at max_tokens before emitting structured-output tool call"
                     );
-                    return Err(TemplateError::Manifest(format!(
-                        "Step {} truncated at max_tokens before emitting the structured-output \
-                         tool call — increase max_tokens or reduce the prompt; refusing to \
-                         parse partial output",
-                        node.ordinal
-                    )));
+                    return Err(TemplateError::ParseFailure {
+                        step_ordinal: node.ordinal,
+                        detail: "truncated at max_tokens before emitting the structured-output \
+                             tool call — increase max_tokens or reduce the prompt; refusing to \
+                             parse partial output"
+                            .to_string(),
+                    });
                 }
                 tracing::warn!(
                     target: "reg.skill.cascade.step_executed",
@@ -398,10 +399,13 @@ impl StepMachine {
                     failure_mode = "empty_output",
                     "Step returned empty output with no structured tool call."
                 );
-                return Err(TemplateError::Manifest(format!(
-                    "Step {} returned empty output (finish_reason: {:?}). Likely causes: max_tokens too low, model spent its budget on reasoning, or the provider returned no completion. Remediation: raise max_tokens, enable thinking_budget, retry, or convert the manifest step from 'select' to 'render' action.",
-                    node.ordinal, finish_reason
-                )));
+                return Err(TemplateError::ParseFailure {
+                    step_ordinal: node.ordinal,
+                    detail: format!(
+                        "returned empty output (finish_reason: {:?}). Likely causes: max_tokens too low, model spent its budget on reasoning, or the provider returned no completion. Remediation: raise max_tokens, enable thinking_budget, retry, or convert the manifest step from 'select' to 'render' action.",
+                        finish_reason
+                    ),
+                });
             }
             crate::executor::parse_json_response(&result_text, node.ordinal)?
         };
@@ -2388,6 +2392,235 @@ convergence:
             inference.peak(),
             2,
             "max_concurrency: 2 must allow both cascades' select calls to overlap"
+        );
+    }
+
+    // ── Empty batch/branches with allSettled guards ───────────────────
+
+    /// An empty `mcp_batch` with `join: allSettled` must return a
+    /// `TemplateError::Manifest` ("empty batch — no tools to execute"), not
+    /// panic on `.unwrap()` when partitioning an empty results vec. Before the
+    /// guard, `oks.is_empty() && errs.is_empty()` fell through to
+    /// `errs.into_iter().next().unwrap()`, which panicked on `None`.
+    #[tokio::test]
+    async fn empty_mcp_batch_allsettled_returns_error_not_panic() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let executor =
+            ManifestExecutor::new(inference, Arc::new(NoopToolPort), LLMParameters::default());
+
+        let manifest_yaml = r#"
+manifest:
+  id: test-empty-batch-allsettled
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: "Empty mcp_batch with allSettled"
+    mcp_batch: []
+    input_mapping:
+      join: allSettled
+convergence:
+  max_iterations: 1
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let result = executor
+            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .await;
+
+        let err = result
+            .expect_err("empty mcp_batch with allSettled must return Err, not panic on .unwrap()");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("empty batch"),
+            "error must mention empty batch; got: {msg}"
+        );
+    }
+
+    /// An empty `branches` array with `join: allSettled` must return a
+    /// `TemplateError::Manifest` ("empty branches array — no branches to
+    /// execute"), not panic on `.unwrap()` when partitioning an empty results
+    /// vec. Same guard pattern as `execute_tool_batch`.
+    #[tokio::test]
+    async fn empty_branches_allsettled_returns_error_not_panic() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::concurrency::ConcurrencyLimiter;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        // A concurrency limiter is required so buffer_bound is at least 1.
+        // Without it, buffer_bound falls back to branches.len() (0), and
+        // buffer_unordered(0) never polls the inner stream, hanging instead
+        // of discovering the stream is exhausted.
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let limiter = Arc::new(ConcurrencyLimiter::new(1, 1));
+        let executor =
+            ManifestExecutor::new(inference, Arc::new(NoopToolPort), LLMParameters::default())
+                .with_concurrency_limiter(limiter);
+
+        let manifest_yaml = r#"
+manifest:
+  id: test-empty-branches-allsettled
+  category: skill
+steps:
+  - ordinal: 1
+    action: parallel
+    description: "Empty branches with allSettled"
+    input_mapping:
+      branches: []
+      join: allSettled
+convergence:
+  max_iterations: 1
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let result = executor
+            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .await;
+
+        let err = result
+            .expect_err("empty branches with allSettled must return Err, not panic on .unwrap()");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("empty branches array"),
+            "error must mention empty branches; got: {msg}"
+        );
+    }
+
+    // ── ParseFailure typed-variant retry ──────────────────────────────
+
+    /// A stub `InferencePort` that always returns a truncated result
+    /// (`finish_reason: "length"`, partial JSON, no tool calls). Each `generate`
+    /// call increments the counter so the retry test can verify the typed
+    /// `TemplateError::ParseFailure` variant is retried by `dispatch_with_retry`
+    /// when `on_parse_failure: "retry"`.
+    struct TruncationCountingInference {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl TruncationCountingInference {
+        fn new() -> Self {
+            Self {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl InferencePort for TruncationCountingInference {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = std::result::Result<
+                            hkask_types::InferenceResult,
+                            hkask_types::InferenceError,
+                        >,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            let calls = &self.calls;
+            Box::pin(async move {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(hkask_types::InferenceResult {
+                    text: "{\"partial\":".to_string(),
+                    model: "test".into(),
+                    usage: hkask_types::InferenceUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    finish_reason: "length".into(),
+                    token_probabilities: None,
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    /// Verifies that the typed `TemplateError::ParseFailure` variant is retried
+    /// by `dispatch_with_retry` when `on_parse_failure: "retry"`. The
+    /// `is_parse_failure` string matching was replaced with a typed variant
+    /// match — this test pins that the typed match arm fires and retries.
+    ///
+    /// With `max_retries: 2` and `retry_backoff_seconds: 0`, the inference
+    /// `generate` is called 3 times (1 initial + 2 retries) before the error
+    /// propagates.
+    #[tokio::test]
+    async fn parse_failure_retries_with_typed_variant() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(TruncationCountingInference::new());
+        let executor = ManifestExecutor::new(
+            inference.clone(),
+            Arc::new(NoopToolPort),
+            LLMParameters::default(),
+        );
+
+        // output_schema activates the D25 truncation refusal guard, which
+        // returns TemplateError::ParseFailure (the typed variant).
+        let manifest_yaml = r#"
+manifest:
+  id: test-parse-failure-retry
+  category: skill
+steps:
+  - ordinal: 1
+    action: select
+    description: "Structured output step that always truncates"
+    template_ref: "Return a JSON object with a result key"
+    output_schema:
+      type: object
+      properties:
+        result:
+          type: string
+      required: [result]
+convergence:
+  max_iterations: 1
+error_handling:
+  on_parse_failure: retry
+  max_retries: 2
+  retry_backoff_seconds: 0
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let result = executor
+            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .await;
+
+        let err =
+            result.expect_err("truncated output must produce an error after retries are exhausted");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("truncated at max_tokens"),
+            "error must mention truncation; got: {msg}"
+        );
+
+        // 1 initial attempt + 2 retries = 3 generate calls. If the typed
+        // ParseFailure variant match arm were broken, only 1 call would
+        // happen (error propagates immediately without retry).
+        assert_eq!(
+            inference.calls(),
+            3,
+            "on_parse_failure: retry with max_retries: 2 must call generate 3 times (1 + 2 retries)"
         );
     }
 }

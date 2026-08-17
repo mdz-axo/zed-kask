@@ -233,6 +233,51 @@ impl VerificationStore {
             }
         }
     }
+
+    /// Enforce narrative-only grounding for ABW cloud delegation responses.
+    ///
+    /// ABW cloud agents produce free prose (not structured JSON), and we
+    /// don't have `tool_calls` visibility — the response is entirely
+    /// narrative. This method scans the narrative for leak patterns
+    /// (fabricated file paths, test results, code execution claims) and
+    /// records the result to the central ledger.
+    ///
+    /// Unlike `enforce_for_agent`, this method does NOT require a
+    /// registered `GroundingContract` for the agent_type — the narrative
+    /// scan rules are built-in (`ABW_NARRATIVE_LEAK_RULES`). The record
+    /// is written with `had_contract: true, was_enforced: true` so the
+    /// trend query counts it as a grounded delegation, not a coverage gap.
+    ///
+    /// `source` identifies the calling tool ("swarm_delegate",
+    /// "swarm_delegate_and_wait", "swarm_fanout") for cross-tool trend
+    /// analysis. `agent_id` is the ABW agent name. `agent_type` is
+    /// typically `"abw_cloud"`.
+    ///
+    /// Returns the `GroundingResult` (with any narrative leaks found).
+    /// The caller does not need to modify the response — narrative
+    /// grounding keeps the prose (paper §5.5: "keep, scan for claims it
+    /// cannot support").
+    pub fn enforce_narrative(
+        &self,
+        source: &str,
+        agent_id: &str,
+        agent_type: &str,
+        narrative: &str,
+    ) -> GroundingResult {
+        let result = scan_narrative_for_leaks(narrative);
+        if !result.narrative_leaks.is_empty() {
+            tracing::warn!(
+                target: "hkask.verification",
+                agent_id = %agent_id,
+                agent_type = %agent_type,
+                narrative_leaks = ?result.narrative_leaks,
+                "ABW narrative grounding: found {} narrative leak(s) in cloud delegation response",
+                result.narrative_leaks.len(),
+            );
+        }
+        self.record_grounding(source, agent_id, agent_type, &result);
+        result
+    }
 }
 
 /// The outcome of `enforce_and_stamp` — the caller uses this to stamp
@@ -776,6 +821,99 @@ mod tests {
             .expect("agent_b trend");
         assert_eq!(agent_b.total_delegations, 1);
         assert_eq!(agent_b.delegations_with_nulled, 1);
+    }
+
+    /// Deletion-resistance property (paper Rule 5.4): the lead metric
+    /// `delegations_with_zero_nulled` is a COUNT of clean delegations, not a
+    /// ratio. Adding more delegations with violations does not change the
+    /// count of clean delegations. This is what makes it deletion-resistant —
+    /// an adversary cannot game the scoreboard by recording fewer
+    /// delegations or retiring cards that produced violations.
+    ///
+    /// In contrast, `clean_rate` IS a ratio and IS affected by the
+    /// denominator — adding violations decreases it, and removing violations
+    /// (by retiring the card) increases it. This is why the trend leads with
+    /// the count, not the rate.
+    #[test]
+    fn delegations_with_zero_nulled_is_deletion_resistant() {
+        let store = test_store();
+        let clean_output = json!({
+            "deliverable_path": "/src/clean.rs",
+            "summary": "did the work",
+            "approach": "directly",
+        });
+        let clean_tools = vec![json!({ "tool": "zed/write_file", "ok": true })];
+        let nulled_output = json!({
+            "deliverable_path": "/src/fabricated.rs",
+            "summary": "did the work",
+            "approach": "directly",
+        });
+
+        // Record 3 clean delegations.
+        for _ in 0..3 {
+            store.enforce_for_agent(
+                "kanban_task_spawn",
+                "good_agent",
+                "task",
+                &clean_output,
+                &clean_tools,
+                &clean_output.to_string(),
+            );
+        }
+        let trend_before = store
+            .grounding_trend(&TrendScope::Global)
+            .expect("trend before violations");
+        assert_eq!(trend_before.delegations_with_zero_nulled, 3);
+        assert_eq!(trend_before.delegations_with_nulled, 0);
+        assert_eq!(trend_before.clean_rate(), Some(1.0));
+
+        // Now record 2 delegations with violations from a different agent
+        // (simulating a card that produces nulled fields).
+        for _ in 0..2 {
+            store.enforce_for_agent(
+                "kanban_task_spawn",
+                "bad_agent",
+                "task",
+                &nulled_output,
+                &[],
+                &nulled_output.to_string(),
+            );
+        }
+        let trend_after = store
+            .grounding_trend(&TrendScope::Global)
+            .expect("trend after violations");
+
+        // The deletion-resistant count is UNCHANGED — 3 clean delegations
+        // are still 3 clean delegations, regardless of how many violations
+        // were recorded by other agents.
+        assert_eq!(
+            trend_after.delegations_with_zero_nulled, 3,
+            "delegations_with_zero_nulled must not change when violations are added \
+             (deletion-resistant, paper Rule 5.4)"
+        );
+        assert_eq!(trend_after.delegations_with_nulled, 2);
+
+        // The clean_rate ratio DID change — it dropped from 1.0 to 0.6.
+        // This is why clean_rate is NOT the lead metric: an adversary could
+        // game it by retiring the bad_agent card (removing its violations
+        // from the denominator), which would push clean_rate back to 1.0.
+        // The count stays at 3 regardless.
+        assert!((trend_after.clean_rate().unwrap() - 0.6).abs() < 1e-9);
+
+        // The ledger is append-only: querying the bad_agent scope still
+        // shows its violations. Retiring the card in the agent registry
+        // does NOT remove records from the ledger — the trend still sees
+        // them, so the clean_rate cannot be gamed by retirement.
+        let bad_agent_trend = store
+            .grounding_trend(&TrendScope::ByAgent("bad_agent".to_string()))
+            .expect("bad_agent trend");
+        assert_eq!(bad_agent_trend.delegations_with_nulled, 2);
+        assert_eq!(bad_agent_trend.delegations_with_zero_nulled, 0);
+
+        // The global trend still includes bad_agent's violations — retiring
+        // the card cannot hide them from the global scoreboard.
+        assert_eq!(trend_after.total_delegations, 5);
+        assert_eq!(trend_after.delegations_with_nulled, 2);
     }
 }
 

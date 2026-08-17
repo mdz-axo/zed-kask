@@ -304,11 +304,9 @@ pub(crate) fn parse_json_response(text: &str, step_ordinal: u32) -> Result<Value
         return Ok(v);
     }
     let extracted = llm_json::extract_json_from_response(text);
-    serde_json::from_str(&extracted).map_err(|e| {
-        TemplateError::Manifest(format!(
-            "Step {}: Failed to parse JSON response: {}",
-            step_ordinal, e
-        ))
+    serde_json::from_str(&extracted).map_err(|e| TemplateError::ParseFailure {
+        step_ordinal,
+        detail: format!("Failed to parse JSON response: {e}"),
     })
 }
 

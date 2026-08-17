@@ -350,10 +350,8 @@ pub struct ErrorHandlingConfig {
     /// Policy for JSON parse failures from `select` steps: `"retry"` (retry
     /// up to `max_retries` times with a correction preamble) or `"abort"`
     /// (propagate immediately). Read by `StepMachine::dispatch_with_retry`.
-    /// Parse failures are `TemplateError::Manifest` errors where the message
-    /// starts with "Step N: Failed to parse JSON response" or
-    /// "Step N returned empty output" or
-    /// "Step N truncated at max_tokens". These are often transient — the
+    /// Parse failures are `TemplateError::ParseFailure` errors (JSON parse,
+    /// empty output, or truncation). These are often transient — the
     /// model may emit valid JSON on retry. Non-parse `Manifest` errors
     /// (e.g. missing `mcp` reference) propagate immediately regardless of
     /// this field.

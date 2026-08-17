@@ -50,9 +50,12 @@ pub fn validate_typing(
     for label in card.accepts.iter().chain(card.produces.iter()) {
         if !registry.resolves(label) {
             return Err(LocalSwarmError::InvalidInput(format!(
-                "agent '{}': port label '{}' does not resolve to a registered type; \
-                 see mcp/swarm/port_types.json",
-                card.agent_id, label
+                "agent '{}': port label '{}' does not resolve to a registered type. \
+                 Valid built-in labels are {:?}. Update the card's accepts/produces to use \
+                 one of these (file-backed registry extension is not yet wired).",
+                card.agent_id,
+                label,
+                crate::port_registry::BUILTIN_PORT_TYPES
             )));
         }
     }

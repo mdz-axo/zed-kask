@@ -349,7 +349,7 @@ override; the constants are compile-time defaults, env vars take precedence.
 
 | Constant | Value | Env override |
 |----------|-------|--------------|
-| `DEFAULT_CLASSIFIER_MODEL` | `OpenRouter/deepseek/deepseek-v4-flash` | `HKASK_CLASSIFIER_MODEL` |
+| `DEFAULT_CLASSIFIER_MODEL` | `OpenRouter/z-ai/glm-5.2` | `HKASK_CLASSIFIER_MODEL` |
 | `DEFAULT_EMBEDDING_MODEL` | `DeepInfra/Qwen/Qwen3-Embedding-0.6B` | `HKASK_EMBEDDING_MODEL` |
 | `DEFAULT_OCR_MODEL` | `RunPod/kask-ocr` | `HKASK_OCR_MODEL` |
 | `DEFAULT_FALLBACK_MODEL` | `OpenRouter/z-ai/glm-5.2` | `HKASK_DEFAULT_MODEL` |

@@ -26,6 +26,11 @@ pub enum TemplateError {
         step_ordinal: u32,
         elapsed_seconds: u64,
     },
+    /// Parse failure (JSON parse, empty output, or truncation). Typed so the
+    /// retry loop in `run_pass` can detect it without string-matching the
+    /// `Manifest` message — same pattern as `Timeout`.
+    #[error("Step {step_ordinal}: parse failure: {detail}")]
+    ParseFailure { step_ordinal: u32, detail: String },
     #[error("Database error: {0}")]
     Database(#[from] hkask_types::InfrastructureError),
     #[error("Inference error: {0}")]
@@ -73,6 +78,7 @@ impl TemplateError {
             Self::Render(_) => "HKASK-SKILL-002",
             Self::Manifest(_) => "HKASK-SKILL-003",
             Self::Timeout { .. } => "HKASK-SKILL-013",
+            Self::ParseFailure { .. } => "HKASK-SKILL-014",
             Self::Database(_) => "HKASK-SKILL-004",
             Self::Inference(_) => "HKASK-SKILL-005",
             Self::Mcp(_) => "HKASK-SKILL-006",
@@ -124,8 +130,8 @@ impl TemplateError {
             | Self::Inference(hkask_types::InferenceError::Generation(m)) => m.as_str(),
             Self::Mcp(err) => &err.to_string(),
             // CircuitOpen is a sustained-breaker state, not a single throttle.
-            // Json / NotFound / Render / Manifest / Validation / Timeout /
-            // PathTraversal / SandboxViolation / SkillLoad / Frontmatter /
+            // Json / NotFound / Render / Manifest / ParseFailure / Validation /
+            // Timeout / PathTraversal / SandboxViolation / SkillLoad / Frontmatter /
             // Database are not throttles.
             _ => return false,
         };

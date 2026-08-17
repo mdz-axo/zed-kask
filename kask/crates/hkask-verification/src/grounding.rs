@@ -427,6 +427,55 @@ pub const NARRATIVE_LEAK_RULES: &[(&str, LeakRule)] = &[
     ("test_verdict", LeakRule::Word("0 failed")),
 ];
 
+/// Narrative leak rules for ABW cloud delegation responses. These are
+/// broader than the field-specific `NARRATIVE_LEAK_RULES` because ABW
+/// responses are free prose with no structured fields and no `tool_calls`
+/// visibility — the entire response is narrative. The rules detect claims
+/// that an ABW cloud agent might fabricate without tool access.
+///
+/// Deliberately conservative (paper Rule 5.2): a rule that fires on
+/// legitimate output is worse than no rule because it gets switched off.
+/// Each rule targets a distinctive pattern unlikely to appear in honest
+/// summary prose.
+pub const ABW_NARRATIVE_LEAK_RULES: &[(&str, LeakRule)] = &[
+    // File paths — same as task agent; fabricated paths in prose.
+    ("narrative", LeakRule::Word("/src/")),
+    ("narrative", LeakRule::Word("/home/")),
+    // Test verdicts — claimed test results without tool visibility.
+    ("narrative", LeakRule::Word("all tests passed")),
+    ("narrative", LeakRule::Word("tests passed")),
+    ("narrative", LeakRule::Word("0 failed")),
+    // Claimed code execution — the ABW agent claims to have run code
+    // but we have no tool_calls to verify it.
+    ("narrative", LeakRule::Word("i ran the tests")),
+    ("narrative", LeakRule::Word("i executed the code")),
+];
+
+/// Scan a narrative string for leak patterns. Used for ABW cloud
+/// delegation responses where the entire output is prose (no structured
+/// JSON, no `tool_calls`). Returns a `GroundingResult` with any narrative
+/// leaks found — no fields are nulled because there are no structured
+/// fields to null.
+///
+/// This is the narrative-only grounding path (paper §5.5: Narrative
+/// disposition — "keep, scan for claims it cannot support"). The ABW
+/// agent was commissioned to produce a response, so the prose is kept;
+/// we scan for claims that look fabricated (file paths, test results,
+/// code execution) that the agent could not have produced without tool
+/// access we can't verify.
+pub fn scan_narrative_for_leaks(narrative: &str) -> GroundingResult {
+    let haystack = narrative.to_ascii_lowercase();
+    let mut result = GroundingResult::default();
+    for (block, rule) in ABW_NARRATIVE_LEAK_RULES {
+        if rule.matches(&haystack) {
+            result
+                .narrative_leaks
+                .push((format!("{:?} rule matched", block), block.to_string()));
+        }
+    }
+    result
+}
+
 /// Scan narrative text for mentions of a removed value. Returns the
 /// matching substring if found.
 ///
@@ -899,6 +948,17 @@ mod tests {
         let short = serde_json::Value::String("short".to_string());
         let preview = truncate_preview(&short);
         assert_eq!(preview, "short");
+    }
+
+    #[test]
+    fn truncate_preview_multibyte_utf8_does_not_panic() {
+        // A string where byte 200 falls inside a multibyte character.
+        // "é" is 2 bytes (0xC3 0xA9); 101 copies = 202 bytes.
+        // Byte 200 is inside the 101st "é" — &s[..200] would panic.
+        let value = serde_json::Value::String("é".repeat(101));
+        let preview = truncate_preview(&value);
+        assert!(preview.ends_with("..."));
+        // Must not panic — that's the test.
     }
 
     // ── C1: Derived provenance variant ──────────────────────────────────

@@ -363,7 +363,6 @@ impl CyberneticsLoop {
     pub fn set_verification_store(&mut self, store: Arc<hkask_verification::VerificationStore>) {
         let clean_floor = self.set_points.grounding_clean_rate_floor;
         let coverage_floor = self.set_points.grounding_coverage_rate_floor;
-        self.verification_store = Some(Arc::clone(&store));
         self.sensor_registry
             .register(Arc::new(crate::sensor_provider::GroundingSensor::new(
                 Arc::clone(&store),
@@ -380,11 +379,12 @@ impl CyberneticsLoop {
             )));
         self.sensor_registry
             .register(Arc::new(crate::sensor_provider::GroundingSensor::new(
-                store,
+                Arc::clone(&store),
                 crate::sensor_provider::GroundingSensorMetric::ViolationDelta,
                 clean_floor,
                 coverage_floor,
             )));
+        self.verification_store = Some(store);
     }
 
     /// Override the stagnation detection threshold (default: 5 cycles).
@@ -1360,6 +1360,15 @@ impl CyberneticsLoop {
                 RegulationData::VarietyDeficitExceeded { deficit, .. } => {
                     (*deficit, SignalMetric::VarietyDeficit)
                 }
+                RegulationData::GroundingCleanRateDegraded { clean_rate, .. } => {
+                    (*clean_rate, SignalMetric::GroundingCleanRate)
+                }
+                RegulationData::GroundingCoverageDegraded { coverage_rate, .. } => {
+                    (*coverage_rate, SignalMetric::GroundingCoverageRate)
+                }
+                RegulationData::GroundingViolationDeltaIncreased { delta, .. } => {
+                    (*delta as f64, SignalMetric::GroundingViolationDelta)
+                }
                 _ => continue,
             };
 
@@ -1369,15 +1378,68 @@ impl CyberneticsLoop {
                     .map(|(_, s)| s.remaining as f64 / s.ceiling.max(1) as f64)
                     .fold(1.0, f64::min),
                 SignalMetric::VarietyDeficit => current_deficit,
+                SignalMetric::GroundingCleanRate
+                | SignalMetric::GroundingCoverageRate
+                | SignalMetric::GroundingViolationDelta => {
+                    // Re-sense grounding metrics from the verification ledger.
+                    // If the store is not wired or the query fails, we can't
+                    // measure impact — skip rather than fabricate a value
+                    // (absence ≠ 0, paper Rule 5.3).
+                    let Some(ref store) = self.verification_store else {
+                        continue;
+                    };
+                    let report = match store
+                        .grounding_trend(&hkask_verification::TrendScope::Global)
+                    {
+                        Ok(report) => report,
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "reg.grounding",
+                                error = %error,
+                                "verify_impact: grounding trend query failed — skipping impact verification for grounding action (not 'no change')"
+                            );
+                            continue;
+                        }
+                    };
+                    match metric {
+                        SignalMetric::GroundingCleanRate => {
+                            // clean_rate is None when no grounded delegations
+                            // exist — absence ≠ 0. Skip rather than treat as 0.
+                            match report.clean_rate() {
+                                Some(rate) => rate,
+                                None => continue,
+                            }
+                        }
+                        SignalMetric::GroundingCoverageRate => match report.coverage_rate() {
+                            Some(rate) => rate,
+                            None => continue,
+                        },
+                        SignalMetric::GroundingViolationDelta => {
+                            // For violation delta, the "after" value is the
+                            // current delegations_with_nulled count. If it
+                            // decreased, the alert was effective (violations
+                            // went down). If it increased or stayed the same,
+                            // the alert was ineffective.
+                            report.delegations_with_nulled as f64
+                        }
+                        _ => continue,
+                    }
+                }
                 _ => continue,
             };
 
             let delta = after_val - before_val;
             // For EnergyRemaining: higher is better (positive delta = improved).
             // For VarietyDeficit: lower is better (negative delta = improved).
+            // For GroundingCleanRate / GroundingCoverageRate: higher is better.
+            // For GroundingViolationDelta: lower is better (fewer nulled delegations).
             let improved = match metric {
                 SignalMetric::EnergyRemaining => delta > 0.0,
                 SignalMetric::VarietyDeficit => delta < 0.0,
+                SignalMetric::GroundingCleanRate | SignalMetric::GroundingCoverageRate => {
+                    delta > 0.0
+                }
+                SignalMetric::GroundingViolationDelta => delta < 0.0,
                 _ => delta.abs() > f64::EPSILON,
             };
 
@@ -1977,11 +2039,6 @@ impl CyberneticsLoop {
                         "grounding_clean_rate_degraded",
                         RegulationData::GroundingCleanRateDegraded {
                             clean_rate: dev.signal.value,
-                            // coverage_rate is not carried on the signal —
-                            // the alert message notes the clean_rate floor
-                            // violation; the operator queries
-                            // curator_grounding_coverage for the coverage gap.
-                            coverage_rate: -1.0,
                             floor: dev.signal.set_point,
                         },
                     ),
@@ -2021,8 +2078,6 @@ impl CyberneticsLoop {
                         "grounding_violation_delta_increased",
                         RegulationData::GroundingViolationDeltaIncreased {
                             delta: dev.signal.value as i64,
-                            current_nulled: 0,
-                            previous_nulled: 0,
                         },
                     ),
                     "grounding_violation_delta".into(),

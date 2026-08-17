@@ -271,7 +271,7 @@ constants, which are `const` references to the single source of truth in
 |-------|------|---------|-------------------|
 | `default_model` | `String` | `""` | `DEFAULT_INFERENCE_MODEL` = `DEFAULT_FALLBACK_MODEL` = `"OpenRouter/z-ai/glm-5.2"` (model_constants.rs:35) |
 | `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"DeepInfra/Qwen/Qwen3-Embedding-0.6B"` (model_constants.rs:26) |
-| `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"OpenRouter/deepseek/deepseek-v4-flash"` (model_constants.rs:23) |
+| `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"OpenRouter/z-ai/glm-5.2"` (model_constants.rs:23) |
 
 `model_constants.rs` also defines `DEFAULT_OCR_MODEL` (`"RunPod/kask-ocr"`),
 env `HKASK_OCR_MODEL`), `DEFAULT_TTS_MODEL` (`"DeepInfra/hexgrad/Kokoro-82M"`),

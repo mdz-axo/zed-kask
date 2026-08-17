@@ -12,7 +12,8 @@
 
 /// Canonical classifier model for all classification surfaces (corpus
 /// pipeline, QA triage, convergence evaluation, h_mem extraction).
-/// DeepSeek V4 Flash via OpenRouter: fast, cheap, strong classification quality.
+/// GLM-5.2 via OpenRouter: strongest classification accuracy on the real
+/// hKask label-space eval (39/47; see kask/docs/review/classifier-model-review.md).
 ///
 /// This is the single source of truth for the classifier model id. Every
 /// call site resolves it via [`classifier_model`] (env `HKASK_CLASSIFIER_MODEL`
@@ -20,7 +21,7 @@
 /// `model:` field empty to defer to this path; `ClassifierConfig::from_def`
 /// passes the full provider-prefixed string to `InferencePort::generate_with_model`,
 /// and the `LanguageModelRegistry` resolves the `OpenRouter/` prefix to the provider.
-pub const DEFAULT_CLASSIFIER_MODEL: &str = "OpenRouter/deepseek/deepseek-v4-flash";
+pub const DEFAULT_CLASSIFIER_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 
 /// Default embedding model.
 pub const DEFAULT_EMBEDDING_MODEL: &str = "DeepInfra/Qwen/Qwen3-Embedding-0.6B";

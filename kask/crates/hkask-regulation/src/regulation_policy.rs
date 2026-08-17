@@ -506,10 +506,40 @@ impl RegulationPolicy {
 
 /// Extract (deficit, threshold) from a `RegulationData` variant.
 /// Returns (0, 0) when the variant doesn't carry deficit/threshold.
+///
+/// For grounding variants, the deficit/threshold vocabulary is adapted:
+/// - `GroundingCleanRateDegraded`: deficit = floor - clean_rate (how far
+///   below floor), threshold = floor scaled to 100 for readability.
+/// - `GroundingCoverageDegraded`: deficit = floor - coverage_rate, threshold
+///   = floor scaled to 100.
+/// - `GroundingViolationDeltaIncreased`: deficit = delta (new violations),
+///   threshold = 0 (any positive delta is a deviation).
+/// This ensures the `error_context` JSON in the escalation queue carries
+/// meaningful values, not (0, 0) which looks like a bug.
 pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> (u64, u64) {
     match data {
         RegulationData::VarietyDeficitExceeded { deficit, threshold } => {
             (*deficit as u64, *threshold as u64)
+        }
+        RegulationData::GroundingCleanRateDegraded { clean_rate, floor } => {
+            // Deficit = how far below the floor (scaled to 0-100).
+            // A clean_rate of 0.5 with floor 0.8 → deficit 30, threshold 80.
+            let deficit = ((floor - clean_rate) * 100.0).max(0.0) as u64;
+            let threshold = (floor * 100.0) as u64;
+            (deficit, threshold)
+        }
+        RegulationData::GroundingCoverageDegraded {
+            coverage_rate,
+            floor,
+        } => {
+            let deficit = ((floor - coverage_rate) * 100.0).max(0.0) as u64;
+            let threshold = (floor * 100.0) as u64;
+            (deficit, threshold)
+        }
+        RegulationData::GroundingViolationDeltaIncreased { delta } => {
+            // Deficit = the delta (new violations). Threshold = 0 (any
+            // positive delta is a deviation).
+            (*delta as u64, 0)
         }
         _ => (0, 0),
     }

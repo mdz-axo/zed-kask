@@ -479,22 +479,20 @@ impl StepMachine {
                     }
                     continue;
                 }
-                Err(crate::ports::TemplateError::Manifest(msg))
-                    if attempt < max_retries
-                        && self.error_handling.on_parse_failure == "retry"
-                        && is_parse_failure(msg.as_str()) =>
-                {
+                Err(crate::ports::TemplateError::ParseFailure {
+                    step_ordinal,
+                    detail: _,
+                }) if attempt < max_retries && self.error_handling.on_parse_failure == "retry" => {
                     attempt += 1;
                     tracing::warn!(
                         target: "reg.skill.cascade.parse_failure_retry",
-                        step = node.ordinal,
+                        step = step_ordinal,
                         attempt,
                         max_retries,
                         backoff_seconds = self.error_handling.retry_backoff_seconds,
-                        error = %msg,
                         failure_mode = "parse_failure",
                         "Step {} parse failure — retrying (attempt {}/{}) after {}s backoff",
-                        node.ordinal,
+                        step_ordinal,
                         attempt,
                         max_retries,
                         self.error_handling.retry_backoff_seconds,
@@ -720,18 +718,6 @@ enum PassResult {
     Exit(ExitKind),
 }
 
-/// Check whether a `TemplateError::Manifest` message represents a parse
-/// failure that is eligible for retry under `on_parse_failure: retry`.
-/// Parse failures are transient — the model may emit valid JSON on retry.
-/// Non-parse `Manifest` errors (e.g. missing `mcp` reference, missing
-/// `template_ref`) are not eligible for retry — they are structural
-/// errors that will recur on every attempt.
-fn is_parse_failure(msg: &str) -> bool {
-    msg.contains("Failed to parse JSON response")
-        || msg.contains("returned empty output")
-        || msg.contains("truncated at max_tokens")
-}
-
 /// Classify a `TemplateError` into a `failure_mode` string for tracing.
 /// This enables operators to filter and aggregate skill failures by mode
 /// (e.g. `failure_mode=timeout`, `failure_mode=parse_failure`,
@@ -740,14 +726,9 @@ fn is_parse_failure(msg: &str) -> bool {
 fn classify_failure_mode(error: &crate::ports::TemplateError) -> &'static str {
     match error {
         crate::ports::TemplateError::Timeout { .. } => "timeout",
+        crate::ports::TemplateError::ParseFailure { .. } => "parse_failure",
         crate::ports::TemplateError::NotFound(_) => "tool_not_found",
-        crate::ports::TemplateError::Manifest(msg) => {
-            if is_parse_failure(msg) {
-                "parse_failure"
-            } else {
-                "manifest_error"
-            }
-        }
+        crate::ports::TemplateError::Manifest(_) => "manifest_error",
         crate::ports::TemplateError::Mcp(_) => "mcp_error",
         crate::ports::TemplateError::Render(_) => "render_error",
         crate::ports::TemplateError::Inference(_) => "inference_error",
