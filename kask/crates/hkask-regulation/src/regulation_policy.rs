@@ -46,6 +46,25 @@ pub enum RegulationReason {
     InferenceUnavailable,
     InferenceGasLow,
     ModelUnavailable,
+    /// Grounding clean rate dropped below the configured floor — more than
+    /// the tolerated fraction of grounded delegations have nulled fields.
+    /// A quality regression: a tool broke, an agent's prompt drifted, or a
+    /// model was swapped. The operator's remediation is to investigate the
+    /// recent violations (via `curator_grounding_violations`) and fix the
+    /// root cause — the regulation system does not auto-fix grounding
+    /// contracts (that's a human decision).
+    GroundingCleanRateDegraded,
+    /// Grounding coverage rate dropped below the configured floor — more
+    /// than the tolerated fraction of delegations have no grounding contract.
+    /// A coverage gap (paper §6): agent types exist with delegations but no
+    /// contract. The operator's remediation is to register contracts for the
+    /// uncovered agent types.
+    GroundingCoverageDegraded,
+    /// Grounding violation delta is positive — new nulled fields appeared
+    /// since the last sense tick. The spike is the regulation signal that
+    /// something changed. Routed as Escalate so the Curator surfaces it to
+    /// the user via the algedonic alert path.
+    GroundingViolationDeltaIncreased,
 }
 
 impl RegulationReason {
@@ -82,6 +101,9 @@ impl RegulationReason {
             Self::InferenceUnavailable => "inference_unavailable",
             Self::InferenceGasLow => "inference_gas_low",
             Self::ModelUnavailable => "model_unavailable",
+            Self::GroundingCleanRateDegraded => "grounding_clean_rate_degraded",
+            Self::GroundingCoverageDegraded => "grounding_coverage_degraded",
+            Self::GroundingViolationDeltaIncreased => "grounding_violation_delta_increased",
         }
     }
 }
@@ -428,6 +450,42 @@ impl RegulationPolicy {
                         reason: ModelUnavailable,
                     }],
                 },
+                // ── Grounding (Cybernetics Loop 6 — verification ladder Rung 3) ──
+                // Grounding clean rate below floor → Escalate to Curation.
+                // The operator must investigate which delegations have nulled
+                // fields (curator_grounding_violations) and fix the root cause.
+                RegulationRule {
+                    metric: GroundingCleanRate,
+                    direction: BelowSetPoint,
+                    proposed: &[ProposedAction {
+                        target: Curation,
+                        action_type: Escalate,
+                        reason: GroundingCleanRateDegraded,
+                    }],
+                },
+                // Grounding coverage rate below floor → Escalate to Curation.
+                // The operator must register contracts for uncovered agent types.
+                RegulationRule {
+                    metric: GroundingCoverageRate,
+                    direction: BelowSetPoint,
+                    proposed: &[ProposedAction {
+                        target: Curation,
+                        action_type: Escalate,
+                        reason: GroundingCoverageDegraded,
+                    }],
+                },
+                // Grounding violation delta above zero → Escalate to Curation.
+                // A positive delta means new nulled fields appeared since the
+                // last tick — the spike is the regulation signal.
+                RegulationRule {
+                    metric: GroundingViolationDelta,
+                    direction: AboveSetPoint,
+                    proposed: &[ProposedAction {
+                        target: Curation,
+                        action_type: Escalate,
+                        reason: GroundingViolationDeltaIncreased,
+                    }],
+                },
             ],
         }
     }
@@ -516,6 +574,10 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         SignalMetric::MemoryLife => &[Calibrate, Escalate],
         SignalMetric::InferenceAvailable => &[Throttle, Calibrate, Escalate],
         SignalMetric::InferenceModelAvailable => &[Calibrate, Escalate],
+        // ── Grounding (Escalate — the Curator surfaces to the user) ──
+        SignalMetric::GroundingCleanRate => &[Escalate, Calibrate],
+        SignalMetric::GroundingCoverageRate => &[Escalate, Calibrate],
+        SignalMetric::GroundingViolationDelta => &[Escalate, Calibrate],
         // ── Observational (no substitution — Notify is terminal) ──
         SignalMetric::StorageUsage
         | SignalMetric::TripleCount

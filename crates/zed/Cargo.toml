@@ -72,6 +72,7 @@ hkask-mcp.workspace = true
 hkask-capability.workspace = true
 hkask-types.workspace = true
 hkask-regulation.workspace = true
+hkask-verification.workspace = true
 hkask-email.workspace = true
 
 kask_extensions_ui.workspace = true

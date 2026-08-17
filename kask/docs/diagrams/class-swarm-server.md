@@ -114,13 +114,13 @@ classDiagram
     A2A ..> LocalSwarmRuntime : wraps delegate
     LocalAgentRegistry ..> LocalSwarmRuntime : reads cards
 
-    note for SwarmServer "53 tools = 27 ABW + 26 local\nBoth sets always registered\nkask.swarm.mode selects the substrate not the surface\nSpend mutating tools are consent gated\npinned by tool_surface_is_exactly_53_registered_tools"
+    note for SwarmServer "52 tools = 27 ABW + 25 local\nBoth sets always registered\nkask.swarm.mode selects the substrate not the surface\nSpend mutating tools are consent gated\npinned by tool_surface_is_exactly_52_registered_tools"
     note for LocalDelegateResult "Fed back as delegate_results\nto swarm-intelligence ORIENT\nactivates C5 fault attribution\nand C6 reconfigure"
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-006
-verified_date: 2026-08-14
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (combined_router, tool_surface_is_exactly_53_registered_tools); kask/mcp-servers/hkask-mcp-swarm/src/consent.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs (crate-private authorize_*/complete_* fns, no pub struct SpendGate); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs; kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (AgentExecutor: inference, tool_dispatch, skill_exec — no guard field, no scan_input/scan_output); kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs
+verified_date: 2026-08-16
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (combined_router, tool_surface_is_exactly_52_registered_tools); kask/mcp-servers/hkask-mcp-swarm/src/consent.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs (crate-private authorize_*/complete_* fns, no pub struct SpendGate); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs; kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (AgentExecutor: inference, tool_dispatch, skill_exec — no guard field, no scan_input/scan_output); kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs; kask/crates/hkask-verification/src/ledger.rs (VerificationStore, enforce_and_stamp)
 status: VERIFIED
 -->

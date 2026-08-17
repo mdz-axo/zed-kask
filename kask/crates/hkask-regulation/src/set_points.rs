@@ -129,6 +129,20 @@ pub const DEFAULT_COVERAGE_FLOOR: f64 = 0.70;
 /// Cybernetics Loop's `MutationScoreSensor` produces a signal.
 pub const DEFAULT_MUTATION_SCORE_FLOOR: f64 = 0.50;
 
+/// Default grounding clean rate floor (0.80 = 80% of grounded delegations
+/// have zero nulled fields). When the grounding clean rate drops below this,
+/// the Cybernetics Loop's `GroundingSensor` produces a signal — more than
+/// 20% of grounded delegations have nulled fields (fabricated values no tool
+/// could have sourced). Configurable via `HKASK_GROUNDING_CLEAN_RATE_FLOOR`.
+pub const DEFAULT_GROUNDING_CLEAN_RATE_FLOOR: f64 = 0.80;
+
+/// Default grounding coverage rate floor (0.50 = 50% of delegations have a
+/// grounding contract). When the grounding coverage rate drops below this,
+/// the Cybernetics Loop's `GroundingSensor` produces a signal — more than
+/// half of delegations have no grounding contract (paper §6: coverage is
+/// itself a metric). Configurable via `HKASK_GROUNDING_COVERAGE_RATE_FLOOR`.
+pub const DEFAULT_GROUNDING_COVERAGE_RATE_FLOOR: f64 = 0.50;
+
 /// Default maximum regulation cycles retained for history queries.
 ///
 /// Bounds memory growth in long-running sessions. An operator running a
@@ -215,6 +229,19 @@ pub struct SetPoints {
     /// Read from the latest trace run's `metrics.json` `mutation_score`.
     /// Default: 0.50.
     pub mutation_score_floor: f64,
+    // ── Grounding (verification ladder Rung 3, v0.35.0) ──
+    /// Minimum grounding clean rate before the Cybernetics Loop alerts.
+    /// When the fraction of grounded delegations with zero nulled fields
+    /// drops below this, the `GroundingSensor` produces a signal — more
+    /// than the tolerated fraction have fabricated values no tool could
+    /// have sourced. Default: 0.80.
+    pub grounding_clean_rate_floor: f64,
+    /// Minimum grounding coverage rate before the Cybernetics Loop alerts.
+    /// When the fraction of delegations with a grounding contract drops
+    /// below this, the `GroundingSensor` produces a signal — more than
+    /// the tolerated fraction have no contract (paper §6: coverage is
+    /// itself a metric). Default: 0.50.
+    pub grounding_coverage_rate_floor: f64,
     // ── History retention (v0.33.0) ──
     /// Maximum regulation cycles retained for history queries.
     /// Default: 100.
@@ -254,6 +281,8 @@ pub struct SetPointsConfig {
     pub inference_throttle_mode: Option<InferenceThrottleMode>,
     pub coverage_floor: Option<f64>,
     pub mutation_score_floor: Option<f64>,
+    pub grounding_clean_rate_floor: Option<f64>,
+    pub grounding_coverage_rate_floor: Option<f64>,
     pub max_regulation_history: Option<usize>,
     pub max_skill_span_history: Option<usize>,
 }
@@ -297,6 +326,8 @@ impl Default for SetPoints {
             inference_throttle_mode: InferenceThrottleMode::Off,
             coverage_floor: DEFAULT_COVERAGE_FLOOR,
             mutation_score_floor: DEFAULT_MUTATION_SCORE_FLOOR,
+            grounding_clean_rate_floor: DEFAULT_GROUNDING_CLEAN_RATE_FLOOR,
+            grounding_coverage_rate_floor: DEFAULT_GROUNDING_COVERAGE_RATE_FLOOR,
             max_regulation_history: DEFAULT_MAX_REGULATION_HISTORY,
             max_skill_span_history: DEFAULT_MAX_SKILL_SPAN_HISTORY,
         }
@@ -365,6 +396,12 @@ impl SetPoints {
             mutation_score_floor: config
                 .mutation_score_floor
                 .unwrap_or(defaults.mutation_score_floor),
+            grounding_clean_rate_floor: config
+                .grounding_clean_rate_floor
+                .unwrap_or(defaults.grounding_clean_rate_floor),
+            grounding_coverage_rate_floor: config
+                .grounding_coverage_rate_floor
+                .unwrap_or(defaults.grounding_coverage_rate_floor),
             max_regulation_history: config
                 .max_regulation_history
                 .unwrap_or(defaults.max_regulation_history),
@@ -383,6 +420,14 @@ impl SetPoints {
             ("seam_coverage_min", self.seam_coverage_min),
             ("coverage_floor", self.coverage_floor),
             ("mutation_score_floor", self.mutation_score_floor),
+            (
+                "grounding_clean_rate_floor",
+                self.grounding_clean_rate_floor,
+            ),
+            (
+                "grounding_coverage_rate_floor",
+                self.grounding_coverage_rate_floor,
+            ),
         ] {
             if !(0.0..=1.0).contains(&value) {
                 return Err(anyhow::anyhow!("{name} must be in [0.0, 1.0], got {value}"));
@@ -432,9 +477,16 @@ impl SetPoints {
 ///
 /// If `HKASK_REG_CONFIG` is set, reads the YAML file at that path.
 /// If unset or the file doesn't exist, returns default set-points.
+///
+/// Grounding thresholds (`grounding_clean_rate_floor`,
+/// `grounding_coverage_rate_floor`) are additionally env-configurable via
+/// `HKASK_GROUNDING_CLEAN_RATE_FLOOR` / `HKASK_GROUNDING_COVERAGE_RATE_FLOOR`
+/// and override the YAML/config values. Malformed values trigger a `warn!`
+/// naming the env var and the malformed value (the `.rules` numeric-env-var
+/// trap — a silent fallback hides a misconfiguration).
 #[must_use]
 pub fn load_set_points() -> SetPoints {
-    match std::env::var("HKASK_REG_CONFIG") {
+    let mut points = match std::env::var("HKASK_REG_CONFIG") {
         Ok(path) => match SetPointsConfig::load_from_file(&path) {
             Ok(config) => {
                 let points = SetPoints::from_config(&config);
@@ -465,7 +517,67 @@ pub fn load_set_points() -> SetPoints {
             }
         },
         Err(_) => SetPoints::default(),
+    };
+    // Env-var overrides for grounding thresholds. These take precedence over
+    // YAML config so an operator can adjust the alert floor without editing
+    // the config file. Malformed values warn and preserve the prior value
+    // (the `.rules` numeric-env-var trap: a silent fallback to the default
+    // hides a misconfiguration).
+    if let Ok(raw) = std::env::var("HKASK_GROUNDING_CLEAN_RATE_FLOOR") {
+        match raw.parse::<f64>() {
+            Ok(value) if (0.0..=1.0).contains(&value) => {
+                points.grounding_clean_rate_floor = value;
+            }
+            Ok(value) => {
+                tracing::warn!(
+                    target: "reg.config()",
+                    env_var = "HKASK_GROUNDING_CLEAN_RATE_FLOOR",
+                    raw_value = %raw,
+                    parsed = %value,
+                    "HKASK_GROUNDING_CLEAN_RATE_FLOOR out of range [0.0, 1.0] — keeping prior value {}",
+                    points.grounding_clean_rate_floor
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "reg.config()",
+                    env_var = "HKASK_GROUNDING_CLEAN_RATE_FLOOR",
+                    raw_value = %raw,
+                    error = %error,
+                    "HKASK_GROUNDING_CLEAN_RATE_FLOOR malformed — keeping prior value {}",
+                    points.grounding_clean_rate_floor
+                );
+            }
+        }
     }
+    if let Ok(raw) = std::env::var("HKASK_GROUNDING_COVERAGE_RATE_FLOOR") {
+        match raw.parse::<f64>() {
+            Ok(value) if (0.0..=1.0).contains(&value) => {
+                points.grounding_coverage_rate_floor = value;
+            }
+            Ok(value) => {
+                tracing::warn!(
+                    target: "reg.config()",
+                    env_var = "HKASK_GROUNDING_COVERAGE_RATE_FLOOR",
+                    raw_value = %raw,
+                    parsed = %value,
+                    "HKASK_GROUNDING_COVERAGE_RATE_FLOOR out of range [0.0, 1.0] — keeping prior value {}",
+                    points.grounding_coverage_rate_floor
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "reg.config()",
+                    env_var = "HKASK_GROUNDING_COVERAGE_RATE_FLOOR",
+                    raw_value = %raw,
+                    error = %error,
+                    "HKASK_GROUNDING_COVERAGE_RATE_FLOOR malformed — keeping prior value {}",
+                    points.grounding_coverage_rate_floor
+                );
+            }
+        }
+    }
+    points
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ mds_categories: [domain, composition]
 
 # Swarm MCP Server Architecture
 
-The swarm server (`hkask-mcp-swarm`) exposes 53 tools (27 ABW + 26 local) across two substrates selected by `kask.swarm.mode`. It is launched by two independent paths — `McpRuntime` (app-global, governed dispatch for the skill cascade) and `ContextServerStore` (per-project, for the agent tool picker) — both correct by design. The `swarm-intelligence` skill composes/steers swarms via a 10-step PDCA cascade; the `swarm-steering` skill codifies the local execute-and-feed-back loop for the Kask Curator. See the [Swarm MCP Server Reference](../reference/mcp-servers/swarm.md) and the [Cybernetic Swarm Plan](../plans/cybernetic-swarm-plan.md).
+The swarm server (`hkask-mcp-swarm`) exposes 52 tools (27 ABW + 25 local) across two substrates selected by `kask.swarm.mode`. It is launched by two independent paths — `McpRuntime` (app-global, governed dispatch for the skill cascade) and `ContextServerStore` (per-project, for the agent tool picker) — both correct by design. The `swarm-intelligence` skill composes/steers swarms via a 10-step PDCA cascade; the `swarm-steering` skill codifies the local execute-and-feed-back loop for the Kask Curator. See the [Swarm MCP Server Reference](../reference/mcp-servers/swarm.md) and the [Cybernetic Swarm Plan](../plans/cybernetic-swarm-plan.md).
 
 ```mermaid
 flowchart TD
@@ -18,7 +18,7 @@ flowchart TD
         MR[McpRuntime<br/>app-global, governed]
         CS[ContextServerStore<br/>per-project]
     end
-    SWARM[hkask-mcp-swarm<br/>53 tools: 27 ABW + 26 local]
+    SWARM[hkask-mcp-swarm<br/>52 tools: 27 ABW + 25 local]
     MR --> SWARM
     CS --> SWARM
 

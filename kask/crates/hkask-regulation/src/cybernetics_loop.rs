@@ -325,6 +325,59 @@ impl CyberneticsLoop {
         self.tool_stats = Some(stats);
     }
 
+    /// Wire the central verification ledger for grounding health sensing.
+    /// Registers three `GroundingSensor` instances (clean rate, coverage
+    /// rate, violation delta) into the sensor registry, closing the
+    /// cybernetic feedback loop: grounding enforcement → ledger →
+    /// regulation sense → algedonic alert → curator → user → action →
+    /// improved contracts → better enforcement.
+    ///
+    /// The thresholds come from `SetPoints.grounding_clean_rate_floor`
+    /// and `SetPoints.grounding_coverage_rate_floor` (env-configurable via
+    /// `HKASK_GROUNDING_CLEAN_RATE_FLOOR` / `HKASK_GROUNDING_COVERAGE_RATE_FLOOR`,
+    /// with `log::warn!` on parse failure per the `.rules` numeric-env-var trap).
+    ///
+    /// expect: "The system provides pluggable metric sensing for the cybernetic regulation loop"
+    /// post: returns Self for chaining
+    #[must_use = "builder methods must be chained or assigned"]
+    pub fn with_verification_store(
+        self,
+        store: Arc<hkask_verification::VerificationStore>,
+    ) -> Self {
+        self.set_verification_store(store);
+        self
+    }
+
+    /// Set the verification store on an already-constructed loop (post-build
+    /// wiring). Registers the three `GroundingSensor` instances.
+    ///
+    /// expect: "The system provides pluggable metric sensing for the cybernetic regulation loop"
+    pub fn set_verification_store(&mut self, store: Arc<hkask_verification::VerificationStore>) {
+        let clean_floor = self.set_points.grounding_clean_rate_floor;
+        let coverage_floor = self.set_points.grounding_coverage_rate_floor;
+        self.sensor_registry
+            .register(Arc::new(crate::sensor_provider::GroundingSensor::new(
+                Arc::clone(&store),
+                crate::sensor_provider::GroundingSensorMetric::CleanRate,
+                clean_floor,
+                coverage_floor,
+            )));
+        self.sensor_registry
+            .register(Arc::new(crate::sensor_provider::GroundingSensor::new(
+                Arc::clone(&store),
+                crate::sensor_provider::GroundingSensorMetric::CoverageRate,
+                clean_floor,
+                coverage_floor,
+            )));
+        self.sensor_registry
+            .register(Arc::new(crate::sensor_provider::GroundingSensor::new(
+                store,
+                crate::sensor_provider::GroundingSensorMetric::ViolationDelta,
+                clean_floor,
+                coverage_floor,
+            )));
+    }
+
     /// Override the stagnation detection threshold (default: 5 cycles).
     ///
     /// After this many consecutive cycles where the same (metric, action)
@@ -1859,6 +1912,77 @@ impl CyberneticsLoop {
                             threshold: dev.signal.set_point,
                         },
                     ),
+                ))
+            }
+            // -- Grounding (verification ladder Rung 3) ---------------------
+            //
+            // Grounding signals are quality regressions: a tool broke, an
+            // agent's prompt drifted, or a model was swapped. The regulation
+            // system surfaces these to the Curator (algedonic alert) — it does
+            // not auto-fix grounding contracts (that's a human decision).
+            RegulationReason::GroundingCleanRateDegraded => {
+                tracing::warn!(
+                    target: "reg.grounding",
+                    clean_rate = dev.signal.value,
+                    floor = dev.signal.set_point,
+                    "Grounding clean rate degraded below floor — grounded delegations have nulled fields"
+                );
+                Some(RegulatoryAction::with_metric(
+                    proposed.target,
+                    proposed.action_type,
+                    RegulatoryActionParams::with_data(
+                        "grounding_clean_rate_degraded",
+                        RegulationData::GroundingCleanRateDegraded {
+                            clean_rate: dev.signal.value,
+                            // coverage_rate is not carried on the signal —
+                            // the alert message notes the clean_rate floor
+                            // violation; the operator queries
+                            // curator_grounding_coverage for the coverage gap.
+                            coverage_rate: -1.0,
+                            floor: dev.signal.set_point,
+                        },
+                    ),
+                    "grounding_clean_rate".into(),
+                ))
+            }
+            RegulationReason::GroundingCoverageDegraded => {
+                tracing::warn!(
+                    target: "reg.grounding",
+                    coverage_rate = dev.signal.value,
+                    floor = dev.signal.set_point,
+                    "Grounding coverage rate degraded below floor — delegations have no grounding contract"
+                );
+                Some(RegulatoryAction::with_metric(
+                    proposed.target,
+                    proposed.action_type,
+                    RegulatoryActionParams::with_data(
+                        "grounding_coverage_degraded",
+                        RegulationData::GroundingCoverageDegraded {
+                            coverage_rate: dev.signal.value,
+                            floor: dev.signal.set_point,
+                        },
+                    ),
+                    "grounding_coverage_rate".into(),
+                ))
+            }
+            RegulationReason::GroundingViolationDeltaIncreased => {
+                tracing::warn!(
+                    target: "reg.grounding",
+                    delta = dev.signal.value,
+                    "Grounding violation delta positive — new nulled fields since last tick"
+                );
+                Some(RegulatoryAction::with_metric(
+                    proposed.target,
+                    proposed.action_type,
+                    RegulatoryActionParams::with_data(
+                        "grounding_violation_delta_increased",
+                        RegulationData::GroundingViolationDeltaIncreased {
+                            delta: dev.signal.value as i64,
+                            current_nulled: 0,
+                            previous_nulled: 0,
+                        },
+                    ),
+                    "grounding_violation_delta".into(),
                 ))
             }
             _ => {

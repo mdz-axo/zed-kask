@@ -274,7 +274,7 @@ status: VERIFIED
 | `companies` | `hkask-mcp-companies` | 6 | 2 |
 | `condenser` | `hkask-mcp-condenser` | 1 | 4 |
 | `corpus` | `hkask-mcp-corpus` | 1 | 16 |
-| `curator` | `hkask-mcp-curator` | 2 | 10 |
+| `curator` | `hkask-mcp-curator` | 2 | 13 |
 | `kata-kanban` | `hkask-mcp-kata-kanban` | 1 | 2 |
 | `media` | `hkask-mcp-media` | 2 | 6 |
 | `research` | `hkask-mcp-research` | 7 | 3 |

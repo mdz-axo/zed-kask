@@ -235,9 +235,9 @@ templates, the registry wins.
 - Deterministic compute primitives: `swarm.converge_accumulate`,
   `swarm.second_order_monitor`, `swarm.filter_proposed_moves` (in
   `hkask-templates/src/compute.rs`)
-- MCP tool surface (50 tools — both sets always registered in either mode;
+- MCP tool surface (52 tools — both sets always registered in either mode;
   `kask.swarm.mode` selects the substrate, not the surface; pinned by
-  `tool_surface_is_exactly_50_registered_tools`):
+  `tool_surface_is_exactly_52_registered_tools`):
   - **ABW tools (27)**: `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
     `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
     `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`,

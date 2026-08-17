@@ -810,6 +810,21 @@ fn main() {
         } else {
             cybernetics_loop_inner
         };
+        // zed-kask: D3/D8 — F11: grounding health sensing (verification ladder Rung 3).
+        // Wire the central verification ledger into the CyberneticsLoop so the
+        // sense phase reads grounding violation trends. This closes the
+        // cybernetic feedback loop: grounding enforcement → ledger →
+        // regulation sense → algedonic alert → curator → user → action →
+        // improved contracts → better enforcement. The store shares the same
+        // DB file (`mcp/verification/grounding.db`) as the kata-kanban, swarm,
+        // and curator MCP servers — every grounded delegation writes to it,
+        // and the regulation loop reads the trend on each tick.
+        let verification_store = std::sync::Arc::new(
+            hkask_verification::VerificationStore::open(),
+        );
+        let cybernetics_loop_inner =
+            cybernetics_loop_inner.with_verification_store(verification_store);
+        log::info!("hKask grounding health sensor wired to CyberneticsLoop");
         // zed-kask: D3/D8 — F5: swarm-panel gas budget persona (call cap seed).
         // Seed a call cap for the `swarm-panel` persona (see
         // `SWARM_PANEL_CALL_CAP` for the rationale — fail-closed gate, no other
