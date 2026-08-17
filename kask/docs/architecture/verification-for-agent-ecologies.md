@@ -88,6 +88,23 @@ The grounding contract covers `kanban-task-*` agents — the agents spawned by
 produce LLM output that may contain fabricated facts (file paths that don't
 exist, test results that weren't run, code that wasn't written).
 
+Grounding is a **system-level capability**, not a per-tool feature. The
+`hkask-verification` crate provides the shared enforcement code
+(`enforce_grounding`, `GroundingContract`, `GroundingResult`, `ProvenanceTag`,
+`schema_validate`, `envelope`, `card_contract`, `rollup_trust`) and the central
+grounding ledger (`VerificationStore`). Every MCP server that delegates to
+agents calls `VerificationStore::enforce_for_agent()` on each delegation:
+
+- `kanban_task_spawn` (kata-kanban) — source `"kanban_task_spawn"`
+- `swarm_delegate_local` (swarm) — source `"swarm_delegate_local"`
+- `swarm_execute_plan_local` (swarm) — source `"swarm_execute_plan_local"`
+
+The central ledger is append-only, cross-tool, and cross-server. The curator
+queries it via `curator_grounding_trend`, `curator_grounding_violations`, and
+`curator_grounding_coverage` — closing the cybernetic feedback loop:
+enforcement → ledger → curator → user → action → improved contracts → better
+enforcement.
+
 The contract is declared in `grounding::task_agent_contract()`:
 
 | Field | Source tools | Disposition |
@@ -155,27 +172,33 @@ the unit, so "GBIF" does not match but "480 Mb" does.
   instead of JSON, the grounding check is a no-op. The system prompt mitigates
   this by asking for JSON, but it is not enforced.
 - **The contract is hand-declared and therefore incomplete.** It covers only the
-  `"task"` agent_type. Coverage is itself a metric. Extending to other agent
-  types requires a new contract manifest in the same PR.
+  `"task"` agent_type. Coverage is itself a metric — the `curator_grounding_coverage`
+  tool reports which agent types have delegations but no contract (the coverage
+  gap). Extending to other agent types requires a new contract registered via
+  `VerificationStore::register_contract()` in the same PR.
 
 ## The invocation lifecycle
 
-The grounding check runs on the fast clock (per invocation), in
-`spawn_via_local_runtime`:
+The grounding check runs on the fast clock (per invocation), via
+`VerificationStore::enforce_for_agent()` — called by every delegating tool
+(`spawn_via_local_runtime`, `swarm_delegate_local`, `swarm_execute_plan_local`):
 
-1. `kanban_task_spawn` builds a task agent card (or reuses an expert agent).
+1. The delegating tool builds a task agent card (or reuses an expert agent).
 2. The agent's system prompt instructs it to produce JSON with
    `deliverable_path`, `test_verdict`, `summary`, `approach`.
 3. `runtime.delegate` runs the agent (skill cascade + tool loop + LLM call).
-4. After delegation, `enforce_grounding` parses the response as JSON:
+4. After delegation, `enforce_for_agent()` parses the response as JSON:
    - **Sourced** fields: keep, mark verified.
    - **Inferred** fields: keep, mark as inference.
    - **UncommissionedInference** fields: keep, mark.
    - **Unsourced** fields: null, retain truncated preview, scan narrative for
      leaked values.
-5. The cleaned JSON (with unsourced fields nulled) replaces the raw response
+5. A full `GroundingRecord` is written to the central ledger (append-only,
+   cross-tool). When no contract exists for the agent_type, a coverage-gap
+   record (`had_contract: false`) is written so the gap is visible.
+6. The cleaned JSON (with unsourced fields nulled) replaces the raw response
    before it is recorded and commented.
-6. Nulled fields and narrative leaks are logged at `warn!`.
+7. Nulled fields and narrative leaks are logged at `warn!`.
 
 The check runs **before** anything persists or renders — not as a report
 afterward. The paper's Rule 4: *"the check that runs after the write is a
@@ -185,13 +208,34 @@ metric; the check that runs before it is a control."*
 
 | Clock | What runs | Where |
 |-------|-----------|-------|
-| **Authoring (slow)** | Presence check, typing check | `LocalAgentRegistry::load`, `write_card` |
-| **Invocation (fast)** | Bind check, grounding enforcement | `swarm_delegate_local`, `spawn_via_local_runtime` |
+| **Authoring (slow)** | Presence check, typing check, card-declared grounding validation | `LocalAgentRegistry::load`, `write_card`, `hkask_verification::card_contract::validate` |
+| **Invocation (fast)** | Bind check, grounding enforcement, ledger write | `VerificationStore::enforce_for_agent` (called by `swarm_delegate_local`, `swarm_execute_plan_local`, `spawn_via_local_runtime`) |
+| **Curator (feedback)** | Trend query, violations query, coverage query | `curator_grounding_trend`, `curator_grounding_violations`, `curator_grounding_coverage` |
 
 The authoring gate is where enforcement by default lives: a new agent cannot
 enter the catalogue with an untyped or ungrounded interface. The invocation gate
 catches what the authoring gate cannot know — that this particular output, on
-this particular run, contains something no tool could have supplied.
+this particular run, contains something no tool could have supplied. The
+curator gate closes the feedback loop: the operator sees trends and coverage
+gaps and acts (adjusts contracts, adds tools, retires agents).
+
+## Curator integration (the feedback loop)
+
+The curator MCP server (`hkask-mcp-curator`) exposes three tools that query
+the central verification ledger:
+
+- `curator_grounding_trend` — aggregates grounding records into a
+  `GroundingTrendReport` (lead metric: `delegations_with_zero_nulled`).
+  Supports scoping by agent or source tool.
+- `curator_grounding_violations` — returns recent delegations with nulled
+  fields or narrative leaks, sorted by timestamp descending.
+- `curator_grounding_coverage` — reports the coverage gap: delegations with
+  no grounding contract for their agent_type.
+
+This closes the cybernetic feedback loop described in the paper's §4.1:
+enforcement → ledger → curator → user → action → improved contracts → better
+enforcement. Without the curator integration, grounding violations are logged
+but invisible to the operator — the check gets quietly disabled.
 
 ## Design rules (from the paper, pinned in `.rules`)
 
