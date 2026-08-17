@@ -2785,8 +2785,13 @@ steps:
     description: "Hanging tool call that times out"
     mcp: test/hang
     timeout_seconds: 1
+    on_failure:
+      action: escalate
+      resume: "The tool timed out"
 convergence:
   max_iterations: 1
+error_handling:
+  on_timeout: abort
 "#;
         let manifest =
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
@@ -2796,7 +2801,12 @@ convergence:
             .await;
 
         let outcome = result.expect(
-            "execute_manifest returns Ok(CascadeOutcome) with an error step result on timeout",
+            "execute_manifest returns Ok(CascadeOutcome) with ExitKind::Escalated when on_failure catches the timeout",
+        );
+        assert_eq!(
+            outcome.exit_kind,
+            crate::step_graph::ExitKind::Escalated,
+            "timeout with on_failure: escalate must exit Escalated, not propagate Err",
         );
         // The tool call must be recorded with ok=false. Without the fix,
         // tool_calls is empty (the timeout returned before the push).
@@ -2848,8 +2858,13 @@ steps:
       - mcp: test/hang_b
       - mcp: test/hang_c
     timeout_seconds: 1
+    on_failure:
+      action: escalate
+      resume: "The batch timed out"
 convergence:
   max_iterations: 1
+error_handling:
+  on_timeout: abort
 "#;
         let manifest =
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
@@ -2859,7 +2874,12 @@ convergence:
             .await;
 
         let outcome = result.expect(
-            "execute_manifest returns Ok(CascadeOutcome) with an error step result on batch timeout",
+            "execute_manifest returns Ok(CascadeOutcome) with ExitKind::Escalated when on_failure catches the batch timeout",
+        );
+        assert_eq!(
+            outcome.exit_kind,
+            crate::step_graph::ExitKind::Escalated,
+            "batch timeout with on_failure: escalate must exit Escalated, not propagate Err",
         );
         // All three batch entries must be recorded with ok=false. Without
         // the fix, tool_calls is empty (the batch timeout returned before
@@ -2891,5 +2911,218 @@ convergence:
             ]),
             "recorded tool names must match the batch mcp refs",
         );
+    }
+
+    // ── Tool-call summary consistency (Phase 5 grounding) ──────────────
+
+    /// A single `execute` step whose tool succeeds must record the tool call
+    /// in `CascadeOutcome.tool_calls` with `ok: true`. This is the success-path
+    /// counterpart to the timeout tests above — grounding enforcement reads
+    /// `tool_calls` to determine whether a field was sourced from a successful
+    /// tool call.
+    #[tokio::test]
+    async fn execute_step_records_tool_call_on_success() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let executor = ManifestExecutor::new(
+            inference,
+            Arc::new(SuccessToolPort) as Arc<dyn hkask_capability::ToolPort>,
+            LLMParameters::default(),
+        );
+
+        let manifest_yaml = r#"
+manifest:
+  id: test-success-record
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: "Successful tool call"
+    mcp: test_server/test_tool
+convergence:
+  max_iterations: 1
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let outcome = executor
+            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .await
+            .expect("cascade succeeds");
+
+        assert_eq!(
+            outcome.tool_calls.len(),
+            1,
+            "successful tool call must be recorded; got {:?}",
+            outcome.tool_calls,
+        );
+        assert_eq!(
+            outcome.tool_calls[0]["tool"].as_str(),
+            Some("test_server/test_tool"),
+            "recorded tool name must match the mcp ref",
+        );
+        assert_eq!(
+            outcome.tool_calls[0]["ok"].as_bool(),
+            Some(true),
+            "successful tool call must be recorded with ok=true",
+        );
+    }
+
+    /// A single `execute` step whose tool fails must record the tool call
+    /// with `ok: false`. The `NoopToolPort` returns `NotFound` for every call.
+    #[tokio::test]
+    async fn execute_step_records_tool_call_on_failure() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let executor = ManifestExecutor::new(
+            inference,
+            Arc::new(NoopToolPort) as Arc<dyn hkask_capability::ToolPort>,
+            LLMParameters::default(),
+        );
+
+        let manifest_yaml = r#"
+manifest:
+  id: test-failure-record
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: "Failing tool call"
+    mcp: test_server/noop
+    on_failure:
+      action: escalate
+      resume: "The tool failed"
+convergence:
+  max_iterations: 1
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let outcome = executor
+            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .await
+            .expect("cascade exits Escalated via on_failure");
+
+        assert_eq!(
+            outcome.exit_kind,
+            crate::step_graph::ExitKind::Escalated,
+            "failed tool with on_failure must exit Escalated",
+        );
+        assert_eq!(
+            outcome.tool_calls.len(),
+            1,
+            "failed tool call must be recorded; got {:?}",
+            outcome.tool_calls,
+        );
+        assert_eq!(
+            outcome.tool_calls[0]["ok"].as_bool(),
+            Some(false),
+            "failed tool call must be recorded with ok=false",
+        );
+    }
+
+    /// An `mcp_batch` with mixed success/failure must record every entry in
+    /// order with the correct `ok` status. `join: allSettled` collects partial
+    /// results so the cascade doesn't abort on the first error.
+    #[tokio::test]
+    async fn execute_batch_records_mixed_success_failure_in_order() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        // A tool port that succeeds for "good" tools and fails for "bad" ones.
+        struct MixedToolPort;
+        impl hkask_capability::ToolPort for MixedToolPort {
+            fn invoke<'a>(
+                &'a self,
+                _server: &'a str,
+                tool: &'a str,
+                _args: serde_json::Value,
+                _agent: hkask_types::WebID,
+            ) -> hkask_capability::ToolFuture<
+                'a,
+                std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
+            > {
+                let ok = tool.contains("good");
+                Box::pin(async move {
+                    if ok {
+                        Ok(serde_json::json!({"result": "ok"}))
+                    } else {
+                        Err(hkask_capability::ToolPortError::NotFound(hkask_types::NotFound {
+                            entity_type: "tool".to_string(),
+                            id: tool.to_string(),
+                        }))
+                    }
+                })
+            }
+            fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+                Box::pin(async { Vec::new() })
+            }
+            fn get_tool_info<'a>(
+                &'a self,
+                tool_name: &'a str,
+            ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+                Box::pin(async move {
+                    Some(hkask_capability::ToolInfo {
+                        name: tool_name.to_string(),
+                        description: "mixed tool".to_string(),
+                        input_schema: serde_json::json!({}),
+                        server_id: "test".to_string(),
+                    })
+                })
+            }
+        }
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let executor = ManifestExecutor::new(
+            inference,
+            Arc::new(MixedToolPort) as Arc<dyn hkask_capability::ToolPort>,
+            LLMParameters::default(),
+        );
+
+        let manifest_yaml = r#"
+manifest:
+  id: test-batch-mixed
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: "Batch with mixed success/failure"
+    mcp_batch:
+      - mcp: test/good_a
+      - mcp: test/bad_b
+      - mcp: test/good_c
+    input_mapping:
+      join: allSettled
+convergence:
+  max_iterations: 1
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let outcome = executor
+            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .await
+            .expect("allSettled batch succeeds with partial results");
+
+        // Three entries, in batch order, with correct ok status.
+        assert_eq!(
+            outcome.tool_calls.len(),
+            3,
+            "all batch entries must be recorded; got {:?}",
+            outcome.tool_calls,
+        );
+        assert_eq!(outcome.tool_calls[0]["tool"].as_str(), Some("test/good_a"));
+        assert_eq!(outcome.tool_calls[0]["ok"].as_bool(), Some(true));
+        assert_eq!(outcome.tool_calls[1]["tool"].as_str(), Some("test/bad_b"));
+        assert_eq!(outcome.tool_calls[1]["ok"].as_bool(), Some(false));
+        assert_eq!(outcome.tool_calls[2]["tool"].as_str(), Some("test/good_c"));
+        assert_eq!(outcome.tool_calls[2]["ok"].as_bool(), Some(true));
     }
 }

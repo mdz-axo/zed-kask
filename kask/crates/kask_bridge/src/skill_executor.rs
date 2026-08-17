@@ -1601,6 +1601,151 @@ mod tests {
         assert!(out.contains("0.05"));
     }
 
+    // ── Integration: BridgeManifestExecutor grounding wiring (Phase 5) ──
+    // Tests the integration between hkask-templates (extract_final_step_result)
+    // and hkask-verification (enforce_for_agent) that execute_skill wires
+    // together. The tests simulate a CascadeOutcome with known output and
+    // tool_calls, then run the same grounding path execute_skill uses.
+
+    /// When a skill cascade produces a `deliverable_path` field but no
+    /// file-writing tool was called, grounding must null the field (it's a
+    /// fabrication). The cleaned output replaces the raw output.
+    #[test]
+    fn grounding_wiring_nulls_unsourced_deliverable_path() {
+        let store = hkask_verification::VerificationStore::in_memory();
+
+        let mut ctx = StepContext::new(std::collections::HashMap::new());
+        ctx.store_result(
+            0,
+            1,
+            json!({
+                "deliverable_path": "/src/new_file.rs",
+                "summary": "Created the file",
+            }),
+        );
+        let outcome = outcome_with_last(ctx, Some(0));
+        // No tool calls — deliverable_path is unsourced.
+
+        let raw_value = hkask_templates::extract_final_step_result(&outcome);
+        let response_str = match &raw_value {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let (result, cleaned) = store.enforce_for_agent(
+            "skill_cascade",
+            "test-skill",
+            "skill",
+            &raw_value,
+            &outcome.tool_calls,
+            &response_str,
+        );
+
+        assert!(
+            result.is_some(),
+            "grounding result must be Some (contract exists for 'skill')"
+        );
+        let gr = result.unwrap();
+        assert!(
+            gr.nulled_fields.contains(&"deliverable_path".to_string()),
+            "deliverable_path must be nulled — no file-writing tool was called"
+        );
+        assert_eq!(
+            cleaned["deliverable_path"],
+            Value::Null,
+            "cleaned output must have deliverable_path nulled"
+        );
+        assert_eq!(
+            cleaned["summary"],
+            json!("Created the file"),
+            "summary must be preserved (inferred field)"
+        );
+    }
+
+    /// When a skill cascade produces a `deliverable_path` field AND a
+    /// file-writing tool was called successfully, grounding must keep the
+    /// field (it's sourced). The cleaned output preserves the value.
+    #[test]
+    fn grounding_wiring_keeps_sourced_deliverable_path() {
+        let store = hkask_verification::VerificationStore::in_memory();
+
+        let mut ctx = StepContext::new(std::collections::HashMap::new());
+        ctx.store_result(
+            0,
+            1,
+            json!({
+                "deliverable_path": "/src/new_file.rs",
+                "summary": "Created the file",
+            }),
+        );
+        let mut outcome = outcome_with_last(ctx, Some(0));
+        outcome.tool_calls = vec![json!({
+            "tool": "zed/write_file",
+            "ok": true,
+        })];
+
+        let raw_value = hkask_templates::extract_final_step_result(&outcome);
+        let response_str = match &raw_value {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let (result, cleaned) = store.enforce_for_agent(
+            "skill_cascade",
+            "test-skill",
+            "skill",
+            &raw_value,
+            &outcome.tool_calls,
+            &response_str,
+        );
+
+        assert!(result.is_some());
+        let gr = result.unwrap();
+        assert!(
+            gr.nulled_fields.is_empty(),
+            "no fields must be nulled — write_file tool was called successfully"
+        );
+        assert_eq!(
+            cleaned["deliverable_path"],
+            json!("/src/new_file.rs"),
+            "deliverable_path must be preserved (sourced from write_file)"
+        );
+    }
+
+    /// When the cascade output is a string (not a JSON object), grounding
+    /// records an unenforceable record and returns the original value
+    /// unchanged. This is the narrative-only path — the skill produced prose,
+    /// not structured JSON.
+    #[test]
+    fn grounding_wiring_handles_string_output_as_unenforceable() {
+        let store = hkask_verification::VerificationStore::in_memory();
+
+        let mut ctx = StepContext::new(std::collections::HashMap::new());
+        ctx.store_result(0, 1, json!("This is a prose summary, not JSON."));
+        let outcome = outcome_with_last(ctx, Some(0));
+
+        let raw_value = hkask_templates::extract_final_step_result(&outcome);
+        let response_str = match &raw_value {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let (result, cleaned) = store.enforce_for_agent(
+            "skill_cascade",
+            "test-skill",
+            "skill",
+            &raw_value,
+            &outcome.tool_calls,
+            &response_str,
+        );
+
+        assert!(
+            result.is_none(),
+            "grounding result must be None for non-object output (unenforceable)"
+        );
+        assert_eq!(
+            cleaned, raw_value,
+            "cleaned output must equal raw output for unenforceable records"
+        );
+    }
+
     /// The reshape must move header fields under `manifest:` and keep the
     /// rest as siblings, so `load_manifest_from_yaml` can round-trip a saved
     /// bundle. Pins the on-disk format for the `Save` action.
