@@ -2354,6 +2354,52 @@ convergence:
         }
     }
 
+    /// `ToolPort` stub that succeeds for tools whose name contains "good"
+    /// and fails for all others. Used by the tool-call consistency proptest
+    /// to generate random success/failure patterns across a batch.
+    struct MaskedToolPort;
+
+    impl hkask_capability::ToolPort for MaskedToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            tool: &'a str,
+            _args: serde_json::Value,
+            _agent: hkask_types::WebID,
+        ) -> hkask_capability::ToolFuture<
+            'a,
+            std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
+        > {
+            let ok = tool.contains("good");
+            Box::pin(async move {
+                if ok {
+                    Ok(serde_json::json!({"result": "ok"}))
+                } else {
+                    Err(hkask_capability::ToolPortError::NotFound(hkask_types::NotFound {
+                        entity_type: "tool".to_string(),
+                        id: tool.to_string(),
+                    }))
+                }
+            })
+        }
+        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+            Box::pin(async { Vec::new() })
+        }
+        fn get_tool_info<'a>(
+            &'a self,
+            tool_name: &'a str,
+        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+            Box::pin(async move {
+                Some(hkask_capability::ToolInfo {
+                    name: tool_name.to_string(),
+                    description: "masked tool".to_string(),
+                    input_schema: serde_json::json!({}),
+                    server_id: "test".to_string(),
+                })
+            })
+        }
+    }
+
     impl hkask_capability::ToolPort for NoopToolPort {
         fn invoke<'a>(
             &'a self,
@@ -3173,7 +3219,7 @@ steps:
     action: execute
     description: "Batch with template variable in mcp ref"
     mcp_batch:
-      - mcp: "test_server/{{ tool_name }}"
+      - mcp: "test_server/{{tool_name}}"
     input_mapping:
       join: allSettled
 convergence:

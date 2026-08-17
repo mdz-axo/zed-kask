@@ -2413,6 +2413,7 @@ fn main() {
                         &registry_manifests_dir,
                         &registry_templates_dir,
                         &regulation_ledger_for_model_task,
+                        &verification_store_for_model_task,
                         cx,
                     )
                     .await
@@ -2472,6 +2473,7 @@ fn main() {
                                         &manifests_dir,
                                         &templates_dir,
                                         &regulation_ledger,
+                                        &verification_store,
                                         cx,
                                     )
                                     .await
@@ -3038,6 +3040,7 @@ async fn try_wire_manifest_executor(
     registry_manifests_dir: &std::path::Path,
     registry_templates_dir: &std::path::Path,
     regulation_ledger: &std::sync::Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>,
+    verification_store: &std::sync::Arc<hkask_verification::VerificationStore>,
     cx: &mut gpui::AsyncApp,
 ) -> Result<(), anyhow::Error> {
     // Already wired — no-op.

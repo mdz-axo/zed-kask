@@ -353,7 +353,11 @@ fn scan_rust_file_for_tools(path: &std::path::Path, tools: &mut Vec<String>) {
     let mut test_depth: Option<i32> = None;
     let mut cfg_test_pending = false;
     let mut tool_pending = false;
+    // Track whether we're inside the `#[tool(...)]` attribute body (between
+    // `#[tool(` and `)]`). When > 0, lines are attribute body, not fn decls.
+    let mut tool_attr_paren_depth: i32 = 0;
     let mut brace_depth_in_test = 0i32;
+    let mut in_string = false; // V3 fix: track string literals for brace counting
 
     for line in source.lines() {
         let trimmed = line.trim();
@@ -365,34 +369,63 @@ fn scan_rust_file_for_tools(path: &std::path::Path, tools: &mut Vec<String>) {
         }
 
         // Track entry into `mod tests` / `mod tool_surface_tests` blocks.
+        // V4 fix: also enter tracking when `#[cfg(test)]` was pending and the
+        // next line is `mod <name> {` — the module is test-only regardless of
+        // its name, so tools inside it must be suppressed.
         if test_depth.is_none()
-            && (trimmed.starts_with("mod tests") || trimmed.starts_with("mod tool_surface_tests"))
+            && (trimmed.starts_with("mod tests")
+                || trimmed.starts_with("mod tool_surface_tests")
+                || (cfg_test_pending && trimmed.starts_with("mod ") && trimmed.contains('{')))
         {
             if trimmed.contains('{') {
                 test_depth = Some(0);
                 brace_depth_in_test = 1;
                 cfg_test_pending = false;
                 tool_pending = false;
+                tool_attr_paren_depth = 0;
+                in_string = false;
                 continue;
             }
             // `mod tests;` — a separate file not compiled in non-test builds.
             cfg_test_pending = false;
             tool_pending = false;
+            tool_attr_paren_depth = 0;
             continue;
         }
 
         // If inside a test module, count braces to find the exit.
+        // V3 fix: skip braces inside string literals so an unbalanced brace
+        // in a string (e.g. `let s = "{";`) doesn't desync the counter and
+        // cause the scanner to miss all tools after the test module.
         if test_depth.is_some() {
-            for ch in line.chars() {
-                if ch == '{' {
-                    brace_depth_in_test += 1;
-                } else if ch == '}' {
-                    brace_depth_in_test -= 1;
-                    if brace_depth_in_test == 0 {
-                        test_depth = None;
-                        break;
+            let chars: Vec<char> = line.chars().collect();
+            let mut i = 0;
+            while i < chars.len() {
+                let ch = chars[i];
+                if in_string {
+                    if ch == '\\' && i + 1 < chars.len() {
+                        // Escaped char — skip the next character.
+                        i += 2;
+                        continue;
+                    }
+                    if ch == '"' {
+                        in_string = false;
+                    }
+                } else {
+                    match ch {
+                        '"' => in_string = true,
+                        '{' => brace_depth_in_test += 1,
+                        '}' => {
+                            brace_depth_in_test -= 1;
+                            if brace_depth_in_test == 0 {
+                                test_depth = None;
+                                break;
+                            }
+                        }
+                        _ => {}
                     }
                 }
+                i += 1;
             }
             continue;
         }
@@ -400,6 +433,47 @@ fn scan_rust_file_for_tools(path: &std::path::Path, tools: &mut Vec<String>) {
         // Detect `#[tool` (start of a tool attribute, possibly multi-line).
         if trimmed.starts_with("#[tool") {
             tool_pending = true;
+            // V2 fix: `#[tool(...)] pub async fn name()` on the same line.
+            // The `continue` would skip the `pub fn` on this line. Check if
+            // the line also contains a `pub ... fn` declaration after the
+            // closing `]` of the attribute.
+            if let Some(name) = extract_tool_from_same_line(trimmed) {
+                if !cfg_test_pending {
+                    tools.push(name.to_string());
+                }
+                tool_pending = false;
+                cfg_test_pending = false;
+            } else {
+                // Track paren depth to know when the multi-line attribute
+                // body ends. Count `(` and `)` on this line (after `#[tool`).
+                let after_tool = &trimmed["#[tool".len()..];
+                for ch in after_tool.chars() {
+                    if ch == '(' {
+                        tool_attr_paren_depth += 1;
+                    } else if ch == ')' {
+                        tool_attr_paren_depth -= 1;
+                    }
+                }
+                // If paren depth is 0, the attribute closed on this line
+                // (e.g. `#[tool]` or `#[tool(description = "...")]`). The
+                // fn is on a subsequent line — stay pending.
+            }
+            continue;
+        }
+
+        // If inside a multi-line `#[tool(...)]` attribute body, consume lines
+        // until the parens balance.
+        if tool_pending && tool_attr_paren_depth > 0 {
+            for ch in trimmed.chars() {
+                if ch == '(' {
+                    tool_attr_paren_depth += 1;
+                } else if ch == ')' {
+                    tool_attr_paren_depth -= 1;
+                }
+            }
+            // If the parens balanced on this line, the next line may be the
+            // fn declaration (or `)]` on its own line, then the fn).
+            // Stay pending — the fn-finding logic below will handle it.
             continue;
         }
 
@@ -419,9 +493,11 @@ fn scan_rust_file_for_tools(path: &std::path::Path, tools: &mut Vec<String>) {
                 }
                 tool_pending = false;
                 cfg_test_pending = false;
-            } else if trimmed.contains("fn ") {
-                // A `fn` line that we couldn't extract a name from — clear
-                // the pending flag to avoid mis-attributing a later fn.
+            } else {
+                // V1 fix: clear `tool_pending` on ANY non-comment, non-attribute
+                // line that isn't a `pub fn` we can extract. Without this, a
+                // `#[tool]` on a struct/enum/impl/const would set the pending
+                // flag and mis-attribute the next unrelated `pub fn` as a tool.
                 tool_pending = false;
                 cfg_test_pending = false;
             }
@@ -432,6 +508,17 @@ fn scan_rust_file_for_tools(path: &std::path::Path, tools: &mut Vec<String>) {
             }
         }
     }
+}
+
+/// Extract a tool name from a line that has both `#[tool(...)]` and
+/// `pub ... fn <name>` on the same line (V2 fix). Returns `None` if the line
+/// doesn't contain both.
+fn extract_tool_from_same_line(line: &str) -> Option<&str> {
+    // Find the closing `]` of the `#[tool(...)]` attribute, then look for
+    // `pub ... fn <name>` after it.
+    let bracket_close = line.find("]")?;
+    let after_attr = line.get(bracket_close + 1..)?.trim_start();
+    extract_tool_method_name(after_attr)
 }
 
 /// Extract the method name from a line like `pub async fn curator_ping(`,
