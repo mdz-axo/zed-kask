@@ -2374,8 +2374,6 @@ fn main() {
         // - MCP server launch, email sink, collab server
         {
             let app_state_for_model_task = app_state.clone();
-            let verification_store_for_model_task =
-                verification_store_for_model_task;
             cx.spawn(async move |cx| {
                 // Resolve registry paths (same logic as the deferred task,
                 // but doesn't need the user). Disk is the single runtime

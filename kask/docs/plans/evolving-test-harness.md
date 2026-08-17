@@ -124,12 +124,35 @@ Falls back to `cargo test` if nextest is absent or `--cargo-test` is passed.
 
 ### 2.3 `kask-ci.yml`
 
-**Path:** `.github/workflows/kask-ci.yml`. Eight jobs: `fmt`, `clippy`, `test`,
-`build`, `skill-span-namespace`, `reg-canonical`, `mcp-servers`, `deps`.
+**Path:** `.github/workflows/kask-ci.yml`. As of 2026-08-17 the workflow defines
+the following jobs (grouped by kind):
 
-The `test` job runs `cargo nextest run --workspace --no-fail-fast` with
-exclusions for GPU/WASM/randomized stress tests. **No coverage collection, no
-artifact upload, no trace storage, no triage step.**
+- **Core build/test:** `fmt`, `clippy`, `test`, `build`, `deps`,
+  `unused-deps-nightly`, `cargo-deny`, `typos`, `buf`.
+- **Invariant gates (shell):** `skill-span-namespace`, `reg-canonical`,
+  `mcp-servers`, `version-sync`, `hkask-no-zed-deps`, `kali-regressions`,
+  `kali-regressions-selftest`, `unsafe-forbid`, `invariants` (the `invariants`
+  job runs 7 sub-scripts: `check-string-errors`, `check-forecast-conformance`,
+  `check-reg-creep`, `check-mcp-tool-tests`, `check-lora-training-regressions`,
+  `build/check-zed-isolation`, `build/check-uninstall-paths`).
+- **Self-tests:** `reg-creep-selftest`, `forecast-conformance-selftest`,
+  `mcp-servers-selftest`, `version-sync-selftest`, `skill-span-namespace-selftest`,
+  `unsafe-forbid-selftest`, `hkask-no-zed-deps-selftest`, `mcp-tool-tests-selftest`,
+  `string-errors-selftest`, `reg-canonical-selftest`.
+- **Scheduled/audit:** `typos-allowlist-audit` (cron + `workflow_dispatch`).
+
+The `test` job runs `cargo nextest run --no-fail-fast` scoped to the `hkask-*`
+and `kask_bridge` crates with exclusions for GPU/WASM/randomized stress tests.
+**No coverage collection, no artifact upload, no trace storage, no triage step.**
+
+**Historical note:** an earlier revision of this document (2026-08-04) listed
+only eight jobs (`fmt`, `clippy`, `test`, `build`, `skill-span-namespace`,
+`reg-canonical`, `mcp-servers`, `deps`). The invariant-gate and self-test surface
+has since expanded; the list above is the current truth. A deleted
+`check-convergence-weights.sh` gate (its target template was replaced by
+deterministic Kata primitives) is now enforced by
+`hkask-templates/tests/evaluate_weight_sums.rs`; see
+`kask/security/audit-log/2026-08-17-convergence-weights-deletion.md`.
 
 ### 2.4 `qa-triage-cycle` manifest
 
