@@ -133,7 +133,7 @@ impl SwarmPanel {
                 // are in `this.entries` before the merge). This fetch reads the
                 // local filesystem, not ABW — it always succeeds if the MCP
                 // server is running. Local agents are merged with cloud agents:
-                // if a local agent's `cloud_id` matches a cloud agent's id, the
+                // if a local agent's `cloud_swarm_id` matches a cloud agent's id, the
                 // cloud agent is upgraded to `Synced` and the local agent is
                 // dropped (the cloud card is the display row; the local card is
                 // the execution target for local mode).
@@ -151,21 +151,21 @@ impl SwarmPanel {
                                 // Mark cloud agents that have a matching local card as Synced.
                                 let local_ids: std::collections::HashSet<String> =
                                     local_agents.iter().map(|a| a.agent_id.clone()).collect();
-                                let local_cloud_ids: std::collections::HashSet<String> =
+                                let local_cloud_swarm_ids: std::collections::HashSet<String> =
                                     local_agents
                                         .iter()
-                                        .filter_map(|a| a.cloud_id.clone())
+                                        .filter_map(|a| a.cloud_swarm_id.clone())
                                         .collect();
                                 for entry in this.entries.iter_mut() {
                                     if let SwarmEntry::Agent(card) = entry
                                         && (local_ids.contains(&card.id)
-                                            || local_cloud_ids.contains(&card.id))
+                                            || local_cloud_swarm_ids.contains(&card.id))
                                     {
                                         card.source = AgentSource::Synced;
                                     }
                                 }
                                 // Add local-only agents (no matching cloud id) as Local entries.
-                                let existing_cloud_ids: std::collections::HashSet<String> = this
+                                let existing_cloud_swarm_ids: std::collections::HashSet<String> = this
                                     .entries
                                     .iter()
                                     .filter_map(|e| match e {
@@ -177,8 +177,8 @@ impl SwarmPanel {
                                     .collect();
                                 for local in local_agents {
                                     // Skip if already present as a cloud/synced agent.
-                                    if existing_cloud_ids.contains(&local.agent_id)
-                                        || local_cloud_ids.contains(&local.agent_id)
+                                    if existing_cloud_swarm_ids.contains(&local.agent_id)
+                                        || local_cloud_swarm_ids.contains(&local.agent_id)
                                     {
                                         continue;
                                     }
@@ -435,7 +435,7 @@ impl SwarmPanel {
     /// Clone an ABW (cloud) agent to the local registry. Calls
     /// `swarm_clone_to_local` on the swarm MCP server, which fetches the ABW
     /// card, writes it to `agents/local/curated/<id>/agent_card.json`, and
-    /// sets `cloud_id` to mark it as synced. On success, re-fetches the agent
+    /// sets `cloud_swarm_id` to mark it as synced. On success, re-fetches the agent
     /// list so the source badge updates to `synced`.
     pub(crate) fn clone_to_local(&mut self, agent_name: String, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
@@ -477,10 +477,10 @@ impl SwarmPanel {
 
     /// Push a local agent to ABW (cloud). Calls `swarm_push_to_cloud` on the
     /// swarm MCP server, which creates or updates the ABW agent from the local
-    /// card and sets `cloud_id` on the local card to mark it as synced. On
+    /// card and sets `cloud_swarm_id` on the local card to mark it as synced. On
     /// success, re-fetches the agent list so the source badge updates to
     /// `synced`.
-    pub(crate) fn push_to_cloud(&mut self, agent_name: String, cx: &mut Context<Self>) {
+    pub(crate) fn push_to_cloud_swarm(&mut self, agent_name: String, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
             self.spend.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();

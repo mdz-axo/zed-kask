@@ -12,7 +12,7 @@
 //!   carries the full `LocalAgentCard`, including `system_prompt`).
 //! - `save_agent`: persists edits. Local agents use
 //!   `swarm_reconfigure_local_agent` (updates `system_prompt`/`model`/
-//!   `mcp_tools`/`skills`, preserves `cloud_id` and the rest of the card).
+//!   `mcp_tools`/`skills`, preserves `cloud_swarm_id` and the rest of the card).
 //!   Cloud agents have no update tool — the form renders read-only with a
 //!   note pointing the operator to "Clone to Local" to edit.
 
@@ -362,12 +362,12 @@ impl SwarmPanel {
 
     /// Save edits to an existing agent. Branches on `editing_id`:
     /// - `Some` + local: `swarm_reconfigure_local_agent` (updates
-    ///   `system_prompt`/`model`/`mcp_tools`/`skills`, preserves `cloud_id`
+    ///   `system_prompt`/`model`/`mcp_tools`/`skills`, preserves `cloud_swarm_id`
     ///   and the rest of the card). Only `system_prompt` is editable from
     ///   this panel for local agents — `description`/`tags`/`visibility`/
     ///   `valence` changes are not persisted (the reconfigure tool doesn't
     ///   touch them; re-creating via `swarm_create_local_agent` would drop
-    ///   the `cloud_id` sync link).
+    ///   the `cloud_swarm_id` sync link).
     /// - `Some` + cloud: no-op (no ABW update tool). The form status already
     ///   explains this when the agent is loaded.
     /// - `None`: delegates to `create_agent` (the create path).

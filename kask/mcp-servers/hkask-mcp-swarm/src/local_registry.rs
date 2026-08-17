@@ -66,9 +66,9 @@ pub fn validate_typing(
 /// catalogue + future execution. Mirrors the JSON shape in
 /// `agents/local/curated/<id>/agent_card.json`.
 ///
-/// The `cloud_id` field tracks the sync link to an ABW agent: when present,
+/// The `cloud_swarm_id` field tracks the sync link to an ABW agent: when present,
 /// the agent is `synced` (exists both locally and on ABW). When absent,
-/// the agent is `local` only. The operator sets `cloud_id` when cloning an
+/// the agent is `local` only. The operator sets `cloud_swarm_id` when cloning an
 /// ABW agent to local (Slice 11).
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LocalAgentCard {
@@ -87,8 +87,8 @@ pub struct LocalAgentCard {
     /// The ABW agent id this local card is synced with. `None` = local-only.
     /// When set, the panel shows a "synced" badge and the operator can push
     /// local changes to ABW or pull ABW changes to local.
-    #[serde(default)]
-    pub cloud_id: Option<String>,
+    #[serde(default, rename = "cloud_id")]
+    pub cloud_swarm_id: Option<String>,
     /// Tags for local catalogue discovery. `#[serde(default)]` so existing
     /// cards without this field still deserialize.
     #[serde(default)]
@@ -461,7 +461,7 @@ mod tests {
         // Cybernetic Swarm Plan C6 enforcement point: write_card rewrites an
         // existing card in place (preserving agent_id/type/description/accepts/
         // produces/cloud_id) and reloads the registry so the new prompt is
-        // visible to the next delegation. A reconfigure that clobbered cloud_id
+        // visible to the next delegation. A reconfigure that clobbered cloud_swarm_id
         // would silently break the sync link — this pins it.
         let dir = std::env::temp_dir().join("hkask_swarm_test_write_card");
         let _ = std::fs::remove_dir_all(&dir);
@@ -493,23 +493,23 @@ mod tests {
             card.capabilities.system_prompt.as_deref(),
             Some("You are the original prompt.")
         );
-        assert_eq!(card.cloud_id.as_deref(), Some("abw-uuid-123"));
+        assert_eq!(card.cloud_swarm_id.as_deref(), Some("abw-uuid-123"));
 
         // Reconfigure: change only the system_prompt.
         card.capabilities.system_prompt = Some("You are the improved prompt.".to_string());
         let path = registry.write_card(&card).expect("write succeeds");
         assert!(path.contains("synced_agent"));
 
-        // Reload picked up the new prompt; cloud_id and other fields preserved.
+        // Reload picked up the new prompt; cloud_swarm_id and other fields preserved.
         let reloaded = registry.get("synced_agent").expect("reloaded");
         assert_eq!(
             reloaded.capabilities.system_prompt.as_deref(),
             Some("You are the improved prompt.")
         );
         assert_eq!(
-            reloaded.cloud_id.as_deref(),
+            reloaded.cloud_swarm_id.as_deref(),
             Some("abw-uuid-123"),
-            "cloud_id preserved"
+            "cloud_swarm_id preserved"
         );
         assert_eq!(reloaded.agent_type, "research");
         assert_eq!(reloaded.dependencies.required, vec!["dep_a".to_string()]);
@@ -533,7 +533,7 @@ mod tests {
             produces: vec![],
             dependencies: LocalAgentDependencies::default(),
             capabilities: LocalAgentCapabilities::default(),
-            cloud_id: None,
+            cloud_swarm_id: None,
             tags: vec![],
             visibility: String::new(),
             valence: None,
@@ -928,7 +928,7 @@ mod tests {
                     optional,
                     model,
                     min_provider_class,
-                    cloud_id,
+                    cloud_swarm_id,
                 )| {
                     LocalAgentCard {
                         agent_id,
@@ -945,7 +945,7 @@ mod tests {
                             skills: vec![],
                             ..Default::default()
                         },
-                        cloud_id,
+                        cloud_swarm_id,
                         tags: vec![],
                         visibility: String::new(),
                         valence: None,
@@ -970,7 +970,7 @@ mod tests {
             prop_assert_eq!(deserialized.dependencies.required, card.dependencies.required, "round-trip lost dependencies.required");
             prop_assert_eq!(deserialized.dependencies.optional, card.dependencies.optional, "round-trip lost dependencies.optional");
             prop_assert_eq!(deserialized.capabilities.model, card.capabilities.model, "round-trip lost capabilities.model");
-            prop_assert_eq!(deserialized.cloud_id, card.cloud_id, "round-trip lost cloud_id");
+            prop_assert_eq!(deserialized.cloud_swarm_id, card.cloud_swarm_id, "round-trip lost cloud_swarm_id");
         }
     }
 }

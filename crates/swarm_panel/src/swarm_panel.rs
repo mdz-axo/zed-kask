@@ -216,7 +216,7 @@ fn steer_system_prompt(
          (`swarm_hire`, `swarm_delegate`), where credits buy someone else's \
          compute. `swarm_clone_to_local` and `swarm_push_to_cloud` sync \
          cards between the local registry (`agents/local/curated/<id>/agent_card.json`) \
-         and ABW; a cloned card carries `cloud_id` to track the sync link. \
+         and ABW; a cloned card carries `cloud_swarm_id` to track the sync link. \
          `swarm_remove_local` deletes a local card (the local counterpart of \
          firing — a synced card's ABW agent is untouched); `swarm_local_history` \
          reads the local ledger's recent transactions (the run/reconciliation \
@@ -394,7 +394,7 @@ enum SwarmFilter {
 /// selects kind: All/Swarms/Agents) — kind and source are independent axes, so a
 /// single combined enum would either explode to 9 variants or lose the
 /// ability to show, e.g., all local agents. `Synced` entries (cards that exist
-/// in both cloud and local, linked by `cloud_id`) appear under both `Cloud`
+/// in both cloud and local, linked by `cloud_swarm_id`) appear under both `Cloud`
 /// and `Local` — they represent a card visible on either backend, so hiding
 /// them from either view would be a regression. `All` shows every entry
 /// regardless of source. Restores the source filtering that `bc51229ffe`
@@ -1746,7 +1746,7 @@ impl SwarmPanel {
     /// filter restores the cloud/local browse separation that `bc51229ffe`
     /// removed when it moved backend selection onto the per-form
     /// `CreateTarget` (which only affects creation, not browsing). `Synced`
-    /// entries (cards present in both backends, linked by `cloud_id`) appear
+    /// entries (cards present in both backends, linked by `cloud_swarm_id`) appear
     /// under both `Cloud` and `Local` — they are visible on either backend, so
     /// hiding them from either view would be a regression. This matches the
     /// original `kask.swarm.mode`-driven behavior, minus the settings

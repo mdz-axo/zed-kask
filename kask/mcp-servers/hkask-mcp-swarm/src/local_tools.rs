@@ -343,7 +343,7 @@ impl SwarmServer {
     // Local agent store tools (v2 §15 Slice 11).
 
     /// List agents from the local registry. Returns the cards loaded from
-    /// `agents/local/curated/`. Each card carries a `cloud_id` field: when
+    /// `agents/local/curated/`. Each card carries a `cloud_swarm_id` field: when
     /// present, the agent is synced with an ABW agent; when absent, it is
     /// local-only. The panel uses this to show a `source` badge
     /// (`local`, `synced`) alongside the ABW agent list.
@@ -381,7 +381,7 @@ impl SwarmServer {
 
     /// Clone an ABW agent to the local registry. Fetches the agent card from
     /// ABW via `swarm_get_agent`, sets `min_provider_class: local`, writes it
-    /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_id` to
+    /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_swarm_id` to
     /// the ABW agent id (marking it as synced). The ABW catalogue is open
     /// (no API key required) — same as `swarm_list_agents`. The clone is a
     /// read-from-ABW + write-to-local-filesystem operation with no ABW
@@ -522,7 +522,7 @@ impl SwarmServer {
                         skills,
                         ..Default::default()
                     },
-                    cloud_id: Some(req.agent_name.clone()),
+                    cloud_swarm_id: Some(req.agent_name.clone()),
                     tags: Vec::new(),
                     visibility: String::new(),
                     valence: None,
@@ -546,16 +546,16 @@ impl SwarmServer {
     }
 
     /// Push a local agent to ABW. Reads the local card, creates or updates
-    /// the ABW agent via `POST /api/agents`, and sets `cloud_id` on the local
+    /// the ABW agent via `POST /api/agents`, and sets `cloud_swarm_id` on the local
     /// card to the ABW agent id (marking it as synced). Requires the ABW API
-    /// key. If the agent already has a `cloud_id`, the ABW agent is updated;
+    /// key. If the agent already has a `cloud_swarm_id`, the ABW agent is updated;
     /// otherwise a new ABW agent is created.
     #[tool(
         description = "Push a local agent to ABW. Creates or updates the ABW agent from the local card, and sets cloud_id on the local card to mark it as synced. Requires ABW API key."
     )]
     pub(crate) async fn swarm_push_to_cloud(
         &self,
-        parameters: Parameters<PushToCloudRequest>,
+        parameters: Parameters<PushToCloudSwarmRequest>,
     ) -> String {
         execute_tool_semantic(
             self,
@@ -591,21 +591,21 @@ impl SwarmServer {
                     "mcp_tools": local_card.capabilities.mcp_tools,
                     "skills": local_card.capabilities.skills,
                 });
-                // POST to ABW. If the agent already exists (cloud_id is set),
+                // POST to ABW. If the agent already exists (cloud_swarm_id is set),
                 // ABW updates it; otherwise a new agent is created.
                 let result = self
                     .client
                     .post("/agents", &payload)
                     .await
                     .map_err(SwarmError::into_tool_error)?;
-                // Update the local card's cloud_id to mark it as synced.
-                let cloud_id = result
+                // Update the local card's cloud_swarm_id to mark it as synced.
+                let cloud_swarm_id = result
                     .get("agent_id")
                     .and_then(|v| v.as_str())
                     .unwrap_or(&local_card.agent_id)
                     .to_string();
                 let mut updated_card = local_card.clone();
-                updated_card.cloud_id = Some(cloud_id.clone());
+                updated_card.cloud_swarm_id = Some(cloud_swarm_id.clone());
                 // Write the updated card back to the local registry. Sanitize
                 // the agent_id for filesystem use (defense-in-depth — the card
                 // came from disk, but a manually-placed malicious card could
@@ -631,7 +631,7 @@ impl SwarmServer {
                 self.local_registry.load().map_err(map_local_swarm_error)?;
                 Ok(serde_json::json!({
                     "pushed": local_card.agent_id,
-                    "cloud_id": cloud_id,
+                    "cloud_id": cloud_swarm_id,
                     "synced": true,
                     "result": result,
                 }))
@@ -710,8 +710,8 @@ impl SwarmServer {
                 self.local_registry.load().map_err(map_local_swarm_error)?;
                 Ok(serde_json::json!({
                     "removed": card.agent_id,
-                    "cloud_id": card.cloud_id,
-                    "synced": card.cloud_id.is_some(),
+                    "cloud_id": card.cloud_swarm_id,
+                    "synced": card.cloud_swarm_id.is_some(),
                 }))
             },
         )
@@ -782,7 +782,7 @@ impl SwarmServer {
                         skills: req.skills,
                         output_contract: req.output_contract,
                     },
-                    cloud_id: None,
+                    cloud_swarm_id: None,
                     tags: req.tags,
                     visibility: if req.visibility.trim().is_empty() {
                         "private".to_string()
@@ -813,7 +813,7 @@ impl SwarmServer {
     /// Plan C6). Updates ONLY the `system_prompt` (and optionally
     /// `model`/`mcp_tools`/`skills` when supplied non-empty); preserves
     /// `agent_id`, `agent_type`, `description`, `accepts`, `produces`,
-    /// `dependencies`, and the `cloud_id` sync link. The DECIDE
+    /// `dependencies`, and the `cloud_swarm_id` sync link. The DECIDE
     /// `reconfigure_agent` action seeds `swarm_generate_prompt` with the
     /// blamed agent's failure log to produce the new prompt, then this tool
     /// writes it via `LocalAgentRegistry::write_card` and reloads. No consent
@@ -866,8 +866,8 @@ impl SwarmServer {
                 .map_err(map_local_swarm_error)?;
             Ok(serde_json::json!({
                 "reconfigured": card.agent_id,
-                "cloud_id": card.cloud_id,
-                "synced": card.cloud_id.is_some(),
+                "cloud_id": card.cloud_swarm_id,
+                "synced": card.cloud_swarm_id.is_some(),
                 "path": path,
             }))
         })

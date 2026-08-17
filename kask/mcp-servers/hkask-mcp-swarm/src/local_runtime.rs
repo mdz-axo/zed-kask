@@ -381,7 +381,7 @@ impl LocalSwarmRuntime {
         // NO balance gate. Local agents run on the operator's own substrate
         // (their machine, their inference credentials), so there is nothing for
         // this server to withhold: refusing to run costs the operator the work
-        // while saving them nothing. Funding gates belong on *cloud* delegation,
+        // while saving them nothing. Funding gates belong on *cloud swarm* delegation,
         // where credits buy someone else's compute (`spend_gate.rs` + the ABW
         // consent token).
         //
