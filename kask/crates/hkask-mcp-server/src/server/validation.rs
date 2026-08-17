@@ -170,7 +170,7 @@ pub const MAX_READ_BYTES: u64 = 32 * 1024 * 1024;
 /// Resolve the effective read size cap from env var or default.
 ///
 /// Reads `HKASK_MCP_MAX_READ_BYTES` and parses as u64 bytes. Falls back to
-/// `MAX_READ_BYTES` if unset or unparseable (with a `warn!` on parse failure
+/// `MAX_READ_BYTES` if unset or unparsable (with a `warn!` on parse failure
 /// per `.rules`).
 #[must_use]
 pub fn resolve_max_read_bytes() -> u64 {

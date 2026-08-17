@@ -136,7 +136,7 @@ CAND-1a (deletes `Registry`). B10 is addressed by CAND-2.
 | B4 | `RjouleConfig::cap` defaults to 0 as "disabled" sentinel | `bundle/config.rs:319` | Cannot distinguish "intentionally unlimited" from "forgot to configure." **Fixed:** `BudgetTracker::new` now warns when `rjoule.cap == 0` (commit `9a24b4bd4b`). The `Option<NonZeroU64>` / enum change is deferred — the warn + `manifest_compliance.rs` validation gate together surface the failure mode. | **Fixed (warn)** |
 | B5 | `input_mapping::resolve_mapping_value` silent fallback to `value.clone()` on render/parse failure | `input_mapping.rs:65,67` | Two silent fallbacks in 10 lines, no warn. **Fixed:** all three fallback paths now `tracing::warn!` naming the failed render/parse and the template expression (commit `9e90e0381b`). | **Fixed** |
 | B6 | `output_schema::contract_output_to_schema` unknown type → `{"type":"string"}` silent narrow | `output_schema.rs:155` | Typo'd type silently narrows schema. **Fixed:** unknown types now `tracing::warn!` naming the field and declared type before narrowing (commit `9e90e0381b`). | **Fixed** |
-| B7 | `skill_loader::infer_domain_from_registry` defaults to `KnowAct` on every failure mode | `skill_loader.rs:298,309,324` | **Survey was partially wrong** — the method already warns on unreadable/unparseable manifests (L303, L317). It still defaults to `KnowAct`, but the warns are present. The `Result<Domain, _>` change is deferred — the warns surface the drift. | **Partially fixed** |
+| B7 | `skill_loader::infer_domain_from_registry` defaults to `KnowAct` on every failure mode | `skill_loader.rs:298,309,324` | **Survey was partially wrong** — the method already warns on unreadable/unparsable manifests (L303, L317). It still defaults to `KnowAct`, but the warns are present. The `Result<Domain, _>` change is deferred — the warns surface the drift. | **Partially fixed** |
 | B8 | `Registry::reload` clears templates but not skills/bundles | `registry.rs:213` | Doc says "refreshes from filesystem"; skills/bundles survive. **Addressed by CAND-1a** (deletes `Registry` entirely). | **Addressed by CAND-1a** |
 | B9 | `template_renderer::load` doc contradicts code (3 embedded-seed fallbacks) | `template_renderer.rs:96`, `step_actions.rs:957-972,1176-1191`, `hkask-mcp-kata-kanban/kata/execution.rs:93-103` | Doc contradicts code. **Fixed:** doc now documents the fallback behavior and names the 3 production call sites (commit `9a24b4bd4b`). | **Fixed** |
 | B10 | `step_graph::MAX_STEPS` advisory warn + executor hard gate — dual-write | `step_graph.rs:132`, `executor.rs:206` | Two enforcement points for one invariant. Sub-cascade paths get only the warn. **Addressed by CAND-2.** | **Addressed by CAND-2** |
@@ -588,7 +588,7 @@ and `9a24b4bd4b` (B9 — doc fixed, B4 — warn at BudgetTracker::new) landed.
   `manifest_compliance.rs` validation gate together surface the failure mode.
   **Deferred.**
 - **B7** (partial): `infer_domain_from_registry` already warns on
-  unreadable/unparseable manifests. The `Result<Domain, _>` change is deferred
+  unreadable/unparsable manifests. The `Result<Domain, _>` change is deferred
   — the warns surface the drift. **Deferred.**
 - **B8**: addressed by CAND-1a (deletes `Registry`).
 - **B10**: addressed by CAND-2.
@@ -660,7 +660,7 @@ clean; ✅ `./script/clippy` clean.
 failure mode (malformed manifest, missing manifest, registry error).
 
 **Already partially addressed:** the method warns on unreadable (L303) and
-unparseable (L317) manifests, tagged `reg.skill.lifecycle` with
+unparsable (L317) manifests, tagged `reg.skill.lifecycle` with
 `operation = "manifest_unreadable"` / `"manifest_unparseable"`. The
 NotFound case (L296-299) legitimately returns `KnowAct` without a warn — a
 Zed-only skill has no registry layer.

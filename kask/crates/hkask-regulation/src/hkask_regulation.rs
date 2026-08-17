@@ -6,25 +6,25 @@
 //! tool-call caps, OCAP governance, sovereignty enforcement. Per Ashby's Law
 //! of Requisite Variety.
 
-pub(crate) mod algedonic; // Loop 6 subloop 6.4 — algedonic signal channel
-pub mod cybernetics_loop; // Loop 6
-pub(crate) mod dampener; // Loop 6 — regulation
-pub mod energy; // Loop 6 — per-agent tool-call caps
+pub(crate) mod algedonic;
+pub mod cybernetics_loop;
+pub(crate) mod dampener;
+pub mod energy;
 
 pub mod infra_span;
 pub mod metacognition;
 pub mod qa_span;
-pub(crate) mod regulation_policy; // Loop 6 — per-metric regulation rules
+pub(crate) mod regulation_policy;
 pub mod set_points;
-pub mod skill_span; // Unified skill feedback spans (reg.skill.<id>.<phase>) // Loop 6 — set-points config & loaders
+pub mod skill_span;
 
-pub mod sensor_provider; // Pluggable metric sensors (Fermi Extractor pattern) — public for cross-loop registration
-pub(crate) mod strategy_evaluator; // Loop 6 — multi-model strategy selection (Fermi improvement-loop pattern)
-pub(crate) mod system_simulator; // Loop 6 — predictive regulation via digital twin (Fermi dynamics pattern)
-pub(crate) mod tool_stats; // Loop 6 — statistical learning for MCP tool costs and reliability
-pub mod types; // Loop 6 — regulation loop types
+pub mod sensor_provider;
+pub(crate) mod strategy_evaluator;
+pub(crate) mod system_simulator;
+pub(crate) mod tool_stats;
+pub mod types;
 
-pub mod runtime; // Loop 6 — runtime
+pub mod runtime;
 pub use algedonic::{AlertEmailSink, AlertEscalationSink, RuntimeAlert};
 pub use cybernetics_loop::CyberneticsLoop;
 pub use energy::{

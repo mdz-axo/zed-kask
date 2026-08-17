@@ -49,7 +49,7 @@ impl ToolErrorEnvelope {
 ///
 /// `{"content": {…}}` → `{…}`. Defensive: if a future invoker returns the
 /// payload directly (no `content` wrapper), the whole value is returned
-/// rather than `None`. Returns `None` only on unparseable input.
+/// rather than `None`. Returns `None` only on unparsable input.
 pub fn parse_tool_response(output: &str) -> Option<Value> {
     let value: Value = serde_json::from_str(output).ok()?;
     Some(unwrap_tool_envelope(value))
@@ -72,7 +72,7 @@ pub fn unwrap_tool_envelope(value: Value) -> Value {
 /// for the `Err(_)` branch instead of falling into "Failed to parse …".
 ///
 /// Returns `None` when the output is not an error envelope — either it is
-/// unparseable, or it is a successful payload (with or without the `content`
+/// unparsable, or it is a successful payload (with or without the `content`
 /// wrapper). This is the single seam for error-envelope detection: do not
 /// re-implement `value.get("error")` locally.
 ///

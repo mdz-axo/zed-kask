@@ -344,16 +344,19 @@ pub fn mirror_provisioned_db_passphrase(
 /// `https://api.runpod.io` is empty.
 ///
 /// This mirror reads from `kask://credentials/runpod` and writes to
-/// `https://api.runpod.io` (the RunPod provider's default `api_url`). It's
-/// idempotent — if the Zed keychain already has a key at that URL (e.g. the
-/// user entered it via the RunPod provider's settings UI), the mirror
-/// overwrites it with the kask-stored value. If the kask store has no key, the
+/// `https://api.runpod.io` (the RunPod provider's default `api_url`), but
+/// ONLY if the Zed keychain does not already have a key at that URL. This
+/// preserves the precedence: a key entered via the RunPod provider's own
+/// settings UI (which writes directly to the Zed keychain at `api_url`) is
+/// not clobbered by a stale kask-store key. If the kask store has no key, the
 /// mirror is a no-op.
 ///
 /// `mirror_env_keys_to_keychain` handles the same mirror for keys set via the
-/// `RUNPOD_API_KEY` env var at startup. This function handles the case where
-/// the key was set via the kask settings UI (no env var) — the env-var mirror
-/// never fires because the env var is absent.
+/// `RUNPOD_API_KEY` env var at startup, and runs AFTER this mirror (detached
+/// vs `.await`ed), so an env-var key takes precedence over a kask-store key.
+/// This function handles the case where the key was set via the kask settings
+/// UI (no env var) — the env-var mirror never fires because the env var is
+/// absent.
 pub fn mirror_runpod_api_key(
     credentials_provider: &Arc<dyn CredentialsProvider>,
     cx: &mut App,
@@ -378,8 +381,26 @@ pub fn mirror_runpod_api_key(
                 return;
             }
         };
-        // Write to the Zed keychain under the RunPod provider's api_url.
+        // Write to the Zed keychain under the RunPod provider's api_url, but
+        // only if no key is already present — don't clobber a key entered via
+        // the RunPod provider's own settings UI.
         let api_url = "https://api.runpod.io";
+        match credentials_provider.read_credentials(api_url, cx).await {
+            Ok(Some(_)) => {
+                // Zed keychain already has a key at api_url — preserve it.
+                return;
+            }
+            Ok(None) => {} // No key — proceed to write.
+            Err(error) => {
+                tracing::warn!(
+                    target: "hkask.identity",
+                    %error,
+                    api_url = %api_url,
+                    "Failed to check Zed keychain for existing RunPod key — skipping mirror to avoid clobbering"
+                );
+                return;
+            }
+        }
         match credentials_provider
             .write_credentials(api_url, "Bearer", key.as_bytes(), cx)
             .await

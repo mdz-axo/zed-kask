@@ -100,7 +100,7 @@ impl HkaskSettings {
     ///
     /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
     /// pre:  none (always succeeds)
-    /// post: returns HkaskSettings from disk; HkaskSettings::default() if file missing or unparseable
+    /// post: returns HkaskSettings from disk; HkaskSettings::default() if file missing or unparsable
     #[must_use]
     pub fn load() -> Self {
         let path = settings_path();
@@ -222,14 +222,14 @@ impl HkaskSettings {
 }
 
 /// Load any settings type from `~/.config/hkask/settings.json`.
-/// Falls back to `T::default()` if the file doesn't exist or is unparseable.
+/// Falls back to `T::default()` if the file doesn't exist or is unparsable.
 ///
 /// This is the shared load path for CLI (`ReplSettings`), API (`SettingsResponse`),
 /// and any future surface that needs LLM parameter persistence.
 ///
 /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
 /// pre:  T must implement DeserializeOwned + Default
-/// post: returns T from disk; T::default() if file missing or unparseable
+/// post: returns T from disk; T::default() if file missing or unparsable
 #[must_use]
 pub fn load_settings<T: serde::de::DeserializeOwned + Default>() -> T {
     let path = settings_path();

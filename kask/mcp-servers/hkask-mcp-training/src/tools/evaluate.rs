@@ -58,7 +58,7 @@ impl TrainingServer {
                 let record: serde_json::Value = match serde_json::from_str(trimmed) {
                     Ok(v) => v,
                     Err(e) => {
-                        tracing::warn!(target: "hkask.training.evaluate", line = i + 1, error = %e, "Skipping unparseable test line");
+                        tracing::warn!(target: "hkask.training.evaluate", line = i + 1, error = %e, "Skipping unparsable test line");
                         continue;
                     }
                 };
@@ -185,7 +185,7 @@ impl TrainingServer {
             let record: serde_json::Value = match serde_json::from_str(trimmed) {
                 Ok(v) => v,
                 Err(e) => {
-                    tracing::warn!(target: "hkask.training.evaluate.benchmark", line = i + 1, error = %e, "Skipping unparseable line");
+                    tracing::warn!(target: "hkask.training.evaluate.benchmark", line = i + 1, error = %e, "Skipping unparsable line");
                     continue;
                 }
             };

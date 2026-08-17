@@ -289,7 +289,7 @@ impl SkillLoader {
             .join("manifest.yaml");
 
         // F-03 fix: distinguish "file not found" (legitimate — Zed-only skill,
-        // default to KnowAct) from "file present but unparseable" (error — a
+        // default to KnowAct) from "file present but unparsable" (error — a
         // malformed manifest.yaml is a real defect, not a default case).
         let content = match self.reader.read_to_string(&registry_manifest) {
             Ok(c) => c,

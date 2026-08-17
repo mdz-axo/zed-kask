@@ -494,7 +494,7 @@ impl Sensor for TestCoverageSensor {
                     target: "hkask.sensor.coverage",
                     path = %path.display(),
                     error = %error,
-                    "TestCoverageSensor: metrics.json unparseable — returning no signal (not 'no deviation')"
+                    "TestCoverageSensor: metrics.json unparsable — returning no signal (not 'no deviation')"
                 );
                 return None;
             }
@@ -575,7 +575,7 @@ impl Sensor for MutationScoreSensor {
                     target: "hkask.sensor.mutation",
                     path = %path.display(),
                     error = %error,
-                    "MutationScoreSensor: metrics.json unparseable — returning no signal (not 'no deviation')"
+                    "MutationScoreSensor: metrics.json unparsable — returning no signal (not 'no deviation')"
                 );
                 return None;
             }

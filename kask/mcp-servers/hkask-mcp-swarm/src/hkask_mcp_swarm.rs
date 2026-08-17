@@ -203,6 +203,19 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             if let Some(w) = warning {
                 tracing::warn!(target: "hkask.mcp.swarm", "{w}");
             }
+            // The default swarm-memory passphrase is a pre-release convenience
+            // so the local knowledge tools work out of the box. A production
+            // deployment with the default is unencrypted-in-effect — surface it
+            // so the operator distinguishes "not configured" from "configured"
+            // (the .rules opt-in-feature failure-classification rule).
+            if config.memory_passphrase == "allostery" {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    "swarm memory passphrase is the pre-release default ('allostery') — \
+                     set HKASK_SWARM_MEMORY_PASSPHRASE for a real secret. The local \
+                     knowledge store is unencrypted-in-effect until then."
+                );
+            }
             // Load local agent cards (v2 §15). In Abw mode this is a no-op
             // if the directory doesn't exist — the registry stays empty and
             // local tools (Slice 9) will return zero agents. In Local mode

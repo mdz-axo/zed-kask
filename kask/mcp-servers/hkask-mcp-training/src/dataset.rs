@@ -390,7 +390,7 @@ impl DatasetPipeline {
             // Try to parse as JSON.
             let json: serde_json::Value = match serde_json::from_str(trimmed) {
                 Ok(v) => v,
-                Err(_) => continue, // Skip unparseable lines.
+                Err(_) => continue, // Skip unparsable lines.
             };
 
             // SFT: {"messages": [{"role": ..., "content": ...}, ...]}

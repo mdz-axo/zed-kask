@@ -91,7 +91,7 @@ feed the loop.
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `market_ladder` | Ladder of contracts in a series ordered by deadline, each annotated with `time_to_maturity` in fractional years. Kalshi series ticker or Polymarket event slug; unparseable deadlines sort last with null maturity — never fabricated. | `series` |
+| `market_ladder` | Ladder of contracts in a series ordered by deadline, each annotated with `time_to_maturity` in fractional years. Kalshi series ticker or Polymarket event slug; unparsable deadlines sort last with null maturity — never fabricated. | `series` |
 | `market_cmp` | Constant Maturity Prediction: synthesize a fixed-tenor probability for a registered base event by interpolating its family's markets in log-odds space. Sparse coverage returns `bucketed_sparse` with the bracket width. Base events come only from `HKASK_PREDICTION_MARKETS_BASE_EVENTS` — unregistered series refused. | `series`, `tenor_days` |
 | `market_cmp_index` | Full CMP index for a registered base event: probability curve across the standard tenor grid (7d/30d/90d/180d/1y/2y), log-odds interpolated, with curve slope (log-odds/year) as the term-structure signal. Uncovered tenors return null. | `series` |
 | `market_residual` | Decompose a niche market's movement into base-event exposure (log-odds beta) plus idiosyncratic residual. Refuses with `insufficient_overlap` below 10 shared observations; output carries `r_squared` and `observations`. | `market_ticker`, `base_ticker`, `window_days` |

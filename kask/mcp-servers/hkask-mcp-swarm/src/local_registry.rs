@@ -185,15 +185,6 @@ impl LocalAgentRegistry {
         }
     }
 
-    /// Construct with a custom `PortRegistry` (e.g. loaded from a file).
-    pub fn with_port_registry(dir: impl Into<String>, port_registry: PortRegistry) -> Self {
-        Self {
-            dir: dir.into(),
-            cards: std::sync::Mutex::new(None),
-            port_registry,
-        }
-    }
-
     /// Read-only access to the port registry (for metrics tools).
     pub fn port_registry(&self) -> &PortRegistry {
         &self.port_registry

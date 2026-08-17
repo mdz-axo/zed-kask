@@ -211,7 +211,7 @@ flowchart LR
 **Honest-degradation invariants:** a bucket with no data or a read failure is
 `stale: true` (never `brier: 0`); `constant_maturity` returns `None` on empty
 input; `residual_analysis` refuses below `MIN_OBSERVATIONS = 10` overlapping
-pairs (`insufficient_overlap`); the WS stream skips unparseable frames without
+pairs (`insufficient_overlap`); the WS stream skips unparsable frames without
 dying, and a dead stream surfaces a typed error.
 
 **Ontology anchors:** per-record `ontology` blocks and the

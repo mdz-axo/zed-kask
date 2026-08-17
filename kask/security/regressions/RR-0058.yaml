@@ -1,5 +1,5 @@
 id: RR-0058
-title: "kask/deny.toml must parse and cargo-deny must run in CI (an unparseable config silently disables the entire supply-chain policy)"
+title: "kask/deny.toml must parse and cargo-deny must run in CI (an unparsable config silently disables the entire supply-chain policy)"
 surface: supply-chain
 cwe: CWE-1104
 owasp_llm_2025: LLM03
@@ -22,13 +22,13 @@ detection:
   include: "../.github/workflows/kask-ci.yml"
 mitigation: |
   A doubled closing quote at kask/deny.toml:16 (`... re-review 2026-10-22."" },`)
-  made the file unparseable. cargo-deny aborts before reading ANY rule, so the
+  made the file unparsable. cargo-deny aborts before reading ANY rule, so the
   [advisories] ignore list, [bans] deny list, [licenses] allowlist, and [sources]
   restriction were all inert. Independently confirmed by Python tomllib
   ("Unclosed inline table at line 16, column 325").
 
   It survived because cargo-deny was never invoked in CI: `grep -rn 'deny'
-  .github/workflows/*.yml` returned zero matches. An unparseable policy produced
+  .github/workflows/*.yml` returned zero matches. An unparsable policy produced
   no signal at all.
 
   Two-part fix, both required:

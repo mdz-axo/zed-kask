@@ -407,7 +407,7 @@ impl PredictionMarketsServer {
 
     /// Duration profile of a contract series (the term-structure ladder).
     #[tool(
-        description = "Return the ladder of contracts in a series ordered by deadline, each annotated with its time_to_maturity in fractional years. Kalshi series ticker or Polymarket event slug; both platforms are probed. Unparseable deadlines sort last with null maturity; per-platform failures surface in warnings — the ladder never fabricates a maturity."
+        description = "Return the ladder of contracts in a series ordered by deadline, each annotated with its time_to_maturity in fractional years. Kalshi series ticker or Polymarket event slug; both platforms are probed. Unparsable deadlines sort last with null maturity; per-platform failures surface in warnings — the ladder never fabricates a maturity."
     )]
     pub async fn market_ladder(&self, Parameters(req): Parameters<MarketLadderRequest>) -> String {
         execute_tool_semantic(
@@ -487,7 +487,7 @@ impl PredictionMarketsServer {
                     Err(e) => warnings.push(format!("polymarket: {e}")),
                 }
 
-                // Sort by maturity; unparseable deadlines (null) last.
+                // Sort by maturity; unparsable deadlines (null) last.
                 rungs.sort_by(|a, b| {
                     let ma = a["time_to_maturity"].as_f64().unwrap_or(f64::MAX);
                     let mb = b["time_to_maturity"].as_f64().unwrap_or(f64::MAX);
