@@ -211,6 +211,107 @@ fn shell_exec(command: &str, cwd: &str) -> Result<Value> {
     }))
 }
 
+/// The typed `compute_ref` discriminator. Parsing a `compute_ref` string into
+/// this enum makes typo'd refs a parse-time error (with an auto-generated
+/// supported-list message) rather than a silent runtime fallback to the
+/// catch-all arm. The enum also makes the dispatch exhaustive — adding a new
+/// variant is a compile error at the `match` site.
+///
+/// The string forms (returned by `as_str`) are the keys manifests use under
+/// `compute_ref:`. They must stay in sync with the `KNOWN_COMPUTE_REFS`
+/// allow-lists in `tests/manifest_properties.rs` and `tests/manifest_invariants.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ComputeRef {
+    CalibrateFromFermi,
+    OutsideViewAdjustment,
+    BayesianUpdate,
+    CombineTreeProbabilities,
+    ApplyCalibrationAdjustment,
+    BrierScore,
+    BrierScoreMulti,
+    BrierInterpretation,
+    KataObjectGap,
+    KataProcessGap,
+    KataHypotenuse,
+    KataPredictionVsResult,
+    SwarmConvergeAccumulate,
+    SwarmSecondOrderMonitor,
+    SwarmFilterProposedMoves,
+    ListeningChunkTranscript,
+    ListeningVerifyCitations,
+    LispEval,
+    ShellExec,
+}
+
+impl ComputeRef {
+    /// Parse a `compute_ref` string into the typed enum. Returns
+    /// `Err(TemplateError::Manifest)` with an auto-generated supported-list
+    /// message on unknown refs — replacing the hand-maintained catch-all
+    /// error message that had drifted (omitted `combine_tree_probabilities`).
+    pub fn parse(s: &str) -> Result<Self> {
+        match s {
+            "calibrate_from_fermi" => Ok(Self::CalibrateFromFermi),
+            "outside_view_adjustment" => Ok(Self::OutsideViewAdjustment),
+            "bayesian_update" => Ok(Self::BayesianUpdate),
+            "combine_tree_probabilities" => Ok(Self::CombineTreeProbabilities),
+            "apply_calibration_adjustment" => Ok(Self::ApplyCalibrationAdjustment),
+            "brier_score" => Ok(Self::BrierScore),
+            "brier_score_multi" => Ok(Self::BrierScoreMulti),
+            "brier_interpretation" => Ok(Self::BrierInterpretation),
+            "kata.object_gap" => Ok(Self::KataObjectGap),
+            "kata.process_gap" => Ok(Self::KataProcessGap),
+            "kata.hypotenuse" => Ok(Self::KataHypotenuse),
+            "kata.prediction_vs_result" => Ok(Self::KataPredictionVsResult),
+            "swarm.converge_accumulate" => Ok(Self::SwarmConvergeAccumulate),
+            "swarm.second_order_monitor" => Ok(Self::SwarmSecondOrderMonitor),
+            "swarm.filter_proposed_moves" => Ok(Self::SwarmFilterProposedMoves),
+            "listening.chunk_transcript" => Ok(Self::ListeningChunkTranscript),
+            "listening.verify_citations" => Ok(Self::ListeningVerifyCitations),
+            "lisp.eval" => Ok(Self::LispEval),
+            "shell.exec" => Ok(Self::ShellExec),
+            other => Err(TemplateError::Manifest(format!(
+                "Unknown compute_ref: '{other}'. Supported: {}",
+                Self::SUPPORTED_LIST
+            ))),
+        }
+    }
+
+    /// The canonical string form, matching the `compute_ref:` key in manifests.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::CalibrateFromFermi => "calibrate_from_fermi",
+            Self::OutsideViewAdjustment => "outside_view_adjustment",
+            Self::BayesianUpdate => "bayesian_update",
+            Self::CombineTreeProbabilities => "combine_tree_probabilities",
+            Self::ApplyCalibrationAdjustment => "apply_calibration_adjustment",
+            Self::BrierScore => "brier_score",
+            Self::BrierScoreMulti => "brier_score_multi",
+            Self::BrierInterpretation => "brier_interpretation",
+            Self::KataObjectGap => "kata.object_gap",
+            Self::KataProcessGap => "kata.process_gap",
+            Self::KataHypotenuse => "kata.hypotenuse",
+            Self::KataPredictionVsResult => "kata.prediction_vs_result",
+            Self::SwarmConvergeAccumulate => "swarm.converge_accumulate",
+            Self::SwarmSecondOrderMonitor => "swarm.second_order_monitor",
+            Self::SwarmFilterProposedMoves => "swarm.filter_proposed_moves",
+            Self::ListeningChunkTranscript => "listening.chunk_transcript",
+            Self::ListeningVerifyCitations => "listening.verify_citations",
+            Self::LispEval => "lisp.eval",
+            Self::ShellExec => "shell.exec",
+        }
+    }
+
+    /// Auto-generated supported-list string for error messages. Single source
+    /// of truth — no hand-maintained list to drift.
+    const SUPPORTED_LIST: &'static str = "calibrate_from_fermi, outside_view_adjustment, bayesian_update, \
+         combine_tree_probabilities, apply_calibration_adjustment, brier_score, \
+         brier_score_multi, brier_interpretation, kata.object_gap, \
+         kata.process_gap, kata.hypotenuse, kata.prediction_vs_result, \
+         swarm.converge_accumulate, swarm.second_order_monitor, \
+         swarm.filter_proposed_moves, listening.chunk_transcript, \
+         listening.verify_citations, lisp.eval, shell.exec";
+}
+
 /// Dispatch a `compute_ref` string to the matching `hkask_forecast` primitive.
 ///
 /// The `input` JSON object carries the function's arguments, bound from prior
@@ -227,6 +328,15 @@ fn shell_exec(command: &str, cwd: &str) -> Result<Value> {
 /// - `brier_score_multi` — in: `{probabilities: [f64], outcomes: [bool]}`
 /// - `brier_interpretation` — in: `{score}`
 pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
+    let resolved = ComputeRef::parse(compute_ref)?;
+    dispatch_typed(resolved, compute_ref, input)
+}
+
+/// Typed dispatch — the `resolved` enum makes the match exhaustive (no `_ =>`
+/// arm). The `compute_ref_str` is the original string, used in error messages
+/// for the `get_f64`/`get_bool`/`get_u64` helpers so the error names the ref
+/// the manifest author wrote, not the enum variant name.
+fn dispatch_typed(resolved: ComputeRef, compute_ref: &str, input: &Value) -> Result<Value> {
     use hkask_forecast as forecast;
     let get_f64 = |key: &str| -> Result<f64> {
         input.get(key).and_then(|v| v.as_f64()).ok_or_else(|| {
@@ -253,8 +363,8 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         })
     };
 
-    match compute_ref {
-        "calibrate_from_fermi" => {
+    match resolved {
+        ComputeRef::CalibrateFromFermi => {
             let questions = input
                 .get("questions")
                 .and_then(|v| v.as_array())
@@ -279,7 +389,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                 .map_err(|e| TemplateError::Manifest(format!("calibrate_from_fermi: {e}")))?;
             Ok(serde_json::json!({ "calibrated": calibrated }))
         }
-        "outside_view_adjustment" => {
+        ComputeRef::OutsideViewAdjustment => {
             let base_rate = get_f64("base_rate")?;
             let inside_estimate = get_f64("inside_estimate")?;
             let reference_count = get_u64("reference_count")?;
@@ -287,7 +397,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                 forecast::outside_view_adjustment(base_rate, inside_estimate, reference_count);
             Ok(serde_json::json!({ "calibrated": calibrated, "confidence": confidence }))
         }
-        "bayesian_update" => {
+        ComputeRef::BayesianUpdate => {
             let prior = get_f64("prior")?;
             let likelihood = get_f64("evidence_likelihood")?;
             let base_rate = get_f64("evidence_base_rate")?;
@@ -303,7 +413,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         // to `marginalize`, the single source of truth for joint
         // marginalization) and produces `tree_combined_probability`, the prior
         // consumed by stage_4's Bayesian update.
-        "combine_tree_probabilities" => {
+        ComputeRef::CombineTreeProbabilities => {
             let nodes_json = input
                 .get("nodes")
                 .and_then(|v| v.as_array())
@@ -384,19 +494,19 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                     })?;
             Ok(serde_json::json!({ "tree_combined_probability": combined }))
         }
-        "apply_calibration_adjustment" => {
+        ComputeRef::ApplyCalibrationAdjustment => {
             let prior = get_f64("prior")?;
             let bias = get_f64("overconfidence_bias")?;
             let adjusted = forecast::apply_calibration_adjustment(prior, bias);
             Ok(serde_json::json!({ "adjusted": adjusted }))
         }
-        "brier_score" => {
+        ComputeRef::BrierScore => {
             let probability = get_f64("probability")?;
             let occurred = get_bool("outcome_occurred")?;
             let score = forecast::brier_score(probability, occurred);
             Ok(serde_json::json!({ "score": score }))
         }
-        "brier_score_multi" => {
+        ComputeRef::BrierScoreMulti => {
             let probabilities = input
                 .get("probabilities")
                 .and_then(|v| v.as_array())
@@ -423,7 +533,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                 .map_err(|e| TemplateError::Manifest(format!("brier_score_multi: {e}")))?;
             Ok(serde_json::json!({ "score": score }))
         }
-        "brier_interpretation" => {
+        ComputeRef::BrierInterpretation => {
             let score = get_f64("score")?;
             Ok(serde_json::json!({ "interpretation": forecast::brier_interpretation(score) }))
         }
@@ -448,7 +558,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         // Object-space gap (Dublin Core): artifact completeness.
         // Counts missing fields and ungrounded fields in the current artifacts
         // vs the target spec. Normalized to [0, 1].
-        "kata.object_gap" => {
+        ComputeRef::KataObjectGap => {
             let current = input.get("current_artifacts").ok_or_else(|| {
                 TemplateError::Manifest(
                     "compute 'kata.object_gap': missing 'current_artifacts'".into(),
@@ -469,7 +579,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         // Process-space gap (PKO): procedure progress.
         // Counts incomplete steps in the current procedure vs the target spec.
         // Steps in-progress are half-weighted. Normalized to [0, 1].
-        "kata.process_gap" => {
+        ComputeRef::KataProcessGap => {
             let current = input.get("current_procedure").ok_or_else(|| {
                 TemplateError::Manifest(
                     "compute 'kata.process_gap': missing 'current_procedure'".into(),
@@ -488,7 +598,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         }
         // Hypotenuse: sqrt(object_gap² + process_gap²).
         // The total distance to the target in the combined object-process space.
-        "kata.hypotenuse" => {
+        ComputeRef::KataHypotenuse => {
             let object_gap = get_f64("object_gap")?;
             let process_gap = get_f64("process_gap")?;
             let hypotenuse = (object_gap * object_gap + process_gap * process_gap).sqrt();
@@ -501,7 +611,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         // Prediction vs result: Brier score for one PDCA cycle.
         // The prediction carries a confidence in [0,1]; the result is whether
         // the predicted outcome occurred (bool) or the actual delta (f64).
-        "kata.prediction_vs_result" => {
+        ComputeRef::KataPredictionVsResult => {
             let confidence = input
                 .get("prediction")
                 .and_then(|p| p.get("confidence"))
@@ -546,7 +656,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         // pure functions. The manifest threads the accumulator outputs back
         // through the loop step's input_mapping so the next iteration (and
         // DECIDE) can read them.
-        "swarm.converge_accumulate" => {
+        ComputeRef::SwarmConvergeAccumulate => {
             // ACO pheromone evaporation factor for C7 influence_scores. Applied
             // per iteration before adding the fresh d_delta, so stale negative
             // influence decays and previously-poisoned agent types become
@@ -680,7 +790,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                 "fault_count": serde_json::Value::Object(new_fault),
             }))
         }
-        "swarm.second_order_monitor" => {
+        ComputeRef::SwarmSecondOrderMonitor => {
             // S1 P5 second-order monitor: two deterministic signals over the
             // iteration log. No LLM.
             let iteration_log = input
@@ -824,7 +934,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         // filtered_moves. An empty filtered_moves is the correct cybernetic
         // response — a stuck swarm that only re-proposes known-bad edits should
         // stall, at which point the second-order monitor's diversify/Go See fires.
-        "swarm.filter_proposed_moves" => {
+        ComputeRef::SwarmFilterProposedMoves => {
             let proposed = input
                 .get("proposed_moves")
                 .and_then(|v| v.as_array())
@@ -940,7 +1050,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         // the referenced chunk (verify_citations). The model cannot
         // fabricate a quote because the process never gives it a "write a
         // quote" step — only a "find a quote and point to it" step.
-        "listening.chunk_transcript" => {
+        ComputeRef::ListeningChunkTranscript => {
             let transcript = input
                 .get("transcript")
                 .and_then(|v| v.as_str())
@@ -975,7 +1085,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                 "prior_transcript_chunks": prior_chunks,
             }))
         }
-        "listening.verify_citations" => {
+        ComputeRef::ListeningVerifyCitations => {
             let model_output = input.get("model_output").cloned().unwrap_or(Value::Null);
             let chunks = input
                 .get("transcript_chunks")
@@ -1014,7 +1124,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         // gate `lisp.eval` to `category: skill` manifests only — infrastructure
         // manifests run without human review and a Turing-complete step
         // language is an attack surface (see .rules trap on manifests).
-        "lisp.eval" => {
+        ComputeRef::LispEval => {
             let form = input.get("form").and_then(|v| v.as_str()).ok_or_else(|| {
                 TemplateError::Manifest("compute 'lisp.eval': missing 'form' string".into())
             })?;
@@ -1042,7 +1152,7 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         // Security: same trust level as `lisp.eval` — manifests are authored
         // by the operator/curator. The caller must gate `shell.exec` to
         // `category: skill` manifests only.
-        "shell.exec" => {
+        ComputeRef::ShellExec => {
             let command = input
                 .get("command")
                 .and_then(|v| v.as_str())
@@ -1052,10 +1162,6 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
             let cwd = input.get("cwd").and_then(|v| v.as_str()).unwrap_or(".");
             shell_exec(command, cwd)
         }
-        other => Err(TemplateError::Manifest(format!(
-            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation, kata.object_gap, kata.process_gap, kata.hypotenuse, kata.prediction_vs_result, lisp.eval, shell.exec, swarm.converge_accumulate, swarm.second_order_monitor, swarm.filter_proposed_moves, listening.chunk_transcript, listening.verify_citations",
-            other
-        ))),
     }
 }
 
