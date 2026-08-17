@@ -574,11 +574,10 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         SignalMetric::MemoryLife => &[Calibrate, Escalate],
         SignalMetric::InferenceAvailable => &[Throttle, Calibrate, Escalate],
         SignalMetric::InferenceModelAvailable => &[Calibrate, Escalate],
-        // ── Grounding (Escalate — the Curator surfaces to the user) ──
-        SignalMetric::GroundingCleanRate => &[Escalate, Calibrate],
-        SignalMetric::GroundingCoverageRate => &[Escalate, Calibrate],
-        SignalMetric::GroundingViolationDelta => &[Escalate, Calibrate],
         // ── Observational (no substitution — Notify is terminal) ──
+        // Grounding metrics route to Escalate (terminal for grounding — the
+        // regulation system does not auto-fix grounding contracts, that's a
+        // human decision). No substitution ladder.
         SignalMetric::StorageUsage
         | SignalMetric::TripleCount
         | SignalMetric::LowConfidenceCount
@@ -587,7 +586,10 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         | SignalMetric::SeamCoverage
         | SignalMetric::ToolReliability
         | SignalMetric::TestCoverage
-        | SignalMetric::MutationScore => &[],
+        | SignalMetric::MutationScore
+        | SignalMetric::GroundingCleanRate
+        | SignalMetric::GroundingCoverageRate
+        | SignalMetric::GroundingViolationDelta => &[],
     }
 }
 
@@ -690,6 +692,9 @@ mod tests {
             SignalMetric::RegulatoryPlateau,
             SignalMetric::ActionDecisionBlocked,
             SignalMetric::ToolReliability,
+            SignalMetric::GroundingCleanRate,
+            SignalMetric::GroundingCoverageRate,
+            SignalMetric::GroundingViolationDelta,
         ];
         for metric in all_metrics {
             // Test both directions — at least one should produce an action
@@ -753,5 +758,55 @@ mod tests {
         assert!(default_substitution_ladder(SignalMetric::ConsolidationCandidates).is_empty());
         assert!(default_substitution_ladder(SignalMetric::PendingEscalations).is_empty());
         assert!(default_substitution_ladder(SignalMetric::SeamCoverage).is_empty());
+        // Grounding metrics route to Escalate (terminal for grounding — the
+        // regulation system does not auto-fix grounding contracts).
+        assert!(default_substitution_ladder(SignalMetric::GroundingCleanRate).is_empty());
+        assert!(default_substitution_ladder(SignalMetric::GroundingCoverageRate).is_empty());
+        assert!(default_substitution_ladder(SignalMetric::GroundingViolationDelta).is_empty());
+    }
+
+    // ── Grounding policy rules (verification ladder Rung 3) ──
+
+    #[test]
+    fn policy_matches_grounding_clean_rate_below_setpoint() {
+        let policy = RegulationPolicy::default();
+        let dev = make_deviation(SignalMetric::GroundingCleanRate, 0.5, 0.8);
+        let proposed = policy.decide(&dev);
+        assert_eq!(proposed.len(), 1);
+        assert_eq!(proposed[0].target, LoopId::Curation);
+        assert_eq!(proposed[0].action_type, ActionType::Escalate);
+        assert_eq!(
+            proposed[0].reason,
+            RegulationReason::GroundingCleanRateDegraded
+        );
+    }
+
+    #[test]
+    fn policy_matches_grounding_coverage_rate_below_setpoint() {
+        let policy = RegulationPolicy::default();
+        let dev = make_deviation(SignalMetric::GroundingCoverageRate, 0.3, 0.5);
+        let proposed = policy.decide(&dev);
+        assert_eq!(proposed.len(), 1);
+        assert_eq!(proposed[0].target, LoopId::Curation);
+        assert_eq!(proposed[0].action_type, ActionType::Escalate);
+        assert_eq!(
+            proposed[0].reason,
+            RegulationReason::GroundingCoverageDegraded
+        );
+    }
+
+    #[test]
+    fn policy_matches_grounding_violation_delta_above_setpoint() {
+        let policy = RegulationPolicy::default();
+        // Delta of +3 above set-point 0 → AboveSetPoint
+        let dev = make_deviation(SignalMetric::GroundingViolationDelta, 3.0, 0.0);
+        let proposed = policy.decide(&dev);
+        assert_eq!(proposed.len(), 1);
+        assert_eq!(proposed[0].target, LoopId::Curation);
+        assert_eq!(proposed[0].action_type, ActionType::Escalate);
+        assert_eq!(
+            proposed[0].reason,
+            RegulationReason::GroundingViolationDeltaIncreased
+        );
     }
 }

@@ -632,4 +632,44 @@ mod tests {
         };
         assert!(sp.validate().is_err());
     }
+
+    #[test]
+    fn reject_grounding_clean_rate_floor_out_of_range() {
+        let sp = SetPoints {
+            grounding_clean_rate_floor: 1.5,
+            ..Default::default()
+        };
+        assert!(sp.validate().is_err(), "clean rate floor > 1.0 must fail");
+        let sp = SetPoints {
+            grounding_clean_rate_floor: -0.1,
+            ..Default::default()
+        };
+        assert!(sp.validate().is_err(), "clean rate floor < 0.0 must fail");
+    }
+
+    #[test]
+    fn reject_grounding_coverage_rate_floor_out_of_range() {
+        let sp = SetPoints {
+            grounding_coverage_rate_floor: 2.0,
+            ..Default::default()
+        };
+        assert!(sp.validate().is_err(), "coverage rate floor > 1.0 must fail");
+        let sp = SetPoints {
+            grounding_coverage_rate_floor: -0.5,
+            ..Default::default()
+        };
+        assert!(sp.validate().is_err(), "coverage rate floor < 0.0 must fail");
+    }
+
+    #[test]
+    fn from_config_picks_up_grounding_floors() {
+        let config = SetPointsConfig {
+            grounding_clean_rate_floor: Some(0.95),
+            grounding_coverage_rate_floor: Some(0.75),
+            ..Default::default()
+        };
+        let sp = SetPoints::from_config(&config);
+        assert!((sp.grounding_clean_rate_floor - 0.95).abs() < 1e-9);
+        assert!((sp.grounding_coverage_rate_floor - 0.75).abs() < 1e-9);
+    }
 }
