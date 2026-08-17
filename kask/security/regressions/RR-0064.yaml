@@ -1,0 +1,30 @@
+id: RR-0064
+title: "kask subtree must declare zero git dependencies (registry/path-sourced only)"
+surface: supply-chain
+cwe: CWE-829
+owasp_llm_2025: LLM02
+atlas_tactic: AML.TA0010
+nist_ssdf: PW.4.1
+discovered_in: kask/deny.toml ([sources] allow-git comment, line 141)
+discovered_by: supply-chain-sentinel
+discovered_at: 2026-08-16
+severity: medium
+detection:
+  kind: grep
+  # Detect any git = "..." dependency declaration inside the kask subtree.
+  # The kask/ subtree must source deps from crates.io (registry) or workspace
+  # path deps only. Git deps concentrate supply-chain trust on a specific fork
+  # and bypass registry auditing. All 31 git deps live in the upstream-Zed
+  # workspace root Cargo.toml / [patch.crates-io]; adding one under kask/ is a
+  # supply-chain decision, not a routine change.
+  pattern: 'git\s*=\s*"'
+  # Scan every Cargo.toml under the kask/ root (gate runs from kask/).
+  include: "--include=Cargo.toml ."
+mitigation: "Source the dependency from crates.io with a caret/exact version spec, or use a workspace path dep. If a git dep is genuinely required under kask/, it must be reviewed as a supply-chain decision: pin to a full 40-hex rev (not a mutable tag), add the host to deny.toml [sources] allow-git, and document the rationale."
+source: "https://cwe.mitre.org/data/definitions/829.html"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced
+taxonomy_mapping:
+  osc_r_tactic: "Initial Access"
+  osc_r_technique: "Dependency from untrusted source"
+  osc_r_categories: ["OpenSourceSecurity"]

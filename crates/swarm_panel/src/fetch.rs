@@ -165,16 +165,18 @@ impl SwarmPanel {
                                     }
                                 }
                                 // Add local-only agents (no matching cloud id) as Local entries.
-                                let existing_cloud_swarm_ids: std::collections::HashSet<String> = this
-                                    .entries
-                                    .iter()
-                                    .filter_map(|e| match e {
-                                        SwarmEntry::Agent(c) if c.source != AgentSource::Local => {
-                                            Some(c.id.clone())
-                                        }
-                                        _ => None,
-                                    })
-                                    .collect();
+                                let existing_cloud_swarm_ids: std::collections::HashSet<String> =
+                                    this.entries
+                                        .iter()
+                                        .filter_map(|e| match e {
+                                            SwarmEntry::Agent(c)
+                                                if c.source != AgentSource::Local =>
+                                            {
+                                                Some(c.id.clone())
+                                            }
+                                            _ => None,
+                                        })
+                                        .collect();
                                 for local in local_agents {
                                     // Skip if already present as a cloud/synced agent.
                                     if existing_cloud_swarm_ids.contains(&local.agent_id)

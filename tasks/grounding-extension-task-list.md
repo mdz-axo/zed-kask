@@ -25,15 +25,40 @@
 - [x] Updated `policy_no_match_for_unregistered_metric` to include new metrics
 - [x] Updated `default_substitution_ladders_empty_for_observational_metrics` to include grounding metrics
 - [x] Clippy clean across all affected crates
-- [x] All 102 tests in `hkask-regulation` pass
+- [x] All 112 tests in `hkask-regulation` pass
 
-## Priority 2: Algedonic alerts for grounding spikes
+### Adversarial review fixes (DONE)
+- [x] #1: `verify_impact` now handles grounding actions — re-senses from `VerificationStore`, classifies Accept/Stage/Block, feeds stagnation detector
+- [x] #2: Fixed doc comment referencing non-existent `for_metric` → `new`
+- [x] #3: Fixed `read_trend` doc — clarified 3x DB query per tick
+- [x] #4: Removed hardcoded `current_nulled`/`previous_nulled` from `GroundingViolationDeltaIncreased` — delta is the actionable signal
+- [x] #5: Removed `coverage_rate: -1.0` sentinel from `GroundingCleanRateDegraded` — coverage is a separate signal
+- [x] #6: Extended `extract_deficit_threshold` for grounding variants — meaningful deficit/threshold values in escalation queue
+- [x] #7: Added `grounding_clean_rate`/`grounding_coverage_rate` to `HealthSnapshot`; wired `VerificationStore` into `MetacognitionLoop`; surfaced in `BridgeMetacognitionProvider` JSON
+- [x] #8: Documented 3x DB query as known scaling limit with suggested future optimizations
+- [x] #9: Documented `SensorBus` vs `SensorRegistry` pattern as consistent with existing sensors
+- [x] #10: Added 3 `route_action_as_alert` grounding message tests (one per variant)
+- [x] #11: Fixed misleading substitution ladder comment (grounding = Escalate terminal, not Notify)
+- [x] #12: Fixed by removing the `coverage_rate` field (Finding #5)
+- [x] Added `verification_store` field to `CyberneticsLoop` struct for `verify_impact` re-sensing
+- [x] Added 2 `verify_impact` grounding tests (handles action, skips when store not wired)
+- [x] Added 4 `extract_deficit_threshold` grounding tests (clean_rate, coverage, delta, clamps negative)
+- [x] Wired `VerificationStore` into `MetacognitionLoop` via `with_verification_store` builder
+- [x] Updated `BridgeMetacognitionProvider` JSON to include grounding fields
+- [x] All 543 tests pass across all affected crates; clippy clean
 
-- [ ] Read the algedonic alert system in `hkask-mcp-curator` (the `curator_algedonic_log` tool and the `RuntimeAlert` struct)
-- [ ] Verify the regulation decide phase (Priority 1) fires alerts via `route_action_as_alert` — the grounding reasons already route to `Escalate → Curation`, which `route_action_as_alert` converts to a `RuntimeAlert`. This may already be wired by Priority 1.
-- [ ] Add a grounding-specific alert message in `route_action_as_alert` (or verify the generic efferent message is sufficient)
-- [ ] Add env-configurable thresholds: `HKASK_GROUNDING_CLEAN_RATE_FLOOR` (done in Priority 1), `HKASK_GROUNDING_COVERAGE_RATE_FLOOR` (done in Priority 1)
-- [ ] Tests: verify a grounding violation spike produces an alert in the escalation queue
+## Priority 2: Algedonic alerts for grounding spikes (DONE — wired by Priority 1)
+
+The grounding reasons route to `Escalate → Curation`, which `route_action_as_alert` converts to a `RuntimeAlert` with grounding-specific messages. The alert reaches:
+- The escalation queue (`persist_alert_to_queue`) — reviewable via `curator_escalations`
+- The live alerts channel (`alerts_tx`) → `MetacognitionLoop` → toast sink → user
+- The `RegulationArchive` fallback when the live channel is down
+
+The `extract_deficit_threshold` function now produces meaningful deficit/threshold values for grounding variants (not 0,0). The `error_context` JSON in the escalation queue carries these values.
+
+Env-configurable thresholds (`HKASK_GROUNDING_CLEAN_RATE_FLOOR`, `HKASK_GROUNDING_COVERAGE_RATE_FLOOR`) are wired in Priority 1 with `log::warn!` on parse failure.
+
+Tests: `tick_with_grounding_violations_produces_escalate_alert` + 3 `route_action_as_alert` message tests verify the full alert path.
 
 ## Priority 3: Gemba walk integration
 

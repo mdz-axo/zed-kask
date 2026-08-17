@@ -5871,7 +5871,7 @@ dependencies = [
 [[package]]
 name = "dugong"
 version = "0.7.0"
-source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
+source = "git+https://github.com/zed-industries/merman?rev=a3ed8d9f3fd1d74c802f25ed9edd501743796504#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "dugong-graphlib",
  "rustc-hash 2.1.1",
@@ -5883,7 +5883,7 @@ dependencies = [
 [[package]]
 name = "dugong-graphlib"
 version = "0.7.0"
-source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
+source = "git+https://github.com/zed-industries/merman?rev=a3ed8d9f3fd1d74c802f25ed9edd501743796504#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "hashbrown 0.16.1",
  "rustc-hash 2.1.1",
@@ -12523,7 +12523,7 @@ dependencies = [
 [[package]]
 name = "manatee"
 version = "0.7.0"
-source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
+source = "git+https://github.com/zed-industries/merman?rev=a3ed8d9f3fd1d74c802f25ed9edd501743796504#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "indexmap 2.14.0",
  "nalgebra",
@@ -12880,7 +12880,7 @@ dependencies = [
 [[package]]
 name = "merman"
 version = "0.7.0"
-source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
+source = "git+https://github.com/zed-industries/merman?rev=a3ed8d9f3fd1d74c802f25ed9edd501743796504#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "chrono",
  "merman-core",
@@ -12891,7 +12891,7 @@ dependencies = [
 [[package]]
 name = "merman-core"
 version = "0.7.0"
-source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
+source = "git+https://github.com/zed-industries/merman?rev=a3ed8d9f3fd1d74c802f25ed9edd501743796504#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "chrono",
  "euclid 0.22.11",
@@ -12918,7 +12918,7 @@ dependencies = [
 [[package]]
 name = "merman-render"
 version = "0.7.0"
-source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
+source = "git+https://github.com/zed-industries/merman?rev=a3ed8d9f3fd1d74c802f25ed9edd501743796504#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -17849,7 +17849,7 @@ dependencies = [
 [[package]]
 name = "roughr-merman"
 version = "0.12.0"
-source = "git+https://github.com/zed-industries/merman?tag=v0.7.0-with-patches#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
+source = "git+https://github.com/zed-industries/merman?rev=a3ed8d9f3fd1d74c802f25ed9edd501743796504#a3ed8d9f3fd1d74c802f25ed9edd501743796504"
 dependencies = [
  "derive_builder",
  "euclid 0.22.11",
@@ -25365,7 +25365,7 @@ dependencies = [
 [[package]]
 name = "wprcontrol"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/wprcontrol?rev=cd811f7#cd811f7d744f65291e13131b1d907fda63ed91a1"
+source = "git+https://github.com/zed-industries/wprcontrol?rev=cd811f7d744f65291e13131b1d907fda63ed91a1#cd811f7d744f65291e13131b1d907fda63ed91a1"
 dependencies = [
  "windows 0.61.3",
  "windows-bindgen",

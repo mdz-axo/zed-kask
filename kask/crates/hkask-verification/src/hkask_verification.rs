@@ -35,7 +35,8 @@ pub mod types;
 pub use error::VerificationError;
 pub use grounding::{
     FieldSpec, GroundingContract, GroundingResult, LeakRule, ProvenanceTag, enforce_grounding,
-    scan_narrative_for_leaks, task_agent_contract,
+    narrator_agent_contract, research_agent_contract, scan_narrative_for_leaks,
+    task_agent_contract,
 };
 pub use ledger::{CoverageEntry, EnforcementOutcome, VerificationStore};
 pub use trend::{GroundingTrendReport, TrendScope};

@@ -210,7 +210,7 @@ fn build_task_agent_card(
             skills: skills.to_vec(),
             ..Default::default()
         },
-        cloud_id: None,
+        cloud_swarm_id: None,
         ..Default::default()
     }
 }

@@ -120,6 +120,26 @@ impl SwarmServer {
                 // wrote a coverage-gap record. Retain the raw response.
                 result.raw_response = Some(outcome.raw_response);
             }
+            // Rung 2 (Typing) post-invocation: validate the agent's output
+            // against the schema for its `produces` port type (paper's "one
+            // artifact, two uses"). Non-fatal — logged at warn so the operator
+            // sees the mismatch, but the delegation result is still returned.
+            // The output has already been grounded (unsourced fields nulled);
+            // schema validation is an additional structural check on what
+            // remains.
+            if !agent.produces.is_empty() {
+                if let Ok(output_json) = serde_json::from_str::<serde_json::Value>(&result.response) {
+                    if let Err(schema_err) = self.local_registry.port_registry().validate_output(&agent.produces, &output_json) {
+                        tracing::warn!(
+                            target: "hkask.swarm.port_registry",
+                            agent = %req.agent_name,
+                            produces = ?agent.produces,
+                            error = %schema_err,
+                            "Port schema validation failed — agent output does not match its declared produces schema"
+                        );
+                    }
+                }
+            }
             // Stigmergy (ACO pheromone trail): record the delegation's
             // performance annotation to the agent's prefix-scoped semantic
             // memory. The SENSE phase can read these via

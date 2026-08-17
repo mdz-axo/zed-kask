@@ -875,6 +875,65 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             message: e,
         })?;
 
+        // Post-execution golden-output validation (Step 4): when the manifest
+        // declares `golden_outputs`, run the validation suite as a quality
+        // signal after the main cascade. Non-fatal — the main result is
+        // returned regardless. Failures are logged at `warn!` and recorded to
+        // the regulation ledger as a `golden_output_validation` span so the
+        // gemba walk can trend validation quality per skill.
+        if manifest.golden_outputs.as_ref().is_some_and(|f| !f.is_empty()) {
+            match self.validate_golden_outputs_inner(skill_name).await {
+                Ok(validation_results) => {
+                    let passed = validation_results.iter().filter(|r| r.passed).count();
+                    let total = validation_results.len();
+                    if passed != total {
+                        tracing::warn!(
+                            target: "hkask.skill.golden_outputs",
+                            skill = skill_name,
+                            passed, total,
+                            "golden-output validation: {}/{} fixtures passed",
+                            passed, total,
+                        );
+                    } else {
+                        tracing::info!(
+                            target: "hkask.skill.golden_outputs",
+                            skill = skill_name,
+                            passed, total,
+                            "golden-output validation: all fixtures passed",
+                        );
+                    }
+                    if let Some(ref ledger) = self.regulation_ledger {
+                        let ledger_guard = ledger.read().await;
+                        ledger_guard
+                            .record_skill_span(
+                                skill_name,
+                                "golden_output_validation",
+                                serde_json::json!({
+                                    "passed": passed,
+                                    "total": total,
+                                    "results": validation_results.iter().map(|r| {
+                                        serde_json::json!({
+                                            "fixture_index": r.fixture_index,
+                                            "passed": r.passed,
+                                            "error": r.error,
+                                        })
+                                    }).collect::<Vec<_>>(),
+                                }),
+                            )
+                            .await;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "hkask.skill.golden_outputs",
+                        skill = skill_name,
+                        error = %e,
+                        "golden-output validation failed to run (non-fatal)",
+                    );
+                }
+            }
+        }
+
         // (K5) `extract_final_step_result` selects `last_result_step`'s
         // value (deterministic — the machine tracks it, O(1)).
         Ok(extract_final_step_result(&result))
