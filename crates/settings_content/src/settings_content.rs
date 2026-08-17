@@ -1859,6 +1859,6 @@ pub struct KaskModelsSettingsContent {
     /// (provider-prefixed). When empty, falls back to the kask default.
     pub classifier_model: Option<String>,
     /// OCR vision model for scanned document OCR (provider-prefixed).
-    /// When empty, falls back to the kask default (`RunPod/kask-ocr`).
+    /// When empty, falls back to the kask default (`RunPod/allenai/olmocr-2-7b-1025`).
     pub ocr_model: Option<String>,
 }

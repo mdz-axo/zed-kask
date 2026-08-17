@@ -764,7 +764,7 @@ mod tests {
             1,
             executor.clone(),
             &thresholds,
-            Some("RunPod/kask-ocr"),
+            Some("RunPod/allenai/olmocr-2-7b-1025"),
             None,
         )
         .await;

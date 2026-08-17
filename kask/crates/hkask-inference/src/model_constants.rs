@@ -27,7 +27,12 @@ pub const DEFAULT_CLASSIFIER_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 pub const DEFAULT_EMBEDDING_MODEL: &str = "DeepInfra/Qwen/Qwen3-Embedding-0.6B";
 
 /// Default OCR model for scanned PDF fallback.
-/// Uses kask-ocr on RunPod (OLMOCR-2).
+/// Uses OLMOCR-2 on RunPod serverless (endpoint `hsldzov6932wf5`, named `kask-ocr`
+/// in the RunPod console). The vLLM worker serves the model under its HuggingFace
+/// id `allenai/olmOCR-2-7B-1025`; the provider-prefixed name `RunPod/kask-ocr`
+/// resolves through Zed's `LanguageModelRegistry` via the dedicated `runpod`
+/// provider (D29), which carries each endpoint's per-model API URL and discovers
+/// endpoints via the RunPod GraphQL API.
 pub const DEFAULT_OCR_MODEL: &str = "RunPod/kask-ocr";
 
 /// Fallback model when no other model is configured.

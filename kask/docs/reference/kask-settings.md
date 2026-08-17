@@ -273,7 +273,7 @@ constants, which are `const` references to the single source of truth in
 | `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"DeepInfra/Qwen/Qwen3-Embedding-0.6B"` (model_constants.rs:26) |
 | `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"OpenRouter/z-ai/glm-5.2"` (model_constants.rs:23) |
 
-`model_constants.rs` also defines `DEFAULT_OCR_MODEL` (`"RunPod/kask-ocr"`),
+`model_constants.rs` also defines `DEFAULT_OCR_MODEL` (`"RunPod/allenai/olmocr-2-7b-1025"`,
 env `HKASK_OCR_MODEL`), `DEFAULT_TTS_MODEL` (`"DeepInfra/hexgrad/Kokoro-82M"`),
 `DEFAULT_STT_MODEL` (`"DeepInfra/whisper-large-v3"`), `DEFAULT_VISION_MODEL`
 (`"OpenRouter/Qwen/Qwen3-VL-235B-A22B-Instruct"`), and `DEFAULT_IMAGE_GEN_MODEL`

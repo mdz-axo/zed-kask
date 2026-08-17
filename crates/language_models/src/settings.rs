@@ -9,8 +9,8 @@ use crate::provider::{
     google::GoogleSettings, llama_cpp::LlamaCppSettings, lmstudio::LmStudioSettings, mistral,
     mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
     open_ai_compatible::OpenAiCompatibleSettings, open_router, open_router::OpenRouterSettings,
-    opencode, opencode::OpenCodeSettings, resolve_custom_headers,
-    vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
+    opencode, opencode::OpenCodeSettings, resolve_custom_headers, runpod::RUNPOD_DEFAULT_API_URL,
+    runpod::RunpodSettings, vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
 };
 
 #[derive(Debug, RegisterSetting)]
@@ -28,6 +28,7 @@ pub struct AllLanguageModelSettings {
     pub open_router: OpenRouterSettings,
     pub openai: OpenAiSettings,
     pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettings>,
+    pub runpod: RunpodSettings,
     pub vercel_ai_gateway: VercelAiGatewaySettings,
     pub x_ai: XAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
@@ -62,6 +63,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let open_router = language_models.open_router.unwrap();
         let openai = language_models.openai.unwrap();
         let openai_compatible = language_models.openai_compatible.unwrap();
+        let runpod = language_models.runpod.unwrap();
         let vercel_ai_gateway = language_models.vercel_ai_gateway.unwrap();
         let x_ai = language_models.x_ai.unwrap();
         let zed_dot_dev = language_models.zed_dot_dev.unwrap();
@@ -193,6 +195,14 @@ impl settings::Settings for AllLanguageModelSettings {
                     )
                 })
                 .collect(),
+            runpod: RunpodSettings {
+                api_url: runpod
+                    .api_url
+                    .unwrap_or_else(|| RUNPOD_DEFAULT_API_URL.to_string()),
+                auto_discover: runpod.auto_discover.unwrap_or(true),
+                available_models: runpod.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from("RunPod", runpod.custom_headers, &[]),
+            },
             vercel_ai_gateway: VercelAiGatewaySettings {
                 api_url: vercel_ai_gateway.api_url.unwrap(),
                 available_models: vercel_ai_gateway.available_models.unwrap_or_default(),
