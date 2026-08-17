@@ -13,8 +13,8 @@
 //! The built-in seed contains the labels already in use by existing cards and
 //! by `build_task_agent_card` in the kata-kanban server.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A registered port type with an optional JSON Schema for output validation.
 ///
@@ -114,16 +114,16 @@ impl PortRegistry {
 
     /// Get the schema for a registered type, if present.
     pub fn schema_for(&self, label: &str) -> Option<&serde_json::Value> {
-        self.types.get(label).and_then(|entry| entry.schema.as_ref())
+        self.types
+            .get(label)
+            .and_then(|entry| entry.schema.as_ref())
     }
 
     /// Register a type with an optional schema. If the type already exists,
     /// its entry is replaced.
     pub fn register_type(&mut self, label: &str, schema: Option<serde_json::Value>) {
-        self.types.insert(
-            label.to_string(),
-            PortTypeEntry { schema },
-        );
+        self.types
+            .insert(label.to_string(), PortTypeEntry { schema });
     }
 
     /// Validate an agent's output against the schema for its `produces` type.
@@ -281,7 +281,11 @@ mod tests {
         let registry = PortRegistry::builtin();
         // "text" has no schema in the built-in registry — validation is a no-op.
         let output = serde_json::json!("anything");
-        assert!(registry.validate_output(&["text".to_string()], &output).is_ok());
+        assert!(
+            registry
+                .validate_output(&["text".to_string()], &output)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -309,7 +313,11 @@ mod tests {
             "deliverable_path": "/src/main.rs",
             "summary": "did the work"
         });
-        assert!(registry.validate_output(&["task_result".to_string()], &output).is_ok());
+        assert!(
+            registry
+                .validate_output(&["task_result".to_string()], &output)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -328,8 +336,13 @@ mod tests {
         let output = serde_json::json!({
             "summary": "did the work but no path"
         });
-        let err = registry.validate_output(&["task_result".to_string()], &output).unwrap_err();
-        assert!(err.contains("deliverable_path"), "error must name the missing field");
+        let err = registry
+            .validate_output(&["task_result".to_string()], &output)
+            .unwrap_err();
+        assert!(
+            err.contains("deliverable_path"),
+            "error must name the missing field"
+        );
     }
 
     #[test]
@@ -347,7 +360,9 @@ mod tests {
         let output = serde_json::json!({
             "deliverable_path": 42
         });
-        let err = registry.validate_output(&["task_result".to_string()], &output).unwrap_err();
+        let err = registry
+            .validate_output(&["task_result".to_string()], &output)
+            .unwrap_err();
         assert!(err.contains("task_result"), "error must name the port type");
     }
 

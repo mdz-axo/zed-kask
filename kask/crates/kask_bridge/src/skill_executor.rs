@@ -187,7 +187,6 @@ impl BridgeManifestExecutor {
     /// after each invocation (success or failure), closing the feedback
     /// loop for drift detection and gemba walk review.
     #[must_use]
-    :   #[must_use]
     pub fn with_regulation_ledger(
         mut self,
         ledger: Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>,
@@ -904,7 +903,11 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // returned regardless. Failures are logged at `warn!` and recorded to
         // the regulation ledger as a `golden_output_validation` span so the
         // gemba walk can trend validation quality per skill.
-        if manifest.golden_outputs.as_ref().is_some_and(|f| !f.is_empty()) {
+        if manifest
+            .golden_outputs
+            .as_ref()
+            .is_some_and(|f| !f.is_empty())
+        {
             match self.validate_golden_outputs_inner(skill_name).await {
                 Ok(validation_results) => {
                     let passed = validation_results.iter().filter(|r| r.passed).count();

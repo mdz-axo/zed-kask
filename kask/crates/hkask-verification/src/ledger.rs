@@ -40,8 +40,7 @@ use serde_json::Value;
 use crate::error::VerificationError;
 use crate::grounding::{
     GroundingContract, GroundingResult, enforce_grounding, narrator_agent_contract,
-    research_agent_contract, scan_narrative_for_leaks, skill_agent_contract,
-    task_agent_contract,
+    research_agent_contract, scan_narrative_for_leaks, skill_agent_contract, task_agent_contract,
 };
 use crate::trend::{GroundingTrendReport, TrendScope};
 use crate::types::GroundingRecord;
