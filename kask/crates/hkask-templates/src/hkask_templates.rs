@@ -62,7 +62,7 @@ pub mod test_utils {
     /// the `test-utils` feature can drive the deterministic compute primitives
     /// (swarm accumulators, second-order monitor, kata convergence, forecast
     /// primitives) directly without an `InferencePort`.
-    pub use crate::compute::dispatch_compute;
+    pub use crate::compute::{ComputeRef, dispatch_compute};
 
     /// Re-export the step-condition evaluator and choice-condition parser so
     /// external proptest tests can drive the pure string-parsing and

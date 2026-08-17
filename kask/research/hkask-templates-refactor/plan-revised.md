@@ -373,53 +373,57 @@ G3 PASS (consolidates duplicated logic).
 `inference.rs` (≤ 200 lines); `step_actions.rs` shrinks by ~200 lines; no
 behavior change; `cargo test` clean.
 
-### CAND-4 (revised, audit-grounded) — Decompose `dispatch_compute` along the swarm seam + add `ComputeRef` enum + delete dead forecast arms
+### CAND-4 (Partially complete, audit-grounded) — Decompose `dispatch_compute` along the swarm seam + add `ComputeRef` enum + delete dead forecast arms
 
-**Files:** `compute.rs` → new `swarm_compute.rs`.
+**Status: Step 2 (`ComputeRef` enum) is COMPLETE.** Steps 1 (dead arm
+ deletion), 3 (swarm extraction), 4 (`ComputeInput` helper), 5
+ (`CommandRunner` trait) are deferred.
 
-**Problem:** v0's CAND-4 proposed splitting `dispatch_compute` (832-line match,
-19 arms) into 6 sub-domain modules. The multi-perspective review flagged sizing
-errors (v0 said 1,270 lines / 17 arms; actual 3,379 lines / 19 arms) and a
-factual error (v0 said "closures redefined per arm"; grill-me + grep showed
-they're defined once at L231–254). The operator requested a research spike to
-ground the candidate. **See `dispatch-compute-audit.md` for the full audit.**
+**What landed (Step 2 — `ComputeRef` enum):**
+- Added `ComputeRef` enum with `parse(s: &str) -> Result<Self>` and `as_str()`.
+- `dispatch_compute` now dispatches on `ComputeRef` (exhaustive match, no
+  `_ =>` catch-all arm).
+- The supported-list error message is auto-generated from `SUPPORTED_LIST`
+  (single source of truth — no hand-maintained list to drift).
+- The old catch-all error message was stale (omitted `combine_tree_probabilities`);
+  the new one includes it.
+- Re-exported `ComputeRef` via `test_utils`.
+- 3 new tests: `compute_ref_parse_round_trips_all_variants`,
+  `compute_ref_parse_rejects_unknown_with_supported_list`,
+  `dispatch_unknown_ref_errors` (replaces the old assertion-only version).
 
-**Audit findings (measured 2026-08-17):**
-- `lisp.eval` is used by **82 of 97 manifest compute_refs** (85%); the next-most-used arm is used by 2 manifests. `dispatch_compute` is a dispatch table where one arm is the workhorse and 18 are niche.
-- **3 forecast arms are dead surface**: `brier_score`, `brier_score_multi`, `brier_interpretation` have 0 manifest callers (grep-verified); they exist only in tests and allow-lists.
-- **3 swarm arms are 44% of the match body** (368 of 832 lines) with 3 dedicated helpers and 19 tests — the strongest extraction candidate.
-- The closures are defined once (F4); v0 was wrong. The real duplication is 6 arms bypassing them with ad-hoc `input.get("...").and_then(...)` chains.
-- `shell.exec` is the only untestable arm (sync `std::process::Command`, no injection seam).
-- The catch-all error message hardcodes the supported list (already out of date — omits `combine_tree_probabilities`).
-- **0 external callers** of `dispatch_compute` (grep-verified) — zero cross-crate blast radius.
+**What's deferred:**
+- **Step 1 (dead arm deletion):** `brier_score`, `brier_score_multi`,
+  `brier_interpretation` have 0 manifest callers but are tested and listed in
+  3 allow-lists. Deletion is a judgment call — the arms call real
+  `hkask_forecast` functions (not dead helpers). Deferred pending operator
+  decision.
+- **Step 3 (swarm extraction):** 3 arms (368 lines) + 3 helpers into
+  `swarm_compute.rs`. Mechanical but non-trivial. The `ComputeRef` enum
+  already delivers the P1 gain; the swarm extraction would reduce `compute.rs`
+  by ~12%. Deferred.
+- **Step 4 (`ComputeInput` helper):** extract the shared `get_f64`/`get_bool`/
+  `get_u64` closures + the 6 bypass arms' ad-hoc `input.get("...")` chains.
+  Low leverage — the closures are already defined once at the top of
+  `dispatch_typed`. Deferred.
+- **Step 5 (`CommandRunner` trait):** add an injection seam for `shell.exec`.
+  The only untestable arm. Deferred — the trait adds a parameter to
+  `dispatch_compute`'s signature, which is a larger change.
 
-**Solution (essentialist + idiomatic-rust, grounded in the audit):**
-1. **Delete the 3 dead forecast arms** (`brier_score`, `brier_score_multi`, `brier_interpretation`). Update `manifest_properties.rs:39-41` and `composition_principles.rs:678-680` allow-lists. (Essentialist G1: dead surface.)
-2. **Add a `ComputeRef` enum** (idiomatic-rust P1): `parse(s: &str) -> Result<Self, UnknownComputeRef>`. The dispatch becomes `match ComputeRef::parse(compute_ref)? { ... }` — exhaustive, no `_ =>` arm. Auto-generates the supported-list error message (F6 fix). Typo'd `compute_ref` becomes a parse error, not a silent fallback.
-3. **Extract the swarm sub-domain** into `swarm_compute.rs` (F3 — strongest extraction). The 3 swarm arms (368 lines) + 3 helpers (`extract_swarm_decision`, `extract_roster_agent_types`, `extract_task_success_scalar`) move to the new module. `dispatch_compute`'s swarm arms become one-line delegates. **Essentialist G1 PASS** (unlike v0's 6-module split): the swarm arms have 3 dedicated helpers consumed only by swarm arms — inlining re-bloats the match by 368 lines + 3 helpers.
-4. **Extract a `ComputeInput` helper** (F4) that handles scalar + array + object extraction, replacing both the top-of-function closures and the 6 bypass arms' ad-hoc chains.
-5. **Add a `CommandRunner` trait** for `shell.exec` (F5, idiomatic-rust finding) with a `Default` impl (production) and a `Fake` impl (tests). `dispatch_compute` takes `Option<&dyn CommandRunner>` — `None` for non-shell arms, `Some` for `shell.exec`. Safe because 0 external callers (F7).
+**Files:** `compute.rs` (`ComputeRef` enum + `dispatch_typed` + tests),
+`hkask_templates.rs` (`ComputeRef` re-exported via `test_utils`).
 
-**Do NOT extract the other 5 sub-domains** (forecast, kata, listening, lisp, shell) into separate modules. The audit shows they're either too small (lisp: 18 lines; shell: 10 lines), too thin (forecast: 6 arms, 1 manifest caller; kata: 4 arms, 2 callers; listening: 2 arms + 127 lines of helpers that could move but the arms are fine), or pass-through (essentialist G1 FAIL).
+**Success criteria:** ✅ `ComputeRef` enum added; ✅ `dispatch_compute`
+dispatches on the enum (exhaustive, no `_ =>` arm); ✅ supported-list error
+auto-generated; ✅ 3 new tests; ✅ `cargo test` clean (205 lib tests); ✅
+`./script/clippy` clean.
 
-**Essentialist verdict (revised):** G1 PASS for swarm extraction + dead arm deletion + `ComputeRef` enum + `ComputeInput` helper + `CommandRunner` trait. G1 FAIL for the other 5 sub-domain extractions. G2 PASS (all new items ≤7). G3 PASS (genuine behavior).
-
-**Idiomatic-rust Hoare assessment (revised):** P1 High (`ComputeRef` enum), P3 Medium+ (exhaustive match), P5 Medium+ (auto-generated supported list), P7 Medium (`ComputeInput` propagates errors), P8-adjacent (`CommandRunner` makes `shell.exec` testable). Critique score: **0.15** (revised from v0's 0.40 and v1's 0.20 — the audit grounded the design).
-
-**Success criteria:**
-- 3 dead forecast arms deleted (grep-verified: 0 `compute_ref: brier_score` in manifests).
-- `ComputeRef` enum added; `dispatch_compute` dispatches on the enum (exhaustive, no `_ =>` arm).
-- `swarm_compute.rs` module created; 3 swarm arms + 3 helpers moved; `dispatch_compute` swarm arms are one-line delegates.
-- `ComputeInput` helper extracted; 6 bypass arms use it (no inline `input.get("...").and_then(...)` chains).
-- `CommandRunner` trait added; `shell.exec` has a `FakeCommandRunner` test.
-- `compute.rs` shrinks from 3,379 lines to ~2,200.
-- `cargo test -p hkask-templates` clean; `./script/clippy` clean.
-
-**Risks:**
-- The `ComputeRef` enum changes the dispatch from string-match to enum-match. The `compute_ref` field in manifests is still a string (YAML); `ComputeRef::parse` runs at dispatch time. Typo'd `compute_ref` currently falls to the `other` arm with a hardcoded error message; post-CAND-4, it fails at `ComputeRef::parse` with an auto-generated error. Behavior change (better error, different text). Low risk.
-- The `CommandRunner` trait adds a parameter to `dispatch_compute`'s signature. 0 external callers (F7) — safe. Internal caller (`step_actions.rs:481`) passes `None` for non-shell arms, `Some(&runner)` for `shell.exec`.
-
-**Sequencing:** Independent of CAND-2, CAND-3-minimal, CAND-12. Can run in parallel with CAND-3-minimal (disjoint write sets: `compute.rs` vs `step_actions.rs`). After CAND-10 is ideal (the 3 dead forecast arm deletions fit naturally with CAND-10's dead-surface sweep), but standalone is fine.
+**Risks:** The `ComputeRef` enum changes the dispatch from string-match to
+enum-match. The `compute_ref` field in manifests is still a string (YAML);
+`ComputeRef::parse` runs at dispatch time. Typo'd `compute_ref` now fails at
+`ComputeRef::parse` with an auto-generated error (was: catch-all with a stale
+hardcoded list). Behavior change (better error, different text). Low risk —
+all existing tests pass.
 
 ### CAND-5 (Worth exploring) — Collapse `ManifestFile` into `BundleManifest`
 

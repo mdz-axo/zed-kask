@@ -1379,6 +1379,77 @@ fn collect_field_keys(value: &serde_json::Value) -> Vec<String> {
 mod tests {
     use super::*;
 
+    // ── ComputeRef enum tests (CAND-4) ─────────────────────────────────
+
+    #[test]
+    fn compute_ref_parse_round_trips_all_variants() {
+        // Every variant's `as_str()` must round-trip through `parse()`.
+        // This pins that the string forms in `parse()` and `as_str()` are
+        // in sync — a drift would surface here, not at a manifest runtime.
+        let all = [
+            ComputeRef::CalibrateFromFermi,
+            ComputeRef::OutsideViewAdjustment,
+            ComputeRef::BayesianUpdate,
+            ComputeRef::CombineTreeProbabilities,
+            ComputeRef::ApplyCalibrationAdjustment,
+            ComputeRef::BrierScore,
+            ComputeRef::BrierScoreMulti,
+            ComputeRef::BrierInterpretation,
+            ComputeRef::KataObjectGap,
+            ComputeRef::KataProcessGap,
+            ComputeRef::KataHypotenuse,
+            ComputeRef::KataPredictionVsResult,
+            ComputeRef::SwarmConvergeAccumulate,
+            ComputeRef::SwarmSecondOrderMonitor,
+            ComputeRef::SwarmFilterProposedMoves,
+            ComputeRef::ListeningChunkTranscript,
+            ComputeRef::ListeningVerifyCitations,
+            ComputeRef::LispEval,
+            ComputeRef::ShellExec,
+        ];
+        for variant in &all {
+            let s = variant.as_str();
+            assert_eq!(
+                ComputeRef::parse(s).unwrap(),
+                *variant,
+                "round-trip failed for {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn compute_ref_parse_rejects_unknown_with_supported_list() {
+        // Unknown refs must return Err with the auto-generated supported list.
+        // The supported list must include `combine_tree_probabilities` (the
+        // old hand-maintained catch-all omitted it — a drift bug the enum fixes).
+        let err = ComputeRef::parse("nonexistent_fn").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("nonexistent_fn"),
+            "error must name the unknown ref: {msg}"
+        );
+        assert!(
+            msg.contains("combine_tree_probabilities"),
+            "supported list must include combine_tree_probabilities (the old \
+             hand-maintained list omitted it): {msg}"
+        );
+    }
+
+    #[test]
+    fn dispatch_unknown_ref_errors() {
+        // Pins that `dispatch_compute` returns Err for unknown refs (via
+        // `ComputeRef::parse`). The error must name the ref and the supported list.
+        let input = serde_json::json!({});
+        let err = dispatch_compute("nonexistent_fn", &input).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("nonexistent_fn"),
+            "error must name the unknown ref: {msg}"
+        );
+    }
+
+    // ── Original dispatch tests ─────────────────────────────────────────
+
     #[test]
     fn dispatch_calibrate_from_fermi() {
         let input = serde_json::json!({
@@ -1478,12 +1549,6 @@ mod tests {
         let result = dispatch_compute("brier_score", &input).unwrap();
         let score = result.get("score").and_then(|v| v.as_f64()).unwrap();
         assert!((score - 0.0).abs() < 1e-9, "perfect forecast = 0 Brier");
-    }
-
-    #[test]
-    fn dispatch_unknown_ref_errors() {
-        let input = serde_json::json!({});
-        assert!(dispatch_compute("nonexistent_fn", &input).is_err());
     }
 
     // ── listening.chunk_transcript tests ──
