@@ -102,7 +102,7 @@ impl StepMachine {
                                 .and_then(|v| v.as_f64())
                                 .unwrap_or_else(|| {
                                     tracing::warn!(
-                                        target: "reg.skill.cascade.choice",
+                                        target: "reg.skill.cascade.choice_misconfigured",
                                         field,
                                         "execute_choice: condition field not found or non-numeric — defaulting to non-match"
                                     );
@@ -110,7 +110,7 @@ impl StepMachine {
                                 });
                             let target: f64 = val_str.parse().unwrap_or_else(|_| {
                                 tracing::warn!(
-                                    target: "reg.skill.cascade.choice",
+                                    target: "reg.skill.cascade.choice_misconfigured",
                                     field,
                                     value = val_str,
                                     "execute_choice: target value failed to parse as f64 — defaulting to non-match"

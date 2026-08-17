@@ -363,6 +363,7 @@ impl CyberneticsLoop {
     pub fn set_verification_store(&mut self, store: Arc<hkask_verification::VerificationStore>) {
         let clean_floor = self.set_points.grounding_clean_rate_floor;
         let coverage_floor = self.set_points.grounding_coverage_rate_floor;
+        self.verification_store = Some(Arc::clone(&store));
         self.sensor_registry
             .register(Arc::new(crate::sensor_provider::GroundingSensor::new(
                 Arc::clone(&store),
