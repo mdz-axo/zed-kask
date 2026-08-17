@@ -211,6 +211,52 @@ jobs:
       - name: "Verify the forecast-conformance gate can actually fail"
         run: cd kask && bash scripts/check-forecast-conformance-selftest.sh
 
+  # Self-tests for the count-based CI gates flagged in the gate sweep
+  # (follow-up issue #6). Each injects a synthetic violation into a temp tree
+  # and asserts the gate catches it — pinning the "0 = 0" silent-disconnection
+  # failure mode where an empty scan trivially passes.
+  mcp-servers-selftest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Verify the mcp-servers drift gate can actually fail"
+        run: cd kask && bash scripts/check-mcp-servers-selftest.sh
+
+  version-sync-selftest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Verify the version-sync gate can actually fail"
+        run: cd kask && bash scripts/check-version-sync-selftest.sh
+
+  skill-span-namespace-selftest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Verify the skill-span-namespace gate can actually fail"
+        run: cd kask && bash scripts/check-skill-span-namespace-selftest.sh
+
+  unsafe-forbid-selftest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Verify the unsafe-forbid gate can actually fail"
+        run: cd kask && bash scripts/check-unsafe-forbid-selftest.sh
+
+  hkask-no-zed-deps-selftest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Verify the hkask-no-zed-deps gate can actually fail"
+        run: cd kask && bash scripts/check-hkask-no-zed-deps-selftest.sh
+
+  mcp-tool-tests-selftest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Verify the mcp-tool-tests gate can actually fail"
+        run: cd kask && bash scripts/check-mcp-tool-tests-selftest.sh
+
   unsafe-forbid:
     runs-on: ubuntu-24.04
     steps:

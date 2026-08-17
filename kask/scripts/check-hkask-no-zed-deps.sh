@@ -44,7 +44,13 @@ ZED_CRATES='gpui|gpui_tokio|gpui_platform|gpui_macros|language_model|language_mo
 # The bridge (kask_bridge) lives under kask/crates/ but is zed-kask-side
 # (D8), not hKask — scanning it would false-positive on the very
 # bidirectional seam §13.1 exempts. See zed-host-architecture-plan.md:640.
-manifests=$(find ./crates/hkask-* ./mcp-servers/hkask-* -name Cargo.toml -not -path './target/*' 2>/dev/null)
+# Overridable via env var so the self-test can point at a temp tree; the
+# default preserves the production behavior exactly.
+if [ -n "${MANIFEST_PATHS+x}" ]; then
+  manifests=$(find $MANIFEST_PATHS -name Cargo.toml -not -path './target/*' 2>/dev/null || true)
+else
+  manifests=$(find ./crates/hkask-* ./mcp-servers/hkask-* -name Cargo.toml -not -path './target/*' 2>/dev/null || true)
+fi
 
 # 1. Any path-dep into the zed-kask tree (e.g. path = "../../Clones/zed-kask/...").
 echo "Checking hKask Cargo.toml for zed-kask path-deps..."

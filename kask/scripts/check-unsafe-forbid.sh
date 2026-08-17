@@ -18,14 +18,26 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Overridable via env var so the self-test can point at a temp tree; the
+# default preserves the production behavior exactly. SCAN_DIRS is an array
+# of glob patterns expanded unquoted in the for loop.
+if [ -n "${SCAN_DIRS+x}" ]; then
+  # shellcheck disable=SC2206
+  scan_dirs=($SCAN_DIRS)
+else
+  scan_dirs=(
+    crates/*/ mcp-servers/*/
+    ../crates/swarm_panel/ ../crates/hkask-viz-core/
+    ../crates/kask_extensions_ui/ ../crates/marketplace_ui_common/
+    ../crates/hkask-scenarios-widget/ ../crates/hkask-portfolio-widget/
+    ../crates/hkask-kanban-widget/
+  )
+fi
+
 violations=0
 checked=0
 
-for dir in crates/*/ mcp-servers/*/ \
-  ../crates/swarm_panel/ ../crates/hkask-viz-core/ \
-  ../crates/kask_extensions_ui/ ../crates/marketplace_ui_common/ \
-  ../crates/hkask-scenarios-widget/ ../crates/hkask-portfolio-widget/ \
-  ../crates/hkask-kanban-widget/; do
+for dir in "${scan_dirs[@]}"; do
   [ -f "$dir/Cargo.toml" ] || continue
   # Extract [lib] path from Cargo.toml (falls back to src/lib.rs).
   lib_path=$(grep -A2 '^\[lib\]' "$dir/Cargo.toml" 2>/dev/null \

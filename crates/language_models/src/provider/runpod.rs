@@ -2,11 +2,14 @@
 //!
 //! zed-kask (D29): RunPod serverless endpoints are not a standard
 //! OpenAI-compatible provider. Each endpoint has its own API URL
-//! (`https://api.runpod.io/v2/{endpoint_id}/openai/v1`), and endpoint
-//! discovery uses the RunPod GraphQL API (not `/v1/models`). This file
-//! registers RunPod as a dedicated `LanguageModelProvider` so each model
-//! carries its own endpoint URL and the IPC bridge (`LanguageModelRegistry`)
-//! can resolve `RunPod/kask-ocr` for the corpus OCR pipeline.
+//! (`https://api.runpod.ai/v2/{endpoint_id}/openai/v1`), and endpoint
+//! discovery uses the RunPod GraphQL API at `https://api.runpod.io/graphql`
+//! (not `/v1/models`). The GraphQL API and the serverless REST API use
+//! different domains: `api.runpod.io` for GraphQL, `api.runpod.ai` for REST.
+//! This file registers RunPod as a dedicated `LanguageModelProvider` so each
+//! model carries its own endpoint URL and the IPC bridge
+//! (`LanguageModelRegistry`) can resolve `RunPod/kask-ocr` for the corpus OCR
+//! pipeline.
 //!
 //! See `DIVERGENCE.md` D29 for the full rationale and pin tests.
 
@@ -37,9 +40,19 @@ const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new(
 const API_KEY_ENV_VAR_NAME: &str = "RUNPOD_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 
-/// Default RunPod API base URL. Endpoint URLs are derived as
-/// `{api_url}/v2/{endpoint_id}/openai/v1`.
+/// Default RunPod GraphQL API base URL. Used for endpoint discovery via the
+/// GraphQL API at `{api_url}/graphql`. The serverless REST API (OpenAI-compatible
+/// inference) uses a different domain (`api.runpod.ai`) — see
+/// `RUNPOD_REST_API_BASE_URL` and `endpoint_url`.
 pub const RUNPOD_DEFAULT_API_URL: &str = "https://api.runpod.io";
+
+/// Default RunPod serverless REST API base URL. The OpenAI-compatible endpoint
+/// URL for a serverless endpoint is
+/// `{RUNPOD_REST_API_BASE_URL}/v2/{endpoint_id}/openai/v1`.
+/// Per the RunPod docs (https://docs.runpod.io/serverless/vllm/openai-compatibility),
+/// the REST API domain is `api.runpod.ai`, NOT `api.runpod.io` (which is the
+/// GraphQL API domain).
+pub const RUNPOD_REST_API_BASE_URL: &str = "https://api.runpod.ai";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct RunpodSettings {
@@ -228,12 +241,11 @@ impl RunpodLanguageModelProvider {
     fn create_language_model_with_url(
         &self,
         model: AvailableModel,
-        cx: &App,
+        _cx: &App,
     ) -> Arc<dyn LanguageModel> {
-        let api_url = Self::api_url_from_settings(cx);
         Arc::new(RunpodLanguageModel {
             id: LanguageModelId::from(model.name.clone()),
-            endpoint_url: endpoint_url(&api_url, &model.endpoint_id),
+            endpoint_url: endpoint_url("", &model.endpoint_id),
             supports_images: model.supports_images,
             max_tokens: model.max_tokens,
             max_output_tokens: model.max_output_tokens,
@@ -356,7 +368,7 @@ impl LanguageModelProvider for RunpodLanguageModelProvider {
 pub struct RunpodLanguageModel {
     id: LanguageModelId,
     /// Per-model OpenAI-compatible endpoint URL:
-    /// `https://api.runpod.io/v2/{endpoint_id}/openai/v1`.
+    /// `https://api.runpod.ai/v2/{endpoint_id}/openai/v1`.
     endpoint_url: String,
     supports_images: bool,
     max_tokens: u64,
@@ -519,10 +531,10 @@ impl LanguageModel for RunpodLanguageModel {
 }
 
 /// Derive the OpenAI-compatible endpoint URL for a RunPod serverless endpoint.
-fn endpoint_url(api_url: &str, endpoint_id: &str) -> String {
-    // Trim any trailing slash so `{api_url}/v2/{id}/openai/v1` is well-formed.
-    let base = api_url.trim_end_matches('/');
-    format!("{base}/v2/{endpoint_id}/openai/v1")
+/// Uses `RUNPOD_REST_API_BASE_URL` (`api.runpod.ai`), NOT the GraphQL API URL
+/// (`api.runpod.io`). The two domains are different per the RunPod docs.
+fn endpoint_url(_api_url: &str, endpoint_id: &str) -> String {
+    format!("{RUNPOD_REST_API_BASE_URL}/v2/{endpoint_id}/openai/v1")
 }
 
 // ── RunPod GraphQL discovery ──────────────────────────────────────────────
@@ -675,18 +687,14 @@ async fn fetch_runpod_endpoints(
 mod tests {
     use super::*;
 
-    /// D29 pin: the endpoint URL is derived as `{api_url}/v2/{id}/openai/v1`,
-    /// with any trailing slash on `api_url` trimmed.
+    /// D29 pin: the endpoint URL is derived as
+    /// `{RUNPOD_REST_API_BASE_URL}/v2/{id}/openai/v1`, using the REST API
+    /// domain (`api.runpod.ai`), NOT the GraphQL API domain (`api.runpod.io`).
     #[test]
     fn endpoint_url_derives_from_api_url_and_endpoint_id() {
         assert_eq!(
-            endpoint_url("https://api.runpod.io", "hsldzov6932wf5"),
-            "https://api.runpod.io/v2/hsldzov6932wf5/openai/v1"
-        );
-        // Trailing slash on api_url is trimmed.
-        assert_eq!(
-            endpoint_url("https://api.runpod.io/", "hsldzov6932wf5"),
-            "https://api.runpod.io/v2/hsldzov6932wf5/openai/v1"
+            endpoint_url("", "hsldzov6932wf5"),
+            "https://api.runpod.ai/v2/hsldzov6932wf5/openai/v1"
         );
     }
 
