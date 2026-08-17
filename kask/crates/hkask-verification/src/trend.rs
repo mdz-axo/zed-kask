@@ -32,14 +32,24 @@ pub enum TrendScope {
 /// `delegations_without_contract` is the coverage gap (paper §6: coverage
 /// is itself a metric, not a pass). A delegation with `had_contract: false`
 /// is a coverage gap, not a compliant delegation.
+///
+/// `delegations_unenforceable` is the "contract existed but could not run"
+/// bucket — the contract matched but the output was not a JSON object.
+/// The operator's remediation is to fix the agent's system prompt, not to
+/// write a contract (paper Rule 5.3: absence ≠ verdict).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GroundingTrendReport {
     /// Total delegations recorded.
     pub total_delegations: usize,
-    /// Delegations for which a grounding contract existed and ran.
+    /// Delegations for which a grounding contract existed (enforced +
+    /// unenforceable). The denominator for `coverage_rate`.
     pub delegations_with_contract: usize,
     /// Delegations for which no grounding contract existed (coverage gap).
     pub delegations_without_contract: usize,
+    /// Delegations where the contract existed but grounding could not run
+    /// (non-JSON output). `had_contract: true, was_enforced: false`.
+    /// Neither zero_nulled nor nulled — absence ≠ verdict (Rule 5.3).
+    pub delegations_unenforceable: usize,
     /// Delegations where grounding ran and zero fields were nulled.
     /// The deletion-resistant scoreboard metric (paper Rule 5.4).
     pub delegations_with_zero_nulled: usize,
@@ -84,6 +94,7 @@ mod tests {
             total_delegations: 2,
             delegations_with_contract: 2,
             delegations_without_contract: 0,
+            delegations_unenforceable: 2,
             delegations_with_zero_nulled: 0,
             delegations_with_nulled: 0,
             delegations_with_narrative_leaks: 0,
@@ -97,6 +108,7 @@ mod tests {
             total_delegations: 4,
             delegations_with_contract: 3,
             delegations_without_contract: 1,
+            delegations_unenforceable: 0,
             delegations_with_zero_nulled: 2,
             delegations_with_nulled: 1,
             delegations_with_narrative_leaks: 1,
@@ -128,6 +140,7 @@ mod tests {
         assert_eq!(report.total_delegations, 0);
         assert_eq!(report.delegations_with_contract, 0);
         assert_eq!(report.delegations_without_contract, 0);
+        assert_eq!(report.delegations_unenforceable, 0);
         assert_eq!(report.delegations_with_zero_nulled, 0);
         assert_eq!(report.delegations_with_nulled, 0);
         assert_eq!(report.delegations_with_narrative_leaks, 0);

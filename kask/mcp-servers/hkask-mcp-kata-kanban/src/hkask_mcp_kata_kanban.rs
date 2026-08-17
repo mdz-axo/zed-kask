@@ -1315,32 +1315,14 @@ impl KanbanServer {
         // (paper §6) and covers only the "task" agent_type — other types
         // get a coverage-gap record (had_contract: false) so the gap is
         // visible in the trend (paper §6: coverage is itself a metric).
-        let output_json = serde_json::from_str::<serde_json::Value>(&result.response)
-            .unwrap_or(serde_json::Value::Null);
-        // Retain the raw response before grounding overwrites it (paper §4:
-        // "the raw response is retained. Not the digest.").
-        let raw_response = result.response.clone();
-        let (grounding_result, cleaned) = self.verification_store.enforce_for_agent(
+        let outcome = self.verification_store.enforce_and_stamp(
             "kanban_task_spawn",
             &result.agent_id,
             &agent.agent_type,
-            &output_json,
-            &result.tool_calls,
             &result.response,
+            &result.tool_calls,
         );
-        if let Some(ref gr) = grounding_result {
-            if !gr.nulled_fields.is_empty() {
-                tracing::warn!(
-                    target: "hkask.mcp.kata_kanban",
-                    task_id = %tid,
-                    agent_id = %result.agent_id,
-                    nulled_fields = ?gr.nulled_fields,
-                    narrative_leaks = ?gr.narrative_leaks,
-                    "grounding enforcement: nulled {} unsourced field(s), found {} narrative leak(s)",
-                    gr.nulled_fields.len(),
-                    gr.narrative_leaks.len(),
-                );
-            }
+        if let Some(ref gr) = outcome.result {
             // Rung 2 (Schema validation): validate the cleaned document
             // AFTER grounding, BEFORE it persists. Unsupported keywords
             // are NOT a pass. Logged at warn — schema violations are
@@ -1356,7 +1338,7 @@ impl KanbanServer {
                         "approach": { "type": "string" }
                     }
                 }),
-                &cleaned,
+                &outcome.cleaned,
             );
             if !validation.violations.is_empty() {
                 tracing::warn!(
@@ -1379,14 +1361,18 @@ impl KanbanServer {
             // Build the delegation envelope so provenance survives the
             // hop to the caller (N2). The envelope is additive — it
             // carries the enforced payload, provenance, and violations.
-            let envelope =
-                hkask_verification::envelope::build(&result.agent_id, Some(&cleaned), gr, true);
+            let envelope = hkask_verification::envelope::build(
+                &result.agent_id,
+                Some(&outcome.cleaned),
+                gr,
+                true,
+            );
             // Replace the response with the cleaned JSON (with provenance
             // stamps and nulled unsourced fields).
             result.response =
-                serde_json::to_string(&cleaned).unwrap_or_else(|_| result.response.clone());
+                serde_json::to_string(&outcome.cleaned).unwrap_or_else(|_| result.response.clone());
             // Retain the raw response for audit and future reprocessing.
-            result.raw_response = Some(raw_response);
+            result.raw_response = Some(outcome.raw_response);
             // Log the envelope at debug — it's diagnostic, not blocking.
             tracing::debug!(
                 target: "hkask.mcp.kata_kanban",
@@ -1394,15 +1380,15 @@ impl KanbanServer {
                 envelope = %envelope,
                 "delegation envelope built",
             );
-        } else if output_json.is_object() {
+        } else if outcome.was_object {
             // No contract for this agent_type — the verification store
             // wrote a coverage-gap record. The raw response is retained
             // for audit even when grounding did not run.
-            result.raw_response = Some(raw_response);
+            result.raw_response = Some(outcome.raw_response);
         }
         // When the output was not a JSON object, the verification store
-        // wrote a coverage-gap record (had_contract: false). The raw
-        // response is retained above when applicable.
+        // wrote an unenforceable record (had_contract: true, was_enforced:
+        // false). The raw response is retained above when applicable.
 
         let verdict = result.task_success.clone();
         if let Err(error) =

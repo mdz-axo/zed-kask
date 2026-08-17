@@ -37,6 +37,6 @@ pub use grounding::{
     FieldSpec, GroundingContract, GroundingResult, LeakRule, ProvenanceTag, enforce_grounding,
     task_agent_contract,
 };
-pub use ledger::VerificationStore;
+pub use ledger::{CoverageEntry, EnforcementOutcome, VerificationStore};
 pub use trend::{GroundingTrendReport, TrendScope};
 pub use types::GroundingRecord;

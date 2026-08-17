@@ -920,30 +920,30 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             )
             .await?;
 
-        // Extract the composed manifest from step_3_result.candidates[0].composite_manifest.
-        // The synthesize step produces a `candidates` array; the first candidate's
-        // `composite_manifest` is the governed BundleManifest.
+        // Extract the composed manifest from step_4_result.candidates[0].composite_manifest.
+        // The synthesize step (ordinal 4) produces a `candidates` array; the first
+        // candidate's `composite_manifest` is the governed BundleManifest.
         let bundle_manifest_json = bundler_result
             .context
-            .lookup("step_3_result")
+            .lookup("step_4_result")
             .and_then(|v| v.get("candidates"))
             .and_then(|c| c.get(0))
             .and_then(|c| c.get("composite_manifest"))
             .cloned()
             .ok_or_else(|| {
                 "skill-bundler cascade did not produce a composite_manifest at \
-                 step_3_result.candidates[0].composite_manifest — the synthesize \
+                 step_4_result.candidates[0].composite_manifest — the synthesize \
                  step may have failed or produced no candidates"
                     .to_string()
             })?;
 
-        // Extract the deterministic composition score from step_5_result
-        // (the lisp.eval step). This is the falsifier anchor — if lisp.eval
+        // Extract the deterministic composition score from step_6_result
+        // (the lisp.eval score step). This is the falsifier anchor — if lisp.eval
         // were removed, this would be absent and the UI's score display
         // would degrade to "unavailable".
         let composition_score = bundler_result
             .context
-            .lookup("step_5_result")
+            .lookup("step_6_result")
             .and_then(|v| v.as_f64());
 
         // Extract the goal-extract step's output (step_1_result) so the

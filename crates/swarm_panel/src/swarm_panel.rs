@@ -2996,7 +2996,7 @@ mod tests {
 
     // Pins the tool name strings the panel calls. The single source of truth
     // is `hkask_mcp_swarm::TOOL_NAMES`, re-exported as `parse::SWARM_TOOLS`.
-    // The server's own `tool_surface_is_exactly_53_registered_tools` test pins
+    // The server's own `tool_surface_is_exactly_52_registered_tools` test pins
     // the count against the live `combined_router()` surface, and the Steer-mode
     // prompt-token test (`steer_prompt_mentions_only_known_tools`) catches any
     // `swarm_*` name the prompt mentions that isn't in the const — so a rename

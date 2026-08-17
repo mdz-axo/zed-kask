@@ -109,8 +109,18 @@ impl VerificationStore {
             }
             resolved.to_string_lossy().to_string()
         });
-        let passphrase = std::env::var("HKASK_VERIFICATION_PASSPHRASE")
-            .unwrap_or_else(|_| "allostery".to_string());
+        let passphrase = match std::env::var("HKASK_VERIFICATION_PASSPHRASE") {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!(
+                    target: "hkask.verification",
+                    "HKASK_VERIFICATION_PASSPHRASE not set — using default 'allostery'. \
+                     This provides zero confidentiality in a multi-user environment. \
+                     Set HKASK_VERIFICATION_PASSPHRASE (keychain-provisioned) for production."
+                );
+                "allostery".to_string()
+            }
+        };
         match hkask_storage::open_or_repair(&db_path, &passphrase) {
             Ok(db) => match db.sqlite_pool() {
                 Ok(pool) => {
@@ -168,20 +178,22 @@ impl VerificationStore {
     /// Enforce grounding for a delegation and record the result to the
     /// central ledger. Returns `(Option<GroundingResult>, cleaned_json)`.
     ///
-    /// If a contract exists for the agent_type:
+    /// If a contract exists for the agent_type AND the output is a JSON object:
     ///   - Runs `enforce_grounding()` (nulls unsourced fields, scans narrative)
     ///   - Writes a full `GroundingRecord` to the ledger (append-only)
     ///   - Returns `(Some(result), cleaned_json)`
     ///
-    /// If no contract exists:
-    ///   - Writes a coverage-gap record to the ledger (`had_contract: false`)
-    ///   - Returns `(None, original_json)` — unchanged
-    ///
     /// If a contract exists but the output is not a JSON object (e.g. the
-    /// agent produced prose): writes a coverage-gap record and returns
-    /// `(None, original_json)`. The trend query counts this as
-    /// "with contract" (the contract matched) but not "zero nulled" —
-    /// absence ≠ verdict (paper Rule 5.3).
+    /// agent produced prose): writes an **unenforceable** record
+    /// (`had_contract: true, was_enforced: false`) and returns
+    /// `(None, original_json)`. The trend query counts this under
+    /// `delegations_unenforceable` — the operator's remediation is to fix
+    /// the agent's system prompt, not to write a contract (paper Rule 5.3:
+    /// absence ≠ verdict).
+    ///
+    /// If no contract exists: writes a **coverage-gap** record
+    /// (`had_contract: false`) and returns `(None, original_json)`.
+    /// The trend query counts this under `delegations_without_contract`.
     ///
     /// `source` identifies the calling tool ("kanban_task_spawn",
     /// "swarm_delegate_local", etc.) for cross-tool trend analysis.
@@ -202,10 +214,11 @@ impl VerificationStore {
             Some(contract) => {
                 if !output_json.is_object() {
                     // Contract exists for this agent_type but the output is
-                    // not a JSON object — grounding cannot run. Record a
-                    // coverage-gap so the trend query sees the delegation
-                    // (absence ≠ verdict, paper Rule 5.3).
-                    self.record_coverage_gap(source, agent_id, agent_type);
+                    // not a JSON object — grounding cannot run. Record an
+                    // unenforceable record (had_contract: true, was_enforced:
+                    // false) so the trend query distinguishes this from a
+                    // coverage gap (paper Rule 5.3: absence ≠ verdict).
+                    self.record_unenforceable(source, agent_id, agent_type);
                     return (None, output_json.clone());
                 }
                 let (result, cleaned) =
@@ -218,6 +231,100 @@ impl VerificationStore {
                 self.record_coverage_gap(source, agent_id, agent_type);
                 (None, output_json.clone())
             }
+        }
+    }
+}
+
+/// The outcome of `enforce_and_stamp` — the caller uses this to stamp
+/// the delegation result fields (`response`, `raw_response`). This
+/// struct exists so the grounding wiring (parse → enforce → warn →
+/// replace → retain) is not duplicated across 3 call sites.
+#[derive(Debug, Clone)]
+pub struct EnforcementOutcome {
+    /// The grounding result, when grounding ran. `None` when no contract
+    /// existed or the output was not a JSON object.
+    pub result: Option<GroundingResult>,
+    /// The cleaned JSON (with unsourced fields nulled). When grounding
+    /// did not run, this is the original output unchanged.
+    pub cleaned: Value,
+    /// The raw response string (the original `response` before cleaning).
+    /// The caller should store this as `raw_response` for audit.
+    pub raw_response: String,
+    /// Whether the output was a JSON object (and thus could potentially
+    /// be grounded). The caller uses this to decide whether to retain
+    /// `raw_response` when grounding did not run.
+    pub was_object: bool,
+}
+
+/// One row in the grounding coverage report. Groups delegations by
+/// `agent_type` and counts how many had a grounding contract vs. how many
+/// were coverage gaps. The operator uses this to see which agent types need
+/// a contract written.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CoverageEntry {
+    /// The agent_type this entry covers.
+    pub agent_type: String,
+    /// Total delegations for this agent_type.
+    pub total_delegations: usize,
+    /// Delegations where a grounding contract existed.
+    pub delegations_with_contract: usize,
+    /// Delegations where no grounding contract existed (coverage gap).
+    pub delegations_without_contract: usize,
+}
+
+impl VerificationStore {
+    /// Enforce grounding for a delegation, record the result to the central
+    /// ledger, and return an `EnforcementOutcome` that the caller uses to
+    /// stamp the delegation result fields. This encapsulates the
+    /// parse → enforce → warn pattern that was duplicated across
+    /// `spawn_via_local_runtime`, `swarm_delegate_local`, and
+    /// `swarm_execute_plan_local`.
+    ///
+    /// The caller is responsible for:
+    /// - Calling this before `record_delegation` or `task_record_delegation`.
+    /// - Using `outcome.result` to decide whether to run schema validation
+    ///   and envelope building (kata-kanban does; swarm does not).
+    /// - Setting `result.response = serde_json::to_string(&outcome.cleaned)`
+    ///   when `outcome.result.is_some()`.
+    /// - Setting `result.raw_response = Some(outcome.raw_response)` when
+    ///   `outcome.result.is_some() || outcome.was_object`.
+    pub fn enforce_and_stamp(
+        &self,
+        source: &str,
+        agent_id: &str,
+        agent_type: &str,
+        response: &str,
+        tool_calls: &[Value],
+    ) -> EnforcementOutcome {
+        let output_json = serde_json::from_str::<Value>(response).unwrap_or(Value::Null);
+        let raw_response = response.to_string();
+        let was_object = output_json.is_object();
+        let (result, cleaned) = self.enforce_for_agent(
+            source,
+            agent_id,
+            agent_type,
+            &output_json,
+            tool_calls,
+            response,
+        );
+        if let Some(ref gr) = result {
+            if !gr.nulled_fields.is_empty() {
+                tracing::warn!(
+                    target: "hkask.verification",
+                    agent_id = %agent_id,
+                    nulled_fields = ?gr.nulled_fields,
+                    narrative_leaks = ?gr.narrative_leaks,
+                    "grounding enforcement: nulled {} unsourced field(s), found {} narrative leak(s)",
+                    gr.nulled_fields.len(),
+                    gr.narrative_leaks.len(),
+                );
+            }
+        }
+        EnforcementOutcome {
+            result,
+            cleaned,
+            raw_response,
+            was_object,
         }
     }
 
@@ -233,8 +340,14 @@ impl VerificationStore {
         self.write_record(&record);
     }
 
-    /// Write a coverage-gap record (no contract for this agent_type, or
-    /// contract existed but output was not a JSON object).
+    /// Write an unenforceable record: the contract existed but the output
+    /// was not a JSON object (had_contract: true, was_enforced: false).
+    fn record_unenforceable(&self, source: &str, agent_id: &str, agent_type: &str) {
+        let record = GroundingRecord::unenforceable(source, agent_id, agent_type);
+        self.write_record(&record);
+    }
+
+    /// Write a coverage-gap record (no contract for this agent_type).
     fn record_coverage_gap(&self, source: &str, agent_id: &str, agent_type: &str) {
         let record = GroundingRecord::coverage_gap(source, agent_id, agent_type);
         self.write_record(&record);
@@ -279,13 +392,20 @@ impl VerificationStore {
             report.total_delegations += 1;
             if record.had_contract {
                 report.delegations_with_contract += 1;
-                if record.nulled_fields.is_empty() {
-                    report.delegations_with_zero_nulled += 1;
+                if record.was_enforced {
+                    if record.nulled_fields.is_empty() {
+                        report.delegations_with_zero_nulled += 1;
+                    } else {
+                        report.delegations_with_nulled += 1;
+                    }
+                    if !record.narrative_leaks.is_empty() {
+                        report.delegations_with_narrative_leaks += 1;
+                    }
                 } else {
-                    report.delegations_with_nulled += 1;
-                }
-                if !record.narrative_leaks.is_empty() {
-                    report.delegations_with_narrative_leaks += 1;
+                    // Contract existed but output was not a JSON object —
+                    // grounding could not run. Counted as unenforceable, not
+                    // as zero_nulled (absence ≠ verdict, Rule 5.3).
+                    report.delegations_unenforceable += 1;
                 }
             } else {
                 report.delegations_without_contract += 1;
@@ -311,6 +431,38 @@ impl VerificationStore {
             .collect();
         violations.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
         Ok(violations)
+    }
+
+    /// Query the grounding coverage report: which agent types have grounding
+    /// contracts vs. which have delegations but no contract (the coverage
+    /// gap, paper §6). Returns a per-agent_type breakdown so the operator
+    /// can see exactly which types need a contract written.
+    pub fn grounding_coverage(&self) -> Result<Vec<CoverageEntry>, VerificationError> {
+        let records = self.query_records(&TrendScope::Global)?;
+        // Group by agent_type and count had_contract vs. not.
+        let mut by_type: HashMap<String, CoverageEntry> = HashMap::new();
+        for record in &records {
+            let entry = by_type
+                .entry(record.agent_type.clone())
+                .or_insert_with(|| CoverageEntry {
+                    agent_type: record.agent_type.clone(),
+                    total_delegations: 0,
+                    delegations_with_contract: 0,
+                    delegations_without_contract: 0,
+                });
+            entry.total_delegations += 1;
+            if record.had_contract {
+                entry.delegations_with_contract += 1;
+            } else {
+                entry.delegations_without_contract += 1;
+            }
+        }
+        let mut entries: Vec<CoverageEntry> = by_type.into_values().collect();
+        entries.sort_by(|a, b| {
+            b.delegations_without_contract
+                .cmp(&a.delegations_without_contract)
+        });
+        Ok(entries)
     }
 
     /// Query all grounding records matching the scope. Returns `Err` when
@@ -398,7 +550,11 @@ mod tests {
     }
 
     #[test]
-    fn enforce_for_agent_writes_coverage_gap_when_output_not_object() {
+    fn enforce_for_agent_writes_unenforceable_when_output_not_object() {
+        // Contract exists for "task" but the output is not a JSON object —
+        // the record is unenforceable (had_contract: true, was_enforced:
+        // false), NOT a coverage gap. The operator's remediation is to fix
+        // the agent's system prompt, not to write a contract.
         let store = test_store();
         let output = json!("just prose, not an object");
         let (result, cleaned) = store.enforce_for_agent(
@@ -415,7 +571,11 @@ mod tests {
             .grounding_trend(&TrendScope::Global)
             .expect("trend query");
         assert_eq!(trend.total_delegations, 1);
-        assert_eq!(trend.delegations_without_contract, 1);
+        assert_eq!(trend.delegations_with_contract, 1);
+        assert_eq!(trend.delegations_without_contract, 0);
+        assert_eq!(trend.delegations_unenforceable, 1);
+        assert_eq!(trend.delegations_with_zero_nulled, 0);
+        assert_eq!(trend.delegations_with_nulled, 0);
     }
 
     #[test]
@@ -584,5 +744,437 @@ mod tests {
             .expect("agent_b trend");
         assert_eq!(agent_b.total_delegations, 1);
         assert_eq!(agent_b.delegations_with_nulled, 1);
+    }
+}
+
+/// Property-based tests for the central grounding ledger.
+///
+/// These exercise the full pipeline (enforce → write → query → aggregate)
+/// with arbitrary combinations of agents, sources, agent_types (some with
+/// contracts, some without), and outputs (some clean, some with violations,
+/// some non-JSON). The four properties anchor the ledger's integrity:
+///
+/// 1. **Append-only invariant** — after N `enforce_for_agent` calls,
+///    `trend(Global).total_delegations == N`. No records lost, no duplicates.
+///
+/// 2. **Scope partitioning** — `Σ trend(ByAgent(aᵢ)) == trend(Global)` for all
+///    distinct agents. Same for `BySource`. Catches scope filters that include
+///    or exclude the wrong records.
+///
+/// 3. **Trend bucket accounting** — `with_contract + without_contract ==
+///    total` and `zero_nulled + nulled <= with_contract`. The `<=` (not `==`)
+///    is because non-object outputs with a contract are counted as
+///    `with_contract` but neither `zero_nulled` nor `nulled` (absence ≠
+///    verdict, Rule 5.3).
+/// 4. **`enforce_for_agent` ≡ `enforce_grounding`** — when a contract exists
+///    and the output is a JSON object, the cleaning from `enforce_for_agent`
+///    must be byte-identical to calling `enforce_grounding` directly. The
+///    store is a wrapper that adds ledger writes; it must not modify the
+///    cleaning.
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use crate::grounding::{enforce_grounding, task_agent_contract};
+    use proptest::prelude::*;
+    use serde_json::json;
+    use std::collections::BTreeSet;
+
+    /// One delegation action: a call to `enforce_for_agent` with all its
+    /// parameters. Generated by the proptest strategy and executed against
+    /// a fresh `VerificationStore`.
+    #[derive(Debug, Clone)]
+    struct DelegationAction {
+        source: String,
+        agent_id: String,
+        agent_type: String,
+        output: serde_json::Value,
+        tool_calls: Vec<serde_json::Value>,
+        narrative: String,
+    }
+
+    /// A small set of agent_types: "task" (has a contract) and a few without.
+    /// This ensures we exercise both the contract-matched path and the
+    /// coverage-gap path in every generated sequence.
+    const AGENT_TYPES: &[&str] = &["task", "research", "narrator", "planner"];
+
+    /// A small set of source tools — the real ones plus a synthetic one.
+    const SOURCES: &[&str] = &[
+        "kanban_task_spawn",
+        "swarm_delegate_local",
+        "swarm_execute_plan_local",
+        "test_source",
+    ];
+
+    /// Generate a delegation action. The output is an arbitrary JSON value
+    /// (sometimes an object with contract fields, sometimes not). The
+    /// tool_calls are a vec of `{"tool": <str>, "ok": <bool>}` entries.
+    fn arb_delegation_action() -> BoxedStrategy<DelegationAction> {
+        let source = proptest::sample::select(SOURCES.to_vec());
+        let agent_id = prop::string::string_regex("[a-z][a-z0-9_]{0,10}")
+            .expect("valid regex")
+            .boxed();
+        let agent_type = proptest::sample::select(AGENT_TYPES.to_vec());
+        let output = arb_output_for_grounding();
+        let tool_calls = prop::collection::vec(
+            ("[a-z][a-z0-9_/]{0,20}", any::<bool>())
+                .prop_map(|(tool, ok)| json!({ "tool": tool, "ok": ok })),
+            0..6,
+        );
+        let narrative = prop::string::string_regex("[a-zA-Z0-9 /._-]{0,100}").expect("valid regex");
+        (source, agent_id, agent_type, output, tool_calls, narrative)
+            .prop_map(
+                |(source, agent_id, agent_type, output, tool_calls, narrative)| DelegationAction {
+                    source: source.to_string(),
+                    agent_id,
+                    agent_type: agent_type.to_string(),
+                    output,
+                    tool_calls,
+                    narrative,
+                },
+            )
+            .boxed()
+    }
+
+    /// Generate an output JSON value. Sometimes a JSON object with contract
+    /// fields (deliverable_path, test_verdict, summary, approach), sometimes
+    /// an arbitrary JSON value (to exercise the non-object path and the
+    /// UncommissionedInference path).
+    fn arb_output_for_grounding() -> BoxedStrategy<serde_json::Value> {
+        prop_oneof![
+            // A JSON object with contract fields — exercises the Sourced /
+            // Unsourced / Inferred paths.
+            prop::collection::vec(
+                proptest::sample::select(
+                    [
+                        "deliverable_path",
+                        "test_verdict",
+                        "summary",
+                        "approach",
+                        "extra_field"
+                    ]
+                    .to_vec(),
+                ),
+                0..5,
+            )
+            .prop_map(|fields| {
+                let mut map = serde_json::Map::new();
+                for f in fields {
+                    let val = match f {
+                        "deliverable_path" => json!("/src/main.rs"),
+                        "test_verdict" => json!("pass: all tests passed"),
+                        "summary" => json!("I completed the task."),
+                        "approach" => json!("I used a direct approach."),
+                        _ => json!("surprise"),
+                    };
+                    map.insert(f.to_string(), val);
+                }
+                serde_json::Value::Object(map)
+            }),
+            // An arbitrary JSON value — exercises the non-object path and
+            // arbitrary object shapes.
+            hkask_test_harness::arb_json_value(),
+        ]
+        .boxed()
+    }
+
+    /// Generate a sequence of delegation actions.
+    fn arb_delegation_sequence() -> BoxedStrategy<Vec<DelegationAction>> {
+        prop::collection::vec(arb_delegation_action(), 0..20).boxed()
+    }
+
+    /// Execute a sequence of delegation actions against a fresh store and
+    /// return the store. This is the shared setup for all properties.
+    fn execute_sequence(actions: &[DelegationAction]) -> VerificationStore {
+        let store = VerificationStore::in_memory();
+        for action in actions {
+            store.enforce_for_agent(
+                &action.source,
+                &action.agent_id,
+                &action.agent_type,
+                &action.output,
+                &action.tool_calls,
+                &action.narrative,
+            );
+        }
+        store
+    }
+
+    proptest! {
+        /// **Property 1: Append-only invariant.**
+        ///
+        /// After N `enforce_for_agent` calls, `trend(Global).total_delegations`
+        /// must equal N. No records lost, no duplicates. This is the
+        /// foundation: if the ledger lies about the count, every downstream
+        /// metric is wrong.
+        #[test]
+        fn ledger_total_delegations_equals_action_count(
+            actions in arb_delegation_sequence(),
+        ) {
+            let store = execute_sequence(&actions);
+            let trend = store.grounding_trend(&TrendScope::Global)
+                .expect("trend query must succeed on a healthy store");
+            prop_assert_eq!(
+                trend.total_delegations,
+                actions.len(),
+                "total_delegations must equal the number of enforce_for_agent calls — \
+                 a mismatch means the ledger lost or duplicated records"
+            );
+        }
+
+        /// **Property 2a: Scope partitioning by agent.**
+        ///
+        /// The sum of `total_delegations` across all distinct agents (via
+        /// `ByAgent` scope) must equal `total_delegations` for `Global` scope.
+        /// Catches scope filters that include or exclude the wrong records.
+        #[test]
+        fn by_agent_scope_partitions_global(
+            actions in arb_delegation_sequence(),
+        ) {
+            let store = execute_sequence(&actions);
+            let global = store.grounding_trend(&TrendScope::Global)
+                .expect("global trend");
+            // Collect the distinct agent_ids from the action sequence.
+            let distinct_agents: BTreeSet<&str> =
+                actions.iter().map(|a| a.agent_id.as_str()).collect();
+            let mut sum_by_agent = 0usize;
+            for agent_id in &distinct_agents {
+                let trend = store
+                    .grounding_trend(&TrendScope::ByAgent(agent_id.to_string()))
+                    .expect("per-agent trend");
+                sum_by_agent += trend.total_delegations;
+            }
+            prop_assert_eq!(
+                sum_by_agent, global.total_delegations,
+                "Σ trend(ByAgent(aᵢ)).total_delegations must equal trend(Global).total_delegations — \
+                 a mismatch means the ByAgent scope filter is wrong"
+            );
+        }
+
+        /// **Property 2b: Scope partitioning by source.**
+        ///
+        /// Same as 2a but for `BySource` scope.
+        #[test]
+        fn by_source_scope_partitions_global(
+            actions in arb_delegation_sequence(),
+        ) {
+            let store = execute_sequence(&actions);
+            let global = store.grounding_trend(&TrendScope::Global)
+                .expect("global trend");
+            let distinct_sources: BTreeSet<&str> =
+                actions.iter().map(|a| a.source.as_str()).collect();
+            let mut sum_by_source = 0usize;
+            for source in &distinct_sources {
+                let trend = store
+                    .grounding_trend(&TrendScope::BySource(source.to_string()))
+                    .expect("per-source trend");
+                sum_by_source += trend.total_delegations;
+            }
+            prop_assert_eq!(
+                sum_by_source, global.total_delegations,
+                "Σ trend(BySource(sᵢ)).total_delegations must equal trend(Global).total_delegations — \
+                 a mismatch means the BySource scope filter is wrong"
+            );
+        }
+
+        /// **Property 3: Trend bucket accounting.**
+        ///
+        /// `delegations_with_contract + delegations_without_contract ==
+        /// total_delegations` (every delegation is in exactly one contract bucket).
+        ///
+        /// `delegations_with_zero_nulled + delegations_with_nulled +
+        /// delegations_unenforceable <= delegations_with_contract` (the `<=`
+        /// is because unenforceable delegations have a contract but were not
+        /// measured — absence ≠ verdict, Rule 5.3).
+        ///
+        /// `delegations_with_narrative_leaks <= delegations_with_nulled`
+        /// (a narrative leak requires a nulled field to leak from — a
+        /// delegation with zero nulled fields cannot have a narrative leak).
+        #[test]
+        fn trend_buckets_are_consistent(
+            actions in arb_delegation_sequence(),
+        ) {
+            let store = execute_sequence(&actions);
+            let trend = store.grounding_trend(&TrendScope::Global)
+                .expect("trend");
+            // Every delegation is in exactly one contract bucket.
+            prop_assert_eq!(
+                trend.delegations_with_contract + trend.delegations_without_contract,
+                trend.total_delegations,
+                "with_contract + without_contract must equal total — \
+                 every delegation must be in exactly one bucket"
+            );
+            // The enforced buckets (zero_nulled + nulled) plus unenforceable
+            // are a subset of with_contract.
+            prop_assert!(
+                trend.delegations_with_zero_nulled + trend.delegations_with_nulled
+                    + trend.delegations_unenforceable
+                    <= trend.delegations_with_contract,
+                "zero_nulled + nulled + unenforceable must be <= with_contract — \
+                 the gap is unenforceable delegations (Rule 5.3: absence ≠ verdict)"
+            );
+            // A narrative leak requires a nulled field to leak from.
+            prop_assert!(
+                trend.delegations_with_narrative_leaks <= trend.delegations_with_nulled,
+                "narrative_leaks must be <= nulled — \
+                 a leak requires a nulled field to leak from"
+            );
+        }
+
+        /// **Property 4: `enforce_for_agent` ≡ `enforce_grounding`.**
+        ///
+        /// When a contract exists for the agent_type and the output is a JSON
+        /// object, the cleaned output from `enforce_for_agent` must be
+        /// byte-identical to calling `enforce_grounding` directly. The store
+        /// is a wrapper that adds ledger writes; it must not modify the
+        /// cleaning. If this property breaks, the ledger records would
+        /// disagree with the actual cleaned output returned to the caller.
+        #[test]
+        fn enforce_for_agent_matches_enforce_grounding(
+            output in arb_output_for_grounding(),
+            tool_calls in prop::collection::vec(
+                ("[a-z][a-z0-9_/]{0,20}", any::<bool>())
+                    .prop_map(|(tool, ok)| json!({ "tool": tool, "ok": ok })),
+                0..6,
+            ),
+            narrative in prop::string::string_regex("[a-zA-Z0-9 /._-]{0,100}")
+                .expect("valid regex"),
+        ) {
+            let store = VerificationStore::in_memory();
+            let contract = task_agent_contract();
+            // Direct call to the pure function.
+            let (direct_result, direct_cleaned) =
+                enforce_grounding(&contract, &output, &tool_calls, &narrative);
+            // Call through the store wrapper.
+            let (store_result, store_cleaned) = store.enforce_for_agent(
+                "test_source",
+                "test_agent",
+                "task", // contract exists for "task"
+                &output,
+                &tool_calls,
+                &narrative,
+            );
+            // When the output is a JSON object, both must agree.
+            if output.is_object() {
+                let store_result = store_result.expect("contract exists for task → Some result");
+                // Compare nulled_fields as sets (order is non-deterministic —
+                // it depends on HashMap iteration order in enforce_grounding).
+                let store_nulled: BTreeSet<&str> =
+                    store_result.nulled_fields.iter().map(|s| s.as_str()).collect();
+                let direct_nulled: BTreeSet<&str> =
+                    direct_result.nulled_fields.iter().map(|s| s.as_str()).collect();
+                prop_assert_eq!(
+                    store_nulled, direct_nulled,
+                    "nulled_fields must match (as sets) between enforce_for_agent and enforce_grounding"
+                );
+                prop_assert_eq!(
+                    store_result.narrative_leaks, direct_result.narrative_leaks,
+                    "narrative_leaks must match between enforce_for_agent and enforce_grounding"
+                );
+                prop_assert_eq!(
+                    store_cleaned, direct_cleaned,
+                    "cleaned output must be byte-identical — the store must not modify the cleaning"
+                );
+            } else {
+                // Non-object output: the store writes an unenforceable record
+                // (had_contract: true, was_enforced: false) and returns
+                // (None, original). The pure function returns an empty result
+                // and the original output.
+                prop_assert!(
+                    store_result.is_none(),
+                    "non-object output → store returns None (unenforceable)"
+                );
+                prop_assert_eq!(
+                    store_cleaned, output,
+                    "non-object output → store returns the original unchanged"
+                );
+                prop_assert!(
+                    direct_result.nulled_fields.is_empty(),
+                    "non-object output → enforce_grounding finds no nulled fields"
+                );
+            }
+        }
+
+        /// **Property 5: Violations query is a subset of all delegations.**
+        ///
+        /// The violations query returns delegations with nulled fields or
+        /// narrative leaks. Every violation record must have `had_contract:
+        /// true` (a coverage-gap record has no violations) and at least one
+        /// nulled field or narrative leak. The count must not exceed
+        /// `total_delegations`.
+        #[test]
+        fn violations_are_a_subset_of_all_delegations(
+            actions in arb_delegation_sequence(),
+        ) {
+            let store = execute_sequence(&actions);
+            let since = chrono::Utc::now() - chrono::Duration::days(7);
+            let violations = store
+                .grounding_violations(since, &TrendScope::Global)
+                .expect("violations query");
+            let trend = store
+                .grounding_trend(&TrendScope::Global)
+                .expect("trend");
+            prop_assert!(
+                violations.len() <= trend.total_delegations,
+                "violations count must not exceed total delegations"
+            );
+            for v in &violations {
+                prop_assert!(
+                    v.had_contract,
+                    "every violation must have had_contract: true — \
+                     a coverage-gap record (had_contract: false) has no violations"
+                );
+                prop_assert!(
+                    !v.nulled_fields.is_empty() || !v.narrative_leaks.is_empty(),
+                    "every violation must have at least one nulled field or narrative leak"
+                );
+            }
+            // The violations count must equal the number of delegations with
+            // nulled fields or narrative leaks in the trend.
+            let expected_violation_count =
+                trend.delegations_with_nulled; // every nulled delegation is a violation
+            prop_assert_eq!(
+                violations.len(),
+                expected_violation_count,
+                "violations count must equal delegations_with_nulled in the trend"
+            );
+        }
+
+        /// **Property 6: Coverage gap and unenforceable records have no violations.**
+        ///
+        /// A coverage-gap record (`had_contract: false`) and an unenforceable
+        /// record (`had_contract: true, was_enforced: false`) both have empty
+        /// `nulled_fields` and `narrative_leaks`. This is the absence ≠
+        /// verdict property (Rule 5.3): a delegation where grounding did not
+        /// run is "not checked," not "compliant" — but it also cannot have
+        /// violations because the check never ran.
+        ///
+        /// Every delegation partitions into exactly one of:
+        /// - violation (with contract, enforced, has nulled fields)
+        /// - clean (with contract, enforced, zero nulled)
+        /// - unenforceable (with contract, not enforced)
+        /// - coverage gap (without contract)
+        #[test]
+        fn coverage_gap_records_have_no_violations(
+            actions in arb_delegation_sequence(),
+        ) {
+            let store = execute_sequence(&actions);
+            let since = chrono::Utc::now() - chrono::Duration::days(7);
+            let trend = store
+                .grounding_trend(&TrendScope::Global)
+                .expect("trend");
+            let violations = store
+                .grounding_violations(since, &TrendScope::Global)
+                .expect("violations");
+            // Every delegation is in exactly one of: violation, clean,
+            // unenforceable, or coverage gap.
+            let clean_count = trend.delegations_with_zero_nulled;
+            let unenforceable_count = trend.delegations_unenforceable;
+            let coverage_gap_count = trend.delegations_without_contract;
+            prop_assert_eq!(
+                violations.len() + clean_count + unenforceable_count + coverage_gap_count,
+                trend.total_delegations,
+                "every delegation is either: a violation, clean, unenforceable, or a coverage gap"
+            );
+        }
     }
 }

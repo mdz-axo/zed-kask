@@ -83,9 +83,39 @@ steps:
       skill_names: "{{ skill_names }}"
       existing_bundles: "{{ existing_bundles | default([]) }}"
       goal: "{{ step_1_result }}"
-      previous_manifest: "{{ prev_step_7_result.evolved_manifest | default(none) }}"
+      previous_manifest: "{{ prev_step_8_result.evolved_manifest | default(none) }}"
 
+  # Deterministic recompute of coverage and overlap — the compose step
+  # (ordinal 2) asks the LLM to self-compute these, but the LLM's
+  # self-assessment is non-deterministic. This step recomputes them from
+  # the actual manifest data so the convergence score (ordinal 6) reads
+  # reproducible values, not LLM guesses.
   - ordinal: 3
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic recompute of coverage and overlap from the compose
+      step's actual bundle_manifest. Coverage = fraction of input
+      skill_names that appear in bundle_manifest.skills. Overlap = count
+      of same-phase skill pairs with matching artifact_contract targets.
+      These override the LLM's self-computed values in step_2_result so
+      the convergence score (ordinal 6) reads reproducible numbers.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((skills (assoc "skills" (assoc "bundle_manifest" step_2_result)))
+              (names step_2_input_skill_names)
+              (n (length names)))
+          (if (= n 0)
+              0.0
+              (/ (length (filter (lambda (nm) (member nm (map (lambda (s) (assoc "name" s)) skills)) names)))
+                 (* 1.0 n))))
+      env:
+        step_2_result: "{{ step_2_result }}"
+        step_2_input_skill_names: "{{ skill_names }}"
+
+  - ordinal: 4
     action: select
     description: Synthesize the composed skills into a single optimized composite PKO Procedure. Parse each skill's PDCA graph into RDF triples, detect isomorphic substructures, decimate redundant nodes, fuse shared patterns, and generate novel loop structures.
     renderer: minijinja
@@ -97,7 +127,7 @@ steps:
       goal: "{{ step_1_result }}"
       skill_manifests: "{{ skill_manifests | default([]) }}"
 
-  - ordinal: 4
+  - ordinal: 5
     action: select
     description: Validate the synthesized composite manifest against composition rules and ontological anchoring requirements.
     renderer: minijinja
@@ -105,7 +135,7 @@ steps:
     gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
-      bundle_manifest: "{{ step_3_result.candidates[0].composite_manifest }}"
+      bundle_manifest: "{{ step_4_result.candidates[0].composite_manifest }}"
 
   # ── Deterministic compute: lisp.eval is available for custom logic ──
   #
@@ -129,38 +159,40 @@ steps:
   # Use cases: custom convergence formulas, weighted scoring, data
   # transformation between steps, filtering findings by threshold.
   # Security: gated to category: skill manifests only (human-reviewed).
-  - ordinal: 5
+  - ordinal: 6
     action: compute
     compute_ref: lisp.eval
     description: >
       Deterministic composition-quality score combining three signals:
-      coverage (from compose), overlap (from compose), and validation
-      violations/warnings/ontology_gaps (from validate). The score is a
-      weighted sum where lower = better: coverage contributes negatively
-      (higher coverage = lower score = better), while overlap and
-      violations contribute positively (more = higher score = worse).
-      This is the deterministic convergence signal the loop (ordinal 7)
-      converges on — removing `lisp.eval` makes the score non-reproducible
-      (the LLM's self-assessment is non-deterministic), so the loop would
-      drift on re-runs of the same input (the falsifier test pins this).
+      coverage (from deterministic recompute at step 3), overlap (from
+      compose), and validation violations/warnings/ontology_gaps (from
+      validate at step 5). The score is a weighted sum where lower =
+      better: coverage contributes negatively (higher coverage = lower
+      score = better), while overlap and violations contribute positively
+      (more = higher score = worse). This is the deterministic convergence
+      signal the loop (ordinal 8) converges on — removing `lisp.eval`
+      makes the score non-reproducible (the LLM's self-assessment is
+      non-deterministic), so the loop would drift on re-runs of the same
+      input (the falsifier test pins this).
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((coverage (assoc "coverage" step_2_result))
+        (let ((coverage step_3_result)
               (overlap (assoc "overlap" step_2_result))
-              (v (length (assoc "violations" step_4_result)))
-              (w (length (assoc "warnings" step_4_result)))
-              (o (length (assoc "ontology_gaps" step_4_result))))
+              (v (length (assoc "violations" step_5_result)))
+              (w (length (assoc "warnings" step_5_result)))
+              (o (length (assoc "ontology_gaps" step_5_result))))
           (+ 0.0
              (* 2.0 (- 1.0 coverage))
              (* 0.5 overlap)
              (+ v w) o))
       env:
         step_2_result: "{{ step_2_result }}"
-        step_4_result: "{{ step_4_result }}"
+        step_3_result: "{{ step_3_result }}"
+        step_5_result: "{{ step_5_result }}"
 
-  - ordinal: 6
+  - ordinal: 7
     action: select
     description: Evolve the composite via goal-delta-driven recomposition when convergence has not been met.
     renderer: minijinja
@@ -168,25 +200,26 @@ steps:
     gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
-      bundle_name: "{{ step_3_result.candidates[0].name | default('composite-skill') }}"
-      current_manifest: "{{ step_3_result.candidates[0].composite_manifest }}"
+      bundle_name: "{{ step_4_result.candidates[0].name | default('composite-skill') }}"
+      current_manifest: "{{ step_4_result.candidates[0].composite_manifest }}"
       changed_skills: "{{ step_2_result.bundle_manifest.skills }}"
       goal_context: "{{ step_1_result }}"
-      goal_delta: "{{ prev_step_6_result.goal_delta | default(1.0) }}"
-      convergence_failure_reason: "{{ prev_step_6_result.rationale | default('') }}"
+      goal_delta: "{{ prev_step_7_result.goal_delta | default(1.0) }}"
+      convergence_failure_reason: "{{ prev_step_7_result.rationale | default('') }}"
 
-  - ordinal: 7
+  - ordinal: 8
     action: loop
     description: Re-enter composition cycle if convergence threshold was not met after evolution.
     input_mapping:
       loop_target: "{{ 2 }}"
-      convergence_signal: "{{ step_5_result }}"
+      convergence_signal: "{{ step_6_result }}"
 
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry
-  max_retries: 1
-  retry_backoff_seconds: 1
+  on_parse_failure: retry
+  max_retries: 2
+  retry_backoff_seconds: 2
   on_validation_failure: abort
 
 ledger:
