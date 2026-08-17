@@ -17,13 +17,13 @@
 //! documented in `.rules`.
 
 use crate::budget::BudgetTracker;
-use crate::concurrency::ConcurrencyLimiter;
 use crate::convergence::{ConvergenceStatus, ConvergenceTracker};
 use crate::ports::Result;
 use crate::step_context::StepContext;
 use crate::step_graph::{ControlFlow, ENTRY, ExitKind, StepGraph, StepId};
 use crate::template_renderer::TemplateRenderer;
 use hkask_capability::ToolPort;
+use hkask_types::concurrency::ConcurrencyLimiter;
 use hkask_types::ports::inference_port::InferencePort;
 use hkask_types::ports::inference_types::ChatMessage;
 use hkask_types::ports::memory_port::MemorySnippet;

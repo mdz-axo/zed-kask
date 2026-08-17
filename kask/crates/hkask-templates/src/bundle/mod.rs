@@ -1,12 +1,10 @@
 //! BundleManifest type system — skill bundling for hKask
 //!
 //! Re-export facade. Submodules organized by concern:
-//! - `manifest`: BundleManifest, BundleManifestStep, BundleSkill, SkillPolarity, ValidationResult
+//! - `manifest`: BundleManifest, BundleManifestStep, BundleSkill, SkillPolarity, ValidationResult, CascadePhase
 //! - `config`: ConvergenceConfig, BundleGasConfig, ErrorHandlingConfig, BundleLedgerConfig, BundleAuditConfig
 //! - `composition`: BundleComplementarity, BundleConflict, ConflictType, ConflictResolution, ComplementarityType
-//! - `cascade`: CascadePhase
 
-pub mod cascade;
 pub mod composition;
 pub mod config;
 pub mod manifest;
@@ -14,10 +12,9 @@ pub mod manifest;
 pub use composition::*;
 pub use config::*;
 pub use manifest::{
-    BundleManifest, BundleManifestStep, BundleSkill, GoldenOutputFixture, MAX_CONCURRENCY,
-    OnFailureConfig,
+    BundleManifest, BundleManifestStep, BundleSkill, CascadePhase, GoldenOutputFixture,
+    MAX_CONCURRENCY, OnFailureConfig,
 };
-// cascade types are pub(crate) — not re-exported
 
 /// CRUD for bundle manifests. Read methods return owned values for HashMap/SQLite compat.
 /// Write methods return `Result` so pool exhaustion and other infrastructure
