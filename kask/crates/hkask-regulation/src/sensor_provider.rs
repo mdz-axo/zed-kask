@@ -916,8 +916,8 @@ mod grounding_sensor_tests {
         );
         store.enforce_for_agent(
             "swarm_delegate_local",
-            "researcher",
-            "research",
+            "custom_agent",
+            "unknown_agent_type",
             &clean_output,
             &[],
             &clean_output.to_string(),
