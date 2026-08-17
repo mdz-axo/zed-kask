@@ -140,31 +140,6 @@ impl SwarmPanel {
                                     // rather than inferring it from the
                                     // `swarm_get_swarm` error message.
                                     this.cloud_authenticated = response.authenticated;
-                                    // If the swarms fetch (parallel spawn) already
-                                    // failed with `permission_denied` while
-                                    // `cloud_authenticated` was still `None`, it
-                                    // set a transient "not yet confirmed" placeholder.
-                                    // Now that we know the real status, re-evaluate
-                                    // the swarms error so the operator sees the
-                                    // precise message ("no key" vs "key rejected")
-                                    // without waiting for the next fetch cycle.
-                                    if let Some(err) = &this.swarms_error
-                                        && err.as_ref().contains("not yet confirmed")
-                                    {
-                                        let key_configured =
-                                            this.cloud_authenticated.unwrap_or(false);
-                                        this.swarms_error = Some(
-                                            if key_configured {
-                                                "Cloud swarms unavailable — ABW rejected the API key. \
-                                                 Check the key in Settings > Kask > Swarm.".into()
-                                            } else {
-                                                "Cloud swarms unavailable — no ABW API key configured. \
-                                                 Local agents and swarms still work. \
-                                                 Set HKASK_ABW_API_KEY or add it in \
-                                                 Settings > Kask > Swarm.".into()
-                                            },
-                                        );
-                                    }
                                     let agents = response
                                         .agents
                                         .into_iter()
@@ -240,7 +215,12 @@ impl SwarmPanel {
                     .invoke_tool(SWARM_SERVER, "swarm_get_swarm", json!({}))
                     .await;
                 this.update(cx, |this, cx| {
-                    this.in_flight = this.in_flight.saturating_sub(1);
+                    // Note: `in_flight` is NOT decremented here — the combined
+                    // task decrements it once at the end (after the local
+                    // balance fetch). The cloud swarms fetch is sequenced inside
+                    // the combined task specifically to ensure
+                    // `cloud_authenticated` is set before
+                    // `handle_swarm_fetch_failure` runs.
                     match swarm_result {
                         Ok(output) => {
                             if let Some(b) = extract_wallet_balance(&output) {

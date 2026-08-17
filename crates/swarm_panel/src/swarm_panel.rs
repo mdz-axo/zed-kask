@@ -883,16 +883,13 @@ impl SwarmPanel {
             // WAS configured but rejected — the panel showed "no ABW API key
             // configured" even though the key was present.
             //
-            // Race: `cloud_authenticated` is set by the `swarm_list_agents`
-            // fetch (spawn 1), which runs in parallel with this `swarm_get_swarm`
-            // fetch (spawn 2). If the swarms fetch fails before the agents
-            // fetch completes, `cloud_authenticated` is still `None`. Treating
-            // `None` as `false` (key not configured) would show "no ABW API key
-            // configured" even when the key IS configured — exactly the user's
-            // complaint. When `None`, use a neutral message that does not claim
-            // the key is missing; the next `fetch_all` cycle (or the agents
-            // fetch completing in this cycle) will refresh `cloud_authenticated`
-            // and the retry/manual-refresh will produce the precise message.
+            // `cloud_authenticated` is set by the `swarm_list_agents` fetch,
+            // which is sequenced BEFORE the `swarm_get_swarm` fetch in the same
+            // task (see `fetch_all`). So by the time this runs,
+            // `cloud_authenticated` is `Some(_)` in the normal case. `None` is
+            // a defensive fallback (e.g. the agents fetch failed before
+            // reaching the parse step) — treat it as "key not confirmed" rather
+            // than guessing.
             let status: SharedString = match self.cloud_authenticated {
                 Some(true) => format!(
                     "Cloud swarms unavailable — ABW rejected the API key: {message}. \
@@ -2003,19 +2000,27 @@ impl SwarmPanel {
         } else if let Some(err) = self.visible_error() {
             format!("Failed to load swarm data: {err}").into()
         } else {
+            // When the API key is not configured, the empty-state messages
+            // suggest setting it. When it IS configured (or status is unknown),
+            // the hint is dropped — the operator genuinely has no swarms, not
+            // a missing-key problem.
+            let key_hint = match self.cloud_authenticated {
+                Some(false) => " or set HKASK_ABW_API_KEY to see your cloud swarms",
+                _ => "",
+            };
             match self.filter {
                 SwarmFilter::All => {
                     if has_search {
                         "No agents or swarms that match your search."
                     } else {
-                        "No agents or swarms. Create one (Author/Compose), or set HKASK_ABW_API_KEY to see your cloud swarms."
+                        format!("No agents or swarms. Create one (Author/Compose){key_hint}.").into()
                     }
                 }
                 SwarmFilter::Swarms => {
                     if has_search {
                         "No swarms that match your search."
                     } else {
-                        "No swarms. Compose one (Compose) to group agents, or set HKASK_ABW_API_KEY to see your cloud workspaces."
+                        format!("No swarms. Compose one (Compose) to group agents{key_hint}.").into()
                     }
                 }
                 SwarmFilter::Agents => {

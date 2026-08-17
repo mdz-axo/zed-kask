@@ -1725,6 +1725,13 @@ impl ContextServerStore {
         cx.notify();
     }
 
+    /// zed-kask: D-seam — public trigger for self-healing. Called by
+    /// ContextServerTool when a server is not running or a transport error
+    /// occurs, to force maintain_servers to restart the server.
+    pub fn trigger_server_maintenance(&mut self, cx: &mut Context<Self>) {
+        self.available_context_servers_changed(cx);
+    }
+
     fn available_context_servers_changed(&mut self, cx: &mut Context<Self>) {
         if self.update_servers_task.is_some() {
             self.needs_server_update = true;
