@@ -140,7 +140,7 @@ status: VERIFIED
 | `swarm_publish_agent`     | catalogue publish                                    | auth                      |
 | `swarm_fork_agent`         | derivative fork                                     | auth                      |
 
-Source: `cloud_tools.rs:27-1854` (router at `:26`).
+Source: `cloud_swarm_tools.rs:27-1854` (router at `:26`).
 
 ### Local tools (26) — `mode: local`
 
@@ -176,7 +176,7 @@ Source: `cloud_tools.rs:27-1854` (router at `:26`).
 Source: `local_tools.rs:42-1395` (router at `:41`), `ledger_tools.rs:20-119`
 (router at `:20`), `knowledge_tools.rs:12` (router at `:12`),
 `a2a_tools.rs:12` (router at `:12`). The combined router is
-`cloud_router + ledger_router + local_router + a2a_router + knowledge_router`
+`cloud_swarm_router + ledger_router + local_router + a2a_router + knowledge_router`
 (`hkask_mcp_swarm.rs:132-140`). The 52-tool surface is pinned by
 `tool_surface_is_exactly_52_registered_tools` (`hkask_mcp_swarm.rs:361-434`).
 
@@ -368,7 +368,7 @@ Constants:
 | `MAX_TOOL_ROUNDS` / `MAX_SKILLS_PER_DELEGATION` | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:22` / `:27` |
 | `LocalAgentCard` / `LocalAgentCapabilities` | `kask/mcp-servers/hkask-mcp-swarm/src/local_registry.rs:18` / `:71` |
 | `LocalSwarm` / `LocalSwarmRegistry` | `kask/mcp-servers/hkask-mcp-swarm/src/local_swarms.rs:28` / `:53`       |
-| `swarm_request_consent` / `swarm_authorize_session` | `kask/mcp-servers/hkask-mcp-swarm/src/cloud_tools.rs:452` / `:506` |
+| `swarm_request_consent` / `swarm_authorize_session` | `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:452` / `:506` |
 | `swarm_delegate_local` / `swarm_fanout_local` / `swarm_pipeline_local` | `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:64` / `:119` / `:216` |
 | `swarm_fund_local` / `swarm_balance_local` / `swarm_local_history` | `kask/mcp-servers/hkask-mcp-swarm/src/ledger_tools.rs:29` / `:66` / `:99` |
 | `swarm_a2a_send`                   | `kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:24`                   |

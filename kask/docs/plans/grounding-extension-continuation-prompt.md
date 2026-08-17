@@ -180,13 +180,13 @@ The `grounding_summary` field has been removed. The `raw_response` field is reta
 
 ### 6. ABW cloud delegation grounding
 
-**The gap:** `swarm_delegate`, `swarm_delegate_and_wait`, and `swarm_fanout` in `hkask-mcp-swarm/src/cloud_tools.rs` delegate to ABW cloud agents. The response is free prose from an uncontrolled model. A fabricated file path or test result from a cloud agent is the same defect class as from a local agent, but the operator has even less visibility (no local tool-call log).
+**The gap:** `swarm_delegate`, `swarm_delegate_and_wait`, and `swarm_fanout` in `hkask-mcp-swarm/src/cloud_swarm_tools.rs` delegate to ABW cloud agents. The response is free prose from an uncontrolled model. A fabricated file path or test result from a cloud agent is the same defect class as from a local agent, but the operator has even less visibility (no local tool-call log).
 
 **The challenge:** ABW agents don't produce structured JSON by default, and the `tool_calls` summary is not available for ABW delegations (the tool loop runs on ABW's side). The grounding check is limited to narrative-leak scanning — checking whether the response restates values that no tool could have sourced.
 
 **What to do:**
 
-1. **Read the cloud delegation tools.** `kask/mcp-servers/hkask-mcp-swarm/src/cloud_tools.rs` — `swarm_delegate` (L606), `swarm_delegate_and_wait` (L669), `swarm_fanout`.
+1. **Read the cloud delegation tools.** `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs` — `swarm_delegate` (L606), `swarm_delegate_and_wait` (L669), `swarm_fanout`.
 
 2. **Add a cloud-agent grounding contract.** The contract for cloud agents is narrative-only — no `tool_calls` summary, so no field can be "sourced." The contract checks:
    - The response for narrative leaks (claims that look like facts but couldn't have come from any tool the cloud agent has access to).
@@ -197,7 +197,7 @@ The `grounding_summary` field has been removed. The `raw_response` field is reta
 4. **Register a `cloud_agent_contract()`.** The contract is narrative-focused. The `LeakRule` mechanism (Word / Quantity) is the primary tool. The contract should define which leak rules apply to cloud agent output.
 
 **Insertion points:**
-- `kask/mcp-servers/hkask-mcp-swarm/src/cloud_tools.rs` — after cloud delegation returns
+- `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs` — after cloud delegation returns
 - `kask/crates/hkask-verification/src/grounding.rs` — `cloud_agent_contract()`
 
 **Estimated cost:** ~150 lines + 8 tests.

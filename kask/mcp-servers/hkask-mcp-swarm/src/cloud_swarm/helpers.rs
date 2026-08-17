@@ -1,10 +1,10 @@
-//! Pure helpers for the ABW cloud tools — the agent-card builder and the
-//! execute-response extractor. Extracted from `cloud_tools.rs` so the tool
+//! Pure helpers for the ABW cloud swarm tools — the agent-card builder and the
+//! execute-response extractor. Extracted from `cloud_swarm_tools.rs` so the tool
 //! methods file stays focused on the `#[tool_router]` impl, and the pure
 //! functions (which are property-tested without a live ABW connection) live
 //! alongside their tests.
 //!
-//! Both helpers are `pub` so `cloud_tools.rs` and the `test_utils` module can
+//! Both helpers are `pub` so `cloud_swarm_tools.rs` and the `test_utils` module can
 //! re-export them.
 
 use crate::request_types::CreateAgentRequest;

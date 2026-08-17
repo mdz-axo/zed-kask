@@ -209,4 +209,4 @@ cross-machine communication — the types are already wire-compatible
 | A2A HTTP gateway (opt-in)        | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:263-299`        |
 | `MAX_TOOL_ROUNDS` / `MAX_SKILLS_PER_DELEGATION` | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:22` / `:27` |
 | Spend gate two-phase shape       | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:1-14`                |
-| Session budget (Loop C gain)     | `kask/mcp-servers/hkask-mcp-swarm/src/cloud_tools.rs:506-538`            |
+| Session budget (Loop C gain)     | `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:506-538`            |

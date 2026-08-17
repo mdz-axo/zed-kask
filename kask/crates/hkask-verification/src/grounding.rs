@@ -1587,4 +1587,55 @@ mod tests {
             }
         }
     }
+
+    // ── ABW narrative-only grounding tests ────────────────────────────────
+
+    #[test]
+    fn scan_narrative_detects_file_paths() {
+        let result = scan_narrative_for_leaks("I wrote the file at /src/main.rs and it compiles.");
+        assert!(!result.narrative_leaks.is_empty(), "must detect /src/ path");
+        assert!(
+            result.nulled_fields.is_empty(),
+            "no fields nulled in narrative-only mode"
+        );
+    }
+
+    #[test]
+    fn scan_narrative_detects_test_verdicts() {
+        let result = scan_narrative_for_leaks("All tests passed successfully.");
+        assert!(
+            !result.narrative_leaks.is_empty(),
+            "must detect test verdict claim"
+        );
+    }
+
+    #[test]
+    fn scan_narrative_detects_code_execution_claims() {
+        let result = scan_narrative_for_leaks("I ran the tests and they all passed.");
+        assert!(
+            !result.narrative_leaks.is_empty(),
+            "must detect code execution claim"
+        );
+    }
+
+    #[test]
+    fn scan_narrative_clean_prose_has_no_leaks() {
+        let result = scan_narrative_for_leaks(
+            "The bestiary recommends the market_analyst agent for this task.",
+        );
+        assert!(
+            result.narrative_leaks.is_empty(),
+            "clean prose must not trigger leaks"
+        );
+        assert!(result.is_clean(), "clean prose must produce a clean result");
+    }
+
+    #[test]
+    fn scan_narrative_empty_string_is_clean() {
+        let result = scan_narrative_for_leaks("");
+        assert!(
+            result.is_clean(),
+            "empty string must produce a clean result"
+        );
+    }
 }

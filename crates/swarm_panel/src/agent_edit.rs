@@ -99,7 +99,7 @@ impl AgentDetail {
 
     /// Parse a cloud agent card from the `swarm_get_agent` response. The card
     /// shape mirrors `CreateAgentRequest`'s output (see
-    /// `hkask-mcp-swarm/src/cloud_tools.rs::build_agent_card`):
+    /// `hkask-mcp-swarm/src/cloud_swarm_tools.rs::build_agent_card`):
     /// `agent_id`/`agent_type`/`system_prompt`/`visibility` top-level,
     /// `metadata.description`/`metadata.tags`/`metadata.valence`,
     /// `capabilities.model`/`capabilities.mcp_tools`/`capabilities.skills`.

@@ -55,6 +55,8 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
                 "accepted": s.regulation_health.accepted,
                 "staged": s.regulation_health.staged,
                 "blocked": s.regulation_health.blocked,
+                "grounding_clean_rate": s.grounding_clean_rate,
+                "grounding_coverage_rate": s.grounding_coverage_rate,
             });
             // Merge the memory-health section — flat keys, so the merge is
             // just inserting the `memory` object. A degraded curator memory

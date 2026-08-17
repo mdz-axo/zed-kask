@@ -840,4 +840,52 @@ mod tests {
             RegulationReason::GroundingViolationDeltaIncreased
         );
     }
+
+    // ── extract_deficit_threshold grounding variants ──
+
+    #[test]
+    fn extract_deficit_threshold_grounding_clean_rate() {
+        let data = RegulationData::GroundingCleanRateDegraded {
+            clean_rate: 0.5,
+            floor: 0.8,
+        };
+        let (deficit, threshold) = extract_deficit_threshold(&data);
+        // deficit = (0.8 - 0.5) * 100 = 30, threshold = 0.8 * 100 = 80
+        assert_eq!(deficit, 30);
+        assert_eq!(threshold, 80);
+    }
+
+    #[test]
+    fn extract_deficit_threshold_grounding_coverage() {
+        let data = RegulationData::GroundingCoverageDegraded {
+            coverage_rate: 0.3,
+            floor: 0.5,
+        };
+        let (deficit, threshold) = extract_deficit_threshold(&data);
+        // deficit = (0.5 - 0.3) * 100 = 20, threshold = 0.5 * 100 = 50
+        assert_eq!(deficit, 20);
+        assert_eq!(threshold, 50);
+    }
+
+    #[test]
+    fn extract_deficit_threshold_grounding_violation_delta() {
+        let data = RegulationData::GroundingViolationDeltaIncreased { delta: 5 };
+        let (deficit, threshold) = extract_deficit_threshold(&data);
+        // deficit = 5 (the delta), threshold = 0 (any positive delta is a deviation)
+        assert_eq!(deficit, 5);
+        assert_eq!(threshold, 0);
+    }
+
+    #[test]
+    fn extract_deficit_threshold_grounding_clean_rate_clamps_negative() {
+        // When clean_rate > floor (shouldn't happen for a degraded alert, but
+        // the function should not return a negative deficit cast to u64).
+        let data = RegulationData::GroundingCleanRateDegraded {
+            clean_rate: 0.9,
+            floor: 0.8,
+        };
+        let (deficit, _) = extract_deficit_threshold(&data);
+        // (0.8 - 0.9) * 100 = -10.0, clamped to 0
+        assert_eq!(deficit, 0);
+    }
 }

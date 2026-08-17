@@ -73,8 +73,8 @@ mod a2a_tools;
 mod abw_client;
 mod abw_util;
 mod agent_executor;
-mod cloud;
-mod cloud_tools;
+mod cloud_swarm;
+mod cloud_swarm_tools;
 mod config;
 mod consent;
 mod error;
@@ -102,7 +102,7 @@ include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils {
     pub use crate::abw_util::*;
-    pub use crate::cloud_tools::build_create_agent_card;
+    pub use crate::cloud_swarm_tools::build_create_agent_card;
     pub use crate::config::{SwarmConfig, SwarmMode, resolve_local_agents_dir};
     pub use crate::consent::{ConsentStore, fnv1a, mint_token};
     pub use crate::error::SwarmError;
@@ -155,7 +155,7 @@ hkask_mcp_server::mcp_server!(
 
 impl SwarmServer {
     fn combined_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
-        Self::cloud_router()
+        Self::cloud_swarm_router()
             + Self::ledger_router()
             + Self::local_router()
             + Self::a2a_router()

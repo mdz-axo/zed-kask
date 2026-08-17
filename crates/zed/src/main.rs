@@ -823,7 +823,7 @@ fn main() {
             hkask_verification::VerificationStore::open(),
         );
         let cybernetics_loop_inner =
-            cybernetics_loop_inner.with_verification_store(verification_store);
+            cybernetics_loop_inner.with_verification_store(verification_store.clone());
         log::info!("hKask grounding health sensor wired to CyberneticsLoop");
         // zed-kask: D3/D8 — F5: swarm-panel gas budget persona (call cap seed).
         // Seed a call cap for the `swarm-panel` persona (see
@@ -899,7 +899,8 @@ fn main() {
         let metacognition_loop = std::sync::Arc::new(
             hkask_regulation::MetacognitionLoop::new(regulation_ledger)
                 .with_alert_receiver(alert_rx)
-                .with_alert_sink(alert_sink),
+                .with_alert_sink(alert_sink)
+                .with_verification_store(verification_store),
         );
         let metacognition_loop_for_tick = metacognition_loop.clone();
 

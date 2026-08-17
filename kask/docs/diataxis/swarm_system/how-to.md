@@ -31,7 +31,7 @@ spend, and the feedback path that closes the loop. Read the
 | 53-tool surface (pinned)           | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:361-434`        |
 | Consent gate (mint/consume/refund) | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:221` / `:255` / `:288` |
 | Spend gate (hire/delegate/curate)   | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:169` / `:377` / `:492` |
-| `swarm_request_consent` / `swarm_authorize_session` | `kask/mcp-servers/hkask-mcp-swarm/src/cloud_tools.rs:452` / `:506` |
+| `swarm_request_consent` / `swarm_authorize_session` | `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:452` / `:506` |
 | `swarm_delegate_local` / `swarm_fanout_local` / `swarm_pipeline_local` | `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:64` / `:119` / `:216` |
 | `swarm_fund_local` / `swarm_balance_local` | `kask/mcp-servers/hkask-mcp-swarm/src/ledger_tools.rs:29` / `:66`  |
 | Planner PDCA                       | `.agents/skills/swarm-intelligence/SKILL.md`                            |
@@ -103,11 +103,11 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SWARM-011
 verified_date: 2026-08-13
-verified_against: crates/swarm_panel/src/hire.rs:21-272; kask/mcp-servers/hkask-mcp-swarm/src/cloud_tools.rs:379-602; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:169-371; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:221-298
+verified_against: crates/swarm_panel/src/hire.rs:21-272; kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:379-602; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:169-371; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:221-298
 status: VERIFIED
 -->
 
-1. **Preflight cost.** Panel calls `swarm_hire_cost` (`cloud_tools.rs:379-442`).
+1. **Preflight cost.** Panel calls `swarm_hire_cost` (`cloud_swarm_tools.rs:379-442`).
    The server returns `total_hire_cost`, `required_cost`, `optional_cost`,
    `within_budget`, and `max_credits_per_dispatch`. The panel populates
    `PendingHire` (`hire.rs:70-99`). A missing `total_hire_cost` is surfaced as
@@ -116,16 +116,16 @@ status: VERIFIED
    `PendingHire`. A new Hire click replaces any stale pending consent
    (`hire.rs:30-32`).
 3. **Mint consent token.** Panel calls `swarm_request_consent`
-   (`cloud_tools.rs:452-497`). The server requires auth (`require_auth()`) so a
+   (`cloud_swarm_tools.rs:452-497`). The server requires auth (`require_auth()`) so a
    prompt-injected agent cannot self-authorize. `credits_authorized` must be > 0
-   for spend actions (`cloud_tools.rs:478-483`). The token is single-use and
+   for spend actions (`cloud_swarm_tools.rs:478-483`). The token is single-use and
    action-scoped (`consent.rs:15-30`).
-4. **Execute the spend.** Panel calls `swarm_hire` (`cloud_tools.rs:544-602`)
+4. **Execute the spend.** Panel calls `swarm_hire` (`cloud_swarm_tools.rs:544-602`)
    with the consent token. `authorize_hire` (`spend_gate.rs:169-310`) consumes
    the token, re-verifies the cost against ABW, and enforces the per-dispatch
    ceiling. `complete_hire` (`spend_gate.rs:317-371`) executes the POST and
    refunds the authorization on transient failure.
-5. **Reconcile.** Read `swarm_run_status` (`cloud_tools.rs:796-844`) for the
+5. **Reconcile.** Read `swarm_run_status` (`cloud_swarm_tools.rs:796-844`) for the
    run state.
 
 ## How-to: Use a pre-authorized session (headless pipelines)
@@ -133,7 +133,7 @@ status: VERIFIED
 For headless ABW pipelines where per-spend confirmation is impractical, open a
 session with a total budget upfront.
 
-1. Call `swarm_authorize_session` (`cloud_tools.rs:506-538`) with
+1. Call `swarm_authorize_session` (`cloud_swarm_tools.rs:506-538`) with
    `total_credits` and an optional `actions` allowlist (empty = `hire` +
    `delegate`). Returns a `session_token`.
 2. Pass `session_token` (instead of `consent_token`) to `swarm_hire`,
@@ -169,8 +169,8 @@ spend rather than authorizing it (`local_runtime.rs:381-396`).
   agents sequentially (to avoid ledger TOCTOU — the local ledger is
   single-writer) and aggregates cost/tokens/latency. Capped at `MAX_FANOUT`
   (`local_runtime.rs:491`).
-- **ABW:** `swarm_fanout` (`cloud_tools.rs:1276-1370`) dispatches in parallel
-  against ABW. Capped at `MAX_FANOUT_ABW` (`cloud_tools.rs:1296`). Each
+- **ABW:** `swarm_fanout` (`cloud_swarm_tools.rs:1276-1370`) dispatches in parallel
+  against ABW. Capped at `MAX_FANOUT_ABW` (`cloud_swarm_tools.rs:1296`). Each
   dispatch carries its own consent token.
 
 ## How-to: Run a sequential pipeline

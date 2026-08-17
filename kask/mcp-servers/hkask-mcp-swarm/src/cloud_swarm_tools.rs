@@ -1,4 +1,4 @@
-//! ABW (Agent Bestiary World) cloud tools — catalogue, workspaces, agents,
+//! ABW (Agent Bestiary World) cloud swarm tools — catalogue, workspaces, agents,
 //! Xaman Ek curator, hire/delegate/fanout spend tools, lifecycle (fire/delete),
 //! knowledge search, publish, fork. Split from `hkask_mcp_swarm.rs` (M2).
 //!
@@ -8,7 +8,7 @@ use crate::SwarmServer;
 use crate::abw_util::{
     effective_hire_cost, make_swarm_slug, url_encode_segment, validate_agent_name,
 };
-use crate::cloud;
+use crate::cloud_swarm;
 use crate::error::SwarmError;
 use crate::request_types::*;
 use crate::sanitize::{
@@ -21,9 +21,9 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 // Re-export the pure helpers from `cloud` so the `test_utils` module and
 // any internal callers can reach them at the crate root.
-pub use crate::cloud::{build_create_agent_card, extract_execute_response};
+pub use crate::cloud_swarm::{build_create_agent_card, extract_execute_response};
 
-#[tool_router(router = cloud_router, vis = "pub")]
+#[tool_router(router = cloud_swarm_router, vis = "pub")]
 impl SwarmServer {
     /// Browse the ABW agent catalogue. Works without an API key.
     #[tool(
@@ -681,7 +681,6 @@ impl SwarmServer {
         .await
     }
 
-    pub(crate) async fn swarm_delegate_and_wait
     /// Delegate a task to an ABW agent and poll `swarm_run_status` until the
     /// agent responds or the timeout is reached. Wraps `swarm_delegate` +
     /// polling.
@@ -797,10 +796,7 @@ impl SwarmServer {
                 // verification ledger. The prose is kept (paper §5.5:
                 // "keep, scan for claims it cannot support").
                 let grounding_leaks = if let Some(ref resp) = agent_response {
-                    let narrative = resp
-                        .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("");
+                    let narrative = resp.get("content").and_then(|c| c.as_str()).unwrap_or("");
                     let result = self.verification_store.enforce_narrative(
                         "swarm_delegate_and_wait",
                         &req.agent_name,
@@ -1202,7 +1198,7 @@ impl SwarmServer {
 
                 // Consent gate: Xaman Ek is a third-party curator that reads user
                 // task content. Per the plan's §3.7, sending content to it requires
-                // explicit opt-in. The gate lives in `cloud::curator::authorize`
+                // explicit opt-in. The gate lives in `cloud_swarm::curator::authorize`
                 // (wraps `spend_gate::authorize_curate`); it returns `Some(auth)`
                 // when a token was consumed (refundable) or `None` when the
                 // operator has globally opted in (`curator_consent_default`).
@@ -1213,7 +1209,7 @@ impl SwarmServer {
                 // inline ladder had four `auth.take().refund()` sites; the guard
                 // removes that footgun — a new failure path cannot forget the
                 // refund because `Drop` covers it.
-                let auth = cloud::curator::authorize(
+                let auth = cloud_swarm::curator::authorize(
                     &self.client,
                     &self.consent,
                     req.consent_token.as_deref(),
@@ -1223,7 +1219,7 @@ impl SwarmServer {
                 // the auth on construction failure; `resume` carries it for the
                 // send step.
                 let mut session = match req.session_id {
-                    Some(id) => cloud::curator::CuratorSession::resume(
+                    Some(id) => cloud_swarm::curator::CuratorSession::resume(
                         &self.client,
                         &self.consent,
                         auth,
@@ -1231,7 +1227,7 @@ impl SwarmServer {
                     ),
                     None => {
                         let session_type = req.session_type.unwrap_or_else(|| "free".to_string());
-                        cloud::curator::CuratorSession::create(
+                        cloud_swarm::curator::CuratorSession::create(
                             &self.client,
                             &self.consent,
                             auth,
@@ -1381,13 +1377,12 @@ impl SwarmServer {
                             // Rung 3 (Grounding): narrative-only grounding
                             // for each ABW cloud delegation in the fanout.
                             let narrative = data.to_string();
-                            let grounding_result = self.verification_store
-                                .enforce_narrative(
-                                    "swarm_fanout",
-                                    &entry.agent_name,
-                                    "abw_cloud",
-                                    &narrative,
-                                );
+                            let grounding_result = self.verification_store.enforce_narrative(
+                                "swarm_fanout",
+                                &entry.agent_name,
+                                "abw_cloud",
+                                &narrative,
+                            );
                             results.push(serde_json::json!({
                                 "agent_name": entry.agent_name,
                                 "ok": true,

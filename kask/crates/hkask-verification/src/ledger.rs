@@ -452,7 +452,7 @@ impl VerificationStore {
             if record.had_contract {
                 report.delegations_with_contract += 1;
                 if record.was_enforced {
-                    if record.nulled_fields.is_empty() {
+                    if record.nulled_fields.is_empty() && record.narrative_leaks.is_empty() {
                         report.delegations_with_zero_nulled += 1;
                     } else {
                         report.delegations_with_nulled += 1;
@@ -916,6 +916,69 @@ mod tests {
         assert_eq!(trend_after.total_delegations, 5);
         assert_eq!(trend_after.delegations_with_nulled, 2);
     }
+
+    /// ABW narrative-only grounding: `enforce_narrative` scans prose for
+    /// leak patterns and records the result to the central ledger.
+    #[test]
+    fn enforce_narrative_records_clean_response() {
+        let store = test_store();
+        let result = store.enforce_narrative(
+            "swarm_delegate_and_wait",
+            "cloud_agent",
+            "abw_cloud",
+            "The bestiary recommends the market_analyst agent for this task.",
+        );
+        assert!(result.is_clean(), "clean prose must produce a clean result");
+        let trend = store.grounding_trend(&TrendScope::Global).expect("trend");
+        assert_eq!(trend.total_delegations, 1);
+        assert_eq!(trend.delegations_with_contract, 1);
+        assert_eq!(trend.delegations_with_zero_nulled, 1);
+        assert_eq!(trend.delegations_with_nulled, 0);
+    }
+
+    #[test]
+    fn enforce_narrative_records_violations_for_fabricated_claims() {
+        let store = test_store();
+        let result = store.enforce_narrative(
+            "swarm_delegate",
+            "cloud_agent",
+            "abw_cloud",
+            "I wrote the file at /src/main.rs and all tests passed.",
+        );
+        assert!(
+            !result.narrative_leaks.is_empty(),
+            "must detect fabricated claims"
+        );
+        let trend = store.grounding_trend(&TrendScope::Global).expect("trend");
+        assert_eq!(trend.total_delegations, 1);
+        assert_eq!(trend.delegations_with_contract, 1);
+        assert_eq!(trend.delegations_with_nulled, 1);
+        assert_eq!(trend.delegations_with_zero_nulled, 0);
+    }
+
+    #[test]
+    fn enforce_narrative_counts_in_trend_by_source() {
+        let store = test_store();
+        store.enforce_narrative("swarm_delegate", "agent_a", "abw_cloud", "Clean response.");
+        store.enforce_narrative(
+            "swarm_delegate_and_wait",
+            "agent_b",
+            "abw_cloud",
+            "I ran the tests and they passed.",
+        );
+        store.enforce_narrative("swarm_fanout", "agent_c", "abw_cloud", "Clean response.");
+        let global = store
+            .grounding_trend(&TrendScope::Global)
+            .expect("global trend");
+        assert_eq!(global.total_delegations, 3);
+        assert_eq!(global.delegations_with_zero_nulled, 2);
+        assert_eq!(global.delegations_with_nulled, 1);
+        let by_source = store
+            .grounding_trend(&TrendScope::BySource("swarm_delegate_and_wait".to_string()))
+            .expect("by_source trend");
+        assert_eq!(by_source.total_delegations, 1);
+        assert_eq!(by_source.delegations_with_nulled, 1);
+    }
 }
 
 /// Property-based tests for the central grounding ledger.
@@ -1300,12 +1363,17 @@ mod proptests {
                 );
             }
             // The violations count must equal the number of delegations with
-            // nulled fields. This is currently correct because narrative leaks
-            // only come from Unsourced tags (which are also in nulled_fields) —
-            // so every delegation with a narrative leak also has a nulled field.
-            // If a future change adds a narrative leak source that doesn't
-            // require a nulled field, this assertion will fail and the operator
-            // will see the invariant has changed.
+            // nulled fields or narrative leaks (`delegations_with_nulled` in
+            // the trend). For `enforce_for_agent` delegations, narrative leaks
+            // come from Unsourced tags (which are also in nulled_fields), so
+            // every violation has nulled fields. ABW narrative-only grounding
+            // (`enforce_narrative`) can produce narrative leaks without nulled
+            // fields — those are also counted in `delegations_with_nulled`.
+            // This proptest only generates `enforce_for_agent` delegations, so
+            // the assertion holds. If ABW delegations are added to the proptest
+            // generator, the assertion still holds because
+            // `delegations_with_nulled` counts both nulled fields and narrative
+            // leaks.
             let expected_violation_count = trend.delegations_with_nulled;
             prop_assert_eq!(
                 violations.len(),
