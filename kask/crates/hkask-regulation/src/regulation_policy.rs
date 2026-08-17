@@ -781,7 +781,7 @@ mod tests {
 
     #[test]
     fn default_substitution_ladders_empty_for_observational_metrics() {
-        // Observational metrics use Notify (terminal action — no substitution)
+        // Observational metrics use Notify (terminal action — no substitution).
         assert!(default_substitution_ladder(SignalMetric::StorageUsage).is_empty());
         assert!(default_substitution_ladder(SignalMetric::TripleCount).is_empty());
         assert!(default_substitution_ladder(SignalMetric::LowConfidenceCount).is_empty());
@@ -789,7 +789,8 @@ mod tests {
         assert!(default_substitution_ladder(SignalMetric::PendingEscalations).is_empty());
         assert!(default_substitution_ladder(SignalMetric::SeamCoverage).is_empty());
         // Grounding metrics route to Escalate (terminal for grounding — the
-        // regulation system does not auto-fix grounding contracts).
+        // regulation system does not auto-fix grounding contracts, that's
+        // a human decision). No substitution ladder — Escalate is terminal.
         assert!(default_substitution_ladder(SignalMetric::GroundingCleanRate).is_empty());
         assert!(default_substitution_ladder(SignalMetric::GroundingCoverageRate).is_empty());
         assert!(default_substitution_ladder(SignalMetric::GroundingViolationDelta).is_empty());
