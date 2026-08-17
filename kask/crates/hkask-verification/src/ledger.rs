@@ -855,7 +855,9 @@ mod tests {
             "skill contract must be registered at construction (Phase 5)"
         );
         assert!(
-            contracts["skill"].field_sources.contains_key("deliverable_path"),
+            contracts["skill"]
+                .field_sources
+                .contains_key("deliverable_path"),
             "skill contract must have a deliverable_path field"
         );
         assert!(

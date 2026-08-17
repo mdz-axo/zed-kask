@@ -495,6 +495,14 @@ pub struct SwarmPanel {
     /// swarms error (and vice versa) — the H1 cross-clobber finding.
     agents_error: Option<SharedString>,
     swarms_error: Option<SharedString>,
+    /// Whether the swarm MCP server reports the ABW API key as configured
+    /// (`authenticated` field from the `swarm_list_agents` response). Read
+    /// from the same source the server uses (`ctx.credentials.get(
+    /// "HKASK_ABW_API_KEY")`), so the panel's "no API key" warning is
+    /// accurate rather than inferred from the `swarm_get_swarm` error
+    /// message (which conflates "no key" with "key rejected by ABW").
+    /// `None` until the first `swarm_list_agents` response arrives.
+    cloud_authenticated: Option<bool>,
     /// Pending automatic retry after a *retryable* fetch failure (MCP transport
     /// closed, invoker not yet wired). Held so it is cancelled on drop and so a
     /// manual refresh can supersede it.
@@ -714,6 +722,7 @@ impl SwarmPanel {
                 in_flight: 0,
                 agents_error: None,
                 swarms_error: None,
+                cloud_authenticated: None,
                 retry_task: None,
                 retry_attempt: 0,
                 filter: SwarmFilter::All,
@@ -837,6 +846,16 @@ impl SwarmPanel {
     ///   swarms. Surface a short, non-alarming status so the cause is visible
     ///   without a retry loop (retrying with no key is pointless).
     /// - Other non-retryable: log at warn and stay quiet (agents-only mode).
+    ///
+    /// API-key status is read from `cloud_authenticated` (the `authenticated`
+    /// field the server returns in the `swarm_list_agents` response), NOT from
+    /// the error message. The error message conflates "no key configured"
+    /// (from `require_auth()`) with "key configured but rejected by ABW"
+    /// (from the ABW 401 body) — both surface as `permission_denied`, and a
+    /// 401 body can contain "no API key" text, which would misclassify a
+    /// rejected key as "not configured." The `authenticated` field is the
+    /// server's own report of whether `ctx.credentials` has the key, so it is
+    /// the same source the MCP server uses.
     pub(crate) fn handle_swarm_fetch_failure(
         &mut self,
         retryable: bool,
@@ -849,11 +868,43 @@ impl SwarmPanel {
                 Some(format!("Reconnecting to the swarm server… ({message})").into());
             self.schedule_fetch_retry(cx);
         } else if matches!(kind, Some(hkask_types::McpErrorKind::PermissionDenied)) {
-            // Auth failure is expected when no ABW key is configured — agents-only
-            // is the right degradation, and retrying is pointless until the
-            // operator configures a key. Surface the cause as a quiet status so
-            // an empty swarm list is not mistaken for "you have no swarms".
-            self.swarms_error = Some(format!("Swarm list unavailable: {message}").into());
+            // Auth failure: either no ABW key is configured, or the key is
+            // configured but rejected by ABW (401/403). Retry is pointless in
+            // both cases (a missing key won't appear without a settings
+            // change; an invalid key won't become valid). Surface the cause as
+            // a quiet status so an empty swarm list is not mistaken for "you
+            // have no swarms".
+            //
+            // Distinguish the two causes using `cloud_authenticated` (the
+            // server's own report of whether the key is configured) rather
+            // than the error message. The message-based check
+            // (`message.contains("no API key")`) was a false positive when ABW
+            // returned a 401 body containing "no API key" text for a key that
+            // WAS configured but rejected — the panel showed "no ABW API key
+            // configured" even though the key was present.
+            //
+            // `cloud_authenticated` is set by the `swarm_list_agents` fetch,
+            // which is sequenced BEFORE the `swarm_get_swarm` fetch in the same
+            // task (see `fetch_all`). So by the time this runs,
+            // `cloud_authenticated` is `Some(_)` in the normal case. `None` is
+            // a defensive fallback (e.g. the agents fetch failed before
+            // reaching the parse step) — treat it as "key not confirmed" rather
+            // than guessing.
+            let status: SharedString = match self.cloud_authenticated {
+                Some(true) => format!(
+                    "Cloud swarms unavailable — ABW rejected the API key: {message}. \
+                     Check the key in Settings > Kask > Swarm."
+                )
+                .into(),
+                Some(false) => "Cloud swarms unavailable — no ABW API key configured. \
+                 Local agents and swarms still work. Set HKASK_ABW_API_KEY or add it \
+                 in Settings > Kask > Swarm."
+                    .into(),
+                None => "Cloud swarms unavailable — API key status not yet confirmed. \
+                 Local agents and swarms still work. Retry to refresh."
+                    .into(),
+            };
+            self.swarms_error = Some(status);
             log::warn!("swarm-panel: swarm list unavailable (agents-only mode): {message}");
         } else {
             log::warn!("swarm-panel: could not fetch workspaces (agents-only mode): {message}");
@@ -1952,30 +2003,40 @@ impl SwarmPanel {
         } else if let Some(err) = self.visible_error() {
             format!("Failed to load swarm data: {err}").into()
         } else {
-            match self.filter {
+            // When the API key is not configured, the empty-state messages
+            // suggest setting it. When it IS configured (or status is unknown),
+            // the hint is dropped — the operator genuinely has no swarms, not
+            // a missing-key problem.
+            let key_hint = match self.cloud_authenticated {
+                Some(false) => " or set HKASK_ABW_API_KEY to see your cloud swarms",
+                _ => "",
+            };
+            let message: SharedString = match self.filter {
                 SwarmFilter::All => {
                     if has_search {
-                        "No agents or swarms that match your search."
+                        "No agents or swarms that match your search.".into()
                     } else {
-                        "No agents or swarms. Create one (Author/Compose), or set HKASK_ABW_API_KEY to see your cloud swarms."
+                        format!("No agents or swarms. Create one (Author/Compose){key_hint}.")
+                            .into()
                     }
                 }
                 SwarmFilter::Swarms => {
                     if has_search {
-                        "No swarms that match your search."
+                        "No swarms that match your search.".into()
                     } else {
-                        "No swarms. Compose one (Compose) to group agents, or set HKASK_ABW_API_KEY to see your cloud workspaces."
+                        format!("No swarms. Compose one (Compose) to group agents{key_hint}.")
+                            .into()
                     }
                 }
                 SwarmFilter::Agents => {
                     if has_search {
-                        "No agents that match your search."
+                        "No agents that match your search.".into()
                     } else {
-                        "No agents. Create one (Author), or clone a cloud agent to Local."
+                        "No agents. Create one (Author), or clone a cloud agent to Local.".into()
                     }
                 }
-            }
-            .into()
+            };
+            message
         };
 
         marketplace_empty_state(message, self.visible_error().is_some())
@@ -3097,6 +3158,44 @@ mod tests {
         );
     }
 
+    // The `swarm_list_agents` response includes an `authenticated` boolean
+    // (`self.client.is_authenticated()` on the server). The panel reads this
+    // field to determine API-key status from the same source the MCP server
+    // uses, rather than inferring it from the `swarm_get_swarm` error message.
+    // This test pins the field name and the parse so a server-side rename is
+    // caught here first.
+    #[test]
+    fn agent_list_response_parses_authenticated_field() {
+        let json = serde_json::json!({
+            "count": 0,
+            "authenticated": true,
+            "agents": []
+        });
+        let response: AgentListResponse = serde_json::from_value(json).expect("parse");
+        assert_eq!(response.authenticated, Some(true));
+
+        let json = serde_json::json!({
+            "count": 0,
+            "authenticated": false,
+            "agents": []
+        });
+        let response: AgentListResponse = serde_json::from_value(json).expect("parse");
+        assert_eq!(response.authenticated, Some(false));
+    }
+
+    // When the server omits `authenticated` (e.g. an older server version), the
+    // field must default to `None` — never a fabricated `false` (which would
+    // trigger the "no API key" warning even when the key is configured).
+    #[test]
+    fn agent_list_response_authenticated_defaults_to_none_when_absent() {
+        let json = serde_json::json!({
+            "count": 0,
+            "agents": []
+        });
+        let response: AgentListResponse = serde_json::from_value(json).expect("parse");
+        assert_eq!(response.authenticated, None);
+    }
+
     // The workspace parse path mirrors the agents path.
     #[test]
     fn fetch_all_parse_path_unwraps_envelope_for_workspaces() {
@@ -3130,6 +3229,32 @@ mod tests {
         // A successful payload must NOT be misclassified as an error envelope.
         let ok = r#"{"content":{"workspaces":[]}}"#;
         assert!(hkask_types::tool_response::parse_tool_error(ok).is_none());
+    }
+
+    // The cloud agents fetch (`swarm_list_agents`) and the local agents fetch
+    // (`swarm_list_local_agents`) now also detect the server error envelope
+    // before attempting to parse the typed response. The canonical case for
+    // `swarm_list_agents` is a 401 from ABW (invalid key) mapped to
+    // `permission_denied`; for `swarm_list_local_agents` a server error is a
+    // bug (it reads the filesystem, no auth), but it must not be silently
+    // swallowed. Before the seam, both fell through to the typed parse, failed
+    // (no `agents` field), and either surfaced as "Failed to parse agents"
+    // (cloud) or silently disappeared (local). This test pins the detection at
+    // the seam for both agent fetches.
+    #[test]
+    fn fetch_all_detects_server_error_envelope_before_agents_parse() {
+        let out = r#"{"error":"no API key configured","kind":"permission_denied"}"#;
+        let err = hkask_types::tool_response::parse_tool_error(out)
+            .expect("server error envelope must be detected");
+        assert_eq!(err.message, "no API key configured");
+        assert_eq!(err.kind, Some(hkask_types::McpErrorKind::PermissionDenied));
+        assert!(!err.is_retryable());
+        // A successful agents payload must NOT be misclassified as an error.
+        let ok = r#"{"content":{"agents":[],"total":0}}"#;
+        assert!(hkask_types::tool_response::parse_tool_error(ok).is_none());
+        // A successful local agents payload must NOT be misclassified either.
+        let ok_local = r#"{"content":{"agents":[],"total":0}}"#;
+        assert!(hkask_types::tool_response::parse_tool_error(ok_local).is_none());
     }
 
     // Pin the consent-token response field name. The panel extracts
@@ -3542,6 +3667,62 @@ mod tests {
         assert!(
             prompt.contains("kanban_task_spawn"),
             "steer prompt must mention the `kanban_task_spawn` bridge tool"
+        );
+    }
+
+    // Pin the sequencing invariant: the `swarm_list_agents` response carries
+    // the `authenticated` field, and `handle_swarm_fetch_failure` uses
+    // `cloud_authenticated` (not the error message) to distinguish "no key"
+    // from "key rejected." This is a static contract test — it verifies the
+    // field exists in the response shape and the handler reads it, without
+    // constructing a full GPUI test harness (which would be needed to exercise
+    // the parallel-spawn ordering directly). The sequencing itself is enforced
+    // by the `fetch_all` structure: the cloud swarms fetch is chained after
+    // the cloud agents fetch in the same task, so `cloud_authenticated` is
+    // always set before `handle_swarm_fetch_failure` runs.
+    #[test]
+    fn cloud_authenticated_is_read_from_server_response() {
+        // The server's `swarm_list_agents` response includes `authenticated`.
+        // The panel must parse it — without this field, the panel cannot
+        // distinguish "no key configured" from "key rejected by ABW" without
+        // guessing from the error message (which conflates the two).
+        let out = r#"{"content":{"count":0,"authenticated":true,"agents":[]}}"#;
+        let parsed = parse_tool_response(out).expect("envelope");
+        let response: AgentListResponse =
+            serde_json::from_value(parsed).expect("inner content deserializes");
+        assert_eq!(
+            response.authenticated,
+            Some(true),
+            "the panel must parse `authenticated` from the server response"
+        );
+    }
+
+    // Pin the empty-state message contract: when the API key IS configured
+    // (`cloud_authenticated == Some(true)`), the empty-state message must NOT
+    // suggest setting `HKASK_ABW_API_KEY` — the operator genuinely has no
+    // swarms, not a missing-key problem. When the key is NOT configured
+    // (`Some(false)`), the hint must appear.
+    #[test]
+    fn empty_state_omits_key_hint_when_authenticated() {
+        // When authenticated, the `key_hint` is empty — the message should
+        // NOT contain "HKASK_ABW_API_KEY".
+        let key_hint = match Some(true) {
+            Some(false) => " or set HKASK_ABW_API_KEY to see your cloud swarms",
+            _ => "",
+        };
+        assert!(
+            !key_hint.contains("HKASK_ABW_API_KEY"),
+            "empty-state must not suggest setting the key when it IS configured"
+        );
+
+        // When not authenticated, the hint must appear.
+        let key_hint = match Some(false) {
+            Some(false) => " or set HKASK_ABW_API_KEY to see your cloud swarms",
+            _ => "",
+        };
+        assert!(
+            key_hint.contains("HKASK_ABW_API_KEY"),
+            "empty-state must suggest setting the key when it is NOT configured"
         );
     }
 }

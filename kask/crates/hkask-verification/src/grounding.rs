@@ -1992,10 +1992,11 @@ mod tests {
             "diagram": "graph TD\nA-->B",
             "summary": "generated a diagram"
         });
-        let (result, cleaned) =
-            enforce_grounding(&contract, &output, &[], &output.to_string());
+        let (result, cleaned) = enforce_grounding(&contract, &output, &[], &output.to_string());
         assert!(
-            result.nulled_fields.contains(&"deliverable_path".to_string()),
+            result
+                .nulled_fields
+                .contains(&"deliverable_path".to_string()),
             "deliverable_path must be nulled when no file-writing tool was called"
         );
         assert_eq!(
@@ -2017,7 +2018,9 @@ mod tests {
         let (result, cleaned) =
             enforce_grounding(&contract, &output, &tool_calls, &output.to_string());
         assert!(
-            !result.nulled_fields.contains(&"deliverable_path".to_string()),
+            !result
+                .nulled_fields
+                .contains(&"deliverable_path".to_string()),
             "deliverable_path must NOT be nulled when write_file succeeded"
         );
         assert_eq!(
@@ -2047,7 +2050,9 @@ mod tests {
             "summary must NOT be nulled (commissioned judgment)"
         );
         assert!(
-            !result.nulled_fields.contains(&"recommendations".to_string()),
+            !result
+                .nulled_fields
+                .contains(&"recommendations".to_string()),
             "recommendations must NOT be nulled (commissioned judgment)"
         );
         assert_eq!(cleaned.get("diagram"), Some(&json!("graph TD\nA-->B")));
@@ -2060,8 +2065,7 @@ mod tests {
             "test_verdict": "pass",
             "summary": "all tests passed"
         });
-        let (result, _cleaned) =
-            enforce_grounding(&contract, &output, &[], &output.to_string());
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &[], &output.to_string());
         assert!(
             result.nulled_fields.contains(&"test_verdict".to_string()),
             "test_verdict must be nulled when no terminal tool was called"

@@ -341,15 +341,27 @@ impl AnyAgentTool for ContextServerTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
-        let Some(server) = self.store.read(cx).get_running_server(&self.server_id) else {
+        // Check the server is running before spawning — gives an early error
+        // rather than entering the self-healing loop for a server that was
+        // never started. The closure re-fetches by id after auth.
+        if self
+            .store
+            .read(cx)
+            .get_running_server(&self.server_id)
+            .is_none()
+        {
             return Task::ready(Err(anyhow::anyhow!("Context server not found").into()));
-        };
+        }
         let tool_name = self.tool.name.clone();
         let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
         let display_name = self.tool.name.clone();
         let initial_title = self.initial_title(serde_json::Value::Null, cx);
         let authorize =
             event_stream.authorize_third_party_tool(initial_title, tool_id, display_name, cx);
+        // Capture the store and server_id for the self-healing path below —
+        // the closure needs to re-fetch the server after a transport death.
+        let store = self.store.clone();
+        let server_id = self.server_id.clone();
 
         cx.spawn(async move |cx| {
             let input = input
@@ -360,6 +372,47 @@ impl AnyAgentTool for ContextServerTool {
             authorize
                 .await
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+            // zed-kask: D-seam — on-demand self-healing. When the server's
+            // client is None (transport died, server moved to Stopped by
+            // watch_transport_shutdown), trigger maintain_servers to restart
+            // it before failing. This mirrors McpRuntime::call_tool_inner's
+            // try_reconnect pattern.
+            let server = cx.update(|cx| store.read(cx).get_running_server(&server_id));
+            let server = match server {
+                Some(s) => s,
+                None => {
+                    // Server is not running — trigger a restart via
+                    // available_context_servers_changed, then wait for it.
+                    log::warn!(
+                        "Context server '{}' not running — triggering restart",
+                        server_id.0
+                    );
+                    cx.update(|cx| {
+                        store.update(cx, |store, cx| {
+                            store.trigger_server_maintenance(cx);
+                        });
+                    });
+                    // Wait for the server to come back (up to 30s)
+                    let mut elapsed = 0u64;
+                    let server = loop {
+                        if elapsed >= 30_000 {
+                            return Err(anyhow::anyhow!(
+                                "Context server '{}' failed to restart within 30s",
+                                server_id.0
+                            ).into());
+                        }
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(500))
+                            .await;
+                        elapsed += 500;
+                        if let Some(s) = cx.update(|cx| store.read(cx).get_running_server(&server_id)) {
+                            break s;
+                        }
+                    };
+                    server
+                }
+            };
 
             let Some(protocol) = server.client() else {
                 return Err(anyhow::anyhow!("Context server not initialized").into());
@@ -379,14 +432,66 @@ impl AnyAgentTool for ContextServerTool {
 
             let request = protocol.request::<context_server::types::requests::CallTool>(
                 context_server::types::CallToolParams {
-                    name: tool_name,
-                    arguments,
+                    name: tool_name.clone(),
+                    arguments: arguments.clone(),
                     meta: None,
                 },
             );
 
             let response = futures::select! {
-                response = request.fuse() => response?,
+                response = request.fuse() => match response {
+                    Ok(r) => r,
+                    Err(e) => {
+                        // zed-kask: D-seam — transport error during tool call.
+                        // The server may have died mid-call. Trigger a restart
+                        // and retry once, mirroring McpRuntime::call_tool_inner.
+                        log::warn!(
+                            "Context server '{}' tool '{}' failed: {} — attempting restart and retry",
+                            server_id.0, tool_name, e
+                        );
+                        cx.update(|cx| {
+                            store.update(cx, |store, cx| {
+                                store.trigger_server_maintenance(cx);
+                            });
+                        });
+                        // Wait for restart (up to 30s)
+                        let mut elapsed = 0u64;
+                        let retried_server = loop {
+                            if elapsed >= 30_000 {
+                                return Err(anyhow::anyhow!(
+                                    "Context server '{}' failed to restart after transport error: {}",
+                                    server_id.0, e
+                                ).into());
+                            }
+                            cx.background_executor()
+                                .timer(std::time::Duration::from_millis(500))
+                                .await;
+                            elapsed += 500;
+                            if let Some(s) = cx.update(|cx| store.read(cx).get_running_server(&server_id)) {
+                                break s;
+                            }
+                        };
+                        let Some(retried_protocol) = retried_server.client() else {
+                            return Err(anyhow::anyhow!(
+                                "Context server '{}' restarted but client not available",
+                                server_id.0
+                            ).into());
+                        };
+                        let retry_request = retried_protocol.request::<context_server::types::requests::CallTool>(
+                            context_server::types::CallToolParams {
+                                name: tool_name,
+                                arguments,
+                                meta: None,
+                            },
+                        );
+                        futures::select! {
+                            response = retry_request.fuse() => response?,
+                            _ = event_stream.cancelled_by_user().fuse() => {
+                                return Err(anyhow::anyhow!("MCP tool cancelled by user").into());
+                            }
+                        }
+                    }
+                },
                 _ = event_stream.cancelled_by_user().fuse() => {
                     return Err(anyhow::anyhow!("MCP tool cancelled by user").into());
                 }

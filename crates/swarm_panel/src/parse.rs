@@ -90,6 +90,13 @@ pub(crate) struct SwarmCard {
 #[derive(Debug, Deserialize)]
 pub(crate) struct AgentListResponse {
     pub(crate) agents: Vec<AgentInfo>,
+    /// Whether the swarm MCP server has the ABW API key configured
+    /// (`self.client.is_authenticated()`). The panel reads this field to
+    /// determine API-key status from the same source the server uses —
+    /// rather than inferring it from the `swarm_get_swarm` error message,
+    /// which conflates "no key configured" with "key configured but
+    /// rejected by ABW" (both surface as `permission_denied`).
+    pub(crate) authenticated: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
