@@ -42,6 +42,11 @@ pub fn build(
         // False is not a pass — it means nobody has written one, which
         // the coverage metric reports and this must not disguise.
         "grounding_enforced": has_contract,
+        // Distinct from `grounding_enforced`: whether grounding actually ran
+        // (contract exists AND output was an object). A contract that exists
+        // but was not enforced (e.g. non-object output) must not read as
+        // "grounding ran" to consumers.
+        "has_grounding_contract": has_contract,
         "payload": payload,
         "blocks": grounding_result
             .provenance

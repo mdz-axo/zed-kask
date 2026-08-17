@@ -297,6 +297,9 @@ impl BundleManifest {
     pub fn validate(&self) -> ValidationResult {
         let mut errors: Vec<String> = Vec::new();
         let mut warnings: Vec<String> = Vec::new();
+        if self.steps.is_empty() {
+            errors.push("Manifest must have at least one step".to_string());
+        }
         if self.skills.len() < 2 {
             errors.push(format!(
                 "Bundle must have at least 2 skills, found {}",

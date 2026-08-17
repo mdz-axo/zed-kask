@@ -78,10 +78,7 @@ impl ConcurrencyLimiter {
     /// are updated atomically — no concurrent `on_success` or `on_throttle`
     /// can interleave between the `current` update and `add_permits`.
     pub fn on_success(&self) {
-        let mut current = self
-            .current
-            .lock()
-            .expect("concurrency limiter mutex poisoned");
+        let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
         if *current >= self.max {
             return;
         }
@@ -102,10 +99,7 @@ impl ConcurrencyLimiter {
     /// `forget_permits` saturates at the available count so it never goes
     /// negative (in-flight permits are unaffected and return on drop).
     pub fn on_throttle(&self) {
-        let mut current = self
-            .current
-            .lock()
-            .expect("concurrency limiter mutex poisoned");
+        let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
         let floor = self.step;
         if *current <= floor {
             return;
@@ -123,10 +117,7 @@ impl ConcurrencyLimiter {
 
     /// Current permit count (for observability and tests).
     pub fn current(&self) -> u32 {
-        *self
-            .current
-            .lock()
-            .expect("concurrency limiter mutex poisoned")
+        *self.current.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// The configured maximum.

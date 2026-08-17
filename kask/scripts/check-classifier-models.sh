@@ -123,8 +123,8 @@ EOF
     status=ERR; pred=TRANSPORT
   fi
   rm -f "$outfile" "$ttft_file"
-  # Result line: model|task|gold|status|pred|ttft|total_ms|tok  (deterministic per idx)
-  printf '%s|%s|%s|%s|%s|%s|%s|%s\n' "$model" "$task" "$gold" "$status" "$pred" "$ttft" "$total_ms" "$tok" > "$RESULTS_DIR/$idx.line"
+  # Result line: model|id|task|gold|status|pred|ttft|total_ms|tok  (deterministic per idx)
+  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$model" "$id" "$task" "$gold" "$status" "$pred" "$ttft" "$total_ms" "$tok" > "$RESULTS_DIR/$idx.line"
 
   # Running completed-count under a lock so progress is quantifiable under concurrency.
   cnt_lock="$RESULTS_DIR/.counter.lock"
@@ -159,7 +159,7 @@ CONCURRENCY="${CONCURRENCY:-8}"
 N_CASES="$(jq '.cases | length' "$EVAL_SET")"
 SCRIPT="$REPO_ROOT/kask/scripts/check-classifier-models.sh"
 
-echo "model|correct/47|inctx/3|section/20|dimension/20|failure/10|ttft_p50_ms|tok_s_p50"
+echo "model|correct/47|inctx/3|section/17|dimension/20|failure/10|ttft_p50_ms|tok_s_p50"
 for model in "${MODELS[@]}"; do
   echo "== $model ($N_CASES cases, concurrency $CONCURRENCY) ==" >&2
   RDIR="$(mktemp -d)"; : > "$RDIR/.counter"
@@ -182,23 +182,25 @@ for model in "${MODELS[@]}"; do
   model_res="$(mktemp)"
   for i in $(seq 0 $((N_CASES - 1))); do
     [ -f "$RDIR/$i.line" ] && cat "$RDIR/$i.line" >> "$model_res" \
-      || printf '%s|%s|%s|ERR|MISSING|0|0|0\n' "$model" "?" "?" >> "$model_res"
+      || printf '%s|idx%s|?|ERR|MISSING|0|0|0\n' "$model" "$i" >> "$model_res"
   done
 
-  # Scored = all rows excluding the 3 in-context examples (S01-S03 are idx 0-2).
-  ok="$(tail -n +4 "$model_res" | awk -F'|' '$4 == "OK"' | wc -l)"
-  scored="$(tail -n +4 "$model_res" | wc -l)"
-  inctx="$(head -3 "$model_res" | awk -F'|' '$4 == "OK"' | wc -l)"
-  sec="$(grep "^$model|section|" "$model_res" | awk -F'|' '$4 == "OK"' | wc -l)"
-  sec_t="$(grep -c "^$model|section|" "$model_res" || true)"
-  dim="$(grep "^$model|dimension|" "$model_res" | awk -F'|' '$4 == "OK"' | wc -l)"
-  dim_t="$(grep -c "^$model|dimension|" "$model_res" || true)"
-  fail="$(grep "^$model|failure|" "$model_res" | awk -F'|' '$4 == "OK"' | wc -l)"
-  fail_t="$(grep -c "^$model|failure|" "$model_res" || true)"
-  ttft="$(awk -F'|' '$6 != "0" && $6 != "" {print $6}' "$model_res" | sort -n | awk '
+  # Result line fields: 1=model 2=id 3=task 4=gold 5=status 6=pred 7=ttft 8=total_ms 9=tok.
+  # In-context examples S01-S03 are excluded from the accuracy total and from
+  # per-task scored counts (reported only in the inctx/3 column).
+  ok="$(awk -F'|' '$2 !~ /^S0[123]$/ && $5 == "OK"' "$model_res" | wc -l)"
+  scored="$(awk -F'|' '$2 !~ /^S0[123]$/' "$model_res" | wc -l)"
+  inctx="$(awk -F'|' '$2 ~ /^S0[123]$/ && $5 == "OK"' "$model_res" | wc -l)"
+  sec="$(awk -F'|' '$3 == "section" && $2 !~ /^S0[123]$/ && $5 == "OK"' "$model_res" | wc -l)"
+  sec_t="$(awk -F'|' '$3 == "section" && $2 !~ /^S0[123]$/' "$model_res" | wc -l)"
+  dim="$(awk -F'|' '$3 == "dimension" && $5 == "OK"' "$model_res" | wc -l)"
+  dim_t="$(awk -F'|' '$3 == "dimension"' "$model_res" | wc -l)"
+  fail="$(awk -F'|' '$3 == "failure" && $5 == "OK"' "$model_res" | wc -l)"
+  fail_t="$(awk -F'|' '$3 == "failure"' "$model_res" | wc -l)"
+  ttft="$(awk -F'|' '$7 != "0" && $7 != "" {print $7}' "$model_res" | sort -n | awk '
     { a[NR]=$1 } END { if (NR == 0) { print "n/a" } else if (NR % 2 == 1) { print a[(NR+1)/2] } else { print (a[NR/2]+a[NR/2+1])/2 } }')"
   # tok/s over the generation window (total - ttft), median across cases.
-  tok_s="$(awk -F'|' '$8 > 0 && ($7 - $6) > 0 { printf "%.1f\n", $8 / (($7 - $6) / 1000.0) }' "$model_res" | sort -n | awk '
+  tok_s="$(awk -F'|' '$9 > 0 && ($8 - $7) > 0 { printf "%.1f\n", $9 / (($8 - $7) / 1000.0) }' "$model_res" | sort -n | awk '
     { a[NR]=$1 } END { if (NR == 0) { print "n/a" } else if (NR % 2 == 1) { print a[(NR+1)/2] } else { print (a[NR/2]+a[NR/2+1])/2 } }')"
   echo "$model|$ok/$scored|$inctx/3|$sec/$sec_t|$dim/$dim_t|$fail/$fail_t|$ttft|$tok_s"
   rm -rf "$RDIR" "$model_res"

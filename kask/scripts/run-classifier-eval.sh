@@ -16,7 +16,8 @@ cd "$(dirname "$0")/../.."
 
 LIST="${1:-/tmp/bench_models.txt}"
 [ -f "$LIST" ] || { echo "error: model list not found: $LIST" >&2; exit 1; }
-mapfile -t MODELS < "$LIST"
+# Strip comments (#...) and blank lines so the bench list can be annotated.
+mapfile -t MODELS < <(grep -vE '^[[:space:]]*(#|$)' "$LIST")
 NMODELS=${#MODELS[@]}
 CONCURRENCY="${CONCURRENCY:-8}"
 export CONCURRENCY
@@ -51,7 +52,7 @@ done
 
 echo ""
 echo "================ SUMMARY ================"
-echo "model|correct/47|inctx/3|section/20|dimension/20|failure/10|ttft_p50_ms|tok_s_p50"
+echo "model|correct/47|inctx/3|section/17|dimension/20|failure/10|ttft_p50_ms|tok_s_p50"
 cat "$SUMMARY"
 echo ""
 echo "(per-case progress log: $PROGRESS ; summary: $SUMMARY)"

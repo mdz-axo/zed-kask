@@ -100,8 +100,23 @@ impl StepMachine {
                                 .context
                                 .lookup(field)
                                 .and_then(|v| v.as_f64())
-                                .unwrap_or(1.0);
-                            let target: f64 = val_str.parse().unwrap_or(0.0);
+                                .unwrap_or_else(|| {
+                                    tracing::warn!(
+                                        target: "reg.skill.cascade.choice",
+                                        field,
+                                        "execute_choice: condition field not found or non-numeric — defaulting to non-match"
+                                    );
+                                    f64::NAN
+                                });
+                            let target: f64 = val_str.parse().unwrap_or_else(|_| {
+                                tracing::warn!(
+                                    target: "reg.skill.cascade.choice",
+                                    field,
+                                    value = val_str,
+                                    "execute_choice: target value failed to parse as f64 — defaulting to non-match"
+                                );
+                                f64::NAN
+                            });
                             match op {
                                 "<" => current < target,
                                 "<=" => current <= target,
@@ -355,7 +370,8 @@ impl StepMachine {
                         "Step truncated at max_tokens before emitting structured-output tool call"
                     );
                     return Err(TemplateError::Manifest(format!(
-                        "Step {} truncated at max_tokens before emitting the structured-output \\n                         tool call — increase max_tokens or reduce the prompt; refusing to \
+                        "Step {} truncated at max_tokens before emitting the structured-output \
+                         tool call — increase max_tokens or reduce the prompt; refusing to \
                          parse partial output",
                         node.ordinal
                     )));
@@ -791,6 +807,12 @@ impl StepMachine {
         // silently dropped. If every tool failed, propagate the first error.
         // Otherwise store the partial result + an `errors` sidecar.
         if oks.is_empty() {
+            if errs.is_empty() {
+                return Err(TemplateError::Manifest(format!(
+                    "Step {} (action 'mcp_batch') has an empty batch — no tools to execute",
+                    node.ordinal
+                )));
+            }
             let first_err = errs.into_iter().next().unwrap().unwrap_err();
             tracing::warn!(
                 target: "reg.skill.cascade.tool_batch_joined",
@@ -1290,6 +1312,12 @@ impl StepMachine {
         // result + an `errors` sidecar so downstream steps and the operator
         // can see what survived.
         if oks.is_empty() {
+            if errs.is_empty() {
+                return Err(TemplateError::Manifest(format!(
+                    "Step {} (action 'parallel') has an empty branches array — no branches to execute",
+                    node.ordinal
+                )));
+            }
             let first_err = errs.into_iter().next().unwrap().unwrap_err();
             tracing::warn!(
                 target: "reg.skill.cascade.parallel_joined",

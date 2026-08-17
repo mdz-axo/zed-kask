@@ -5,17 +5,26 @@
 //! nothing is rejected at admission — the paper's "499 labels that match
 //! nothing" finding, prevented by construction.
 //!
-//! The registry is file-backed (`mcp/swarm/port_types.json`). When the file is
-//! absent, the built-in seed is used and a `warn!` is emitted naming the
-//! missing path — the `.rules` trap on silent fallbacks. The built-in seed
-//! contains the labels already in use by existing cards and by
-//! `build_task_agent_card` in the kata-kanban server.
+//! The registry is designed to be file-backed (`mcp/swarm/port_types.json`),
+//! but the file-backed load path is **not yet enforced** — `run()` constructs
+//! the registry via `PortRegistry::builtin()`. The `load_or_builtin` and
+//! `with_port_registry` helpers exist for future wiring but have only test
+//! callers today. When the file path is absent, the built-in seed is used.
+//! The built-in seed contains the labels already in use by existing cards and
+//! by `build_task_agent_card` in the kata-kanban server.
 
 use std::collections::HashSet;
 
 /// Built-in port types derived from existing cards (the paper's "start with
 /// what's already in use"). These are the only labels that can form a seam
-/// today. The operator can extend via `mcp/swarm/port_types.json`.
+/// today. The operator can extend via `mcp/swarm/port_types.json` (not yet
+/// enforced — see module docs).
+///
+/// Upgrade hazard: cards using labels not in this set (e.g. `"query"`,
+/// `"analysis"` from prior versions) are silently skipped on load after
+/// upgrade. The `load()` warn names the rejected label; operators must either
+/// add the label to `port_types.json` (once file-backed loading is wired) or
+/// update the card to use a built-in label.
 pub const BUILTIN_PORT_TYPES: &[&str] = &["text", "json", "task", "task_result"];
 
 /// Registered port types. A port label is a reference to a type, not a free

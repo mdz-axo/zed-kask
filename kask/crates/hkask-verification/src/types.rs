@@ -157,7 +157,10 @@ mod tests {
             GroundingRecord::coverage_gap("swarm_delegate_local", "researcher", "research");
         assert!(!record.had_contract);
         assert!(!record.was_enforced);
-        assert!(!record.is_clean(), "coverage gap must not be reported as clean");
+        assert!(
+            !record.is_clean(),
+            "coverage gap must not be reported as clean"
+        );
         assert!(record.nulled_fields.is_empty());
         assert!(record.narrative_leaks.is_empty());
     }
@@ -167,10 +170,12 @@ mod tests {
         // A contract existed but the output was not a JSON object — the
         // record is NOT clean (grounding did not run) and NOT a coverage gap
         // (the contract existed). `had_contract: true, was_enforced: false`.
-        let record =
-            GroundingRecord::unenforceable("kanban_task_spawn", "task_agent", "task");
+        let record = GroundingRecord::unenforceable("kanban_task_spawn", "task_agent", "task");
         assert!(record.had_contract, "unenforceable record had a contract");
-        assert!(!record.was_enforced, "unenforceable record was not enforced");
+        assert!(
+            !record.was_enforced,
+            "unenforceable record was not enforced"
+        );
         assert!(!record.is_clean(), "unenforceable record is not clean");
         assert!(record.nulled_fields.is_empty());
         assert!(record.narrative_leaks.is_empty());

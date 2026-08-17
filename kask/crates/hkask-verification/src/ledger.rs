@@ -299,13 +299,19 @@ impl VerificationStore {
         let output_json = serde_json::from_str::<Value>(response).unwrap_or(Value::Null);
         let raw_response = response.to_string();
         let was_object = output_json.is_object();
+        // When the response is a JSON object, it is the structured output —
+        // not prose. Feeding it as the `narrative` argument causes false-
+        // positive narrative leaks because the raw JSON still contains the
+        // pre-cleaning values that `scan_narrative_for_leak` matches against.
+        // Pass an empty narrative for structured responses.
+        let narrative = if was_object { "" } else { response };
         let (result, cleaned) = self.enforce_for_agent(
             source,
             agent_id,
             agent_type,
             &output_json,
             tool_calls,
-            response,
+            narrative,
         );
         if let Some(ref gr) = result {
             if !gr.nulled_fields.is_empty() {
@@ -364,7 +370,14 @@ impl VerificationStore {
         let mut h_mem = HMem::new(
             VERIFICATION_ENTITY,
             &record.delegation_id,
-            serde_json::to_value(record).unwrap_or(Value::Null),
+            serde_json::to_value(record).unwrap_or_else(|error| {
+                tracing::warn!(
+                    target: "hkask.verification",
+                    %error,
+                    "Grounding record serialization failed — writing null placeholder"
+                );
+                Value::Null
+            }),
             owner,
         )
         .with_ontology(ontology);
@@ -484,7 +497,17 @@ impl VerificationStore {
         let records: Vec<GroundingRecord> = h_mems
             .into_iter()
             .filter_map(|h| {
-                let record: GroundingRecord = serde_json::from_value(h.value).ok()?;
+                let record: GroundingRecord = match serde_json::from_value(h.value) {
+                    Ok(r) => r,
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hkask.verification",
+                            %error,
+                            "Grounding record failed to deserialize — skipping (not counted)"
+                        );
+                        return None;
+                    }
+                };
                 match scope {
                     TrendScope::Global => Some(record),
                     TrendScope::ByAgent(agent_id) if record.agent_id == *agent_id => Some(record),

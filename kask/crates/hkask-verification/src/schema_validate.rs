@@ -159,6 +159,12 @@ fn validate_at(schema: &Value, doc: &Value, path: &str, result: &mut ValidationR
                 unsupported: Vec::new(),
             };
             validate_at(alt, doc, path, &mut sub_result);
+            // Propagate unsupported keywords from every alternative — an
+            // unsupported keyword in a non-matching sibling is still an
+            // unchecked keyword, and "unsupported is NOT a pass."
+            result
+                .unsupported
+                .extend(sub_result.unsupported.iter().cloned());
             if sub_result.is_valid() {
                 matches += 1;
             }
