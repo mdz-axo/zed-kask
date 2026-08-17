@@ -67,7 +67,7 @@ pub struct ClassifierYaml {
 #[derive(Debug, Deserialize)]
 pub struct ClassifierDef {
     pub name: String,
-    /// Provider-prefixed model id (e.g. `DeepInfra/Qwen/Qwen3-235B-A22B-Instruct-2507`)
+    /// Provider-prefixed model id (e.g. `OpenRouter/z-ai/glm-5.2`)
     /// passed as `model_override` to `InferencePort::generate_with_model`, which
     /// forwards it to zed's `LanguageModelRegistry` via the IPC bridge. When empty,
     /// `ClassifierConfig::from_def` resolves the canonical classifier model via
