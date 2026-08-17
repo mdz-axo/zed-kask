@@ -272,6 +272,86 @@ pub fn narrator_agent_contract() -> GroundingContract {
     }
 }
 
+/// The built-in grounding contract for skill cascades (`agent_type: "skill"`).
+///
+/// Skill cascades produce LLM-synthesized text from Jinja2 templates. Some
+/// skills (e.g. `diataxis-diagram`, `sankey-flow`) produce structured output
+/// (Mermaid diagrams) with potentially fabricated content. Skills that
+/// produce code may claim to have written files.
+///
+/// The contract checks for fabricated file paths in the output:
+/// - `deliverable_path`: a file path the skill claims to have written. Must
+///   be sourced from an `edit_file`, `write_file`, or `terminal` tool call
+///   that succeeded (same pattern as `task_agent_contract`).
+/// - `test_verdict`: a pass/fail claim about tests. Must be sourced from a
+///   `terminal` tool call that succeeded.
+/// - `diagram`: the main diagram or structured output. Inferred — the skill
+///   was commissioned to produce this.
+/// - `summary`: a prose summary. Inferred.
+/// - `recommendations`: a list of recommendations. Inferred.
+///
+/// Any other field is UncommissionedInference (kept, marked) unless it
+/// matches a tool's output (Sourced) or has no possible source (Unsourced,
+/// nulled). This catches skills that fabricate file paths in their output
+/// without actually calling a file-writing tool.
+pub fn skill_agent_contract() -> GroundingContract {
+    let mut field_sources = HashMap::new();
+    field_sources.insert(
+        "deliverable_path".to_string(),
+        FieldSpec {
+            sources: vec![
+                "zed/edit_file".to_string(),
+                "zed/write_file".to_string(),
+                "zed/terminal".to_string(),
+            ],
+            why: "A file path the skill claims to have written. Must be sourced \
+                  from a file-writing tool that succeeded. Skills that produce \
+                  code may fabricate file paths without actually writing files."
+                .to_string(),
+        },
+    );
+    field_sources.insert(
+        "test_verdict".to_string(),
+        FieldSpec {
+            sources: vec!["zed/terminal".to_string()],
+            why: "A pass/fail claim about tests. Must be sourced from a terminal \
+                  tool call that succeeded (the test runner)."
+                .to_string(),
+        },
+    );
+    field_sources.insert(
+        "diagram".to_string(),
+        FieldSpec {
+            sources: vec![],
+            why: "The main diagram or structured output. Commissioned by the \
+                  skill's template — the skill was asked to produce this."
+                .to_string(),
+        },
+    );
+    field_sources.insert(
+        "summary".to_string(),
+        FieldSpec {
+            sources: vec![],
+            why: "A prose summary of the skill output. Commissioned by the \
+                  skill's template — the skill was asked to summarize."
+                .to_string(),
+        },
+    );
+    field_sources.insert(
+        "recommendations".to_string(),
+        FieldSpec {
+            sources: vec![],
+            why: "A list of recommendations produced by the skill. Commissioned \
+                  by the skill's template — the skill was asked to propose actions."
+                .to_string(),
+        },
+    );
+    GroundingContract {
+        agent_type: "skill".to_string(),
+        field_sources,
+    }
+}
+
 /// Extract the set of tools that successfully returned data from the
 /// `tool_calls` summary on a `LocalDelegateResult`.
 ///
@@ -1883,5 +1963,108 @@ mod tests {
         );
         // The value is preserved.
         assert_eq!(cleaned.get("file_path"), Some(&json!("/output/story.txt")));
+    }
+
+    // ── Skill agent contract (Phase 5) ──
+
+    #[test]
+    fn skill_agent_contract_has_why_for_every_field() {
+        let contract = skill_agent_contract();
+        for (field, spec) in &contract.field_sources {
+            assert!(
+                spec.why.len() >= 40,
+                "field '{}' has a short why ({} chars): '{}'",
+                field,
+                spec.why.len(),
+                spec.why
+            );
+        }
+    }
+
+    #[test]
+    fn skill_agent_contract_deliverable_path_nulled_when_no_file_tool_called() {
+        // Falsification test: the `deliverable_path` field must be nulled when
+        // no file-writing tool was called. This is the check that proves the
+        // skill contract catches fabricated file paths.
+        let contract = skill_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/generated.rs",
+            "diagram": "graph TD\nA-->B",
+            "summary": "generated a diagram"
+        });
+        let (result, cleaned) =
+            enforce_grounding(&contract, &output, &[], &output.to_string());
+        assert!(
+            result.nulled_fields.contains(&"deliverable_path".to_string()),
+            "deliverable_path must be nulled when no file-writing tool was called"
+        );
+        assert_eq!(
+            cleaned.get("deliverable_path"),
+            Some(&serde_json::Value::Null),
+            "nulled field must be null in cleaned output"
+        );
+    }
+
+    #[test]
+    fn skill_agent_contract_deliverable_path_kept_when_file_tool_succeeded() {
+        let contract = skill_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/generated.rs",
+            "diagram": "graph TD\nA-->B",
+            "summary": "generated a diagram"
+        });
+        let tool_calls = vec![json!({"tool": "zed/write_file", "ok": true})];
+        let (result, cleaned) =
+            enforce_grounding(&contract, &output, &tool_calls, &output.to_string());
+        assert!(
+            !result.nulled_fields.contains(&"deliverable_path".to_string()),
+            "deliverable_path must NOT be nulled when write_file succeeded"
+        );
+        assert_eq!(
+            cleaned.get("deliverable_path"),
+            Some(&json!("/src/generated.rs"))
+        );
+    }
+
+    #[test]
+    fn skill_agent_contract_diagram_and_summary_are_inferred() {
+        // `diagram`, `summary`, and `recommendations` are commissioned
+        // judgments (empty source list = Inferred). They must NOT be nulled
+        // even when no tools were called.
+        let contract = skill_agent_contract();
+        let output = json!({
+            "diagram": "graph TD\nA-->B",
+            "summary": "generated a diagram",
+            "recommendations": [{"action": "test"}]
+        });
+        let (result, cleaned) = enforce_grounding(&contract, &output, &[], &output.to_string());
+        assert!(
+            !result.nulled_fields.contains(&"diagram".to_string()),
+            "diagram must NOT be nulled (commissioned judgment)"
+        );
+        assert!(
+            !result.nulled_fields.contains(&"summary".to_string()),
+            "summary must NOT be nulled (commissioned judgment)"
+        );
+        assert!(
+            !result.nulled_fields.contains(&"recommendations".to_string()),
+            "recommendations must NOT be nulled (commissioned judgment)"
+        );
+        assert_eq!(cleaned.get("diagram"), Some(&json!("graph TD\nA-->B")));
+    }
+
+    #[test]
+    fn skill_agent_contract_test_verdict_nulled_when_no_terminal_called() {
+        let contract = skill_agent_contract();
+        let output = json!({
+            "test_verdict": "pass",
+            "summary": "all tests passed"
+        });
+        let (result, _cleaned) =
+            enforce_grounding(&contract, &output, &[], &output.to_string());
+        assert!(
+            result.nulled_fields.contains(&"test_verdict".to_string()),
+            "test_verdict must be nulled when no terminal tool was called"
+        );
     }
 }

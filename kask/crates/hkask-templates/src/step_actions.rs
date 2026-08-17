@@ -575,10 +575,22 @@ impl StepMachine {
         // check rejects field borrows held across `.await` under `tokio::spawn`).
         let timeout_dur = effective_timeout(node.timeout_seconds);
         let tools = infra.tools.clone();
+        let mcp_ref_for_tracking = mcp_ref.clone();
         let tool_result =
             match tokio::time::timeout(timeout_dur, invoke_tool(tools, mcp_ref, input)).await {
                 Ok(inner) => inner,
                 Err(_elapsed) => {
+                    // Record the timed-out tool call before propagating.
+                    // Without this, grounding cannot distinguish "tool timed
+                    // out" from "tool never called" — a timed-out call that
+                    // supplied no data is an Unsourced field, not an absent
+                    // one (paper: absence ≠ verdict). The `ok` flag is false
+                    // so `failed_tools` will include it, giving the operator
+                    // the `tool_failed` remediation signal (retry vs. wire up).
+                    self.tool_calls.push(serde_json::json!({
+                        "tool": mcp_ref_for_tracking,
+                        "ok": false,
+                    }));
                     return Err(TemplateError::Timeout {
                         step_ordinal: node.ordinal,
                         elapsed_seconds: timeout_dur.as_secs(),
@@ -600,7 +612,7 @@ impl StepMachine {
         // `{"tool": "server/tool_name", "ok": true/false}`. Recorded
         // before the `?` so both success and failure paths are captured.
         self.tool_calls.push(serde_json::json!({
-            "tool": mcp_ref,
+            "tool": mcp_ref_for_tracking,
             "ok": tool_result.is_ok(),
         }));
 
@@ -756,6 +768,19 @@ impl StepMachine {
                     elapsed_ms = batch_started.elapsed().as_millis(),
                     "tool batch timed out"
                 );
+                // Record every batch entry as a failed tool call before
+                // propagating. On timeout, `join_all` did not return, so the
+                // recording loop below is unreachable — without this, a
+                // timed-out batch leaves zero tool_calls entries and grounding
+                // cannot distinguish "all tools timed out" from "no tools
+                // called" (paper: absence ≠ verdict). Each entry is recorded
+                // with `ok: false` so `failed_tools` includes it.
+                for entry in batch.iter() {
+                    self.tool_calls.push(serde_json::json!({
+                        "tool": entry.mcp,
+                        "ok": false,
+                    }));
+                }
                 return Err(TemplateError::Timeout {
                     step_ordinal: node.ordinal,
                     elapsed_seconds: timeout_dur.as_secs(),
@@ -2274,6 +2299,43 @@ convergence:
     /// the select-step tests don't invoke tools.
     struct NoopToolPort;
 
+    /// `ToolPort` stub that succeeds for every tool call. Used by tool-call
+    /// tracking tests to verify that `tool_calls` records `ok: true` on the
+    /// success path. Returns a static JSON object — the tests don't inspect
+    /// the value, only the `tool_calls` summary.
+    struct SuccessToolPort;
+
+    impl hkask_capability::ToolPort for SuccessToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: serde_json::Value,
+            _agent: hkask_types::WebID,
+        ) -> hkask_capability::ToolFuture<
+            'a,
+            std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
+        > {
+            Box::pin(async { Ok(serde_json::json!({"result": "ok"})) })
+        }
+        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+            Box::pin(async { vec!["test_tool".to_string()] })
+        }
+        fn get_tool_info<'a>(
+            &'a self,
+            tool_name: &'a str,
+        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+            Box::pin(async {
+                Some(hkask_capability::ToolInfo {
+                    name: tool_name.to_string(),
+                    description: "test tool".to_string(),
+                    input_schema: serde_json::json!({}),
+                    server_id: "test_server".to_string(),
+                })
+            })
+        }
+    }
+
     impl hkask_capability::ToolPort for NoopToolPort {
         fn invoke<'a>(
             &'a self,
@@ -2642,5 +2704,425 @@ error_handling:
             3,
             "on_parse_failure: retry with max_retries: 2 must call generate 3 times (1 + 2 retries)"
         );
+    }
+
+    // ── Tool-call recording on the timeout path (Phase 5 grounding) ───
+
+    /// A `ToolPort` whose `invoke` hangs forever. Used to drive the
+    /// `execute` step's timeout path so the test can verify the tool call
+    /// is still recorded in `CascadeOutcome.tool_calls` (paper: absence ≠
+    /// verdict — a timed-out call that supplied no data is an Unsourced
+    /// field, not an absent one).
+    struct HangingToolPort;
+
+    impl hkask_capability::ToolPort for HangingToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: serde_json::Value,
+            _agent: hkask_types::WebID,
+        ) -> hkask_capability::ToolFuture<
+            'a,
+            std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
+        > {
+            Box::pin(async {
+                // Never resolves — the timeout fires first.
+                std::future::pending::<
+                    std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
+                >()
+                .await
+            })
+        }
+        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+            Box::pin(async { Vec::new() })
+        }
+        fn get_tool_info<'a>(
+            &'a self,
+            tool_name: &'a str,
+        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+            // Return a ToolInfo so `invoke_tool` proceeds to `invoke` (which
+            // hangs). Without this, `invoke_tool` returns NotFound before the
+            // timeout path is reached, and the test would not exercise the
+            // timeout recording branch.
+            Box::pin(async move {
+                Some(hkask_capability::ToolInfo {
+                    name: tool_name.to_string(),
+                    description: "hanging tool".to_string(),
+                    input_schema: serde_json::json!({}),
+                    server_id: "test".to_string(),
+                })
+            })
+        }
+    }
+
+    /// A single `execute` step whose tool hangs must record the tool call
+    /// in `CascadeOutcome.tool_calls` with `ok: false` even though the
+    /// step times out and returns `Err`. Without the fix, the timeout path
+    /// returned early before the `self.tool_calls.push(...)` line, leaving
+    /// grounding unable to distinguish "tool timed out" from "tool never
+    /// called."
+    #[tokio::test]
+    async fn execute_step_records_tool_call_on_timeout() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let executor = ManifestExecutor::new(
+            inference,
+            Arc::new(HangingToolPort) as Arc<dyn hkask_capability::ToolPort>,
+            LLMParameters::default(),
+        );
+
+        let manifest_yaml = r#"
+manifest:
+  id: test-timeout-record
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: "Hanging tool call that times out"
+    mcp: test/hang
+    timeout_seconds: 1
+    on_failure:
+      action: escalate
+      resume: "The tool timed out"
+convergence:
+  max_iterations: 1
+error_handling:
+  on_timeout: abort
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let result = executor
+            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .await;
+
+        let outcome = result.expect(
+            "execute_manifest returns Ok(CascadeOutcome) with ExitKind::Escalated when on_failure catches the timeout",
+        );
+        assert_eq!(
+            outcome.exit_kind,
+            crate::step_graph::ExitKind::Escalated,
+            "timeout with on_failure: escalate must exit Escalated, not propagate Err",
+        );
+        // The tool call must be recorded with ok=false. Without the fix,
+        // tool_calls is empty (the timeout returned before the push).
+        assert_eq!(
+            outcome.tool_calls.len(),
+            1,
+            "timed-out tool call must be recorded in tool_calls; got {:?}",
+            outcome.tool_calls,
+        );
+        assert_eq!(
+            outcome.tool_calls[0]["tool"].as_str(),
+            Some("test/hang"),
+            "recorded tool name must match the mcp ref",
+        );
+        assert_eq!(
+            outcome.tool_calls[0]["ok"].as_bool(),
+            Some(false),
+            "timed-out tool call must be recorded with ok=false",
+        );
+    }
+
+    /// An `mcp_batch` step whose tools all hang must record every batch
+    /// entry in `CascadeOutcome.tool_calls` with `ok: false` even though the
+    /// batch times out. Without the fix, the batch timeout returned early
+    /// before the recording loop, leaving zero entries.
+    #[tokio::test]
+    async fn execute_batch_records_all_tool_calls_on_timeout() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let executor = ManifestExecutor::new(
+            inference,
+            Arc::new(HangingToolPort) as Arc<dyn hkask_capability::ToolPort>,
+            LLMParameters::default(),
+        );
+
+        let manifest_yaml = r#"
+manifest:
+  id: test-batch-timeout-record
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: "Batch of hanging tools that all time out"
+    mcp_batch:
+      - mcp: test/hang_a
+      - mcp: test/hang_b
+      - mcp: test/hang_c
+    timeout_seconds: 1
+    on_failure:
+      action: escalate
+      resume: "The batch timed out"
+convergence:
+  max_iterations: 1
+error_handling:
+  on_timeout: abort
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let result = executor
+            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .await;
+
+        let outcome = result.expect(
+            "execute_manifest returns Ok(CascadeOutcome) with ExitKind::Escalated when on_failure catches the batch timeout",
+        );
+        assert_eq!(
+            outcome.exit_kind,
+            crate::step_graph::ExitKind::Escalated,
+            "batch timeout with on_failure: escalate must exit Escalated, not propagate Err",
+        );
+        // All three batch entries must be recorded with ok=false. Without
+        // the fix, tool_calls is empty (the batch timeout returned before
+        // the recording loop).
+        assert_eq!(
+            outcome.tool_calls.len(),
+            3,
+            "all timed-out batch entries must be recorded; got {:?}",
+            outcome.tool_calls,
+        );
+        for entry in &outcome.tool_calls {
+            assert_eq!(
+                entry["ok"].as_bool(),
+                Some(false),
+                "timed-out batch entry must be recorded with ok=false; got {entry:?}",
+            );
+        }
+        let tool_names: std::collections::HashSet<Option<&str>> = outcome
+            .tool_calls
+            .iter()
+            .map(|e| e["tool"].as_str())
+            .collect();
+        assert_eq!(
+            tool_names,
+            std::collections::HashSet::from([
+                Some("test/hang_a"),
+                Some("test/hang_b"),
+                Some("test/hang_c")
+            ]),
+            "recorded tool names must match the batch mcp refs",
+        );
+    }
+
+    // ── Tool-call summary consistency (Phase 5 grounding) ──────────────
+
+    /// A single `execute` step whose tool succeeds must record the tool call
+    /// in `CascadeOutcome.tool_calls` with `ok: true`. This is the success-path
+    /// counterpart to the timeout tests above — grounding enforcement reads
+    /// `tool_calls` to determine whether a field was sourced from a successful
+    /// tool call.
+    #[tokio::test]
+    async fn execute_step_records_tool_call_on_success() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let executor = ManifestExecutor::new(
+            inference,
+            Arc::new(SuccessToolPort) as Arc<dyn hkask_capability::ToolPort>,
+            LLMParameters::default(),
+        );
+
+        let manifest_yaml = r#"
+manifest:
+  id: test-success-record
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: "Successful tool call"
+    mcp: test_server/test_tool
+convergence:
+  max_iterations: 1
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let outcome = executor
+            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .await
+            .expect("cascade succeeds");
+
+        assert_eq!(
+            outcome.tool_calls.len(),
+            1,
+            "successful tool call must be recorded; got {:?}",
+            outcome.tool_calls,
+        );
+        assert_eq!(
+            outcome.tool_calls[0]["tool"].as_str(),
+            Some("test_server/test_tool"),
+            "recorded tool name must match the mcp ref",
+        );
+        assert_eq!(
+            outcome.tool_calls[0]["ok"].as_bool(),
+            Some(true),
+            "successful tool call must be recorded with ok=true",
+        );
+    }
+
+    /// A single `execute` step whose tool fails must record the tool call
+    /// with `ok: false`. The `NoopToolPort` returns `NotFound` for every call.
+    #[tokio::test]
+    async fn execute_step_records_tool_call_on_failure() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let executor = ManifestExecutor::new(
+            inference,
+            Arc::new(NoopToolPort) as Arc<dyn hkask_capability::ToolPort>,
+            LLMParameters::default(),
+        );
+
+        let manifest_yaml = r#"
+manifest:
+  id: test-failure-record
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: "Failing tool call"
+    mcp: test_server/noop
+    on_failure:
+      action: escalate
+      resume: "The tool failed"
+convergence:
+  max_iterations: 1
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let outcome = executor
+            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .await
+            .expect("cascade exits Escalated via on_failure");
+
+        assert_eq!(
+            outcome.exit_kind,
+            crate::step_graph::ExitKind::Escalated,
+            "failed tool with on_failure must exit Escalated",
+        );
+        assert_eq!(
+            outcome.tool_calls.len(),
+            1,
+            "failed tool call must be recorded; got {:?}",
+            outcome.tool_calls,
+        );
+        assert_eq!(
+            outcome.tool_calls[0]["ok"].as_bool(),
+            Some(false),
+            "failed tool call must be recorded with ok=false",
+        );
+    }
+
+    /// An `mcp_batch` with mixed success/failure must record every entry in
+    /// order with the correct `ok` status. `join: allSettled` collects partial
+    /// results so the cascade doesn't abort on the first error.
+    #[tokio::test]
+    async fn execute_batch_records_mixed_success_failure_in_order() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        // A tool port that succeeds for "good" tools and fails for "bad" ones.
+        struct MixedToolPort;
+        impl hkask_capability::ToolPort for MixedToolPort {
+            fn invoke<'a>(
+                &'a self,
+                _server: &'a str,
+                tool: &'a str,
+                _args: serde_json::Value,
+                _agent: hkask_types::WebID,
+            ) -> hkask_capability::ToolFuture<
+                'a,
+                std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
+            > {
+                let ok = tool.contains("good");
+                Box::pin(async move {
+                    if ok {
+                        Ok(serde_json::json!({"result": "ok"}))
+                    } else {
+                        Err(hkask_capability::ToolPortError::NotFound(hkask_types::NotFound {
+                            entity_type: "tool".to_string(),
+                            id: tool.to_string(),
+                        }))
+                    }
+                })
+            }
+            fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+                Box::pin(async { Vec::new() })
+            }
+            fn get_tool_info<'a>(
+                &'a self,
+                tool_name: &'a str,
+            ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+                Box::pin(async move {
+                    Some(hkask_capability::ToolInfo {
+                        name: tool_name.to_string(),
+                        description: "mixed tool".to_string(),
+                        input_schema: serde_json::json!({}),
+                        server_id: "test".to_string(),
+                    })
+                })
+            }
+        }
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let executor = ManifestExecutor::new(
+            inference,
+            Arc::new(MixedToolPort) as Arc<dyn hkask_capability::ToolPort>,
+            LLMParameters::default(),
+        );
+
+        let manifest_yaml = r#"
+manifest:
+  id: test-batch-mixed
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: "Batch with mixed success/failure"
+    mcp_batch:
+      - mcp: test/good_a
+      - mcp: test/bad_b
+      - mcp: test/good_c
+    input_mapping:
+      join: allSettled
+convergence:
+  max_iterations: 1
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let outcome = executor
+            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .await
+            .expect("allSettled batch succeeds with partial results");
+
+        // Three entries, in batch order, with correct ok status.
+        assert_eq!(
+            outcome.tool_calls.len(),
+            3,
+            "all batch entries must be recorded; got {:?}",
+            outcome.tool_calls,
+        );
+        assert_eq!(outcome.tool_calls[0]["tool"].as_str(), Some("test/good_a"));
+        assert_eq!(outcome.tool_calls[0]["ok"].as_bool(), Some(true));
+        assert_eq!(outcome.tool_calls[1]["tool"].as_str(), Some("test/bad_b"));
+        assert_eq!(outcome.tool_calls[1]["ok"].as_bool(), Some(false));
+        assert_eq!(outcome.tool_calls[2]["tool"].as_str(), Some("test/good_c"));
+        assert_eq!(outcome.tool_calls[2]["ok"].as_bool(), Some(true));
     }
 }

@@ -1,5 +1,6 @@
 ---
 name: gemba-walk
+core: true
 visibility: public
 description: "Human-in-the-loop guided review of the cybernetic regulation system. Queries algedonic alerts, pending escalations, and the curator's memory for skill performance patterns, then synthesizes a structured briefing with per-skill digest and proposed refinement actions for operator approval. Implements the Prepare and Present phases of the gemba loop.
 "

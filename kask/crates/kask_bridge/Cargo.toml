@@ -19,6 +19,7 @@ hkask-storage.workspace = true
 hkask-inference.workspace = true
 hkask-keystore.workspace = true
 hkask-regulation.workspace = true
+hkask-verification.workspace = true
 hkask-email.workspace = true
 hkask-services-core.workspace = true
 hkask-condenser.workspace = true

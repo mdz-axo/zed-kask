@@ -732,26 +732,3 @@ enum PassResult {
     /// The pass hit an `Exit` — the cascade is done.
     Exit(ExitKind),
 }
-
-/// Classify a `TemplateError` into a `failure_mode` string for tracing.
-/// This enables operators to filter and aggregate skill failures by mode
-/// (e.g. `failure_mode=timeout`, `failure_mode=parse_failure`,
-/// `failure_mode=tool_not_found`) in log analysis tools.
-#[allow(dead_code)] // in-process work — not yet wired
-fn classify_failure_mode(error: &crate::ports::TemplateError) -> &'static str {
-    match error {
-        crate::ports::TemplateError::Timeout { .. } => "timeout",
-        crate::ports::TemplateError::ParseFailure { .. } => "parse_failure",
-        crate::ports::TemplateError::NotFound(_) => "tool_not_found",
-        crate::ports::TemplateError::Manifest(_) => "manifest_error",
-        crate::ports::TemplateError::Mcp(_) => "mcp_error",
-        crate::ports::TemplateError::Render(_) => "render_error",
-        crate::ports::TemplateError::Inference(_) => "inference_error",
-        crate::ports::TemplateError::Database(_) => "database_error",
-        crate::ports::TemplateError::Validation(_) => "validation_error",
-        crate::ports::TemplateError::PathTraversal(_) => "path_traversal",
-        crate::ports::TemplateError::SandboxViolation(_) => "sandbox_violation",
-        crate::ports::TemplateError::SkillLoad { .. } => "skill_load_error",
-        crate::ports::TemplateError::Frontmatter { .. } => "frontmatter_error",
-    }
-}
