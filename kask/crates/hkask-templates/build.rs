@@ -446,7 +446,7 @@ fn scan_rust_file_for_tools(path: &std::path::Path, tools: &mut Vec<String>) {
             } else {
                 // Track paren depth to know when the multi-line attribute
                 // body ends. Count `(` and `)` on this line (after `#[tool`).
-                let after_tool = &trimmed["#[tool".len()..];
+                let after_tool = trimmed.strip_prefix("#[tool").unwrap_or("");
                 for ch in after_tool.chars() {
                     if ch == '(' {
                         tool_attr_paren_depth += 1;
