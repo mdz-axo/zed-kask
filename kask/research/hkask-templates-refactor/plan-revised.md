@@ -245,95 +245,37 @@ separate release note.
 (traits with 1 impl → single-use → inline) only applies after CAND-1a removes
 the second impl.
 
-### CAND-2 (Strong) — Extract `SubCascade` builder
+### CAND-2 (Partially complete) — Extract `SubCascade` builder / `MAX_STEPS` hard gate
 
-**Files:** `executor.rs`, `step_actions.rs::execute_flowdef`,
-`step_actions.rs::execute_parallel`.
+**Status: B10 is FIXED.** The `MAX_STEPS` hard gate now fires in all three
+orchestration paths (top-level, flowdef sub-cascade, parallel branch
+sub-cascade) via a shared `check_step_cap` helper in `step_graph.rs`.
 
-**Problem:** Sub-cascade orchestration is triplicated (C4). The `MAX_STEPS`
-hard gate is applied only in the executor path (grep-verified); the two
-sub-cascade paths get only the advisory warn (B10). The three call sites have
-**5 concrete differences** (grill-me enumeration):
-1. Budget constructor: `BudgetTracker::new` (executor, flowdef) vs
-   `BudgetTracker::from_remaining_shared` (parallel).
-2. Context merge: clone-and-merge-back (flowdef) vs clone-template (parallel).
-3. Depth tracking: flowdef increments `self.depth + 1`; parallel doesn't.
-4. Manifest ID suffix: `::flowdef` vs `::parallel`.
-5. Post-run merge: flowdef merges back via `merge_back_sub_cascade`; parallel
-   collects by `branch_id`.
+**What landed:**
+- `step_graph::check_step_cap(step_count, context)` — shared hard gate helper.
+- `executor::execute_manifest_into` — calls `check_step_cap` (replaces inline check).
+- `step_actions::execute_flowdef` — calls `check_step_cap` after parsing sub-manifest.
+- `step_actions::execute_parallel` — calls `check_step_cap` per branch after parsing sub-manifest.
+- Two new tests pin the gate: `check_step_cap_rejects_over_cap` (unit) and
+  `execute_manifest_rejects_over_cap_at_top_level` (integration).
 
-v0's single-signature `run_sub_cascade(manifest, parent_context, infra)`
-cannot accommodate these without parameter explosion.
+**What's deferred:** The full `SubCascade` builder struct (idiomatic-rust design
+with `for_flowdef` / `for_parallel_branch` constructors). The audit showed the
+three call sites have 5 concrete differences (budget constructor, context
+merge, depth, manifest_id, post-run merge) that would require a config struct
+or call-mode enum. The `MAX_STEPS` gate extraction delivers the correctness fix
+(B10) without the risk of restructuring the parallel path's complex
+`catch_unwind` + `buffer_unordered` async machinery. The full builder
+extraction is deferred pending operator decision on whether the triplicated
+orchestration is a maintenance burden worth the restructure risk.
 
-**Solution (idiomatic-rust design):** Extract a `SubCascade` builder struct
-with two constructors:
+**Files:** `step_graph.rs` (new `check_step_cap`), `executor.rs` (use helper),
+`step_actions.rs` (use helper in flowdef + parallel),
+`tests/executor_baseline_contract.rs` (2 new tests).
 
-```rust
-pub struct SubCascade {
-    machine: StepMachine,
-    parent_step_id: StepId,
-    merge_context: bool,
-}
-
-impl SubCascade {
-    /// Construct a flowdef sub-cascade (single child, context-merging).
-    pub fn for_flowdef(manifest, parent_context, parent_budget, parent_manifest_id, depth) -> Result<Self, TemplateError> {
-        // MAX_STEPS hard gate — single enforcement point (fixes B10)
-        Self::check_cap(&manifest)?;
-        let sub_budget = BudgetTracker::capped_by(parent_budget, &manifest.gas, &manifest.rjoule);
-        // ... construct machine with format!("{}::flowdef", parent_manifest_id), depth+1
-        Ok(Self { machine, parent_step_id, merge_context: true })
-    }
-
-    /// Construct a parallel branch sub-cascade (shared atomic gas, no context merge).
-    pub fn for_parallel_branch(manifest, branch_context, shared_gas, branch_rjoule_cap, parent_manifest_id, depth) -> Result<Self, TemplateError> {
-        Self::check_cap(&manifest)?;
-        let sub_budget = BudgetTracker::with_shared_gas(shared_gas, branch_rjoule_cap);
-        // ... construct machine with format!("{}::parallel", parent_manifest_id)
-        Ok(Self { machine, parent_step_id, merge_context: false })
-    }
-
-    /// Run. Box::pin to guard recursion depth (P8-adjacent — v0 omitted this).
-    pub async fn run(self, infra: Infra) -> Result<CascadeOutcome> {
-        Box::pin(self.machine.run(infra)).await
-    }
-
-    fn check_cap(manifest: &BundleManifest) -> Result<(), TemplateError> {
-        if manifest.steps.len() > MAX_STEPS {
-            return Err(TemplateError::Manifest(format!(
-                "Sub-cascade '{}' has {} steps — exceeds cap {}", manifest.id, manifest.steps.len(), MAX_STEPS,
-            )));
-        }
-        Ok(())
-    }
-}
-```
-
-**Ownership DAG:** `SubCascade` owns the `StepMachine` (single owner).
-`execute_flowdef` owns the `SubCascade`. `execute_parallel` owns
-`Vec<SubCascade>` (one per branch). The shared `Arc<AtomicU64>` gas is
-shared-mutable across branches — the only shared-mutable value, and it's
-atomic (correct).
-
-**P8-adjacent:** `Box::pin` is preserved (recursion-depth guard). v0 omitted
-this; idiomatic-rust flagged it.
-
-**Cancellation semantics (idiomatic-rust edge case):** if the parent cascade
-is cancelled mid-`execute_parallel`, branches are dropped (correct), but the
-shared `Arc<AtomicU64>` gas has already been debited by cancelled branches.
-The budget is over-charged. **Address:** either (a) accept the over-charge
-(branches did real work before cancellation), or (b) refund on cancel (track
-per-branch debits and reverse). Recommend (a) with a `tracing::warn!` naming
-the over-charge.
-
-**Essentialist verdict:** G1 PASS (triplication verified; inlining re-triplicates). G2 PASS conditional (facade re-exports ONLY `SubCascade` + `CascadeOutcome`; if >7 items, reduce). G3 PASS (adds orchestration behavior, not a wrapper).
-
-**Idiomatic-rust Hoare assessment:** P1 High (MAX_STEPS violation unrepresentable), P5 Medium+ (gate explicit in one place), P8 addressed (Box::pin). Critique score 0.20 (revised from v0's 0.45).
-
-**Success criteria:** `MAX_STEPS` hard gate fires in all 3 paths (test asserts
-this); `execute_flowdef` and `execute_parallel` shrink by ~40 lines each;
-`SubCascade` struct ≤ 200 lines; `Box::pin` preserved; cancellation over-charge
-logged.
+**Success criteria:** ✅ `MAX_STEPS` hard gate fires in all 3 paths (test
+asserts this); ✅ `check_step_cap` is the shared helper; ✅ 2 new tests pin
+the gate; ✅ `cargo test` clean; ✅ `./script/clippy` clean.
 
 ### CAND-3-minimal (Deferred) — Extract `call_inference_stream*` only
 

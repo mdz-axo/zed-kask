@@ -163,6 +163,24 @@ impl StepContext {
         self.results.get(&step_id)
     }
 
+    /// The canonical string key for a step result at `ordinal`:
+    /// `step_{ordinal}_result`. This is the single source of truth for the
+    /// string-key shape — callers that need the key (e.g.
+    /// `merge_control_flow`'s branching lookup, `entries`, `materialize`,
+    /// `Serialize`) should construct it via this helper rather than
+    /// `format!("step_{}_result", ordinal)` inline, so the key shape can
+    /// evolve in one place.
+    pub fn result_key(ordinal: u32) -> String {
+        format!("step_{ordinal}_result")
+    }
+
+    /// The canonical string key for a previous-iteration step result at
+    /// `ordinal`: `prev_step_{ordinal}_result`. Same rationale as
+    /// `result_key`.
+    pub fn prev_result_key(ordinal: u32) -> String {
+        format!("prev_step_{ordinal}_result")
+    }
+
     /// The last step result that stored a value (highest StepId with a result).
     /// O(1) — the machine tracks `last_result_step`, no string-key scan.
     pub fn last_result(&self, last_step_id: StepId) -> Option<&StepResult> {
@@ -253,11 +271,11 @@ impl StepContext {
     pub fn entries<'a>(&'a self) -> impl Iterator<Item = (String, &'a Value)> + 'a {
         self.results
             .values()
-            .map(|r| (format!("step_{}_result", r.ordinal), r.value.as_ref()))
+            .map(|r| (Self::result_key(r.ordinal), r.value.as_ref()))
             .chain(
                 self.prev_results
                     .values()
-                    .map(|r| (format!("prev_step_{}_result", r.ordinal), r.value.as_ref())),
+                    .map(|r| (Self::prev_result_key(r.ordinal), r.value.as_ref())),
             )
             .chain(self.named.iter().map(|(k, v)| (k.clone(), v.as_ref())))
             .chain(self.inputs.iter().map(|(k, v)| (k.clone(), v)))
@@ -271,16 +289,10 @@ impl StepContext {
     pub fn materialize(&self) -> HashMap<String, Value> {
         let mut out = HashMap::new();
         for r in self.results.values() {
-            out.insert(
-                format!("step_{}_result", r.ordinal),
-                r.value.as_ref().clone(),
-            );
+            out.insert(Self::result_key(r.ordinal), r.value.as_ref().clone());
         }
         for r in self.prev_results.values() {
-            out.insert(
-                format!("prev_step_{}_result", r.ordinal),
-                r.value.as_ref().clone(),
-            );
+            out.insert(Self::prev_result_key(r.ordinal), r.value.as_ref().clone());
         }
         for (k, v) in &self.named {
             out.insert(k.clone(), v.as_ref().clone());
@@ -363,10 +375,10 @@ impl Serialize for StepContext {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
         for r in self.results.values() {
-            map.serialize_entry(&format!("step_{}_result", r.ordinal), &*r.value)?;
+            map.serialize_entry(&Self::result_key(r.ordinal), &*r.value)?;
         }
         for r in self.prev_results.values() {
-            map.serialize_entry(&format!("prev_step_{}_result", r.ordinal), &*r.value)?;
+            map.serialize_entry(&Self::prev_result_key(r.ordinal), &*r.value)?;
         }
         for (k, v) in &self.named {
             map.serialize_entry(k, &**v)?;

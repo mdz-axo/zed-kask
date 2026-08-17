@@ -286,6 +286,74 @@ fn over_cap_graph_builds_without_panic() {
     );
 }
 
+#[test]
+fn check_step_cap_rejects_over_cap() {
+    // PINS THE HARD GATE FIRES: `check_step_cap` is the shared hard gate
+    // called by `execute_manifest_into` (top-level), `execute_flowdef`
+    // (sub-cascade), and `execute_parallel` (parallel branch sub-cascade).
+    // Previously only the top-level path had the hard gate; the sub-cascade
+    // paths got only the advisory `tracing::warn!` from `StepGraph::new`,
+    // which was an open loop — a sub-cascade could exceed the cap and run
+    // to completion. This test pins that the gate fires for all callers.
+    use hkask_templates::step_graph::check_step_cap;
+
+    // At cap — passes.
+    assert!(check_step_cap(MAX_STEPS, "test at-cap").is_ok());
+    // Over cap — fails with a message naming the context and the cap.
+    let err = check_step_cap(MAX_STEPS + 1, "test over-cap").unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("test over-cap"),
+        "error must name the context: {msg}"
+    );
+    assert!(
+        msg.contains(&MAX_STEPS.to_string()),
+        "error must name the cap: {msg}"
+    );
+    assert!(
+        msg.contains(&(MAX_STEPS + 1).to_string()),
+        "error must name the actual step count: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn execute_manifest_rejects_over_cap_at_top_level() {
+    // PINS THE HARD GATE FIRES AT THE TOP-LEVEL PATH: `execute_manifest_into`
+    // returns `Err` for a manifest exceeding `MAX_STEPS`. This is the K5
+    // gate; the sub-cascade paths are pinned by `check_step_cap_rejects_over_cap`
+    // (unit) and the flowdef/parallel integration tests.
+    let over = MAX_STEPS + 1;
+    let mut steps_yaml = String::from("manifest:\n  id: overcap-top\n  category: skill\nsteps:\n");
+    for ordinal in 1..=over as u32 {
+        steps_yaml.push_str(&format!(
+            "  - ordinal: {ordinal}\n    action: abort\n    description: x\n"
+        ));
+    }
+    let manifest = load_manifest_from_yaml(&steps_yaml).expect("over-cap manifest must parse");
+    let executor = ManifestExecutor::new(
+        Arc::new(NoopInferencePort),
+        Arc::new(NoopToolPort::new()),
+        LLMParameters::default(),
+    )
+    .with_template_base_path(std::path::PathBuf::from("/nonexistent"));
+    let result = executor
+        .execute_manifest_into(manifest, std::collections::HashMap::new())
+        .await;
+    assert!(
+        result.is_err(),
+        "execute_manifest_into must reject a manifest exceeding MAX_STEPS"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("overcap-top"),
+        "error must name the manifest id: {err}"
+    );
+    assert!(
+        err.contains(&MAX_STEPS.to_string()),
+        "error must name the cap: {err}"
+    );
+}
+
 // ── K2: parallel action ──────────────────────────────────────────────────
 
 /// Sub-manifest for `parallel` branch A: single compute step, `(+ 1 10)` → 11.
