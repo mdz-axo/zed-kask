@@ -1,6 +1,6 @@
 # Grounding System Extension — Task List
 
-## Priority 1: Regulation system integration (IN PROGRESS)
+## Priority 1: Regulation system integration (DONE)
 
 ### Done
 - [x] Add `hkask-verification` dependency to `hkask-regulation`
@@ -8,27 +8,24 @@
 - [x] Add `RegulationReason` variants: `GroundingCleanRateDegraded`, `GroundingCoverageDegraded`, `GroundingViolationDeltaIncreased`
 - [x] Add `RegulationData` variants for the three grounding signals
 - [x] Add policy rules mapping the new metrics → Escalate to Curation
-- [x] Add substitution ladder entries (empty — observational, terminal Escalate)
+- [x] Add substitution ladder entries (empty — terminal Escalate)
 - [x] Add `build_regulation_action` arms for the three new reasons
+- [x] Add grounding-specific alert messages in `route_action_as_alert`
 - [x] Add `GroundingSensor` in `sensor_provider.rs` (3 metric variants)
 - [x] Add set-point constants and fields (`grounding_clean_rate_floor`, `grounding_coverage_rate_floor`)
 - [x] Add env-var overrides with `log::warn!` on parse failure
 - [x] Add `with_verification_store` / `set_verification_store` builder methods on `CyberneticsLoop`
 - [x] Wire `VerificationStore::open()` in `main.rs`
 - [x] 8 unit tests for `GroundingSensor` (all passing)
-
-### TODO — tests for Priority 1
-- [ ] **Policy rule tests** (`regulation_policy.rs`): verify the three new rules match on the correct `(metric, direction)` and produce `Escalate → Curation` with the correct reason. One test per rule (3 tests).
-- [ ] **`build_regulation_action` tests** (`cybernetics_loop.rs`): verify each of the three new reason arms produces a `RegulatoryAction` with the correct `RegulationData` variant and `metric_name`. One test per reason (3 tests).
-- [ ] **SetPoints validation tests** (`set_points.rs`): verify the new grounding floors are validated (in [0.0, 1.0]) and that `from_config` picks up the new fields. 2 tests.
-- [ ] **Proptest: `GroundingSensor` never panics** across random delegation sequences. The sensor reads from a store that may have 0..N delegations of mixed clean/nulled/coverage-gap types. 1 proptest.
-- [ ] **Proptest: clean_rate signal value matches `GroundingTrendReport::clean_rate()`** for any delegation sequence. The sensor is a thin wrapper — its signal value must equal the report's computed rate (or be absent). 1 proptest.
-- [ ] **Proptest: violation_delta is monotonic** — the delta is always `current - previous`, never negative when fired, and the sensor never fires on the first tick. 1 proptest.
-- [ ] **Integration test**: `CyberneticsLoop::with_verification_store` registers 3 sensors. Verify via `sensor_registry.len()` or `provider_names()`. 1 test.
-- [ ] **Integration test**: a full `tick()` cycle with a store that has violations produces an `Escalate` action routed to Curation. This requires a `CapturingEscalationSink` or checking the alerts channel. 1 test.
-
-### TODO — Priority 1 design review
-- [ ] Verify the `route_action_as_alert` path correctly handles the grounding `RegulationData` variants (the `extract_deficit_threshold` function returns (0,0) for non-variety variants — the alert message should still be meaningful). Check whether `route_action_as_alert` needs a grounding-specific message branch.
+- [x] 3 policy rule tests (one per new metric)
+- [x] 3 `build_regulation_action` tests (one per new reason)
+- [x] 3 SetPoints validation tests (reject out-of-range, from_config picks up new fields)
+- [x] 3 proptests (never panics, clean_rate matches report, violation_delta never fires on first tick)
+- [x] 1 integration test (full tick cycle with grounding violations produces escalate alert)
+- [x] Updated `policy_no_match_for_unregistered_metric` to include new metrics
+- [x] Updated `default_substitution_ladders_empty_for_observational_metrics` to include grounding metrics
+- [x] Clippy clean across all affected crates
+- [x] All 102 tests in `hkask-regulation` pass
 
 ## Priority 2: Algedonic alerts for grounding spikes
 

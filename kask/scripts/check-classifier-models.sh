@@ -101,29 +101,41 @@ run_case() { # $1=model $2=task $3=gold $4=text ; writes RESULT_FILE line
     usage: {include: true}, reasoning: {enabled: false}
   }')"
   outfile="$(mktemp)"
+  local ttft_file total_ms tok
+  ttft_file="$(mktemp)"
   t0="$(date +%s%N)"
   if ! curl -sS --max-time 120 "https://openrouter.ai/api/v1/chat/completions" \
       -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-      -H "X-Title: classifier-eval" -N --data "$body" > "$outfile" 2>/dev/null; then
-    echo "$model|$task|$gold|ERR|TRANSPORT|0" >> "$RESULT_FILE"
-    rm -f "$outfile"; return
+      -H "X-Title: classifier-eval" -N --data "$body" 2>/dev/null \
+      | awk -v tf="$ttft_file" '/"content"/ && !done { ("date +%s%N" | getline now); close("date +%s%N"); print now > tf; done=1 } { print }' \
+      > "$outfile"; then
+    echo "$model|$task|$gold|ERR|TRANSPORT|0|0|0" >> "$RESULT_FILE"
+    rm -f "$outfile" "$ttft_file"; return
   fi
-  t1="$(date +%s%N)"; ttft=$(( (t1 - t0) / 1000000 ))
+  t1="$(date +%s%N)"
+  total_ms=$(( (t1 - t0) / 1000000 ))
+  if [ -s "$ttft_file" ]; then
+    ttft=$(( ("$(cat "$ttft_file")" - t0) / 1000000 ))
+  else
+    ttft=0
+  fi
   # SSE stream: collect content deltas, extract label from the first JSON field hit.
   local field pred
   field="$(field_for_task "$task")"
-  pred="$(grep '^data: ' "$outfile" | sed 's/^data: //' \
+  pred="$(grep '^data: ' "$outfile" | sed 's/^data: //' | grep -v '^\[DONE\]$' \
     | jq -rs --arg f "$field" '
         [ .[] | (.choices // [])[] | (.delta.content // "") ] | join("")
-        | capture("(?<v>\"" + $f + "\"\\s*:\\s*\"(?<lbl>[^\"]+)\")"; "i") // {} | .lbl // empty
+        | capture("\"" + $f + "\"\\s*:\\s*\"(?<lbl>[^\"]+)\""; "i") | .lbl // empty
       ' 2>/dev/null | head -1)"
-  rm -f "$outfile"
+  tok="$(grep '^data: ' "$outfile" | sed 's/^data: //' | grep -v '^\[DONE\]$' \
+    | jq -rs '[ .[] | (.usage.completion_tokens // empty) ] | last // 0' 2>/dev/null)"
+  rm -f "$outfile" "$ttft_file"
   if [ -z "$pred" ]; then
-    echo "$model|$task|$gold|NOPARSE|-|$ttft" >> "$RESULT_FILE"
+    echo "$model|$task|$gold|NOPARSE|-|$ttft|$total_ms|$tok" >> "$RESULT_FILE"
   elif [ "$(printf '%s' "$pred" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$gold" | tr '[:upper:]' '[:lower:]')" ]; then
-    echo "$model|$task|$gold|OK|$pred|$ttft" >> "$RESULT_FILE"
+    echo "$model|$task|$gold|OK|$pred|$ttft|$total_ms|$tok" >> "$RESULT_FILE"
   else
-    echo "$model|$task|$gold|BAD|$pred|$ttft" >> "$RESULT_FILE"
+    echo "$model|$task|$gold|BAD|$pred|$ttft|$total_ms|$tok" >> "$RESULT_FILE"
   fi
 }
 
@@ -144,11 +156,9 @@ for model in "${MODELS[@]}"; do
 done
 
 echo ""
-echo "model|scored_correct|scored_total|inctx_correct|section|dimension|failure|ttft_p50_ms"
+echo "model|correct/47|inctx/3|section/20|dimension/20|failure/10|ttft_p50_ms|tok_s_p50"
 for model in "${MODELS[@]}"; do
-  total="$(grep -c "^$model|" "$RESULT_FILE" || true)"
-  scored_total="$(grep "^$model|" "$RESULT_FILE" | awk -F'|' '$4 != "ERR" || 1' | wc -l)"
-  # scored = all rows excluding the 3 in-context examples (S01-S03 are scored separately by id via task-agnostic position: they always run first 3)
+  # scored = all rows excluding the 3 in-context examples (S01-S03 always run first)
   ok="$(grep "^$model|" "$RESULT_FILE" | tail -n +4 | awk -F'|' '$4 == "OK"' | wc -l)"
   scored="$(grep "^$model|" "$RESULT_FILE" | tail -n +4 | wc -l)"
   inctx="$(grep "^$model|" "$RESULT_FILE" | head -3 | awk -F'|' '$4 == "OK"' | wc -l)"
@@ -160,7 +170,10 @@ for model in "${MODELS[@]}"; do
   fail_t="$(grep -c "^$model|failure|" "$RESULT_FILE" || true)"
   ttft="$(grep "^$model|" "$RESULT_FILE" | awk -F'|' '$6 != "0" {print $6}' | sort -n | awk '
     { a[NR]=$1 } END { if (NR == 0) { print "n/a" } else if (NR % 2 == 1) { print a[(NR+1)/2] } else { print (a[NR/2]+a[NR/2+1])/2 } }')"
-  echo "$model|$ok/$scored|inctx=$inctx/3|$sec/$sec_t|$dim/$dim_t|$fail/$fail_t|$ttft"
+  # tok/s over the generation window (total - ttft), median across cases
+  tok_s="$(grep "^$model|" "$RESULT_FILE" | awk -F'|' '$8 > 0 && ($7 - $6) > 0 { printf "%.1f\n", $8 / (($7 - $6) / 1000.0) }' | sort -n | awk '
+    { a[NR]=$1 } END { if (NR == 0) { print "n/a" } else if (NR % 2 == 1) { print a[(NR+1)/2] } else { print (a[NR/2]+a[NR/2+1])/2 } }')"
+  echo "$model|$ok/$scored|$inctx/3|$sec/$sec_t|$dim/$dim_t|$fail/$fail_t|$ttft|$tok_s"
 done
 
 rm -f "$RESULT_FILE"

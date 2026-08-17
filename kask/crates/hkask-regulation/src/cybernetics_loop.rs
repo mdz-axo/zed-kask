@@ -43,9 +43,8 @@ use crate::regulation_policy::{
     extract_deficit_threshold,
 };
 use crate::types::loops::{
-    ActionDecision, ActionType, CurationInput, Deviation, DeviationDirection, ImpactReport,
-    LoopId, LoopMetrics, RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric,
-    TriggerOrigin,
+    ActionDecision, ActionType, CurationInput, Deviation, ImpactReport, LoopId, LoopMetrics,
+    RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric, TriggerOrigin,
 };
 use crate::types::loops::{BudgetOption, RegulationData};
 
@@ -1190,10 +1189,40 @@ impl CyberneticsLoop {
             format!("efferent:{}", action.action_type.as_str())
         };
         let message = if is_native_escalate {
-            format!(
-                "Variety deficit {} exceeds threshold {}",
-                deficit, threshold
-            )
+            // Grounding alerts carry their own message — the generic
+            // "Variety deficit" message is wrong for grounding signals.
+            // The deficit/threshold extraction returns (0, 0) for
+            // grounding variants (they don't carry deficit/threshold in
+            // the variety sense), so the generic message would read
+            // "Variety deficit 0 exceeds threshold 0" — meaningless.
+            match &action.parameters.data {
+                RegulationData::GroundingCleanRateDegraded {
+                    clean_rate,
+                    floor,
+                    ..
+                } => format!(
+                    "Grounding clean rate {:.1}% below floor {:.1}% — grounded delegations have nulled fields (fabricated values no tool could source). Use curator_grounding_violations to investigate.",
+                    clean_rate * 100.0,
+                    floor * 100.0,
+                ),
+                RegulationData::GroundingCoverageDegraded {
+                    coverage_rate,
+                    floor,
+                } => format!(
+                    "Grounding coverage rate {:.1}% below floor {:.1}% — delegations have no grounding contract (paper §6: coverage is a metric, not a pass). Use curator_grounding_coverage to see which agent types need contracts.",
+                    coverage_rate * 100.0,
+                    floor * 100.0,
+                ),
+                RegulationData::GroundingViolationDeltaIncreased { delta, .. } => format!(
+                    "Grounding violation delta +{} — new nulled fields since last regulation tick. A tool may have broken, an agent's prompt may have drifted, or a model may have been swapped. Use curator_grounding_violations to investigate.",
+                    delta,
+                ),
+                // Other native Escalate variants use the generic message.
+                _ => format!(
+                    "Variety deficit {} exceeds threshold {}",
+                    deficit, threshold
+                ),
+            }
         } else {
             format!(
                 "Efferent action {} (target: {}) recommended but not wired — reason: {}",
@@ -2025,6 +2054,7 @@ impl CyberneticsLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::loops::DeviationDirection;
     use proptest::strategy::Strategy;
 
     #[tokio::test]
@@ -2574,7 +2604,8 @@ mod tests {
     async fn with_verification_store_registers_three_sensors() {
         let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
         let store = Arc::new(hkask_verification::VerificationStore::in_memory());
-        let loop_instance = CyberneticsLoop::new(ledger).with_verification_store(store);
+        let loop_instance =
+            CyberneticsLoop::new(ledger).with_verification_store(store);
         // The sensor registry should have the 3 default sensors (energy,
         // variety, test coverage, mutation score) + 3 grounding sensors = 7.
         // But the default build registers 4 (energy, variety, test coverage,
@@ -2588,6 +2619,73 @@ mod tests {
             grounding_count, 3,
             "expected 3 GroundingSensor instances, got {}: {:?}",
             grounding_count, provider_names
+        );
+    }
+
+    // ── Integration: full tick cycle with grounding violations ──
+
+    /// Integration test: a CyberneticsLoop wired with a VerificationStore
+    /// that has grounding violations (nulled fields) produces an Escalate
+    /// action routed to Curation on tick(). The alert reaches the
+    /// escalation queue (the primary durable path for alert review).
+    ///
+    /// This closes the cybernetic feedback loop: grounding enforcement →
+    /// ledger → regulation sense → algedonic alert → curator → user.
+    #[tokio::test]
+    async fn tick_with_grounding_violations_produces_escalate_alert() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let store = Arc::new(hkask_verification::VerificationStore::in_memory());
+        // Seed the store with delegations that have nulled fields (clean rate
+        // below the default floor of 0.80). 1 clean + 2 nulled = clean_rate 0.33.
+        let clean_output = serde_json::json!({
+            "deliverable_path": "/src/lib.rs",
+            "summary": "did the work",
+            "approach": "directly",
+        });
+        let clean_tools = vec![serde_json::json!({"tool": "zed/edit_file", "ok": true})];
+        let nulled_output = serde_json::json!({
+            "deliverable_path": "/src/fabricated.rs",
+            "summary": "did the work",
+            "approach": "directly",
+        });
+        store.enforce_for_agent(
+            "kanban_task_spawn", "task_agent", "task",
+            &clean_output, &clean_tools, &clean_output.to_string(),
+        );
+        for _ in 0..2 {
+            store.enforce_for_agent(
+                "kanban_task_spawn", "task_agent", "task",
+                &nulled_output, &[], &nulled_output.to_string(),
+            );
+        }
+        // Wire the loop with the verification store and a capturing escalation sink.
+        let escalation_sink = Arc::new(CapturingEscalationSink::new());
+        let loop_instance = CyberneticsLoop::new(ledger)
+            .with_verification_store(store)
+            .with_alert_escalation_sink(escalation_sink.clone() as Arc<dyn crate::algedonic::AlertEscalationSink>);
+        // Run one tick.
+        loop_instance.tick().await;
+        // The escalation sink should have received at least one alert
+        // (the grounding clean rate degraded alert). The alert message
+        // should mention "Grounding clean rate".
+        let calls = escalation_sink.calls();
+        let grounding_alerts: Vec<_> = calls
+            .iter()
+            .filter(|(msg, _, _)| msg.contains("Grounding"))
+            .collect();
+        assert!(
+            !grounding_alerts.is_empty(),
+            "expected at least one grounding alert, got {} alerts: {:?}",
+            calls.len(),
+            calls.iter().map(|(m, _, _)| m.as_str()).collect::<Vec<_>>()
+        );
+        // Verify the alert message is meaningful (not the generic
+        // "Variety deficit 0 exceeds threshold 0").
+        let grounding_msg = &grounding_alerts[0].0;
+        assert!(
+            grounding_msg.contains("clean rate") || grounding_msg.contains("coverage") || grounding_msg.contains("delta"),
+            "grounding alert message should name the specific signal, got: {}",
+            grounding_msg
         );
     }
 }
