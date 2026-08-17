@@ -825,6 +825,7 @@ mod tests {
     }
 
     #[test]
+    :   #[test]
     fn research_and_narrator_contracts_are_registered() {
         let store = test_store();
         let contracts = store.contracts.lock().unwrap();
@@ -844,6 +845,97 @@ mod tests {
             contracts["narrator"].field_sources.contains_key("content"),
             "narrator contract must have a content field"
         );
+    }
+
+    #[test]
+    fn skill_contract_is_registered() {
+        let store = test_store();
+        let contracts = store.contracts.lock().unwrap();
+        assert!(
+            contracts.contains_key("skill"),
+            "skill contract must be registered at construction (Phase 5)"
+        );
+        assert!(
+            contracts["skill"].field_sources.contains_key("deliverable_path"),
+            "skill contract must have a deliverable_path field"
+        );
+        assert!(
+            contracts["skill"].field_sources.contains_key("diagram"),
+            "skill contract must have a diagram field"
+        );
+    }
+
+    #[test]
+    fn enforce_for_agent_with_skill_type_nulls_fabricated_file_path() {
+        // The skill contract must null a fabricated deliverable_path when
+        // no file-writing tool was called during the skill cascade.
+        let store = test_store();
+        let output = json!({
+            "deliverable_path": "/output/fake.rs",
+            "diagram": "graph TD\nA-->B",
+            "summary": "generated a diagram"
+        });
+        let (result, cleaned) = store.enforce_for_agent(
+            "skill_cascade",
+            "diataxis-diagram",
+            "skill",
+            &output,
+            &[],
+            &output.to_string(),
+        );
+        assert!(result.is_some(), "skill contract exists → grounding runs");
+        let gr = result.unwrap();
+        assert!(
+            gr.nulled_fields.contains(&"deliverable_path".to_string()),
+            "deliverable_path must be nulled when no file-writing tool was called"
+        );
+        assert_eq!(
+            cleaned.get("deliverable_path"),
+            Some(&Value::Null),
+            "nulled field must be null in cleaned output"
+        );
+    }
+
+    #[test]
+    fn enforce_for_agent_with_skill_type_keeps_inferred_fields() {
+        let store = test_store();
+        let output = json!({
+            "diagram": "graph TD\nA-->B",
+            "summary": "generated a diagram",
+            "recommendations": []
+        });
+        let (result, cleaned) = store.enforce_for_agent(
+            "skill_cascade",
+            "sankey-flow",
+            "skill",
+            &output,
+            &[],
+            &output.to_string(),
+        );
+        let gr = result.as_ref().expect("grounding ran");
+        assert!(gr.nulled_fields.is_empty(), "no fields should be nulled");
+        assert_eq!(cleaned.get("diagram"), Some(&json!("graph TD\nA-->B")));
+        assert_eq!(cleaned.get("summary"), Some(&json!("generated a diagram")));
+    }
+
+    #[test]
+    fn enforce_for_agent_with_skill_type_writes_grounding_record() {
+        let store = test_store();
+        let output = json!({"deliverable_path": "/fake.rs", "summary": "done"});
+        store.enforce_for_agent(
+            "skill_cascade",
+            "test-skill",
+            "skill",
+            &output,
+            &[],
+            &output.to_string(),
+        );
+        // The trend should count this delegation.
+        let trend = store
+            .grounding_trend(&TrendScope::Global)
+            .expect("trend query");
+        assert_eq!(trend.total_delegations, 1);
+        assert_eq!(trend.delegations_with_zero_nulled, 0);
     }
 
     #[test]

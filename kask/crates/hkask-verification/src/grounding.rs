@@ -1964,4 +1964,107 @@ mod tests {
         // The value is preserved.
         assert_eq!(cleaned.get("file_path"), Some(&json!("/output/story.txt")));
     }
+
+    // ── Skill agent contract (Phase 5) ──
+
+    #[test]
+    fn skill_agent_contract_has_why_for_every_field() {
+        let contract = skill_agent_contract();
+        for (field, spec) in &contract.field_sources {
+            assert!(
+                spec.why.len() >= 40,
+                "field '{}' has a short why ({} chars): '{}'",
+                field,
+                spec.why.len(),
+                spec.why
+            );
+        }
+    }
+
+    #[test]
+    fn skill_agent_contract_deliverable_path_nulled_when_no_file_tool_called() {
+        // Falsification test: the `deliverable_path` field must be nulled when
+        // no file-writing tool was called. This is the check that proves the
+        // skill contract catches fabricated file paths.
+        let contract = skill_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/generated.rs",
+            "diagram": "graph TD\nA-->B",
+            "summary": "generated a diagram"
+        });
+        let (result, cleaned) =
+            enforce_grounding(&contract, &output, &[], &output.to_string());
+        assert!(
+            result.nulled_fields.contains(&"deliverable_path".to_string()),
+            "deliverable_path must be nulled when no file-writing tool was called"
+        );
+        assert_eq!(
+            cleaned.get("deliverable_path"),
+            Some(&Value::Null),
+            "nulled field must be null in cleaned output"
+        );
+    }
+
+    #[test]
+    fn skill_agent_contract_deliverable_path_kept_when_file_tool_succeeded() {
+        let contract = skill_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/generated.rs",
+            "diagram": "graph TD\nA-->B",
+            "summary": "generated a diagram"
+        });
+        let tool_calls = vec![json!({"tool": "zed/write_file", "ok": true})];
+        let (result, cleaned) =
+            enforce_grounding(&contract, &output, &tool_calls, &output.to_string());
+        assert!(
+            !result.nulled_fields.contains(&"deliverable_path".to_string()),
+            "deliverable_path must NOT be nulled when write_file succeeded"
+        );
+        assert_eq!(
+            cleaned.get("deliverable_path"),
+            Some(&json!("/src/generated.rs"))
+        );
+    }
+
+    #[test]
+    fn skill_agent_contract_diagram_and_summary_are_inferred() {
+        // `diagram`, `summary`, and `recommendations` are commissioned
+        // judgments (empty source list = Inferred). They must NOT be nulled
+        // even when no tools were called.
+        let contract = skill_agent_contract();
+        let output = json!({
+            "diagram": "graph TD\nA-->B",
+            "summary": "generated a diagram",
+            "recommendations": [{"action": "test"}]
+        });
+        let (result, cleaned) = enforce_grounding(&contract, &output, &[], &output.to_string());
+        assert!(
+            !result.nulled_fields.contains(&"diagram".to_string()),
+            "diagram must NOT be nulled (commissioned judgment)"
+        );
+        assert!(
+            !result.nulled_fields.contains(&"summary".to_string()),
+            "summary must NOT be nulled (commissioned judgment)"
+        );
+        assert!(
+            !result.nulled_fields.contains(&"recommendations".to_string()),
+            "recommendations must NOT be nulled (commissioned judgment)"
+        );
+        assert_eq!(cleaned.get("diagram"), Some(&json!("graph TD\nA-->B")));
+    }
+
+    #[test]
+    fn skill_agent_contract_test_verdict_nulled_when_no_terminal_called() {
+        let contract = skill_agent_contract();
+        let output = json!({
+            "test_verdict": "pass",
+            "summary": "all tests passed"
+        });
+        let (result, _cleaned) =
+            enforce_grounding(&contract, &output, &[], &output.to_string());
+        assert!(
+            result.nulled_fields.contains(&"test_verdict".to_string()),
+            "test_verdict must be nulled when no terminal tool was called"
+        );
+    }
 }
