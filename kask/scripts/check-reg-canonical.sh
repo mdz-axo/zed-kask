@@ -25,7 +25,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-REGISTRY="crates/hkask-types/src/event.rs"
+# Overridable paths so the self-test (check-reg-canonical-selftest.sh) can
+# point the gate at a temp tree with a synthetic violation. Defaults to the
+# production paths.
+REGISTRY="${REGISTRY:-crates/hkask-types/src/event.rs}"
+SCAN_DIRS=( ${SCAN_DIRS:-crates/ mcp-servers/} )
+TEMPLATE_DIR="${TEMPLATE_DIR:-registry/templates/}"
 
 if [ ! -f "$REGISTRY" ]; then
   echo "FAIL: registry not found at $REGISTRY"
@@ -63,7 +68,7 @@ FAIL=0
 # Collect every distinct `target: "reg.<...>"` in production code
 # (exclude tests, examples, build artifacts).
 mapfile -t TARGETS < <(
-  grep -rhoE 'target: "reg\.[a-z0-9_.]+"' crates/ mcp-servers/ \
+  grep -rhoE 'target: "reg\.[a-z0-9_.]+"' "${SCAN_DIRS[@]}" \
     --include='*.rs' \
     --exclude-dir=target \
     --exclude-dir=tests \
@@ -75,7 +80,7 @@ mapfile -t TARGETS < <(
 
 for ns in "${TARGETS[@]}"; do
   if ! is_canonical "$ns"; then
-    sites=$( { grep -rnF -- "target: \"$ns\"" crates/ mcp-servers/ \
+    sites=$( { grep -rnF -- "target: \"$ns\"" "${SCAN_DIRS[@]}" \
       --include='*.rs' --exclude-dir=target --exclude-dir=tests --exclude-dir=examples \
       2>/dev/null || true; } | head -5 )
     echo "  non-canonical reg.* target (Rust): $ns"
@@ -107,7 +112,7 @@ is_template_allowlisted() {
 }
 
 mapfile -t J2_REFS < <(
-  grep -rhoE 'reg\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+' registry/templates/ \
+  grep -rhoE 'reg\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+' "$TEMPLATE_DIR" \
     --include='*.j2' \
     2>/dev/null \
     | sort -u
@@ -116,7 +121,7 @@ mapfile -t J2_REFS < <(
 template_ratchet=0
 for ns in "${J2_REFS[@]}"; do
   if ! is_canonical "$ns"; then
-    sites=$( { grep -rnF -- "$ns" registry/templates/ \
+    sites=$( { grep -rnF -- "$ns" "$TEMPLATE_DIR" \
       --include='*.j2' \
       2>/dev/null || true; } | head -5 )
     if is_template_allowlisted "$ns"; then
