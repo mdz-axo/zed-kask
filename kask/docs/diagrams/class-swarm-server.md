@@ -10,15 +10,18 @@ mds_categories: [domain, composition, trust]
 
 # Swarm Server Class Diagram
 
-The `hkask-mcp-swarm` server (`SwarmServer`) exposes 53 tools (27 ABW + 26
+The `hkask-mcp-swarm` server (`SwarmServer`) exposes 52 tools (27 ABW + 25
 local) — both sets always registered; `kask.swarm.mode` selects the substrate,
 not the surface — pinned by
-`tool_surface_is_exactly_53_registered_tools` (`hkask_mcp_swarm.rs`). `SwarmServer` composes four collaborators:
+`tool_surface_is_exactly_52_registered_tools` (`hkask_mcp_swarm.rs`). `SwarmServer` composes five collaborators:
 the ABW REST client, the consent store (real-time spend gate with TTL), the
-local agent registry, and the lazily-initialized local runtime. The spend gate
+local agent registry, the lazily-initialized local runtime, and the central
+verification store (grounding ledger). The spend gate
 consumes consent grants before any debit; the local runtime owns the
 debit-before-return invariant (it debits the ledger, then `AgentExecutor`
-returns the result so a failed delegation still costs credits). The A2A layer
+returns the result so a failed delegation still costs credits). The verification
+store runs grounding enforcement on every delegation via `enforce_and_stamp()`.
+The A2A layer
 wraps the existing `delegate` in protocol-compliant types over the in-process
 transport (no HTTP server required). See the [Swarm MCP Server Architecture](flowchart-swarm-architecture.md).
 

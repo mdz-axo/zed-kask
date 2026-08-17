@@ -45,14 +45,14 @@ mds_categories: [composition, domain]
 | [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, portfolio ledger | 44 | `tool_surface_is_exactly_44_registered_tools` |
 | [Condenser](condenser.md) | `mcp-servers/hkask-mcp-condenser` | Context condensation (thread summarization, persistence, saliency) | 4 | `tool_surface_is_exactly_4_registered_tools` |
 | [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 27 | `tool_surface_is_exactly_27_registered_tools` |
-| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 10 | `tool_surface_is_exactly_10_registered_tools` |
+| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query, grounding trend) | 13 | `tool_surface_is_exactly_13_registered_tools` |
 | Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 25 | `tool_surface_is_exactly_25_registered_tools` |
 | Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation (image, video, audio, gallery) | 41 | `tool_surface_is_exactly_41_registered_tools` |
 | Portfolio | `mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 14 | `tool_surface_is_exactly_14_registered_tools` |
 | [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves, residuals | 32 | `tool_surface_is_exactly_32_registered_tools` |
 | Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 23 | `tool_surface_is_exactly_23_registered_tools` |
 | [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 21 | `tool_surface_is_exactly_21_registered_tools` |
-| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 53 | `tool_surface_is_exactly_53_registered_tools` |
+| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 52 | `tool_surface_is_exactly_52_registered_tools` |
 | Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 8 | `tool_surface_is_exactly_8_registered_tools` |
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native

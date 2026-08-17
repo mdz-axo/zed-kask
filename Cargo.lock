@@ -9772,6 +9772,7 @@ dependencies = [
  "chrono",
  "hkask-test-harness",
  "hkask-types",
+ "hkask-verification",
  "parking_lot",
  "proptest",
  "serde",
