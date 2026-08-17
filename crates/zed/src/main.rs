@@ -896,6 +896,11 @@ fn main() {
             tokio::sync::mpsc::unbounded_channel::<hkask_regulation::AlertEvent>();
         spawn_alert_toast_drainer(alert_sink_rx, cx);
         let alert_sink = std::sync::Arc::new(ToastAlertSink::new(alert_sink_tx));
+        // Clone before the move into `metacognition_loop` so the model-dependent
+        // manifest-executor wiring can also wire grounding (Loop 4). Without this,
+        // `BridgeManifestExecutor::execute_skill` skips `enforce_for_agent` —
+        // the grounding path is implemented but inert at runtime.
+        let verification_store_for_model_task = verification_store.clone();
         let metacognition_loop = std::sync::Arc::new(
             hkask_regulation::MetacognitionLoop::new(regulation_ledger)
                 .with_alert_receiver(alert_rx)
@@ -2354,6 +2359,8 @@ fn main() {
         // - MCP server launch, email sink, collab server
         {
             let app_state_for_model_task = app_state.clone();
+            let verification_store_for_model_task =
+                verification_store_for_model_task.clone();
             cx.spawn(async move |cx| {
                 // Resolve registry paths (same logic as the deferred task,
                 // but doesn't need the user). Disk is the single runtime
@@ -2413,6 +2420,7 @@ fn main() {
                         &registry_manifests_dir,
                         &registry_templates_dir,
                         &regulation_ledger_for_model_task,
+                        &verification_store_for_model_task,
                         cx,
                     )
                     .await
@@ -2444,6 +2452,7 @@ fn main() {
                 let manifests_dir_for_sub = registry_manifests_dir.clone();
                 let templates_dir_for_sub = registry_templates_dir.clone();
                 let regulation_ledger_for_sub = regulation_ledger_for_model_task.clone();
+                let verification_store_for_sub = verification_store_for_model_task.clone();
                 // zed-kask: D24 — separate AtomicBool for the edit-prediction port.
                 let ep_wired_for_sub =
                     std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2464,6 +2473,7 @@ fn main() {
                                 let ep_wired = ep_wired_for_sub.clone();
                                 let http_client = http_client_for_sub.clone();
                                 let regulation_ledger = regulation_ledger_for_sub.clone();
+                                let verification_store = verification_store_for_sub.clone();
                                 cx.spawn(async move |cx| {
                                     if let Err(e) = try_wire_manifest_executor(
                                         &wired,
@@ -2472,6 +2482,7 @@ fn main() {
                                         &manifests_dir,
                                         &templates_dir,
                                         &regulation_ledger,
+                                        &verification_store,
                                         cx,
                                     )
                                     .await
@@ -3038,6 +3049,7 @@ async fn try_wire_manifest_executor(
     registry_manifests_dir: &std::path::Path,
     registry_templates_dir: &std::path::Path,
     regulation_ledger: &std::sync::Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>,
+    verification_store: &std::sync::Arc<hkask_verification::VerificationStore>,
     cx: &mut gpui::AsyncApp,
 ) -> Result<(), anyhow::Error> {
     // Already wired — no-op.
@@ -3131,7 +3143,8 @@ async fn try_wire_manifest_executor(
                 gpui_tokio::Tokio::handle(cx),
             )
             .with_profile_resolver(profile_resolver)
-            .with_regulation_ledger(regulation_ledger.clone()),
+            .with_regulation_ledger(regulation_ledger.clone())
+            .with_verification_store(verification_store.clone()),
         );
         agent::set_manifest_executor(Some(executor));
         log::info!(

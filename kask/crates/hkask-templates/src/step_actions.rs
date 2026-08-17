@@ -775,9 +775,19 @@ impl StepMachine {
                 // cannot distinguish "all tools timed out" from "no tools
                 // called" (paper: absence ≠ verdict). Each entry is recorded
                 // with `ok: false` so `failed_tools` includes it.
+                //
+                // Render the mcp ref through the template engine so the
+                // recorded tool name matches what `execute_tool_invoke`
+                // records (the resolved ref, not the raw template string).
+                // Grounding enforcement matches tool names against contract
+                // sources — an unrendered template would never match.
                 for entry in batch.iter() {
+                    let rendered = crate::template_renderer::TemplateRenderer::render_inline(
+                        &entry.mcp,
+                        &self.context,
+                    );
                     self.tool_calls.push(serde_json::json!({
-                        "tool": entry.mcp,
+                        "tool": rendered,
                         "ok": false,
                     }));
                 }
@@ -790,12 +800,20 @@ impl StepMachine {
         let elapsed_ms = batch_started.elapsed().as_millis();
 
         // Record tool calls for grounding enforcement (Phase 5). Each batch
-        // entry is recorded with its MCP ref and success/failure status.
-        // The results vec is in the same order as the batch entries (join_all
-        // preserves order).
+        // entry is recorded with its rendered MCP ref and success/failure
+        // status. The results vec is in the same order as the batch entries
+        // (join_all preserves order). Rendering the mcp ref through the
+        // template engine ensures the recorded tool name matches the
+        // resolved reference that `execute_tool_invoke` would record —
+        // grounding enforcement matches tool names against contract sources,
+        // so an unrendered template string would never match.
         for (entry, result) in batch.iter().zip(results.iter()) {
+            let rendered = crate::template_renderer::TemplateRenderer::render_inline(
+                &entry.mcp,
+                &self.context,
+            );
             self.tool_calls.push(serde_json::json!({
-                "tool": entry.mcp,
+                "tool": rendered,
                 "ok": result.is_ok(),
             }));
         }
@@ -2336,6 +2354,54 @@ convergence:
         }
     }
 
+    /// `ToolPort` stub that succeeds for tools whose name contains "good"
+    /// and fails for all others. Used by the tool-call consistency proptest
+    /// to generate random success/failure patterns across a batch.
+    struct MaskedToolPort;
+
+    impl hkask_capability::ToolPort for MaskedToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            tool: &'a str,
+            _args: serde_json::Value,
+            _agent: hkask_types::WebID,
+        ) -> hkask_capability::ToolFuture<
+            'a,
+            std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
+        > {
+            let ok = tool.contains("good");
+            Box::pin(async move {
+                if ok {
+                    Ok(serde_json::json!({"result": "ok"}))
+                } else {
+                    Err(hkask_capability::ToolPortError::NotFound(
+                        hkask_types::NotFound {
+                            entity_type: "tool".to_string(),
+                            id: tool.to_string(),
+                        },
+                    ))
+                }
+            })
+        }
+        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+            Box::pin(async { Vec::new() })
+        }
+        fn get_tool_info<'a>(
+            &'a self,
+            tool_name: &'a str,
+        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+            Box::pin(async move {
+                Some(hkask_capability::ToolInfo {
+                    name: tool_name.to_string(),
+                    description: "masked tool".to_string(),
+                    input_schema: serde_json::json!({}),
+                    server_id: "test".to_string(),
+                })
+            })
+        }
+    }
+
     impl hkask_capability::ToolPort for NoopToolPort {
         fn invoke<'a>(
             &'a self,
@@ -2708,31 +2774,51 @@ error_handling:
 
     // ── Tool-call recording on the timeout path (Phase 5 grounding) ───
 
-    /// A `ToolPort` whose `invoke` hangs forever. Used to drive the
-    /// `execute` step's timeout path so the test can verify the tool call
-    /// is still recorded in `CascadeOutcome.tool_calls` (paper: absence ≠
-    /// verdict — a timed-out call that supplied no data is an Unsourced
-    /// field, not an absent one).
+    /// A `ToolPort` whose `invoke` hangs forever for tools whose name
+    /// starts with `test/hang`. Other tools (e.g. `curator_report_skill_use_issue`,
+    /// used by the `on_failure: report` path) return a quick `NotFound` error so
+    /// the cascade's `on_failure` handling completes and the `CascadeOutcome`
+    /// (with `tool_calls`) is returned. Used to drive the `execute` step's
+    /// timeout path so the test can verify the tool call is still recorded in
+    /// `CascadeOutcome.tool_calls` (paper: absence ≠ verdict — a timed-out
+    /// call that supplied no data is an Unsourced field, not an absent one).
     struct HangingToolPort;
 
     impl hkask_capability::ToolPort for HangingToolPort {
         fn invoke<'a>(
             &'a self,
             _server: &'a str,
-            _tool: &'a str,
+            tool: &'a str,
             _args: serde_json::Value,
             _agent: hkask_types::WebID,
         ) -> hkask_capability::ToolFuture<
             'a,
             std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
         > {
-            Box::pin(async {
-                // Never resolves — the timeout fires first.
-                std::future::pending::<
-                    std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
-                >()
-                .await
-            })
+            // `tool` is the full mcp ref (e.g. "test/hang") passed as
+            // `tool_name` to `invoke_tool`.
+            if tool.starts_with("test/hang") {
+                Box::pin(async {
+                    // Never resolves — the timeout fires first.
+                    std::future::pending::<
+                        std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
+                    >()
+                    .await
+                })
+            } else {
+                // Non-hang tools (e.g. curator_report_skill_use_issue) return
+                // a quick NotFound so the `on_failure: report` path completes
+                // and the cascade exits with `Effect::Exit(Escalated)`,
+                // preserving `tool_calls` in the returned `CascadeOutcome`.
+                Box::pin(async {
+                    Err(hkask_capability::ToolPortError::NotFound(
+                        hkask_types::NotFound {
+                            entity_type: "tool".to_string(),
+                            id: tool.to_string(),
+                        },
+                    ))
+                })
+            }
         }
         fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
             Box::pin(async { Vec::new() })
@@ -2742,9 +2828,9 @@ error_handling:
             tool_name: &'a str,
         ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
             // Return a ToolInfo so `invoke_tool` proceeds to `invoke` (which
-            // hangs). Without this, `invoke_tool` returns NotFound before the
-            // timeout path is reached, and the test would not exercise the
-            // timeout recording branch.
+            // hangs for test/hang*). Without this, `invoke_tool` returns
+            // NotFound before the timeout path is reached, and the test would
+            // not exercise the timeout recording branch.
             Box::pin(async move {
                 Some(hkask_capability::ToolInfo {
                     name: tool_name.to_string(),
@@ -3054,10 +3140,12 @@ convergence:
                     if ok {
                         Ok(serde_json::json!({"result": "ok"}))
                     } else {
-                        Err(hkask_capability::ToolPortError::NotFound(hkask_types::NotFound {
-                            entity_type: "tool".to_string(),
-                            id: tool.to_string(),
-                        }))
+                        Err(hkask_capability::ToolPortError::NotFound(
+                            hkask_types::NotFound {
+                                entity_type: "tool".to_string(),
+                                id: tool.to_string(),
+                            },
+                        ))
                     }
                 })
             }
@@ -3124,5 +3212,147 @@ convergence:
         assert_eq!(outcome.tool_calls[1]["ok"].as_bool(), Some(false));
         assert_eq!(outcome.tool_calls[2]["tool"].as_str(), Some("test/good_c"));
         assert_eq!(outcome.tool_calls[2]["ok"].as_bool(), Some(true));
+    }
+
+    // ── Rendered mcp_ref recording (item 3 fix) ───────────────────────
+
+    /// A batch entry with a `{{ tool_name }}` template variable must record
+    /// the *rendered* mcp ref in `tool_calls`, not the raw template string.
+    /// Grounding enforcement matches tool names against contract sources —
+    /// an unrendered template would never match, causing false-positive
+    /// nulling of sourced fields.
+    #[tokio::test]
+    async fn execute_batch_records_rendered_mcp_ref_not_raw_template() {
+        use crate::executor::ManifestExecutor;
+        use hkask_types::template::LLMParameters;
+        use std::sync::Arc;
+
+        let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+        let executor = ManifestExecutor::new(
+            inference,
+            Arc::new(SuccessToolPort) as Arc<dyn hkask_capability::ToolPort>,
+            LLMParameters::default(),
+        );
+
+        let manifest_yaml = r#"
+manifest:
+  id: test-batch-rendered-ref
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: "Batch with template variable in mcp ref"
+    mcp_batch:
+      - mcp: "test_server/{{tool_name}}"
+    input_mapping:
+      join: allSettled
+convergence:
+  max_iterations: 1
+"#;
+        let manifest =
+            crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
+
+        let mut context = std::collections::HashMap::new();
+        context.insert("tool_name".to_string(), serde_json::json!("my_tool"));
+
+        let outcome = executor
+            .execute_manifest(&manifest, context)
+            .await
+            .expect("cascade succeeds");
+
+        assert_eq!(outcome.tool_calls.len(), 1);
+        assert_eq!(
+            outcome.tool_calls[0]["tool"].as_str(),
+            Some("test_server/my_tool"),
+            "recorded tool name must be the rendered ref, not the raw template",
+        );
+        assert_eq!(
+            outcome.tool_calls[0]["ok"].as_bool(),
+            Some(true),
+            "successful tool call must be recorded with ok=true",
+        );
+    }
+
+    // ── Tool-call summary consistency proptest (Phase 5) ──────────────
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// For a batch of N entries with a random success/failure pattern
+        /// (at least one success — allSettled propagates Err when all fail),
+        /// `CascadeOutcome.tool_calls` must have exactly N entries, in order,
+        /// with the correct `ok` status and rendered tool name. This is the
+        /// Phase 5 proptest — it verifies the recording logic is consistent
+        /// across random batch sizes and outcomes.
+        #[test]
+        fn tool_batch_recording_consistent_with_batch_size_and_status(
+            success_mask in proptest::collection::vec(any::<bool>(), 1..7)
+                .prop_filter("at least one success", |v| v.iter().any(|&b| b)),
+        ) {
+            use crate::executor::ManifestExecutor;
+            use hkask_types::template::LLMParameters;
+            use std::sync::Arc;
+
+            let batch_size = success_mask.len();
+
+            // Build manifest YAML with batch entries based on success_mask.
+            let mut batch_yaml = String::new();
+            for (i, &ok) in success_mask.iter().enumerate() {
+                let label = if ok { "good" } else { "bad" };
+                batch_yaml.push_str(&format!("      - mcp: test/{label}_{i}\n"));
+            }
+            let manifest_yaml = format!(
+                r#"manifest:
+  id: test-proptest-batch
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: "Proptest batch"
+    mcp_batch:
+{batch_yaml}    input_mapping:
+      join: allSettled
+convergence:
+  max_iterations: 1
+"#
+            );
+
+            let manifest = crate::manifest_loader::load_manifest_from_yaml(&manifest_yaml)
+                .expect("parse manifest");
+
+            let inference = Arc::new(RecordingInference::new()) as Arc<dyn InferencePort>;
+            let executor = ManifestExecutor::new(
+                inference,
+                Arc::new(MaskedToolPort) as Arc<dyn hkask_capability::ToolPort>,
+                LLMParameters::default(),
+            );
+
+            let rt = tokio::runtime::Runtime::new().expect("create runtime");
+            let outcome = rt.block_on(executor.execute_manifest(
+                &manifest,
+                std::collections::HashMap::new(),
+            )).expect("allSettled batch with at least one success must produce Ok");
+
+            prop_assert_eq!(
+                outcome.tool_calls.len(),
+                batch_size,
+                "tool_calls count must match batch size"
+            );
+
+            for (i, (&expected_ok, tc)) in success_mask.iter().zip(outcome.tool_calls.iter()).enumerate() {
+                let label = if expected_ok { "good" } else { "bad" };
+                let expected_tool = format!("test/{label}_{i}");
+                prop_assert_eq!(
+                    tc["tool"].as_str(),
+                    Some(expected_tool.as_str()),
+                    "tool_calls[{}].tool must match expected name", i
+                );
+                prop_assert_eq!(
+                    tc["ok"].as_bool(),
+                    Some(expected_ok),
+                    "tool_calls[{}].ok must match success_mask", i
+                );
+            }
+        }
     }
 }

@@ -122,18 +122,24 @@ re-verified where load-bearing.
 
 ### E. Broken feedback loops (`.rules` traps)
 
-| ID | Item | Location | Note |
-|----|------|----------|------|
-| B1 | `SqliteRegistry::register_skill`/`register_bundle`/`delete_entry`/`remove_skill` return `Ok(())` on write failure | `registry_sqlite.rs:333,385,206,369` | Logged but not propagated; callers cannot detect write failure. |
-| B2 | `SqliteRegistry::row_to_skill` silent `unwrap_or` defaults on parse failure | `registry_sqlite.rs:529` | `Visibility→Private` silent downgrade is security-relevant. |
-| B3 | `SqliteRegistry::count` returns 0 on error ("graceful degradation") | `registry_sqlite.rs:235` | `unwrap_or(0)` trap; **regulation-loop sense input** (cybernetics finding). |
-| B4 | `RjouleConfig::cap` defaults to 0 as "disabled" sentinel | `bundle/config.rs:319` | Cannot distinguish "intentionally unlimited" from "forgot to configure." |
-| B5 | `input_mapping::resolve_mapping_value` silent fallback to `value.clone()` on render/parse failure | `input_mapping.rs:65,67` | Two silent fallbacks in 10 lines, no warn. |
-| B6 | `output_schema::contract_output_to_schema` unknown type → `{"type":"string"}` silent narrow | `output_schema.rs:155` | Typo'd type silently narrows schema. |
-| B7 | `skill_loader::infer_domain_from_registry` defaults to `KnowAct` on every failure mode | `skill_loader.rs:298,309,324` | Malformed manifest and missing manifest produce same domain. |
-| B8 | `Registry::reload` clears templates but not skills/bundles | `registry.rs:213` | Doc says "refreshes from filesystem"; skills/bundles survive. **Accidentally addressed by CAND-1a (deletes `Registry`).** |
-| B9 | `template_renderer::load` doc contradicts code (3 embedded-seed fallbacks) | `template_renderer.rs:96`, `step_actions.rs:939,1158`, `hkask-mcp-kata-kanban/kata/execution.rs:93` | Doc contradicts code. **Cross-crate** (one fallback in `hkask-mcp-kata-kanban`). |
-| B10 | `step_graph::MAX_STEPS` advisory warn + executor hard gate — dual-write | `step_graph.rs:132`, `executor.rs:206` | Two enforcement points for one invariant. Sub-cascade paths get only the warn. **Addressed by CAND-2.** |
+**Status note (post-execution):** B1, B5, B6, B9 are now fixed in commits
+`f1d95635c7`, `9e90e0381b`, `9a24b4bd4b`. B2 and B7 were already partially
+addressed (warns present, still default). B3 was a false alarm (no production
+callers). B4 is fixed (warn at `BudgetTracker::new`). B8 is addressed by
+CAND-1a (deletes `Registry`). B10 is addressed by CAND-2.
+
+| ID | Item | Location | Note | Status |
+|----|------|----------|------|--------|
+| B1 | `SqliteRegistry::register_skill`/`register_bundle`/`delete_entry`/`remove_skill` return `Ok(())` on write failure | `registry_sqlite.rs:333,385,206,369` | **Survey was wrong** — errors already propagated via `?` + `.map_err(...)`. Commit `f1d95635c7` confirmed and tightened the propagation. | **Fixed** |
+| B2 | `SqliteRegistry::row_to_skill` silent `unwrap_or` defaults on parse failure | `registry_sqlite.rs:529` | `Visibility→Private` silent downgrade is security-relevant. **Already warns** (L560-580); still defaults to `Private`. The cybernetics recommendation to add `Visibility::Unknown` variant is still valid but lower priority. | **Partially fixed** |
+| B3 | `SqliteRegistry::count` returns 0 on error ("graceful degradation") | `registry_sqlite.rs:235` | **Survey was wrong** — `count` has zero production callers (grep-verified; only in-crate tests call it). The "regulation-loop sense input" claim was fabricated. No fix needed. | **False alarm** |
+| B4 | `RjouleConfig::cap` defaults to 0 as "disabled" sentinel | `bundle/config.rs:319` | Cannot distinguish "intentionally unlimited" from "forgot to configure." **Fixed:** `BudgetTracker::new` now warns when `rjoule.cap == 0` (commit `9a24b4bd4b`). The `Option<NonZeroU64>` / enum change is deferred — the warn + `manifest_compliance.rs` validation gate together surface the failure mode. | **Fixed (warn)** |
+| B5 | `input_mapping::resolve_mapping_value` silent fallback to `value.clone()` on render/parse failure | `input_mapping.rs:65,67` | Two silent fallbacks in 10 lines, no warn. **Fixed:** all three fallback paths now `tracing::warn!` naming the failed render/parse and the template expression (commit `9e90e0381b`). | **Fixed** |
+| B6 | `output_schema::contract_output_to_schema` unknown type → `{"type":"string"}` silent narrow | `output_schema.rs:155` | Typo'd type silently narrows schema. **Fixed:** unknown types now `tracing::warn!` naming the field and declared type before narrowing (commit `9e90e0381b`). | **Fixed** |
+| B7 | `skill_loader::infer_domain_from_registry` defaults to `KnowAct` on every failure mode | `skill_loader.rs:298,309,324` | **Survey was partially wrong** — the method already warns on unreadable/unparseable manifests (L303, L317). It still defaults to `KnowAct`, but the warns are present. The `Result<Domain, _>` change is deferred — the warns surface the drift. | **Partially fixed** |
+| B8 | `Registry::reload` clears templates but not skills/bundles | `registry.rs:213` | Doc says "refreshes from filesystem"; skills/bundles survive. **Addressed by CAND-1a** (deletes `Registry` entirely). | **Addressed by CAND-1a** |
+| B9 | `template_renderer::load` doc contradicts code (3 embedded-seed fallbacks) | `template_renderer.rs:96`, `step_actions.rs:957-972,1176-1191`, `hkask-mcp-kata-kanban/kata/execution.rs:93-103` | Doc contradicts code. **Fixed:** doc now documents the fallback behavior and names the 3 production call sites (commit `9a24b4bd4b`). | **Fixed** |
+| B10 | `step_graph::MAX_STEPS` advisory warn + executor hard gate — dual-write | `step_graph.rs:132`, `executor.rs:206` | Two enforcement points for one invariant. Sub-cascade paths get only the warn. **Addressed by CAND-2.** | **Addressed by CAND-2** |
 
 ### F. Coupling / dependency-direction issues
 
@@ -535,62 +541,60 @@ split; `cargo test` clean.
 
 ### CAND-9 (Strong, Prohibition) — Fix broken feedback loops in `SqliteRegistry`
 
-**Files:** `registry_sqlite.rs`.
+**Status: B1, B5, B6, B9 are FIXED.** Commits `f1d95635c7` (B1 — error
+propagation in write paths), `9e90e0381b` (B5, B6 — warns on silent fallbacks),
+and `9a24b4bd4b` (B9 — doc fixed, B4 — warn at BudgetTracker::new) landed.
 
-**Problem:** 4 methods return `Ok(())` on write failure (B1). `row_to_skill`
-silently defaults `Visibility→Private` (B2, security-relevant). `count`
-returns 0 on error (B3, regulation-critical).
+**Remaining work:**
+- **B2** (partial): `row_to_skill` already warns on unknown visibility/zone
+  strings but still defaults to `Private`. The cybernetics recommendation to
+  add a `Visibility::Unknown` variant (so the operator can distinguish
+  "intentionally Private" from "corrupted") is still valid but lower priority
+  — the warn surfaces the drift. **Deferred.**
+- **B3** (false alarm): `count` has zero production callers. No fix needed.
+- **B4** (partial): `BudgetTracker::new` now warns when `rjoule.cap == 0`.
+  The `Option<NonZeroU64>` / `enum Cap` change is deferred — the warn +
+  `manifest_compliance.rs` validation gate together surface the failure mode.
+  **Deferred.**
+- **B7** (partial): `infer_domain_from_registry` already warns on
+  unreadable/unparseable manifests. The `Result<Domain, _>` change is deferred
+  — the warns surface the drift. **Deferred.**
+- **B8**: addressed by CAND-1a (deletes `Registry`).
+- **B10**: addressed by CAND-2.
 
-**Pragmatic-semantics reframe:** v0 framed this as "may be gated behind a
-separate PR" (Guardrail). **The `.rules` "propagate errors" / "unwrap_or(0) on
-regulation-loop sense inputs is a broken feedback loop" is Prohibition-grade.**
-Per OT ranking (Prohibition > Guardrail; Specification > Inference), the
-Prohibition overrides. **CAND-9 is a `.rules`-mandated fix, not a gateable
-behavior change.** Ship behind a release note (per PR hygiene `.rules`), not
-behind a gate.
+**Caller audit (E7) result:** The only external caller of `SqliteRegistry`
+methods is `hkask-mcp-kata-kanban/kata/execution.rs:76` calling `get_entry`.
+No external caller calls `register_skill`, `register_bundle`, `delete_entry`,
+`remove_skill`, `remove_bundle`, or `count`. The B1 fix therefore had zero
+external blast radius — only in-crate tests needed updating.
 
-**Solution:**
-1. `register_skill`/`register_bundle`/`delete_entry`/`remove_skill`: propagate
-   SQL errors via `?`. Return `Result<(), TemplateError>`.
-2. `row_to_skill`: return `Result<Skill, _>`; warn on unknown enum strings.
-   **Cybernetics caveat:** returning `Result` breaks the loop differently — a
-   single corrupt row fails the entire `list_skills` query. Correct
-   remediation: warn + retain the row with `Visibility::Unknown` (new variant)
-   or skip-and-warn, not fail-the-whole-query.
-3. `count`: propagate the pool error. Return `Result<usize, _>`.
+**This candidate is largely complete.** The remaining items (B2, B4, B7) are
+deferred to a future iteration pending operator decision on whether the warns
+are sufficient or the type-level changes (`Visibility::Unknown`,
+`Option<NonZeroU64>`, `Result<Domain, _>`) are warranted.
 
-**Algedonic routing (cybernetics):** every propagated error from
-`SqliteRegistry` must emit a `tracing::warn!` at the SQL boundary naming the
-SQL error variant before propagation. Callers may additionally surface to UI.
-This preserves the algedonic channel (S1 → S5 direct).
+### CAND-9b (Deferred) — Eliminate config sentinels
 
-**Caller audit (grill-me requirement):** grep all call sites of the 4 write
-methods + `row_to_skill` + `count`. Per-caller handling decision:
-- `kask_bridge`: trace the error path to the UI (`.rules` "async errors must
-  propagate to the UI layer").
-- `hkask-mcp-kata-kanban`: check if `register_skill` is called in a
-  fire-and-forget context.
-- In-crate tests: update assertions.
-
-**Success criteria:** zero `Ok(())`-on-write-failure methods (grep-verified);
-`count` returns `Result`; `row_to_skill` warns on unknown enum strings; all
-callers audited; release note published.
-
-### CAND-9b (Strong, Prohibition) — Eliminate config sentinels
-
-**Files:** `bundle/config.rs`.
+**Files:** `bundle/config.rs`, `budget.rs`.
 
 **Problem:** B4 — `RjouleConfig::cap` defaults to 0 as "disabled" sentinel.
 Cannot distinguish "intentionally unlimited" from "forgot to configure."
 
-**Solution (cybernetics recommendation):** `RjouleConfig::cap` →
-`Option<NonZeroU64>` or `enum Cap { Disabled, Limited(u64), Unlimited }`.
-Eliminates the sentinel-as-default variety collapse.
+**Interim fix landed (commit `9a24b4bd4b`):** `BudgetTracker::new` now
+`tracing::warn!`s when `rjoule.cap == 0`, naming the failure mode and the
+remediation. Combined with `manifest_compliance.rs`'s validation gate ("uses
+inference but rjoule.cap == 0"), the operator now has two signals.
 
-**Success criteria:** `RjouleConfig::cap` is `Option` or enum; no sentinel;
-`cargo test` clean.
+**Deferred type-level fix:** `RjouleConfig::cap` → `Option<NonZeroU64>` or
+`enum Cap { Disabled, Limited(u64), Unlimited }`. This eliminates the sentinel
+entirely but changes the manifest YAML schema (30+ manifests would need
+`rjoule: { cap: 0 }` → `rjoule: { cap: disabled }` or omission). **Operator
+decision needed:** is the warn sufficient, or is the schema change warranted?
 
-### CAND-9c (Strong, Prohibition) — Eliminate silent fallbacks
+**Success criteria (if pursued):** `RjouleConfig::cap` is `Option` or enum; no
+sentinel; all manifests updated; `cargo test` clean.
+
+### CAND-9c (Fixed) — Eliminate silent fallbacks
 
 **Files:** `input_mapping.rs`, `output_schema.rs`.
 
@@ -598,48 +602,66 @@ Eliminates the sentinel-as-default variety collapse.
 on render/parse failure. B6 — `contract_output_to_schema` unknown type →
 `{"type":"string"}` silent narrow.
 
-**Solution (cybernetics recommendation):**
-- B5: `resolve_mapping_value` must `tracing::warn!` naming the failed
-  render/parse and propagate the error (or return a `MappingResult` enum
-  distinguishing `Resolved`/`Literal`/`Failed`).
-- B6: `contract_output_to_schema` must return `unverified_unsupported_schema`
-  for unknown types, not silently narrow to `string`. Aligns with `.rules`
-  "validation gates must return Undetermined/Skipped."
+**Fixed (commit `9e90e0381b`):**
+- B5: all three fallback paths in `resolve_mapping_value` now
+  `tracing::warn!` naming the template expression, the rendered output (where
+  available), and the error. The fallback behavior is preserved (returning the
+  literal template string keeps the cascade running) but is no longer silent.
+- B6: unknown type strings in `contract_output_to_schema` now
+  `tracing::warn!` naming the field and the declared type before narrowing to
+  `"string"`.
 
-**Success criteria:** zero silent fallbacks in `resolve_mapping_value`; zero
-silent schema narrows in `contract_output_to_schema`; `cargo test` clean.
+**Deferred:** the `MappingResult` enum (distinguishing
+`Resolved`/`Literal`/`Failed`) and the `unverified_unsupported_schema` return
+value. The warns surface the drift; the type-level changes would require
+caller updates at 4 sites (`resolve_mapping_value`) and 1 site
+(`contract_output_to_schema`). **Operator decision needed.**
 
-### CAND-9d (Strong, Prohibition) — Fix domain inference variety collapse
+**Success criteria:** ✅ zero silent fallbacks in `resolve_mapping_value`;
+✅ zero silent schema narrows in `contract_output_to_schema`; ✅ `cargo test`
+clean; ✅ `./script/clippy` clean.
+
+### CAND-9d (Deferred) — Fix domain inference variety collapse
 
 **Files:** `skill_loader.rs`.
 
 **Problem:** B7 — `infer_domain_from_registry` defaults to `KnowAct` on every
-failure mode (malformed manifest, missing manifest, registry error). Three
-distinct failure modes attenuated to one default.
+failure mode (malformed manifest, missing manifest, registry error).
 
-**Solution (cybernetics recommendation):** `infer_domain_from_registry` must
-return `Result<Domain, _>` or `Option<Domain>` with distinct error variants
-for malformed-manifest vs missing-manifest vs registry-error.
+**Already partially addressed:** the method warns on unreadable (L303) and
+unparseable (L317) manifests, tagged `reg.skill.lifecycle` with
+`operation = "manifest_unreadable"` / `"manifest_unparseable"`. The
+NotFound case (L296-299) legitimately returns `KnowAct` without a warn — a
+Zed-only skill has no registry layer.
 
-**Success criteria:** `infer_domain_from_registry` returns `Result`; distinct
-error variants; `cargo test` clean.
+**Deferred type-level fix:** return `Result<TemplateType, DomainInferError>`
+with distinct variants. The warns already distinguish the three failure modes
+in the log; the type-level change would let the caller branch. **Operator
+decision needed:** is the warn sufficient?
 
-### CAND-9e (Strong, Prohibition) — Fix cross-crate doc-drift
+### CAND-9e (Fixed) — Fix cross-crate doc-drift
 
-**Files:** `template_renderer.rs`, `step_actions.rs`,
-`hkask-mcp-kata-kanban/kata/execution.rs`.
+**Files:** `template_renderer.rs`.
 
-**Problem:** B9 — `template_renderer::load` doc claims "disk is the single
-runtime source" but 3 production fallback paths call embedded seeds. **Cross-crate**
-(one fallback in `hkask-mcp-kata-kanban`).
+**Problem:** B9 — `template_renderer::load` doc claimed "disk is the single
+runtime source — there is no compiled-in fallback" but 3 production fallback
+paths call embedded seeds.
 
-**Solution (cybernetics recommendation):** either (a) update the doc to
-document the fallback behavior, or (b) remove the fallback paths (if the
-embedded seeds are truly seed-only). Add a DIVERGENCE.md entry + cross-crate
-test pinning the behavior.
+**Fixed (commit `9a24b4bd4b`):** the doc now says disk is the **primary**
+runtime source and documents the embedded-seed fallback, naming all three
+production call sites (`step_actions.rs::execute_flowdef`,
+`step_actions.rs::execute_parallel`,
+`hkask-mcp-kata-kanban/kata/execution.rs::render_template`). It also explains
+why the fallback exists (bootstrapping a fresh install before the seeding path
+runs) and the operational consequence (a disk edit may be shadowed by the
+embedded seed if the disk file is missing).
 
-**Success criteria:** doc matches code; DIVERGENCE.md entry added; cross-crate
-test pins the fallback behavior.
+**Deferred:** the DIVERGENCE.md entry + cross-crate test pinning the fallback
+behavior. The doc fix removes the contradiction; the test would pin it against
+regression. **Recommend adding the test in a follow-up.**
+
+**Success criteria:** ✅ doc matches code; ⏸ DIVERGENCE.md entry (deferred);
+⏸ cross-crate test (deferred).
 
 ### CAND-10 (Speculative) — Remove dead public surface
 

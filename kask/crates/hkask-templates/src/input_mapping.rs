@@ -62,15 +62,41 @@ pub(crate) fn resolve_mapping_value(
                 let wrapped = format!("{{{{ ({inner}) | tojson }}}}");
                 match renderer.render(&wrapped, context) {
                     Ok(json_str) => {
-                        serde_json::from_str(json_str.trim()).unwrap_or_else(|_| value.clone())
+                        let trimmed_json = json_str.trim();
+                        serde_json::from_str(trimmed_json).unwrap_or_else(|e| {
+                            tracing::warn!(
+                                target: "hkask.templates",
+                                template = %inner,
+                                rendered = %trimmed_json,
+                                error = %e,
+                                "resolve_mapping_value: rendered `{{{{}}}}` expression did not parse as JSON — falling back to the literal template string. The downstream step will receive `{{ ... }}` syntax instead of the resolved value."
+                            );
+                            value.clone()
+                        })
                     }
-                    Err(_) => value.clone(),
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "hkask.templates",
+                            template = %inner,
+                            error = %e,
+                            "resolve_mapping_value: minijinja render of `{{{{}}}}` expression failed — falling back to the literal template string. The downstream step will receive `{{ ... }}` syntax instead of the resolved value."
+                        );
+                        value.clone()
+                    }
                 }
             } else if trimmed.contains("{{") {
                 renderer
                     .render(s, context)
                     .map(Value::String)
-                    .unwrap_or_else(|_| value.clone())
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(
+                            target: "hkask.templates",
+                            template = %s,
+                            error = %e,
+                            "resolve_mapping_value: minijinja render of inline `{{ }}` expression failed — falling back to the literal template string."
+                        );
+                        value.clone()
+                    })
             } else {
                 value.clone()
             }

@@ -22,6 +22,11 @@ use std::collections::HashMap;
 // Auto-generated per-skill template manifests (from build.rs).
 include!(concat!(env!("OUT_DIR"), "/manifest_skills.rs"));
 
+// Auto-generated MCP tool names from #[tool] annotations (from build.rs).
+// Scans kask/mcp-servers/hkask-mcp-*/src/**/*.rs so the list refreshes
+// automatically when a server adds a tool — no manual maintenance.
+include!(concat!(env!("OUT_DIR"), "/known_mcp_tools.rs"));
+
 /// Look up the compiled-in process manifest (FlowDef cascade) for a skill.
 ///
 /// Process manifests are authored at `registry/manifests/<skill>.yaml` and
