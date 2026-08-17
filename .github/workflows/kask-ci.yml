@@ -11,6 +11,12 @@ on:
     branches: [main]
   pull_request:
     branches: ['**']
+  schedule:
+    # Weekly allowlist-drift audit (Sundays 09:00 UTC). Runs typos WITHOUT the
+    # extend-words/extend-exclude allowlists and reports new findings as a
+    # warning issue, not a CI failure. Makes allowlist accumulation visible
+    # without breaking per-PR CI. See `typos-allowlist-audit` job below.
+    - cron: '0 9 * * 0'
 
 env:
   CARGO_TERM_COLOR: always
@@ -187,6 +193,24 @@ jobs:
       - name: "Verify the kali-regressions gate can actually fail"
         run: cd kask && bash scripts/check-kali-regressions-selftest.sh
 
+  # Self-tests for the pure-shell invariant gates. Each injects a synthetic
+  # violation into a temp tree and asserts the gate catches it — so a future
+  # regression in the gate's grep/condition logic cannot silently vacate it.
+  # (CI gate sweep follow-up issue #6: a gate that can't fail doesn't enforce.)
+  reg-creep-selftest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Verify the reg-creep gate can actually fail"
+        run: cd kask && bash scripts/check-reg-creep-selftest.sh
+
+  forecast-conformance-selftest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Verify the forecast-conformance gate can actually fail"
+        run: cd kask && bash scripts/check-forecast-conformance-selftest.sh
+
   unsafe-forbid:
     runs-on: ubuntu-24.04
     steps:
@@ -289,3 +313,38 @@ jobs:
         run: ./script/linux
       - name: Check for unused crate dependencies (nightly lint, kask crates only)
         run: cd kask && bash scripts/check-unused-deps.sh
+
+  # Weekly audit of the typos allowlist (follow-up issue #7). The per-PR
+  # `typos` job enforces the allowlist; this job runs typos WITHOUT the
+  # `[default.extend-words]` and `[files] extend-exclude` allowlists and
+  # reports the delta as a warning. Each exclusion is a potential future
+  # false-negative — a new typo matching an allowlisted word would be silently
+  # missed. This job makes accumulation visible without breaking per-PR CI.
+  #
+  # Runs only on schedule (not on push/PR) to avoid noise. Findings are
+  # surfaced as job output for manual triage — the job never fails, because
+  # the unallowlisted typos include the false positives the allowlist exists
+  # to suppress. The value is the DELTA between runs, not the absolute count.
+  typos-allowlist-audit:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: typos@v1.49.0
+      - name: "Run typos WITHOUT the allowlist (warning-only — review the delta)"
+        # --words / --files flags disable the extend-words / extend-exclude
+        # sections, exposing every finding the allowlist currently suppresses.
+        # continue-on-error makes the job non-blocking; the output is the signal.
+        continue-on-error: true
+        run: |
+          echo "## Typos allowlist audit (weekly)"
+          echo "Findings below are suppressed by typos.toml's allowlist."
+          echo "Review the DELTA from last week — new entries may indicate a"
+          echo "real typo that matches an allowlisted word."
+          echo ""
+          typos --config typos.toml --format json 2>/dev/null | head -200 || true
+          echo ""
+          echo "(Job is non-blocking. Triage new findings and either fix the typo"
+          echo "or confirm the allowlist entry is still justified.)"

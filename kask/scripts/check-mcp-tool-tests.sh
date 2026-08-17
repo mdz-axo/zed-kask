@@ -32,24 +32,25 @@ set -euo pipefail
 
 # Servers known to lack tool-behavior contract tests today. Shrink over time.
 # Remove a name the moment its tests/ contains a `Parameters(` call.
-# Each entry must carry a one-line reason so the gap is auditable.
 #
-# Ratchet quota: ALLOWLIST_MAX is the high-water mark of allowlisted servers.
-# Adding a new entry without removing one (i.e., growing beyond ALLOWLIST_MAX)
-# fails the gate. To raise the cap, a human must explicitly bump this number
-# with a justification — the bump itself is the audit signal. Lower the cap
-# whenever an entry is removed; never raise it to make a new gap pass.
+# Each entry is `name|added-date|reason`. The date is a real field (not a
+# comment) so the staleness check below can parse it. Entries older than
+# STALE_DAYS emit a non-failing warning in CI output — making a stalled
+# ratchet visible without forcing a deadline that may not be resourced.
+# (Follow-up issue #3: the quota prevents growth but doesn't force shrinkage;
+# visibility is the smallest honest fix.)
+STALE_DAYS=${STALE_DAYS:-90}
 ALLOWLIST_MAX=9
 ALLOWLIST=(
-  hkask-mcp-codegraph          # tools query a code-graph DB; need a populated graph fixture
-  hkask-mcp-companies          # tools require SerpAPI/external HTTP; need network mocking
-  hkask-mcp-condenser          # tool invokes an LLM condenser; need an inference mock
-  hkask-mcp-corpus             # tools require SQLite + embedding store; need a fixture store
-  hkask-mcp-media              # tools call Fal.ai workflow APIs; need a media-API mock
-  hkask-mcp-portfolio          # no tests dir yet; tools wrap portfolio storage
-  hkask-mcp-prediction-markets # tools fetch live Polymarket/Kalshi data; need network mocking
-  hkask-mcp-swarm              # existing tests use the panel invoke seam / live HTTP, not Parameters<T>
-  hkask-mcp-training           # tools require inference + HF Hub; need mocks
+  "hkask-mcp-codegraph|2026-07-17|tools query a code-graph DB; need a populated graph fixture"
+  "hkask-mcp-companies|2026-07-17|tools require SerpAPI/external HTTP; need network mocking"
+  "hkask-mcp-condenser|2026-07-17|tool invokes an LLM condenser; need an inference mock"
+  "hkask-mcp-corpus|2026-07-17|tools require SQLite + embedding store; need a fixture store"
+  "hkask-mcp-media|2026-07-17|tools call Fal.ai workflow APIs; need a media-API mock"
+  "hkask-mcp-portfolio|2026-07-17|no tests dir yet; tools wrap portfolio storage"
+  "hkask-mcp-prediction-markets|2026-07-17|tools fetch live Polymarket/Kalshi data; need network mocking"
+  "hkask-mcp-swarm|2026-07-17|existing tests use the panel invoke seam / live HTTP, not Parameters<T>"
+  "hkask-mcp-training|2026-07-17|tools require inference + HF Hub; need mocks"
 )
 
 # Servers that are EXEMPT by design (not agent-facing tool surfaces requiring
@@ -58,14 +59,33 @@ EXEMPT=()
 
 is_listed() {
   local name="$1"
-  local item
+  local item entry_name
   for item in "${ALLOWLIST[@]}"; do
-    [ "$item" = "$name" ] && return 0
+    entry_name="${item%%|*}"
+    [ "$entry_name" = "$name" ] && return 0
   done
   for item in "${EXEMPT[@]}"; do
-    [ "$item" = "$name" ] && return 0
+    entry_name="${item%%|*}"
+    [ "$entry_name" = "$name" ] && return 0
   done
   return 1
+}
+
+# Extract the date field (field 2) from a `name|date|reason` entry.
+entry_date() {
+  local entry="$1"
+  printf '%s' "$entry" | awk -F'|' '{print $2}'
+}
+
+# Days between a YYYY-MM-DD date and today (UTC). Uses date(1); GNU date on
+# ubuntu-24.04 runners. Returns 0 on any parse failure (fail-open for age —
+# staleness is a warning, not a failure, so a parse glitch must not break CI).
+days_since() {
+  local then="$1"
+  local then_epoch now_epoch
+  then_epoch=$(date -u -d "$then" +%s 2>/dev/null) || { echo 0; return; }
+  now_epoch=$(date -u +%s 2>/dev/null) || { echo 0; return; }
+  echo $(( (now_epoch - then_epoch) / 86400 ))
 }
 
 violations=0
@@ -99,6 +119,30 @@ for server_dir in mcp-servers/hkask-mcp-*/; do
 done
 
 echo "summary: $violations violation(s), $ratchet_gaps allowlisted gap(s), ${#ALLOWLIST[@]} in ratchet allowlist (cap: $ALLOWLIST_MAX)"
+
+# Stale-entry visibility (follow-up issue #3, option 1): warn — do not fail —
+# for allowlisted entries older than STALE_DAYS. This makes a stalled ratchet
+# visible in CI output without forcing a deadline that may not be resourced.
+# A gate that can't fail is a gate that doesn't enforce, but a ratchet that
+# can't be seen to stall is a ratchet that won't be acted on.
+stale_warnings=0
+for entry in "${ALLOWLIST[@]}"; do
+  name="${entry%%|*}"
+  added=$(entry_date "$entry")
+  if [ -z "$added" ]; then
+    echo "::warning::$name has no added-date field — add one so staleness is trackable."
+    stale_warnings=$((stale_warnings + 1))
+    continue
+  fi
+  age=$(days_since "$added")
+  if [ "$age" -gt "$STALE_DAYS" ]; then
+    echo "::warning::$name has been allowlisted for ${age} days (added $added, stale threshold $STALE_DAYS). Consider adding a tool-behavior test or documenting why the deferral persists."
+    stale_warnings=$((stale_warnings + 1))
+  fi
+done
+if [ "$stale_warnings" -gt 0 ]; then
+  echo "staleness: $stale_warnings entr(y/ies) above the $STALE_DAYS-day visibility threshold (warnings, not failures)"
+fi
 
 # Ratchet quota: fail if the allowlist grew beyond the high-water mark.
 # Adding a server requires removing one — or explicitly bumping ALLOWLIST_MAX

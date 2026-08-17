@@ -380,7 +380,7 @@ pub struct RunpodSettingsContent {
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct RunpodAvailableModel {
-    /// The endpoint name (used as the model id and display name).
+    /// The endpoint name (used as the model id and `LanguageModel::name()`).
     pub name: String,
     /// Optional display name override. Defaults to the endpoint name.
     pub display_name: Option<String>,
@@ -393,6 +393,14 @@ pub struct RunpodAvailableModel {
     /// Whether this endpoint supports vision/image input.
     #[serde(default)]
     pub supports_images: bool,
+    /// The model name to send in the OpenAI `model` field of inference
+    /// requests. vLLM expects this to match `MODEL_NAME` (or a
+    /// `--served-model-name` override). If `None`, defaults to the endpoint
+    /// `name` — which works when the endpoint is configured with
+    /// `--served-model-name` equal to the endpoint name, but may cause 400/404
+    /// from vLLM otherwise. For discovered endpoints, this is populated from
+    /// the `MODEL_NAME` env var.
+    pub served_model_name: Option<String>,
 }
 
 #[with_fallible_options]

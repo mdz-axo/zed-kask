@@ -661,7 +661,7 @@ failure mode (malformed manifest, missing manifest, registry error).
 
 **Already partially addressed:** the method warns on unreadable (L303) and
 unparsable (L317) manifests, tagged `reg.skill.lifecycle` with
-`operation = "manifest_unreadable"` / `"manifest_unparseable"`. The
+`operation = "manifest_unreadable"` / `"manifest_unparsable"`. The
 NotFound case (L296-299) legitimately returns `KnowAct` without a warn — a
 Zed-only skill has no registry layer.
 

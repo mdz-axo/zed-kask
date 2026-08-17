@@ -238,6 +238,10 @@ impl RunpodLanguageModelProvider {
             max_tokens: model.max_tokens,
             max_output_tokens: model.max_output_tokens,
             model_name: model.name.clone(),
+            served_model_name: model
+                .served_model_name
+                .clone()
+                .unwrap_or_else(|| model.name.clone()),
             state: self.state.clone(),
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
@@ -357,9 +361,13 @@ pub struct RunpodLanguageModel {
     supports_images: bool,
     max_tokens: u64,
     max_output_tokens: Option<u64>,
-    /// The endpoint name, used as the OpenAI `model` field in requests and as
-    /// the `LanguageModel::name()` (the resolution key).
+    /// The endpoint name, used as `LanguageModel::name()` (the resolution key)
+    /// and `telemetry_id()`.
     model_name: String,
+    /// The model name to send in the OpenAI `model` field. Defaults to
+    /// `model_name` when not overridden — works if the endpoint sets
+    /// `--served-model-name` to the endpoint name.
+    served_model_name: String,
     state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
@@ -489,7 +497,7 @@ impl LanguageModel for RunpodLanguageModel {
     > {
         let request = match into_open_ai(
             request,
-            &self.model_name,
+            &self.served_model_name,
             false, // supports_parallel_tool_calls
             false, // supports_prompt_cache_key
             self.max_output_tokens,
@@ -630,11 +638,14 @@ async fn fetch_runpod_endpoints(
         }
         // Derive a display name from MODEL_NAME when present, otherwise use
         // the endpoint name.
-        let display_name = endpoint
+        let model_name_env = endpoint
             .env
             .iter()
             .find(|var| var.key == "MODEL_NAME")
-            .map(|var| format!("{} ({})", endpoint.name, var.value));
+            .map(|var| var.value.clone());
+        let display_name = model_name_env
+            .as_ref()
+            .map(|mn| format!("{} ({})", endpoint.name, mn));
         models.push(AvailableModel {
             name: endpoint.name,
             display_name,
@@ -648,6 +659,10 @@ async fn fetch_runpod_endpoints(
             // reports `false` so the IPC vision-model list doesn't advertise
             // a non-vision endpoint.
             supports_images: false,
+            // vLLM expects the `model` field to match MODEL_NAME unless
+            // --served-model-name overrides it. Populate from the env var so
+            // discovered endpoints work without manual config.
+            served_model_name: model_name_env,
         });
     }
 
@@ -754,5 +769,23 @@ mod tests {
             .find(|var| var.key == "MODEL_NAME")
             .map(|var| var.value.clone());
         assert_eq!(model_name.as_deref(), Some("allenai/olmOCR-2-7B-1025"));
+
+        // Verify the discovery function populates served_model_name from MODEL_NAME.
+        let available = AvailableModel {
+            name: endpoint.name.clone(),
+            display_name: model_name
+                .as_ref()
+                .map(|mn| format!("{} ({})", endpoint.name, mn)),
+            endpoint_id: endpoint.id.clone(),
+            max_tokens: 32_768,
+            max_output_tokens: None,
+            supports_images: false,
+            served_model_name: model_name.clone(),
+        };
+        assert_eq!(
+            available.served_model_name.as_deref(),
+            Some("allenai/olmOCR-2-7B-1025"),
+            "served_model_name must be populated from MODEL_NAME env var"
+        );
     }
 }

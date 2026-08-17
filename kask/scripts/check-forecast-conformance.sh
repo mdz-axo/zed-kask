@@ -19,9 +19,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-LIB="crates/hkask-forecast/src/hkask_forecast.rs"
-CONTRACT="registry/templates/superforecasting/README.md"
-SECTION="Deterministic Primitives"
+# Overridable paths so the self-test (check-forecast-conformance-selftest.sh)
+# can point the gate at temp files with synthetic violations. Defaults to the
+# production paths.
+LIB="${LIB:-crates/hkask-forecast/src/hkask_forecast.rs}"
+CONTRACT="${CONTRACT:-registry/templates/superforecasting/README.md}"
+SECTION="${SECTION:-Deterministic Primitives}"
 
 [ -f "$LIB" ] || { echo "FAIL: $LIB not found"; exit 1; }
 [ -f "$CONTRACT" ] || { echo "FAIL: $CONTRACT not found"; exit 1; }
