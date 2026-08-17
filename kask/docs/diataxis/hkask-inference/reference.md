@@ -351,7 +351,7 @@ override; the constants are compile-time defaults, env vars take precedence.
 |----------|-------|--------------|
 | `DEFAULT_CLASSIFIER_MODEL` | `OpenRouter/z-ai/glm-5.2` | `HKASK_CLASSIFIER_MODEL` |
 | `DEFAULT_EMBEDDING_MODEL` | `DeepInfra/Qwen/Qwen3-Embedding-0.6B` | `HKASK_EMBEDDING_MODEL` |
-| `DEFAULT_OCR_MODEL` | `RunPod/allenai/olmocr-2-7b-1025` | `HKASK_OCR_MODEL` |
+| `DEFAULT_OCR_MODEL` | `RunPod/kask-ocr` | `HKASK_OCR_MODEL` |
 | `DEFAULT_FALLBACK_MODEL` | `OpenRouter/z-ai/glm-5.2` | `HKASK_DEFAULT_MODEL` |
 | `DEFAULT_TTS_MODEL` | `DeepInfra/hexgrad/Kokoro-82M` | — |
 | `DEFAULT_STT_MODEL` | `DeepInfra/whisper-large-v3` | — |

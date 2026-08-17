@@ -82,6 +82,14 @@ extend-exclude = [
     # evidence — typos flags its own example list. It is documentation of the
     # remediation, not prose to be checked.
     "kask/docs/plans/ci-typos-buf-jobs.md",
+    # Two files carry the telemetry span operation name `manifest_unparseable`
+    # / `reg.skill.manifest.unparseable` — registered reg.* identifiers, not
+    # prose. The codebase standard is `unparsable` (45:1 in prose); these two
+    # tokens are the only `unparseable` survivors and renaming them is a
+    # breaking span-name change. Excluding the files keeps the prose standard
+    # enforceable without churning the telemetry contract.
+    "kask/crates/hkask-templates/src/skill_loader.rs",
+    "kask/crates/hkask-types/src/event.rs",
 ]
 
 [default]
@@ -171,11 +179,6 @@ FALS = "FALS"
 ETO = "ETO"
 # German word in a metacognition template.
 Lokal = "Lokal"
-# Both "unparseable" and "unparsable" are attested in major dictionaries
-# (Merriam-Webster, OED). Used 77× consistently across the codebase as a
-# deliberate word choice — not a typo.
-unparseable = "unparseable"
-Unparseable = "Unparseable"
 # RunPod GraphQL API field name — upstream spells it "Celcius". We cannot
 # rename it without breaking the API query.
 Celcius = "Celcius"

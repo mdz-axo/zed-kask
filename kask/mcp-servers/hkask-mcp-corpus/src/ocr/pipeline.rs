@@ -764,7 +764,7 @@ mod tests {
             1,
             executor.clone(),
             &thresholds,
-            Some("RunPod/allenai/olmocr-2-7b-1025"),
+            Some(hkask_inference::model_constants::DEFAULT_OCR_MODEL),
             None,
         )
         .await;

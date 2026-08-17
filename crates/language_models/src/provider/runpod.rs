@@ -416,7 +416,13 @@ impl LanguageModel for RunpodLanguageModel {
     }
 
     fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.display_name.clone())
+        // Return the endpoint name (the resolution key), not the display_name.
+        // The IPC server builds `ModelListEntry.name` as `{provider_id}/{model.name()}`;
+        // if `name()` returned the display_name (e.g. "kask-ocr (OLMOCR-2)"), the
+        // prefixed name would be "runpod/kask-ocr (OLMOCR-2)" which can't match
+        // `DEFAULT_OCR_MODEL = "RunPod/kask-ocr"` in `resolve_ocr_model`. The
+        // display_name is for UI rendering; `name()` is the resolution key.
+        LanguageModelName::from(self.model_name.clone())
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
@@ -428,14 +434,18 @@ impl LanguageModel for RunpodLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        // vLLM OpenAI-compatible endpoints support tool calls when the model
-        // is tool-capable. Conservatively advertise support; the model will
-        // reject unsupported tool calls with a clear error.
-        true
+        // RunPod serverless endpoints host single-model vLLM workers (e.g.
+        // OLMOCR-2 for OCR). These are specialized models that do not support
+        // tool calls. Advertising `false` is fail-closed: the agent panel
+        // won't offer RunPod models for tool-using agent profiles, and the
+        // inference request won't include tool definitions the model can't
+        // honor. A future tool-capable endpoint can override this via a
+        // per-model config field when one is needed.
+        false
     }
 
     fn supports_streaming_tools(&self) -> bool {
-        true
+        false
     }
 
     fn supports_thinking(&self) -> bool {
