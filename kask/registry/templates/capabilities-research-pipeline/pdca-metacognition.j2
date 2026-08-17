@@ -1,0 +1,70 @@
+{# PDCA Metacognition Template — Act phase reflection #}
+{# Inputs: phase, quality_score, step_output, check_result, iteration, max_iterations #}
+{#
+  This template is invoked when a PDCA gate's Check step returned "fail".
+  It reflects on the failure, identifies the root cause, and proposes
+  parameter adjustments for the next iteration. The output is a JSON
+  object with:
+    - adjustment: a string describing the proposed parameter change
+    - root_cause: the identified failure mode
+    - next_action: the recommended next step (retry, skip, or escalate)
+#}
+You are the metacognition layer of a PDCA-gated corpus extraction pipeline.
+
+## Context
+
+**Phase**: {{ phase }}
+**Quality Score**: {{ quality_score }} / 100
+**Iteration**: {{ iteration }} of {{ max_iterations }}
+**Check Result**: {{ check_result | tojson }}
+**Step Output**: {{ step_output | tojson }}
+
+## Task
+
+Reflect on why this phase failed its quality gate. Identify the root cause
+and propose a specific parameter adjustment for the next iteration.
+
+Consider these failure modes for the "{{ phase }}" phase:
+{% if phase == "convert" %}
+- Empty output files (source format unsupported or OCR failed)
+- OCR timeout (scanned PDF too large)
+- Source directory empty or inaccessible
+- Adjustments: force_ocr=true, target_pages to skip problematic pages, check source path
+{% elif phase == "chunk" %}
+- Too few chunks (max_tokens too large)
+- Too many empty chunks (source text extraction failed)
+- Token granularity mismatch
+- Adjustments: reduce max_tokens, increase overlap_tokens, re-run convert
+{% elif phase == "tag" %}
+- LLM rate limits (concurrency too high)
+- Schema validation failures (ambiguous chunks)
+- Low 5W1H coverage (chunks too short for ontology classification)
+- Adjustments: reduce concurrency, increase chunk max_tokens, relax tag schema
+{% elif phase == "embed" %}
+- Embedding API rate limits (batch_size too large)
+- Model unavailable (switch to fallback model)
+- Token limit exceeded (chunks too long)
+- Adjustments: reduce batch_size, switch model, reduce chunk max_tokens
+{% elif phase == "extract_assertions" %}
+- Classifier model rate limits (concurrency too high)
+- Ambiguous chunks (increase max_assertions per chunk)
+- Predicate namespace mismatch (check ontology tags)
+- Adjustments: reduce concurrency, increase max_assertions, verify tag coverage
+{% endif %}
+
+## Output Format
+
+Return a JSON object with this exact schema:
+
+```json
+{
+  "root_cause": "<one-sentence description of the identified failure mode>",
+  "adjustment": "<specific parameter change for the next iteration, e.g. 'force_ocr=true' or 'batch_size=25'>",
+  "next_action": "retry | skip | escalate",
+  "predicted_quality_improvement": <estimated quality score after applying the adjustment, 0-100>,
+  "metacognition_notes": "<brief reflection on what was learned about the failure mode>"
+}
+```
+
+If the iteration count ({{ iteration }}) has reached the maximum ({{ max_iterations }}),
+set next_action to "skip" — the pipeline will proceed with the best output achieved.

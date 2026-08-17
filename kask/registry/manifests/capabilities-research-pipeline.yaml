@@ -1,0 +1,877 @@
+# Capabilities Research Pipeline — Corpus Extraction with PDCA Gates
+# ℏKask v0.35.0
+#
+# Extracts the corpus of materials in Clones/Library/Researcher using the
+# hkask-mcp-corpus MCP server. Each phase is wrapped in a PDCA gate:
+#   Plan  → lisp.eval defines expected quality criteria
+#   Do    → corpus MCP tool executes the extraction step
+#   Check → lisp.eval evaluates output against the criteria (0–100 score)
+#   Act   → select (metacognition) reflects on failure and adjusts; loop
+#          re-executes Do if quality < threshold AND iterations < max.
+#
+# The pipeline uses direct MCP tool calls (action: execute, mcp: <tool_name>)
+# for deterministic extraction steps, lisp.eval (action: compute) for quality
+# gates, and minijinja (action: select) for LLM-mediated metacognition.
+#
+# Source library: Clones/Library/Researcher (HTML essays + PDFs)
+# Output root:   corpus/ (created fresh — prior artifacts were deleted)
+
+manifest:
+  id: capabilities-research-pipeline
+  category: skill
+  name: Capabilities Research Pipeline
+  description: >
+    Corpus extraction pipeline for the Capabilities Researcher persona
+    (John Brooks). Converts source materials from Library/Researcher to
+    text, chunks them, tags with multi-dimensional ontology annotations,
+    generates ontology-anchored embeddings, extracts assertions, and
+    consolidates/deduplicates. Each phase is wrapped in a PDCA gate with
+    a lisp.eval quality check and metacognition-driven iteration.
+  functional_role: flowdef
+  version: "0.35.0"
+  editor: curator-or-human-admin
+  visibility: Public
+  enforce_inputs: true
+
+convergence:
+  # The pipeline has 5 PDCA-gated phases. Convergence is reached when all
+  # phases pass their quality gates OR hit the max-iteration ceiling.
+  # The outer loop (step 30) re-runs failed phases.
+  convergence_mode: ""
+  max_iterations: 3
+  min_iterations: 1
+  on_not_reached: escalate
+
+gas:
+  cap: 500000
+  cost_per_iteration: 5000
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 10
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: source_library
+    type: string
+    required: false
+    description: >
+      Path to the source library directory. Defaults to
+      Clones/Library/Researcher. Must be under the project root for
+      path_safety containment. If outside, copy/symlink into the project
+      first.
+  - name: output_root
+    type: string
+    required: false
+    description: >
+      Root directory for pipeline outputs (extracted text, chunks,
+      tagged JSONL, memory DB). Defaults to corpus/ under the project root.
+  - name: entity_ref_prefix
+    type: string
+    required: false
+    description: >
+      Prefix for entity references in chunk output. Defaults to
+      "corpus:researcher".
+  - name: db_passphrase
+    type: string
+    required: false
+    description: >
+      Passphrase for the SQLCipher memory DB. If not provided, the corpus
+      server uses its default.
+  - name: owner
+    type: string
+    required: false
+    description: >
+      Owner persona for stored h_mems (e.g., "john-brooks"). Defaults to
+      "john-brooks".
+  - name: max_iterations_per_gate
+    type: integer
+    required: false
+    description: >
+      Maximum PDCA iterations per gate before proceeding with the best
+      output. Default: 5.
+  - name: quality_threshold
+    type: integer
+    required: false
+    description: >
+      Minimum quality score (0–100) to pass a PDCA gate. Default: 80.
+
+ledger:
+  span_namespace: reg.skill.capabilities-research-pipeline
+
+steps:
+  # ════════════════════════════════════════════════════════════════════════
+  # Phase 0: Initialize — clear index, set up paths
+  # ════════════════════════════════════════════════════════════════════════
+  - ordinal: 0
+    action: execute
+    description: >
+      Clear the in-memory vector index to avoid cross-document contamination
+      from any prior corpus run. Deterministic.
+    mcp: corpus_clear_index
+    gas_cap: 1000
+    timeout_seconds: 30
+    on_failure:
+      action: report
+      resume: >
+        corpus_clear_index failed — the index may be in a poisoned state.
+        Proceeding; the first corpus_chunk call will rebuild it.
+    input_mapping:
+      index_id: "researcher-corpus"
+
+  # ════════════════════════════════════════════════════════════════════════
+  # Phase 1: CONVERT — Extract text from source documents
+  # PDCA: Plan (1a) → Do (1b) → Check (1c) → Act (1d) → Loop (1e)
+  # ════════════════════════════════════════════════════════════════════════
+  - ordinal: 1
+    id: convert_plan
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      PDCA Plan for Phase 1 (Convert): define expected quality criteria.
+      The convert step should produce one .txt file per source document,
+      with a minimum word count per file. Returns the plan as a JSON
+      object with thresholds.
+    gas_cap: 100
+    timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        Convert plan (lisp.eval) failed — using default thresholds
+        (min_files=10, min_avg_words=100).
+    input_mapping:
+      form: >
+        (list
+          (cons "phase" "convert")
+          (cons "min_files" 10)
+          (cons "min_avg_words_per_file" 100)
+          (cons "max_empty_files_pct" 0.10))
+      env: {}
+      max_steps: 1000
+      max_depth: 16
+
+  - ordinal: 2
+    id: convert_do
+    action: execute
+    description: >
+      PDCA Do for Phase 1 (Convert): extract text from all documents in the
+      source library directory. Uses corpus_convert with directory mode —
+      one .txt file per source, persisted to the output directory. OCR
+      fallback is automatic for scanned PDFs.
+    mcp: corpus_convert
+    gas_cap: 50000
+    timeout_seconds: 600
+    on_failure:
+      action: report
+      resume: >
+        corpus_convert failed — the source directory may be inaccessible
+        or empty. Check that source_library is under the project root and
+        contains supported formats (PDF, HTML, TXT, MD).
+    input_mapping:
+      path: "{{ source_library | default('Clones/Library/Researcher') }}"
+      output: "{{ output_root | default('corpus') }}/extracted/researcher"
+      force_ocr: false
+
+  - ordinal: 3
+    id: convert_check
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      PDCA Check for Phase 1 (Convert): evaluate the convert output against
+      the plan. Counts extracted .txt files, computes average word count,
+      and checks the percentage of empty files. Returns a quality score
+      (0–100) and a pass/fail verdict.
+    gas_cap: 100
+    timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        Convert check (lisp.eval) failed — the Lisp form could not parse
+        the convert output. Assigning quality_score=0; the Act step will
+        trigger metacognition.
+    input_mapping:
+      form: >
+        (let ((result step_2_result))
+          (let ((files (assoc "files" result))
+                (total (assoc "total" result))
+                (succeeded (assoc "succeeded" result))
+                (failed (assoc "failed" result)))
+            (let ((n-files (if files (length files) 0))
+                  (n-succeeded (if succeeded succeeded 0))
+                  (n-failed (if failed failed 0)))
+              (let ((success-rate (if (> n-succeeded 0) (/ n-succeeded (+ n-succeeded n-failed)) 0)))
+                (let ((quality-score (* success-rate 100)))
+                  (list
+                    (cons "phase" "convert")
+                    (cons "files_extracted" n-files)
+                    (cons "succeeded" n-succeeded)
+                    (cons "failed" n-failed)
+                    (cons "success_rate" success-rate)
+                    (cons "quality_score" quality-score)
+                    (cons "verdict" (if (>= quality-score 80) "pass" "fail"))))))))
+      env:
+        step_2_result: "{{ step_2_result | default({}) }}"
+      max_steps: 10000
+      max_depth: 32
+
+  - ordinal: 4
+    id: convert_act
+    action: select
+    description: >
+      PDCA Act for Phase 1 (Convert): if the check failed, reflect on what
+      went wrong (metacognition). Identify the failure mode (empty outputs,
+      OCR failures, unsupported formats) and propose adjustments for the
+      next iteration (e.g., force_ocr=true, target_pages for specific PDFs).
+      If the check passed, emit a no-op adjustment.
+    renderer: minijinja
+    template_ref: capabilities-research-pipeline/pdca-metacognition
+    gas_cap: 4096
+    timeout_seconds: 120
+    condition: "step_3_result.verdict == 'fail'"
+    input_mapping:
+      phase: "convert"
+      quality_score: "{{ step_3_result.quality_score | default(0) }}"
+      step_output: "{{ step_2_result | default({}) }}"
+      check_result: "{{ step_3_result | default({}) }}"
+      iteration: "{{ prior_iteration.convert_iteration | default(0) }}"
+      max_iterations: "{{ max_iterations_per_gate | default(5) }}"
+
+  # ════════════════════════════════════════════════════════════════════════
+  # Phase 2: CHUNK — Split extracted text into passages
+  # PDCA: Plan (2a) → Do (2b) → Check (2c) → Act (2d)
+  # ════════════════════════════════════════════════════════════════════════
+  - ordinal: 5
+    id: chunk_plan
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      PDCA Plan for Phase 2 (Chunk): define expected quality criteria.
+      The chunk step should produce a JSONL file with passages of
+      configurable token granularity. Quality criteria: minimum chunk
+      count, maximum empty-chunk percentage.
+    gas_cap: 100
+    timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        Chunk plan (lisp.eval) failed — using default thresholds.
+    input_mapping:
+      form: >
+        (list
+          (cons "phase" "chunk")
+          (cons "min_chunks" 100)
+          (cons "max_empty_pct" 0.05)
+          (cons "target_max_tokens" 512))
+      env: {}
+      max_steps: 1000
+      max_depth: 16
+
+  - ordinal: 6
+    id: chunk_do
+    action: execute
+    description: >
+      PDCA Do for Phase 2 (Chunk): chunk the extracted text directory into
+      passages. Uses corpus_chunk with input_dir mode — reads all .txt
+      files and produces a single JSONL with entity_ref, source, text,
+      word_count per line. Multi-tier chunking (coarse/medium/fine) for
+      richer retrieval granularity.
+    mcp: corpus_chunk
+    gas_cap: 30000
+    timeout_seconds: 300
+    on_failure:
+      action: report
+      resume: >
+        corpus_chunk failed — the extracted text directory may be empty
+        or inaccessible. Check that Phase 1 (convert) produced outputs.
+    input_mapping:
+      input_dir: "{{ output_root | default('corpus') }}/extracted/researcher"
+      output: "{{ output_root | default('corpus') }}/chunks/chunks.jsonl"
+      entity_ref_prefix: "{{ entity_ref_prefix | default('corpus:researcher') }}"
+      max_tokens: 512
+      overlap_tokens: 64
+      multi_tier: true
+      coarse_max_tokens: 2048
+      medium_max_tokens: 512
+      fine_max_tokens: 128
+      index: true
+
+  - ordinal: 7
+    id: chunk_check
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      PDCA Check for Phase 2 (Chunk): evaluate the chunk output. Counts
+      total chunks, checks for empty text fields, computes average word
+      count per chunk. Returns a quality score (0–100).
+    gas_cap: 100
+    timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        Chunk check (lisp.eval) failed — assigning quality_score=0.
+    input_mapping:
+      form: >
+        (let ((result step_6_result))
+          (let ((total (assoc "total" result))
+                (chunks (assoc "chunks" result)))
+            (let ((n-total (if total total 0))
+                  (n-chunks (if chunks (length chunks) 0)))
+              (let ((completeness (if (> n-total 0) (/ n-chunks n-total) 0)))
+                (let ((quality-score (* completeness 100)))
+                  (list
+                    (cons "phase" "chunk")
+                    (cons "total_chunks" n-chunks)
+                    (cons "expected_total" n-total)
+                    (cons "completeness" completeness)
+                    (cons "quality_score" quality-score)
+                    (cons "verdict" (if (and (>= quality-score 80) (>= n-chunks 100)) "pass" "fail"))))))))
+      env:
+        step_6_result: "{{ step_6_result | default({}) }}"
+      max_steps: 10000
+      max_depth: 32
+
+  - ordinal: 8
+    id: chunk_act
+    action: select
+    description: >
+      PDCA Act for Phase 2 (Chunk): if the check failed, reflect on chunk
+      quality. Common failure modes: too few chunks (increase max_tokens
+      granularity), too many empty chunks (filter or re-convert source).
+    renderer: minijinja
+    template_ref: capabilities-research-pipeline/pdca-metacognition
+    gas_cap: 4096
+    timeout_seconds: 120
+    condition: "step_7_result.verdict == 'fail'"
+    input_mapping:
+      phase: "chunk"
+      quality_score: "{{ step_7_result.quality_score | default(0) }}"
+      step_output: "{{ step_6_result | default({}) }}"
+      check_result: "{{ step_7_result | default({}) }}"
+      iteration: "{{ prior_iteration.chunk_iteration | default(0) }}"
+      max_iterations: "{{ max_iterations_per_gate | default(5) }}"
+
+  # ════════════════════════════════════════════════════════════════════════
+  # Phase 3: TAG — Ontology-annotate chunks
+  # PDCA: Plan (3a) → Do (3b) → Check (3c) → Act (3d)
+  # ════════════════════════════════════════════════════════════════════════
+  - ordinal: 9
+    id: tag_plan
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      PDCA Plan for Phase 3 (Tag): define expected quality criteria.
+      Every chunk should have at least one 5W1H dimension. Quality
+      criteria: minimum tagging coverage (percentage of chunks with
+      at least one ontology tag).
+    gas_cap: 100
+    timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        Tag plan (lisp.eval) failed — using default thresholds.
+    input_mapping:
+      form: >
+        (list
+          (cons "phase" "tag")
+          (cons "min_coverage_pct" 0.95)
+          (cons "min_tags_per_chunk" 1))
+      env: {}
+      max_steps: 1000
+      max_depth: 16
+
+  - ordinal: 10
+    id: tag_do
+    action: execute
+    description: >
+      PDCA Do for Phase 3 (Tag): tag chunks with multi-dimensional ontology
+      annotations (5W1H interrogatory dimensions, Dublin Core metadata,
+      PKO process concepts, FIBO/GOLEM domain concepts, expertise level).
+      Uses LLM-based extraction via Jinja2 template. Every chunk gets at
+      least one 5W1H dimension — no zero-salience chunks.
+    mcp: corpus_tag_chunks
+    gas_cap: 100000
+    timeout_seconds: 600
+    on_failure:
+      action: report
+      resume: >
+        corpus_tag_chunks failed — the LLM tagging service may be
+        unavailable or the chunks JSONL is empty. Check that Phase 2
+        (chunk) produced outputs.
+    input_mapping:
+      chunks_jsonl: "{{ output_root | default('corpus') }}/chunks/chunks.jsonl"
+      output: "{{ output_root | default('corpus') }}/chunks/tagged_ontology.jsonl"
+      concurrency: 4
+      dry_run: false
+
+  - ordinal: 11
+    id: tag_check
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      PDCA Check for Phase 3 (Tag): evaluate the tagging output. Counts
+      tagged chunks, checks 5W1H coverage. Returns a quality score (0–100).
+    gas_cap: 100
+    timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        Tag check (lisp.eval) failed — assigning quality_score=0.
+    input_mapping:
+      form: >
+        (let ((result step_10_result))
+          (let ((total (assoc "total" result))
+                (tagged (assoc "tagged" result))
+                (skipped (assoc "skipped" result)))
+            (let ((n-total (if total total 0))
+                  (n-tagged (if tagged tagged 0)))
+              (let ((coverage (if (> n-total 0) (/ n-tagged n-total) 0)))
+                (let ((quality-score (* coverage 100)))
+                  (list
+                    (cons "phase" "tag")
+                    (cons "total_chunks" n-total)
+                    (cons "tagged" n-tagged)
+                    (cons "coverage" coverage)
+                    (cons "quality_score" quality-score)
+                    (cons "verdict" (if (>= quality-score 95) "pass" "fail"))))))))
+      env:
+        step_10_result: "{{ step_10_result | default({}) }}"
+      max_steps: 10000
+      max_depth: 32
+
+  - ordinal: 12
+    id: tag_act
+    action: select
+    description: >
+      PDCA Act for Phase 3 (Tag): if the check failed, reflect on tagging
+      quality. Common failure modes: LLM rate limits (reduce concurrency),
+      ambiguous chunks (increase context window), schema validation
+      failures (relax or tighten tag schema).
+    renderer: minijinja
+    template_ref: capabilities-research-pipeline/pdca-metacognition
+    gas_cap: 4096
+    timeout_seconds: 120
+    condition: "step_11_result.verdict == 'fail'"
+    input_mapping:
+      phase: "tag"
+      quality_score: "{{ step_11_result.quality_score | default(0) }}"
+      step_output: "{{ step_10_result | default({}) }}"
+      check_result: "{{ step_11_result | default({}) }}"
+      iteration: "{{ prior_iteration.tag_iteration | default(0) }}"
+      max_iterations: "{{ max_iterations_per_gate | default(5) }}"
+
+  # ════════════════════════════════════════════════════════════════════════
+  # Phase 4: EMBED — Generate ontology-anchored embeddings
+  # PDCA: Plan (4a) → Do (4b) → Check (4c) → Act (4d)
+  # ════════════════════════════════════════════════════════════════════════
+  - ordinal: 13
+    id: embed_plan
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      PDCA Plan for Phase 4 (Embed): define expected quality criteria.
+      Every chunk should have an embedding vector. Quality criteria:
+      minimum embedding success rate.
+    gas_cap: 100
+    timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        Embed plan (lisp.eval) failed — using default thresholds.
+    input_mapping:
+      form: >
+        (list
+          (cons "phase" "embed")
+          (cons "min_success_rate" 0.95))
+      env: {}
+      max_steps: 1000
+      max_depth: 16
+
+  - ordinal: 14
+    id: embed_do
+    action: execute
+    description: >
+      PDCA Do for Phase 4 (Embed): generate ontology-anchored embedding
+      vectors for corpus chunks. Uses the configured embedding model via
+      the inference router. When tagged_jsonl is provided, ontology tags
+      are prepended to chunk text before embedding (per INSTRUCTOR, Su et
+      al. 2023), producing vectors that encode both content and
+      ontological classification.
+    mcp: corpus_embed
+    gas_cap: 80000
+    timeout_seconds: 600
+    on_failure:
+      action: report
+      resume: >
+        corpus_embed failed — the embedding model may be unavailable or
+        the chunks JSONL is empty. Check that Phase 2 (chunk) and Phase 3
+        (tag) produced outputs.
+    input_mapping:
+      chunks_jsonl: "{{ output_root | default('corpus') }}/chunks/chunks.jsonl"
+      tagged_jsonl: "{{ output_root | default('corpus') }}/chunks/tagged_ontology.jsonl"
+      db_path: "{{ output_root | default('corpus') }}/memory/researcher.db"
+      passphrase: "{{ db_passphrase | default('') }}"
+      batch_size: 50
+
+  - ordinal: 15
+    id: embed_check
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      PDCA Check for Phase 4 (Embed): evaluate the embedding output. Counts
+      embedded vs failed chunks, computes success rate. Returns a quality
+      score (0–100).
+    gas_cap: 100
+    timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        Embed check (lisp.eval) failed — assigning quality_score=0.
+    input_mapping:
+      form: >
+        (let ((result step_14_result))
+          (let ((total (assoc "total" result))
+                (embedded (assoc "embedded" result))
+                (failed (assoc "failed" result)))
+            (let ((n-total (if total total 0))
+                  (n-embedded (if embedded embedded 0))
+                  (n-failed (if failed failed 0)))
+              (let ((success-rate (if (> n-total 0) (/ n-embedded n-total) 0)))
+                (let ((quality-score (* success-rate 100)))
+                  (list
+                    (cons "phase" "embed")
+                    (cons "total" n-total)
+                    (cons "embedded" n-embedded)
+                    (cons "failed" n-failed)
+                    (cons "success_rate" success-rate)
+                    (cons "quality_score" quality-score)
+                    (cons "verdict" (if (>= quality-score 95) "pass" "fail"))))))))
+      env:
+        step_14_result: "{{ step_14_result | default({}) }}"
+      max_steps: 10000
+      max_depth: 32
+
+  - ordinal: 16
+    id: embed_act
+    action: select
+    description: >
+      PDCA Act for Phase 4 (Embed): if the check failed, reflect on embedding
+      quality. Common failure modes: embedding API rate limits (reduce
+      batch_size), model unavailable (switch model), token limit exceeded
+      (reduce chunk max_tokens).
+    renderer: minijinja
+    template_ref: capabilities-research-pipeline/pdca-metacognition
+    gas_cap: 4096
+    timeout_seconds: 120
+    condition: "step_15_result.verdict == 'fail'"
+    input_mapping:
+      phase: "embed"
+      quality_score: "{{ step_15_result.quality_score | default(0) }}"
+      step_output: "{{ step_14_result | default({}) }}"
+      check_result: "{{ step_15_result | default({}) }}"
+      iteration: "{{ prior_iteration.embed_iteration | default(0) }}"
+      max_iterations: "{{ max_iterations_per_gate | default(5) }}"
+
+  # ════════════════════════════════════════════════════════════════════════
+  # Phase 5: EXTRACT ASSERTIONS — Subject-predicate-object triples
+  # PDCA: Plan (5a) → Do (5b) → Check (5c) → Act (5d)
+  # ════════════════════════════════════════════════════════════════════════
+  - ordinal: 17
+    id: assert_plan
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      PDCA Plan for Phase 5 (Extract Assertions): define expected quality
+      criteria. The extraction should produce h_mems anchored to chunks.
+      Quality criteria: minimum extraction success rate, minimum h_mems
+      per chunk.
+    gas_cap: 100
+    timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        Assert plan (lisp.eval) failed — using default thresholds.
+    input_mapping:
+      form: >
+        (list
+          (cons "phase" "extract_assertions")
+          (cons "min_success_rate" 0.80)
+          (cons "min_h_mems_per_chunk" 1))
+      env: {}
+      max_steps: 1000
+      max_depth: 16
+
+  - ordinal: 18
+    id: assert_do
+    action: execute
+    description: >
+      PDCA Do for Phase 5 (Extract Assertions): extract assertions (subject,
+      predicate, object) from corpus chunks using the inference engine.
+      Uses the canonical classifier model with 3-attempt retry. Reads
+      chunks from chunks_jsonl, processes them concurrently, and stores
+      each assertion as a chunk-anchored h_mem in the memory DB. When
+      tagged_jsonl is provided, ontology tags guide predicate selection.
+    mcp: corpus_extract_assertions
+    gas_cap: 150000
+    timeout_seconds: 900
+    on_failure:
+      action: report
+      resume: >
+        corpus_extract_assertions failed — the classifier model may be
+        unavailable or the chunks JSONL is empty. Check that Phase 2
+        (chunk) produced outputs.
+    input_mapping:
+      chunks_jsonl: "{{ output_root | default('corpus') }}/chunks/chunks.jsonl"
+      tagged_jsonl: "{{ output_root | default('corpus') }}/chunks/tagged_ontology.jsonl"
+      db_path: "{{ output_root | default('corpus') }}/memory/researcher.db"
+      passphrase: "{{ db_passphrase | default('') }}"
+      max_assertions: 15
+      owner: "{{ owner | default('john-brooks') }}"
+      concurrency: 8
+
+  - ordinal: 19
+    id: assert_check
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      PDCA Check for Phase 5 (Extract Assertions): evaluate the extraction
+      output. Counts total chunks, succeeded, failed, h_mems stored.
+      Returns a quality score (0–100).
+    gas_cap: 100
+    timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        Assert check (lisp.eval) failed — assigning quality_score=0.
+    input_mapping:
+      form: >
+        (let ((result step_18_result))
+          (let ((total (assoc "total_chunks" result))
+                (succeeded (assoc "succeeded" result))
+                (failed (assoc "failed" result))
+                (h-mems (assoc "h_mems_stored" result)))
+            (let ((n-total (if total total 0))
+                  (n-succeeded (if succeeded succeeded 0))
+                  (n-failed (if failed failed 0))
+                  (n-h-mems (if h-mems h-mems 0)))
+              (let ((success-rate (if (> n-total 0) (/ n-succeeded n-total) 0)))
+                (let ((quality-score (* success-rate 100)))
+                  (list
+                    (cons "phase" "extract_assertions")
+                    (cons "total_chunks" n-total)
+                    (cons "succeeded" n-succeeded)
+                    (cons "failed" n-failed)
+                    (cons "h_mems_stored" n-h-mems)
+                    (cons "success_rate" success-rate)
+                    (cons "quality_score" quality-score)
+                    (cons "verdict" (if (>= quality-score 80) "pass" "fail"))))))))
+      env:
+        step_18_result: "{{ step_18_result | default({}) }}"
+      max_steps: 10000
+      max_depth: 32
+
+  - ordinal: 20
+    id: assert_act
+    action: select
+    description: >
+      PDCA Act for Phase 5 (Extract Assertions): if the check failed, reflect
+      on extraction quality. Common failure modes: classifier model rate
+      limits (reduce concurrency), ambiguous chunks (increase max_assertions
+      per chunk), predicate namespace mismatch (check ontology tags).
+    renderer: minijinja
+    template_ref: capabilities-research-pipeline/pdca-metacognition
+    gas_cap: 4096
+    timeout_seconds: 120
+    condition: "step_19_result.verdict == 'fail'"
+    input_mapping:
+      phase: "extract_assertions"
+      quality_score: "{{ step_19_result.quality_score | default(0) }}"
+      step_output: "{{ step_18_result | default({}) }}"
+      check_result: "{{ step_19_result | default({}) }}"
+      iteration: "{{ prior_iteration.assert_iteration | default(0) }}"
+      max_iterations: "{{ max_iterations_per_gate | default(5) }}"
+
+  # ════════════════════════════════════════════════════════════════════════
+  # Phase 6: CONSOLIDATE — Merge semantically related chunks
+  # ════════════════════════════════════════════════════════════════════════
+  - ordinal: 21
+    id: consolidate_do
+    action: execute
+    description: >
+      Consolidate semantically related chunks via LLM synthesis. Reduces
+      redundancy and merges overlapping passages. Optional phase — runs
+      only if the chunk count exceeds a threshold (1000+).
+    mcp: corpus_consolidate_chunks
+    gas_cap: 80000
+    timeout_seconds: 600
+    on_failure:
+      action: report
+      resume: >
+        corpus_consolidate_chunks failed — consolidation is optional.
+        Proceeding with unconsolidated chunks.
+    input_mapping:
+      tagged_jsonl: "{{ output_root | default('corpus') }}/chunks/tagged_ontology.jsonl"
+      output: "{{ output_root | default('corpus') }}/chunks/consolidated.jsonl"
+      db_path: "{{ output_root | default('corpus') }}/memory/researcher.db"
+      passphrase: "{{ db_passphrase | default('') }}"
+      threshold: 0.85
+      max_chunks_per_cluster: 5
+      concurrency: 4
+      dry_run: false
+
+  # ════════════════════════════════════════════════════════════════════════
+  # Phase 7: DEDUP — Remove duplicate chunks by embedding similarity
+  # ════════════════════════════════════════════════════════════════════════
+  - ordinal: 22
+    id: dedup_do
+    action: execute
+    description: >
+      Deduplicate chunks by semantic embedding similarity. Removes
+      near-identical passages that may have been introduced by overlapping
+      source documents or multi-tier chunking.
+    mcp: corpus_dedup_chunks
+    gas_cap: 50000
+    timeout_seconds: 300
+    on_failure:
+      action: report
+      resume: >
+        corpus_dedup_chunks failed — dedup is optional. Proceeding with
+        un-deduplicated chunks.
+    input_mapping:
+      tagged_jsonl: "{{ output_root | default('corpus') }}/chunks/tagged_ontology.jsonl"
+      output: "{{ output_root | default('corpus') }}/chunks/deduped.jsonl"
+      db_path: "{{ output_root | default('corpus') }}/memory/researcher.db"
+      passphrase: "{{ db_passphrase | default('') }}"
+      threshold: 0.92
+      dry_run: false
+
+  # ════════════════════════════════════════════════════════════════════════
+  # Phase 8: VERIFY — Query the corpus to verify extraction quality
+  # ════════════════════════════════════════════════════════════════════════
+  - ordinal: 23
+    id: verify_do
+    action: execute
+    description: >
+      Verify corpus extraction quality by querying the index for a
+      representative test question. If the index returns relevant results,
+      the extraction pipeline succeeded.
+    mcp: corpus_query
+    gas_cap: 5000
+    timeout_seconds: 60
+    on_failure:
+      action: report
+      resume: >
+        corpus_query failed — the index may be empty or the embedding
+        model is unavailable. The extraction may have succeeded but
+        verification is inconclusive.
+    input_mapping:
+      query: "What is a capability approach to organizational analysis?"
+      top_k: 5
+      generate_answer: false
+
+  # ════════════════════════════════════════════════════════════════════════
+  # Phase 9: AGGREGATE — Compute overall pipeline quality score
+  # ════════════════════════════════════════════════════════════════════════
+  - ordinal: 24
+    id: aggregate_check
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Aggregate per-phase quality scores into an overall pipeline quality
+      score. The overall score is the minimum of all phase scores (weakest-
+      link principle: the pipeline is only as good as its worst phase).
+      Returns the overall score, per-phase scores, and a final verdict.
+    gas_cap: 100
+    timeout_seconds: 10
+    on_failure:
+      action: report
+      resume: >
+        Aggregate check (lisp.eval) failed — cannot compute overall quality.
+        Escalating without a convergence signal.
+    input_mapping:
+      form: >
+        (let ((convert-score (assoc "quality_score" step_3_result))
+              (chunk-score (assoc "quality_score" step_7_result))
+              (tag-score (assoc "quality_score" step_11_result))
+              (embed-score (assoc "quality_score" step_15_result))
+              (assert-score (assoc "quality_score" step_19_result)))
+          (let ((scores (list convert-score chunk-score tag-score embed-score assert-score)))
+            (let ((min-score (apply min scores)))
+              (list
+                (cons "phase" "aggregate")
+                (cons "convert_score" convert-score)
+                (cons "chunk_score" chunk-score)
+                (cons "tag_score" tag-score)
+                (cons "embed_score" embed-score)
+                (cons "assert_score" assert-score)
+                (cons "overall_quality_score" min-score)
+                (cons "verdict" (if (>= min-score 80) "pass" "fail"))))))
+      env:
+        step_3_result: "{{ step_3_result | default({}) }}"
+        step_7_result: "{{ step_7_result | default({}) }}"
+        step_11_result: "{{ step_11_result | default({}) }}"
+        step_15_result: "{{ step_15_result | default({}) }}"
+        step_19_result: "{{ step_19_result | default({}) }}"
+      max_steps: 10000
+      max_depth: 32
+
+  # ════════════════════════════════════════════════════════════════════════
+  # Phase 10: REPORT — Compile final extraction summary
+  # ════════════════════════════════════════════════════════════════════════
+  - ordinal: 25
+    id: report
+    action: select
+    description: >
+      Compile the final corpus extraction report. Includes per-phase quality
+      scores, total materials extracted, chunk count, tag coverage, embedding
+      success rate, h_mems stored, and any phases that hit the iteration
+      ceiling. Emits lessons for the next pipeline run.
+    renderer: minijinja
+    template_ref: capabilities-research-pipeline/extraction-report
+    gas_cap: 4096
+    timeout_seconds: 150
+    input_mapping:
+      aggregate: "{{ step_24_result | default({}) }}"
+      convert_result: "{{ step_2_result | default({}) }}"
+      chunk_result: "{{ step_6_result | default({}) }}"
+      tag_result: "{{ step_10_result | default({}) }}"
+      embed_result: "{{ step_14_result | default({}) }}"
+      assert_result: "{{ step_18_result | default({}) }}"
+      verify_result: "{{ step_23_result | default({}) }}"
+      consolidate_result: "{{ step_21_result | default({}) }}"
+      dedup_result: "{{ step_22_result | default({}) }}"
+
+  # ════════════════════════════════════════════════════════════════════════
+  # Phase 11: LOOP — Re-enter failed phases if convergence not reached
+  # ════════════════════════════════════════════════════════════════════════
+  - ordinal: 26
+    id: convergence_loop
+    action: loop
+    description: >
+      Re-enter the pipeline if the overall quality score is below the
+      threshold. Routes the aggregate check's per-phase failure flags back
+      to the corresponding Do steps as prior_iteration, closing the PDCA
+      feedback loop. Non-convergence typically means one or more phases
+      need parameter adjustment (e.g., force_ocr, batch_size, concurrency).
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      prior_iteration:
+        convert_iteration: "{{ prior_iteration.convert_iteration | default(0) | int + 1 }}"
+        chunk_iteration: "{{ prior_iteration.chunk_iteration | default(0) | int + 1 }}"
+        tag_iteration: "{{ prior_iteration.tag_iteration | default(0) | int + 1 }}"
+        embed_iteration: "{{ prior_iteration.embed_iteration | default(0) | int + 1 }}"
+        assert_iteration: "{{ prior_iteration.assert_iteration | default(0) | int + 1 }}"
+        convert_adjustment: "{{ step_4_result.adjustment | default('') }}"
+        chunk_adjustment: "{{ step_8_result.adjustment | default('') }}"
+        tag_adjustment: "{{ step_12_result.adjustment | default('') }}"
+        embed_adjustment: "{{ step_16_result.adjustment | default('') }}"
+        assert_adjustment: "{{ step_20_result.adjustment | default('') }}"
+      convergence_signal: "{{ step_24_result.verdict | default('fail') }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 2
+  retry_backoff_seconds: 5
+  on_validation_failure: abort

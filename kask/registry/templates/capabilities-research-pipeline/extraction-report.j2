@@ -1,0 +1,72 @@
+{# Extraction Report Template — final pipeline summary #}
+{# Inputs: aggregate, convert_result, chunk_result, tag_result, embed_result, assert_result, verify_result, consolidate_result, dedup_result #}
+You are compiling the final report for a corpus extraction pipeline run.
+
+## Pipeline Results
+
+### Aggregate Quality Score
+{{ aggregate | tojson }}
+
+### Phase 1: Convert (text extraction)
+{{ convert_result | tojson }}
+
+### Phase 2: Chunk (passage splitting)
+{{ chunk_result | tojson }}
+
+### Phase 3: Tag (ontology annotation)
+{{ tag_result | tojson }}
+
+### Phase 4: Embed (vector generation)
+{{ embed_result | tojson }}
+
+### Phase 5: Extract Assertions (h_mem storage)
+{{ assert_result | tojson }}
+
+### Phase 6: Consolidate (semantic merge)
+{{ consolidate_result | tojson }}
+
+### Phase 7: Dedup (similarity removal)
+{{ dedup_result | tojson }}
+
+### Phase 8: Verify (corpus query test)
+{{ verify_result | tojson }}
+
+## Task
+
+Compile a structured extraction report as JSON with this schema:
+
+```json
+{
+  "pipeline_verdict": "pass | fail | partial",
+  "overall_quality_score": <number from aggregate>,
+  "materials_extracted": <total source documents processed>,
+  "total_chunks": <chunk count>,
+  "tagged_chunks": <tagged chunk count>,
+  "embeddings_generated": <embedded chunk count>,
+  "h_mems_stored": <assertion h_mem count>,
+  "per_phase_summary": {
+    "convert": {"quality_score": <number>, "verdict": "pass|fail"},
+    "chunk": {"quality_score": <number>, "verdict": "pass|fail"},
+    "tag": {"quality_score": <number>, "verdict": "pass|fail"},
+    "embed": {"quality_score": <number>, "verdict": "pass|fail"},
+    "extract_assertions": {"quality_score": <number>, "verdict": "pass|fail"}
+  },
+  "phases_at_iteration_ceiling": [<list of phase names that hit max iterations>],
+  "corpus_query_verification": {
+    "total_indexed": <number from verify_result>,
+    "results_returned": <number of results from verify_result>,
+    "verification_passed": <true if results_returned > 0>
+  },
+  "lessons_learned": [
+    "<one-sentence lesson about what worked or failed>"
+  ],
+  "recommended_next_steps": [
+    "<actionable next step for improving the corpus>"
+  ]
+}
+```
+
+The pipeline_verdict is "pass" if overall_quality_score >= 80, "partial" if
+>= 50, and "fail" otherwise. Extract the per-phase scores from the aggregate
+object. Count phases that may have hit the iteration ceiling by checking if
+any Act steps produced non-empty adjustments.

@@ -1,0 +1,29 @@
+# Template manifest for capabilities-research-pipeline
+# Registers the Jinja2 templates used by the flowdef.
+
+crate:
+  name: capabilities-research-pipeline
+  description: >
+    Templates for the Capabilities Research Pipeline flowdef — PDCA
+    metacognition reflection and final extraction report compilation.
+
+templates:
+  - id: capabilities-research-pipeline/pdca-metacognition
+    name: "PDCA Metacognition Reflection"
+    path: pdca-metacognition.j2
+    type: KnowAct
+    description: >
+      Reflects on a failed PDCA gate, identifies the root cause, and
+      proposes parameter adjustments for the next iteration. Invoked
+      by the Act step of each PDCA gate when the Check step returns
+      "fail".
+
+  - id: capabilities-research-pipeline/extraction-report
+    name: "Corpus Extraction Report"
+    path: extraction-report.j2
+    type: KnowAct
+    description: >
+      Compiles the final corpus extraction report from per-phase quality
+      scores, chunk counts, tag coverage, embedding success rates, and
+      h_mem storage counts. Emits lessons learned and recommended next
+      steps.
