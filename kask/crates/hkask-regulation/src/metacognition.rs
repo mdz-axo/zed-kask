@@ -215,6 +215,7 @@ impl MetacognitionLoop {
             last_snapshot: RwLock::new(None),
             alert_rx: None,
             alert_sink: None,
+            verification_store: None,
         }
     }
 
@@ -238,6 +239,24 @@ impl MetacognitionLoop {
     #[must_use = "builder methods must be chained or assigned"]
     pub fn with_alert_sink(mut self, sink: Arc<dyn AlertSink>) -> Self {
         self.alert_sink = Some(sink);
+        self
+    }
+
+    /// Wire the central verification ledger so the health snapshot includes
+    /// grounding clean/coverage rates. This lets the Curator surface
+    /// grounding health via `CuratorStatusTool` — the user can proactively
+    /// check "is grounding getting better?" not just see alerts when they
+    /// fire.
+    ///
+    /// A DB outage is NOT collapsed to `None` silently — the snapshot
+    /// grounding fields are `None` on query failure (absence ≠ 0, paper
+    /// Rule 5.3), and the failure is logged at `warn!`.
+    #[must_use = "builder methods must be chained or assigned"]
+    pub fn with_verification_store(
+        mut self,
+        store: Arc<hkask_verification::VerificationStore>,
+    ) -> Self {
+        self.verification_store = Some(store);
         self
     }
 
@@ -273,7 +292,31 @@ impl MetacognitionLoop {
             regulation_health,
             // Filled in after `compare` produces the alerts below.
             escalation_count: 0,
+            // Grounding health — populated from the verification ledger
+            // when wired. `None` on absence (no grounded delegations) or
+            // DB failure (absence ≠ 0, paper Rule 5.3).
+            grounding_clean_rate: None,
+            grounding_coverage_rate: None,
         };
+
+        // Sense grounding health from the verification ledger.
+        if let Some(ref store) = self.verification_store {
+            match store.grounding_trend(&hkask_verification::TrendScope::Global) {
+                Ok(report) => {
+                    snapshot.grounding_clean_rate = report.clean_rate();
+                    snapshot.grounding_coverage_rate = report.coverage_rate();
+                }
+                Err(error) => {
+                    // DB outage — do NOT collapse to 0.0 (the `.rules`
+                    // broken-feedback-loop trap). Log and leave as None.
+                    tracing::warn!(
+                        target: "hkask.metacognition.grounding",
+                        error = %error,
+                        "MetacognitionLoop: grounding trend query failed — snapshot grounding fields are None (not 0.0)"
+                    );
+                }
+            }
+        }
 
         // ── Compare + Compute ──────────────────────────────────────────
         let mut alerts = self.compare(&snapshot);

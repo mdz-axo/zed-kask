@@ -2763,8 +2763,194 @@ mod tests {
             grounding_msg.contains("clean rate")
                 || grounding_msg.contains("coverage")
                 || grounding_msg.contains("delta"),
+            grounding_msg.contains("clean rate")
+                || grounding_msg.contains("coverage")
+                || grounding_msg.contains("delta"),
             "grounding alert message should name the specific signal, got: {}",
             grounding_msg
+        );
+    }
+
+    // ── verify_impact grounding tests ──
+
+    /// `verify_impact` must handle grounding actions — re-sensing the
+    /// grounding trend from the verification store and classifying the
+    /// action as Accept/Stage/Block. Without this, the Fermi impact-gate
+    /// is broken for grounding (the loop fires alerts but never learns
+    /// whether they're effective).
+    #[tokio::test]
+    async fn verify_impact_handles_grounding_clean_rate_action() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let store = Arc::new(hkask_verification::VerificationStore::in_memory());
+        // Seed: 1 clean + 1 nulled → clean_rate = 0.5
+        let clean_output = serde_json::json!({
+            "deliverable_path": "/src/lib.rs",
+            "summary": "did the work",
+            "approach": "directly",
+        });
+        let clean_tools = vec![serde_json::json!({"tool": "zed/edit_file", "ok": true})];
+        let nulled_output = serde_json::json!({
+            "deliverable_path": "/src/fabricated.rs",
+            "summary": "did the work",
+            "approach": "directly",
+        });
+        store.enforce_for_agent(
+            "kanban_task_spawn",
+            "task_agent",
+            "task",
+            &clean_output,
+            &clean_tools,
+            &clean_output.to_string(),
+        );
+        store.enforce_for_agent(
+            "kanban_task_spawn",
+            "task_agent",
+            "task",
+            &nulled_output,
+            &[],
+            &nulled_output.to_string(),
+        );
+        let loop_instance = CyberneticsLoop::new(ledger).with_verification_store(store.clone());
+        // Build a grounding action with before_val = 0.5 (clean_rate at alert time).
+        let action = RegulatoryAction::with_metric(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::with_data(
+                "grounding_clean_rate_degraded",
+                RegulationData::GroundingCleanRateDegraded {
+                    clean_rate: 0.5,
+                    floor: 0.8,
+                },
+            ),
+            "grounding_clean_rate".to_string(),
+        );
+        let reports = loop_instance.verify_impact(&[action]).await;
+        // The report must exist — verify_impact did not skip the grounding action.
+        assert_eq!(
+            reports.len(),
+            1,
+            "verify_impact must produce a report for grounding actions"
+        );
+        // The after_val should be 0.5 (current clean_rate from the store).
+        // The before_val was 0.5 (from the action data). delta = 0 → not improved.
+        // This is correct — the alert didn't change anything yet (no new delegations
+        // were added between the alert and the verify_impact call).
+        assert_eq!(reports[0].metric, SignalMetric::GroundingCleanRate);
+    }
+
+    #[tokio::test]
+    async fn verify_impact_skips_grounding_when_store_not_wired() {
+        // When the verification store is not wired, verify_impact must skip
+        // grounding actions (not fabricate a value — absence ≠ 0).
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let loop_instance = CyberneticsLoop::new(ledger);
+        let action = RegulatoryAction::with_metric(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::with_data(
+                "grounding_clean_rate_degraded",
+                RegulationData::GroundingCleanRateDegraded {
+                    clean_rate: 0.5,
+                    floor: 0.8,
+                },
+            ),
+            "grounding_clean_rate".to_string(),
+        );
+        let reports = loop_instance.verify_impact(&[action]).await;
+        // No report — the grounding action was skipped because the store is not wired.
+        assert!(
+            reports.is_empty(),
+            "verify_impact must skip grounding actions when the store is not wired"
+        );
+    }
+
+    // ── route_action_as_alert grounding message tests ──
+
+    /// Verify that `route_action_as_alert` produces the correct grounding-specific
+    /// message for each `RegulationData` variant — not the generic "Variety deficit"
+    /// message. Tests each variant individually (the integration test only checks
+    /// that the message contains "clean rate" / "coverage" / "delta").
+    #[tokio::test]
+    async fn route_action_as_alert_grounding_clean_rate_message() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let sink = Arc::new(CapturingEscalationSink::new());
+        let loop_instance = CyberneticsLoop::new(ledger).with_alert_escalation_sink(
+            sink.clone() as Arc<dyn crate::algedonic::AlertEscalationSink>
+        );
+        let action = RegulatoryAction::new(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::with_data(
+                "grounding_clean_rate_degraded",
+                RegulationData::GroundingCleanRateDegraded {
+                    clean_rate: 0.5,
+                    floor: 0.8,
+                },
+            ),
+        );
+        loop_instance.route_action_as_alert(&action).await;
+        let calls = sink.calls();
+        assert_eq!(calls.len(), 1);
+        let msg = &calls[0].0;
+        assert!(
+            msg.contains("Grounding clean rate 50.0% below floor 80.0%"),
+            "expected grounding clean rate message, got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn route_action_as_alert_grounding_coverage_message() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let sink = Arc::new(CapturingEscalationSink::new());
+        let loop_instance = CyberneticsLoop::new(ledger).with_alert_escalation_sink(
+            sink.clone() as Arc<dyn crate::algedonic::AlertEscalationSink>
+        );
+        let action = RegulatoryAction::new(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::with_data(
+                "grounding_coverage_degraded",
+                RegulationData::GroundingCoverageDegraded {
+                    coverage_rate: 0.3,
+                    floor: 0.5,
+                },
+            ),
+        );
+        loop_instance.route_action_as_alert(&action).await;
+        let calls = sink.calls();
+        assert_eq!(calls.len(), 1);
+        let msg = &calls[0].0;
+        assert!(
+            msg.contains("Grounding coverage rate 30.0% below floor 50.0%"),
+            "expected grounding coverage message, got: {}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn route_action_as_alert_grounding_violation_delta_message() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let sink = Arc::new(CapturingEscalationSink::new());
+        let loop_instance = CyberneticsLoop::new(ledger).with_alert_escalation_sink(
+            sink.clone() as Arc<dyn crate::algedonic::AlertEscalationSink>
+        );
+        let action = RegulatoryAction::new(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::with_data(
+                "grounding_violation_delta_increased",
+                RegulationData::GroundingViolationDeltaIncreased { delta: 3 },
+            ),
+        );
+        loop_instance.route_action_as_alert(&action).await;
+        let calls = sink.calls();
+        assert_eq!(calls.len(), 1);
+        let msg = &calls[0].0;
+        assert!(
+            msg.contains("Grounding violation delta +3"),
+            "expected grounding violation delta message, got: {}",
+            msg
         );
     }
 }

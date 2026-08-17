@@ -297,7 +297,7 @@ ingestion:
     }
 
     /// All valid OntologyNamespace names (the domain supplements).
-    const VALID_ONTOLOGIES: &[&str] = &["fibo", "eso", "golem", "mlschema", "omc", "sumo"];
+    const VALID_ONTOLOGIES: &[&str] = &["fibo", "eso", "golem", "mlschema", "sdmx", "omc", "sumo"];
 
     proptest! {
         /// P4 (panic-freedom): `from_yaml` + `validate()` never panics on
