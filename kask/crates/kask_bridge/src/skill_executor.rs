@@ -890,9 +890,9 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         title: Option<agent::CascadeProgress>,
     ) -> Result<agent::BundleExecutionResult, String> {
         // Phase 1: Run the skill-bundler manifest to compose a BundleManifest.
-        // The bundler cascade is: goal-extract → compose → synthesize → validate
-        // → lisp.eval score → evolve → loop. The composed manifest is at
-        // step_3_result.candidates[0].composite_manifest.
+        // The bundler cascade is: goal-extract → compose → deterministic coverage
+        // recompute → synthesize → validate → lisp.eval score → evolve → loop.
+        // The composed manifest is at step_4_result.candidates[0].composite_manifest.
         let bundler_context = {
             let mut ctx = context;
             ctx.insert(
