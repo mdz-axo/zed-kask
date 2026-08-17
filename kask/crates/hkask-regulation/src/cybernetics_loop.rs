@@ -2763,11 +2763,7 @@ mod tests {
             grounding_msg.contains("clean rate")
                 || grounding_msg.contains("coverage")
                 || grounding_msg.contains("delta"),
-            grounding_msg.contains("clean rate")
-                || grounding_msg.contains("coverage")
-                || grounding_msg.contains("delta"),
-            "grounding alert message should name the specific signal, got: {}",
-            grounding_msg
+            "grounding alert message should name the specific signal, got: {grounding_msg}"
         );
     }
 

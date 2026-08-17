@@ -406,16 +406,16 @@ pub struct ListLocalAgentsRequest {
 pub struct CloneToLocalRequest {
     /// The ABW agent id to clone to the local registry. The server fetches
     /// the agent card from ABW, sets `min_provider_class: local`, writes it
-    /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_id`
+    /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_swarm_id`
     /// to the ABW agent id (marking it as synced).
     pub agent_name: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct PushToCloudRequest {
+pub struct PushToCloudSwarmRequest {
     /// The local agent id to push to ABW. The server reads the local card,
     /// creates or updates the ABW agent via `swarm_create_agent`, and sets
-    /// `cloud_id` on the local card to the ABW agent id.
+    /// `cloud_swarm_id` on the local card to the ABW agent id.
     pub agent_name: String,
 }
 
@@ -492,7 +492,7 @@ pub struct FanoutEntry {
 /// C6 — the Modify-Block / MASS prompt axis). Updates ONLY the `system_prompt`
 /// (and optionally `model`/`mcp_tools`/`skills`); preserves `agent_id`,
 /// `agent_type`, `description`, `accepts`, `produces`, `dependencies`, and the
-/// `cloud_id` sync link. The DECIDE `reconfigure_agent` action seeds
+/// `cloud_swarm_id` sync link. The DECIDE `reconfigure_agent` action seeds
 /// `swarm_generate_prompt` with the blamed agent's failure log to produce the
 /// new prompt, then this tool writes it and reloads the registry. No consent
 /// token — local mode; re-prompting is generation (an LLM producing a new
@@ -1016,7 +1016,7 @@ mod schema_tests {
     schema_clean_test!(pipeline_step_schema, PipelineStep);
     schema_clean_test!(publish_agent_request_schema, PublishAgentRequest);
     schema_clean_test!(publish_checks_request_schema, PublishChecksRequest);
-    schema_clean_test!(push_to_cloud_request_schema, PushToCloudRequest);
+    schema_clean_test!(push_to_cloud_swarm_request_schema, PushToCloudSwarmRequest);
     schema_clean_test!(
         reconfigure_local_agent_request_schema,
         ReconfigureLocalAgentRequest

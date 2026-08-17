@@ -27,7 +27,7 @@ pub(crate) enum AgentSource {
     Cloud,
     /// Exists only in the local registry. Can be pushed to cloud.
     Local,
-    /// Exists in both — synced via `cloud_id`. Changes can flow both
+    /// Exists in both — synced via `cloud_swarm_id`. Changes can flow both
     /// directions.
     Synced,
 }
@@ -63,7 +63,7 @@ pub(crate) struct AgentCard {
     #[allow(dead_code)] // retained for future detail-view enrichment
     pub(crate) updated_at: Option<String>,
     /// Where this agent card lives: cloud (ABW only), local (local registry
-    /// only), or synced (both, linked by `cloud_id`).
+    /// only), or synced (both, linked by `cloud_swarm_id`).
     pub(crate) source: AgentSource,
 }
 
@@ -124,8 +124,8 @@ pub(crate) struct LocalAgentInfo {
     #[serde(default)]
     pub(crate) description: String,
     /// The ABW agent id this local card is synced with. `None` = local-only.
-    #[serde(default)]
-    pub(crate) cloud_id: Option<String>,
+    #[serde(default, rename = "cloud_id")]
+    pub(crate) cloud_swarm_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

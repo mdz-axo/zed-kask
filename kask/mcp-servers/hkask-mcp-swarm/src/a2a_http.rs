@@ -467,7 +467,7 @@ mod tests {
                     system_prompt: Some("test".to_string()),
                     ..Default::default()
                 },
-                cloud_id: None,
+                cloud_swarm_id: None,
                 tags: vec![],
                 visibility: String::new(),
                 valence: None,

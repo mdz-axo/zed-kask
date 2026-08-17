@@ -195,7 +195,7 @@ impl SwarmPanel {
                                                                             panel_handle.upgrade()
                                                                         {
                                                                             panel.update(cx, |this, cx| {
-                                                                                this.push_to_cloud(push_name.clone(), cx);
+                                                                                this.push_to_cloud_swarm(push_name.clone(), cx);
                                                                             });
                                                                         }
                                                                     },

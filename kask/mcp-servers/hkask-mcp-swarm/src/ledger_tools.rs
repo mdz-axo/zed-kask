@@ -5,7 +5,7 @@
 //! the operator's own substrate, so `swarm_delegate_local` never refuses for
 //! lack of funds (see `LocalSwarmRuntime::delegate`). These tools are the
 //! reconciliation surface — what was spent, not what is permitted. Funding
-//! gates live on the *cloud* path, where credits buy someone else's compute.
+//! gates live on the *cloud swarm* path, where credits buy someone else's compute.
 //!
 //! Because spend is recorded without a balance precondition, a balance may be
 //! **negative**: that is the operator's unreconciled local spend, not a fault.
