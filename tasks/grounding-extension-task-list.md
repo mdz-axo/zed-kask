@@ -67,16 +67,23 @@ Tests: `tick_with_grounding_violations_produces_escalate_alert` + 3 `route_actio
 - [ ] Add a "Grounding Health" section to the briefing templates
 - [ ] Add proposed refinement actions for grounding coverage gaps and clean rate degradation
 
-## Priority 4: Expand the contract registry — more agent types
+## Priority 4: Expand the contract registry — more agent types (DONE)
 
-- [ ] Inventory agent types in `LocalAgentRegistry` — find all `agent_type` values in use
-- [ ] Read agent cards' system prompts to understand output shapes per type
-- [ ] Add `research_agent_contract()` — sources field, findings, summary
-- [ ] Add `creative_agent_contract()` — content, summary (both inferred)
-- [ ] Add `analysis_agent_contract()` — analysis, data_points, summary
-- [ ] Register contracts in `KanbanServer::run()` and `SwarmServer::run()`
-- [ ] Verify card-declared contract lookup in `enforce_for_agent()` (check before registry fallback)
-- [ ] Tests: one per new contract (with falsification test per the "check that has never been falsified is inert" rule) — 3+ tests
+### Done
+- [x] Inventoried agent types: `"task"` (kanban), `"research"` (swarm default), `"narrator"` (local agent card), `"sentiment"` (test-only)
+- [x] Added `research_agent_contract()` — `sources` field sourced from search tools; `findings`/`summary` inferred
+- [x] Added `narrator_agent_contract()` — `content`/`summary` both inferred (commissioned judgment)
+- [x] Registered both contracts in `VerificationStore::new()` (auto-registered at construction)
+- [x] Re-exported `research_agent_contract` and `narrator_agent_contract` from crate root
+- [x] 7 new tests: `why` validation (2), falsification (sources nulled without tool, sources kept with tool, findings/summary inferred, content/summary inferred, uncommissioned file_path kept not nulled)
+- [x] 1 registration test: `research_and_narrator_contracts_are_registered`
+- [x] Fixed existing tests that used `"research"` as a coverage-gap agent_type (now has a contract)
+- [x] All 139 tests in `hkask-verification` pass; 551 total across all affected crates; clippy clean
+
+### Not done (deferred)
+- [ ] `creative_agent_contract()` — low priority (no creative agents in use locally)
+- [ ] `analysis_agent_contract()` — low priority (no analysis agents in use locally)
+- [ ] Card-declared contract lookup in `enforce_for_agent()` — verify before registry fallback (may already be wired via `card_contract::validate`)
 
 ## Priority 5: Skill cascade grounding
 
