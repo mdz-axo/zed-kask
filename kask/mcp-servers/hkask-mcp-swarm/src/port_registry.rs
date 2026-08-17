@@ -16,6 +16,27 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Errors from `PortRegistry::validate_output`.
+///
+/// Replaces an earlier `Result<_, String>` return — the stringly-typed error
+/// hid structural mismatches behind a free-form message and tripped the
+/// `check-string-errors.sh` invariant gate. The variants carry the port label
+/// and the schema validator's violation paths so callers can log a structured
+/// mismatch rather than parsing a formatted string.
+#[derive(Debug, thiserror::Error)]
+pub enum PortValidationError {
+    /// The agent's output does not match the schema registered for its
+    /// `produces` port type. `violations` is the joined
+    /// `path: message` list from `hkask_verification::schema_validate`.
+    #[error("output does not match schema for port type '{port_type}': {violations}")]
+    SchemaMismatch {
+        /// The `produces` label whose schema was violated.
+        port_type: String,
+        /// Joined `path: message` pairs from the schema validator.
+        violations: String,
+    },
+}
+
 /// A registered port type with an optional JSON Schema for output validation.
 ///
 /// The schema is the paper's "one artifact, two uses": the same schema
@@ -140,7 +161,7 @@ impl PortRegistry {
         &self,
         produces: &[String],
         output: &serde_json::Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), PortValidationError> {
         for label in produces {
             if let Some(schema) = self.schema_for(label) {
                 let report = hkask_verification::schema_validate::validate(schema, output);
@@ -150,11 +171,10 @@ impl PortRegistry {
                         .iter()
                         .map(|v| format!("{}: {}", v.path, v.message))
                         .collect();
-                    return Err(format!(
-                        "output does not match schema for port type '{}': {}",
-                        label,
-                        errors.join("; ")
-                    ));
+                    return Err(PortValidationError::SchemaMismatch {
+                        port_type: label.to_string(),
+                        violations: errors.join("; "),
+                    });
                 }
                 if !report.unsupported.is_empty() {
                     tracing::warn!(
