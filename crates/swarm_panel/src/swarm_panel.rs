@@ -849,11 +849,24 @@ impl SwarmPanel {
                 Some(format!("Reconnecting to the swarm server… ({message})").into());
             self.schedule_fetch_retry(cx);
         } else if matches!(kind, Some(hkask_types::McpErrorKind::PermissionDenied)) {
-            // Auth failure is expected when no ABW key is configured — agents-only
-            // is the right degradation, and retrying is pointless until the
-            // operator configures a key. Surface the cause as a quiet status so
-            // an empty swarm list is not mistaken for "you have no swarms".
-            self.swarms_error = Some(format!("Swarm list unavailable: {message}").into());
+            // Auth failure: either no ABW key is configured, or the key is
+            // configured but rejected by ABW (401/403). The `require_auth()`
+            // path emits "no API key configured" when `ctx.credentials` has no
+            // `HKASK_ABW_API_KEY`; the `send()` path emits the ABW server's 401
+            // body when the key is present but invalid. Both surface here as
+            // `permission_denied`. Retry is pointless in both cases (a missing
+            // key won't appear without a settings change; an invalid key won't
+            // become valid). Surface the cause as a quiet status so an empty
+            // swarm list is not mistaken for "you have no swarms".
+            //
+            // The message distinguishes the two causes so the operator knows
+            // whether to configure a key or fix an existing one.
+            let status: SharedString = if message.contains("no API key") {
+                "Cloud swarms unavailable — no ABW API key configured. Local agents and swarms still work. Set HKASK_ABW_API_KEY or add it in Settings > Kask > Swarm.".into()
+            } else {
+                format!("Cloud swarms unavailable — ABW rejected the API key: {message}. Check the key in Settings > Kask > Swarm.").into()
+            };
+            self.swarms_error = Some(status);
             log::warn!("swarm-panel: swarm list unavailable (agents-only mode): {message}");
         } else {
             log::warn!("swarm-panel: could not fetch workspaces (agents-only mode): {message}");

@@ -528,13 +528,24 @@ pub async fn build_mcp_server_env(
     //    `mcp_env_with_credentials` established: an empty env var in the
     //    parent shell is not a meaningful override and would silently break
     //    inference with an untraceable "API key not configured" error).
+    //
+    //    The governed McpRuntime path (`start_server_with_env`) calls
+    //    `cmd.env_clear()` before injecting `extra_env`, so a shell-set
+    //    credential that is merely `continue`-d here is LOST — the child sees
+    //    neither the shell value nor the keychain value. The prior `continue`
+    //    was correct for the zed context-server path (which inherits the parent
+    //    env), but the governed path does not inherit. Insert the parent value
+    //    into `env` so it survives the `env_clear()`: the shell value still
+    //    wins over the keychain (it is inserted first, and the keychain branch
+    //    below only runs when the parent env did not provide a non-empty
+    //    value), and the governed child receives it.
     let cred_urls =
         filter_credentials_for_server(server_id, &crate::credential_urls_for_mcp(settings));
     for (env_var, url) in cred_urls {
-        if std::env::var(&env_var)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
+        if let Ok(value) = std::env::var(&env_var)
+            && !value.is_empty()
         {
+            env.insert(env_var, value);
             continue;
         }
         if let Ok(Some((_username, password))) =

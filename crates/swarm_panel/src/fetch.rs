@@ -64,6 +64,31 @@ impl SwarmPanel {
                     }
                     match cloud_result {
                         Ok(output) => {
+                            // The server returns tool errors as an Ok string
+                            // carrying the `{"error": ..., "kind": ...}`
+                            // envelope (see `McpToolError::to_json_string`),
+                            // not as an `Err` from `invoke_tool`. Without
+                            // this check, a `permission_denied` (e.g. ABW
+                            // returning 401 for an invalid key) would fall
+                            // through to the `AgentListResponse` parse, fail
+                            // (no `agents` field), and surface as the misleading
+                            // "Failed to parse agents: {…}". Route the envelope
+                            // through the same classification the `Err(_)` branch
+                            // uses below. Mirrors the `swarm_get_swarm` seam.
+                            if let Some(err) = parse_tool_error(&output) {
+                                if err.is_retryable() {
+                                    this.agents_error = Some(
+                                        format!("Reconnecting to the swarm server… ({})", err.message).into(),
+                                    );
+                                    this.schedule_fetch_retry(cx);
+                                } else {
+                                    this.agents_error =
+                                        Some(format!("Failed to list agents: {}", err.message).into());
+                                }
+                                this.filter_entries(cx);
+                                cx.notify();
+                                return;
+                            }
                             // The invoker wraps tool output in {"content": {...}}.
                             // Unwrap the envelope first, then deserialize the
                             // inner content into the typed response. The prior
@@ -143,6 +168,31 @@ impl SwarmPanel {
                 this.update(cx, |this, cx| {
                     match local_result {
                         Ok(output) => {
+                            // The server returns tool errors as an Ok string
+                            // carrying the `{"error": ..., "kind": ...}`
+                            // envelope. `swarm_list_local_agents` reads the
+                            // local filesystem and does not call `require_auth`,
+                            // so a `permission_denied` here would be a server
+                            // bug — but it must not be silently swallowed.
+                            // Without this check, an error envelope falls through
+                            // to the `LocalAgentListResponse` parse, fails (no
+                            // `agents` field), and the `if let Some(response)`
+                            // block is skipped — local agents silently disappear
+                            // with no error surfaced. Mirrors the `swarm_get_swarm`
+                            // and `swarm_list_agents` seams.
+                            if let Some(err) = parse_tool_error(&output) {
+                                log::warn!(
+                                    "swarm-panel: local agents fetch returned a server error: {} ({:?})",
+                                    err.message, err.kind
+                                );
+                                // Do NOT set `agents_error` — local agents are a
+                                // secondary fetch, and a server-side error here
+                                // should not clobber a successful cloud agents
+                                // list. The cloud agents fetch owns the
+                                // `agents_error` slot; this is logged only.
+                                cx.notify();
+                                return;
+                            }
                             let parsed = parse_tool_response(&output).and_then(|c| {
                                 serde_json::from_value::<LocalAgentListResponse>(c).ok()
                             });
@@ -382,6 +432,22 @@ impl SwarmPanel {
                     this.in_flight = this.in_flight.saturating_sub(1);
                     match result {
                         Ok(output) => {
+                            // The server returns tool errors as an Ok string
+                            // carrying the `{"error": ..., "kind": ...}`
+                            // envelope. `swarm_list_local_swarms` reads the
+                            // local filesystem and does not call `require_auth`,
+                            // so a `permission_denied` here would be a server
+                            // bug — but it must not be silently swallowed.
+                            // Mirrors the `swarm_get_swarm` and
+                            // `swarm_list_local_agents` seams.
+                            if let Some(err) = parse_tool_error(&output) {
+                                log::warn!(
+                                    "swarm-panel: local swarms fetch returned a server error: {} ({:?})",
+                                    err.message, err.kind
+                                );
+                                cx.notify();
+                                return;
+                            }
                             let parsed = parse_tool_response(&output).and_then(|c| {
                                 serde_json::from_value::<LocalSwarmListResponse>(c).ok()
                             });
