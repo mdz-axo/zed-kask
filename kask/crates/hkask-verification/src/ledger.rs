@@ -467,6 +467,15 @@ impl VerificationStore {
 
     /// Query all grounding records matching the scope. Returns `Err` when
     /// the store query fails (the `.rules` broken-feedback-loop trap).
+    ///
+    /// **Scaling limit:** this method loads ALL records into memory via
+    /// `query_by_entity`, then filters by scope in Rust. For a system with
+    /// thousands of delegations, every trend/violations/coverage query loads
+    /// every record. This is acceptable now (grounding queries are
+    /// infrequent — the curator calls them on gemba walks, not per-
+    /// delegation), but a future optimization should use SQL-level filtering
+    /// (e.g., `query_by_entity_attribute` or a custom query) to avoid the
+    /// full-table scan.
     fn query_records(&self, scope: &TrendScope) -> Result<Vec<GroundingRecord>, VerificationError> {
         let h_mems = self
             .store
@@ -1129,13 +1138,20 @@ mod proptests {
                 );
             }
             // The violations count must equal the number of delegations with
-            // nulled fields or narrative leaks in the trend.
-            let expected_violation_count =
-                trend.delegations_with_nulled; // every nulled delegation is a violation
+            // nulled fields. This is currently correct because narrative leaks
+            // only come from Unsourced tags (which are also in nulled_fields) —
+            // so every delegation with a narrative leak also has a nulled field.
+            // If a future change adds a narrative leak source that doesn't
+            // require a nulled field, this assertion will fail and the operator
+            // will see the invariant has changed.
+            let expected_violation_count = trend.delegations_with_nulled;
             prop_assert_eq!(
                 violations.len(),
                 expected_violation_count,
-                "violations count must equal delegations_with_nulled in the trend"
+                "violations count must equal delegations_with_nulled in the trend — \
+                 this holds because narrative leaks only come from Unsourced tags \
+                 (which are also in nulled_fields). If this fails, a new leak \
+                 source was added that doesn't require a nulled field."
             );
         }
 

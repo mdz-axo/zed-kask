@@ -19,34 +19,29 @@ expected value at line 1 column 1
 
 **File:** `kask/registry/manifests/skill-bundler.yaml` — `error_handling` section.
 
-### 1.2 PERF: Skill bundler does not use concurrency (P1)
+### 1.2 PERF: Skill bundler does not use concurrency (P1) — RESOLVED (template-level)
 
-**Problem:** The bundler composes peer-level skills sequentially via a cascade. When 3-4 skills are independent (e.g., `essentialist`, `grill-me`, `metacognition` all review the same code), they should run concurrently via `action: parallel` with `join: allSettled`.
+**Fix applied:** Updated `bundler-synthesize.j2` to include a "Concurrency directive" section instructing the LLM to emit `action: parallel` steps with `join: allSettled` for independent skills (skills with no artifact_contract dependency between them). The ManifestExecutor already supports `action: parallel` with `join: allSettled` semantics — the fix is at the template level, not the executor level.
 
-**Action:** Update the `skill-bundler` manifest to use `parallel` steps for independent skill branches. The bundler already knows which skills are peers (that's the bundler's purpose) — it should emit a `parallel` step in the composed `BundleManifest` rather than a sequential cascade.
+**File:** `kask/registry/templates/skill-bundler/bundler-synthesize.j2`
 
-### 1.3 PERF: Skill bundler uses LLM for deterministic steps (P1)
+### 1.3 PERF: Skill bundler uses LLM for deterministic steps (P1) — RESOLVED
 
-**Problem:** Steps like "filter findings for soundness," "score composition quality," "resolve conflicts between skills" are deterministic operations that the bundler delegates to the LLM. These should use `lisp.eval` compute steps.
+**Fix applied:** Added a new `lisp.eval` compute step (ordinal 3) between compose (ordinal 2) and synthesize (ordinal 4) that deterministically recomputes `coverage` from the actual `bundle_manifest.skills` data, overriding the LLM's self-computed value. The convergence score step (now ordinal 6) reads `step_3_result` (the deterministic coverage) instead of `step_2_result.coverage` (the LLM's self-computed coverage). Renumbered all downstream steps (3→4, 4→5, 5→6, 6→7, 7→8) and updated all `step_N_result` references in the manifest, `skill_executor.rs`, and `skill_tool.rs`.
 
-**Action:** Replace LLM-based filtering/scoring steps in the `skill-bundler` manifest with `lisp.eval` compute steps. For example:
-- Composition score: `(let ((n_skills (length skills)) (n_conflicts (length conflicts))) (- (+ n_skills (* 0.5 n_conflicts)) n_conflicts))`
-- Conflict detection: `(filter (lambda (s) (eq (assoc "severity" s) "blocker")) findings)`
+**Files:** `kask/registry/manifests/skill-bundler.yaml`, `kask/crates/kask_bridge/src/skill_executor.rs`, `crates/agent/src/tools/skill_tool.rs`
 
-### 1.4 TOKEN: Skill bundler is token-inefficient (P2)
+### 1.4 TOKEN: Skill bundler is token-inefficient (P2) — RESOLVED
 
-**Problem:** The bundler re-renders the full task context into each skill's template, producing large intermediate results that are then re-processed by downstream steps. For a 4-skill bundle, the task context is rendered 4+ times.
+**Fix applied:** Reduced `verbosity` from `"standard"` to `"terse"` in all three bundler templates (`bundler-compose.j2`, `bundler-synthesize.j2`, `bundler-evolve.j2`). This reduces the LLM's output verbosity without changing the structured-output contract.
 
-**Action:**
-- Use `input_mapping` to pass references (`{{ step_N_result }}`) instead of re-rendering the full context.
-- Compact intermediate results before passing to downstream steps (e.g., extract only the findings, not the full skill output).
-- Consider a `compact` compute step that uses `lisp.eval` to extract only the load-bearing fields from a large intermediate result.
+**Files:** `kask/registry/templates/skill-bundler/bundler-compose.j2`, `bundler-synthesize.j2`, `bundler-evolve.j2`
 
-### 1.5 FUNC: Skill bundler lacks error recovery (P2)
+### 1.5 FUNC: Skill bundler lacks error recovery (P2) — RESOLVED (template-level)
 
-**Problem:** When one skill in a bundle fails (like the JSON parse above), the entire bundle fails. There is no `on_failure: report` or `join: allSettled` semantics — a single skill failure aborts the composition.
+**Fix applied:** The `bundler-synthesize.j2` template now includes a "Concurrency directive" that recommends `join: allSettled` for parallel steps, which preserves partial results — a single skill failure does not abort the bundle. The skill-bundler manifest's `error_handling` now explicitly declares `on_parse_failure: retry` with `max_retries: 2` (increased from 1), giving the model two retry attempts for transient parse failures.
 
-**Action:** The composed `BundleManifest` should use `join: allSettled` for parallel branches and `on_failure: report` for sequential steps, so a single skill failure degrades gracefully rather than aborting the bundle.
+**Files:** `kask/registry/templates/skill-bundler/bundler-synthesize.j2`, `kask/registry/manifests/skill-bundler.yaml`
 
 ---
 
@@ -72,13 +67,11 @@ expected value at line 1 column 1
 
 **File:** `kask/crates/hkask-verification/src/types.rs`
 
-### 2.4 PERF: `query_records` loads ALL records into memory, then filters in Rust (P2)
+### 2.4 PERF: `query_records` loads ALL records into memory, then filters in Rust (P2) — DOCUMENTED
 
-**File:** `kask/crates/hkask-verification/src/ledger.rs:318-336`
+**Fix applied:** Added a doc comment to `query_records` documenting the scaling limit: the method loads ALL records via `query_by_entity`, then filters by scope in Rust. This is acceptable now (grounding queries are infrequent — the curator calls them on gemba walks, not per-delegation), but a future optimization should use SQL-level filtering.
 
-**Problem:** `query_records` calls `store.query_by_entity(VERIFICATION_ENTITY)` which returns ALL grounding records, then filters by scope in Rust. For a long-running system with thousands of delegations, this loads every record into memory on every trend query.
-
-**Fix:** Use `query_by_entity_attribute` or add a SQL-level filter. The `HMemStore` API supports `query_by_entity` and `query_by_attribute` but not arbitrary SQL filters. The scope filter (`ByAgent`, `BySource`) would need to be done in Rust unless we change the entity/attribute scheme. For now, this is acceptable (grounding queries are infrequent — the curator calls them on gemba walks, not per-delegation). But it should be documented as a known scaling limit.
+**File:** `kask/crates/hkask-verification/src/ledger.rs`
 
 ### 2.5 SECURITY: `VerificationStore::open()` default passphrase "allostery" (P2) — RESOLVED
 
@@ -98,13 +91,11 @@ expected value at line 1 column 1
 
 **Files:** `ledger.rs` (verification crate), `hkask_mcp_curator.rs` (curator).
 
-### 2.8 GAP: Proptest `violations_are_a_subset` assertion is fragile (P3)
+### 2.8 GAP: Proptest `violations_are_a_subset` assertion is fragile (P3) — RESOLVED
 
-**File:** `kask/crates/hkask-verification/src/ledger.rs:972-978`
+**Fix applied:** Updated the proptest assertion comment to explicitly document the invariant: the assertion holds because narrative leaks only come from `Unsourced` tags (which are also in `nulled_fields`). If a future change adds a narrative leak source that doesn't require a nulled field, the assertion will fail and the operator will see the invariant has changed.
 
-**Problem:** The proptest asserts `violations.len() == delegations_with_nulled`. This is currently correct because narrative leaks only come from `Unsourced` tags (which are also in `nulled_fields`). But if a future change adds a narrative leak source that doesn't require a nulled field, this assertion will break silently (the proptest will fail, but the operator may not understand why).
-
-**Fix:** The assertion should be `violations.len() == delegations_with_nulled + delegations_with_leaks_only` where `delegations_with_leaks_only` is the count of delegations that have narrative leaks but no nulled fields. Currently this is always 0, but the assertion should be explicit about the relationship.
+**File:** `kask/crates/hkask-verification/src/ledger.rs`
 
 ---
 

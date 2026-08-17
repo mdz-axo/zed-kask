@@ -514,7 +514,7 @@ pub trait SkillManifestExecutor: Send + Sync {
     /// Returns the composed bundle manifest (as JSON), the cascade's final
     /// output text, and the deterministic composition score (for the post-run
     /// UI's save/refine/discard affordance). The `bundle_manifest` JSON is
-    /// the `step_3_result.candidates[0].composite_manifest` extracted from
+    /// the `step_4_result.candidates[0].composite_manifest` extracted from
     /// the skill-bundler cascade context.
     async fn compose_and_execute_bundle(
         &self,
@@ -533,7 +533,7 @@ pub trait SkillManifestExecutor: Send + Sync {
     ///
     /// `bundle_manifest` is the JSON value carried by
     /// `BundleExecutionResult.bundle_manifest` (the
-    /// `step_3_result.candidates[0].composite_manifest` from the bundler
+    /// `step_4_result.candidates[0].composite_manifest` from the bundler
     /// cascade). Returns the bundle's `id` on success.
     async fn save_bundle(&self, bundle_manifest: serde_json::Value) -> Result<String, String>;
 
@@ -609,12 +609,12 @@ pub trait SkillManifestExecutor: Send + Sync {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BundleExecutionResult {
     /// The composed `BundleManifest` as JSON (the
-    /// `step_3_result.candidates[0].composite_manifest` from the
+    /// `step_4_result.candidates[0].composite_manifest` from the
     /// skill-bundler cascade). Persisted by the `Save` action.
     pub bundle_manifest: serde_json::Value,
     /// The final output text from executing the composed bundle's cascade.
     pub output: String,
-    /// The deterministic composition score from `lisp.eval` (ordinal 5).
+    /// The deterministic composition score from `lisp.eval` (ordinal 6).
     /// Lower = better. Used by `Refine` to decide if re-composition is
     /// worthwhile, and by the UI to display the score breakdown.
     pub composition_score: Option<f64>,
