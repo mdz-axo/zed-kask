@@ -359,10 +359,18 @@ mod tests {
         let err = registry
             .validate_output(&["task_result".to_string()], &output)
             .unwrap_err();
-        assert!(
-            err.contains("deliverable_path"),
-            "error must name the missing field"
-        );
+        match err {
+            PortValidationError::SchemaMismatch {
+                port_type,
+                violations,
+            } => {
+                assert_eq!(port_type, "task_result");
+                assert!(
+                    violations.contains("deliverable_path"),
+                    "error must name the missing field: {violations}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -383,7 +391,14 @@ mod tests {
         let err = registry
             .validate_output(&["task_result".to_string()], &output)
             .unwrap_err();
-        assert!(err.contains("task_result"), "error must name the port type");
+        match err {
+            PortValidationError::SchemaMismatch {
+                port_type,
+                violations: _,
+            } => {
+                assert_eq!(port_type, "task_result", "error must name the port type");
+            }
+        }
     }
 
     #[test]
