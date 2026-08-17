@@ -83,8 +83,10 @@ pub enum RegulationData {
     /// the measured coverage_rate and the floor that was violated.
     GroundingCoverageDegraded { coverage_rate: f64, floor: f64 },
     /// Grounding violation delta is positive — new nulled fields appeared
-    /// since the last sense tick. Carries the delta, the current
-    /// `delegations_with_nulled` count, and the previous count.
+    /// since the last sense tick. Carries the delta. The current/previous
+    /// nulled counts are not carried on the signal (the sensor emits only
+    /// the scalar delta); the fields are present for structural completeness
+    /// and default to 0.
     GroundingViolationDeltaIncreased {
         delta: i64,
         current_nulled: u64,

@@ -638,6 +638,10 @@ pub struct GroundingSensor {
     /// Previous tick's `delegations_with_nulled` count, for delta computation.
     /// `None` on the first tick (no baseline — delta is 0, not "no change").
     previous_nulled: parking_lot::Mutex<Option<u64>>,
+    /// Set when the last `read_trend()` returned `None` (DB outage). On the
+    /// next successful read, the violation-delta sensor suppresses the delta
+    /// (it spans the outage, not a single tick) and resets this flag.
+    was_outage: parking_lot::Mutex<bool>,
 }
 
 /// Which grounding metric this sensor instance produces.
@@ -662,6 +666,7 @@ impl GroundingSensor {
             clean_rate_floor,
             coverage_rate_floor,
             previous_nulled: parking_lot::Mutex::new(None),
+            was_outage: parking_lot::Mutex::new(false),
         }
     }
 
@@ -745,8 +750,26 @@ impl GroundingSensor {
         report: &hkask_verification::GroundingTrendReport,
     ) -> Option<Signal> {
         let current_nulled = report.delegations_with_nulled as u64;
+        // Check and reset the outage flag before touching previous_nulled.
+        let was_outage = {
+            let mut guard = self.was_outage.lock();
+            let was = *guard;
+            *guard = false;
+            was
+        };
         let mut previous_guard = self.previous_nulled.lock();
         let previous = previous_guard.replace(current_nulled);
+        // After a DB outage, the delta spans the entire outage — not a single
+        // tick. Suppress it (update the baseline, return no signal) so the
+        // operator isn't misdirected by a giant spike attributed to one tick.
+        if was_outage {
+            tracing::warn!(
+                target: "hkask.sensor.grounding",
+                "GroundingSensor: suppressing violation delta after DB outage recovery \
+                 (delta spans the outage, not a single tick)"
+            );
+            return None;
+        }
         let delta = match previous {
             Some(prev) => current_nulled as i64 - prev as i64,
             None => 0, // First tick — no baseline (absence ≠ "no change").
@@ -767,7 +790,13 @@ impl GroundingSensor {
 #[async_trait::async_trait]
 impl Sensor for GroundingSensor {
     async fn sense(&self) -> Option<Signal> {
-        let report = self.read_trend()?;
+        let report = match self.read_trend() {
+            Some(r) => r,
+            None => {
+                *self.was_outage.lock() = true;
+                return None;
+            }
+        };
         match self.metric {
             GroundingSensorMetric::CleanRate => self.sense_clean_rate(&report),
             GroundingSensorMetric::CoverageRate => self.sense_coverage_rate(&report),
@@ -961,12 +990,10 @@ mod grounding_sensor_tests {
     /// Generate a random delegation action: a mix of clean, nulled, and
     /// coverage-gap delegations. Used by the proptests to verify the sensor
     /// never panics and produces consistent signals.
-    fn arb_delegation_sequence() -> impl proptest::prelude::Strategy<Value = Vec<(usize, usize, usize)>> {
+    fn arb_delegation_sequence()
+    -> impl proptest::prelude::Strategy<Value = Vec<(usize, usize, usize)>> {
         // (n_clean_task, n_nulled_task, n_research_coverage_gap)
-        proptest::prelude::prop::collection::vec(
-            (0usize..20, 0usize..20, 0usize..20),
-            1..5,
-        )
+        proptest::prelude::prop::collection::vec((0usize..20, 0usize..20, 0usize..20), 1..5)
     }
 
     /// Build a store from a delegation sequence: each element is
@@ -989,20 +1016,32 @@ mod grounding_sensor_tests {
         for &(n_clean, n_nulled, n_gap) in sequence {
             for _ in 0..n_clean {
                 store.enforce_for_agent(
-                    "kanban_task_spawn", "task_agent", "task",
-                    &clean_output, &clean_tools, &clean_output.to_string(),
+                    "kanban_task_spawn",
+                    "task_agent",
+                    "task",
+                    &clean_output,
+                    &clean_tools,
+                    &clean_output.to_string(),
                 );
             }
             for _ in 0..n_nulled {
                 store.enforce_for_agent(
-                    "kanban_task_spawn", "task_agent", "task",
-                    &nulled_output, &[], &nulled_output.to_string(),
+                    "kanban_task_spawn",
+                    "task_agent",
+                    "task",
+                    &nulled_output,
+                    &[],
+                    &nulled_output.to_string(),
                 );
             }
             for _ in 0..n_gap {
                 store.enforce_for_agent(
-                    "swarm_delegate_local", "researcher", "research",
-                    &gap_output, &[], &gap_output.to_string(),
+                    "swarm_delegate_local",
+                    "researcher",
+                    "research",
+                    &gap_output,
+                    &[],
+                    &gap_output.to_string(),
                 );
             }
         }

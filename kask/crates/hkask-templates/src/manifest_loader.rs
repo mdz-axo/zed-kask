@@ -335,49 +335,6 @@ pub fn resolve_manifest(
         }
     }
 
-    // Try as a relative path from CWD
-    let cwd_path = std::path::PathBuf::from(reference);
-    if cwd_path.exists() {
-        match load_manifest_from_file(&cwd_path) {
-            Ok(manifest) => {
-                if !manifest.is_skill() {
-                    tracing::warn!(
-                        target: "hkask.manifest_loader",
-                        path = reference,
-                        id = %manifest.id,
-                        category = ?manifest.category,
-                        "resolve_manifest: '{reference}' is not a skill (category={:?}); \
-                         only `skill` manifests may bind as agent process_manifests",
-                        manifest.category
-                    );
-                    return Err(ManifestResolveError::NotASkill {
-                        reference: reference.to_owned(),
-                        category: format!("{:?}", manifest.category),
-                    });
-                }
-                info!(
-                    target: "hkask.manifest_loader",
-                    id = %manifest.id,
-                    path = reference,
-                    "Loaded manifest from relative path"
-                );
-                return Ok(manifest);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "hkask.manifest_loader",
-                    path = reference,
-                    error = %e,
-                    "Failed to load manifest from relative path"
-                );
-                return Err(ManifestResolveError::LoadFailed {
-                    reference: reference.to_owned(),
-                    source: e,
-                });
-            }
-        }
-    }
-
     tracing::warn!(
         target: "hkask.manifest_loader",
         reference = reference,

@@ -174,6 +174,8 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.cybernetics",
     "reg.cybernetics.backpressure",
     "reg.cybernetics.substitution",
+    // Grounding alert signals from the cybernetics loop violation-delta sensor.
+    "reg.grounding",
     // ── Email (curator interaction — outbound reg.email.sent + inbound reg.email.received) ──
     "reg.email",
     "reg.email.sent",

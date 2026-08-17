@@ -110,6 +110,13 @@ pub struct CyberneticsLoop {
     simulator: MovingAverageExtrapolator,
     /// Runtime-calibratable thresholds — updated by `SetPointCalibrator` background task.
     calibrated_thresholds: Arc<RwLock<CalibratedThresholds>>,
+    /// Central verification ledger — when wired, `verify_impact` re-senses
+    /// grounding metrics to close the feedback loop for grounding alerts.
+    /// `None` when `with_verification_store` was not called (grounding
+    /// sensors are still registered, but impact verification skips
+    /// grounding actions — the loop fires alerts but doesn't learn whether
+    /// they're effective).
+    verification_store: Option<Arc<hkask_verification::VerificationStore>>,
 }
 
 impl CyberneticsLoop {
@@ -184,6 +191,7 @@ impl CyberneticsLoop {
             budget_persistence_path: None,
             stagnation_detector,
             sensor_registry,
+            verification_store: None,
 
             tool_stats: None,
             strategy_evaluator: Mutex::new(StrategyEvaluator::new()),
@@ -921,6 +929,12 @@ impl CyberneticsLoop {
                     "Failed to persist directive acknowledgment"
                 );
             }
+        } else {
+            tracing::warn!(
+                target: "reg.cybernetics",
+                directive_type,
+                "Directive acknowledgment dropped — no event_sink configured"
+            );
         }
     }
 }
@@ -1197,9 +1211,7 @@ impl CyberneticsLoop {
             // "Variety deficit 0 exceeds threshold 0" — meaningless.
             match &action.parameters.data {
                 RegulationData::GroundingCleanRateDegraded {
-                    clean_rate,
-                    floor,
-                    ..
+                    clean_rate, floor, ..
                 } => format!(
                     "Grounding clean rate {:.1}% below floor {:.1}% — grounded delegations have nulled fields (fabricated values no tool could source). Use curator_grounding_violations to investigate.",
                     clean_rate * 100.0,
@@ -2604,8 +2616,7 @@ mod tests {
     async fn with_verification_store_registers_three_sensors() {
         let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
         let store = Arc::new(hkask_verification::VerificationStore::in_memory());
-        let loop_instance =
-            CyberneticsLoop::new(ledger).with_verification_store(store);
+        let loop_instance = CyberneticsLoop::new(ledger).with_verification_store(store);
         // The sensor registry should have the 3 default sensors (energy,
         // variety, test coverage, mutation score) + 3 grounding sensors = 7.
         // But the default build registers 4 (energy, variety, test coverage,
@@ -2649,20 +2660,30 @@ mod tests {
             "approach": "directly",
         });
         store.enforce_for_agent(
-            "kanban_task_spawn", "task_agent", "task",
-            &clean_output, &clean_tools, &clean_output.to_string(),
+            "kanban_task_spawn",
+            "task_agent",
+            "task",
+            &clean_output,
+            &clean_tools,
+            &clean_output.to_string(),
         );
         for _ in 0..2 {
             store.enforce_for_agent(
-                "kanban_task_spawn", "task_agent", "task",
-                &nulled_output, &[], &nulled_output.to_string(),
+                "kanban_task_spawn",
+                "task_agent",
+                "task",
+                &nulled_output,
+                &[],
+                &nulled_output.to_string(),
             );
         }
         // Wire the loop with the verification store and a capturing escalation sink.
         let escalation_sink = Arc::new(CapturingEscalationSink::new());
         let loop_instance = CyberneticsLoop::new(ledger)
             .with_verification_store(store)
-            .with_alert_escalation_sink(escalation_sink.clone() as Arc<dyn crate::algedonic::AlertEscalationSink>);
+            .with_alert_escalation_sink(
+                escalation_sink.clone() as Arc<dyn crate::algedonic::AlertEscalationSink>
+            );
         // Run one tick.
         loop_instance.tick().await;
         // The escalation sink should have received at least one alert
@@ -2683,7 +2704,9 @@ mod tests {
         // "Variety deficit 0 exceeds threshold 0").
         let grounding_msg = &grounding_alerts[0].0;
         assert!(
-            grounding_msg.contains("clean rate") || grounding_msg.contains("coverage") || grounding_msg.contains("delta"),
+            grounding_msg.contains("clean rate")
+                || grounding_msg.contains("coverage")
+                || grounding_msg.contains("delta"),
             "grounding alert message should name the specific signal, got: {}",
             grounding_msg
         );

@@ -653,12 +653,18 @@ mod tests {
             grounding_coverage_rate_floor: 2.0,
             ..Default::default()
         };
-        assert!(sp.validate().is_err(), "coverage rate floor > 1.0 must fail");
+        assert!(
+            sp.validate().is_err(),
+            "coverage rate floor > 1.0 must fail"
+        );
         let sp = SetPoints {
             grounding_coverage_rate_floor: -0.5,
             ..Default::default()
         };
-        assert!(sp.validate().is_err(), "coverage rate floor < 0.0 must fail");
+        assert!(
+            sp.validate().is_err(),
+            "coverage rate floor < 0.0 must fail"
+        );
     }
 
     #[test]

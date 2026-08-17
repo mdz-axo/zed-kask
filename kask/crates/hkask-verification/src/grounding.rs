@@ -359,7 +359,11 @@ fn truncate_preview(value: &serde_json::Value) -> String {
         other => other.to_string(),
     };
     if s.len() > 200 {
-        format!("{}...", &s[..200])
+        let mut end = 200;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &s[..end])
     } else {
         s
     }

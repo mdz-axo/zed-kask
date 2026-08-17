@@ -99,7 +99,11 @@ impl SwarmServer {
             // agent_type), writes a `GroundingRecord` to the cross-tool
             // ledger, and returns the result + cleaned JSON. Previously
             // `swarm_delegate_local` did not run grounding — the coverage
-            // gap was invisible. Now every delegating tool enforces.
+            // gap was invisible. `swarm_delegate_local` and
+            // `swarm_execute_plan_local` now enforce; `swarm_fanout_local`
+            // and `swarm_pipeline_local` delegate directly without
+            // grounding enforcement (see the struct-level doc for
+            // coverage details).
             let outcome = self.verification_store.enforce_and_stamp(
                 "swarm_delegate_local",
                 &req.agent_name,
@@ -523,6 +527,15 @@ impl SwarmServer {
                     visibility: String::new(),
                     valence: None,
                 };
+                // Rung 1 (Presence) + Rung 2 (Typing): validate before
+                // writing (same invariant as `swarm_create_local_agent`).
+                crate::local_registry::validate_presence(&local_card)
+                    .map_err(map_local_swarm_error)?;
+                crate::local_registry::validate_typing(
+                    &local_card,
+                    self.local_registry.port_registry(),
+                )
+                .map_err(map_local_swarm_error)?;
                 // Write the card to the local registry directory.
                 let dir = self.client.config().local_agents_dir.clone();
                 let card_dir = std::path::Path::new(&dir).join(&safe_agent_id);
@@ -822,6 +835,14 @@ impl SwarmServer {
                         "refusing to write a path outside the local agents dir".to_string(),
                     ));
                 }
+                // Rung 1 (Presence) + Rung 2 (Typing): validate before
+                // writing. Without this, a card that fails the typing rung
+                // is written to disk but silently skipped on the next
+                // `load()` — the tool reports success but the card is
+                // invisible to every other tool (broken feedback loop).
+                crate::local_registry::validate_presence(&card).map_err(map_local_swarm_error)?;
+                crate::local_registry::validate_typing(&card, self.local_registry.port_registry())
+                    .map_err(map_local_swarm_error)?;
                 std::fs::create_dir_all(&card_dir)
                     .map_err(|e| hkask_mcp_server::map_io_error(e, "failed to create agent dir"))?;
                 let card_path = card_dir.join("agent_card.json");

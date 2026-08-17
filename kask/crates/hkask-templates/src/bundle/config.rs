@@ -48,7 +48,7 @@ pub const RJOULE_TO_GAS: u64 = 250_000;
 /// (grasp current, establish target, predict, experiment); the executor
 /// computes the gap and Brier score deterministically.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ConvergenceConfig {
     // ── Kata target-condition fields ──
     /// Semantic label for the target artifact the skill converges on (Dublin
@@ -266,7 +266,7 @@ fn default_weight() -> f64 {
 /// Gas (compute cycle budget) configuration — caps local loop iterations.
 /// Gas is cheap compute. 250,000 gas cycles ≈ 1 rJoule of inference.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct BundleGasConfig {
     /// Total compute gas budget for the cascade.
     pub cap: u32,
@@ -289,7 +289,7 @@ impl Default for BundleGasConfig {
 /// rJoule (inference energy budget) configuration — caps LLM inference cost.
 /// Cost per token is set by the inference provider/model, not the manifest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct RjouleConfig {
     /// Total rJoule budget for inference in this cascade — a **USD budget**
     /// (`1 rJoule = $1 USD`).
@@ -414,7 +414,7 @@ fn default_on_parse_failure() -> String {
 
 /// Regulation monitoring configuration. Loaded from manifest YAML, spans handled by `McpRuntime::invoke` / `ToolGovernance` (in `hkask-mcp`) at runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct BundleLedgerConfig {
     pub emit_spans: bool,
     pub span_namespace: String,

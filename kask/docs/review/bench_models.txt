@@ -1,0 +1,8 @@
+# Classifier-model eval pool — >50B-parameter, catalog-disclosed (see
+# kask/docs/review/classifier-model-review.md §1). Pure model ids, one per line.
+deepseek/deepseek-v4-flash
+deepseek/deepseek-v4-flash-0731
+inclusionai/ling-2.6-1t
+inclusionai/ling-2.6-flash
+tencent/hy3
+mistralai/mistral-small-2603

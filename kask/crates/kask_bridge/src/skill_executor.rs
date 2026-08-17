@@ -131,7 +131,6 @@ pub struct BridgeManifestExecutor {
     /// Optional RegulationLedger for recording skill feedback spans
     /// (`reg.skill.<id>.outcome`). When `None`, skill outcomes are not
     /// persisted to the regulation system (tests, pre-login).
-    #[allow(dead_code)] // wired in a later commit — field is set but not yet read
     regulation_ledger: Option<Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>>,
 }
 
@@ -1488,7 +1487,7 @@ mod tests {
             "visibility": "Public",
             "steps": [{"ordinal": 1, "action": "know", "description": "step 1"}],
             "skills": [{"id": "skill-a", "polarity": "proposer", "manifest_ref": "skill-a", "content_hash": "abc"}],
-            "convergence": {"max_iterations": 3, "threshold": 0.1, "field": "score"},
+            "convergence": {"max_iterations": 3, "threshold": 0.1, "convergence_field": "score"},
             "gas": {"cap": 10000}
         });
 
@@ -1590,7 +1589,7 @@ mod tests {
                 "manifest_ref": "skill-a",
                 "content_hash": "abc123"
             }],
-            "convergence": {"max_iterations": 3, "threshold": 0.1, "field": "score"},
+            "convergence": {"max_iterations": 3, "threshold": 0.1, "convergence_field": "score"},
             "gas": {"cap": 10000}
         });
 
