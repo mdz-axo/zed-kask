@@ -272,6 +272,86 @@ pub fn narrator_agent_contract() -> GroundingContract {
     }
 }
 
+/// The built-in grounding contract for skill cascades (`agent_type: "skill"`).
+///
+/// Skill cascades produce LLM-synthesized text from Jinja2 templates. Some
+/// skills (e.g. `diataxis-diagram`, `sankey-flow`) produce structured output
+/// (Mermaid diagrams) with potentially fabricated content. Skills that
+/// produce code may claim to have written files.
+///
+/// The contract checks for fabricated file paths in the output:
+/// - `deliverable_path`: a file path the skill claims to have written. Must
+///   be sourced from an `edit_file`, `write_file`, or `terminal` tool call
+///   that succeeded (same pattern as `task_agent_contract`).
+/// - `test_verdict`: a pass/fail claim about tests. Must be sourced from a
+///   `terminal` tool call that succeeded.
+/// - `diagram`: the main diagram or structured output. Inferred — the skill
+///   was commissioned to produce this.
+/// - `summary`: a prose summary. Inferred.
+/// - `recommendations`: a list of recommendations. Inferred.
+///
+/// Any other field is UncommissionedInference (kept, marked) unless it
+/// matches a tool's output (Sourced) or has no possible source (Unsourced,
+/// nulled). This catches skills that fabricate file paths in their output
+/// without actually calling a file-writing tool.
+pub fn skill_agent_contract() -> GroundingContract {
+    let mut field_sources = HashMap::new();
+    field_sources.insert(
+        "deliverable_path".to_string(),
+        FieldSpec {
+            sources: vec![
+                "zed/edit_file".to_string(),
+                "zed/write_file".to_string(),
+                "zed/terminal".to_string(),
+            ],
+            why: "A file path the skill claims to have written. Must be sourced \
+                  from a file-writing tool that succeeded. Skills that produce \
+                  code may fabricate file paths without actually writing files."
+                .to_string(),
+        },
+    );
+    field_sources.insert(
+        "test_verdict".to_string(),
+        FieldSpec {
+            sources: vec!["zed/terminal".to_string()],
+            why: "A pass/fail claim about tests. Must be sourced from a terminal \
+                  tool call that succeeded (the test runner)."
+                .to_string(),
+        },
+    );
+    field_sources.insert(
+        "diagram".to_string(),
+        FieldSpec {
+            sources: vec![],
+            why: "The main diagram or structured output. Commissioned by the \
+                  skill's template — the skill was asked to produce this."
+                .to_string(),
+        },
+    );
+    field_sources.insert(
+        "summary".to_string(),
+        FieldSpec {
+            sources: vec![],
+            why: "A prose summary of the skill output. Commissioned by the \
+                  skill's template — the skill was asked to summarize."
+                .to_string(),
+        },
+    );
+    field_sources.insert(
+        "recommendations".to_string(),
+        FieldSpec {
+            sources: vec![],
+            why: "A list of recommendations produced by the skill. Commissioned \
+                  by the skill's template — the skill was asked to propose actions."
+                .to_string(),
+        },
+    );
+    GroundingContract {
+        agent_type: "skill".to_string(),
+        field_sources,
+    }
+}
+
 /// Extract the set of tools that successfully returned data from the
 /// `tool_calls` summary on a `LocalDelegateResult`.
 ///

@@ -11201,6 +11201,7 @@ dependencies = [
  "hkask-test-harness",
  "hkask-tool-invoker",
  "hkask-types",
+ "hkask-verification",
  "http_client",
  "language_model",
  "language_model_core",

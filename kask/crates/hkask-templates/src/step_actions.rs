@@ -575,6 +575,7 @@ impl StepMachine {
         // check rejects field borrows held across `.await` under `tokio::spawn`).
         let timeout_dur = effective_timeout(node.timeout_seconds);
         let tools = infra.tools.clone();
+        let mcp_ref_for_tracking = mcp_ref.clone();
         let tool_result =
             match tokio::time::timeout(timeout_dur, invoke_tool(tools, mcp_ref, input)).await {
                 Ok(inner) => inner,
@@ -600,7 +601,7 @@ impl StepMachine {
         // `{"tool": "server/tool_name", "ok": true/false}`. Recorded
         // before the `?` so both success and failure paths are captured.
         self.tool_calls.push(serde_json::json!({
-            "tool": mcp_ref,
+            "tool": mcp_ref_for_tracking,
             "ok": tool_result.is_ok(),
         }));
 
