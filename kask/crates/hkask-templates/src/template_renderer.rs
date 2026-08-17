@@ -93,11 +93,24 @@ impl TemplateRenderer {
         &self.base_path
     }
 
-    /// Load a template by ref from the filesystem. Disk is the single
-    /// runtime source — there is no compiled-in fallback. The shipped
-    /// templates are seeded to disk at startup by the registry seeding path,
-    /// so a fresh install has the full template tree on disk and edits take
-    /// effect immediately without recompilation.
+    /// Load a template by ref from the filesystem. Disk is the **primary**
+    /// runtime source — the shipped templates are seeded to disk at startup by
+    /// the registry seeding path, so a fresh install has the full template tree
+    /// on disk and edits take effect immediately without recompilation.
+    ///
+    /// **Fallback to embedded seeds:** when a template_ref is not found on disk
+    /// (e.g. the registry seeding path was skipped, or the disk tree is
+    /// partial), callers fall back to the compiled-in embedded seeds via
+    /// `crate::template_file` / `crate::template_yaml_file`. This fallback
+    /// exists in three production call sites:
+    /// - `step_actions.rs::execute_flowdef` (sub-manifest resolution)
+    /// - `step_actions.rs::execute_parallel` (parallel branch sub-manifest)
+    /// - `hkask-mcp-kata-kanban/kata/execution.rs::render_template`
+    /// The fallback is intentional (the embedded seeds are the bootstrapping
+    /// source for a fresh install before the seeding path runs), but it means
+    /// a disk edit to a shipped template may be shadowed by the embedded seed
+    /// if the disk file is missing. Operators relying on disk edits should
+    /// verify the file exists at the expected path.
     ///
     /// Resolution order on disk: ref as-is → ref `.j2` → ref `.yaml`.
     ///

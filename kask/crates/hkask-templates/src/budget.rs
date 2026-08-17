@@ -94,8 +94,27 @@ pub struct BudgetTracker {
 
 impl BudgetTracker {
     /// Construct from manifest config blocks.
+    ///
+    /// When `rjoule.cap == 0`, the cascade runs with no inference budget —
+    /// `rjoule_enabled` is false and `check_exhausted` never trips on rJoule.
+    /// This is the backward-compat default, but it's also the "forgot to
+    /// configure" failure mode: the operator cannot distinguish
+    /// "intentionally unlimited" from "forgot to set the cap" without this
+    /// warn. `manifest_compliance.rs` catches the "uses inference but cap == 0"
+    /// case at validation time; this warn catches the runtime case where the
+    /// manifest was loaded without the compliance gate (e.g. a hand-edited
+    /// manifest, or a manifest that uses inference indirectly via a sub-cascade).
     pub fn new(gas: &BundleGasConfig, rjoule: &RjouleConfig) -> Self {
         let rjoule_cap = rjoule.cap as f64;
+        if rjoule.cap == 0 {
+            tracing::warn!(
+                target: "hkask.templates",
+                "BudgetTracker::new: rjoule.cap == 0 — cascade runs with no inference \
+                 budget. If this cascade uses `select` steps, inference calls will \
+                 not be charged. Set rjoule.cap > 0 to enable charging, or set \
+                 hard_limit = false to make the absence explicit."
+            );
+        }
         Self {
             gas_used: Arc::new(AtomicU64::new(0)),
             gas_cap: gas.cap as u64,
