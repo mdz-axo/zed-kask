@@ -146,6 +146,7 @@ acp_thread.workspace = true
 action_log = { workspace = true, optional = true }
 agent_servers = { workspace = true, optional = true }
 gpui_tokio.workspace = true
+gpui_util.workspace = true
 tokio.workspace = true
 rayon.workspace = true
 

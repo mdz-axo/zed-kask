@@ -2007,6 +2007,7 @@ fn main() {
                     let panel_tool_invoker = std::sync::Arc::new(PanelToolInvoker {
                         tool_port: tool_port_for_deferred.clone(),
                         executor: cx.background_executor().clone(),
+                        tokio_handle: gpui_tokio::Tokio::handle(cx),
                     });
                     swarm_panel::set_tool_invoker(Some(panel_tool_invoker));
                     log::info!(
@@ -2374,8 +2375,6 @@ fn main() {
         // - MCP server launch, email sink, collab server
         {
             let app_state_for_model_task = app_state.clone();
-            let verification_store_for_model_task =
-                verification_store_for_model_task;
             cx.spawn(async move |cx| {
                 // Resolve registry paths (same logic as the deferred task,
                 // but doesn't need the user). Disk is the single runtime
@@ -3453,9 +3452,25 @@ fn sync_kask_mcp_runtime_servers(
 // adapter construction.
 
 /// Adapter implementing `swarm_panel::ToolInvoker` via the `McpRuntime`.
+///
+/// The dispatch future MUST run on the Tokio runtime, not on the GPUI
+/// background executor. `McpRuntime::invoke` → `call_tool_inner` →
+/// `try_reconnect` → `start_server_with_env` spawns a child process via
+/// `TokioChildProcess`, which requires a Tokio reactor context. The GPUI
+/// background executor has no reactor, so a transport-loss-triggered
+/// reconnect from a panel tool call would panic with "there is no reactor
+/// running" (the `.rules` "background_spawn of tokio-dependent futures"
+/// trap). The initial server start avoids this by going through
+/// `gpui_tokio::Tokio::spawn`; this adapter must do the same for the
+/// on-demand reconnect path. The `ToolPort::invoke` future is `Send`
+/// (`ToolFuture` is `Pin<Box<dyn Future + Send>>`), so `handle.spawn` is
+/// sound. The `JoinHandle` is bridged back to a GPUI `Task` via the
+/// background executor (the same pattern `gpui_tokio::Tokio::spawn` uses
+/// internally).
 struct PanelToolInvoker {
     tool_port: std::sync::Arc<hkask_mcp::McpRuntime>,
     executor: gpui::BackgroundExecutor,
+    tokio_handle: tokio::runtime::Handle,
 }
 
 /// `SkillExecPort` backed by the agent crate's global manifest executor.
@@ -3592,8 +3607,12 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
         let tool_port = self.tool_port.clone();
         let server = server.to_string();
         let tool = tool.to_string();
+        let tokio_handle = self.tokio_handle.clone();
 
-        self.executor.spawn(async move {
+        // Spawn on the Tokio runtime so `try_reconnect` → `start_server_with_env`
+        // → `TokioChildProcess::spawn` finds a reactor. See the struct doc for
+        // why this cannot be `self.executor.spawn`.
+        let join_handle = tokio_handle.spawn(async move {
             // Preserve the retry-safety classification across the seam. A blanket
             // `e.to_string()` erased it and forced panels to treat a restarting
             // MCP server as a permanent failure. `Interrupted` is kept separate
@@ -3618,6 +3637,27 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
                     }
                 })?;
             Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()))
+        });
+        // Bridge the Tokio `JoinHandle` to a GPUI `Task` so the panel can
+        // `.await` it on the GPUI side. Cancelling the GPUI task aborts the
+        // underlying Tokio task (mirrors `gpui_tokio::Tokio::spawn`).
+        let abort_handle = join_handle.abort_handle();
+        let cancel = gpui_util::defer(move || {
+            abort_handle.abort();
+        });
+        self.executor.spawn(async move {
+            let result = join_handle.await;
+            drop(cancel);
+            result.map_err(|join_error| {
+                use swarm_panel::InvokeError;
+                if join_error.is_cancelled() {
+                    InvokeError::Interrupted("panel tool call cancelled".to_string())
+                } else {
+                    // `is_panic()` is true for panics; `tokio::task::JoinError`
+                    // stringifies to the panic message in that case.
+                    InvokeError::Failed(format!("tokio task failed: {join_error}"))
+                }
+            })?
         })
     }
 }
