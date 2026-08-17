@@ -26042,6 +26042,7 @@ dependencies = [
  "hkask-mcp",
  "hkask-regulation",
  "hkask-types",
+ "hkask-verification",
  "http_client",
  "image",
  "image_viewer",

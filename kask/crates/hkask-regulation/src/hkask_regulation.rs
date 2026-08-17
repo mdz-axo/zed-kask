@@ -43,13 +43,14 @@ pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
 pub use runtime::StoredSkillSpan;
 pub use sensor_provider::{
-    EnergyBudgetSensor, Sensor, SensorBus, SensorRegistry, ToolReliabilitySensor, VarietySensor,
+    EnergyBudgetSensor, GroundingSensor, GroundingSensorMetric, Sensor, SensorBus, SensorRegistry,
+    ToolReliabilitySensor, VarietySensor,
 };
 pub use set_points::{
     DEFAULT_COMMUNICATION_BACKPRESSURE_THRESHOLD, DEFAULT_CONNECTOR_LATENCY_MAX_SECS,
-    DEFAULT_ENERGY_MIN_REMAINING_RATIO, DEFAULT_ERROR_RATE_MAX, DEFAULT_MAX_ITERATIONS,
-    DEFAULT_VARIETY_MAX_DEFICIT, InferenceThrottleMode, SetPoints, SetPointsConfig,
-    load_set_points,
+    DEFAULT_ENERGY_MIN_REMAINING_RATIO, DEFAULT_ERROR_RATE_MAX, DEFAULT_GROUNDING_CLEAN_RATE_FLOOR,
+    DEFAULT_GROUNDING_COVERAGE_RATE_FLOOR, DEFAULT_MAX_ITERATIONS, DEFAULT_VARIETY_MAX_DEFICIT,
+    InferenceThrottleMode, SetPoints, SetPointsConfig, load_set_points,
 };
 pub use skill_span::SkillFeedbackSpan;
 pub use tool_stats::ToolStats;

@@ -46,7 +46,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/mcp-servers/portfolio.md`](reference/mcp-servers/portfolio.md) | Portfolio server — transaction-ledger portfolio store.                 |
 | [`reference/mcp-servers/prediction-markets.md`](reference/mcp-servers/prediction-markets.md) | Prediction-markets server — Polymarket/Kalshi calibration.        |
 | [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline.                           |
-| [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md)         | Swarm server — Agent Bestiary World agent swarms, Xaman Ek curator, local substrate (53 tools). |
+| [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md)         | Swarm server — Agent Bestiary World agent swarms, Xaman Ek curator, local substrate (52 tools). |
 | [`reference/skills/README.md`](reference/skills/README.md)                 | Skill, template, and bundle registry — 64 skills, 1:1 with SKILL.md dirs. |
 | [`reference/kask-settings.md`](reference/kask-settings.md)                 | Kask settings reference.                                                 |
 | [`reference/ontology-bridge.md`](reference/ontology-bridge.md)             | Ontology bridge API reference.                                           |
@@ -76,7 +76,7 @@ Build plans for major features. All plans in the active tree have `status: Activ
 
 | Document                                                             | Description                                                                                                                                                                             |
 | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server (53 tools: 27 ABW + 26 local) + `swarm_panel`. v1 feature-complete; v2 local mode implemented. |
+| [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server (52 tools: 27 ABW + 25 local) + `swarm_panel`. v1 feature-complete; v2 local mode implemented. |
 | [`plans/cybernetic-swarm-plan.md`](plans/cybernetic-swarm-plan.md)   | Cybernetic Swarm Plan — the `swarm-intelligence` skill design + implementation record. 10-step PDCA cascade, C0–C8 cybernetic components, steering modes, `delegate_results` contract.  |
 | [`plans/evolving-test-harness.md`](plans/evolving-test-harness.md)   | Evolving test harness plan — trace filesystem, oracle taxonomy, property-based testing infrastructure.                                                                                  |
 

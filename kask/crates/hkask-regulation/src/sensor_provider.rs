@@ -603,3 +603,195 @@ impl Sensor for MutationScoreSensor {
         Some(LoopId::Cybernetics)
     }
 }
+
+/// Senses grounding health from the central verification ledger.
+///
+/// Data source: `VerificationStore::grounding_trend(Global)`. Produces up to
+/// three signals per tick:
+///
+/// - `GroundingCleanRate` — fraction of grounded delegations with zero
+///   nulled fields. Encoded as -1.0 when no grounded delegations exist
+///   (absence ≠ 0 — paper Rule 5.3). Signal fires only when the clean rate
+///   drops below the floor.
+/// - `GroundingCoverageRate` — fraction of delegations with a grounding
+///   contract. Encoded as -1.0 when no delegations exist. Signal fires only
+///   when the coverage rate drops below the floor.
+/// - `GroundingViolationDelta` — change in `delegations_with_nulled` since
+///   the last tick. Encoded as 0.0 on the first tick (no baseline). Signal
+///   fires only when the delta is positive (new violations).
+///
+/// A DB outage is NOT collapsed to "no signal" — the sensor logs a `warn!`
+/// naming the failure and returns no signals for that tick. The operator
+/// can distinguish "not configured" from "configured but broken" (the
+/// `.rules` broken-feedback-loop trap).
+///
+/// The sensor produces at most one signal per metric per tick (the
+/// `Sensor::sense` trait returns `Option<Signal>`, so the loop registers
+/// three `GroundingSensor` instances — one per metric — via
+/// `GroundingSensor::for_metric`). This follows the existing pattern where
+/// each `Sensor` implementation produces a single `SignalMetric`.
+pub struct GroundingSensor {
+    verification_store: Arc<hkask_verification::VerificationStore>,
+    metric: GroundingSensorMetric,
+    clean_rate_floor: f64,
+    coverage_rate_floor: f64,
+    /// Previous tick's `delegations_with_nulled` count, for delta computation.
+    /// `None` on the first tick (no baseline — delta is 0, not "no change").
+    previous_nulled: parking_lot::Mutex<Option<u64>>,
+}
+
+/// Which grounding metric this sensor instance produces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroundingSensorMetric {
+    CleanRate,
+    CoverageRate,
+    ViolationDelta,
+}
+
+impl GroundingSensor {
+    /// expect: "The system provides pluggable metric sensing for the cybernetic regulation loop"
+    pub fn new(
+        verification_store: Arc<hkask_verification::VerificationStore>,
+        metric: GroundingSensorMetric,
+        clean_rate_floor: f64,
+        coverage_rate_floor: f64,
+    ) -> Self {
+        Self {
+            verification_store,
+            metric,
+            clean_rate_floor,
+            coverage_rate_floor,
+            previous_nulled: parking_lot::Mutex::new(None),
+        }
+    }
+
+    /// Read the trend once and dispatch to the metric-specific handler.
+    /// Shared by all three metric variants so the DB query happens once per
+    /// tick per sensor instance (each instance is its own sensor).
+    fn read_trend(&self) -> Option<hkask_verification::GroundingTrendReport> {
+        match self
+            .verification_store
+            .grounding_trend(&hkask_verification::TrendScope::Global)
+        {
+            Ok(report) => Some(report),
+            Err(error) => {
+                // DB outage — do NOT collapse to "no signal" (the `.rules`
+                // broken-feedback-loop trap). Log the failure classification
+                // so the operator can distinguish "not configured" from
+                // "configured but broken."
+                tracing::warn!(
+                    target: "hkask.sensor.grounding",
+                    error = %error,
+                    metric = ?self.metric,
+                    "GroundingSensor: verification ledger query failed — returning no signal (not 'no deviation'). Check that the verification DB is accessible and HKASK_VERIFICATION_PASSPHRASE is set."
+                );
+                None
+            }
+        }
+    }
+
+    /// Produce the `GroundingCleanRate` signal. Fires only when the clean
+    /// rate drops below the floor. Encoded as -1.0 when no grounded
+    /// delegations exist (absence ≠ 0).
+    fn sense_clean_rate(
+        &self,
+        report: &hkask_verification::GroundingTrendReport,
+    ) -> Option<Signal> {
+        let clean_rate = report.clean_rate().unwrap_or(-1.0);
+        // Only fire when below the floor AND we have measured delegations.
+        // A -1.0 (no grounded delegations) is absence, not a violation —
+        // the coverage sensor handles the "no contract" case.
+        if clean_rate < 0.0 {
+            return None;
+        }
+        if clean_rate >= self.clean_rate_floor {
+            return None;
+        }
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::GroundingCleanRate,
+            clean_rate,
+            self.clean_rate_floor,
+        ))
+    }
+
+    /// Produce the `GroundingCoverageRate` signal. Fires only when the
+    /// coverage rate drops below the floor. Encoded as -1.0 when no
+    /// delegations exist.
+    fn sense_coverage_rate(
+        &self,
+        report: &hkask_verification::GroundingTrendReport,
+    ) -> Option<Signal> {
+        let coverage_rate = report.coverage_rate().unwrap_or(-1.0);
+        if coverage_rate < 0.0 {
+            return None;
+        }
+        if coverage_rate >= self.coverage_rate_floor {
+            return None;
+        }
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::GroundingCoverageRate,
+            coverage_rate,
+            self.coverage_rate_floor,
+        ))
+    }
+
+    /// Produce the `GroundingViolationDelta` signal. Fires only when the
+    /// delta is positive (new nulled fields since the last tick). Zero on
+    /// the first tick (no baseline — absence ≠ "no change").
+    fn sense_violation_delta(
+        &self,
+        report: &hkask_verification::GroundingTrendReport,
+    ) -> Option<Signal> {
+        let current_nulled = report.delegations_with_nulled as u64;
+        let mut previous_guard = self.previous_nulled.lock();
+        let previous = previous_guard.replace(current_nulled);
+        let delta = match previous {
+            Some(prev) => current_nulled as i64 - prev as i64,
+            None => 0, // First tick — no baseline (absence ≠ "no change").
+        };
+        // Only fire when the delta is positive (new violations).
+        if delta <= 0 {
+            return None;
+        }
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::GroundingViolationDelta,
+            delta as f64,
+            0.0, // Set-point is 0 — any positive delta is a deviation.
+        ))
+    }
+}
+
+#[async_trait::async_trait]
+impl Sensor for GroundingSensor {
+    async fn sense(&self) -> Option<Signal> {
+        let report = self.read_trend()?;
+        match self.metric {
+            GroundingSensorMetric::CleanRate => self.sense_clean_rate(&report),
+            GroundingSensorMetric::CoverageRate => self.sense_coverage_rate(&report),
+            GroundingSensorMetric::ViolationDelta => self.sense_violation_delta(&report),
+        }
+    }
+
+    fn metric(&self) -> Option<SignalMetric> {
+        Some(match self.metric {
+            GroundingSensorMetric::CleanRate => SignalMetric::GroundingCleanRate,
+            GroundingSensorMetric::CoverageRate => SignalMetric::GroundingCoverageRate,
+            GroundingSensorMetric::ViolationDelta => SignalMetric::GroundingViolationDelta,
+        })
+    }
+
+    fn name(&self) -> &str {
+        match self.metric {
+            GroundingSensorMetric::CleanRate => "GroundingSensor(CleanRate)",
+            GroundingSensorMetric::CoverageRate => "GroundingSensor(CoverageRate)",
+            GroundingSensorMetric::ViolationDelta => "GroundingSensor(ViolationDelta)",
+        }
+    }
+
+    fn loop_id(&self) -> Option<LoopId> {
+        Some(LoopId::Cybernetics)
+    }
+}

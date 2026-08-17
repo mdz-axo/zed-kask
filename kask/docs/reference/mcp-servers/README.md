@@ -80,7 +80,7 @@ Every MCP server MUST include **tool-behavior contract tests** that invoke tools
 - [Corpus MCP Server Reference](corpus.md) — 27 tools: corpus gathering, document processing, QA generation, style replicas
 - [Prediction Markets MCP Server Reference](prediction-markets.md) — 32 tools: Polymarket/Kalshi base rates, calibration loop, CMP curves
 - [Scenario Forecasting Pipeline Diagram](scenarios.md) — 21 tools, scenarios tool flow (DIAG-RF-005 inline)
-- [Swarm MCP Server Reference](swarm.md) — 53 tools (27 ABW + 26 local), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
+- [Swarm MCP Server Reference](swarm.md) — 52 tools (27 ABW + 25 local), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
 - [Superforecasting: Layered Model](../../explanation/forecasting-and-scenarios.md) — three-layer architecture
 - [MCP Tool Dispatch Sequence](../../diataxis/hkask-mcp-server/explanation.md) — MCP dispatch and governance (replaces the deleted `explanation/architecture-patterns.md`)
 - CodeGraph Adversarial Review — adversarial code review of the codegraph server (17 findings, all fixed)
