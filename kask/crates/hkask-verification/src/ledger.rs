@@ -614,8 +614,8 @@ mod tests {
         let output = json!({"summary": "done"});
         let (result, cleaned) = store.enforce_for_agent(
             "swarm_delegate_local",
-            "custom_agent",
-            "unknown_agent_type", // no contract for this type
+            "sentiment_agent",
+            "sentiment", // no contract for "sentiment"
             &output,
             &[],
             "done",
@@ -676,11 +676,11 @@ mod tests {
             &tool_calls,
             "done",
         );
-        // Swarm delegation — coverage gap (research agent_type, no contract).
+        // Swarm delegation — coverage gap (unknown agent_type, no contract).
         store.enforce_for_agent(
             "swarm_delegate_local",
-            "researcher",
-            "research",
+            "custom_agent",
+            "unknown_agent_type",
             &json!({"summary": "research done"}),
             &[],
             "research done",
@@ -740,17 +740,17 @@ mod tests {
     #[test]
     fn register_contract_extends_coverage() {
         let store = test_store();
-        // No contract for "research" initially.
+        // No contract for "custom_analysis" initially.
         let (result, _) = store.enforce_for_agent(
             "swarm_delegate_local",
-            "researcher",
-            "research",
+            "analyst",
+            "custom_analysis",
             &json!({"summary": "done"}),
             &[],
             "done",
         );
         assert!(result.is_none());
-        // Register a contract for "research".
+        // Register a contract for "custom_analysis".
         let mut field_sources = std::collections::HashMap::new();
         field_sources.insert(
             "summary".to_string(),
@@ -760,14 +760,14 @@ mod tests {
             },
         );
         store.register_contract(GroundingContract {
-            agent_type: "research".to_string(),
+            agent_type: "custom_analysis".to_string(),
             field_sources,
         });
         // Now grounding runs.
         let (result, _) = store.enforce_for_agent(
             "swarm_delegate_local",
-            "researcher",
-            "research",
+            "analyst",
+            "custom_analysis",
             &json!({"summary": "done"}),
             &[],
             "done",
