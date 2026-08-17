@@ -2375,10 +2375,12 @@ convergence:
                 if ok {
                     Ok(serde_json::json!({"result": "ok"}))
                 } else {
-                    Err(hkask_capability::ToolPortError::NotFound(hkask_types::NotFound {
-                        entity_type: "tool".to_string(),
-                        id: tool.to_string(),
-                    }))
+                    Err(hkask_capability::ToolPortError::NotFound(
+                        hkask_types::NotFound {
+                            entity_type: "tool".to_string(),
+                            id: tool.to_string(),
+                        },
+                    ))
                 }
             })
         }
@@ -2772,31 +2774,51 @@ error_handling:
 
     // ── Tool-call recording on the timeout path (Phase 5 grounding) ───
 
-    /// A `ToolPort` whose `invoke` hangs forever. Used to drive the
-    /// `execute` step's timeout path so the test can verify the tool call
-    /// is still recorded in `CascadeOutcome.tool_calls` (paper: absence ≠
-    /// verdict — a timed-out call that supplied no data is an Unsourced
-    /// field, not an absent one).
+    /// A `ToolPort` whose `invoke` hangs forever for tools whose name
+    /// starts with `test/hang`. Other tools (e.g. `curator_report_skill_use_issue`,
+    /// used by the `on_failure: report` path) return a quick `NotFound` error so
+    /// the cascade's `on_failure` handling completes and the `CascadeOutcome`
+    /// (with `tool_calls`) is returned. Used to drive the `execute` step's
+    /// timeout path so the test can verify the tool call is still recorded in
+    /// `CascadeOutcome.tool_calls` (paper: absence ≠ verdict — a timed-out
+    /// call that supplied no data is an Unsourced field, not an absent one).
     struct HangingToolPort;
 
     impl hkask_capability::ToolPort for HangingToolPort {
         fn invoke<'a>(
             &'a self,
             _server: &'a str,
-            _tool: &'a str,
+            tool: &'a str,
             _args: serde_json::Value,
             _agent: hkask_types::WebID,
         ) -> hkask_capability::ToolFuture<
             'a,
             std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
         > {
-            Box::pin(async {
-                // Never resolves — the timeout fires first.
-                std::future::pending::<
-                    std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
-                >()
-                .await
-            })
+            // `tool` is the full mcp ref (e.g. "test/hang") passed as
+            // `tool_name` to `invoke_tool`.
+            if tool.starts_with("test/hang") {
+                Box::pin(async {
+                    // Never resolves — the timeout fires first.
+                    std::future::pending::<
+                        std::result::Result<serde_json::Value, hkask_capability::ToolPortError>,
+                    >()
+                    .await
+                })
+            } else {
+                // Non-hang tools (e.g. curator_report_skill_use_issue) return
+                // a quick NotFound so the `on_failure: report` path completes
+                // and the cascade exits with `Effect::Exit(Escalated)`,
+                // preserving `tool_calls` in the returned `CascadeOutcome`.
+                Box::pin(async {
+                    Err(hkask_capability::ToolPortError::NotFound(
+                        hkask_types::NotFound {
+                            entity_type: "tool".to_string(),
+                            id: tool.to_string(),
+                        },
+                    ))
+                })
+            }
         }
         fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
             Box::pin(async { Vec::new() })
@@ -2806,9 +2828,9 @@ error_handling:
             tool_name: &'a str,
         ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
             // Return a ToolInfo so `invoke_tool` proceeds to `invoke` (which
-            // hangs). Without this, `invoke_tool` returns NotFound before the
-            // timeout path is reached, and the test would not exercise the
-            // timeout recording branch.
+            // hangs for test/hang*). Without this, `invoke_tool` returns
+            // NotFound before the timeout path is reached, and the test would
+            // not exercise the timeout recording branch.
             Box::pin(async move {
                 Some(hkask_capability::ToolInfo {
                     name: tool_name.to_string(),
@@ -3118,10 +3140,12 @@ convergence:
                     if ok {
                         Ok(serde_json::json!({"result": "ok"}))
                     } else {
-                        Err(hkask_capability::ToolPortError::NotFound(hkask_types::NotFound {
-                            entity_type: "tool".to_string(),
-                            id: tool.to_string(),
-                        }))
+                        Err(hkask_capability::ToolPortError::NotFound(
+                            hkask_types::NotFound {
+                                entity_type: "tool".to_string(),
+                                id: tool.to_string(),
+                            },
+                        ))
                     }
                 })
             }
