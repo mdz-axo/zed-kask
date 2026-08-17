@@ -41,35 +41,10 @@ set -euo pipefail
 # visibility is the smallest honest fix.)
 STALE_DAYS=${STALE_DAYS:-90}
 ALLOWLIST_MAX=9
-ALLOWLIST=(
-  "hkask-mcp-codegraph|2026-07-17|tools query a code-graph DB; need a populated graph fixture"
-  "hkask-mcp-companies|2026-07-17|tools require SerpAPI/external HTTP; need network mocking"
-  "hkask-mcp-condenser|2026-07-17|tool invokes an LLM condenser; need an inference mock"
-  "hkask-mcp-corpus|2026-07-17|tools require SQLite + embedding store; need a fixture store"
-  "hkask-mcp-media|2026-07-17|tools call Fal.ai workflow APIs; need a media-API mock"
-  "hkask-mcp-portfolio|2026-07-17|no tests dir yet; tools wrap portfolio storage"
-  "hkask-mcp-prediction-markets|2026-07-17|tools fetch live Polymarket/Kalshi data; need network mocking"
-  "hkask-mcp-swarm|2026-07-17|existing tests use the panel invoke seam / live HTTP, not Parameters<T>"
-  "hkask-mcp-training|2026-07-17|tools require inference + HF Hub; need mocks"
-)
 
 # Servers that are EXEMPT by design (not agent-facing tool surfaces requiring
 # contract tests). Add only with a documented reason.
 EXEMPT=()
-
-is_listed() {
-  local name="$1"
-  local item entry_name
-  for item in "${ALLOWLIST[@]}"; do
-    entry_name="${item%%|*}"
-    [ "$entry_name" = "$name" ] && return 0
-  done
-  for item in "${EXEMPT[@]}"; do
-    entry_name="${item%%|*}"
-    [ "$entry_name" = "$name" ] && return 0
-  done
-  return 1
-}
 
 # Extract the date field (field 2) from a `name|date|reason` entry.
 entry_date() {
@@ -91,7 +66,45 @@ days_since() {
 violations=0
 ratchet_gaps=0
 
-for server_dir in mcp-servers/hkask-mcp-*/; do
+# Overridable via env vars so the self-test can point at a temp tree with an
+# empty allowlist; the defaults preserve the production behavior exactly.
+# SCAN_DIRS is a glob expanded unquoted in the for loop. ALLOWLIST is a
+# newline-separated list of `name|date|reason` entries (empty = no allowlist).
+SCAN_DIRS="${SCAN_DIRS:-mcp-servers/hkask-mcp-*/}"
+if [ -n "${ALLOWLIST+x}" ]; then
+  # Convert newline-separated input into the array the gate uses. mapfile
+  # preserves entries containing spaces (the reason fields do); word-splitting
+  # on `($(...))` would shatter them.
+  mapfile -t ALLOWLIST_ARR < <(printf '%s\n' "$ALLOWLIST" | grep -v '^$' || true)
+else
+  ALLOWLIST_ARR=(
+    "hkask-mcp-codegraph|2026-07-17|tools query a code-graph DB; need a populated graph fixture"
+    "hkask-mcp-companies|2026-07-17|tools require SerpAPI/external HTTP; need network mocking"
+    "hkask-mcp-condenser|2026-07-17|tool invokes an LLM condenser; need an inference mock"
+    "hkask-mcp-corpus|2026-07-17|tools require SQLite + embedding store; need a fixture store"
+    "hkask-mcp-media|2026-07-17|tools call Fal.ai workflow APIs; need a media-API mock"
+    "hkask-mcp-portfolio|2026-07-17|no tests dir yet; tools wrap portfolio storage"
+    "hkask-mcp-prediction-markets|2026-07-17|tools fetch live Polymarket/Kalshi data; need network mocking"
+    "hkask-mcp-swarm|2026-07-17|existing tests use the panel invoke seam / live HTTP, not Parameters<T>"
+    "hkask-mcp-training|2026-07-17|tools require inference + HF Hub; need mocks"
+  )
+fi
+
+is_listed() {
+  local name="$1"
+  local item entry_name
+  for item in "${ALLOWLIST_ARR[@]}"; do
+    entry_name="${item%%|*}"
+    [ "$entry_name" = "$name" ] && return 0
+  done
+  for item in "${EXEMPT[@]}"; do
+    entry_name="${item%%|*}"
+    [ "$entry_name" = "$name" ] && return 0
+  done
+  return 1
+}
+
+for server_dir in $SCAN_DIRS; do
   [ -d "$server_dir" ] || continue
   name="$(basename "$server_dir")"
   tests_dir="${server_dir}tests"
@@ -111,14 +124,14 @@ for server_dir in mcp-servers/hkask-mcp-*/; do
   # No tool-behavior tests found.
   if is_listed "$name"; then
     ratchet_gaps=$((ratchet_gaps + 1))
-    echo "ratchet: $name lacks tool-behavior tests (allowlisted — ${#ALLOWLIST[@]} remaining)"
+    echo "ratchet: $name lacks tool-behavior tests (allowlisted — ${#ALLOWLIST_ARR[@]} remaining)"
   else
     violations=$((violations + 1))
     echo "::error::MCP server '$name' has no tool-behavior contract tests (no 'Parameters(' in ${tests_dir}). Add tests via the public tool seam, or add to ALLOWLIST with a reason. See docs/reference/mcp-servers/README.md §Testing standard."
   fi
 done
 
-echo "summary: $violations violation(s), $ratchet_gaps allowlisted gap(s), ${#ALLOWLIST[@]} in ratchet allowlist (cap: $ALLOWLIST_MAX)"
+echo "summary: $violations violation(s), $ratchet_gaps allowlisted gap(s), ${#ALLOWLIST_ARR[@]} in ratchet allowlist (cap: $ALLOWLIST_MAX)"
 
 # Stale-entry visibility (follow-up issue #3, option 1): warn — do not fail —
 # for allowlisted entries older than STALE_DAYS. This makes a stalled ratchet
@@ -126,7 +139,7 @@ echo "summary: $violations violation(s), $ratchet_gaps allowlisted gap(s), ${#AL
 # A gate that can't fail is a gate that doesn't enforce, but a ratchet that
 # can't be seen to stall is a ratchet that won't be acted on.
 stale_warnings=0
-for entry in "${ALLOWLIST[@]}"; do
+for entry in "${ALLOWLIST_ARR[@]}"; do
   name="${entry%%|*}"
   added=$(entry_date "$entry")
   if [ -z "$added" ]; then
@@ -148,8 +161,8 @@ fi
 # Adding a server requires removing one — or explicitly bumping ALLOWLIST_MAX
 # with a documented reason. This converts the one-way clutch (no backsliding)
 # into a true ratchet (forced forward progress).
-if [ "${#ALLOWLIST[@]}" -gt "$ALLOWLIST_MAX" ]; then
-  echo "::error::MCP tool-test allowlist grew to ${#ALLOWLIST[@]} (cap: $ALLOWLIST_MAX). "
+if [ "${#ALLOWLIST_ARR[@]}" -gt "$ALLOWLIST_MAX" ]; then
+  echo "::error::MCP tool-test allowlist grew to ${#ALLOWLIST_ARR[@]} (cap: $ALLOWLIST_MAX). "
   echo "  Add a tool-behavior test to an existing allowlisted server and remove it,"
   echo "  or bump ALLOWLIST_MAX in scripts/check-mcp-tool-tests.sh with a justification."
   exit 1

@@ -14,7 +14,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-MANIFEST_DIR="registry/manifests"
+# Overridable via env var so the self-test can point at a temp tree; the
+# default preserves the production behavior exactly.
+MANIFEST_DIR="${MANIFEST_DIR:-registry/manifests}"
 FAIL=0
 CHECKED=0
 SKIPPED=0

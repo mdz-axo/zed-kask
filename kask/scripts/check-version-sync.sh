@@ -26,12 +26,14 @@ GREEN='\033[0;32m'
 NC='\033[0m'
 
 # kask/ workspace (script lives at kask/scripts/).
-KASK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Each path is overridable via env var so the self-test can point at a temp
+# tree; the defaults preserve the production behavior exactly.
+KASK_ROOT="${KASK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # zed-kask repo root (parent of kask/).
-REPO_ROOT="$(cd "$KASK_ROOT/.." && pwd)"
-CARGO_TOML="$REPO_ROOT/Cargo.toml"
-MANIFEST_DIR="$KASK_ROOT/registry/manifests"
-MCP_SERVERS_DIR="$KASK_ROOT/mcp-servers"
+REPO_ROOT="${REPO_ROOT:-$(cd "$KASK_ROOT/.." && pwd)}"
+CARGO_TOML="${CARGO_TOML:-$REPO_ROOT/Cargo.toml}"
+MANIFEST_DIR="${MANIFEST_DIR:-$KASK_ROOT/registry/manifests}"
+MCP_SERVERS_DIR="${MCP_SERVERS_DIR:-$KASK_ROOT/mcp-servers}"
 
 if [ ! -f "$CARGO_TOML" ]; then
     echo -e "${RED}[ERROR]${NC} root Cargo.toml not found: $CARGO_TOML"
