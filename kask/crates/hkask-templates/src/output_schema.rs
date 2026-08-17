@@ -152,7 +152,25 @@ fn contract_output_to_schema(output: &Value) -> Value {
             "boolean" | "bool" => "boolean",
             "array" => "array",
             "object" => "object",
-            _ => "string", // safe default for unknown types
+            other => {
+                // Unknown type string — warn before narrowing to "string".
+                // The safe default keeps the cascade running, but the operator
+                // must see the drift: a typo'd type (e.g. "intger") silently
+                // narrows the schema, permitting strings where the manifest
+                // author intended numbers. This is the `.rules` "validation
+                // gates must return Undetermined/Skipped, not Ready with empty
+                // findings" trap in schema form.
+                tracing::warn!(
+                    target: "hkask.templates",
+                    field = %field_name,
+                    declared_type = %other,
+                    "contract_output_to_schema: unknown type string — narrowing to \"string\". \
+                     A typo'd type silently narrows the output schema; the downstream \
+                     step will accept strings where the manifest may have intended \
+                     a different type."
+                );
+                "string"
+            }
         };
         properties.insert(field_name.clone(), serde_json::json!({"type": json_type}));
     }

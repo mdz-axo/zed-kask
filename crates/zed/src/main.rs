@@ -3131,7 +3131,8 @@ async fn try_wire_manifest_executor(
                 gpui_tokio::Tokio::handle(cx),
             )
             .with_profile_resolver(profile_resolver)
-            .with_regulation_ledger(regulation_ledger.clone()),
+            .with_regulation_ledger(regulation_ledger.clone())
+            .with_verification_store(verification_store.clone()),
         );
         agent::set_manifest_executor(Some(executor));
         log::info!(
