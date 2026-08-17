@@ -109,8 +109,18 @@ impl VerificationStore {
             }
             resolved.to_string_lossy().to_string()
         });
-        let passphrase = std::env::var("HKASK_VERIFICATION_PASSPHRASE")
-            .unwrap_or_else(|_| "allostery".to_string());
+        let passphrase = match std::env::var("HKASK_VERIFICATION_PASSPHRASE") {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!(
+                    target: "hkask.verification",
+                    "HKASK_VERIFICATION_PASSPHRASE not set — using default 'allostery'. \
+                     This provides zero confidentiality in a multi-user environment. \
+                     Set HKASK_VERIFICATION_PASSPHRASE (keychain-provisioned) for production."
+                );
+                "allostery".to_string()
+            }
+        };
         match hkask_storage::open_or_repair(&db_path, &passphrase) {
             Ok(db) => match db.sqlite_pool() {
                 Ok(pool) => {
@@ -168,20 +178,22 @@ impl VerificationStore {
     /// Enforce grounding for a delegation and record the result to the
     /// central ledger. Returns `(Option<GroundingResult>, cleaned_json)`.
     ///
-    /// If a contract exists for the agent_type:
+    /// If a contract exists for the agent_type AND the output is a JSON object:
     ///   - Runs `enforce_grounding()` (nulls unsourced fields, scans narrative)
     ///   - Writes a full `GroundingRecord` to the ledger (append-only)
     ///   - Returns `(Some(result), cleaned_json)`
     ///
-    /// If no contract exists:
-    ///   - Writes a coverage-gap record to the ledger (`had_contract: false`)
-    ///   - Returns `(None, original_json)` — unchanged
-    ///
     /// If a contract exists but the output is not a JSON object (e.g. the
-    /// agent produced prose): writes a coverage-gap record and returns
-    /// `(None, original_json)`. The trend query counts this as
-    /// "with contract" (the contract matched) but not "zero nulled" —
-    /// absence ≠ verdict (paper Rule 5.3).
+    /// agent produced prose): writes an **unenforceable** record
+    /// (`had_contract: true, was_enforced: false`) and returns
+    /// `(None, original_json)`. The trend query counts this under
+    /// `delegations_unenforceable` — the operator's remediation is to fix
+    /// the agent's system prompt, not to write a contract (paper Rule 5.3:
+    /// absence ≠ verdict).
+    ///
+    /// If no contract exists: writes a **coverage-gap** record
+    /// (`had_contract: false`) and returns `(None, original_json)`.
+    /// The trend query counts this under `delegations_without_contract`.
     ///
     /// `source` identifies the calling tool ("kanban_task_spawn",
     /// "swarm_delegate_local", etc.) for cross-tool trend analysis.
@@ -202,10 +214,11 @@ impl VerificationStore {
             Some(contract) => {
                 if !output_json.is_object() {
                     // Contract exists for this agent_type but the output is
-                    // not a JSON object — grounding cannot run. Record a
-                    // coverage-gap so the trend query sees the delegation
-                    // (absence ≠ verdict, paper Rule 5.3).
-                    self.record_coverage_gap(source, agent_id, agent_type);
+                    // not a JSON object — grounding cannot run. Record an
+                    // unenforceable record (had_contract: true, was_enforced:
+                    // false) so the trend query distinguishes this from a
+                    // coverage gap (paper Rule 5.3: absence ≠ verdict).
+                    self.record_unenforceable(source, agent_id, agent_type);
                     return (None, output_json.clone());
                 }
                 let (result, cleaned) =
@@ -221,6 +234,83 @@ impl VerificationStore {
         }
     }
 
+    /// The outcome of `enforce_and_stamp` — the caller uses this to stamp
+    /// the delegation result fields (`response`, `raw_response`). This
+    /// struct exists so the grounding wiring (parse → enforce → warn →
+    /// replace → retain) is not duplicated across 3 call sites.
+    #[derive(Debug, Clone)]
+    pub struct EnforcementOutcome {
+        /// The grounding result, when grounding ran. `None` when no contract
+        /// existed or the output was not a JSON object.
+        pub result: Option<GroundingResult>,
+        /// The cleaned JSON (with unsourced fields nulled). When grounding
+        /// did not run, this is the original output unchanged.
+        pub cleaned: Value,
+        /// The raw response string (the original `response` before cleaning).
+        /// The caller should store this as `raw_response` for audit.
+        pub raw_response: String,
+        /// Whether the output was a JSON object (and thus could potentially
+        /// be grounded). The caller uses this to decide whether to retain
+        /// `raw_response` when grounding did not run.
+        pub was_object: bool,
+    }
+
+    /// Enforce grounding for a delegation, record the result to the central
+    /// ledger, and return an `EnforcementOutcome` that the caller uses to
+    /// stamp the delegation result fields. This encapsulates the
+    /// parse → enforce → warn pattern that was duplicated across
+    /// `spawn_via_local_runtime`, `swarm_delegate_local`, and
+    /// `swarm_execute_plan_local`.
+    ///
+    /// The caller is responsible for:
+    /// - Calling this before `record_delegation` or `task_record_delegation`.
+    /// - Using `outcome.result` to decide whether to run schema validation
+    ///   and envelope building (kata-kanban does; swarm does not).
+    /// - Setting `result.response = serde_json::to_string(&outcome.cleaned)`
+    ///   when `outcome.result.is_some()`.
+    /// - Setting `result.raw_response = Some(outcome.raw_response)` when
+    ///   `outcome.result.is_some() || outcome.was_object`.
+    pub fn enforce_and_stamp(
+        &self,
+        source: &str,
+        agent_id: &str,
+        agent_type: &str,
+        response: &str,
+        tool_calls: &[Value],
+    ) -> EnforcementOutcome {
+        let output_json = serde_json::from_str::<Value>(response)
+            .unwrap_or(Value::Null);
+        let raw_response = response.to_string();
+        let was_object = output_json.is_object();
+        let (result, cleaned) = self.enforce_for_agent(
+            source,
+            agent_id,
+            agent_type,
+            &output_json,
+            tool_calls,
+            response,
+        );
+        if let Some(ref gr) = result {
+            if !gr.nulled_fields.is_empty() {
+                tracing::warn!(
+                    target: "hkask.verification",
+                    agent_id = %agent_id,
+                    nulled_fields = ?gr.nulled_fields,
+                    narrative_leaks = ?gr.narrative_leaks,
+                    "grounding enforcement: nulled {} unsourced field(s), found {} narrative leak(s)",
+                    gr.nulled_fields.len(),
+                    gr.narrative_leaks.len(),
+                );
+            }
+        }
+        EnforcementOutcome {
+            result,
+            cleaned,
+            raw_response,
+            was_object,
+        }
+    }
+
     /// Write a grounding record to the central ledger (append-only).
     fn record_grounding(
         &self,
@@ -233,8 +323,14 @@ impl VerificationStore {
         self.write_record(&record);
     }
 
-    /// Write a coverage-gap record (no contract for this agent_type, or
-    /// contract existed but output was not a JSON object).
+    /// Write an unenforceable record: the contract existed but the output
+    /// was not a JSON object (had_contract: true, was_enforced: false).
+    fn record_unenforceable(&self, source: &str, agent_id: &str, agent_type: &str) {
+        let record = GroundingRecord::unenforceable(source, agent_id, agent_type);
+        self.write_record(&record);
+    }
+
+    /// Write a coverage-gap record (no contract for this agent_type).
     fn record_coverage_gap(&self, source: &str, agent_id: &str, agent_type: &str) {
         let record = GroundingRecord::coverage_gap(source, agent_id, agent_type);
         self.write_record(&record);
@@ -279,13 +375,20 @@ impl VerificationStore {
             report.total_delegations += 1;
             if record.had_contract {
                 report.delegations_with_contract += 1;
-                if record.nulled_fields.is_empty() {
-                    report.delegations_with_zero_nulled += 1;
+                if record.was_enforced {
+                    if record.nulled_fields.is_empty() {
+                        report.delegations_with_zero_nulled += 1;
+                    } else {
+                        report.delegations_with_nulled += 1;
+                    }
+                    if !record.narrative_leaks.is_empty() {
+                        report.delegations_with_narrative_leaks += 1;
+                    }
                 } else {
-                    report.delegations_with_nulled += 1;
-                }
-                if !record.narrative_leaks.is_empty() {
-                    report.delegations_with_narrative_leaks += 1;
+                    // Contract existed but output was not a JSON object —
+                    // grounding could not run. Counted as unenforceable, not
+                    // as zero_nulled (absence ≠ verdict, Rule 5.3).
+                    report.delegations_unenforceable += 1;
                 }
             } else {
                 report.delegations_without_contract += 1;
