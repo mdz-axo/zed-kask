@@ -670,9 +670,12 @@ impl GroundingSensor {
         }
     }
 
-    /// Read the trend once and dispatch to the metric-specific handler.
-    /// Shared by all three metric variants so the DB query happens once per
-    /// tick per sensor instance (each instance is its own sensor).
+    /// Read the trend from the verification ledger. Each sensor instance
+    /// is a separate registered sensor, so this query runs once per sensor
+    /// per tick — 3x per tick total (once for each metric variant). The
+    /// `SensorBus::sense_all` iterates all registered sensors and calls
+    /// `sense()` on each. A future optimization could share a cached trend
+    /// result across the three instances within a single tick.
     fn read_trend(&self) -> Option<hkask_verification::GroundingTrendReport> {
         match self
             .verification_store
