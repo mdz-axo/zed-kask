@@ -361,6 +361,47 @@ impl AnyAgentTool for ContextServerTool {
                 .await
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
+            // zed-kask: D-seam — on-demand self-healing. When the server's
+            // client is None (transport died, server moved to Stopped by
+            // watch_transport_shutdown), trigger maintain_servers to restart
+            // it before failing. This mirrors McpRuntime::call_tool_inner's
+            // try_reconnect pattern.
+            let server = cx.update(|cx| store.read(cx).get_running_server(&server_id));
+            let server = match server {
+                Some(s) => s,
+                None => {
+                    // Server is not running — trigger a restart via
+                    // available_context_servers_changed, then wait for it.
+                    log::warn!(
+                        "Context server '{}' not running — triggering restart",
+                        server_id.0
+                    );
+                    cx.update(|cx| {
+                        store.update(cx, |store, cx| {
+                            store.available_context_servers_changed(cx);
+                        });
+                    }).log_err();
+                    // Wait for the server to come back (up to 30s)
+                    let mut elapsed = 0u64;
+                    let server = loop {
+                        if elapsed >= 30_000 {
+                            return Err(anyhow::anyhow!(
+                                "Context server '{}' failed to restart within 30s",
+                                server_id.0
+                            ).into());
+                        }
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(500))
+                            .await;
+                        elapsed += 500;
+                        if let Some(s) = cx.update(|cx| store.read(cx).get_running_server(&server_id)) {
+                            break s;
+                        }
+                    };
+                    server
+                }
+            };
+
             let Some(protocol) = server.client() else {
                 return Err(anyhow::anyhow!("Context server not initialized").into());
             };
