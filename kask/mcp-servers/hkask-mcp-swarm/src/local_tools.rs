@@ -1448,3 +1448,233 @@ impl SwarmServer {
         .await
     }
 }
+
+#[cfg(test)]
+mod grounding_wiring_tests {
+    use super::*;
+    use crate::config::SwarmConfig;
+    use crate::local_runtime::LocalSwarmRuntime;
+    use hkask_types::ports::inference_port::{InferencePort, SkillExecPort, ToolDispatchPort};
+    use hkask_types::{InferenceError, InferenceResult, InferenceUsage, SkillExecError, WebID};
+    use hkask_verification::{TrendScope, VerificationStore};
+    use std::future::Future;
+    use std::pin::Pin;
+
+    /// A stub `InferencePort` that returns a canned JSON response with no tool
+    /// calls, so `AgentExecutor::run` exits the tool loop after one round.
+    struct StubInference {
+        response: String,
+    }
+    impl InferencePort for StubInference {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = std::result::Result<InferenceResult, InferenceError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            let response = self.response.clone();
+            Box::pin(async move {
+                Ok(InferenceResult {
+                    text: response,
+                    model: "stub-model".to_string(),
+                    usage: InferenceUsage {
+                        prompt_tokens: 10,
+                        completion_tokens: 10,
+                        total_tokens: 20,
+                    },
+                    finish_reason: "stop".to_string(),
+                    token_probabilities: None,
+                    tool_calls: vec![],
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    /// A stub `ToolDispatchPort` that errors if called (the stub inference
+    /// returns no tool calls, so this should never fire).
+    struct StubToolDispatch;
+    impl ToolDispatchPort for StubToolDispatch {
+        fn invoke_tool<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: serde_json::Value,
+            _allowed: &'a [String],
+        ) -> Pin<
+            Box<
+                dyn Future<Output = std::result::Result<serde_json::Value, InferenceError>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async { Err(InferenceError::Generation("stub tool dispatch".into())) })
+        }
+    }
+
+    /// A stub `SkillExecPort` that errors if called (the test agent declares
+    /// no skills, so this should never fire).
+    struct StubSkillExec;
+    impl SkillExecPort for StubSkillExec {
+        fn execute_skill<'a>(
+            &'a self,
+            _name: &'a str,
+            _task: &'a str,
+        ) -> Pin<Box<dyn Future<Output = std::result::Result<String, SkillExecError>> + Send + 'a>>
+        {
+            Box::pin(async { Err(SkillExecError::Unavailable("stub".into())) })
+        }
+    }
+
+    /// Build a `SwarmServer` with stub deps and an in-memory verification store.
+    /// The local runtime returns a canned JSON response so grounding can run.
+    async fn server_with_stub_runtime(
+        response: String,
+    ) -> (SwarmServer, std::sync::Arc<VerificationStore>) {
+        let ledger = hkask_ledger::Ledger::from_driver(
+            hkask_storage::database::sqlite::SqliteDriver::in_memory_driver(),
+        )
+        .expect("ledger");
+        let runtime = LocalSwarmRuntime::with_deps(
+            ledger,
+            std::sync::Arc::new(StubInference { response }),
+            std::sync::Arc::new(StubToolDispatch),
+            std::sync::Arc::new(StubSkillExec),
+        )
+        .expect("runtime with stub deps");
+
+        let lazy_runtime = std::sync::Arc::new(crate::local_runtime::LazyLocalSwarmRuntime::lazy(
+            "/tmp/hkask-test-ledger.db".to_string(),
+            None,
+        ));
+        lazy_runtime.set_runtime(runtime);
+
+        let verification_store = std::sync::Arc::new(VerificationStore::in_memory());
+
+        let config = SwarmConfig::default();
+        let server = SwarmServer::new(
+            WebID::for_agent_name("test-operator"),
+            std::sync::Arc::new(crate::abw_client::SwarmClient::new(
+                reqwest::Client::new(),
+                config,
+            )),
+            std::sync::Arc::new(crate::consent::ConsentStore::default()),
+            std::sync::Arc::new(crate::local_registry::LocalAgentRegistry::new(
+                "/nonexistent",
+            )),
+            lazy_runtime,
+            std::sync::Arc::new(crate::local_swarms::LocalSwarmRegistry::new("/nonexistent")),
+            std::sync::Arc::new(crate::local_knowledge::LazyLocalMemory::lazy(
+                "/tmp/never.db".to_string(),
+                "short".to_string(),
+                1024,
+            )),
+            verification_store.clone(),
+        );
+        (server, verification_store)
+    }
+
+    /// Write a minimal local agent card to a temp dir and return a registry
+    /// pointing at it.
+    fn registry_with_agent(
+        dir: &std::path::Path,
+    ) -> std::sync::Arc<crate::local_registry::LocalAgentRegistry> {
+        let registry = std::sync::Arc::new(crate::local_registry::LocalAgentRegistry::new(
+            dir.to_string_lossy().to_string(),
+        ));
+        let card = LocalAgentCard {
+            agent_id: "test_agent".to_string(),
+            agent_type: "task".to_string(),
+            description: "test".to_string(),
+            accepts: vec!["text".to_string()],
+            produces: vec!["text".to_string()],
+            capabilities: LocalAgentCapabilities {
+                system_prompt: Some("You are a test agent.".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        registry.write_card(&card).expect("write card");
+        registry.load().expect("load");
+        registry
+    }
+
+    /// `swarm_fanout_local` must call `enforce_and_stamp` per-delegation so the
+    /// central ledger receives a record with `source: "swarm_fanout_local"`.
+    /// Previously this path skipped grounding — delegations ran unrecorded and
+    /// the trend query under-counted (the `.rules` Prohibition).
+    #[tokio::test]
+    async fn swarm_fanout_local_records_grounding_in_the_ledger() {
+        let temp_dir = std::env::temp_dir().join("hkask-fanout-grounding-test");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let (mut server, verification_store) = server_with_stub_runtime(
+            "{\"summary\": \"did the work\", \"approach\": \"directly\"}".to_string(),
+        )
+        .await;
+        server.local_registry = registry_with_agent(&temp_dir);
+
+        let request = Parameters(FanoutLocalRequest {
+            delegations: vec![FanoutEntry {
+                agent_name: "test_agent".to_string(),
+                task: "do the work".to_string(),
+                credits_authorized: 10,
+            }],
+        });
+        let _ = server.swarm_fanout_local(request).await;
+
+        let trend = verification_store
+            .grounding_trend(&TrendScope::BySource("swarm_fanout_local".to_string()))
+            .expect("trend query");
+        assert_eq!(
+            trend.total_delegations, 1,
+            "fanout must record one grounding delegation in the ledger"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// `swarm_pipeline_local` must call `enforce_and_stamp` per-delegation so
+    /// the central ledger receives a record with `source: "swarm_pipeline_local"`.
+    /// Previously this path skipped grounding — delegations ran unrecorded and
+    /// the trend query under-counted (the `.rules` Prohibition).
+    #[tokio::test]
+    async fn swarm_pipeline_local_records_grounding_in_the_ledger() {
+        let temp_dir = std::env::temp_dir().join("hkask-pipeline-grounding-test");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let (mut server, verification_store) = server_with_stub_runtime(
+            "{\"summary\": \"did the work\", \"approach\": \"directly\"}".to_string(),
+        )
+        .await;
+        server.local_registry = registry_with_agent(&temp_dir);
+
+        let request = Parameters(PipelineLocalRequest {
+            steps: vec![PipelineStep {
+                agent_name: "test_agent".to_string(),
+                task: "do the work".to_string(),
+                credits_authorized: 10,
+            }],
+        });
+        let _ = server.swarm_pipeline_local(request).await;
+
+        let trend = verification_store
+            .grounding_trend(&TrendScope::BySource("swarm_pipeline_local".to_string()))
+            .expect("trend query");
+        assert_eq!(
+            trend.total_delegations, 1,
+            "pipeline must record one grounding delegation in the ledger"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+}

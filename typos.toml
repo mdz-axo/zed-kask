@@ -82,6 +82,12 @@ extend-exclude = [
     # evidence — typos flags its own example list. It is documentation of the
     # remediation, not prose to be checked.
     "kask/docs/plans/ci-typos-buf-jobs.md",
+    # The audit config mirrors the extend-ignore-re regexes from typos.toml
+    # (policy layer) so the weekly audit job can run without the allowlist.
+    # The regex strings contain typo-like fragments (e.g. `cl[ist]`, `guage`)
+    # that typos flags. Excluding it keeps the per-PR job green; the weekly
+    # audit job excludes it from its own scan via --exclude.
+    "typos-audit.toml",
 ]
 
 [default]

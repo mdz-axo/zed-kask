@@ -18,13 +18,20 @@
 # Exit: 0 = all targets registered (exact match), 1 = unregistered targets found
 
 set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# Scan roots for `target: "reg.*"` strings. Overridable so the self-test
+# (check-reg-creep-selftest.sh) can point the gate at a temp tree with a
+# synthetic violation. Defaults to the production source roots.
+SCAN_DIRS=( ${SCAN_DIRS:-crates/ mcp-servers/} )
+REGISTRY="${REGISTRY:-crates/hkask-types/src/event.rs}"
 
 # Extract all reg.* tracing targets from Rust source files.
 # Matches: target: "reg.foo.bar" (with optional whitespace)
 # Filters out false positives like reg.config() (method calls, not namespaces).
 # `|| true` guards the pipeline under `set -euo pipefail` — grep returns 1 when
 # no matches survive the final filter, which must NOT abort the script.
-targets=$( { grep -roh 'target: "reg\.[^"]*"' crates/ mcp-servers/ \
+targets=$( { grep -roh 'target: "reg\.[^"]*"' "${SCAN_DIRS[@]}" \
     | sed 's/target: "//;s/"//' \
     | grep -v '()' \
     | sort -u; } || true )
@@ -36,7 +43,7 @@ fi
 
 # Check each target against CANONICAL_NAMESPACES in event.rs.
 # EXACT match — unlike check-reg-canonical.sh, no ancestor trimming.
-canonical=$(grep -o '"reg\.[^"]*"' crates/hkask-types/src/event.rs \
+canonical=$(grep -o '"reg\.[^"]*"' "$REGISTRY" \
     | sed 's/"//g' \
     | sort -u)
 

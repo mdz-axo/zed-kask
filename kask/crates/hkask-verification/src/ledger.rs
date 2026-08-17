@@ -300,7 +300,9 @@ impl VerificationStore {
 /// The outcome of `enforce_and_stamp` — the caller uses this to stamp
 /// the delegation result fields (`response`, `raw_response`). This
 /// struct exists so the grounding wiring (parse → enforce → warn →
-/// replace → retain) is not duplicated across 3 call sites.
+/// replace → retain) is not duplicated across the delegating tools.
+/// Callers use `LocalDelegateResult::apply_grounding` (swarm) or stamp
+/// inline (kata-kanban, which does schema validation between).
 #[derive(Debug, Clone)]
 pub struct EnforcementOutcome {
     /// The grounding result, when grounding ran. `None` when no contract
@@ -338,9 +340,9 @@ impl VerificationStore {
     /// Enforce grounding for a delegation, record the result to the central
     /// ledger, and return an `EnforcementOutcome` that the caller uses to
     /// stamp the delegation result fields. This encapsulates the
-    /// parse → enforce → warn pattern that was duplicated across
-    /// `spawn_via_local_runtime`, `swarm_delegate_local`, and
-    /// `swarm_execute_plan_local`.
+    /// parse → enforce → warn pattern that was previously duplicated across
+    /// the delegating tools (`spawn_via_local_runtime`, `swarm_delegate_local`,
+    /// `swarm_execute_plan_local`, `swarm_fanout_local`, `swarm_pipeline_local`).
     ///
     /// The caller is responsible for:
     /// - Calling this before `record_delegation` or `task_record_delegation`.
