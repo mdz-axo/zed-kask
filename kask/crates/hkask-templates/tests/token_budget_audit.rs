@@ -11,7 +11,7 @@
 //! Without this audit, a template with a 13-field output schema (some arrays)
 //! at `max_tokens: 2048` will silently truncate — the model runs out of tokens
 //! before emitting the structured-output tool call, and the executor returns
-//! `TemplateError::Manifest("Step N truncated at max_tokens...")` (D25). This
+//! `TemplateError::ParseFailure { .. }` (D25). This
 //! is a runtime failure that's invisible at manifest-load time.
 //!
 //! # Principle grounding

@@ -875,6 +875,11 @@ impl CuratorServer {
                     ))
                 })?;
             Ok(json!({
+                // Lead with the deletion-resistant count (paper Rule 5.4):
+                // a count of clean delegations cannot be gamed by recording
+                // fewer delegations or retiring cards with violations. The
+                // derived rates (clean_rate, coverage_rate) are secondary.
+                "delegations_with_zero_nulled": report.delegations_with_zero_nulled,
                 "trend": report,
                 "clean_rate": report.clean_rate(),
                 "coverage_rate": report.coverage_rate(),

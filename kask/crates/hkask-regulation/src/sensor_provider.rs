@@ -628,7 +628,7 @@ impl Sensor for MutationScoreSensor {
 /// The sensor produces at most one signal per metric per tick (the
 /// `Sensor::sense` trait returns `Option<Signal>`, so the loop registers
 /// three `GroundingSensor` instances — one per metric — via
-/// `GroundingSensor::for_metric`). This follows the existing pattern where
+/// `GroundingSensor::new`). This follows the existing pattern where
 /// each `Sensor` implementation produces a single `SignalMetric`.
 pub struct GroundingSensor {
     verification_store: Arc<hkask_verification::VerificationStore>,
@@ -969,6 +969,74 @@ mod grounding_sensor_tests {
             sensor.sense().await.is_none(),
             "second tick: delta 0 (stable) — no signal"
         );
+    }
+
+    #[tokio::test]
+    async fn violation_delta_suppressed_after_outage_recovery() {
+        // After a DB outage (read_trend returns None), the first successful
+        // read suppresses the delta (it spans the outage, not a single tick).
+        // The second successful read resumes normal operation.
+        //
+        // The in-memory store always succeeds, so we simulate the outage by
+        // directly setting the `was_outage` flag — the same flag `sense()`
+        // sets when `read_trend()` returns None.
+        let store = store_with_delegations(0, 3);
+        let store_for_additions = store.clone();
+        let sensor = GroundingSensor::new(store, GroundingSensorMetric::ViolationDelta, 0.8, 0.5);
+
+        // was_outage must be initialized to false.
+        assert!(!*sensor.was_outage.lock(), "was_outage must start false");
+
+        // First tick: establishes the baseline (no signal — absence ≠ change).
+        assert!(sensor.sense().await.is_none(), "first tick: no baseline");
+
+        // Simulate a DB outage: `sense()` would set was_outage = true when
+        // read_trend() returns None. We set it directly to emulate that path.
+        *sensor.was_outage.lock() = true;
+
+        // Add a nulled delegation during the "outage" — the delta would be +1
+        // if it were not suppressed.
+        let nulled_output = serde_json::json!({
+            "deliverable_path": "/src/fabricated_outage.rs",
+            "summary": "did the work",
+            "approach": "directly",
+        });
+        store_for_additions.enforce_for_agent(
+            "kanban_task_spawn",
+            "task_agent",
+            "task",
+            &nulled_output,
+            &[],
+            &nulled_output.to_string(),
+        );
+
+        // First read after recovery: delta is suppressed (spans the outage).
+        assert!(
+            sensor.sense().await.is_none(),
+            "delta after outage recovery must be suppressed"
+        );
+        assert!(
+            !*sensor.was_outage.lock(),
+            "was_outage must reset after recovery"
+        );
+
+        // Add another nulled delegation — this delta is a real single-tick jump.
+        store_for_additions.enforce_for_agent(
+            "kanban_task_spawn",
+            "task_agent",
+            "task",
+            &nulled_output,
+            &[],
+            &nulled_output.to_string(),
+        );
+
+        // Second read after recovery: normal operation resumes — delta fires.
+        let signal = sensor
+            .sense()
+            .await
+            .expect("delta must fire on real increase after recovery");
+        assert_eq!(signal.metric, SignalMetric::GroundingViolationDelta);
+        assert!((signal.value - 1.0).abs() < 1e-9);
     }
 
     #[tokio::test]

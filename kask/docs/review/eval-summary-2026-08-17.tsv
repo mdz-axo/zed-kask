@@ -1,0 +1,13 @@
+model	correct/47	inctx/3	section/17	dimension/20	failure/10	ttft_p50_ms	tok_s_p50
+deepseek/deepseek-v4-pro-0813	32/47	3/3	14/17	8/20	10/10	3099	1500
+bytedance-seed/seed-2-1-turbo	40/47	3/3	17/17	13/20	10/10	1229.5	1400
+deepseek/deepseek-v4-flash-0731	29/47	2/3	12/17	7/20	10/10	884	1775
+thinkingmachines/inkling-small	36/47	3/3	13/17	13/20	10/10	537.5	2200
+anthropic/claude-opus-5	38/47	3/3	14/17	14/20	10/10	1422	3250
+moonshotai/kimi-k3	35/47	3/3	15/17	10/20	10/10	1246	3000
+tencent/hy3	38/47	3/3	15/17	13/20	10/10	1930	1708.35
+z-ai/glm-5.2	39/47	3/3	17/17	12/20	10/10	1257.5	1550
+nvidia/nemotron-3-ultra-550b-a55b	33/47	3/3	13/17	10/20	10/10	782.5	1675
+minimax/minimax-m3	34/47	3/3	13/17	11/20	10/10	1668	1675
+z-ai/glm-4.7-flash	28/47	3/3	11/17	7/20	10/10	521	1500
+mistralai/mistral-small-2603	31/47	3/3	12/17	9/20	10/10	704	1633.35

@@ -1,7 +1,15 @@
-# Classifier model selection — working criteria (DRAFT, not yet finalized)
+# Classifier model selection — working criteria
 
-This file is the single source of truth for the selection process. It is a DRAFT.
-Nothing runs until the operator marks it CONFIRMED.
+**OUTCOME (2026-08-17):** operator selected `z-ai/glm-5.2`. Default switched in
+`kask/crates/hkask-inference/src/model_constants.rs:23` to
+`OpenRouter/z-ai/glm-5.2`. Rationale: GLM-5.2 is the accuracy leader on the real
+label-space eval (39/47), the operator knows the GLM family, GLM 5.3 is expected
+to drop price (~75–80%, operator-provided, revisit trigger not current fact), and
+throughput can be optimized over time. See `kask/docs/review/eval-results-2026-08-17.tsv`.
+
+---
+
+(Draft criteria retained below for the record.)
 
 ## Goal
 Pick the classifier model for hKask (resolves `model: ""` → `HKASK_CLASSIFIER_MODEL`

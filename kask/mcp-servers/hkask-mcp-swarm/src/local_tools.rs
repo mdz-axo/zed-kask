@@ -527,40 +527,17 @@ impl SwarmServer {
                     visibility: String::new(),
                     valence: None,
                 };
-                // Rung 1 (Presence) + Rung 2 (Typing): validate before
-                // writing (same invariant as `swarm_create_local_agent`).
-                crate::local_registry::validate_presence(&local_card)
+                // write_card runs Rung 1 (Presence) + Rung 2 (Typing) +
+                // sanitize/canonicalize/dir-write/load — same invariant as
+                // `swarm_create_local_agent`.
+                let card_path = self
+                    .local_registry
+                    .write_card(&local_card)
                     .map_err(map_local_swarm_error)?;
-                crate::local_registry::validate_typing(
-                    &local_card,
-                    self.local_registry.port_registry(),
-                )
-                .map_err(map_local_swarm_error)?;
-                // Write the card to the local registry directory.
-                let dir = self.client.config().local_agents_dir.clone();
-                let card_dir = std::path::Path::new(&dir).join(&safe_agent_id);
-                std::fs::create_dir_all(&card_dir).map_err(|e| {
-                    hkask_mcp_server::map_io_error(
-                        e,
-                        &format!("failed to create local agent dir {}", card_dir.display()),
-                    )
-                })?;
-                let card_path = card_dir.join("agent_card.json");
-                let json = serde_json::to_string_pretty(&local_card).map_err(|e| {
-                    McpToolError::internal(format!("failed to serialize local card: {e}")) // rr0044-ok: serde serialization of own struct
-                })?;
-                std::fs::write(&card_path, json).map_err(|e| {
-                    hkask_mcp_server::map_io_error(
-                        e,
-                        &format!("failed to write {}", card_path.display()),
-                    )
-                })?;
-                // Reload the registry so the new card is visible.
-                self.local_registry.load().map_err(map_local_swarm_error)?;
                 Ok(serde_json::json!({
                     "cloned": safe_agent_id,
                     "cloud_id": req.agent_name,
-                    "path": card_path.to_string_lossy(),
+                    "path": card_path,
                     "synced": true,
                 }))
             },
@@ -819,42 +796,13 @@ impl SwarmServer {
                         personality_traits: v.personality_traits.unwrap_or_default(),
                     }),
                 };
-                let dir = self.client.config().local_agents_dir.clone();
-                let registry_root = std::fs::canonicalize(&dir).map_err(|e| {
-                    hkask_mcp_server::map_io_error(
-                        e,
-                        &format!("failed to resolve local agents dir {}", dir),
-                    )
-                })?;
-                let card_dir = registry_root.join(&safe_id);
-                // Defense-in-depth: refuse to write outside the registry root (the
-                // id is sanitized, but a canonicalized check costs nothing and pins
-                // the invariant — same pattern as swarm_remove_local).
-                if !card_dir.starts_with(&registry_root) {
-                    return Err(McpToolError::invalid_argument(
-                        "refusing to write a path outside the local agents dir".to_string(),
-                    ));
-                }
-                // Rung 1 (Presence) + Rung 2 (Typing): validate before
-                // writing. Without this, a card that fails the typing rung
-                // is written to disk but silently skipped on the next
-                // `load()` — the tool reports success but the card is
-                // invisible to every other tool (broken feedback loop).
-                crate::local_registry::validate_presence(&card).map_err(map_local_swarm_error)?;
-                crate::local_registry::validate_typing(&card, self.local_registry.port_registry())
+                let card_path = self
+                    .local_registry
+                    .write_card(&card)
                     .map_err(map_local_swarm_error)?;
-                std::fs::create_dir_all(&card_dir)
-                    .map_err(|e| hkask_mcp_server::map_io_error(e, "failed to create agent dir"))?;
-                let card_path = card_dir.join("agent_card.json");
-                let json = serde_json::to_string_pretty(&card).map_err(|e| {
-                    McpToolError::internal(format!("failed to serialize card: {e}")) // rr0044-ok: serde serialization of own struct
-                })?;
-                std::fs::write(&card_path, &json)
-                    .map_err(|e| hkask_mcp_server::map_io_error(e, "failed to write card"))?;
-                self.local_registry.load().map_err(map_local_swarm_error)?;
                 Ok(serde_json::json!({
                     "created": safe_id,
-                    "path": card_path.to_string_lossy(),
+                    "path": card_path,
                 }))
             },
         )

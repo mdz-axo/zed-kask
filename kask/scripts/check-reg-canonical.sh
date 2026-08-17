@@ -36,6 +36,13 @@ fi
 # dot-trimming) is registered in CANONICAL_NAMESPACES, else 1. MIRRORS the
 # `is_canonical` ancestor-matching rule in crates/hkask-types/src/event.rs —
 # update both together.
+#
+# NOTE: this is HIERARCHICAL (ancestor) matching — a sub-namespace passes if
+# any prefix is registered. The sibling script check-reg-creep.sh uses EXACT
+# matching only (grep -x, no ancestor trimming) as a local anti-creep guard:
+# it catches ad-hoc sub-namespaces that would silently pass this gate. This
+# script is the CI-enforced gate; that script is the local pre-commit backstop.
+# Keep both.
 is_canonical() {
   local cur="$1"
   while [ -n "$cur" ]; do

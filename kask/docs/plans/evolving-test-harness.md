@@ -138,7 +138,7 @@ manifest (7 steps) executed by the `ManifestExecutor`.
 
 Step 1 runs `cargo test` across priority crates; step 2 classifies failures via
 the `qa-triage` classifier (`kask/registry/classify/qa-triage.yaml`,
-OpenRouter/deepseek/deepseek-v4-flash); steps 3–7 route by confidence (≥ 0.95 auto-repair,
+OpenRouter/z-ai/glm-5.2); steps 3–7 route by confidence (≥ 0.95 auto-repair,
 0.70–0.94 issue+suggestion, < 0.70 human, flake → retry max 3).
 
 **Runner readiness:** `PARTIAL` — `run_command` + `classify` steps work today;
@@ -765,7 +765,7 @@ current state (IS) and target state (OUGHT).
   *harmful* gain (EIR > 0 → halt) but cannot guarantee *useful* gain. The Cauchy
   convergence criterion handles this: if proposals stop improving the triple, the
   loop terminates.
-- **Fidelity noise:** the `qa-triage` classifier (deepseek-v4-flash) introduces
+- **Fidelity noise:** the `qa-triage` classifier (glm-5.2) introduces
   classification noise on the secondary EIR signal (new flaky tests with no
   mutant regression). This is bounded: ECR, Acc, and the deterministic EIR
   component (mutants regressed killed→survived) are sourced from mutation

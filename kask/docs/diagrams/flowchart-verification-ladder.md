@@ -2,7 +2,7 @@
 title: "Verification Ladder — Agent Ecology Grounding Flow"
 audience: [architects, developers]
 last_updated: 2026-08-16
-version: "2.0.0"
+version: "2.1.0"
 status: "Active"
 domain: "Trust"
 mds_categories: [trust, composition]
@@ -14,7 +14,9 @@ Flowchart of the four-rung verification ladder applied to `kanban-task-*`
 agent delegations. Rungs 1 (Presence) and 2 (Typing) run at authoring time
 (slow clock); Rungs 3 (Grounding) and 4 (Binding) run at invocation time
 (fast clock). The grounding check nulls unsourced fields before the response
-persists — it is a control, not a metric. See [Verification for Agent
+persists — it is a control, not a metric. The curator feedback loop (cybernetics
+clock) senses grounding health from the central ledger and surfaces trends,
+violations, and coverage gaps to the operator. See [Verification for Agent
 Ecologies](../architecture/verification-for-agent-ecologies.md).
 
 ```mermaid
@@ -50,6 +52,21 @@ flowchart TD
 
     A6 --> I1
 
+    subgraph feedback["Curator feedback loop — cybernetics clock"]
+        F1["VerificationStore<br/>central grounding ledger<br/>append-only, cross-tool"]
+        F2["GroundingSensor<br/>regulation loop sensor<br/>clean_rate / coverage_rate / violation_delta"]
+        F3["curator_grounding_trend<br/>lead: delegations_with_zero_nulled<br/>deletion-resistant (Rule 5.4)"]
+        F4["curator_grounding_violations<br/>recent nulled fields + leaks"]
+        F5["curator_grounding_coverage<br/>coverage gap by agent_type"]
+        F1 --> F2
+        F1 --> F3
+        F1 --> F4
+        F1 --> F5
+    end
+
+    I4 -.->|writes record| F1
+    F2 -.->|signal → alert| I1
+
     subgraph vocabulary["Six-valued provenance"]
         V1["Sourced<br/>tool returned it → keep"]
         V2["Inferred<br/>commissioned judgment → keep"]
@@ -67,13 +84,16 @@ flowchart TD
     I10 -.->|documents| truth
 ```
 
-## The two clocks
+## The three clocks
 
-Verification runs on two independent schedules. The authoring gate
+Verification runs on three independent schedules. The authoring gate
 (slow clock) prevents bad cards from entering the catalogue. The invocation
 gate (fast clock) catches what the authoring gate cannot know — that this
 particular output, on this particular run, contains something no tool could
-have supplied.
+have supplied. The curator feedback loop (cybernetics clock) senses grounding
+health from the central `VerificationStore` ledger via `GroundingSensor` and
+surfaces trends, violations, and coverage gaps to the operator via the
+curator MCP tools.
 
 ## What the grounding check catches
 
@@ -98,6 +118,6 @@ the nulled field.
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-FLOW-VERIFICATION-LADDER-001
 verified_date: 2026-08-16
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/local_registry.rs (validate_presence, validate_typing); kask/mcp-servers/hkask-mcp-swarm/src/port_registry.rs (PortRegistry); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (check_bind, classify_request, raw_response); kask/crates/hkask-verification/src/grounding.rs (enforce_grounding, ProvenanceTag, task_agent_contract, LeakRule, NARRATIVE_LEAK_RULES, provenance_stamp); kask/crates/hkask-verification/src/card_contract.rs (validate); kask/crates/hkask-verification/src/schema_validate.rs (validate); kask/crates/hkask-verification/src/envelope.rs (build); kask/crates/hkask-verification/src/rollup_trust.rs (ROLLUP_CONTRACTS); kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs (spawn_via_local_runtime grounding wiring via VerificationStore::enforce_and_stamp, build_task_agent_card system prompt)
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/local_registry.rs (validate_presence, validate_typing); kask/mcp-servers/hkask-mcp-swarm/src/port_registry.rs (PortRegistry); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (check_bind, classify_request, raw_response); kask/crates/hkask-verification/src/grounding.rs (enforce_grounding, ProvenanceTag, task_agent_contract, LeakRule, NARRATIVE_LEAK_RULES, provenance_stamp); kask/crates/hkask-verification/src/card_contract.rs (validate); kask/crates/hkask-verification/src/schema_validate.rs (validate); kask/crates/hkask-verification/src/envelope.rs (build); kask/crates/hkask-verification/src/rollup_trust.rs (ROLLUP_CONTRACTS); kask/crates/hkask-verification/src/ledger.rs (VerificationStore, enforce_for_agent, enforce_and_stamp, grounding_trend, grounding_violations, grounding_coverage); kask/crates/hkask-verification/src/trend.rs (GroundingTrendReport, delegations_with_zero_nulled); kask/crates/hkask-regulation/src/sensor_provider.rs (GroundingSensor, GroundingSensorMetric); kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs (curator_grounding_trend, curator_grounding_violations, curator_grounding_coverage); kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs (spawn_via_local_runtime grounding wiring via VerificationStore::enforce_and_stamp, build_task_agent_card system prompt)
 status: VERIFIED
 -->

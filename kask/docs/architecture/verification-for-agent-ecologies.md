@@ -2,7 +2,7 @@
 title: "Verification for Agent Ecologies — Grounding Contract"
 audience: [architects, developers]
 last_updated: 2026-08-16
-version: "1.0.0"
+version: "1.1.0"
 status: "Active"
 domain: "Trust"
 mds_categories: [trust, composition]
@@ -210,7 +210,8 @@ metric; the check that runs before it is a control."*
 |-------|-----------|-------|
 | **Authoring (slow)** | Presence check, typing check, card-declared grounding validation | `LocalAgentRegistry::load`, `write_card`, `hkask_verification::card_contract::validate` |
 | **Invocation (fast)** | Bind check, grounding enforcement, ledger write | `VerificationStore::enforce_for_agent` (called by `swarm_delegate_local`, `swarm_execute_plan_local`, `spawn_via_local_runtime`) |
-| **Curator (feedback)** | Trend query, violations query, coverage query | `curator_grounding_trend`, `curator_grounding_violations`, `curator_grounding_coverage` |
+| **Cybernetic (feedback)** | `GroundingSensor` reads the central ledger and produces clean-rate, coverage-rate, and violation-delta signals | `hkask-regulation::sensor_provider::GroundingSensor` → `CyberneticsLoop` → `RegulationPolicy` |
+| **Curator (query)** | Trend query, violations query, coverage query | `curator_grounding_trend`, `curator_grounding_violations`, `curator_grounding_coverage` |
 
 The authoring gate is where enforcement by default lives: a new agent cannot
 enter the catalogue with an untyped or ungrounded interface. The invocation gate
@@ -218,6 +219,28 @@ catches what the authoring gate cannot know — that this particular output, on
 this particular run, contains something no tool could have supplied. The
 curator gate closes the feedback loop: the operator sees trends and coverage
 gaps and acts (adjusts contracts, adds tools, retires agents).
+
+## Regulation loop integration (the cybernetic clock)
+
+The `GroundingSensor` in `hkask-regulation` reads the central verification
+ledger on every regulation tick and produces up to three signals:
+
+- `GroundingCleanRate` — fraction of grounded delegations with zero nulled
+  fields. Fires when below the floor. Encoded as -1.0 when no grounded
+  delegations exist (absence ≠ 0 — paper Rule 5.3).
+- `GroundingCoverageRate` — fraction of delegations with a grounding contract.
+  Fires when below the floor. Encoded as -1.0 when no delegations exist.
+- `GroundingViolationDelta` — change in `delegations_with_nulled` since the
+  last tick. Fires only when positive (new violations).
+
+A DB outage is NOT collapsed to "no signal" — the sensor logs a `warn!`
+naming the failure and returns no signals for that tick (the `.rules`
+broken-feedback-loop trap: the operator can distinguish "not configured" from
+"configured but broken").
+
+The signals flow through the regulation policy to produce alerts that name the
+specific curator tool the operator should use to investigate
+(`curator_grounding_violations`, `curator_grounding_coverage`).
 
 ## Curator integration (the feedback loop)
 
@@ -253,6 +276,12 @@ but invisible to the operator — the check gets quietly disabled.
 6. **Distinguish retrieval from judgement.** Do not collapse
    `UncommissionedInference` into `Unsourced` — nulling an agent's legitimate
    reasoning removes its entire product.
+7. **The lead trend metric is deletion-resistant.** `delegations_with_zero_nulled`
+   is a raw count of clean delegations — it cannot be gamed by recording fewer
+   delegations or retiring cards with violations. The derived `clean_rate` ratio
+   IS gameable (removing violations from the denominator increases it). The
+   trend report and `curator_grounding_trend` tool lead with the count, not the
+   rate (paper Rule 5.4).
 
 ## References
 

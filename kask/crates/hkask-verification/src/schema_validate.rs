@@ -78,6 +78,23 @@ fn validate_at(schema: &Value, doc: &Value, path: &str, result: &mut ValidationR
         return;
     };
 
+    // ── unsupported keywords ────────────────────────────────────────
+    // Scan first, before any early returns (e.g. type mismatch). An
+    // unsupported keyword in a non-matching oneOf alternative must still
+    // surface — "unsupported is NOT a pass." If this ran at the bottom,
+    // the type-mismatch `return` would skip it and the keyword would be
+    // silently ignored.
+    for key in obj.keys() {
+        if !matches!(
+            key.as_str(),
+            "type" | "const" | "enum" | "properties" | "required" | "items" | "oneOf"
+        ) {
+            result
+                .unsupported
+                .push(format!("{path}: unsupported keyword `{key}`"));
+        }
+    }
+
     // ── type ────────────────────────────────────────────────────────
     if let Some(t) = obj.get("type").and_then(|v| v.as_str()) {
         if !type_matches(t, doc) {
@@ -174,18 +191,6 @@ fn validate_at(schema: &Value, doc: &Value, path: &str, result: &mut ValidationR
                 path: path.to_string(),
                 message: format!("oneOf: expected exactly 1 match, got {matches}"),
             });
-        }
-    }
-
-    // ── unsupported keywords ────────────────────────────────────────
-    for key in obj.keys() {
-        if !matches!(
-            key.as_str(),
-            "type" | "const" | "enum" | "properties" | "required" | "items" | "oneOf"
-        ) {
-            result
-                .unsupported
-                .push(format!("{path}: unsupported keyword `{key}`"));
         }
     }
 }
@@ -343,6 +348,25 @@ mod tests {
         let doc = json!("hello");
         let result = validate(&schema, &doc);
         assert!(result.is_contradiction());
+    }
+
+    #[test]
+    fn oneof_unsupported_in_non_matching_alternative_surfaces() {
+        // Alt 1 matches (supported keywords only); alt 2 has an unsupported
+        // keyword (`pattern`) and does not match. The unsupported keyword
+        // must still surface — "unsupported is NOT a pass."
+        let schema = json!({
+            "oneOf": [
+                {"type": "string"},
+                {"type": "integer", "pattern": "^[0-9]+$"}
+            ]
+        });
+        let doc = json!("hello");
+        let result = validate(&schema, &doc);
+        assert!(
+            result.unsupported.iter().any(|u| u.contains("pattern")),
+            "unsupported keyword in non-matching alternative must surface"
+        );
     }
 
     #[test]

@@ -13,6 +13,7 @@
 # Usage: run-classifier-eval.sh [model-list-file]   (CONCURRENCY env tunes parallelism)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+REPO_ROOT="$(pwd)"
 
 LIST="${1:-/tmp/bench_models.txt}"
 [ -f "$LIST" ] || { echo "error: model list not found: $LIST" >&2; exit 1; }
@@ -22,8 +23,8 @@ NMODELS=${#MODELS[@]}
 CONCURRENCY="${CONCURRENCY:-8}"
 export CONCURRENCY
 
-SUMMARY=/tmp/eval_full_out.txt
-PROGRESS=/tmp/eval_full_log.txt
+SUMMARY="$REPO_ROOT/kask/docs/review/eval-full-out.txt"
+PROGRESS="$REPO_ROOT/kask/docs/review/eval-full-log.txt"
 : > "$SUMMARY"
 : > "$PROGRESS"
 
@@ -55,4 +56,4 @@ echo "================ SUMMARY ================"
 echo "model|correct/47|inctx/3|section/17|dimension/20|failure/10|ttft_p50_ms|tok_s_p50"
 cat "$SUMMARY"
 echo ""
-echo "(per-case progress log: $PROGRESS ; summary: $SUMMARY)"
+echo "(per-case progress log: kask/docs/review/eval-full-log.txt ; summary: kask/docs/review/eval-full-out.txt)"

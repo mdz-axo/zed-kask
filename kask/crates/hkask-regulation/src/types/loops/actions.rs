@@ -68,30 +68,18 @@ pub enum RegulationData {
     /// Tool reliability degraded below threshold.
     ToolReliabilityDegraded { reliability: f64, threshold: f64 },
     /// Grounding clean rate degraded below the configured floor. Carries the
-    /// measured clean_rate, the coverage_rate (so the operator can see both
-    /// signals in one alert), and the floor that was violated. `clean_rate`
-    /// is `None` (encoded as -1.0) when no grounded delegations exist — the
-    /// alert still fires only when the floor is violated, so a `None`
-    /// clean_rate with this variant means the floor was set to a value that
-    /// treats absence as a violation (paper Rule 5.3: absence ≠ 0).
-    GroundingCleanRateDegraded {
-        clean_rate: f64,
-        coverage_rate: f64,
-        floor: f64,
-    },
+    /// measured clean_rate and the floor that was violated. The coverage_rate
+    /// is not carried — the operator queries `curator_grounding_coverage` for
+    /// the coverage gap (a separate signal with its own alert).
+    GroundingCleanRateDegraded { clean_rate: f64, floor: f64 },
     /// Grounding coverage rate degraded below the configured floor. Carries
     /// the measured coverage_rate and the floor that was violated.
     GroundingCoverageDegraded { coverage_rate: f64, floor: f64 },
     /// Grounding violation delta is positive — new nulled fields appeared
-    /// since the last sense tick. Carries the delta. The current/previous
-    /// nulled counts are not carried on the signal (the sensor emits only
-    /// the scalar delta); the fields are present for structural completeness
-    /// and default to 0.
-    GroundingViolationDeltaIncreased {
-        delta: i64,
-        current_nulled: u64,
-        previous_nulled: u64,
-    },
+    /// since the last sense tick. Carries the delta (new nulled count since
+    /// last tick). The absolute counts are available via
+    /// `curator_grounding_violations`.
+    GroundingViolationDeltaIncreased { delta: i64 },
     /// Curator (metacognition) budget override directed at a named agent.
     ///
     /// Carries the LLM-produced target agent name and new budget so `act()`
