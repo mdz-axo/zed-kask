@@ -96,6 +96,16 @@ pub struct HealthSnapshot {
     /// phase. Zero means no threshold was breached; a positive count means
     /// the Curator should self-calibrate or surface the breach to the user.
     pub escalation_count: usize,
+    /// Grounding clean rate from the central verification ledger.
+    /// `None` when no grounded delegations exist (absence ≠ 0 — paper Rule 5.3)
+    /// or when the verification store is not wired into the metacognition
+    /// loop. The Curator surfaces this via `CuratorStatusTool` so the user
+    /// can proactively check grounding health, not just see alerts when they
+    /// fire.
+    pub grounding_clean_rate: Option<f64>,
+    /// Grounding coverage rate from the central verification ledger.
+    /// `None` when no delegations exist or the store is not wired.
+    pub grounding_coverage_rate: Option<f64>,
 }
 
 /// Escalation alert emitted when a threshold is breached.
@@ -180,6 +190,12 @@ pub struct MetacognitionLoop {
     /// notification (e.g. a toast). Best-effort: errors are logged and
     /// swallowed.
     alert_sink: Option<Arc<dyn AlertSink>>,
+    /// Central verification ledger — when wired, the health snapshot
+    /// includes grounding clean/coverage rates so the Curator can
+    /// proactively surface grounding health via `CuratorStatusTool`, not
+    /// just see alerts when they fire. `None` when not wired (snapshot
+    /// grounding fields are `None`).
+    verification_store: Option<Arc<hkask_verification::VerificationStore>>,
 }
 
 impl MetacognitionLoop {

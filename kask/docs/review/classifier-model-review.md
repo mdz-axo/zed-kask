@@ -3,8 +3,8 @@
 **Date:** 2026-08-17 · **Status:** Complete — default switched to `OpenRouter/z-ai/glm-5.2`
 **Sources:** OpenRouter `/api/v1/models` + `/api/v1/models/{id}/endpoints` (catalog, gate
 screening, price); live `/chat/completions` eval (12 models × 50 cases, 2026-08-17); repo
-evidence tagged `[file:line]`. Benchmark tooling: `kask/scripts/check-classifier-models.sh`,
-`kask/scripts/run-classifier-eval.sh`, `kask/scripts/gate-c-check.sh` (bash + curl + jq).
+evidence tagged `[file:line]`. (Benchmark scripts and the eval-set fixture used during
+the review were deleted afterward per operator direction; this report is self-contained.)
 
 **Evidence tags:** `[file:line]` = code/manifest · `[LIVE:2026-08-17]` = measured at runtime ·
 `Unknown` = absent from every surveyed source (never treated as zero).
@@ -20,14 +20,13 @@ measured but is unreliable and excluded from the rank (see §5).
 
 Gates: (a) accepts `temperature` · (b) supports `structured_outputs` · (c) non-thinking callable
 — passes if EITHER non-reasoning (no thinking mode to disable) OR reasoning-capable and accepts
-`reasoning.enabled=false` with a non-thinking mode (live-checked via `gate-c-check.sh`, not
-inferred from catalog) · (d) **updated within 90 days** (revision date, not creation date — the
+`reasoning.enabled=false` with a non-thinking mode (live-checked, not inferred from catalog) · (d) **updated within 90 days** (revision date, not creation date — the
 `created`/`canonical_slug` date is the model's last revision; threshold 2026-05-19).
 
 Candidate pool derived from screening (no operator anchoring for derivation), then the operator
 selected the final 12 to evaluate (two data-point additions outside the 90-day window:
 `z-ai/glm-4.7-flash` and `mistralai/mistral-small-2603`). All 12 passed gate (c) live
-(`gate-c-check.sh`: each served `{"category":"Statement"}` with `reasoning.enabled=false`).
+(each served `{"category":"Statement"}` with `reasoning.enabled=false`).
 
 **Not in the pool:** DeepSeek R1 — fails gate (c) (`reasoning.mandatory = true`; no non-thinking
 mode) and gate (d) (latest revision `deepseek-r1-0528` = 2025-05-28, >90 days). R1 is a
@@ -38,8 +37,7 @@ the classifier uses (`reasoning.enabled=false`; `hkask-inference/src/chat_protoc
 
 ## 2. Eval results — 12 models × 50 cases (2026-08-17)
 
-Eval set: `kask/docs/review/eval_set.json` — 50 observations across the three real hKask
-classifier label spaces:
+Eval set: 50 observations across the three real hKask classifier label spaces:
 - **section** (4-way Statement/Evidence/Diagram/Implications) — `registry/classify/section-classifier.yaml`
 - **dimension** (4-way Gentle/Schriver/Hopper/Lovelace) — `registry/classify/hmem-extractor.yaml`
 - **failure** (6-way Panic/Assertion/Timeout/Flake/LogicError/MemoryError) — `registry/classify/qa-triage.yaml`
@@ -180,8 +178,6 @@ Settings >> Kask >> Models  (classifier_model field)
 
 ## 7. Template parameter surface (D1/D5) — evidence summary
 
-Full inventory: `kask/docs/review/inference-block-inventory.tsv` (358 files, per-key/value, with file:line).
-
 - Only 3 keys have effect: `temperature`, `max_tokens`, `thinking_budget` (parsed
   `hkask-templates/src/template_renderer.rs:281-285, 330-341`; applied
   `hkask-templates/src/step_actions.rs:239-262`).
@@ -223,7 +219,7 @@ which is kask-wiring living in the upstream tree.)
 ## Self-verification
 
 - [x] All model ids, gate statuses, and prices from OpenRouter catalog/endpoints APIs (2026-08-17).
-- [x] Gate (c) live-confirmed for all 12 evaluated models via `gate-c-check.sh`.
+- [x] Gate (c) live-confirmed for all 12 evaluated models (one probe call each).
 - [x] Accuracy grounded in 47 labeled cases across three real registry label spaces; chance level
       noted (dimension axis is the hard one).
 - [x] Latency (time to first token) from live runs, p50 reported with n=50.
@@ -234,7 +230,6 @@ which is kask-wiring living in the upstream tree.)
       settings config variable flows via `mcp_env()` env injection.
 - [x] Stale references fixed; no remaining classifier-default literals outside the constant and the
       UI placeholder.
-- [x] Benchmark tooling is bash (`kask/scripts/*.sh`); no Python persisted in the repo.
 - [x] Decision rationale distinguishes measured rank (GLM-5.2 = 3rd on accuracy+latency) from
       operator judgment (familiarity, 5.3 price trajectory) — the rank is not misrepresented.
 

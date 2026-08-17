@@ -4,7 +4,7 @@
 #   Martin et al. (arXiv:2603.29878): Few-Shot is the dominant strategy
 #   for structured extraction; Zero-Shot produces <30% F1.
 # Model: resolved from HKASK_CLASSIFIER_MODEL → DEFAULT_CLASSIFIER_MODEL
-#   (canonical: OR/deepseek/deepseek-v4-flash).
+#   (canonical: OR/z-ai/glm-5.2).
 #   The `model:` field below is intentionally empty; ClassifierConfig::from_def
 #   fills it from the canonical path and the LanguageModelRegistry resolves
 #   the OpenRouter/ prefix to the provider.
