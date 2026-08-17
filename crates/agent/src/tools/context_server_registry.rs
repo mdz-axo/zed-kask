@@ -341,9 +341,17 @@ impl AnyAgentTool for ContextServerTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
-        let Some(server) = self.store.read(cx).get_running_server(&self.server_id) else {
+        // Check the server is running before spawning — gives an early error
+        // rather than entering the self-healing loop for a server that was
+        // never started. The closure re-fetches by id after auth.
+        if self
+            .store
+            .read(cx)
+            .get_running_server(&self.server_id)
+            .is_none()
+        {
             return Task::ready(Err(anyhow::anyhow!("Context server not found").into()));
-        };
+        }
         let tool_name = self.tool.name.clone();
         let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
         let display_name = self.tool.name.clone();
