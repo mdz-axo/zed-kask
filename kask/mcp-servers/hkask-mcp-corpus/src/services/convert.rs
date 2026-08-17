@@ -142,9 +142,9 @@ impl<'a> ConvertService<'a> {
             ));
         }
 
-        let is_vision = vision_models
-            .iter()
-            .any(|m| m.model == model || m.prefixed_name == model);
+        let is_vision = vision_models.iter().any(|m| {
+            m.model.eq_ignore_ascii_case(&model) || m.prefixed_name.eq_ignore_ascii_case(&model)
+        });
 
         if !is_vision {
             let all_models = self.inference_router.list_models().await.map_err(|e| {
@@ -152,9 +152,9 @@ impl<'a> ConvertService<'a> {
                     "list_models failed — inference port unavailable: {e}"
                 ))
             })?;
-            let exists = all_models
-                .iter()
-                .any(|m| m.model == model || m.prefixed_name == model);
+            let exists = all_models.iter().any(|m| {
+                m.model.eq_ignore_ascii_case(&model) || m.prefixed_name.eq_ignore_ascii_case(&model)
+            });
             if exists {
                 return Err(OcrError::NotVisionModel {
                     model: model.clone(),
