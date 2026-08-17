@@ -76,6 +76,22 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         credential_key: "atlascloud",
         dashboard_url: "https://www.atlascloud.ai/",
     },
+    // RunPod has a dedicated `LanguageModelProvider` (D29), not an
+    // `openai_compatible` entry. It's listed here so `mirror_env_keys_to_keychain`
+    // writes the key to the Zed keychain under `api_url` (where the RunPod
+    // provider's `ApiKeyState` reads it), in addition to the
+    // `kask://credentials/runpod` write handled by `DATA_SERVICES`. Skipped in
+    // `ensure_openai_compatible_entries` (no `openai_compatible` entry) and
+    // in `credential_urls_for_mcp`'s `INFERENCE_PROVIDERS` loop (MCP injection
+    // is handled by the `DATA_SERVICES` loop via `runpod_enabled`).
+    InferenceProviderDescriptor {
+        id: "RunPod",
+        name: "RunPod",
+        api_url: "https://api.runpod.io",
+        env_var: "RUNPOD_API_KEY",
+        credential_key: "runpod",
+        dashboard_url: "https://www.runpod.io/",
+    },
 ];
 
 impl InferenceProviderDescriptor {
@@ -418,8 +434,14 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
     }
 
     // Inference providers — inject the API key as the env var the MCP servers
-    // and hKask's InferenceConfig expect.
+    // and hKask's InferenceConfig expect. RunPod is skipped here: it's in
+    // `INFERENCE_PROVIDERS` for the keychain `api_url` mirror (so the RunPod
+    // `LanguageModelProvider` finds the key), but MCP env injection is handled
+    // by the `DATA_SERVICES` loop above via `runpod_enabled`.
     for provider in INFERENCE_PROVIDERS {
+        if provider.credential_key == "runpod" {
+            continue;
+        }
         let enabled = match provider.credential_key {
             "deepinfra" => settings.inference_providers.deepinfra_enabled,
             "openrouter" => settings.inference_providers.openrouter_enabled,
@@ -493,7 +515,9 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
         }
 
         for provider in INFERENCE_PROVIDERS {
-            if provider.credential_key == "openrouter" {
+            // OpenRouter has a built-in zed provider; RunPod has a dedicated
+            // provider (D29). Neither should get an `openai_compatible` entry.
+            if provider.credential_key == "openrouter" || provider.credential_key == "runpod" {
                 continue;
             }
 
@@ -785,8 +809,14 @@ fn collect_env_keys_for_mirror() -> Vec<MirrorTarget> {
 
     // Data service secrets: no OpenAI-compatible api_url, so only the
     // credential_url is written. Config entries are skipped (non-secret).
+    // RunPod is skipped here because it's in `INFERENCE_PROVIDERS` (which
+    // writes both `api_url` and `credential_url`), so the `DataService`
+    // duplicate would only re-write `credential_url`.
     for desc in DATA_SERVICES {
         if !desc.is_secret() {
+            continue;
+        }
+        if desc.credential_key == "runpod" {
             continue;
         }
         if let Some(key) = std::env::var(desc.env_var).ok().filter(|k| !k.is_empty()) {
@@ -1004,6 +1034,9 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         // SAFETY: test-only env mutation, serialized by ENV_LOCK. Data
         // services produce `DataService` variants (no api_url field).
+        // RunPod is in `INFERENCE_PROVIDERS` (not `DATA_SERVICES` for mirror
+        // purposes), so it produces an `InferenceProvider` variant with an
+        // api_url — tested separately from the pure data-service entries.
         unsafe {
             for provider in INFERENCE_PROVIDERS {
                 std::env::remove_var(provider.env_var);
@@ -1018,30 +1051,44 @@ mod tests {
             std::env::set_var("HKASK_FRED_API_KEY", "fred-test-key");
         }
         let collected = collect_env_keys_for_mirror();
+        // RunPod is now an InferenceProvider (1) + 4 data services = 5 total.
         assert_eq!(
             collected.len(),
             5,
-            "five data-service env vars set → five entries collected, got {collected:?}"
+            "RunPod (InferenceProvider) + four data-service env vars → five entries, got {collected:?}"
         );
-        // Every data-service entry must be a `DataService` variant.
-        for target in &collected {
-            assert!(
-                matches!(target, MirrorTarget::DataService { .. }),
-                "data service {} must be DataService variant, got {target:?}",
-                target.env_var()
-            );
-        }
-        // Verify the credential URL shape for representative entries.
+        // RunPod must be an `InferenceProvider` variant (has api_url).
         let runpod_entry = collected
             .iter()
             .find(|t| t.env_var() == "RUNPOD_API_KEY")
             .expect("RUNPOD_API_KEY entry should be present");
+        assert!(
+            matches!(runpod_entry, MirrorTarget::InferenceProvider { .. }),
+            "RunPod must be InferenceProvider variant (has api_url), got {runpod_entry:?}"
+        );
         assert_eq!(
             runpod_entry.credential_url(),
             "kask://credentials/runpod",
             "credential_url"
         );
         assert_eq!(runpod_entry.key(), "runpod-test-key", "key");
+        // The remaining four must be `DataService` variants.
+        let data_service_entries: Vec<_> = collected
+            .iter()
+            .filter(|t| t.env_var() != "RUNPOD_API_KEY")
+            .collect();
+        assert_eq!(
+            data_service_entries.len(),
+            4,
+            "four non-RunPod data-service entries"
+        );
+        for target in &data_service_entries {
+            assert!(
+                matches!(target, MirrorTarget::DataService { .. }),
+                "data service {} must be DataService variant, got {target:?}",
+                target.env_var()
+            );
+        }
         let hf_entry = collected
             .iter()
             .find(|t| t.env_var() == "HF_TOKEN")
@@ -1192,5 +1239,56 @@ mod tests {
         );
         assert!(write_set.contains(&"DeepInfra"));
         assert!(write_set.contains(&"AtlasCloud"));
+    }
+
+    // D29 pin: RunPod is in `INFERENCE_PROVIDERS` so the keychain mirror writes
+    // its key to `api_url` (where the RunPod `LanguageModelProvider`'s
+    // `ApiKeyState` reads it), but is skipped by `ensure_openai_compatible_entries`
+    // (RunPod has a dedicated provider, D29) and by `credential_urls_for_mcp`'s
+    // `INFERENCE_PROVIDERS` loop (MCP injection is handled by the `DATA_SERVICES`
+    // loop via `runpod_enabled`). The `api_url` MUST match the RunPod provider's
+    // `RUNPOD_DEFAULT_API_URL` constant — a mismatch would write the key to a
+    // URL the provider never reads, silently breaking discovery and inference.
+    #[test]
+    fn runpod_is_mirrored_to_keychain_but_not_registered_as_openai_compatible() {
+        let runpod = INFERENCE_PROVIDERS
+            .iter()
+            .find(|p| p.credential_key == "runpod")
+            .expect("RunPod must be in INFERENCE_PROVIDERS for keychain api_url mirror");
+        assert_eq!(runpod.id, "RunPod");
+        assert_eq!(runpod.env_var, "RUNPOD_API_KEY");
+        assert_eq!(
+            runpod.api_url, "https://api.runpod.io",
+            "api_url must match the RunPod provider's RUNPOD_DEFAULT_API_URL so the keychain mirror writes to the URL ApiKeyState reads"
+        );
+        assert_eq!(
+            runpod.credential_url(),
+            "kask://credentials/runpod",
+            "credential_url must match the kask credential store key"
+        );
+
+        // Replicate the skip filter from `ensure_openai_compatible_entries`.
+        let write_set: Vec<&str> = INFERENCE_PROVIDERS
+            .iter()
+            .filter(|p| p.credential_key != "openrouter" && p.credential_key != "runpod")
+            .map(|p| p.id)
+            .collect();
+        assert!(
+            !write_set.contains(&"RunPod"),
+            "RunPod must not be in the openai_compatible write set (dedicated provider, D29)"
+        );
+        assert!(write_set.contains(&"DeepInfra"));
+        assert!(write_set.contains(&"AtlasCloud"));
+
+        // RunPod must be skipped in `credential_urls_for_mcp`'s
+        // `INFERENCE_PROVIDERS` loop (MCP injection is via `DATA_SERVICES`).
+        let mut settings = crate::KaskSettings::default();
+        settings.data_services.runpod_enabled = true;
+        let urls = credential_urls_for_mcp(&settings);
+        let runpod_count = urls.iter().filter(|(v, _)| v == "RUNPOD_API_KEY").count();
+        assert_eq!(
+            runpod_count, 1,
+            "RunPod must be injected exactly once (via DATA_SERVICES, not INFERENCE_PROVIDERS), got {runpod_count}"
+        );
     }
 }

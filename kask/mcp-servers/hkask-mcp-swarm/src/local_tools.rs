@@ -97,13 +97,11 @@ impl SwarmServer {
             // central verification ledger. The store runs
             // `enforce_grounding` (when a contract exists for the
             // agent_type), writes a `GroundingRecord` to the cross-tool
-            // ledger, and returns the result + cleaned JSON. Previously
-            // `swarm_delegate_local` did not run grounding — the coverage
-            // gap was invisible. `swarm_delegate_local` and
-            // `swarm_execute_plan_local` now enforce; `swarm_fanout_local`
-            // and `swarm_pipeline_local` delegate directly without
-            // grounding enforcement (see the struct-level doc for
-            // coverage details).
+            // ledger, and returns the result + cleaned JSON. All four local
+            // delegation paths (`swarm_delegate_local`,
+            // `swarm_execute_plan_local`, `swarm_fanout_local`,
+            // `swarm_pipeline_local`) now enforce; the cloud paths use
+            // `enforce_narrative` (prose-only grounding).
             let outcome = self.verification_store.enforce_and_stamp(
                 "swarm_delegate_local",
                 &req.agent_name,
@@ -111,15 +109,7 @@ impl SwarmServer {
                 &result.response,
                 &result.tool_calls,
             );
-            if outcome.result.is_some() {
-                result.response =
-                    serde_json::to_string(&outcome.cleaned).unwrap_or_else(|_| result.response.clone());
-                result.raw_response = Some(outcome.raw_response);
-            } else if outcome.was_object {
-                // No contract for this agent_type — the verification store
-                // wrote a coverage-gap record. Retain the raw response.
-                result.raw_response = Some(outcome.raw_response);
-            }
+            result.apply_grounding(outcome);
             // Rung 2 (Typing) post-invocation: validate the agent's output
             // against the schema for its `produces` port type (paper's "one
             // artifact, two uses"). Non-fatal — logged at warn so the operator
@@ -220,7 +210,22 @@ impl SwarmServer {
                         .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
                         .await
                     {
-                        Ok(r) => {
+                        Ok(mut r) => {
+                            // Rung 3 (Grounding): enforce via the central
+                            // verification ledger, same as
+                            // `swarm_delegate_local`. Previously this path
+                            // skipped grounding — delegations ran unrecorded
+                            // and the trend query under-counted (the
+                            // `.rules` "every delegating path must call
+                            // enforce_and_stamp" Prohibition).
+                            let outcome = self.verification_store.enforce_and_stamp(
+                                "swarm_fanout_local",
+                                &entry.agent_name,
+                                &agent.agent_type,
+                                &r.response,
+                                &r.tool_calls,
+                            );
+                            r.apply_grounding(outcome);
                             total_cost += r.cost;
                             total_cost_uncapped += r.cost_uncapped;
                             total_tokens += r.tokens_used;
@@ -327,7 +332,25 @@ impl SwarmServer {
                         .delegate(&agent, &task, step.credits_authorized, ceiling)
                         .await
                     {
-                        Ok(r) => {
+                        Ok(mut r) => {
+                            // Rung 3 (Grounding): enforce via the central
+                            // verification ledger, same as
+                            // `swarm_delegate_local`. Previously this path
+                            // skipped grounding — delegations ran unrecorded
+                            // and the trend query under-counted (the
+                            // `.rules` "every delegating path must call
+                            // enforce_and_stamp" Prohibition). The cleaned
+                            // (grounded) response is what feeds the next
+                            // pipeline step via `prev_output`, so ungrounded
+                            // fields do not propagate down the chain.
+                            let outcome = self.verification_store.enforce_and_stamp(
+                                "swarm_pipeline_local",
+                                &step.agent_name,
+                                &agent.agent_type,
+                                &r.response,
+                                &r.tool_calls,
+                            );
+                            r.apply_grounding(outcome);
                             prev_output = r.response.clone();
                             total_cost += r.cost;
                             total_cost_uncapped += r.cost_uncapped;
@@ -1388,13 +1411,7 @@ impl SwarmServer {
                                 &r.response,
                                 &r.tool_calls,
                             );
-                            if outcome.result.is_some() {
-                                r.response = serde_json::to_string(&outcome.cleaned)
-                                    .unwrap_or_else(|_| r.response.clone());
-                                r.raw_response = Some(outcome.raw_response);
-                            } else if outcome.was_object {
-                                r.raw_response = Some(outcome.raw_response);
-                            }
+                            r.apply_grounding(outcome);
                             // Record stigmergy (same as swarm_delegate_local).
                             local_knowledge::record_delegation(
                                 &self.local_memory,

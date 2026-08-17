@@ -12,6 +12,7 @@ use crate::agent_executor::{AgentExecutor, RawDelegateResult};
 use crate::error::LocalSwarmError;
 use crate::local_registry::LocalAgentCard;
 use crate::sanitize::strip_leading_mentions;
+use hkask_verification::EnforcementOutcome;
 
 /// The local swarm runtime — ledger + inference.
 ///
@@ -638,6 +639,28 @@ impl LocalDelegateResult {
             entry["executed_skills"] = serde_json::Value::Array(self.executed_skills.clone());
         }
         entry
+    }
+
+    /// Apply grounding enforcement to this result: replace `response` with
+    /// the cleaned JSON when grounding ran, and retain the raw response for
+    /// audit. The single source of truth for the stamping logic — previously
+    /// duplicated byte-for-byte across `swarm_delegate_local` and
+    /// `swarm_execute_plan_local`.
+    ///
+    /// When grounding ran (`outcome.result.is_some()`), `response` becomes
+    /// the cleaned JSON (unsourced fields nulled) and `raw_response` retains
+    /// the pre-cleaning original. When the output was a JSON object but no
+    /// contract existed (`outcome.was_object` && `outcome.result.is_none()`),
+    /// the verification store wrote a coverage-gap record and we retain the
+    /// raw response. Otherwise (non-object output) nothing is stamped.
+    pub(crate) fn apply_grounding(&mut self, outcome: EnforcementOutcome) {
+        if outcome.result.is_some() {
+            self.response =
+                serde_json::to_string(&outcome.cleaned).unwrap_or_else(|_| self.response.clone());
+            self.raw_response = Some(outcome.raw_response);
+        } else if outcome.was_object {
+            self.raw_response = Some(outcome.raw_response);
+        }
     }
 
     /// Shape a failed delegation as the per-entry JSON object. Used by

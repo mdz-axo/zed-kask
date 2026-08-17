@@ -33,6 +33,13 @@ set -euo pipefail
 # Servers known to lack tool-behavior contract tests today. Shrink over time.
 # Remove a name the moment its tests/ contains a `Parameters(` call.
 # Each entry must carry a one-line reason so the gap is auditable.
+#
+# Ratchet quota: ALLOWLIST_MAX is the high-water mark of allowlisted servers.
+# Adding a new entry without removing one (i.e., growing beyond ALLOWLIST_MAX)
+# fails the gate. To raise the cap, a human must explicitly bump this number
+# with a justification — the bump itself is the audit signal. Lower the cap
+# whenever an entry is removed; never raise it to make a new gap pass.
+ALLOWLIST_MAX=9
 ALLOWLIST=(
   hkask-mcp-codegraph          # tools query a code-graph DB; need a populated graph fixture
   hkask-mcp-companies          # tools require SerpAPI/external HTTP; need network mocking
@@ -91,7 +98,18 @@ for server_dir in mcp-servers/hkask-mcp-*/; do
   fi
 done
 
-echo "summary: $violations violation(s), $ratchet_gaps allowlisted gap(s), ${#ALLOWLIST[@]} in ratchet allowlist"
+echo "summary: $violations violation(s), $ratchet_gaps allowlisted gap(s), ${#ALLOWLIST[@]} in ratchet allowlist (cap: $ALLOWLIST_MAX)"
+
+# Ratchet quota: fail if the allowlist grew beyond the high-water mark.
+# Adding a server requires removing one — or explicitly bumping ALLOWLIST_MAX
+# with a documented reason. This converts the one-way clutch (no backsliding)
+# into a true ratchet (forced forward progress).
+if [ "${#ALLOWLIST[@]}" -gt "$ALLOWLIST_MAX" ]; then
+  echo "::error::MCP tool-test allowlist grew to ${#ALLOWLIST[@]} (cap: $ALLOWLIST_MAX). "
+  echo "  Add a tool-behavior test to an existing allowlisted server and remove it,"
+  echo "  or bump ALLOWLIST_MAX in scripts/check-mcp-tool-tests.sh with a justification."
+  exit 1
+fi
 
 if [ "${HKASK_MCP_TOOL_TEST_STRICT:-0}" = "1" ]; then
   # Ramp-up mode: allowlisted gaps are warnings only.

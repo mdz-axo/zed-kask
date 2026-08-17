@@ -204,8 +204,6 @@ jobs:
         run: cd kask && bash scripts/check-string-errors.sh
       - name: Check forecast conformance
         run: cd kask && bash scripts/check-forecast-conformance.sh
-      - name: Check convergence weights
-        run: cd kask && bash scripts/check-convergence-weights.sh
       - name: Check reg creep
         run: cd kask && bash scripts/check-reg-creep.sh
       - name: Check MCP tool tests

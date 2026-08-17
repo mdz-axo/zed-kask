@@ -40,7 +40,7 @@ pub use hkask_inference::{InferenceConfig, MediaRouter};
 pub use hkask_types::agent_paths::resolve_data_dir;
 pub use identity::{
     ProvisionError, ProvisionedAgent, agent_name_from_username, mirror_provisioned_db_passphrase,
-    provision_agent,
+    mirror_runpod_api_key, provision_agent,
 };
 pub use inference::BridgeEditPredictionPort;
 pub use inference::LanguageModelEmbeddingPort;
