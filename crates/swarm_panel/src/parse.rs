@@ -114,6 +114,16 @@ pub(crate) struct AgentInfo {
     /// `swarm_list_agents`; absent on local cards and on ABW responses predating
     /// the column (backfilled to `created_at` server-side).
     pub(crate) updated_at: Option<String>,
+    /// fermi v0.16.x: human-readable display name. Forwarded by
+    /// `swarm_list_agents` from ABW's `build_agent_json`. The cloud fetch path
+    /// populates `AgentCard.display_name` from this so the catalogue shows
+    /// "Xaman Ek" instead of the `agent_id` slug "xaman_ek". Empty/absent
+    /// falls back to `agent_id` in the card renderer (see `card.rs`). Local
+    /// cards carry their name under `display_name`, not `display_alias` — the
+    /// field-name difference is an ABW-vs-local shape split, not a semantic
+    /// one, and the panel unifies them into `AgentCard.display_name`.
+    #[serde(default)]
+    pub(crate) display_alias: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

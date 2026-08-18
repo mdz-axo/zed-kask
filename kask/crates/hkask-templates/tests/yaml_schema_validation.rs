@@ -422,9 +422,6 @@ fn kali_audit_manifest_loads_with_correct_structure() {
         "max_iterations should be 10 after Cauchy migration"
     );
 
-    // Verify gas cap is positive.
-    assert!(manifest.gas.cap > 0, "gas cap must be positive");
-
     // Verify steps are present.
 }
 
@@ -946,11 +943,6 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
 
     // Verify gas cap is positive and generous (the briefing queries multiple
     // data sources and synthesizes a large output).
-    assert!(
-        manifest.gas.cap >= 100000,
-        "gas cap must be at least 100000 for a multi-source briefing, got {}",
-        manifest.gas.cap
-    );
 
     // Verify the manifest declares the correct span namespace.
     assert_eq!(

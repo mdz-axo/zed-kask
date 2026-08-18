@@ -89,10 +89,7 @@ fn all_manifests_are_executor_compliant() {
                 }
             }
 
-            // 3. Gas block
-            if manifest.gas.cap == 0 {
-                errors.push(format!("{fname}: gas.cap == 0 (must be > 0)"));
-            }
+
 
             // 4. rJoule block — required when inference is used
             let uses_inference = manifest.steps.iter().any(|s| s.action == "select");

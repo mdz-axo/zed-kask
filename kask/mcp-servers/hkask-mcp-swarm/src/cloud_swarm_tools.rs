@@ -23,6 +23,83 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 // any internal callers can reach them at the crate root.
 pub use crate::cloud_swarm::{build_create_agent_card, extract_execute_response};
 
+/// Map one ABW catalogue agent (fermi `build_agent_json`) into the trimmed
+/// envelope `swarm_list_agents` returns. Pure over its input — extracted from
+/// the inline closure so the field-forwarding contract is unit-testable without
+/// a live ABW connection or a mock HTTP harness.
+///
+/// Forwarding is additive: fermi fields not listed here are dropped. The set
+/// pinned by `tests::map_catalogue_agent_forwards_*` is the load-bearing one —
+/// a field absent from fermi's response stays `Null` (schema-stable), and a
+/// field fermi stops emitting silently goes `Null` rather than blanking the
+/// panel (the panel deserializes with `serde` and ignores unknown keys).
+pub(crate) fn map_catalogue_agent(a: &serde_json::Value) -> serde_json::Value {
+    // Sanitize the description field (KA-01): agent descriptions are
+    // ABW/LLM-generated and can carry injection payloads. Plain-string
+    // sanitizer: the panel parses `description` as `Option<String>` — the
+    // {content, source, trust} container would fail deserialization and
+    // blank the whole list.
+    let sanitized_desc = sanitize_abw_response_plain(a.get("description"));
+    serde_json::json!({
+        "agent_id": a.get("agent_id"),
+        "uuid": a.get("uuid"),
+        "agent_type": a.get("agent_type"),
+        "tier": a.get("tier"),
+        "status": a.get("status"),
+        "description": sanitized_desc,
+        // fermi v0.16.x: human-readable display name. The panel falls back to
+        // `agent_id` when this is absent or empty — forwarding it lets the
+        // catalogue show "Xaman Ek" instead of "xaman_ek".
+        "display_alias": a.get("display_alias"),
+        "author": a.get("author"),
+        "tags": a.get("tags"),
+        "model": a.get("capabilities").and_then(|c| c.get("model")),
+        "llm_provider": a.get("llm_provider"),
+        // Composition signals (fermi `build_agent_json`):
+        // `accepts`/`produces` drive I/O compatibility checks, `valence` drives
+        // homophily scoring, `min_tier` gates cognition tier, `requires_secrets`
+        // enables funding-gate pre-check (avoids hire-then-fail on unfunded
+        // agents).
+        "min_tier": a.get("min_tier"),
+        "accepts": a.get("accepts"),
+        "produces": a.get("produces"),
+        "valence": a.get("valence"),
+        "requires_secrets": a.get("requires_secrets"),
+        // fermi v0.18: the agent's own declaration of how it expects to be
+        // invoked and what it returns. With v0.18 `port_trust` now enforced
+        // server-side from `card.accepts` (fermi `execution.rs`), the curator's
+        // I/O compatibility reasoning (swarm-intelligence, a2a, PortRegistry)
+        // should read these contracts alongside `accepts`/`produces` rather
+        // than hardcoding assumptions keyed on specific agent ids.
+        "fermi_contract": a.get("fermi_contract"),
+        "output_contract": a.get("output_contract"),
+        // Forwarded whole — carries fermi v0.17's spend-honesty fields
+        // `source` ("episodes" | "agents_row") and `episodes_missing_cost`
+        // (non-zero means `total_cost_usd` is a partial sum). A consumer
+        // presenting spend must surface these rather than pass an incomplete
+        // figure off as a total — the same class as the `.rules`
+        // `unwrap_or(0)` broken-feedback-loop trap. Pinned by
+        // `tests::map_catalogue_agent_forwards_execution_stats_honesty_fields`.
+        "execution_stats": a.get("execution_stats"),
+        "dreaming": a.get("dreaming"),
+        "workspace_count": a.get("workspace_count"),
+        // Not emitted by fermi's list endpoint — fetch via `swarm_hire_cost`
+        // (`GET /agents/{id}/dependencies`). Forwarded as null for schema
+        // stability.
+        "dependencies": a.get("dependencies"),
+        // fermi ADR-011 fields (model_ladder, capability_gates) are surfaced
+        // so the panel and the curator can reason about per-tier model
+        // resolution and tool gating.
+        "model_ladder": a.get("model_ladder"),
+        "capability_gates": a.get("capability_gates"),
+        // `agents.updated_at` exists in fermi's DB (mig-166 (fermi v0.16.1))
+        // but `build_agent_json` does not expose it in the list response.
+        // Forwarded as null for schema stability; re-enable when fermi adds
+        // it.
+        "updated_at": a.get("updated_at"),
+    })
+}
+
 /// Recursively scan a JSON value for "accepts" and "produces" arrays of
 /// strings, returning any labels that do not resolve in the PortRegistry.
 /// Used by  to catch decorative port labels in composed
@@ -122,53 +199,7 @@ impl SwarmServer {
                         })
                     })
                     .take(limit)
-                    .map(|a| {
-                        // Sanitize the description field (KA-01): agent descriptions
-                        // are ABW/LLM-generated and can carry injection payloads.
-                        // Plain-string sanitizer: the panel parses `description` as
-                        // `Option<String>` — the {content, source, trust} container
-                        // would fail deserialization and blank the whole list.
-                        let sanitized_desc = sanitize_abw_response_plain(a.get("description"));
-                        serde_json::json!({
-                            "agent_id": a.get("agent_id"),
-                            "uuid": a.get("uuid"),
-                            "agent_type": a.get("agent_type"),
-                            "tier": a.get("tier"),
-                            "status": a.get("status"),
-                            "description": sanitized_desc,
-                            "author": a.get("author"),
-                            "tags": a.get("tags"),
-                            "model": a.get("capabilities").and_then(|c| c.get("model")),
-                            "llm_provider": a.get("llm_provider"),
-                            // Composition signals (fermi `build_agent_json`):
-                            // `accepts`/`produces` drive I/O compatibility checks,
-                            // `valence` drives homophily scoring, `min_tier` gates
-                            // cognition tier, `requires_secrets` enables funding-gate
-                            // pre-check (avoids hire-then-fail on unfunded agents).
-                            "min_tier": a.get("min_tier"),
-                            "accepts": a.get("accepts"),
-                            "produces": a.get("produces"),
-                            "valence": a.get("valence"),
-                            "requires_secrets": a.get("requires_secrets"),
-                            "execution_stats": a.get("execution_stats"),
-                            "dreaming": a.get("dreaming"),
-                            "workspace_count": a.get("workspace_count"),
-                            // Not emitted by fermi's list endpoint — fetch via
-                            // `swarm_hire_cost` (`GET /agents/{id}/dependencies`).
-                            // Forwarded as null for schema stability.
-                            "dependencies": a.get("dependencies"),
-                            // fermi ADR-011 fields (model_ladder, capability_gates)
-                            // are surfaced so the panel and the curator can reason
-                            // about per-tier model resolution and tool gating.
-                            "model_ladder": a.get("model_ladder"),
-                            "capability_gates": a.get("capability_gates"),
-                            // `agents.updated_at` exists in fermi's DB (mig-166 (fermi v0.16.1)) but
-                            // `build_agent_json` does not expose it in the list
-                            // response. Forwarded as null for schema stability;
-                            // re-enable when fermi adds it.
-                            "updated_at": a.get("updated_at"),
-                        })
-                    })
+                    .map(map_catalogue_agent)
                     .collect();
 
                 Ok(serde_json::json!({
@@ -1963,5 +1994,359 @@ impl SwarmServer {
             },
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_catalogue_agent;
+    use serde_json::json;
+
+    // A fermi v0.18 `build_agent_json` payload, shaped exactly as the live
+    // `/api/agents` endpoint emits it (src/handlers/agents.rs:82-232). Field
+    // types mirror fermi's serialization, not the Rust source types:
+    // `tier` is `AgentTier` ("curated"|"community"|"system"), `min_tier` and
+    // `model_ladder[].tier` are `CognitionTier` ("local"|"free"|"standard"
+    // |"premium"), and `capability_gates` values are `CognitionTier` — all
+    // serialize as lowercase *strings*, not integers. Only the fields
+    // `map_catalogue_agent` reads are populated; the rest are omitted so the
+    // test asserts presence-forwarding, not full-shape parity.
+    fn fermi_agent() -> serde_json::Value {
+        json!({
+            "agent_id": "xaman_ek",
+            "uuid": "11111111-1111-1111-1111-111111111111",
+            "agent_type": "composition",
+            "tier": "curated",
+            "status": "published",
+            "description": "The composition brain.",
+            // v0.16.x — human-readable name.
+            "display_alias": "Xaman Ek",
+            "author": "replicant",
+            "tags": ["composition", "orchestra"],
+            "capabilities": { "model": "claude-sonnet-4-20250514" },
+            "llm_provider": "anthropic",
+            "min_tier": "premium",
+            "accepts": ["forecast_brief"],
+            "produces": ["team_plan"],
+            "valence": { "arousal": 0.4, "valence": 0.6 },
+            "requires_secrets": ["ANTHROPIC_API_KEY"],
+            // v0.18 — the agent's own I/O declaration.
+            "fermi_contract": { "accepts": [{ "port": "forecast_brief", "kind": "text" }] },
+            "output_contract": { "produces": [{ "port": "team_plan", "kind": "json" }] },
+            // v0.17 — spend honesty. `episodes_missing_cost` is i64;
+            // `> 0` means `total_cost_usd` is a partial sum, not a total.
+            "execution_stats": {
+                "total_executions": 42,
+                "successful_executions": 40,
+                "failed_executions": 2,
+                "total_cost_usd": 0.31,
+                "tokens_used": 524288,
+                "avg_execution_time_ms": 4100,
+                "episodes_missing_cost": 3,
+                "source": "episodes"
+            },
+            "dreaming": {
+                "budget_credits": 1000,
+                "credits_used": 120,
+                "credits_remaining": 880
+            },
+            "workspace_count": 7,
+            // `ModelRung.tier` is `CognitionTier` (string), not an int.
+            "model_ladder": [{ "tier": "premium", "model": "claude-sonnet-4-20250514" }],
+            // `HashMap<String, CognitionTier>` — value is a string tier.
+            "capability_gates": { "swarm_search_knowledge": "standard" }
+        })
+    }
+
+    // The v0.18 contract: `display_alias` (human name), `fermi_contract` and
+    // `output_contract` (the I/O declaration port_trust now enforces
+    // server-side) must be forwarded so the curator's port-matching reasons
+    // over the agent's own declaration rather than a hardcoded id table.
+    #[test]
+    fn map_catalogue_agent_forwards_v0_18_io_declaration_fields() {
+        let out = map_catalogue_agent(&fermi_agent());
+        assert_eq!(
+            out.get("display_alias").and_then(|v| v.as_str()),
+            Some("Xaman Ek")
+        );
+        assert_eq!(
+            out.get("fermi_contract")
+                .and_then(|v| v.get("accepts"))
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|e| e.get("port"))
+                .and_then(|v| v.as_str()),
+            Some("forecast_brief")
+        );
+        assert_eq!(
+            out.get("output_contract")
+                .and_then(|v| v.get("produces"))
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|e| e.get("port"))
+                .and_then(|v| v.as_str()),
+            Some("team_plan")
+        );
+    }
+
+    // v0.17 spend honesty: `execution_stats` is forwarded whole, so `source`
+    // and `episodes_missing_cost` ride it. A future refactor that switches to
+    // per-field forwarding must not silently drop these — a consumer
+    // presenting `total_cost_usd` without `episodes_missing_cost` passes a
+    // partial sum off as a total (the `.rules` `unwrap_or(0)` trap, applied to
+    // attribution honesty).
+    #[test]
+    fn map_catalogue_agent_forwards_execution_stats_honesty_fields() {
+        let out = map_catalogue_agent(&fermi_agent());
+        let stats = out
+            .get("execution_stats")
+            .expect("execution_stats forwarded whole");
+        assert_eq!(
+            stats.get("source").and_then(|v| v.as_str()),
+            Some("episodes")
+        );
+        // episodes_missing_cost must survive forwarding: non-zero means
+        // total_cost_usd is a partial sum, not a total.
+        assert_eq!(
+            stats.get("episodes_missing_cost").and_then(|v| v.as_i64()),
+            Some(3)
+        );
+    }
+
+    // Regression guard: the pre-existing forward set (`accepts`/`produces`,
+    // `valence`, `min_tier`, `requires_secrets`, `model_ladder`,
+    // `capability_gates`, `dreaming`, `workspace_count`, `model`, `llm_provider`)
+    // must survive the extraction to `map_catalogue_agent`. If a field is
+    // dropped during the refactor, this fails before the new fields do.
+    #[test]
+    fn map_catalogue_agent_preserves_pre_existing_forwarded_fields() {
+        let out = map_catalogue_agent(&fermi_agent());
+        assert_eq!(
+            out.get("agent_id").and_then(|v| v.as_str()),
+            Some("xaman_ek")
+        );
+        assert_eq!(
+            out.get("agent_type").and_then(|v| v.as_str()),
+            Some("composition")
+        );
+        // `tier` is `AgentTier` — serialized as a lowercase string, not an int.
+        assert_eq!(out.get("tier").and_then(|v| v.as_str()), Some("curated"));
+        assert_eq!(
+            out.get("status").and_then(|v| v.as_str()),
+            Some("published")
+        );
+        // Sanitized description is forwarded as a plain string.
+        assert_eq!(
+            out.get("description").and_then(|v| v.as_str()),
+            Some("The composition brain.")
+        );
+        assert_eq!(
+            out.get("author").and_then(|v| v.as_str()),
+            Some("replicant")
+        );
+        assert_eq!(
+            out.get("model").and_then(|v| v.as_str()),
+            Some("claude-sonnet-4-20250514")
+        );
+        assert_eq!(
+            out.get("llm_provider").and_then(|v| v.as_str()),
+            Some("anthropic")
+        );
+        // `min_tier` is `CognitionTier` — a string, not an int.
+        assert_eq!(
+            out.get("min_tier").and_then(|v| v.as_str()),
+            Some("premium")
+        );
+        assert_eq!(
+            out.get("accepts")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            Some(1)
+        );
+        assert_eq!(
+            out.get("produces")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            Some(1)
+        );
+        assert!(out.get("valence").is_some());
+        assert!(out.get("requires_secrets").is_some());
+        assert!(out.get("dreaming").is_some());
+        assert_eq!(out.get("workspace_count").and_then(|v| v.as_i64()), Some(7));
+        assert!(out.get("model_ladder").is_some());
+        assert!(out.get("capability_gates").is_some());
+    }
+
+    // Schema-stability contract: a fermi field the catalogue does NOT emit
+    // (e.g. `updated_at`, which `build_agent_json` still doesn't surface) must
+    // map to `Null`, not be absent. The panel deserializes with `serde` (no
+    // `deny_unknown_fields`), so absence is tolerated, but `Null` keeps the
+    // response shape stable across fermi versions for downstream consumers
+    // that read the field positionally.
+    #[test]
+    fn map_catalogue_agent_absent_fields_map_to_null_not_absent() {
+        let mut agent = fermi_agent();
+        // `updated_at` is not in `fermi_agent()` — confirm it maps to null.
+        let out = map_catalogue_agent(&agent);
+        assert!(
+            out.get("updated_at").is_some(),
+            "updated_at must be present (as null)"
+        );
+        assert!(out.get("updated_at").unwrap().is_null());
+        // Same for `dependencies` (fetched via `swarm_hire_cost`, not the list).
+        assert!(out.get("dependencies").is_some());
+        assert!(out.get("dependencies").unwrap().is_null());
+        // Mutate to confirm an absent `display_alias` does not panic — it
+        // maps to null, and the panel's fallback to `agent_id` handles that.
+        agent["display_alias"] = serde_json::Value::Null;
+        let out2 = map_catalogue_agent(&agent);
+        assert!(out2.get("display_alias").unwrap().is_null());
+    }
+
+    // ── Proptests ───────────────────────────────────────────────────────
+    //
+    // The example tests above pin the specific fermi v0.18 contract (which
+    // fields, which shapes). Proptests pin the UNIVERSAL invariants of
+    // `map_catalogue_agent` that hold across all JSON inputs — the boundary
+    // and totality properties a fixed fixture cannot exercise. Both coexist:
+    // examples document the contract; proptests verify the homomorphism,
+    // schema stability, and totality that make the contract load-bearing.
+
+    use proptest::prelude::*;
+
+    fn arb_json_string(max_len: usize) -> impl Strategy<Value = String> {
+        prop::collection::vec(any::<char>(), 0..max_len).prop_map(|cs| cs.into_iter().collect())
+    }
+
+    /// Bounded arbitrary JSON: null/bool/i64/string leaves, recursing into
+    /// arrays and objects up to depth 3. Exercises every `serde_json::Value`
+    /// variant `map_catalogue_agent` might encounter (including `Null`, bare
+    /// strings, and arrays where an object is expected).
+    fn arb_json() -> impl Strategy<Value = serde_json::Value> {
+        let leaf = prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            any::<i64>().prop_map(serde_json::Value::from),
+            arb_json_string(24).prop_map(serde_json::Value::String),
+        ];
+        leaf.prop_recursive(3, 24, 8, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..6).prop_map(serde_json::Value::Array),
+                prop::collection::vec((arb_json_string(12), inner), 0..6)
+                    .prop_map(|pairs| serde_json::Value::Object(pairs.into_iter().collect())),
+            ]
+        })
+    }
+
+    /// The exact, stable forwarded key set. Any change to `map_catalogue_agent`
+    /// that adds or drops a key fails `prop_schema_is_stable` — the panel and
+    /// the curator depend on this set being what the catalogue emits.
+    const EXPECTED_KEYS: &[&str] = &[
+        "agent_id",
+        "uuid",
+        "agent_type",
+        "tier",
+        "status",
+        "description",
+        "display_alias",
+        "author",
+        "tags",
+        "model",
+        "llm_provider",
+        "min_tier",
+        "accepts",
+        "produces",
+        "valence",
+        "requires_secrets",
+        "fermi_contract",
+        "output_contract",
+        "execution_stats",
+        "dreaming",
+        "workspace_count",
+        "dependencies",
+        "model_ladder",
+        "capability_gates",
+        "updated_at",
+    ];
+
+    proptest! {
+        // Totality: the mapping must never panic and always return a JSON
+        // object, for ANY input shape — Null, a bare string, an array, a
+        // number, a deeply nested object. fermi's `/agents` array could carry
+        // a non-object entry; the panel and curator must not crash on it.
+        #[test]
+        fn prop_never_panics_and_returns_object(a in arb_json()) {
+            let out = map_catalogue_agent(&a);
+            prop_assert!(
+                out.is_object(),
+                "output must always be a JSON object, got {out:?}"
+            );
+        }
+
+        // Schema stability: the output object carries EXACTLY the forwarded
+        // key set — no more, no less — regardless of input. A fermi field that
+        // disappears, or a new fermi field, cannot silently widen or narrow
+        // the envelope downstream code depends on. This is the property the
+        // `updated_at`-stays-null comment promises.
+        #[test]
+        fn prop_schema_is_stable(a in arb_json()) {
+            let out = map_catalogue_agent(&a);
+            let obj = out.as_object().expect("output is an object (prop_never_panics)");
+            let keys: std::collections::HashSet<&str> =
+                obj.keys().map(|s| s.as_str()).collect();
+            let expected: std::collections::HashSet<&str> =
+                EXPECTED_KEYS.iter().copied().collect();
+            prop_assert_eq!(
+                keys, expected,
+                "forwarded key set must be exact and stable across all inputs"
+            );
+        }
+
+        // Forwarding homomorphism: every direct-get field passes through
+        // UNCHANGED — present values verbatim, absent values as `Null` (which
+        // is what `a.get(field)` returns for a missing key, so the equality
+        // holds in both directions). `model` is the one derived field (from
+        // `capabilities.model`); `description` is the one transformed field
+        // (sanitized) and is verified by `prop_description_is_plain`.
+        #[test]
+        fn prop_forwards_direct_fields_unchanged(a in arb_json()) {
+            let out = map_catalogue_agent(&a);
+            let direct = [
+                "agent_id", "uuid", "agent_type", "tier", "status", "display_alias",
+                "author", "tags", "llm_provider", "min_tier", "accepts", "produces",
+                "valence", "requires_secrets", "fermi_contract", "output_contract",
+                "execution_stats", "dreaming", "workspace_count", "dependencies",
+                "model_ladder", "capability_gates", "updated_at",
+            ];
+            for f in direct {
+                prop_assert_eq!(
+                    out.get(f), a.get(f),
+                    "field {} must forward unchanged (absent -> null)",
+                    f
+                );
+            }
+            // `model` is derived from `capabilities.model`, not forwarded directly.
+            prop_assert_eq!(
+                out.get("model"),
+                a.get("capabilities").and_then(|c| c.get("model")),
+                "model must come from capabilities.model"
+            );
+        }
+
+        // KA-01 sanitizer invariant: the forwarded `description` is ALWAYS a
+        // plain string or null — never an object/array/number — because the
+        // panel deserializes `description` as `Option<String>`. An ABW/LLM
+        // `{content, source, trust}` container would otherwise fail to
+        // deserialize and blank the whole list. This holds for every input
+        // shape, including a description that is itself an object or array.
+        #[test]
+        fn prop_description_is_plain_string_or_null(a in arb_json()) {
+            let out = map_catalogue_agent(&a);
+            let desc = out.get("description").expect("description key present (prop_schema_is_stable)");
+            prop_assert!(
+                desc.is_null() || desc.is_string(),
+                "description must be plain string or null (KA-01), got {desc:?}"
+            );
+        }
     }
 }

@@ -9,7 +9,6 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 pub struct KataManifest {
     pub manifest: ManifestMeta,
-    pub gas: KataGasConfig,
     #[serde(default)]
     pub steps: Vec<KataStep>,
     #[serde(default)]
@@ -38,26 +37,6 @@ pub struct ManifestMeta {
     pub visibility: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct KataGasConfig {
-    #[serde(default = "default_gas_cap")]
-    pub cap: u64,
-    #[serde(default = "default_alert_threshold")]
-    pub alert_threshold: f64,
-    #[serde(default = "default_hard_limit")]
-    pub hard_limit: bool,
-}
-
-fn default_gas_cap() -> u64 {
-    15000
-}
-
-fn default_alert_threshold() -> f64 {
-    0.7
-}
-fn default_hard_limit() -> bool {
-    true
-}
 
 /// A single step in an Improvement Kata cycle.
 #[derive(Debug, Clone, Deserialize)]
@@ -71,8 +50,6 @@ pub struct KataStep {
     pub template_ref: Option<String>,
     #[serde(default)]
     pub classifier: bool,
-    #[serde(default)]
-    pub gas_cap: Option<u64>,
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
     #[serde(default)]

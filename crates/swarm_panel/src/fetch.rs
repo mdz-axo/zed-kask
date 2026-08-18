@@ -153,7 +153,7 @@ impl SwarmPanel {
                                                     .execution_stats
                                                     .and_then(|s| s.total_executions)
                                                     .unwrap_or(0),
-                                                display_name: String::new(),
+                                                display_name: a.display_alias.unwrap_or_default(),
                                                 updated_at: a.updated_at,
                                                 source: AgentSource::Cloud,
                                             })

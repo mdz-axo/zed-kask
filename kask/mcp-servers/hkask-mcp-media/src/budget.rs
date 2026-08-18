@@ -77,8 +77,8 @@ pub struct MediaBudget {
     alert_threshold: f64,
     /// One-shot guard for the threshold warning (mirrors `BudgetTracker`'s
     /// private `rjoule_alerted`, which we can't reach without
-    /// `check_exhausted` — and we avoid `check_exhausted` because it spuriously
-    /// returns `Gas` when the inert gas cap is 0).
+    /// `check_exhausted` — and we avoid `check_exhausted` because its
+    /// exhaustion check is redundant with our own pre-charge gate).
     alerted: std::sync::atomic::AtomicBool,
 }
 
@@ -95,28 +95,21 @@ impl MediaBudget {
     }
 }
 
-/// Build an rJoule-only `BudgetTracker` with an inert gas cap (the media server
-/// never charges gas — it is enforced upstream at `McpRuntime::invoke`). Shared
-/// by [`build_media_budget`] (production) and the gate tests.
+/// Build an rJoule-only `BudgetTracker` (the media server never charges gas —
+/// enforcement is upstream at `McpRuntime::invoke`). Shared by
+/// [`build_media_budget`] (production) and the gate tests.
 fn make_rjoule_tracker(
     cap: u32,
     alert_threshold: f64,
 ) -> Arc<tokio::sync::Mutex<hkask_templates::budget::BudgetTracker>> {
-    use hkask_templates::bundle::config::{BundleGasConfig, RjouleConfig};
-    let gas = BundleGasConfig {
-        cap: u32::MAX,
-        cost_per_iteration: 0,
-        alert_threshold: 1.0,
-        hard_limit: false,
-    };
+    use hkask_templates::bundle::config::RjouleConfig;
     let rjoule = RjouleConfig {
         cap,
         alert_threshold,
         hard_limit: true,
     };
     Arc::new(tokio::sync::Mutex::new(
-        hkask_templates::budget::BudgetTracker::new(&gas, &rjoule),
-    ))
+        hkask_templates::budget::BudgetTracker::new(&rjoule)))
 }
 
 /// Estimate the rJoule (USD) cost of a media generation call. Pure function of
