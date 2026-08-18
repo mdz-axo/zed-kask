@@ -46,9 +46,6 @@ pub struct LLMParameters {
     /// - 0.0 disables. Typical: 0.9-0.95
     pub typical_p: f32,
 
-    /// Maximum tokens to generate
-    pub max_tokens: u32,
-
     /// Random seed (None for random, Some for reproducibility)
     pub seed: Option<u64>,
 
@@ -94,7 +91,6 @@ impl LLMParameters {
             typical_p: 0.0,
             frequency_penalty: 0.4,
             presence_penalty: 0.4,
-            max_tokens: 2048,
             seed: None,
             disable_thinking: false,
             adapter: None,

@@ -520,7 +520,6 @@ fn span_namespace_matches_manifest_id() {
 }
 
 /// 7. Template inference block consistency — templates with inference
-///    parameters (temperature, max_tokens, thinking_budget) in their body
 ///    `[inference]` block must declare `template_type` KnowAct or WordAct
 ///    in their frontmatter, not FlowDef or RenderAct.
 ///
@@ -570,7 +569,6 @@ fn template_inference_block_matches_template_type() {
             .take_while(|l| !l.is_empty() || l.starts_with('['))
             .any(|l| {
                 l.contains("temperature")
-                    || l.contains("max_tokens")
                     || l.contains("thinking_budget")
                     || l.contains("work_effort")
                     || l.contains("verbosity")

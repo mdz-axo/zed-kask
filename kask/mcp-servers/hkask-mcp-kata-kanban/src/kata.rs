@@ -69,7 +69,7 @@ pub type MetricCollectorFn =
     Arc<dyn Fn(&str, &str) -> Result<serde_json::Value, KataError> + Send + Sync>;
 
 /// Task-scoped rJoule accountant callback — deducts inference cost from a bound task.
-pub type TaskGasAccountantFn = Arc<dyn Fn(u64, &str) -> Result<u64, KataError> + Send + Sync>;
+pub type TaskRjouleAccountantFn = Arc<dyn Fn(u64, &str) -> Result<u64, KataError> + Send + Sync>;
 
 /// Execution engine for kata manifests.
 ///
@@ -96,7 +96,7 @@ pub struct KataEngine {
     ledger_runtime: Option<Arc<RwLock<RegulationLedger>>>,
     /// Optional task-scoped rJoule accountant. When present, each inference
     /// call deducts its USD cost from the bound kanban task's rJoule budget.
-    task_gas_accountant: Option<TaskGasAccountantFn>,
+    task_rjoule_accountant: Option<TaskRjouleAccountantFn>,
 }
 
 impl KataEngine {
@@ -114,7 +114,7 @@ impl KataEngine {
             history_store: None,
             metric_collector: None,
             ledger_runtime: None,
-            task_gas_accountant: None,
+            task_rjoule_accountant: None,
         }
     }
 
@@ -226,10 +226,10 @@ impl KataEngine {
     ///
     /// `[P9]` Motivating: Homeostatic Self-Regulation — closes the rJoule consumption loop.
     /// pre:  accountant must be bound to a task
-    /// post: returns self with task_gas_accountant set; each inference call will deduct cost
+    /// post: returns self with task_rjoule_accountant set; each inference call will deduct cost
     #[must_use]
-    pub fn with_task_gas_accountant(mut self, accountant: TaskGasAccountantFn) -> Self {
-        self.task_gas_accountant = Some(accountant);
+    pub fn with_task_rjoule_accountant(mut self, accountant: TaskRjouleAccountantFn) -> Self {
+        self.task_rjoule_accountant = Some(accountant);
         self
     }
 

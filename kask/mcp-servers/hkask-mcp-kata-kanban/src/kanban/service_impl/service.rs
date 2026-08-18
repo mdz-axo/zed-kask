@@ -58,24 +58,11 @@ impl KanbanService {
     ///
     /// The accountant decrements `task.rjoule_remaining` via `task_consume_rjoules`
     /// after each inference call. Attach it to a `KataEngine` via
-    /// `with_task_gas_accountant` to close the per-task rJoule feedback loop.
+    /// `with_task_rjoule_accountant` to close the per-task rJoule feedback loop.
     ///
     /// pre:  task_id refers to an existing task with an rJoule budget set
     /// post: returns a callback that deducts from the task's rJoule budget
     #[must_use]
-    pub fn gas_accountant_for(
-        self: &Arc<Self>,
-        task_id: TaskId,
-    ) -> crate::kata::TaskGasAccountantFn {
-        let service = Arc::clone(self);
-        Arc::new(move |cost, reason| {
-            service
-                .task_consume_rjoules(task_id, cost, reason)
-                .map_err(|e| {
-                    crate::kata::KataError::InferenceFailed(format!("task rJoule deduction: {e}"))
-                })
-        })
-    }
 
     pub(super) fn require_task_actor(task: &Task, actor: WebID) -> Result<(), KanbanError> {
         if task.owner == actor || task.assignee == Some(actor) {

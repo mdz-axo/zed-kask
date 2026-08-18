@@ -94,7 +94,6 @@ pub struct TaskCreateRequest {
 
     /// Gas/rJoule budget for the subagent working on this task.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gas_budget: Option<u64>,
     /// Inference/API rJoule budget (250k ≈ $1 spend).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rjoule_budget: Option<u64>,
@@ -151,7 +150,6 @@ pub struct TaskInfo {
     pub assignee: Option<String>,
     pub criteria_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gas_remaining: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rjoule_remaining: Option<u64>,
     /// The swarm this task belongs to, when coordinated via a local swarm.
@@ -226,7 +224,6 @@ pub struct TaskAddGasRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaskAddGasResponse {
     pub task_id: String,
-    pub new_gas_remaining: u64,
     /// Ontology concept: <https://www.w3.org/ns/prov#used>
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
@@ -309,7 +306,6 @@ pub struct TaskReopenRequest {
     pub task_id: String,
     /// Optional new gas budget to grant on reopen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gas_budget: Option<u64>,
     /// Optional new rJoule budget to grant on reopen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rjoule_budget: Option<u64>,
@@ -319,7 +315,6 @@ pub struct TaskReopenRequest {
 pub struct TaskReopenResponse {
     pub task_id: String,
     pub new_status: String,
-    pub gas_remaining: Option<u64>,
     pub rjoule_remaining: Option<u64>,
     /// Ontology concept: <https://w3id.org/pko#ChangeOfStatus>
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -390,7 +385,6 @@ pub struct TaskSpawnRequest {
     pub memory_scope: Option<String>,
     /// Gas budget to grant on spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gas_budget: Option<u64>,
     /// rJoule budget to grant on spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rjoule_budget: Option<u64>,

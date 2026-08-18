@@ -20,7 +20,6 @@ pub struct PracticeEntry {
     pub kata_type: String,
     pub practice_name: String,
     pub steps_completed: usize,
-    pub gas_consumed: u64,
 }
 
 impl KataHistory {

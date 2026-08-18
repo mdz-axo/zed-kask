@@ -102,7 +102,6 @@ impl CorpusServer {
             let params = LLMParameters {
                 temperature: 0.3,
                 top_p: 0.95,
-                max_tokens: 4096,
                 frequency_penalty: 0.0,
                 presence_penalty: 0.0,
                 top_k: 0,
@@ -268,7 +267,6 @@ impl CorpusServer {
                     } else {
                         (tpl, "registry/templates/docproc/generate-qa.j2")
                     };
-                    let params = LLMParameters { temperature: 0.3, top_p: 0.95, max_tokens: 4096, frequency_penalty: 0.0, presence_penalty: 0.0, top_k: 0, min_p: 0.0, typical_p: 0.0, disable_thinking: true, ..Default::default() };
                     let response = match retry_with_backoff(
                         MAX_RETRIES,
                         "hkask.mcp.docproc.qa_batch",

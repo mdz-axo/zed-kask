@@ -154,7 +154,7 @@ impl KataEngine {
         result: &hkask_types::InferenceResult,
         step_label: &str,
     ) {
-        let Some(ref accountant) = self.task_gas_accountant else {
+        let Some(ref accountant) = self.task_rjoule_accountant else {
             return;
         };
         let cost_usd = result.cost_usd.unwrap_or(0.0);

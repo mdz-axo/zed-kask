@@ -90,7 +90,7 @@ pub fn kanban_type_to_pko(type_name: &str) -> Option<PkoConcept> {
         "UnjamItem.error" => Some(ERROR),
         "Assignee" | "kanban_task_assign" => Some(WAS_ASSOCIATED_WITH),
         "Deliverable" | "kanban_task_add_deliverable" => Some(WAS_GENERATED_BY),
-        "GasEntry" | "gas_spend" | "kanban_task_add_gas" | "kanban_task_add_rjoules" => Some(USED),
+        "kanban_task_add_rjoules" => Some(USED),
         "estimated_hours" => Some(HAS_EXPECTED_DURATION),
         "Agent" | "assignee" => Some(AGENT),
         _ => None,

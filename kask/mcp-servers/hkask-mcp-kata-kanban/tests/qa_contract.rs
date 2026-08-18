@@ -113,7 +113,6 @@ async fn make_task(server: &KanbanServer, board_id: &str, title: &str) -> String
         title: title.to_string(),
         description: None,
         criteria: None,
-        gas_budget: None,
         rjoule_budget: None,
         idempotency_key: None,
     };
@@ -296,7 +295,6 @@ mod task_create {
             title: "T1".to_string(),
             description: None,
             criteria: None,
-            gas_budget: None,
             rjoule_budget: None,
             idempotency_key: None,
         };
@@ -317,7 +315,6 @@ mod task_create {
             title: "T".to_string(),
             description: None,
             criteria: None,
-            gas_budget: None,
             rjoule_budget: None,
             idempotency_key: None,
         };
@@ -336,7 +333,6 @@ mod task_create {
             title: "T".to_string(),
             description: None,
             criteria: None,
-            gas_budget: None,
             rjoule_budget: None,
             idempotency_key: None,
         };
@@ -638,42 +634,6 @@ mod task_verify {
 
 // ── kanban_task_add_gas ────────────────────────────────────────────────────
 
-mod task_add_gas {
-    use super::*;
-
-    #[tokio::test]
-    async fn happy() {
-        // REQ: happy
-        let server = make_server();
-        let bid = make_board(&server, "B").await;
-        let tid = make_task(&server, &bid, "T").await;
-        let req = TaskAddGasRequest {
-            task_id: tid,
-            amount: 1000,
-        };
-        let out = server
-            .kanban_task_add_gas(rmcp::handler::server::wrapper::Parameters(req))
-            .await;
-        let v = parse(&out);
-        assert!(v.get("new_gas_remaining").is_some());
-    }
-
-    #[tokio::test]
-    async fn schema_violation_zero_amount() {
-        // REQ: schema-violation — amount must be > 0
-        let server = make_server();
-        let bid = make_board(&server, "B").await;
-        let tid = make_task(&server, &bid, "T").await;
-        let req = TaskAddGasRequest {
-            task_id: tid,
-            amount: 0,
-        };
-        let out = server
-            .kanban_task_add_gas(rmcp::handler::server::wrapper::Parameters(req))
-            .await;
-        assert_error_kind(&out, "invalid_argument");
-    }
-}
 
 // ── kanban_task_add_rjoules ────────────────────────────────────────────────
 
@@ -880,7 +840,6 @@ mod task_reopen {
         }
         let req = TaskReopenRequest {
             task_id: tid,
-            gas_budget: Some(500),
             rjoule_budget: None,
         };
         let out = server
@@ -900,7 +859,6 @@ mod task_reopen {
         let server = make_server();
         let req = TaskReopenRequest {
             task_id: "00000000-0000-0000-0000-000000000000".to_string(),
-            gas_budget: None,
             rjoule_budget: None,
         };
         let out = server
@@ -1015,7 +973,6 @@ mod task_spawn {
             delegation_level: "standard".to_string(),
             delegated_skills: vec!["tdd".to_string()],
             memory_scope: Some("episodic".to_string()),
-            gas_budget: Some(1000),
             rjoule_budget: None,
             swarm_id: None,
             idempotency_key: None,
@@ -1042,7 +999,6 @@ mod task_spawn {
             delegation_level: "standard".to_string(),
             delegated_skills: vec![],
             memory_scope: None,
-            gas_budget: None,
             rjoule_budget: None,
             swarm_id: None,
             idempotency_key: None,

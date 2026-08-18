@@ -289,7 +289,6 @@ pub async fn score_rationale(
         presence_penalty: 0.0,
         min_p: 0.0,
         typical_p: 0.0,
-        max_tokens: 1024,
         seed: None,
         disable_thinking: false,
         adapter: None,

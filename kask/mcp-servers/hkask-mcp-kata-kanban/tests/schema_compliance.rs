@@ -66,7 +66,6 @@ schema_clean_test!(task_list_request_schema, TaskListRequest);
 schema_clean_test!(task_move_request_schema, TaskMoveRequest);
 schema_clean_test!(task_assign_request_schema, TaskAssignRequest);
 schema_clean_test!(task_verify_request_schema, TaskVerifyRequest);
-schema_clean_test!(task_add_gas_request_schema, TaskAddGasRequest);
 schema_clean_test!(task_add_rjoules_request_schema, TaskAddRjoulesRequest);
 schema_clean_test!(task_comment_request_schema, TaskCommentRequest);
 schema_clean_test!(task_comments_since_request_schema, TaskCommentsSinceRequest);

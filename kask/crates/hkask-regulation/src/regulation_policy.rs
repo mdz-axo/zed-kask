@@ -430,9 +430,7 @@ impl RegulationPolicy {
                         reason: InferenceUnavailable,
                     }],
                 },
-                // InferenceGasRemaining (Inference Loop 1) → AdjustEnergyBudget
                 RegulationRule {
-                    metric: InferenceGasRemaining,
                     direction: BelowSetPoint,
                     proposed: &[ProposedAction {
                         target: Inference,
@@ -579,7 +577,6 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
     match metric {
         // ── Energy / Gas ──
         SignalMetric::EnergyRemaining => &[Throttle, AdjustEnergyBudget, Escalate],
-        SignalMetric::InferenceGasRemaining => &[Throttle, AdjustEnergyBudget, Escalate],
         // ── Variety ──
         SignalMetric::VarietyDeficit => &[Escalate, Calibrate, OverrideEnergyBudget],
         SignalMetric::MetacognitionVarietyDeficit => &[Escalate, Calibrate, OverrideEnergyBudget],
@@ -707,7 +704,6 @@ mod tests {
             SignalMetric::LowConfidenceCount,
             SignalMetric::CircuitBreakerState,
             SignalMetric::InferenceAvailable,
-            SignalMetric::InferenceGasRemaining,
             SignalMetric::InferenceModelAvailable,
             SignalMetric::AlgedonicEvents,
             SignalMetric::PendingEscalations,
@@ -766,7 +762,6 @@ mod tests {
         assert!(!default_substitution_ladder(SignalMetric::MemoryLife).is_empty());
         assert!(!default_substitution_ladder(SignalMetric::CircuitBreakerState).is_empty());
         assert!(!default_substitution_ladder(SignalMetric::InferenceAvailable).is_empty());
-        assert!(!default_substitution_ladder(SignalMetric::InferenceGasRemaining).is_empty());
         assert!(!default_substitution_ladder(SignalMetric::InferenceModelAvailable).is_empty());
         assert!(!default_substitution_ladder(SignalMetric::WalletBalanceRatio).is_empty());
         assert!(!default_substitution_ladder(SignalMetric::WalletKeyHealth).is_empty());

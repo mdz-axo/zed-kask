@@ -90,7 +90,6 @@ async fn create_task(
             title: title.to_string(),
             description: None,
             criteria: None,
-            gas_budget: None,
             rjoule_budget: None,
             idempotency_key: key.map(str::to_string),
         }))
@@ -485,7 +484,6 @@ async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
             delegation_level: "standard".to_string(),
             delegated_skills: vec![],
             memory_scope: None,
-            gas_budget: None,
             rjoule_budget: None,
             swarm_id: None,
         }))

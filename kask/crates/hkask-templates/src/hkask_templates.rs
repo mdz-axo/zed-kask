@@ -78,7 +78,7 @@ pub mod test_utils {
     /// Re-export the `[inference]` block parser and its parsed struct so
     /// external tests can audit token-budget adequacy across the template
     /// registry — verifying that every template with a complex output schema
-    /// declares a `max_tokens` sufficient for the expected JSON output.
+    /// declares parameters sufficient for the expected JSON output.
     pub use crate::template_renderer::{
         InferenceBlock, parse_and_strip_inference_block, strip_front_matter,
     };

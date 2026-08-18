@@ -214,7 +214,6 @@ impl CorpusServer {
 
                 let params = LLMParameters {
                     temperature: 0.3,
-                    max_tokens: 1024,
                     ..Default::default()
                 };
 

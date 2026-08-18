@@ -140,7 +140,6 @@ pub struct KataAuditConfig {
     #[serde(default = "default_true")]
     pub include_output: bool,
     #[serde(default = "default_true")]
-    pub include_gas_cost: bool,
     #[serde(default = "default_true")]
     pub include_reg_events: bool,
 }
@@ -152,7 +151,6 @@ impl Default for KataAuditConfig {
             log_level: Some("info".into()),
             include_input: true,
             include_output: true,
-            include_gas_cost: true,
             include_reg_events: true,
         }
     }
