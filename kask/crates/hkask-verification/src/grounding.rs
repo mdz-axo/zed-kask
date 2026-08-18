@@ -481,7 +481,11 @@ fn is_value_sourced(
 }
 
 /// Does `haystack` contain `needle`? Recurses into arrays/objects.
-/// For strings, checks substring containment (handles paths in stdout).
+/// For strings, checks substring containment (handles paths in stdout),
+/// but only when the needle is at least 10 characters — shorter needles
+/// (e.g. "pass", "ok", "0") would match enormous swaths of tool output,
+/// defeating the grounding contract. This mirrors the 10-char guard in
+/// `scan_narrative_for_leak`.
 fn value_contains(haystack: &serde_json::Value, needle: &serde_json::Value) -> bool {
     if haystack == needle {
         return true;
@@ -489,7 +493,10 @@ fn value_contains(haystack: &serde_json::Value, needle: &serde_json::Value) -> b
     match haystack {
         serde_json::Value::Array(arr) => arr.iter().any(|v| value_contains(v, needle)),
         serde_json::Value::Object(obj) => obj.values().any(|v| value_contains(v, needle)),
-        serde_json::Value::String(s) => needle.as_str().is_some_and(|n| s.contains(n)),
+        serde_json::Value::String(s) => match needle {
+            serde_json::Value::String(n) if n.len() >= 10 => s.contains(n),
+            _ => false, // short string or non-string needle: exact match only (handled above)
+        },
         _ => false,
     }
 }
@@ -779,6 +786,15 @@ fn scan_narrative_for_leak(
 /// Total ordering of provenance strength. Used by the weakest-link
 /// rule: a Derived field's provenance is min(its own strength, its
 /// source field's strength). Higher = stronger.
+///
+/// `Derived` is rated 4 (a ceiling), not an absolute strength: a Derived
+/// field's actual strength is `min(4, source_strength)`, computed by
+/// the weakest-link rule in `enforce_grounding`. The number 4 is above
+/// `Inferred` (3) so that a derivation from a Sourced field (5) keeps
+/// the `Derived` tag, while a derivation from an `Inferred` field (3)
+/// triggers the downgrade (`weakest < 4`). The reproducibility
+/// distinction is captured by the tag variant itself, not by this
+/// number alone.
 fn provenance_strength(tag: &ProvenanceTag) -> u8 {
     match tag {
         ProvenanceTag::Sourced { .. } => 5,
@@ -875,7 +891,14 @@ pub fn enforce_grounding(
 
     // ── Pass 2: mark Sourced, Inferred, and UncommissionedInference ──
     // for fields that were not nulled in pass 1.
+    //
+    // Split into two sub-passes to fix an ordering bug: HashMap iteration
+    // is non-deterministic, so a derived field processed before its source
+    // would find no source provenance and be incorrectly tagged Unsourced.
+    // Pass 2a resolves all non-derived fields first; pass 2b then resolves
+    // derived fields with their sources guaranteed present.
     if let serde_json::Value::Object(map) = &output {
+        // Pass 2a: non-derived fields.
         for (field, value) in map {
             // Skip provenance stamps from a previous enforcement pass.
             if field.ends_with("_provenance") {
@@ -898,58 +921,12 @@ pub fn enforce_grounding(
             }) {
                 continue;
             }
-            let tag = match contract.field_sources.get(field) {
-                Some(spec) if spec.derived_from.is_some() => {
-                    let derived = spec.derived_from.as_ref().unwrap();
-                    let from_tag = result.provenance.get(&derived.from);
-                    match from_tag {
-                        None => {
-                            // Source field not in the output — can't derive.
-                            ProvenanceTag::Unsourced {
-                                removed_preview: truncate_preview(value),
-                                tool_failed: false,
-                            }
-                        }
-                        Some(ProvenanceTag::Unsourced { .. }) => {
-                            // Source was nulled — derivation from nothing is nothing.
-                            // Null this field too.
-                            let removed = null_path(&mut cleaned, field);
-                            if removed.is_some() {
-                                result.nulled_fields.push(field.clone());
-                            }
-                            ProvenanceTag::Unsourced {
-                                removed_preview: String::new(),
-                                tool_failed: false,
-                            }
-                        }
-                        Some(from_tag) => {
-                            let weakest = std::cmp::min(
-                                provenance_strength(&ProvenanceTag::Derived {
-                                    from: derived.from.clone(),
-                                    how: derived.how.clone(),
-                                }),
-                                provenance_strength(from_tag),
-                            );
-                            // Downgrade to the weaker tag if needed.
-                            if weakest < 4 {
-                                // Source is weaker than Derived — downgrade.
-                                match from_tag {
-                                    ProvenanceTag::Inferred => ProvenanceTag::Inferred,
-                                    ProvenanceTag::UncommissionedInference => {
-                                        ProvenanceTag::UncommissionedInference
-                                    }
-                                    ProvenanceTag::Narrative => ProvenanceTag::Narrative,
-                                    _ => ProvenanceTag::Inferred, // fallback
-                                }
-                            } else {
-                                ProvenanceTag::Derived {
-                                    from: derived.from.clone(),
-                                    how: derived.how.clone(),
-                                }
-                            }
-                        }
-                    }
-                }
+            // Defer derived fields to pass 2b so their source is resolved.
+            let spec = contract.field_sources.get(field);
+            if spec.and_then(|s| s.derived_from.as_ref()).is_some() {
+                continue;
+            }
+            let tag = match spec {
                 Some(spec) if spec.sources.is_empty() => ProvenanceTag::Inferred,
                 Some(spec) => {
                     if let Some(tool) = is_value_sourced(
@@ -975,6 +952,81 @@ pub fn enforce_grounding(
                     }
                 }
                 None => ProvenanceTag::UncommissionedInference,
+            };
+            result.provenance.insert(field.clone(), tag.clone());
+            // Stamp provenance on the document.
+            if let serde_json::Value::Object(clean_map) = &mut cleaned {
+                clean_map.insert(
+                    format!("{field}_provenance"),
+                    serde_json::Value::String(provenance_stamp(&tag).to_string()),
+                );
+            }
+        }
+
+        // Pass 2b: derived fields — sources are now guaranteed resolved.
+        for (field, value) in map {
+            if field.ends_with("_provenance") {
+                continue;
+            }
+            if result.provenance.contains_key(field) {
+                continue;
+            }
+            let spec = match contract.field_sources.get(field) {
+                Some(spec) if spec.derived_from.is_some() => spec,
+                _ => continue, // handled in pass 2a or not a derived field
+            };
+            let derived = spec.derived_from.as_ref().unwrap();
+            let from_tag = result.provenance.get(&derived.from);
+            let tag = match from_tag {
+                None => {
+                    // Source field not in the output — can't derive.
+                    ProvenanceTag::Unsourced {
+                        removed_preview: truncate_preview(value),
+                        tool_failed: false,
+                    }
+                }
+                Some(ProvenanceTag::Unsourced { .. }) => {
+                    // Source was nulled — derivation from nothing is nothing.
+                    // Null this field too.
+                    let removed = null_path(&mut cleaned, field);
+                    if removed.is_some() {
+                        result.nulled_fields.push(field.clone());
+                    }
+                    ProvenanceTag::Unsourced {
+                        removed_preview: String::new(),
+                        tool_failed: false,
+                    }
+                }
+                Some(from_tag) => {
+                    let weakest = std::cmp::min(
+                        provenance_strength(&ProvenanceTag::Derived {
+                            from: derived.from.clone(),
+                            how: derived.how.clone(),
+                        }),
+                        provenance_strength(from_tag),
+                    );
+                    // Downgrade to the weaker tag if the source is
+                    // weaker than Derived's ceiling (4). This triggers
+                    // for Inferred (3) and below, so a derivation from
+                    // an Inferred field is tagged Inferred, not Derived.
+                    // See `provenance_strength` doc for why 4 is a ceiling.
+                    if weakest < 4 {
+                        // Source is weaker than Derived — downgrade.
+                        match from_tag {
+                            ProvenanceTag::Inferred => ProvenanceTag::Inferred,
+                            ProvenanceTag::UncommissionedInference => {
+                                ProvenanceTag::UncommissionedInference
+                            }
+                            ProvenanceTag::Narrative => ProvenanceTag::Narrative,
+                            _ => ProvenanceTag::Inferred, // fallback
+                        }
+                    } else {
+                        ProvenanceTag::Derived {
+                            from: derived.from.clone(),
+                            how: derived.how.clone(),
+                        }
+                    }
+                }
             };
             result.provenance.insert(field.clone(), tag.clone());
             // Stamp provenance on the document.
@@ -2770,6 +2822,87 @@ mod tests {
             ProvenanceTag::Inferred,
             "weakest link must propagate through the derived chain to Inferred"
         );
+    }
+
+    #[test]
+    fn derived_field_resolved_regardless_of_hashmap_order() {
+        // Regression for the pass-2 ordering bug: HashMap iteration is
+        // non-deterministic, so a derived field processed before its source
+        // would find no source provenance and be incorrectly tagged Unsourced.
+        // The fix splits pass 2 into 2a (non-derived) and 2b (derived), so the
+        // source is always resolved first. This test runs many iterations to
+        // exercise different HashMap orderings.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "path".to_string(),
+            FieldSpec {
+                sources: vec!["zed/write_file".to_string()],
+                response_path: "".to_string(),
+                why: "A file path sourced from a file-writing tool that succeeded.".to_string(),
+                derived_from: None,
+            },
+        );
+        field_sources.insert(
+            "ext".to_string(),
+            FieldSpec {
+                sources: vec![],
+                response_path: "".to_string(),
+                why: "Derived from path by platform code (extension extraction).".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "path".to_string(),
+                    how: "path_extension".to_string(),
+                }),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({"path": "/x.rs", "ext": "rs"});
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/x.rs"}),
+        )];
+        // Run many times to catch non-deterministic ordering.
+        for _ in 0..100 {
+            let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+            assert_eq!(
+                result.provenance["ext"],
+                ProvenanceTag::Derived {
+                    from: "path".to_string(),
+                    how: "path_extension".to_string(),
+                },
+                "derived field must be Derived (source is Sourced), not Unsourced"
+            );
+        }
+    }
+
+    #[test]
+    fn value_contains_short_needle_requires_exact_match() {
+        // Short needle strings (e.g. "pass", "ok", "0") must NOT match via
+        // substring containment — they would match enormous swaths of tool
+        // output, defeating the grounding contract. For needles < 10 chars,
+        // require exact Value equality (handled by the `haystack == needle`
+        // check at the top of value_contains).
+        let haystack = serde_json::json!("bypassing the check");
+        let short_needle = serde_json::json!("pass");
+        assert!(
+            !value_contains(&haystack, &short_needle),
+            "short needle must not match via substring"
+        );
+        // Exact match still works for short strings.
+        let exact = serde_json::json!("pass");
+        assert!(value_contains(&exact, &short_needle));
+        // Long needle (>= 10 chars) uses substring containment.
+        let long_haystack = serde_json::json!("the quick brown fox jumps");
+        let long_needle = serde_json::json!("quick brown");
+        assert!(value_contains(&long_haystack, &long_needle));
+        // Short needle inside an array — still no substring match.
+        let arr_haystack = serde_json::json!(["bypassing", "ok"]);
+        assert!(!value_contains(&arr_haystack, &short_needle));
+        // But exact match inside an array works.
+        let arr_exact = serde_json::json!(["pass", "fail"]);
+        assert!(value_contains(&arr_exact, &short_needle));
     }
 
     #[test]

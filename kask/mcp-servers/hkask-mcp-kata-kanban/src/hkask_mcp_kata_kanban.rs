@@ -1353,6 +1353,7 @@ impl KanbanServer {
         // are NOT a pass. Logged at warn — schema violations are
         // diagnostic, not blocking (the cleaned document is still
         // the best available output).
+        let mut schema_validation: Option<hkask_verification::envelope::ValidationResult> = None;
         if let Some(ref gr) = outcome.result {
             let validation = hkask_verification::schema_validate::validate(
                 &serde_json::json!({
@@ -1384,6 +1385,27 @@ impl KanbanServer {
                     "schema validation: unsupported keyword(s) — NOT a pass",
                 );
             }
+            // Carry the validation result into the envelope so consumers
+            // can distinguish valid from invalid from unverified.
+            let status = if !validation.unsupported.is_empty() {
+                hkask_verification::envelope::ValidationStatus::UnsupportedSchema
+            } else if !validation.violations.is_empty() {
+                hkask_verification::envelope::ValidationStatus::Invalid
+            } else {
+                hkask_verification::envelope::ValidationStatus::Valid
+            };
+            schema_validation = Some(hkask_verification::envelope::ValidationResult {
+                status,
+                violations: validation
+                    .violations
+                    .iter()
+                    .map(|v| hkask_verification::envelope::SchemaViolation {
+                        path: v.path.clone(),
+                        message: v.message.clone(),
+                    })
+                    .collect(),
+                unsupported: validation.unsupported.clone(),
+            });
             let _ = gr; // used below via outcome.result.as_ref()
         }
         // Build the delegation envelope so provenance survives the hop to
@@ -1397,9 +1419,10 @@ impl KanbanServer {
         // - Unenforceable: output was not a JSON object (contract couldn't run)
         //
         // Payload status mapping:
-        // - NoResponse: raw response string is empty
-        // - Document:   output was a JSON object
-        // - ProseOnly:  output was non-empty but not an object
+        // - NoResponse:    raw response string is empty
+        // - EmptyResponse: output was an empty JSON object (no fields)
+        // - Document:      output was a non-empty JSON object
+        // - ProseOnly:     output was non-empty but not an object
         let grounding_status = if outcome.result.is_some() {
             hkask_verification::envelope::GroundingStatus::Enforced
         } else if outcome.was_object {
@@ -1410,7 +1433,15 @@ impl KanbanServer {
         let payload_status = if outcome.raw_response.is_empty() {
             hkask_verification::envelope::PayloadStatus::NoResponse
         } else if outcome.was_object {
-            hkask_verification::envelope::PayloadStatus::Document
+            // Distinguish an empty object ({}) from a populated document.
+            // An empty object means the agent returned no structured fields —
+            // the grounding contract had nothing to check.
+            match &outcome.cleaned {
+                serde_json::Value::Object(map) if map.is_empty() => {
+                    hkask_verification::envelope::PayloadStatus::EmptyResponse
+                }
+                _ => hkask_verification::envelope::PayloadStatus::Document,
+            }
         } else {
             hkask_verification::envelope::PayloadStatus::ProseOnly
         };
@@ -1424,7 +1455,7 @@ impl KanbanServer {
             grounding_status,
             payload_status,
             outcome.result.as_ref(),
-            None,
+            schema_validation.as_ref(),
         );
         // Replace the response with the cleaned JSON (with provenance
         // stamps and nulled unsourced fields) when grounding ran.
