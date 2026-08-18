@@ -27,11 +27,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 80000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -55,7 +50,6 @@ steps:
     description: Identify testable properties from the target's contract and source.
     renderer: minijinja
     template_ref: proptest/proptest-identify
-    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       target: "{{ task | default(target) }}"
@@ -67,7 +61,6 @@ steps:
     description: Design input strategies for each property (harness-first, then custom).
     renderer: minijinja
     template_ref: proptest/proptest-strategize
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target: "{{ target }}"
@@ -79,7 +72,6 @@ steps:
     description: Generate complete proptest code with principle grounding and oracle-appropriate assertions.
     renderer: minijinja
     template_ref: proptest/proptest-write
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       target: "{{ target }}"
@@ -92,7 +84,6 @@ steps:
     description: Analyze test execution results and shrunk counterexamples.
     renderer: minijinja
     template_ref: proptest/proptest-analyze
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target: "{{ target }}"
@@ -107,7 +98,6 @@ steps:
     description: Report verified properties, failures found, and coverage gained.
     renderer: minijinja
     template_ref: proptest/proptest-report
-    gas_cap: 4000
     timeout_seconds: 60
     input_mapping:
       target: "{{ target }}"
@@ -127,7 +117,6 @@ steps:
       properties hold for the generated inputs). If failures_found is
       absent, the form errors (no silent default), surfacing a broken
       report step rather than masking it with a flat 1.0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(let ((f (assoc \"failures_found\" step_5_result))) (if (is_null f) 0 (length f)))"

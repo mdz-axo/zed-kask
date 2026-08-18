@@ -53,11 +53,6 @@ convergence:
   on_not_reached: proceed
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 30000
-  cost_per_iteration: 200
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -102,7 +97,6 @@ steps:
       and type-specific risks.
     renderer: minijinja
     template_ref: prompt-enhance/enhance-classify.j2
-    gas_cap: 6000
     timeout_seconds: 120
     input_mapping:
       prompt: "{{ task | default(prompt) }}"
@@ -124,7 +118,6 @@ steps:
       moves to produce the enhanced prompt. Single LLM call.
     renderer: minijinja
     template_ref: prompt-enhance/enhance-rewrite.j2
-    gas_cap: 9000
     timeout_seconds: 120
     input_mapping:
       prompt: "{{ prompt }}"
@@ -149,7 +142,6 @@ steps:
       audit_findings) and that coding-type prompts have ≥1 acceptance
       criterion. Returns a defects list — empty = passed, non-empty = the
       output step surfaces the defects in the change log. No LLM call.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -192,7 +184,6 @@ steps:
       or fail. No re-entry — the verdict is surfaced in the output change log.
     renderer: minijinja
     template_ref: prompt-enhance/enhance-verify.j2
-    gas_cap: 6000
     timeout_seconds: 120
     input_mapping:
       enhanced_prompt: "{{ step_2_result.enhanced_prompt }}"
@@ -226,7 +217,6 @@ steps:
       the change log is templated from structured data.
     renderer: minijinja
     template_ref: prompt-enhance/enhance-output-render.j2
-    gas_cap: 0
     timeout_seconds: 10
     input_mapping:
       enhanced_prompt: "{{ step_2_result.enhanced_prompt }}"

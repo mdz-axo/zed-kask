@@ -24,11 +24,6 @@ convergence:
   min_iterations: 2
   on_not_reached: escalate
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -73,7 +68,6 @@ steps:
     description: Assess module depth and deletion-test indicators.
     renderer: minijinja
     template_ref: deep-module/deep-module-assess
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       module_path: "{{ task | default(module_path) }}"
@@ -86,7 +80,6 @@ steps:
     description: Execute Ousterhout's deletion test in both directions.
     renderer: minijinja
     template_ref: deep-module/deep-module-delete
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       module_assessment: "{{ step_1_result }}"
@@ -105,7 +98,6 @@ steps:
       falsy in Jinja2, so the Cauchy tracker sees a 0 convergence_signal reading.
     renderer: minijinja
     template_ref: deep-module/deep-module-design
-    gas_cap: 6000
     timeout_seconds: 150
     condition: "step_2_result.recommendation == 'EXTRACT' OR step_2_result.recommendation == 'DEEPEN'"
     input_mapping:
@@ -125,7 +117,6 @@ steps:
       Using lisp.eval instead of a Jinja expression makes the computation
       explicitly deterministic, budgeted (gas_cap: 100), and observable
       via a reg.skill.deep-module span.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(let ((iface (assoc \"public_interface\" step_3_result))) (if (is_null iface) 0 (length iface)))"

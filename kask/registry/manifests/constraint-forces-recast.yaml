@@ -67,11 +67,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 150000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 4
@@ -117,7 +112,6 @@ steps:
       projection.
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-represent
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       seed_concepts: "{{ task | default(seed_concepts) }}"
@@ -138,7 +132,6 @@ steps:
       case). Report honestly; do not fabricate a mutation.
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-violate
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       axiom_graph: "{{ step_1_result.axiom_graph | default({}) }}"
@@ -153,7 +146,6 @@ steps:
       is the forcing operator: minimal-satisfiability projection.
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-project
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       axiom_graph: "{{ step_1_result.axiom_graph | default({}) }}"
@@ -169,7 +161,6 @@ steps:
       the do(not recast) counterfactual.
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-control
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       axiom_graph: "{{ step_1_result.axiom_graph | default({}) }}"
@@ -184,7 +175,6 @@ steps:
       under B's axioms. This is the falsifier.
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-three-criterion
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       mutant: "{{ step_3_result.mutant | default({}) }}"
@@ -203,7 +193,6 @@ steps:
       (random perturbation).
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-compare
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       mutant: "{{ step_3_result.mutant | default({}) }}"
@@ -223,7 +212,6 @@ steps:
       size limit.
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-frontier
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       current_frontier: "{{ prev_frontier | default([]) }}"
@@ -280,7 +268,6 @@ steps:
       testing a reflected rule from the prior iteration). The loop closes
       the evolutionary feedback: the frontier update's lessons feed the
       next iteration's seed selection.
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"

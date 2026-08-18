@@ -69,11 +69,6 @@ convergence:
   prediction_field: "prediction"
   result_field: "rescore_result"
 
-gas:
-  cap: 80000
-  cost_per_iteration: 200
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 5
@@ -131,7 +126,6 @@ steps:
       delegation.
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-direction
-    gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
       rationale: "{{ task | default(rationale) }}"
@@ -152,7 +146,6 @@ steps:
       current condition.
     mcp: hkask-mcp-prediction-markets
     tool: market_score_rationale
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       rationale: "{{ rationale }}"
@@ -177,7 +170,6 @@ steps:
       persists.
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-target
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       current_composite: "{{ step_2_result.composite_score | default(0) }}"
@@ -197,7 +189,6 @@ steps:
       the Brier score tracks whether the agent's confidence is calibrated.
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-predict
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       target_condition: "{{ step_3_result.target_condition | default(step_3_result) }}"
@@ -221,7 +212,6 @@ steps:
       for genuine opposing hypotheses (not strawmen).
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-experiment
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       rationale: "{{ rationale }}"
@@ -243,7 +233,6 @@ steps:
       that makes the prediction testable.
     mcp: hkask-mcp-prediction-markets
     tool: market_score_rationale
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       rationale: "{{ step_5_result.improved_rationale }}"
@@ -272,7 +261,6 @@ steps:
       / (N × 4)), normalized to [0, 1]. Lower = more converged. If scores
       absent, the form errors (no silent default), surfacing a broken
       re-score step rather than masking it.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -327,7 +315,6 @@ steps:
       If the rewrite drifted the implied probability, the alignment marker
       fails and the rewrite is rejected (returns 1.0 = not converged).
       Enforces the alignment invariant (forecast probability preserved).
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -371,7 +358,6 @@ steps:
       marker Y reached B, 0 otherwise. Lower Brier = better calibrated
       predictions. If prediction or re-score absent, the form errors (no
       silent default).
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -436,7 +422,6 @@ steps:
       realized_outcomes absent, returns 0.0 (cannot detect gaming without
       outcomes). This is the enforcement point for the gaming mitigation
       advertised in the SKILL.md.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -470,7 +455,6 @@ steps:
       this forecaster consistently fail on?). Also emits the alignment check
       and Brier score for convergence.
     mcp: null
-    gas_cap: 500
     timeout_seconds: 10
     feedback:
       improved_rationale: "{{ step_5_result.improved_rationale }}"

@@ -66,11 +66,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 70000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 5
@@ -128,7 +123,6 @@ steps:
       Produces: phase ("decompose" | "delegate" | "operate") and rationale.
     renderer: minijinja
     template_ref: kanban-task-management/triage
-    gas_cap: 500
     timeout_seconds: 120
     input_mapping:
       project_description: "{{ project_description | default('') }}"
@@ -144,7 +138,6 @@ steps:
       not "decompose".
     renderer: minijinja
     template_ref: kanban-task-management/gather-context
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       project_description: "{{ project_description | default('') }}"
@@ -158,7 +151,6 @@ steps:
       is not "decompose".
     renderer: minijinja
     template_ref: kanban-task-management/decompose-tasks
-    gas_cap: 10000
     timeout_seconds: 180
     input_mapping:
       project_description: "{{ project_description | default('') }}"
@@ -174,7 +166,6 @@ steps:
       completeness. Skips if triage phase is not "decompose".
     renderer: minijinja
     template_ref: kanban-task-management/review-tasks
-    gas_cap: 4000
     timeout_seconds: 150
     input_mapping:
       tasks: "{{ step_3_result.tasks | default([]) }}"
@@ -191,7 +182,6 @@ steps:
       is not "decompose".
     renderer: minijinja
     template_ref: kanban-task-management/populate-board
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       project_name: "{{ step_2_result.project_name | default('Untitled Project') }}"
@@ -212,7 +202,6 @@ steps:
       in the result is used by the agent for subsequent kanban_task_create
       calls. Condition-gated on the decompose phase.
     mcp: kanban_board_create
-    gas_cap: 2000
     timeout_seconds: 60
     condition: "step_1_result.phase == 'decompose'"
     input_mapping:
@@ -234,7 +223,6 @@ steps:
       phase is not "delegate".
     renderer: minijinja
     template_ref: kanban-task-management/configure-spawn
-    gas_cap: 3000
     timeout_seconds: 150
     input_mapping:
       task: "{{ task_to_delegate | default({}) }}"
@@ -253,7 +241,6 @@ steps:
       Deterministic — task_id, delegation_level, and delegated_skills from
       the configure-spawn step. Condition-gated on the delegate phase.
     mcp: kanban_task_spawn
-    gas_cap: 5000
     timeout_seconds: 120
     condition: "step_1_result.phase == 'delegate'"
     input_mapping:
@@ -279,7 +266,6 @@ steps:
       Skips if triage phase is not "delegate".
     renderer: minijinja
     template_ref: kanban-task-management/execute-task
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task: "{{ task_to_delegate | default({}) }}"
@@ -298,7 +284,6 @@ steps:
       (hkask-mcp-kata-kanban). Deterministic — task_id and body from the
       execute-task step. Condition-gated on the delegate phase.
     mcp: kanban_task_comment
-    gas_cap: 2000
     timeout_seconds: 60
     condition: "step_1_result.phase == 'delegate'"
     input_mapping:
@@ -333,7 +318,6 @@ steps:
         key: tasks
         input_mapping:
           board_id: "{{ board_id | default('') }}"
-    gas_cap: 4000
     timeout_seconds: 60
     condition: "step_1_result.phase == 'operate'"
     on_failure:
@@ -352,7 +336,6 @@ steps:
       triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/monitor-board
-    gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       board_name: "{{ board_name | default('') }}"
@@ -368,7 +351,6 @@ steps:
       Skips if triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/coordinate-agents
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       board_name: "{{ board_name | default('') }}"
@@ -384,7 +366,6 @@ steps:
       Skips if triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/track-deliverables
-    gas_cap: 4000
     timeout_seconds: 150
     input_mapping:
       task: "{{ step_11_result.tasks | first | default(tasks | first | default({})) }}"
@@ -400,7 +381,6 @@ steps:
       "operate".
     renderer: minijinja
     template_ref: kanban-task-management/move-tasks
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       tasks: "{{ step_11_result.tasks | default(tasks | default([])) }}"
@@ -416,7 +396,6 @@ steps:
       triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/verify-completion
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       task_title: "{{ step_11_result.tasks | first | default({}) | get('title', '') }}"
@@ -433,7 +412,6 @@ steps:
       phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/escalate
-    gas_cap: 3000
     timeout_seconds: 150
     input_mapping:
       board_name: "{{ board_name | default('') }}"
@@ -462,7 +440,6 @@ steps:
       The Cauchy tracker sees a stable 0 when no phase ran, which fires
       convergence after min_iterations — the loop_target re-enters at
       step 1 (triage), so the 0 does not cause false convergence.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

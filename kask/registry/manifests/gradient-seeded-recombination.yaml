@@ -55,11 +55,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 80000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -131,7 +126,6 @@ steps:
       Apache 2.0, GPL-3.0, Artistic-2.0).
     renderer: minijinja
     template_ref: gradient-seeded-recombination/gsr-inventory
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       ontology_registry: "{{ task | default(ontology_registry) }}"
@@ -147,7 +141,6 @@ steps:
       prior. Consumes prior_iteration when present (feedback loop closure).
     renderer: minijinja
     template_ref: gradient-seeded-recombination/gsr-prior
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       namespaces: "{{ step_1_result.namespaces | default([]) }}"
@@ -163,7 +156,6 @@ steps:
       mismatch produces false gradients.
     renderer: minijinja
     template_ref: gradient-seeded-recombination/gsr-map
-    gas_cap: 5000
     timeout_seconds: 300
     input_mapping:
       namespaces: "{{ step_1_result.namespaces | default([]) }}"
@@ -179,7 +171,6 @@ steps:
       scales/domains is the system's characteristic pattern.
     renderer: minijinja
     template_ref: gradient-seeded-recombination/gsr-detect
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       prior_graph: "{{ step_2_result.prior_graph | default({}) }}"
@@ -197,7 +188,6 @@ steps:
       allosteric gradients require restoring the distal coupling.
     renderer: minijinja
     template_ref: gradient-seeded-recombination/gsr-hypothesize
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       gradients: "{{ step_4_result.gradients | default([]) }}"
@@ -215,7 +205,6 @@ steps:
       prior (feedback loop closure).
     renderer: minijinja
     template_ref: gradient-seeded-recombination/gsr-prioritize
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       gradients: "{{ step_4_result.gradients | default([]) }}"
@@ -232,7 +221,6 @@ steps:
       concepts produce trivial mutants.
     renderer: minijinja
     template_ref: gradient-seeded-recombination/gsr-select-seeds
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       priority_ranking: "{{ step_6_result.priority_ranking | default([]) }}"
@@ -248,7 +236,6 @@ steps:
       computation explicitly deterministic, budgeted (gas_cap: 100), and
       observable via a reg.skill.gradient-seeded-recombination span. Guards
       against a missing field_coverage field by returning 0 when absent.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

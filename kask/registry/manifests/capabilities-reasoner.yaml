@@ -79,11 +79,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 120000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -154,7 +149,6 @@ steps:
       Feeds the register step (step 1) so the reasoner knows its past
       evaluations and can detect improvement or regression.
     mcp: curator_memory_recall
-    gas_cap: 2000
     timeout_seconds: 60
     on_failure:
       action: report
@@ -180,7 +174,6 @@ steps:
       Consumes prior_evaluations from step 0 (persistence-grounded learning).
     renderer: minijinja
     template_ref: capabilities-reasoner/capability-register
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       target_system: "{{ task | default(target_system) }}"
@@ -211,7 +204,6 @@ steps:
       manually between register and evaluate.
     renderer: minijinja
     template_ref: capabilities-reasoner/capability-elicit
-    gas_cap: 6000
     timeout_seconds: 300
     input_mapping:
       target_system: "{{ target_system }}"
@@ -236,7 +228,6 @@ steps:
       strings (empty = no structural defects). This is the lisp scaffold
       pattern: deterministic checks on structural properties that the LLM
       cannot reliably self-evaluate (Dunning-Kruger gap).
-    gas_cap: 100
     timeout_seconds: 10
     on_failure:
       action: report
@@ -296,7 +287,6 @@ steps:
       capabilities from step 2 (LLM-mediated elicitation).
     renderer: minijinja
     template_ref: capabilities-reasoner/capability-evaluate
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       registry: "{{ step_1_result }}"
@@ -319,7 +309,6 @@ steps:
       model: append-only, signed, scope narrows on delegation).
     renderer: minijinja
     template_ref: capabilities-reasoner/capability-reason
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       evaluations: "{{ step_4_result.evaluations | default([]) }}"
@@ -337,7 +326,6 @@ steps:
       iteration's registry (feedback loop closure).
     renderer: minijinja
     template_ref: capabilities-reasoner/capability-report
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       evaluations: "{{ step_4_result.evaluations | default([]) }}"
@@ -358,7 +346,6 @@ steps:
       and may be metric-sensitive (mirage candidates). Lower = more converged.
       If verdict_summary or any count is absent, the form errors (no silent
       default), surfacing metric-instability rather than masking it.
-    gas_cap: 100
     timeout_seconds: 10
     on_failure:
       action: report

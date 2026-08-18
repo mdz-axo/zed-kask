@@ -24,11 +24,6 @@ convergence:
   min_iterations: 2
   on_not_reached: escalate
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -55,7 +50,6 @@ steps:
     description: Assess the task against coding principles before implementation.
     renderer: minijinja
     template_ref: coding-guidelines/guidelines-assess
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task_description: "{{ task | default(task_description) }}"
@@ -66,7 +60,6 @@ steps:
     description: Apply guardrails and generate constrained implementation directives.
     renderer: minijinja
     template_ref: coding-guidelines/guidelines-apply
-    gas_cap: 4000
     timeout_seconds: 150
     input_mapping:
       task_description: "{{ task_description }}"
@@ -81,7 +74,6 @@ steps:
     description: Verify the implementation plan/diff against coding principles.
     renderer: minijinja
     template_ref: coding-guidelines/guidelines-verify
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task_description: "{{ task_description }}"
@@ -100,7 +92,6 @@ steps:
       makes the computation explicitly deterministic, budgeted
       (gas_cap: 100), and observable via a reg.skill.coding-guidelines span.
       Guards against a missing violations field by returning 0 when absent.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

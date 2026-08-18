@@ -70,11 +70,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 150000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -134,7 +129,6 @@ steps:
       tracks). Read-only — no code edits.
     renderer: minijinja
     template_ref: kask-seam-audit/seam-map
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
@@ -151,7 +145,6 @@ steps:
       phantom} (exclusivity — exactly two classes); slices non-empty (count ≥ 1).
       Returns a list of defect strings — empty = passed; non-empty = step 3
       refines the seam map. No LLM round-trip.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -197,7 +190,6 @@ steps:
       finds a defect the LLM cannot reliably self-detect, the LLM repairs it.
     renderer: minijinja
     template_ref: kask-seam-audit/refine-seam-map
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
@@ -220,7 +212,6 @@ steps:
       Every finding cites file:line or is marked deferred with a reason.
     renderer: minijinja
     template_ref: kask-seam-audit/audit-security
-    gas_cap: 8000
     timeout_seconds: 300
     input_mapping:
       task: "{{ task | default('') }}"
@@ -241,7 +232,6 @@ steps:
       dead_surface_summary (total lines, top deletion candidates).
     renderer: minijinja
     template_ref: kask-seam-audit/audit-architecture
-    gas_cap: 8000
     timeout_seconds: 300
     input_mapping:
       task: "{{ task | default('') }}"
@@ -260,7 +250,6 @@ steps:
       deferred) and pattern_gap_summary (top Zed primitives to adopt).
     renderer: minijinja
     template_ref: kask-seam-audit/audit-ui
-    gas_cap: 8000
     timeout_seconds: 300
     input_mapping:
       task: "{{ task | default('') }}"
@@ -276,7 +265,6 @@ steps:
       medium, low, info} (exclusivity); every finding has a non-null file_line
       OR deferred == "true" (citation). Returns a list of defect strings —
       empty = passed; non-empty = step 8 refines the findings. No LLM round-trip.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -341,7 +329,6 @@ steps:
       or marks the finding deferred with a reason — never fabricates evidence.
     renderer: minijinja
     template_ref: kask-seam-audit/refine-findings
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
@@ -362,7 +349,6 @@ steps:
       finding plus constraint_force + deletion_test + feedback_verdict).
     renderer: minijinja
     template_ref: kask-seam-audit/adjudicate
-    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       task: "{{ task | default('') }}"
@@ -382,7 +368,6 @@ steps:
       {stable_under_perturbation: bool}. Each score traces to a finding.
     renderer: minijinja
     template_ref: kask-seam-audit/mcda
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
@@ -403,7 +388,6 @@ steps:
       {triggered, reason, proposed_d_seam}.
     renderer: minijinja
     template_ref: kask-seam-audit/remediate
-    gas_cap: 8000
     timeout_seconds: 300
     input_mapping:
       task: "{{ task | default('') }}"
@@ -422,7 +406,6 @@ steps:
       (divergence-surface membership — the hard-stop invariant). Returns a list
       of defect strings — any "touched_file_outside_seam" defect means the
       engagement MUST hard-stop and surface to the user. No LLM round-trip.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -492,7 +475,6 @@ steps:
       NOT edit any upstream non-D-seam file. Produces a hard_stop_decision.
     renderer: minijinja
     template_ref: kask-seam-audit/remediation-repair
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       task: "{{ task | default('') }}"
@@ -510,7 +492,6 @@ steps:
       Lower = more converged; 0 = every finding cited and adjudicated. Feeds the
       Cauchy criterion. A stable non-zero signal satisfies Cauchy but is NOT
       clean — `on_not_reached: escalate` routes it to the Curator.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -543,7 +524,6 @@ steps:
       Re-enter the DO tracks (step 4) if convergence is not met. Carries prior
       findings so the LLM repairs cumulatively. Bounded by max_iterations and
       the hard-stop (Gate C).
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 4 }}"
@@ -565,7 +545,6 @@ steps:
       did Lisp catch that the LLM missed?
     renderer: minijinja
     template_ref: kask-seam-audit/final-report
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"

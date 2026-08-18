@@ -27,11 +27,6 @@ convergence:
   on_not_reached: escalate
   # target_artifacts_field removed — no compute step to consume it
 
-gas:
-  cap: 250000
-  cost_per_iteration: 500
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 5
@@ -77,7 +72,6 @@ steps:
       dominant_shape, typography_class, palette, density.
     renderer: minijinja
     template_ref: media/logo-discovery-map
-    gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
       name: "{{ name }}"
@@ -95,7 +89,6 @@ steps:
       Executes the media/logo-discovery sub-manifest (FlowDef recursion).
     renderer: minijinja
     template_ref: media/logo-discovery
-    gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
       design_params: "{{ step_1_result }}"
@@ -110,7 +103,6 @@ steps:
       prompt. This is the quality target for convergence.
     renderer: minijinja
     template_ref: media/logo-formal-prompt
-    gas_cap: 3000
     timeout_seconds: 30
     input_mapping:
       name: "{{ name }}"
@@ -132,7 +124,6 @@ steps:
       convergence or max iterations.
     renderer: minijinja
     template_ref: media/logo-iterative-refine
-    gas_cap: 100000
     timeout_seconds: 300
     input_mapping:
       name: "{{ name }}"

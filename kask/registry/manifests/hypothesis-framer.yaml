@@ -28,11 +28,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -69,7 +64,6 @@ steps:
       rationale and refinement suggestions.
     renderer: minijinja
     template_ref: hypothesis-framer/finer-evaluate
-    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       broad_topic: "{{ task | default(broad_topic) }}"
@@ -86,7 +80,6 @@ steps:
       question and completeness assessment.
     renderer: minijinja
     template_ref: hypothesis-framer/pico-structure
-    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       research_question: "{{ step_1_result.research_question | default('') }}"
@@ -115,7 +108,6 @@ steps:
       elements (population, intervention, comparison, outcome) are present and
       non-null in the PICO step's output. Returns a list of defect strings.
       No LLM round-trip.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -153,7 +145,6 @@ steps:
       elements are structurally present.
     renderer: minijinja
     template_ref: hypothesis-framer/hypothesis-operationalize
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       structured_question: "{{ step_2_result.structured_question | default('') }}"
@@ -175,7 +166,6 @@ steps:
       by returning 0 when absent — when step 4 was skipped (PICO defects),
       the 0 does not cause false convergence because loop_target re-enters
       at step 2.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

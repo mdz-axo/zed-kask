@@ -24,11 +24,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -58,7 +53,6 @@ steps:
     description: Identify and classify decision criteria.
     renderer: minijinja
     template_ref: mcda/identify-criteria.j2
-    gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       decision_question: "{{ task | default(decision_question) }}"
@@ -70,7 +64,6 @@ steps:
     description: Assign weights and score alternatives.
     renderer: minijinja
     template_ref: mcda/weight-and-score.j2
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       decision_question: "{{ decision_question }}"
@@ -83,7 +76,6 @@ steps:
     description: Rank alternatives and detect compensation masking.
     renderer: minijinja
     template_ref: mcda/rank-alternatives.j2
-    gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       decision_question: "{{ decision_question }}"
@@ -96,7 +88,6 @@ steps:
     description: Perform sensitivity analysis and robustness checks.
     renderer: minijinja
     template_ref: mcda/sensitivity-analysis.j2
-    gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       decision_question: "{{ decision_question }}"
@@ -117,7 +108,6 @@ steps:
       `default(1.0)` fallback: if the sensitivity step omitted a field,
       the Lisp `assoc` returns nil and `length` of nil is 0, which is a
       real measurement ("no reversals found"), not a phantom 1.0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -133,7 +123,6 @@ steps:
   - ordinal: 6
     action: loop
     description: Re-enter MCDA cycle if convergence is not met.
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"

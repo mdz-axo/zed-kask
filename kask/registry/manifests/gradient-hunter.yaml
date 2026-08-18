@@ -60,11 +60,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -115,7 +110,6 @@ steps:
       (feedback loop closure).
     renderer: minijinja
     template_ref: gradient-hunter/gradient-prior
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target_region: "{{ task | default(target_region) }}"
@@ -139,7 +133,6 @@ steps:
       orchestrates the mapping manually between prior and detect.
     renderer: minijinja
     template_ref: gradient-hunter/gradient-map
-    gas_cap: 5000
     timeout_seconds: 300
     input_mapping:
       target_region: "{{ target_region }}"
@@ -160,7 +153,6 @@ steps:
       pattern. References gradient-shapes.yaml for the shape taxonomy.
     renderer: minijinja
     template_ref: gradient-hunter/gradient-detect
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       prior: "{{ step_1_result }}"
@@ -185,7 +177,6 @@ steps:
       conformation.
     renderer: minijinja
     template_ref: gradient-hunter/gradient-hypothesize
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       gradients: "{{ step_3_result.gradients | default([]) }}"
@@ -207,7 +198,6 @@ steps:
       closure).
     renderer: minijinja
     template_ref: gradient-hunter/gradient-report
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       gradients: "{{ step_3_result.gradients | default([]) }}"
@@ -223,7 +213,6 @@ steps:
       of gradient_report). Lower = more converged (fewer new gradients found
       as the field is mapped and explained). If gradient_report is absent,
       the form errors (no silent default), surfacing a broken report step.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(length (assoc \"gradient_report\" step_5_result))"

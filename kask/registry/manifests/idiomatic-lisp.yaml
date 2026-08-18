@@ -36,11 +36,6 @@ convergence:
   target_artifacts_field: "idiomatic_lisp_verdict"
   on_not_reached: escalate
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -71,7 +66,6 @@ steps:
       improvement targets.
     renderer: minijinja
     template_ref: idiomatic-lisp/idiomatic-lisp-inquiry
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       design_problem: "{{ task | default(design_problem) }}"
@@ -88,7 +82,6 @@ steps:
       practices. Consumes the assessment from step 1.
     renderer: minijinja
     template_ref: idiomatic-lisp/idiomatic-lisp-design
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       design_problem: "{{ design_problem }}"
@@ -107,7 +100,6 @@ steps:
       targets.
     renderer: minijinja
     template_ref: idiomatic-lisp/idiomatic-lisp-challenge
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       design_problem: "{{ design_problem }}"
@@ -126,7 +118,6 @@ steps:
       (gas_cap: 100), and observable via a reg.skill.idiomatic-lisp span.
       Guards against a missing critique_score field by returning 0 when
       absent.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

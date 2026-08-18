@@ -36,11 +36,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "layout_health"
 
-gas:
-  cap: 50000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 1
@@ -85,7 +80,6 @@ steps:
       CSS flexbox overflow invariant.
     renderer: minijinja
     template_ref: ui-layout-discipline/sense
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       target: "{{ task | default(target) }}"
@@ -101,7 +95,6 @@ steps:
       score (Rosenholtz) and the action-to-content ratio (Tufte data-ink).
     renderer: minijinja
     template_ref: ui-layout-discipline/orient
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       target: "{{ target }}"
@@ -119,7 +112,6 @@ steps:
       verdict. Produce a layout_health vector and a pass/fail decision.
     renderer: minijinja
     template_ref: ui-layout-discipline/decide
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       target: "{{ target }}"
@@ -138,7 +130,6 @@ steps:
       handler pattern.
     renderer: minijinja
     template_ref: ui-layout-discipline/act
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target: "{{ target }}"
@@ -155,7 +146,6 @@ steps:
       to size-only, check if exactly one element remains dominant).
     renderer: minijinja
     template_ref: ui-layout-discipline/review
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       target: "{{ target }}"
@@ -170,7 +160,6 @@ steps:
       The convergence signal is the count of failing gates: 0 = converged
       (all gates pass under adversarial probes), >0 = not converged.
       If the review result is absent, the form errors (no silent default).
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(assoc \"failing_gates\" step_5_result)"

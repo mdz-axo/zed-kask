@@ -30,11 +30,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -79,7 +74,6 @@ steps:
       Returns all boards owned by the caller. The first board's ID feeds
       step 2 (kanban_task_list) to read prior PDCA tasks.
     mcp: kanban_board_list
-    gas_cap: 1000
     timeout_seconds: 30
     on_failure:
       action: report
@@ -97,7 +91,6 @@ steps:
       experiments have already been run.
     mcp: kanban_task_list
     condition: "step_1_result.boards"
-    gas_cap: 1000
     timeout_seconds: 30
     on_failure:
       action: report
@@ -118,7 +111,6 @@ steps:
       If 7+ days since last practice, restart with Observation Drill.
     renderer: minijinja
     template_ref: kata-improvement/beginner-selector
-    gas_cap: 2500
     timeout_seconds: 120
     input_mapping:
       learner_profile: "{{ learner_profile | default({}) }}"
@@ -132,7 +124,6 @@ steps:
       in order on a trivial process (making toast, brewing coffee).
     renderer: minijinja
     template_ref: kata-improvement/beginner-five-questions
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       learner_profile: "{{ learner_profile | default({}) }}"
@@ -146,7 +137,6 @@ steps:
       measurable process.
     renderer: minijinja
     template_ref: kata-improvement/beginner-pdca-cycle
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       learner_profile: "{{ learner_profile | default({}) }}"
@@ -160,7 +150,6 @@ steps:
       interpretations (OUGHT).
     renderer: minijinja
     template_ref: kata-improvement/beginner-observation-drill
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       learner_profile: "{{ learner_profile | default({}) }}"
@@ -179,7 +168,6 @@ steps:
       automaticity_self_assess is absent, the form returns 1.0 (not yet
       graduated — pdca-cycle and observation-drill do not measure
       automaticity directly). Lower = more converged.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(if (is_null step_2_result) 1.0 (let ((a (assoc \"automaticity_self_assess\" step_2_result))) (if (is_null a) 1.0 (- 1.0 a))))"
@@ -192,7 +180,6 @@ steps:
     description: Step 1 — understand direction/challenge.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step1-direction.j2
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
@@ -205,7 +192,6 @@ steps:
     description: Step 2 — grasp current condition with data.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step2-current.j2
-    gas_cap: 3500
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
@@ -218,7 +204,6 @@ steps:
     description: Step 3 — establish target condition.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step3-target.j2
-    gas_cap: 3500
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
@@ -230,7 +215,6 @@ steps:
     description: Step 4 — define next experiment.
     renderer: minijinja
     template_ref: kata-improvement/improvement-step4-experiment.j2
-    gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
@@ -250,7 +234,6 @@ steps:
       experiment). If step_9_result is null or a core field is absent, the
       form counts it as missing (no silent default that masks a broken
       experiment step).
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(- 7 (+ (if (is_null (assoc \"obstacle\" step_9_result)) 0 1) (if (is_null (assoc \"next_experiment\" step_9_result)) 0 1) (if (is_null (assoc \"prediction\" step_9_result)) 0 1) (if (is_null (assoc \"measurement_method\" step_9_result)) 0 1) (if (is_null (assoc \"success_criterion\" step_9_result)) 0 1) (if (is_null (assoc \"learning_commitment\" step_9_result)) 0 1) (if (is_null (assoc \"when_to_check\" step_9_result)) 0 1)))"
@@ -261,7 +244,6 @@ steps:
     action: loop
     condition: "mode == 'beginner'"
     description: Re-enter beginner kata cycle if convergence is not met.
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 3 }}"
@@ -273,7 +255,6 @@ steps:
     action: loop
     condition: "mode != 'beginner'"
     description: Re-enter improvement kata cycle if convergence is not met.
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 8 }}"

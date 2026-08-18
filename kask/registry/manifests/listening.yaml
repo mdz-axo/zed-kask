@@ -37,11 +37,6 @@ convergence:
   min_iterations: 1
   on_not_reached: escalate
 
-gas:
-  cap: 120000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -85,7 +80,6 @@ steps:
       checkpoint map and ignored_short_term.
     renderer: minijinja
     template_ref: listening/apply-template
-    gas_cap: 100000
     timeout_seconds: 120
     input_mapping:
       transcript_chunks: "{{ step_1_result.transcript_chunks | default([]) }}"

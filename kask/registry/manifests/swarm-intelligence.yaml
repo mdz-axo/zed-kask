@@ -94,11 +94,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 120000
-  cost_per_iteration: 150
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -208,7 +203,6 @@ steps:
       agent-mediated fetch. Condition-gated on ABW mode (mode != 'local').
       Result lands in step_1_result and feeds the SENSE template's swarm_state.
     mcp: swarm_get_swarm
-    gas_cap: 2000
     timeout_seconds: 60
     condition: "mode != 'local'"
     input_mapping:
@@ -230,7 +224,6 @@ steps:
       (mode == 'local'). Result lands in step_2_result and feeds the SENSE
       template's swarm_state.
     mcp: swarm_get_local_swarm
-    gas_cap: 2000
     timeout_seconds: 60
     condition: "mode == 'local'"
     input_mapping:
@@ -257,7 +250,6 @@ steps:
       1.0 + trivial_task flag; empty swarm → diversity 0.0, variety 0.0.
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-sense
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       swarm_id: "{{ swarm_id }}"
@@ -286,7 +278,6 @@ steps:
       capabilities)?
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-orient
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       swarm_state: "{{ step_3_result }}"
@@ -318,7 +309,6 @@ steps:
       (required/optional) and the no-delegation-chains invariant.
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-decide
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       swarm_state: "{{ step_3_result }}"
@@ -369,7 +359,6 @@ steps:
       consent gate must actually block, not just warn.
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-act
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       decisions: "{{ step_6_result }}"
@@ -390,7 +379,6 @@ steps:
       Result lands in step_8_result and feeds the CHECK template's
       post_act_state.
     mcp: swarm_get_swarm
-    gas_cap: 2000
     timeout_seconds: 60
     condition: "mode != 'local'"
     input_mapping:
@@ -410,7 +398,6 @@ steps:
       local mode. Result lands in step_9_result and feeds the CHECK
       template's post_act_state.
     mcp: swarm_get_local_swarm
-    gas_cap: 2000
     timeout_seconds: 60
     condition: "mode == 'local'"
     input_mapping:
@@ -443,7 +430,6 @@ steps:
       loop (C2) covers the task-success gap, never an LLM judge.
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-check
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       pre_act_state: "{{ step_3_result }}"
@@ -512,7 +498,6 @@ steps:
       (gas_cap: 100), and observable via a reg.skill.swarm-intelligence
       span. Guards against a missing convergence_metric field by returning
       0 when absent.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

@@ -296,15 +296,16 @@ fn company_research_deep_manifest_parses() {
 fn company_research_deep_has_expected_step_count() {
     let manifest = load_named_manifest("company-research-deep");
     // 1 (COMPANY mcp_batch: company_transcript + dcf_valuation + comparable_analysis + web_search) +
-    // 2 (web_extract) + 3 (company-8part) + 4 (falstaffian) + 5 (gorilla-4dim) +
-    // 6 (gorilla-capability-reason) + 7 (GORILLA lisp.eval) +
-    // 8 (scenario_build) + 9 (economic-trajectory) + 10 (imagine) +
-    // 11 (thesis) + 12 (thesis-essentialist) + 13 (goal-analysis gate) +
-    // 14 (convergence lisp.eval) + 15 (loop) = 15 steps.
+    // 2 (web_extract) + 3 (company-8part) + 4 (falstaffian) + 5 (wardley-anchor) +
+    // 6 (gorilla-4dim) + 7 (gorilla-capability-reason) + 8 (GORILLA lisp.eval) +
+    // 9 (scenario_build) + 10 (economic-trajectory) + 11 (imagine) +
+    // 12 (thesis) + 13 (thesis-essentialist) + 14 (goal-analysis gate) +
+    // 15 (convergence lisp.eval) + 16 (loop) = 16 steps.
+    // v0.36.0: step 5 (wardley-anchor) added between FALSTAFFIAN and GORILLA.
     assert_eq!(
         manifest.steps.len(),
-        15,
-        "company-research-deep must have 15 steps (COMPANY batch merge reduced count from 18), got {}",
+        16,
+        "company-research-deep must have 16 steps (v0.36.0: +wardley-anchor), got {}",
         manifest.steps.len()
     );
 }
@@ -342,14 +343,15 @@ fn company_research_deep_select_steps_have_template_refs() {
         .iter()
         .filter(|s| s.action == "select")
         .collect();
-    // 6 (company-8part) + 7 (falstaffian-competitive-rotation) + 8 (gorilla-4dim) +
-    // 9 (gorilla-capability-reason) + 12 (imagine-longrange) +
-    // 13 (economic-trajectory) + 14 (thesis-three-pillars) +
-    // 15 (thesis-essentialist) + 16 (goal-analysis/judge) = 9 select steps.
+    // 3 (company-8part) + 4 (falstaffian-competitive-rotation) + 5 (wardley-anchor) +
+    // 6 (gorilla-4dim) + 7 (gorilla-capability-reason) + 10 (economic-trajectory) +
+    // 11 (imagine-longrange) + 12 (thesis-three-pillars) +
+    // 13 (thesis-essentialist) + 14 (goal-analysis/judge) = 10 select steps.
+    // v0.36.0: +wardley-anchor (step 5) = 10 select steps.
     assert_eq!(
         select_steps.len(),
-        9,
-        "expected 9 select steps (7 original + 2 cross-skill adapters: gorilla-capability-reason + thesis-essentialist), got {}",
+        10,
+        "expected 10 select steps (7 original + 3 cross-skill adapters: wardley-anchor + gorilla-capability-reason + thesis-essentialist), got {}",
         select_steps.len()
     );
     for step in &select_steps {

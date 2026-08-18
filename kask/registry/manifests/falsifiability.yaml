@@ -31,11 +31,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -72,7 +67,6 @@ steps:
       claims; propose a refined testable reformulation if salvageable.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-admit
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       target: "{{ task | default(target) }}"
@@ -88,7 +82,6 @@ steps:
       (refined reformulation if the admit gate produced one, else the original).
     renderer: minijinja
     template_ref: falsifiability/falsifiability-hypothesize
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       admitted_target: "{{ step_1_result.refined_target | default(target, true) }}"
@@ -123,7 +116,6 @@ steps:
       completeness (every hypothesis has prediction + falsifier keys), diversity
       (>=2 distinct likelihoods), mutual exclusivity (no duplicate hypothesis
       text). Returns a list of defect strings. No LLM round-trip.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -204,7 +196,6 @@ steps:
       set is structurally valid.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-counterfactual
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       hypotheses: "{{ step_2_result.hypotheses | default([]) }}"
@@ -220,7 +211,6 @@ steps:
       surviving hypothesis must be falsifiable by at least one designed test.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-discriminate
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       hypotheses: "{{ step_2_result.hypotheses | default([]) }}"
@@ -237,7 +227,6 @@ steps:
       tests_pending.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-eliminate
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       hypotheses: "{{ step_2_result.hypotheses | default([]) }}"
@@ -256,7 +245,6 @@ steps:
       Guards against a missing eliminated field by returning 0 when absent —
       when step 6 was skipped (hypothesis defects), the 0 does not cause
       false convergence because loop_target re-enters at step 2.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -273,7 +261,6 @@ steps:
       and the materiality guard can detect a plateau. If the Lisp hypothesis
       check (step 3) found defects, re-enter at step 2 (hypothesize) so the LLM
       repairs the structural defects before counterfactuals are constructed.
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       # If hypothesis check failed, re-enter at hypothesize (step 2); else

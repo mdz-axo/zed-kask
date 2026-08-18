@@ -24,11 +24,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -55,7 +50,6 @@ steps:
     description: Identify entities in source text against target schema.
     renderer: minijinja
     template_ref: structured-extraction/identify-entities
-    gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
       source_text: "{{ task | default(source_text) }}"
@@ -67,7 +61,6 @@ steps:
     description: Extract semantic relations between identified entities.
     renderer: minijinja
     template_ref: structured-extraction/extract-relations
-    gas_cap: 4500
     timeout_seconds: 60
     input_mapping:
       source_text: "{{ source_text }}"
@@ -78,7 +71,6 @@ steps:
     description: Map entities and relations to target schema.
     renderer: minijinja
     template_ref: structured-extraction/map-to-schema
-    gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
       source_text: "{{ source_text }}"
@@ -101,7 +93,6 @@ steps:
       omitted `field_coverage`, `assoc` returns nil and the score falls
       back to 1.0 via the nil-guard — a real measurement ("no coverage
       reported"), surfaced rather than masked.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

@@ -48,11 +48,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -111,7 +106,6 @@ steps:
       that the charter (step 1) incorporates into its Beizer category
       selection and probe planning.
     mcp: codegraph_analysis
-    gas_cap: 3000
     timeout_seconds: 60
     on_failure:
       action: report
@@ -131,7 +125,6 @@ steps:
       criteria rather than jumping straight to taxonomy selection.
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-charter
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target: "{{ task | default(target) }}"
@@ -163,7 +156,6 @@ steps:
       instructions and the flow should be re-invoked with populated findings.
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-probe
-    gas_cap: 2000
     timeout_seconds: 300
     input_mapping:
       charter: "{{ step_1_result }}"
@@ -186,7 +178,6 @@ steps:
       without a file:line citation are rejected (no-fiction enforcement).
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-oracle
-    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       charter: "{{ step_1_result }}"
@@ -201,7 +192,6 @@ steps:
       signatures for detecting similar bugs elsewhere.
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-taxonomize
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       evaluated_findings: "{{ step_3_result.evaluated_findings | default([]) }}"
@@ -218,7 +208,6 @@ steps:
       to close the feedback loop.
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-report
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       charter: "{{ step_1_result }}"
@@ -240,7 +229,6 @@ steps:
       The convergence signal is the count of open quality threats:
       summary.confirmed_bugs + summary.potential_bugs. Lower = more converged.
       If either field is absent, the form errors (no silent default).
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(+ (assoc \"confirmed_bugs\" (assoc \"summary\" step_5_result)) (assoc \"potential_bugs\" (assoc \"summary\" step_5_result)))"

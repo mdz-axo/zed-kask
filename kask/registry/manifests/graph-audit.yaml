@@ -33,11 +33,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 180000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -131,7 +126,6 @@ steps:
         key: structure_overview
         input_mapping:
           limit: 20
-    gas_cap: 4000
     timeout_seconds: 60
     on_failure:
       action: report
@@ -149,7 +143,6 @@ steps:
       codegraph_stats, and codegraph_structure to build an initial map.
     renderer: minijinja
     template_ref: graph-audit/code-discover
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       mode: "{{ task | default(mode) }}"
@@ -166,7 +159,6 @@ steps:
       query and the entry symbols from the discovery step (step 3) as the
       name parameter. Feeds the code-query step (step 5) as query_results.
     mcp: codegraph_query
-    gas_cap: 3000
     timeout_seconds: 60
     on_failure:
       action: report
@@ -185,7 +177,6 @@ steps:
       The userpod invokes codegraph_query with keyword/name/semantic queries.
     renderer: minijinja
     template_ref: graph-audit/code-query
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       goal: "{{ goal }}"
@@ -213,7 +204,6 @@ steps:
         key: analysis
         input_mapping:
           kind: "complexity"
-    gas_cap: 6000
     timeout_seconds: 60
     on_failure:
       action: report
@@ -231,7 +221,6 @@ steps:
       and synthesize findings.
     renderer: minijinja
     template_ref: graph-audit/code-analyze
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       goal: "{{ goal }}"
@@ -249,7 +238,6 @@ steps:
       as the query and the analysis result (step 7) for context. Feeds the
       code-context step (step 9) as context_result.
     mcp: codegraph_context
-    gas_cap: 3000
     timeout_seconds: 60
     on_failure:
       action: report
@@ -268,7 +256,6 @@ steps:
       for downstream use. Conditional - runs only when requires_context is true.
     renderer: minijinja
     template_ref: graph-audit/code-context
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       goal: "{{ goal }}"
@@ -285,7 +272,6 @@ steps:
       constraint hierarchy (Prohibition > Guardrail > Guideline > Evidence > Hypothesis).
     renderer: minijinja
     template_ref: graph-audit/semantic-classify
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       nodes: "{{ nodes }}"
@@ -300,7 +286,6 @@ steps:
       pragmatic-cybernetics, essentialist, grill-me, pragmatic-semantics.
     renderer: minijinja
     template_ref: graph-audit/semantic-analyze
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       nodes: "{{ nodes }}"
@@ -316,7 +301,6 @@ steps:
       gaps, orphans, fan-in/out anomalies, force/structure mismatches).
     renderer: minijinja
     template_ref: graph-audit/semantic-detect
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       nodes: "{{ nodes }}"
@@ -332,7 +316,6 @@ steps:
       structural detection into a graph-health convergence metric + markdown report.
     renderer: minijinja
     template_ref: graph-audit/semantic-report
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       nodes: "{{ nodes }}"
@@ -352,7 +335,6 @@ steps:
       relationships from traversal results.
     renderer: minijinja
     template_ref: graph-audit/semantic-classify
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       nodes: "{{ step_7_result.symbols | default([]) }}"
@@ -366,7 +348,6 @@ steps:
       DUAL SEMANTIC ANALYZE: Evaluate the extracted code graph through four lenses.
     renderer: minijinja
     template_ref: graph-audit/semantic-analyze
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       nodes: "{{ step_7_result.symbols | default([]) }}"
@@ -381,7 +362,6 @@ steps:
       DUAL SEMANTIC DETECT: Detect structural pathologies in the extracted code graph.
     renderer: minijinja
     template_ref: graph-audit/semantic-detect
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       nodes: "{{ step_7_result.symbols | default([]) }}"
@@ -396,7 +376,6 @@ steps:
       DUAL SEMANTIC REPORT: Synthesize graph-health report for the extracted code graph.
     renderer: minijinja
     template_ref: graph-audit/semantic-report
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       nodes: "{{ step_7_result.symbols | default([]) }}"
@@ -422,7 +401,6 @@ steps:
       `default(1.0)` fallback: a missing `quality_findings` field
       surfaces as nil and is guarded to 0 ("no findings reported"),
       which is a real measurement, not a phantom 1.0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -450,7 +428,6 @@ steps:
       `default(1.0)` fallback: a missing `blockers` field surfaces as
       nil and is guarded to 0 ("no blockers reported"), which is a real
       measurement, not a phantom 1.0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -474,7 +451,6 @@ steps:
       (fewer blockers). The score is `min(blockers_count / 5, 1.0)` —
       capped at 1.0. No `default(1.0)` fallback: a missing `blockers`
       field surfaces as nil and is guarded to 0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

@@ -24,11 +24,6 @@ convergence:
   target_artifacts_field: "grill_me_verdict"
   on_not_reached: escalate
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -52,7 +47,6 @@ steps:
     description: Calibrate initial interrogation level.
     renderer: minijinja
     template_ref: grill-me/grill-me-escalate
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       topic: "{{ task | default(topic) }}"
@@ -65,7 +59,6 @@ steps:
     description: Generate and evaluate a Socratic interrogation round.
     renderer: minijinja
     template_ref: grill-me/grill-me-round
-    gas_cap: 7000
     timeout_seconds: 150
     input_mapping:
       topic: "{{ topic }}"
@@ -95,7 +88,6 @@ steps:
       difficulty levels (Recall, Mechanism, Rationale, Edge Cases, Synthesis)
       present in the generated questions. Flags insufficient coverage (< 3
       distinct levels). Returns a list of defect strings. No LLM round-trip.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -136,7 +128,6 @@ steps:
     description: Synthesize final assessment and recommendations.
     renderer: minijinja
     template_ref: grill-me/grill-me-assess
-    gas_cap: 4000
     timeout_seconds: 150
     input_mapping:
       topic: "{{ topic }}"
@@ -154,7 +145,6 @@ steps:
       computation explicitly deterministic, budgeted (gas_cap: 100), and
       observable via a reg.skill.grill-me span. Guards against a missing
       recommendations field by returning 0 when absent.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

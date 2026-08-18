@@ -30,11 +30,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -93,7 +88,6 @@ steps:
     description: Select target and map vulnerability surface.
     renderer: minijinja
     template_ref: adversarial-red-team/select-target
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       target_output: "{{ task | default(target_output) }}"
@@ -107,7 +101,6 @@ steps:
     description: Generate adversarial inputs for selected vulnerability classes.
     renderer: minijinja
     template_ref: adversarial-red-team/generate-adversarial
-    gas_cap: 7000
     timeout_seconds: 180
     input_mapping:
       target_output: "{{ step_1_result.selected_target | default(target_output) }}"
@@ -125,7 +118,6 @@ steps:
     description: Evaluate target resistance against generated attacks.
     renderer: minijinja
     template_ref: adversarial-red-team/test-against-target
-    gas_cap: 7000
     timeout_seconds: 180
     input_mapping:
       target_output: "{{ step_1_result.selected_target | default(target_output) }}"
@@ -142,7 +134,6 @@ steps:
       convergence signal is the gap between observed resistance_rate and full
       resistance (1.0): score = 1.0 - resistance_rate. Lower = more converged.
       If resistance_rate is absent, the form errors (no silent default).
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(let ((rr (assoc \"resistance_rate\" step_3_result))) (if (is_null rr) 1.0 (let ((rr-n (if (numberp rr) rr 1.0))) (- 1.0 rr-n))))"

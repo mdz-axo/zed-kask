@@ -24,11 +24,6 @@ convergence:
   min_iterations: 2
   on_not_reached: escalate
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -52,7 +47,6 @@ steps:
     description: Classify ontological/epistemic mode and provenance.
     renderer: minijinja
     template_ref: pragmatic-semantics/semantics-classify-statement
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       statement: "{{ task | default(statement) }}"
@@ -63,7 +57,6 @@ steps:
     description: Trace provenance of the classified claim through hKask's data layers.
     renderer: minijinja
     template_ref: pragmatic-semantics/semantics-provenance-trace
-    gas_cap: 4000
     timeout_seconds: 150
     input_mapping:
       classification_result: "{{ step_1_result }}"
@@ -75,7 +68,6 @@ steps:
     description: Resolve conflicts between statements using OT ranking.
     renderer: minijinja
     template_ref: pragmatic-semantics/semantics-conflict-resolve
-    gas_cap: 4000
     timeout_seconds: 150
     condition: "step_2_result.conflicts_detected == true"
     # When condition is false, step_3_result is undefined. Downstream steps
@@ -95,7 +87,6 @@ steps:
       (gas_cap: 100), and observable via a reg.skill.pragmatic-semantics
       span. Guards against a missing provenance_chain field by returning 0
       when absent.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

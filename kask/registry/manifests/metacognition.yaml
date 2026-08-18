@@ -58,11 +58,6 @@ convergence:
   prediction_field: "prediction"
   result_field: "experiment_result"
 
-gas:
-  cap: 150000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 4
@@ -156,7 +151,6 @@ steps:
       The overconfidence_bias feeds the grasp-current step (step 1) so the
       agent knows its historical calibration and can adjust its predictions.
     mcp: scenario_calibration
-    gas_cap: 2000
     timeout_seconds: 60
     on_failure:
       action: report
@@ -186,7 +180,6 @@ steps:
       gap computation measures against the target.
     renderer: minijinja
     template_ref: metacognition/meta-grasp-current
-    gas_cap: 6000
     # thinking_budget = "full" + max_tokens 3000 on a cloud thinking-mode model
     # (GLM-5.2 via OpenRouter) routinely exceeds 60s. 120s matches the default
     # (DEFAULT_STEP_TIMEOUT_SECONDS) and aligns with task-breakdown (90s) and
@@ -219,7 +212,6 @@ steps:
       cycles, the target persists.
     renderer: minijinja
     template_ref: metacognition/meta-establish-target
-    gas_cap: 5000
     # thinking_budget = "medium"; 120s aligns with DEFAULT_STEP_TIMEOUT_SECONDS.
     # The 90s override was too tight for cold-cache cloud LLM calls.
     timeout_seconds: 120
@@ -243,7 +235,6 @@ steps:
       the Brier score tracks whether the agent's confidence is calibrated.
     renderer: minijinja
     template_ref: metacognition/meta-predict
-    gas_cap: 5000
     # thinking_budget = "off" (set in the template, not "medium" as the
     # prior comment claimed). 120s aligns with DEFAULT_STEP_TIMEOUT_SECONDS
     # — the 90s override was too tight for cold-cache cloud LLM calls
@@ -274,7 +265,6 @@ steps:
       the new current_artifacts and current_procedure.
     renderer: minijinja
     template_ref: metacognition/meta-experiment
-    gas_cap: 6000
     # thinking_budget = "full" + max_tokens 3000 — heaviest inference step.
     # 150s matches capabilities-reasoner's heavy step (300s would be safer
     # but the Kata cycle runs this 4-step loop up to 10 times; 150s balances
@@ -369,7 +359,6 @@ steps:
       expression makes the computation explicitly deterministic, budgeted
       (gas_cap: 100), and observable via a reg.skill.metacognition span.
       Guards against a missing hypotenuse field by returning 0 when absent.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

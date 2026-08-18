@@ -29,11 +29,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 200000
-  cost_per_iteration: 200
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 5
@@ -77,7 +72,6 @@ steps:
     description: "Outer Kata Step 1 — Understand direction: what capability are we building?"
     renderer: minijinja
     template_ref: self-improvement/si-kata-direction.j2
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ task | default(challenge) }}"
@@ -87,7 +81,6 @@ steps:
     description: "Outer Kata Step 2 — Grasp current condition: baseline measurement."
     renderer: minijinja
     template_ref: self-improvement/si-kata-current.j2
-    gas_cap: 3500
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
@@ -99,7 +92,6 @@ steps:
     description: "Outer Kata Step 3 — Establish target condition: measurable, time-bounded."
     renderer: minijinja
     template_ref: self-improvement/si-kata-target.j2
-    gas_cap: 3500
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
@@ -112,7 +104,6 @@ steps:
     description: "PDCA Plan — Select pathway (θ or Σ), signal type, and generate improvement plan."
     renderer: minijinja
     template_ref: self-improvement/si-select-pathway.j2
-    gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
@@ -129,7 +120,6 @@ steps:
     description: "PDCA Do — Execute the improvement operator 𝒰 on the selected target."
     renderer: minijinja
     template_ref: self-improvement/si-execute-improvement.j2
-    gas_cap: 8000
     timeout_seconds: 120
     input_mapping:
       improvement_plan: "{{ step_4_result }}"
@@ -140,7 +130,6 @@ steps:
     description: "PDCA Check — Evaluate updated agent on held-out tasks."
     renderer: minijinja
     template_ref: self-improvement/si-evaluate-improvement.j2
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       updated_config: "{{ step_5_result }}"
@@ -152,7 +141,6 @@ steps:
     description: "PDCA Act — Commit or rollback the update based on acceptance criteria."
     renderer: minijinja
     template_ref: self-improvement/si-commit-or-rollback.j2
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       evaluation_result: "{{ step_6_result }}"
@@ -171,7 +159,6 @@ steps:
       decision "commit" → 0.5 (improving, continue); rollback/refine → 1.0 (not
       converged). Replaces the phantom `convergence_metric` binding that
       silently defaulted to 1.0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -187,7 +174,6 @@ steps:
   - ordinal: 9
     action: loop
     description: "Re-enter PDCA Plan if not converged (max 5 inner iterations)."
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: 4
@@ -199,7 +185,6 @@ steps:
   - ordinal: 10
     action: loop
     description: "Re-enter Kata Step 2 (current condition) if not converged (max 10 outer iterations)."
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: 2  # Re-enter at Kata Step 2 (current condition)

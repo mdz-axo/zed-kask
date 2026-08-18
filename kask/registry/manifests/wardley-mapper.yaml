@@ -59,12 +59,13 @@ convergence:
   max_iterations: 10
   min_iterations: 2
   on_not_reached: escalate
+  # target_artifacts_field is required for kata_enabled() to return true —
+  # without it, cauchy mode silently falls back to legacy self-grade mode.
+  # The actual cauchy check uses convergence_signal history (bound by the
+  # loop step's convergence_signal: input_mapping), not this field. The
+  # field name "convergence_signal" matches the loop step's binding.
+  target_artifacts_field: "convergence_signal"
 
-gas:
-  cap: 90000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -99,7 +100,6 @@ steps:
       re-enter here.
     renderer: minijinja
     template_ref: wardley-mapper/inventory-components
-    gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
       target_system: "{{ task | default(target_system) }}"
@@ -115,7 +115,6 @@ steps:
       object (which also contains inventory_notes).
     renderer: minijinja
     template_ref: wardley-mapper/classify-evolution
-    gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
       components: "{{ step_1_result.components }}"
@@ -130,7 +129,6 @@ steps:
       not the whole step_2_result object (which also contains evolution_distribution).
     renderer: minijinja
     template_ref: wardley-mapper/map-value-chain
-    gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
       classified_components: "{{ step_2_result.components }}"
@@ -145,7 +143,6 @@ steps:
       contains map_diagram).
     renderer: minijinja
     template_ref: wardley-mapper/identify-movement
-    gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
       current_map: "{{ step_3_result.map }}"
@@ -160,7 +157,6 @@ steps:
       Consumes step_3_result.map (not step_3_result) for the current_map.
     renderer: minijinja
     template_ref: wardley-mapper/synthesize-recommendations
-    gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
       movement_analysis: "{{ step_4_result }}"
@@ -179,7 +175,6 @@ steps:
       confidence values count as low (conservative — forces re-evaluation).
       No default(1.0) fallback: a nil recs field surfaces as 1.0 via the
       is_null guard, not via a silent default.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -216,7 +211,6 @@ steps:
       Consumes step_3_result.map_diagram and step_5_result.recommendations.
     renderer: minijinja
     template_ref: wardley-mapper/present-map
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       map_diagram: "{{ step_3_result.map_diagram }}"
@@ -225,7 +219,6 @@ steps:
 
   - ordinal: 8
     action: loop
-    gas_cap: 200
     timeout_seconds: 10
     description: >
       Re-enter the cycle at step 2 (classify-evolution) if convergence not met.

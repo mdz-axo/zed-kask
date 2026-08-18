@@ -47,11 +47,6 @@ convergence:
   on_not_reached: proceed
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 20000
-  cost_per_iteration: 150
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -104,7 +99,6 @@ steps:
       steering_mode: steering). The Curator/human calls swarm_execute_plan_local.
     renderer: minijinja
     template_ref: swarm-steering/swarm-steering-direct
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       emitted_calls: "{{ emitted_calls }}"
@@ -129,7 +123,6 @@ steps:
       keys; that no credits_authorized exceeds the ceiling; and that no
       duplicate agent_name entries exist. Returns a defects list — empty =
       passed, non-empty = the directive is structurally invalid. No LLM call.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

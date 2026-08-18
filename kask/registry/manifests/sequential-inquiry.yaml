@@ -46,11 +46,6 @@ convergence:
   prediction_field: "prediction"
   result_field: "experiment_result"
 
-gas:
-  cap: 120000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 4
@@ -98,7 +93,6 @@ steps:
       have been executed).
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-grasp
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       problem: "{{ task | default(problem) }}"
@@ -119,7 +113,6 @@ steps:
       target_procedure (which inquiry steps must be complete).
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-target
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       problem: "{{ problem }}"
@@ -135,7 +128,6 @@ steps:
       Carry a confidence in [0,1]. The Brier score tracks calibration.
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-predict
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       problem: "{{ problem }}"
@@ -155,7 +147,6 @@ steps:
       falsifiability). Re-measure the current condition after the experiment.
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-engine
-    gas_cap: 9000
     timeout_seconds: 180
     input_mapping:
       problem: "{{ problem }}"
@@ -176,7 +167,6 @@ steps:
       If the engine emitted no queries, this step returns an empty result.
     renderer: minijinja
     template_ref: skill-router/skill-router-match
-    gas_cap: 2000
     timeout_seconds: 150
     input_mapping:
       task_description: "{{ step_4_result.skill_match_queries[0].query | default('') }}"
@@ -245,7 +235,6 @@ steps:
       but step 7 is kata.process_gap (returns process_gap, not hypotenuse).
       The hypotenuse is computed at step 8. This lisp.eval step references
       step_8_result, fixing the prior null-field read.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

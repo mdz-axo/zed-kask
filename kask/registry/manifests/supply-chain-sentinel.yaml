@@ -25,11 +25,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -51,7 +46,6 @@ steps:
       Select dependency manifest surfaces to audit (Cargo.toml, deny.toml, lockfiles).
     renderer: minijinja
     template_ref: supply-chain-sentinel/select-surface
-    gas_cap: 2000
     timeout_seconds: 120
   - ordinal: 2
     action: select
@@ -60,7 +54,6 @@ steps:
       unmaintained indicators, and transitive dependency visibility.
     renderer: minijinja
     template_ref: supply-chain-sentinel/probe
-    gas_cap: 2000
     timeout_seconds: 120
   - ordinal: 3
     action: select
@@ -68,7 +61,6 @@ steps:
       Report supply-chain findings with CWE-mapped evidence and proposed regressions.
     renderer: minijinja
     template_ref: supply-chain-sentinel/report
-    gas_cap: 2000
     timeout_seconds: 120
   - ordinal: 4
     action: compute
@@ -80,7 +72,6 @@ steps:
       explicitly deterministic, budgeted (gas_cap: 100), and observable via
       a reg.skill.supply-chain-sentinel span. Guards against a missing
       findings field by returning 0 when absent.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
