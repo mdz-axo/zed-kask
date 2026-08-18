@@ -36,7 +36,7 @@ Before invoking this skill, the agent should fetch the current board state so it
 3. For each task, call `kanban_task_comments_since` with `{"task_id": "...", "since_index": 0}` to get the comment thread (for detecting stuck tasks).
 4. Pass the fetched `board_name` and `tasks` as skill inputs when invoking this skill.
 
-The `kanban_task_list` response includes: task_id, title, status, assignee, gas_remaining, swarm_id, and activity (latest comment). Use the `activity` field to detect tasks with no recent updates.
+The `kanban_task_list` response includes: task_id, title, status, assignee, rjoule_remaining, swarm_id, and activity (latest comment). Use the `activity` field to detect tasks with no recent updates.
 
 All tools are on the `hkask-mcp-kata-kanban` server.
 

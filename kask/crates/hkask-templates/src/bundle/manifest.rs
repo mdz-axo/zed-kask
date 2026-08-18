@@ -11,8 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::composition::{BundleComplementarity, BundleConflict};
 use super::config::{
-    BundleAuditConfig, BundleLedgerConfig, ConvergenceConfig, ErrorHandlingConfig,
-    RjouleConfig,
+    BundleAuditConfig, BundleLedgerConfig, ConvergenceConfig, ErrorHandlingConfig, RjouleConfig,
 };
 use hkask_types::SkillPolarity;
 use hkask_types::Visibility;

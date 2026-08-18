@@ -89,8 +89,6 @@ fn all_manifests_are_executor_compliant() {
                 }
             }
 
-
-
             // 4. rJoule block — required when inference is used
             let uses_inference = manifest.steps.iter().any(|s| s.action == "select");
             if uses_inference && manifest.rjoule.cap == 0 {

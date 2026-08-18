@@ -155,6 +155,15 @@ pub const DEFAULT_MAX_REGULATION_HISTORY: usize = 100;
 /// Bounds memory growth for skill self-improvement signal storage.
 pub const DEFAULT_MAX_SKILL_SPAN_HISTORY: usize = 50;
 
+/// Default maximum algedonic alerts retained in the in-memory log.
+///
+/// Bounds memory growth in long-running sessions. The log is a diagnostic
+/// ring buffer; escalated alerts are persisted to the `EscalationQueue`
+/// separately, so eviction from this log loses only the diagnostic trail.
+/// When the log approaches this cap, the `algedonic-review` skill should be
+/// invoked to review and clear reviewed entries.
+pub const DEFAULT_MAX_ALERTS: usize = 200;
+
 /// Homeostatic set-points for the Cybernetics Loop.
 ///
 /// These define the reference values against which sensed signals
@@ -249,6 +258,10 @@ pub struct SetPoints {
     /// Maximum skill feedback spans retained per skill+phase.
     /// Default: 50.
     pub max_skill_span_history: usize,
+    /// Maximum algedonic alerts retained in the in-memory log before oldest
+    /// entries are evicted. Default: 200. When the log approaches this cap,
+    /// the cybernetics loop emits an `AlgedonicLogApproachingCap` signal.
+    pub max_alerts: usize,
 }
 
 /// Configurable thresholds for Curation decisions (spec coherence, drift).
@@ -285,6 +298,7 @@ pub struct SetPointsConfig {
     pub grounding_coverage_rate_floor: Option<f64>,
     pub max_regulation_history: Option<usize>,
     pub max_skill_span_history: Option<usize>,
+    pub max_alerts: Option<usize>,
 }
 
 impl SetPointsConfig {
@@ -330,6 +344,7 @@ impl Default for SetPoints {
             grounding_coverage_rate_floor: DEFAULT_GROUNDING_COVERAGE_RATE_FLOOR,
             max_regulation_history: DEFAULT_MAX_REGULATION_HISTORY,
             max_skill_span_history: DEFAULT_MAX_SKILL_SPAN_HISTORY,
+            max_alerts: DEFAULT_MAX_ALERTS,
         }
     }
 }
@@ -408,6 +423,7 @@ impl SetPoints {
             max_skill_span_history: config
                 .max_skill_span_history
                 .unwrap_or(defaults.max_skill_span_history),
+            max_alerts: config.max_alerts.unwrap_or(defaults.max_alerts),
         }
     }
 

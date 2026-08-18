@@ -29,11 +29,6 @@ primary_model: "fal.ai/flux/dev"
 # HKASK_FUSION_PANEL_MODELS. Recommend the default image generation model
 # (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step and the fal.ai
 # seedance-2.0 image-to-video endpoint for the animate step.
-gas:
-  cap: 120000
-  cost_per_iteration: 6000
-  alert_threshold: 0.8
-  hard_limit: true
 
 # rJoule: generate_image (flux/dev) + image_to_video (seedance, queue-mode) is
 # the costly pair; video_to_gif is local ffmpeg (no inference cost).

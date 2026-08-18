@@ -126,7 +126,7 @@ impl SkillExecutionError {
         }
     }
 
-    /// The failure phase (e.g. "load", "inference", "gas_exhausted").
+    /// The failure phase (e.g. "load", "inference", "rjoule_exhausted").
     pub fn phase(&self) -> &'static str {
         match self {
             Self::CompileTime { phase, .. } | Self::Runtime { phase, .. } => phase,

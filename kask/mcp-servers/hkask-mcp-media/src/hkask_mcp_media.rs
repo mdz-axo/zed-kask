@@ -118,9 +118,7 @@ hkask_mcp_server::mcp_server!(
         pub ffmpeg: FfmpegRunner,
         /// Resolved rJoule budget configuration for inference cost (1 rJoule = $1 USD).
         /// `tracker = None` = no budget enforcement (`HKASK_MEDIA_RJOULE_CAP` unset/0).
-        /// Gas (compute) is enforced upstream at `McpRuntime::invoke` +
-        /// `CyberneticsLoop`, so the tracker's gas cap is inert and never
-        /// charged here. Resolved once at startup so the gate is deterministic.
+        /// Resolved once at startup so the gate is deterministic.
         pub budget: MediaBudget,
     }
 );
@@ -229,13 +227,10 @@ impl MediaServer {
     //
     // The media server pre-charges rJoule (inference USD cost) before each
     // billable generation call and rejects the request when the remaining
-    // budget is insufficient. Compute gas is NOT tracked here — it is
-    // enforced upstream at `McpRuntime::invoke` via `CyberneticsLoop`, so the
-    // tracker's gas cap is constructed inert (large cap, `hard_limit: false`)
-    // and never charged. We deliberately avoid `BudgetTracker::check_exhausted`
-    // because it is redundant with our own pre-charge gate
-    // spuriously when the gas cap is 0 — instead the rJoule gate is checked
-    // directly via `remaining_rjoule()`.
+    // budget is insufficient. We deliberately avoid
+    // `BudgetTracker::check_exhausted` because it is redundant with our own
+    // pre-charge gate; instead the rJoule gate is checked directly via
+    // `remaining_rjoule()`.
 
     /// Pre-charge the rJoule budget for an estimated call and enforce the hard
     /// limit. Returns `Ok(())` when no budget is configured (enforcement

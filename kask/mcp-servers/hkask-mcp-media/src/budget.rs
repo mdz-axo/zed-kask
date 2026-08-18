@@ -67,9 +67,9 @@ impl UnitCosts {
 /// (`HKASK_MEDIA_RJOULE_CAP` unset or `0`); `unit_costs` and `alert_threshold`
 /// are still carried so a disabled budget is self-describing.
 pub struct MediaBudget {
-    /// `None` = enforcement disabled (cap unset/0). Gas (compute) is enforced
-    /// upstream at `McpRuntime::invoke` + `CyberneticsLoop`, so the tracker's
-    /// gas cap is inert and never charged here.
+    /// `None` = enforcement disabled (cap unset/0). rJoule (inference/API)
+    /// spend is the only budget tracked here; compute is not tracked at
+    /// this layer.
     tracker: Option<Arc<tokio::sync::Mutex<hkask_templates::budget::BudgetTracker>>>,
     unit_costs: UnitCosts,
     /// Fraction of the cap (0.0–1.0) at which the threshold-crossing warning
@@ -95,7 +95,7 @@ impl MediaBudget {
     }
 }
 
-/// Build an rJoule-only `BudgetTracker` (the media server never charges gas —
+/// Build an rJoule-only `BudgetTracker` (the media server never charges compute —
 /// enforcement is upstream at `McpRuntime::invoke`). Shared by
 /// [`build_media_budget`] (production) and the gate tests.
 fn make_rjoule_tracker(
@@ -109,7 +109,8 @@ fn make_rjoule_tracker(
         hard_limit: true,
     };
     Arc::new(tokio::sync::Mutex::new(
-        hkask_templates::budget::BudgetTracker::new(&rjoule)))
+        hkask_templates::budget::BudgetTracker::new(&rjoule),
+    ))
 }
 
 /// Estimate the rJoule (USD) cost of a media generation call. Pure function of
@@ -226,10 +227,7 @@ pub(super) async fn charge_budget_gate(
 /// enforcement disabled. A set-but-malformed value (e.g. `100.5`, `1e3`) is a
 /// config error — the server returns an error from `run()` rather than
 /// silently disabling enforcement (fail-closed on a cost-control setting: a
-/// typo in the cap must not remove the spend ceiling silently). The gas
-/// (compute) cap is constructed inert — gas is enforced upstream at
-/// `McpRuntime::invoke` + `CyberneticsLoop`, and the media server never
-/// charges gas itself, so a gas cap here would be dead config.
+/// typo in the cap must not remove the spend ceiling silently).
 pub(super) fn build_media_budget() -> Result<MediaBudget, MediaError> {
     let unit_costs = UnitCosts::from_env();
     let alert_threshold = env_f64("HKASK_MEDIA_RJOULE_ALERT_THRESHOLD", 0.8).clamp(0.0, 1.0);

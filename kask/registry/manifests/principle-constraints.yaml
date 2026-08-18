@@ -35,12 +35,6 @@ convergence:
   target_artifacts_field: "constraint_set"
   on_not_reached: abort
 
-gas:
-  cap: 80000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
-
 rjoule:
   cap: 2
   alert_threshold: 0.8

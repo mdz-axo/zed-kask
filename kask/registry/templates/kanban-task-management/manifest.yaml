@@ -70,7 +70,7 @@ templates:
     type: KnowAct
     description: >
       Configure spawn parameters: delegation level, skills, memory scope,
-      gas budget, timeout. Includes post-cascade instructions for the agent
+      rJoule budget, timeout. Includes post-cascade instructions for the agent
       to call kanban_task_spawn. Phase: delegate.
 
   - id: kanban-task-management/execute-task
