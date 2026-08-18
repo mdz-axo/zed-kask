@@ -44,7 +44,6 @@ pub enum RegulationReason {
     MemoryLifeLow,
     CircuitBreakerOpen,
     InferenceUnavailable,
-    InferenceGasLow,
     ModelUnavailable,
     /// Grounding clean rate dropped below the configured floor — more than
     /// the tolerated fraction of grounded delegations have nulled fields.
@@ -99,7 +98,6 @@ impl RegulationReason {
             Self::MemoryLifeLow => "memory_life_low",
             Self::CircuitBreakerOpen => "circuit_breaker_open",
             Self::InferenceUnavailable => "inference_unavailable",
-            Self::InferenceGasLow => "inference_gas_low",
             Self::ModelUnavailable => "model_unavailable",
             Self::GroundingCleanRateDegraded => "grounding_clean_rate_degraded",
             Self::GroundingCoverageDegraded => "grounding_coverage_degraded",
@@ -428,14 +426,6 @@ impl RegulationPolicy {
                         target: Inference,
                         action_type: Throttle,
                         reason: InferenceUnavailable,
-                    }],
-                },
-                RegulationRule {
-                    direction: BelowSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Inference,
-                        action_type: AdjustEnergyBudget,
-                        reason: InferenceGasLow,
                     }],
                 },
                 // InferenceModelAvailable (Inference Loop 1) → Calibrate
