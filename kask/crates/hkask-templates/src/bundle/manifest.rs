@@ -112,9 +112,6 @@ pub struct BundleManifestStep {
     /// deterministic math layer without an LLM round-trip.
     #[serde(default)]
     pub compute_ref: Option<String>,
-    /// Per-step gas budget estimate (informational — total gas.cap is the hard boundary).
-    #[serde(default)]
-    pub gas_cap: u32,
     /// Per-step timeout in seconds (hard — enforced via tokio::time::timeout).
     /// Defaults to 120s when omitted — a zero timeout fires immediately without
     /// polling the future, silently breaking inference and tool calls.
@@ -243,7 +240,6 @@ pub struct BundleManifest {
     pub complementarities: Vec<BundleComplementarity>,
     pub steps: Vec<BundleManifestStep>,
     pub convergence: ConvergenceConfig,
-    pub gas: BundleGasConfig,
     pub rjoule: RjouleConfig,
     pub error_handling: ErrorHandlingConfig,
     pub ledger: BundleLedgerConfig,
@@ -432,9 +428,6 @@ impl BundleManifest {
                 errors.push("Iterative manifest must declare convergence.threshold > 0".into());
             }
         }
-        if self.gas.cap == 0 {
-            errors.push("Manifest must declare gas.cap > 0 (energy budget)".into());
-        }
         let has_exit = self
             .steps
             .iter()
@@ -444,12 +437,6 @@ impl BundleManifest {
         }
 
         ValidationResult { errors, warnings }
-    }
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  self.steps is populated with valid BundleManifestStep entries
-    /// post: returns the sum of all step gas_cap values
-    pub fn total_step_gas(&self) -> u32 {
-        self.steps.iter().map(|s| s.gas_cap).sum()
     }
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// pre:  phase is a valid CascadePhase variant

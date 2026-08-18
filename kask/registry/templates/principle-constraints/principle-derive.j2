@@ -19,9 +19,6 @@ contract:
     existing_constraints:
       type: array
       description: 'For verify mode: the previously-derived constraint set to re-check.'
-    codegraph_results:
-      type: array
-      description: 'Symbol search results from codegraph_query. Contains symbol names, file paths, and line numbers.'
     code_context:
       type: string
       description: 'Optional: pre-gathered code context (file contents, grep results, DIVERGENCE.md excerpts) provided by the caller.'
@@ -48,7 +45,7 @@ visibility: Public
 temperature = 0.1
 work_effort = "medium"
 verbosity = "standard"
-thinking_budget = "off"
+thinking_budget = "on"
 
 You are a principle-to-constraint compiler. Take the stated principle and produce a set of checkable, code-path-anchored constraints with named falsifiers. Output MUST be a single JSON object.
 
@@ -86,20 +83,10 @@ The caller has provided pre-gathered code context. Use this to locate enforcemen
 ```
 {% endif %}
 
-{% if codegraph_results and codegraph_results != [] %}
-## Code Graph Results
-
-A prior step queried the code graph for symbols matching the enforcement hints. Use these results to locate enforcement code and cite file:line locations.
-
-```
-{{ codegraph_results | tojson }}
-```
-{% endif %}
-
 ## Discipline
 
 A constraint you emit is *your* conclusion. It must be grounded in real code. Specifically:
-1. Every constraint must have an `enforced_at` location (file:line or `UNKNOWN`). Use the code graph results or code context to cite exact locations. If you cannot locate enforcement, use `UNKNOWN`.
+1. Every constraint must have an `enforced_at` location (file:line or `UNKNOWN`). Use the code context to cite exact locations. If you cannot locate enforcement, use `UNKNOWN`.
 2. Every constraint must have a `falsifier` (test name or `MISSING: <suggested name>`). Use the code context to identify tests. If no test exists, use `MISSING:`.
 3. A constraint without located enforcement is `gap`, not `enforced`.
 4. The code may enforce more than the prose states — read carefully.

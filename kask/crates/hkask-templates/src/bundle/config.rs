@@ -1,13 +1,9 @@
 //! Bundle configuration sub-structs — mirror existing manifest YAML fields
 //!
 //! These config structs are loaded from manifest YAML. Wired into ManifestExecutor
-//! for PDCA convergence, gas enforcement, and error handling.
+//! for PDCA convergence, rJoule budgeting, and error handling.
 
 use serde::{Deserialize, Serialize};
-
-/// System constant: 250,000 compute gas cycles = 1 rJoule of inference energy.
-/// This reflects the cost differential between local compute and LLM inference.
-pub const RJOULE_TO_GAS: u64 = 250_000;
 
 /// Convergence configuration for PDCA loop exit conditions.
 ///
@@ -263,29 +259,6 @@ fn default_weight() -> f64 {
     1.0
 }
 
-/// Gas (compute cycle budget) configuration — caps local loop iterations.
-/// Gas is cheap compute. 250,000 gas cycles ≈ 1 rJoule of inference.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct BundleGasConfig {
-    /// Total compute gas budget for the cascade.
-    pub cap: u32,
-    /// Compute gas cost per cascade iteration (loop pass).
-    pub cost_per_iteration: u32,
-    pub alert_threshold: f64,
-    pub hard_limit: bool,
-}
-impl Default for BundleGasConfig {
-    fn default() -> Self {
-        Self {
-            cap: 100000,
-            cost_per_iteration: 100,
-            alert_threshold: 0.8,
-            hard_limit: true,
-        }
-    }
-}
-
 /// rJoule (inference energy budget) configuration — caps LLM inference cost.
 /// Cost per token is set by the inference provider/model, not the manifest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -332,15 +305,12 @@ impl Default for RjouleConfig {
 /// other errors (validation, not-found, render) propagate immediately.
 ///
 /// **Gas and validation policies are not yet enforced** (`on_gas_exceeded`,
-/// `on_validation_failure`): a step that exceeds its `gas_cap` or fails
-/// `validate_inputs` aborts the cascade immediately regardless of these
-/// fields. They are retained for schema stability.
+/// `on_validation_failure`): a step that fails `validate_inputs` aborts the
+/// cascade immediately regardless of these fields. They are retained for
+/// schema stability.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ErrorHandlingConfig {
-    /// **Accepted but ignored.** No code reads this field. A step that exceeds
-    /// its `gas_cap` aborts the cascade immediately.
-    pub on_gas_exceeded: String,
     /// Policy for step timeouts: `"retry"` (retry up to `max_retries` times) or
     /// `"abort"` (propagate immediately). Read by
     /// `StepMachine::dispatch_with_retry`. Only `TemplateError::Timeout` is
@@ -388,7 +358,6 @@ pub struct ErrorHandlingConfig {
 impl Default for ErrorHandlingConfig {
     fn default() -> Self {
         Self {
-            on_gas_exceeded: "abort".into(),
             on_timeout: "retry".into(),
             on_parse_failure: default_on_parse_failure(),
             max_retries: 2,
