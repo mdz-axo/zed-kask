@@ -104,6 +104,60 @@ steps:
       existing_constraints: "{{ existing_constraints | default([]) }}"
       enforcement_hints: "{{ enforcement_hints | default([]) }}"
       code_context: "{{ code_context | default('') }}"
+    output_schema:
+      type: object
+      properties:
+        constraint_set:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              assertion:
+                type: string
+              kind:
+                type: string
+                enum: [structural, review]
+              enforced_at:
+                type: string
+              enforcement_mechanism:
+                type: string
+              falsifier:
+                type: string
+              status:
+                type: string
+                enum: [enforced, gap, unverified]
+              notes:
+                type: string
+        gaps:
+          type: array
+          items:
+            type: object
+            properties:
+              gap_id:
+                type: string
+              principle_asserted:
+                type: string
+              enforcement_status:
+                type: string
+              proposed_remediation:
+                type: string
+              human_decision_required:
+                type: boolean
+        summary:
+          type: object
+          properties:
+            total_constraints:
+              type: integer
+            enforced:
+              type: integer
+            gaps:
+              type: integer
+            unverified:
+              type: integer
+            human_review_required:
+              type: boolean
 
   - ordinal: 2
     action: loop
