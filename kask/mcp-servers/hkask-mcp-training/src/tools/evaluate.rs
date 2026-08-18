@@ -106,7 +106,6 @@ impl TrainingServer {
                 let prompt = format!("{input}\n\nRespond concisely and accurately.");
                 let params = LLMParameters {
                     temperature: 1.0,
-                    max_tokens: 512,
                     ..Default::default()
                 };
                 match router
@@ -249,7 +248,6 @@ impl TrainingServer {
 
             let params = LLMParameters {
                 temperature: 1.0,
-                max_tokens: 16,
                 ..Default::default()
             };
 

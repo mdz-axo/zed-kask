@@ -130,7 +130,6 @@ pub async fn validate_face_reference(
 
     let params = LLMParameters {
         temperature: 0.1, // Low temperature for consistent, objective assessment
-        max_tokens: 512,
         ..Default::default()
     };
 
@@ -196,7 +195,6 @@ pub async fn match_faces(
 
     let params = LLMParameters {
         temperature: 0.1,
-        max_tokens: 512,
         ..Default::default()
     };
 
@@ -279,7 +277,6 @@ pub async fn embed_face(
     // Embeddings need more tokens than a match result — 512 floats + JSON overhead.
     let params = LLMParameters {
         temperature: 0.1,
-        max_tokens: 4096,
         ..Default::default()
     };
 

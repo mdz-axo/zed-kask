@@ -216,7 +216,6 @@ impl ConsolidationService {
                 let params = LLMParameters {
                     temperature: 0.3,
                     top_p: 0.95,
-                    max_tokens: 4096,
                     frequency_penalty: 0.0,
                     presence_penalty: 0.0,
                     top_k: 0,
