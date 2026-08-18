@@ -165,7 +165,7 @@ impl From<String> for SkillExecError {
 /// run an hKask skill cascade that lives in the zed process (the global
 /// `ManifestExecutor`). `InferenceIpcClient` implements this over the
 /// `InferenceMethod::SkillExecute` IPC method; backends without a bridge
-/// return a clear error. The cascade runs with the executor's own gas/OCAP
+/// return a clear error. The cascade runs with the executor's own
 /// enforcement on the zed side — the child never holds token material.
 ///
 /// Two implementors: the IPC client (real execution) and the fallback stub

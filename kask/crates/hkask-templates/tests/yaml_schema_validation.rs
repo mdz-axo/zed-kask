@@ -941,8 +941,8 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
         "gemba-walk min_iterations should be 1 (single-pass is valid)"
     );
 
-    // Verify gas cap is positive and generous (the briefing queries multiple
-    // data sources and synthesizes a large output).
+    // Verify rJoule cap is positive (the briefing queries multiple data
+    // sources and synthesizes a large output).
 
     // Verify the manifest declares the correct span namespace.
     assert_eq!(

@@ -54,7 +54,7 @@ manifest:
     templates do LLM synthesis over their outputs. Converges on THESIS
     investment_grade verdict.
   functional_role: flowdef
-  version: "0.36.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

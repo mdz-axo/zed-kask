@@ -1,5 +1,5 @@
 # Wardley Mapper — Generalized strategic mapping skill
-# hKask v0.36.0 — Strategy: component evolution mapping for any system
+# hKask v0.35.0 — Strategy: component evolution mapping for any system
 # Functional Role: FlowDef (process orchestration)
 # Steps: inventory_components, classify_evolution, map_value_chain,
 #   identify_movement, synthesize_recommendations, confidence_gap (lisp.eval),
@@ -19,7 +19,7 @@
 #     complex — the lisp.eval primitive set has no map/reduce, so the recursive
 #     define is the only option, but we tighten the nil guards.
 #   - Step 8 loop_target: 2 (not 1). Step 1 (inventory) is deterministic given
-#     the same inputs — re-running it wastes gas. The loop re-enters at step 2
+#     the same inputs — re-running it wastes rJoules. The loop re-enters at step 2
 #     (classify-evolution) so the LLM can re-classify with the convergence
 #     signal's feedback. The inventory from step 1 is still in step_1_result.
 #   - target_artifacts_field removed — cauchy convergence mode uses
@@ -27,7 +27,7 @@
 #     referenced "current_artifacts" which does not exist in any step result.
 #   - present-map.j2 frontmatter cleaned up (was inside a Jinja comment, now
 #     a proper header comment outside the template body).
-#   - gas cap raised from 75000 to 90000 to accommodate the loop re-entering
+#   - rJoule cap raised from 1 to 3 to accommodate the loop re-entering
 #     at step 2 (classify) which is the most expensive re-run step.
 
 manifest:
@@ -47,7 +47,7 @@ manifest:
     platforms. This skill builds the map that prevents strategic blindness.
 
   functional_role: flowdef
-  version: "0.36.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

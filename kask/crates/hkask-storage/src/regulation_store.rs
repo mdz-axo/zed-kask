@@ -375,7 +375,7 @@ impl RegulationArchive {
     /// Count events by span_category prefix, grouped by exact span_category.
     ///
     /// The stored `span_category` column holds the short name (e.g., "guard.input",
-    /// "regulation", "gas"). Callers pass the short-name prefix.
+    /// "regulation", "variety"). Callers pass the short-name prefix.
     ///
     /// expect: "The system provides durable storage for event data"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — aggregate Regulation span stats

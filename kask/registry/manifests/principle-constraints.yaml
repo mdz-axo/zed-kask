@@ -76,11 +76,10 @@ steps:
   # results, DIVERGENCE.md excerpts). For exact line numbers and test names
   # the LLM cannot verify, it uses UNKNOWN and MISSING: prefixes.
   #
-  # A prior codegraph_query execute step was removed because the
-  # in-process refactor removing gas_cap/max_tokens as concepts broke the
-  # step's budget enforcement. To re-add codegraph access once the refactor
-  # lands, use a separate execute step with on_failure: action: resume (not
-  # report) so failures don't escalate the cascade.
+  # A prior codegraph_query execute step was removed during the
+  # gas_cap/max_tokens removal. To re-add codegraph access, use a separate
+  # execute step with on_failure: action: resume (not report) so failures
+  # don't escalate the cascade.
   - ordinal: 1
     action: select
     description: >

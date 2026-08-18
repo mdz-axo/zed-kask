@@ -19,7 +19,7 @@ description: >
 # and upscale steps route through their own MCP tools' configured models.
 primary_model: "fal.ai/flux/dev"
 
-# gas: image generation + upscale are the costly steps (two fal.ai calls,
+# rJoule: image generation + upscale are the costly steps (two fal.ai calls,
 # one queue-mode). No fusion block — model selection is operator-configured
 # via kask.fusion / HKASK_FUSION_PANEL_MODELS; recommend the default image
 # generation model (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step.

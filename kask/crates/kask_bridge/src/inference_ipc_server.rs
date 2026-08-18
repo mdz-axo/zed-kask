@@ -284,7 +284,7 @@ impl InferenceIpcServer {
     /// requests return an error. The zed side mints the OCAP panel token —
     /// the child process never holds token material.
     /// `skill_exec_port` runs `skill_execute` requests through the zed-side
-    /// `ManifestExecutor` (its own gas/OCAP enforcement). When `None`,
+    /// `ManifestExecutor` (its own enforcement). When `None`,
     /// `skill_execute` requests return an error.
     pub fn start(
         inference_port: Arc<dyn InferencePort>,

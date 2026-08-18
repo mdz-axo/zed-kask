@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 /// Communication queue depth for backpressure regulation.
 ///
 /// Newtype wrapper that prevents accidental confusion with other numeric
-/// thresholds in `SetPoints` (gas, variety deficit, error rate).
+/// thresholds in `SetPoints` (energy, variety deficit, error rate).
 ///
 /// Defined in hkask-types (substrate crate) because it is shared across
 /// hkask-regulation (SetPoints, cybernetics loop) and hkask-agents

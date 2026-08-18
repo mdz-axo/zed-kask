@@ -40,7 +40,7 @@ The `hkask-test-harness` crate provides shared generators and fixtures. Check it
 - `arb_json_value()` — recursive JSON value strategy (Null/Bool/i64/u64/f64/String leaves, Array/Object branches, max depth 4). Use for any JSON or YAML deserialization surface. JSON is a YAML subset, so `serde_yaml_neo` can parse these strings.
 - `NoopToolPort` — stub `ToolPort` returning `NotFound` for all invocations. Use when a test needs a `ToolPort` fixture.
 - `test_agent_webid()` — the accounting identity used by call-meter tests (`WebID::from_persona(b"test-agent")`). Register a call ceiling for it to exercise the runaway-loop breaker. (The former `test_token_for_tool` fixture and `DelegationToken` were deleted 2026-08-12 — RR-0056.)
-- `test_agent_webid()` — the `delegated_to` WebID for seeding gas budgets in governance tests.
+- `test_agent_webid()` — the `delegated_to` WebID for seeding rJoule budgets in governance tests.
 
 To use the harness, the test crate needs `hkask-test-harness = { workspace = true }` in `[dev-dependencies]`.
 

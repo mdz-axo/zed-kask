@@ -8,7 +8,7 @@
 //! # Regulation Flow
 //!
 //! Threshold drift alerts are emitted via `tracing::warn!` for operational
-//! observability. Pipeline-level Regulation observation (start/settle spans, gas
+//! observability. Pipeline-level Regulation observation (start/settle spans, rJoule
 //! accounting, variety tracking) is handled externally by the GovernedTool
 //! membrane — the docproc server is a pure instrument with no self-instrumentation.
 
