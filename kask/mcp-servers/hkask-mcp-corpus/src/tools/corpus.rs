@@ -55,9 +55,7 @@ impl CorpusServer {
                 return Err(McpToolError::invalid_argument("tagged_jsonl is empty"));
             }
 
-            let dim = embedding_dim();
-            let store = MemoryStore::open(&req.db_path, &req.passphrase, dim)
-                .map_err(|e| map_database_error(e, "Cannot open memory DB"))?;
+            let store = crate::helpers::open_memory_store(&req.db_path, &req.passphrase)?;
             let embeddings = store
                 .embeddings_by_prefix(&req.prefix)
                 .map_err(|e| map_memory_store_error(e, "Embedding query failed"))?;
@@ -123,9 +121,7 @@ impl CorpusServer {
                     .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?); // rr0044-ok: serde serialization of own struct
                 out.push('\n');
             }
-            let output_path = crate::path_safety::contain_for_write(&req.output)?;
-            std::fs::write(&output_path, &out)
-                .map_err(|e| map_corpus_io_error(e, &format!("Cannot write output '{}'", req.output)))?;
+            crate::helpers::write_contained(&req.output, &out)?;
 
             Ok(result)
         })
@@ -271,15 +267,11 @@ impl CorpusServer {
                 serde_json::to_string(&serde_json::json!({"instruction": q.instruction, "input": "", "output": q.output}))
                     .unwrap_or_default()
             }).collect::<Vec<_>>().join("\n");
-            let output_path = crate::path_safety::contain_for_write(&req.output)?;
-            std::fs::write(&output_path, train + "\n")
-                .map_err(|e| map_corpus_io_error(e, &format!("Cannot write output '{}'", req.output)))?;
+            crate::helpers::write_contained(&req.output, &(train + "\n"))?;
             tracing::info!("  Wrote: {} QAs to {}", deduped_count, req.output);
 
             // Store h_mems + embeddings
-            let dim = embedding_dim();
-            let store = MemoryStore::open(&req.db_path, &req.passphrase, dim)
-                .map_err(|e| map_database_error(e, "Cannot open memory DB"))?;
+            let store = crate::helpers::open_memory_store(&req.db_path, &req.passphrase)?;
             let webid = owner_webid(&req.owner);
             let mut stored = 0usize;
 
@@ -631,14 +623,10 @@ impl CorpusServer {
 
             // Write output if not dry run
             if !req.dry_run && !chatml_lines.is_empty() {
-                let output_path = crate::path_safety::contain_for_write(&req.output_jsonl)?;
-                std::fs::write(&output_path, chatml_lines.join("\n") + "\n")
-                    .map_err(|e| {
-                        map_corpus_io_error(
-                            e,
-                            &format!("Cannot write output '{}'", req.output_jsonl),
-                        )
-                    })?;
+                crate::helpers::write_contained(
+                    &req.output_jsonl,
+                    &(chatml_lines.join("\n") + "\n"),
+                )?;
             }
 
             tracing::info!(

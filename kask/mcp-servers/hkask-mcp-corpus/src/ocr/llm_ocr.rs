@@ -53,7 +53,7 @@ pub(crate) async fn vision_ocr_bytes(
     router: &dyn InferencePort,
     bytes: &[u8],
     model: &str,
-    max_tokens: u32,
+    _max_tokens: u32,
 ) -> Result<String, OcrError> {
     let b64_data = base64::engine::general_purpose::STANDARD.encode(bytes);
     let params = LLMParameters {
