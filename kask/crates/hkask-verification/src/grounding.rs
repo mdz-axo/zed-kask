@@ -147,9 +147,15 @@ impl GroundingResult {
 /// declared skills. Their output may include:
 /// - `deliverable_path`: a file path the agent claims to have written.
 ///   Must be sourced from an `edit_file`, `write_file`, or `terminal` tool
-///   call that succeeded.
+///   call that succeeded. `response_path` is `""` because the three tools
+///   have different return shapes (`edit_file`/`write_file` serialize the
+///   path under `input_path`; `terminal` returns stdout as a bare string),
+///   so a single dotted path cannot cover all of them.
 /// - `test_verdict`: a pass/fail claim about tests. Must be sourced from a
-///   `terminal` tool call that succeeded (the test runner).
+///   `terminal` tool call that succeeded (the test runner). The verdict is
+///   a short string ("pass", "fail") extracted from terminal stdout, so a
+///   `transform: "extract_verdict"` hint enables substring matching for
+///   values shorter than the 10-char guard.
 /// - `summary`: a prose summary of what the agent did. Inferred — the
 ///   agent was commissioned to summarize.
 /// - `approach`: a description of the approach taken. Inferred.
@@ -167,6 +173,12 @@ pub fn task_agent_contract() -> GroundingContract {
                 "zed/write_file".to_string(),
                 "zed/terminal".to_string(),
             ],
+            // `edit_file`/`write_file` return the path under `input_path`,
+            // but `terminal` returns stdout as a bare string. A single
+            // response_path cannot cover both shapes, so search the entire
+            // result. Tightening per-tool would require splitting this into
+            // two FieldSpec entries, which the contract model does not
+            // support.
             response_path: "".to_string(),
             why: "A file path the agent claims to have written. Must be sourced \
                   from a file-writing tool that succeeded."
@@ -179,12 +191,18 @@ pub fn task_agent_contract() -> GroundingContract {
         "test_verdict".to_string(),
         FieldSpec {
             sources: vec!["zed/terminal".to_string()],
+            // `terminal` returns stdout as a bare string — the whole result
+            // is the output, so search the entire result.
             response_path: "".to_string(),
             why: "A pass/fail claim about tests. Must be sourced from a terminal \
                   tool call that succeeded (the test runner)."
                 .to_string(),
             derived_from: None,
-            transform: None,
+            // The agent extracts a short verdict ("pass"/"fail") from the
+            // terminal output. Without this hint, the 10-char guard would
+            // require exact equality for short verdicts, which would fail
+            // when the terminal output is e.g. "passed: 3 tests ran".
+            transform: Some("extract_verdict".to_string()),
         },
     );
     // Commissioned judgments — empty source list = Inferred, not Unsourced.
@@ -225,7 +243,13 @@ pub fn task_agent_contract() -> GroundingContract {
 /// include:
 /// - `sources`: a list of sources the agent claims to have found. Must be
 ///   sourced from a `research_search`, `web_search`, `web_extract`, or
-///   `fetch` tool call that succeeded.
+///   `fetch` tool call that succeeded. `response_path` is `""` because
+///   the four tools have different return shapes (`web_search` returns a
+///   `results` array; `fetch`/`web_extract` return page content as a
+///   string or structured object), so a single dotted path cannot cover
+///   all of them. A `transform: "extract_urls"` hint enables substring
+///   matching so the agent may normalize, deduplicate, or reorder URLs
+///   extracted from the search results.
 /// - `findings`: a prose summary of what the agent found. Inferred — the
 ///   agent was commissioned to analyze and report.
 /// - `summary`: a prose summary. Inferred.
@@ -244,12 +268,20 @@ pub fn research_agent_contract() -> GroundingContract {
                 "zed/web_extract".to_string(),
                 "zed/fetch".to_string(),
             ],
+            // `web_search` returns `{"results": [{"url": ...}, ...]}` but
+            // `fetch`/`web_extract` return page content as a string or
+            // structured object. A single response_path cannot cover both
+            // shapes, so search the entire result.
             response_path: "".to_string(),
             why: "A list of sources the agent claims to have found. Must be \
                   sourced from a research or web search tool that succeeded."
                 .to_string(),
             derived_from: None,
-            transform: None,
+            // The agent extracts URLs from search results and may normalize,
+            // deduplicate, or reorder them. Without this hint, short URLs
+            // would require exact equality, which would fail when the agent
+            // strips query parameters or trailing slashes.
+            transform: Some("extract_urls".to_string()),
         },
     );
     field_sources.insert(
@@ -337,8 +369,15 @@ pub fn narrator_agent_contract() -> GroundingContract {
 /// - `deliverable_path`: a file path the skill claims to have written. Must
 ///   be sourced from an `edit_file`, `write_file`, or `terminal` tool call
 ///   that succeeded (same pattern as `task_agent_contract`).
+///   `response_path` is `""` because the three tools have different return
+///   shapes (`edit_file`/`write_file` serialize the path under `input_path`;
+///   `terminal` returns stdout as a bare string), so a single dotted path
+///   cannot cover all of them.
 /// - `test_verdict`: a pass/fail claim about tests. Must be sourced from a
-///   `terminal` tool call that succeeded.
+///   `terminal` tool call that succeeded. The verdict is a short string
+///   ("pass", "fail") extracted from terminal stdout, so a
+///   `transform: "extract_verdict"` hint enables substring matching for
+///   values shorter than the 10-char guard.
 /// - `diagram`: the main diagram or structured output. Inferred — the skill
 ///   was commissioned to produce this.
 /// - `summary`: a prose summary. Inferred.
@@ -358,6 +397,12 @@ pub fn skill_agent_contract() -> GroundingContract {
                 "zed/write_file".to_string(),
                 "zed/terminal".to_string(),
             ],
+            // `edit_file`/`write_file` return the path under `input_path`,
+            // but `terminal` returns stdout as a bare string. A single
+            // response_path cannot cover both shapes, so search the entire
+            // result. Tightening per-tool would require splitting this into
+            // two FieldSpec entries, which the contract model does not
+            // support.
             response_path: "".to_string(),
             why: "A file path the skill claims to have written. Must be sourced \
                   from a file-writing tool that succeeded. Skills that produce \
@@ -371,12 +416,18 @@ pub fn skill_agent_contract() -> GroundingContract {
         "test_verdict".to_string(),
         FieldSpec {
             sources: vec!["zed/terminal".to_string()],
+            // `terminal` returns stdout as a bare string — the whole result
+            // is the output, so search the entire result.
             response_path: "".to_string(),
             why: "A pass/fail claim about tests. Must be sourced from a terminal \
                   tool call that succeeded (the test runner)."
                 .to_string(),
             derived_from: None,
-            transform: None,
+            // The agent extracts a short verdict ("pass"/"fail") from the
+            // terminal output. Without this hint, the 10-char guard would
+            // require exact equality for short verdicts, which would fail
+            // when the terminal output is e.g. "passed: 3 tests ran".
+            transform: Some("extract_verdict".to_string()),
         },
     );
     field_sources.insert(
@@ -3070,8 +3121,26 @@ mod tests {
     fn sourced_field_without_transform_hint_does_not_match_short_substring() {
         // Without the transform hint, a short value (< 10 chars) that is a
         // substring of a tool return must NOT match — this is the existing
-        // 10-char guard, preserved when loose matching is off.
-        let contract = task_agent_contract();
+        // 10-char guard, preserved when loose matching is off. Uses a custom
+        // contract because the built-in `task_agent_contract` now declares
+        // `transform: "extract_verdict"` on `test_verdict`.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "test_verdict".to_string(),
+            FieldSpec {
+                sources: vec!["zed/terminal".to_string()],
+                response_path: "".to_string(),
+                why: "A pass/fail claim about tests. Must be sourced from a terminal \
+                      tool call that succeeded (the test runner)."
+                    .to_string(),
+                derived_from: None,
+                transform: None,
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
         let output = json!({"test_verdict": "pass"});
         let tool_calls = vec![tool_call_with_result(
             "zed/terminal",
