@@ -939,8 +939,8 @@ fn main() {
         // can clear reviewed alerts from the in-memory AlgedonicManager log
         // and query the log cap status. The sink wraps the RegulationLedger.
         let algedonic_log_sink: std::sync::Arc<dyn agent::AlgedonicLogSink> =
-            std::sync::Arc::new(kask_bridge::BridgeAlgedonicLogSink::from_shared(
-                regulation_ledger,
+            std::sync::Arc::new(kask_bridge::BridgeAlgedonicLogSink::new(
+                regulation_ledger.clone(),
             ));
         agent::set_algedonic_log_sink(Some(algedonic_log_sink));
         log::info!("Algedonic log sink wired to CuratorClearAlgedonicLogTool");

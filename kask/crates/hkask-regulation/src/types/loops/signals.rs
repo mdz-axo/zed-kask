@@ -42,6 +42,11 @@ pub enum SignalMetric {
     InferenceModelAvailable,
     /// Algedonic event count (Cybernetics Loop 6)
     AlgedonicEvents,
+    /// Algedonic log approaching cap (Cybernetics Loop 6).
+    /// 1.0 when the in-memory alert log is ≥ 80% of its cap, 0.0 otherwise.
+    /// The operator (or the `algedonic-review` skill) should review and clear
+    /// reviewed entries before they are evicted unread.
+    AlgedonicLogApproachingCap,
     /// Pending escalation count (Curation Loop 5)
     PendingEscalations,
     /// Consolidation candidate count (Episodic → Semantic bridge)
@@ -145,6 +150,7 @@ impl SignalMetric {
             SignalMetric::InferenceAvailable => "inference_available",
             SignalMetric::InferenceModelAvailable => "inference_model_available",
             SignalMetric::AlgedonicEvents => "algedonic_events",
+            SignalMetric::AlgedonicLogApproachingCap => "algedonic_log_approaching_cap",
             SignalMetric::PendingEscalations => "pending_escalations",
             SignalMetric::ConsolidationCandidates => "consolidation_candidates",
             SignalMetric::GoalStaleCount => "goal_stale_count",

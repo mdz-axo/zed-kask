@@ -34,6 +34,10 @@ pub enum RegulationReason {
     ConsolidationCandidatesObserved,
     PendingEscalationsObserved,
     AlgedonicEventsExceeded,
+    /// The in-memory algedonic alert log is approaching its cap. The operator
+    /// (or the `algedonic-review` skill) should review and clear reviewed
+    /// entries before they are evicted unread.
+    AlgedonicLogApproachingCap,
     GoalsStale,
     GoalsExpired,
     MetacognitionVarietyDeficit,
@@ -88,6 +92,7 @@ impl RegulationReason {
             Self::ConsolidationCandidatesObserved => "consolidation_candidates_observed",
             Self::PendingEscalationsObserved => "pending_escalations_observed",
             Self::AlgedonicEventsExceeded => "algedonic_events_exceeded",
+            Self::AlgedonicLogApproachingCap => "algedonic_log_approaching_cap",
             Self::GoalsStale => "goals_stale",
             Self::GoalsExpired => "goals_expired",
             Self::MetacognitionVarietyDeficit => "metacognition_variety_deficit",
@@ -332,6 +337,15 @@ impl RegulationPolicy {
                         target: Curation,
                         action_type: Escalate,
                         reason: AlgedonicEventsExceeded,
+                    }],
+                },
+                RegulationRule {
+                    metric: AlgedonicLogApproachingCap,
+                    direction: AboveSetPoint,
+                    proposed: &[ProposedAction {
+                        target: Curation,
+                        action_type: Escalate,
+                        reason: AlgedonicLogApproachingCap,
                     }],
                 },
                 RegulationRule {
@@ -581,6 +595,7 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         SignalMetric::WalletKeyHealth => &[Escalate, Calibrate],
         // ── Meta-regulatory (only Curation can break the plateau) ──
         SignalMetric::AlgedonicEvents => &[Escalate, Calibrate],
+        SignalMetric::AlgedonicLogApproachingCap => &[Escalate, Calibrate],
         SignalMetric::GoalStaleCount => &[Escalate, Calibrate],
         SignalMetric::GoalExpiredCount => &[Escalate, Calibrate],
         SignalMetric::MetacognitionCriticalAlerts => &[Escalate, Calibrate, OverrideEnergyBudget],
@@ -696,6 +711,7 @@ mod tests {
             SignalMetric::InferenceAvailable,
             SignalMetric::InferenceModelAvailable,
             SignalMetric::AlgedonicEvents,
+            SignalMetric::AlgedonicLogApproachingCap,
             SignalMetric::PendingEscalations,
             SignalMetric::ConsolidationCandidates,
             SignalMetric::GoalStaleCount,

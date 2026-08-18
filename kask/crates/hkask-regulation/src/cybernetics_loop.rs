@@ -962,6 +962,20 @@ impl CyberneticsLoop {
         let registry_signals = self.sensor_registry.sense_all(LoopId::Cybernetics).await;
         signals.extend(registry_signals);
 
+        // Sense the in-memory algedonic log cap. When the log approaches its
+        // cap, emit a signal so the operator (or the `algedonic-review` skill)
+        // can review and clear reviewed entries before they are evicted unread.
+        // The set-point is 0.0 — any positive value (1.0 = approaching cap) is
+        // a deviation.
+        if self.ledger.read().await.alert_log_approaching_cap().await {
+            signals.push(Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::AlgedonicLogApproachingCap,
+                1.0,
+                0.0,
+            ));
+        }
+
         // Feed observed values into the predictive simulator.
         for signal in &signals {
             self.simulator.observe(signal.metric, signal.value);

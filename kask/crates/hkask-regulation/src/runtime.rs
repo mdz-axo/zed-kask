@@ -661,6 +661,20 @@ impl RegulationLedger {
         mgr.clear_reviewed(true);
     }
 
+    /// Clear ALL alerts from the in-memory log, including unresolved Critical.
+    /// Use with caution — this loses live signals. The operator should only
+    /// call this when the log is being reset for a fresh session or when all
+    /// alerts have been reviewed and persisted to the `EscalationQueue`.
+    ///
+    /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation — hard reset clears the log for a fresh session
+    /// post: all alerts cleared from the in-memory log
+    pub async fn clear_all_alerts(&self) {
+        let state = self.state.write().await;
+        let mut mgr = state.algedonic.write();
+        mgr.clear_reviewed(false);
+    }
+
     /// Whether the in-memory algedonic log is approaching its cap.
     ///
     /// When true, the cybernetics loop emits an `AlgedonicLogApproachingCap`

@@ -99,17 +99,20 @@ ledger:
   escalation_target: Curator
 
 steps:
-  # ── SENSE: Query alert backlog and system health concurrently ───────
-  # Three independent curator queries run concurrently via mcp_batch.
-  # Results are keyed by escalations, algedonic, and status in step_1_result.
+  # ── SENSE: Query alert backlog and algedonic event log concurrently ──
+  # Two independent curator MCP queries run concurrently via mcp_batch.
+  # Results are keyed by escalations and algedonic in step_1_result.
+  # Note: `curator_status` is an agent tool, not an MCP tool — the skill
+  # cannot call it from `mcp_batch`. The alert log cap status is carried
+  # by the `AlgedonicLogApproachingCap` signal that triggers this skill's
+  # invocation, so the skill doesn't need to re-query it.
   - ordinal: 1
     action: execute
     description: >
-      Query three independent curator signal channels concurrently via
-      mcp_batch: pending escalations, algedonic event log (24h lookback),
-      and curator status (alert log count, approaching cap, critical alerts).
-      All three are independent inputs to the triage synthesis. Results are
-      keyed by escalations, algedonic, and status in step_1_result.
+      Query two independent curator MCP signal channels concurrently via
+      mcp_batch: pending escalations and algedonic event log (24h lookback).
+      Both are independent inputs to the triage synthesis. Results are keyed
+      by escalations and algedonic in step_1_result.
     mcp_batch:
       - mcp: curator_escalations
         key: escalations
@@ -118,9 +121,6 @@ steps:
         key: algedonic
         input_mapping:
           hours: "{{ algedonic_hours | default(24) }}"
-      - mcp: curator_status
-        key: status
-        input_mapping: {}
     timeout_seconds: 60
     on_failure:
       action: report
