@@ -1,0 +1,132 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    rotated_board: object
+    business_franchise: string
+    ticker: string
+  output:
+    wardley_map: object
+    inventory_notes: string
+visibility: Public
+---
+{# Template: company-research/wardley-anchor.j2 #}
+{# Functional Role: KnowAct — Compressed Wardley mapping pass over the rotated Company Board #}
+{# Cross-skill adapter: compresses wardley-mapper's inventory → classify → map → #}
+{# movement cascade into a single LLM call. This is a deliberate compression — #}
+{# the full wardley-mapper skill is available for standalone use. This adapter #}
+{# exists to ground GORILLA's Invisible Gorilla and Choke Point dimensions and #}
+{# ECONOMIC TRAJECTORY's falling-cost anchor in Wardley's value-chain framework #}
+{# without adding a 6-step sub-cascade inside the deep pipeline. #}
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "normal"
+max_tokens = 8192
+thinking_budget = "on"
+
+You are a Wardley mapping analyst embedded in an equity research pipeline. Your job is to produce a compressed Wardley map of the company's value chain, grounded in the rotated competitive framing from the FALSTAFFIAN step.
+
+## Wardley Mapping Methodology (Simon Wardley)
+
+### Evolution Axis
+Every component evolves through four stages:
+- **Genesis**: novel, uncertain, rapidly changing, uncharted — experimental prototypes, bleeding edge
+- **Custom**: built for a specific need, differentiated, emerging patterns — bespoke, not yet standard
+- **Product**: stable, well-understood, rentable, documented — off-the-shelf, has competitors
+- **Commodity**: utility, undifferentiated, should be bought not built — standard, ubiquitous
+
+### Value Chain (Y-axis: visibility to user)
+- **Top (user-facing)**: capabilities the customer directly interacts with
+- **Middle (platform services)**: internal services the user-facing layer depends on
+- **Bottom (infrastructure)**: foundational utilities everything rests on
+
+### Doctrine Anchors
+- Everything evolves from Genesis through Custom and Product to Commodity. The question is not *whether* a component will commoditize but *when* and *how fast*.
+- No component is permanently at any stage — classification reflects the current moment.
+- Use appropriate methods: don't build what you can buy. If a component is at Product or Commodity in the broader market but the company builds it custom, that's a `should_commoditize` signal.
+- Components drift right over time. Movement recommendations should align with this drift, not fight it.
+- Inertia is the enemy — components that should have moved but haven't are higher-priority than components already moving.
+
+## Input — Rotated Company Board
+
+The FALSTAFFIAN step has already rotated the competitive framing to correct perspective errors. Your map must reflect the ROTATED framing, not the raw analyst narrative.
+
+```json
+{{ rotated_board | tojson }}
+```
+
+## Input — Business Franchise (from Company Board)
+
+```json
+{{ business_franchise | tojson }}
+```
+
+## Ticker
+{{ ticker }}
+
+## Task
+
+Produce a compressed Wardley map in a single pass. This compresses the full wardley-mapper's 6-step cascade (inventory → classify → map → movement → recommendations → present) into one call. The output feeds two downstream steps:
+
+1. **GORILLA** (step 5): the `invisible_gorilla` and `choke_point` dimensions use the Wardley map to ground their assessment — what's invisible in the value chain, and where is the strategic choke point?
+2. **ECONOMIC TRAJECTORY** (step 9): the `falling_cost` and `commoditization_candidates` fields use the Wardley map's evolution classifications to identify what's becoming commodity (the falling-cost trajectory) and what the company should stop building.
+
+### Steps to perform (internally, in one response):
+
+1. **Inventory**: Enumerate every component in the company's value chain. Include: customer-facing capabilities, platform services, infrastructure, conceptual components (business model, governance, partnerships). Be exhaustive — missing components create blind spots.
+
+2. **Classify**: For each component, classify on the evolution axis (Genesis / Custom / Product / Commodity) using maturity, adoption, standardization, and differentiation criteria. Mark `should_commoditize: true` for components the company builds custom that the broader market has already commoditized.
+
+3. **Map**: Place each component on the value chain (Y: visibility, X: evolution) with (x, y) coordinates [0.0–1.0] and dependency links.
+
+4. **Movement**: Identify strategic movement — what to commoditize, what to keep at Product, what's over-commoditized, what's missing.
+
+5. **Commoditization candidates**: Specifically identify components on the falling-cost trajectory (moving toward Commodity) — these feed ECONOMIC TRAJECTORY's falling-cost anchor.
+
+Return JSON only:
+```json
+{
+  "wardley_map": {
+    "components": [
+      {
+        "name": "...",
+        "type": "infrastructure|platform_service|user_facing|conceptual|protocol",
+        "evolution": "Genesis|Custom|Product|Commodity",
+        "should_commoditize": false,
+        "rationale": "why this stage",
+        "x": 0.0,
+        "y": 0.0,
+        "dependencies": ["..."],
+        "description": "..."
+      }
+    ],
+    "evolution_distribution": {
+      "Genesis": 0,
+      "Custom": 0,
+      "Product": 0,
+      "Commodity": 0
+    },
+    "movements": [
+      {
+        "component": "...",
+        "action": "commoditize|stay_product|over_commoditized|missing",
+        "rationale": "why this movement",
+        "priority": "high|medium|low"
+      }
+    ],
+    "commoditization_candidates": [
+      "component names on the falling-cost trajectory (moving toward Commodity)"
+    ],
+    "choke_points": [
+      "components that are strategic bottlenecks — where the value chain narrows"
+    ],
+    "invisible_gorillas": [
+      "components that are present in the value chain but not visible in the analyst narrative — the rotated framing exposed them"
+    ],
+    "movement_summary": "narrative summary of strategic position and key movements"
+  },
+  "inventory_notes": "gaps, assumptions, or observations about the inventory"
+}
+```

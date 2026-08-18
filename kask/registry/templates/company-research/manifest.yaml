@@ -25,19 +25,20 @@
 
 crate:
   name: company-research
-  version: "0.35.0"
+  version: "0.36.0"
   description: >
     Equity research pipeline converted from EFRA-AI (Replicant-Partners).
     Two flowdefs: company-research-flash (SCOUT → INTEL → FORENSIC × 2 →
     CRITICAL FACTOR → VALUATION → COMMUNICATION → KATA → LENS) producing a
     flash note / initiation report, and company-research-deep (COMPANY →
-    FALSTAFFIAN → GORILLA → ECONOMIC TRAJECTORY → IMAGINE → THESIS)
+    FALSTAFFIAN → WARDLEY → GORILLA → ECONOMIC TRAJECTORY → IMAGINE → THESIS)
     producing a deep company analysis and investment thesis. The deep
     pipeline applies Falstaffian perspective rotation to the competitive
-    framing before GORILLA scores it (structural defense against frame
-    capture), and anchors IMAGINE on an economic trajectory probe
-    (falling costs, Coasean shifts, Kauffman adjacent possible) that is
-    challenged by the Falstaffian rotations. MCP tool calls
+    framing before WARDLEY maps the value chain and GORILLA scores it
+    (structural defense against frame capture), and anchors IMAGINE on an
+    economic trajectory probe (falling costs, Coasean shifts, Kauffman
+    adjacent possible) that is challenged by the Falstaffian rotations and
+    grounded by the Wardley commoditization candidates. MCP tool calls
     (dcf_valuation, comparable_analysis, expectations_gap,
     scenario_impact_valuation, market_check_resolutions,
     market_calibration, market_cmp, evaluate_evidence,
@@ -323,6 +324,21 @@ templates:
       18), then re-measures the current condition. Emits calibration_gap
       (0.0 calibrated → 1.0 maximum gap) that LENS (step 23) consumes as a
       6th axis alongside the existing five frameworks.
+
+  - id: company-research/wardley-anchor
+    name: "WARDLEY — compressed value-chain map of rotated board (v0.36.0)"
+    path: wardley-anchor.j2
+    type: KnowAct
+    description: >
+      v0.36.0 cross-skill adapter. Compresses wardley-mapper's 6-step cascade
+      (inventory → classify → map → movement → recommendations → present) into
+      a single LLM call over the rotated Company Board. Emits wardley_map with
+      components, evolution classifications, movements, commoditization
+      candidates, choke_points, and invisible_gorillas. Feeds GORILLA's
+      Invisible Gorilla and Choke Point dimensions (step 5) and ECONOMIC
+      TRAJECTORY's falling-cost anchor (step 9). The full wardley-mapper skill
+      is available for standalone use — this adapter exists to ground the deep
+      pipeline's strategic analysis without adding a 6-step sub-cascade.
 
 # FlowDef orchestrators — two flowdefs mirroring EFRA-AI's two-pipeline
 # structure. See registry/manifests/company-research-flash.yaml and

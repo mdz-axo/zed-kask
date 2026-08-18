@@ -70,19 +70,14 @@ steps:
   # ── DERIVE: Compile the principle into a constraint set ──
   # Single-pass LLM inference. The LLM reasons about the enforcement hints
   # and its knowledge of the codebase to produce the proposed constraint
-  # set. The LLM does NOT have tool access — it cannot grep or read files.
-  # For exact line numbers and test names, the LLM uses UNKNOWN and MISSING:
-  # prefixes. The human reviewer verifies the citations.
+  # set. For exact line numbers and test names, the LLM uses UNKNOWN and
+  # MISSING: prefixes. The human reviewer verifies the citations.
   - ordinal: 1
     action: select
     description: >
       Derive (or verify) the constraint set. The template receives the
       principle, its source, and enforcement hints, and emits the proposed
-      constraint set with per-constraint status and gaps. The LLM reasons
-      about the enforcement hints and its knowledge of the codebase. For
-      exact file:line locations and test names, the LLM uses UNKNOWN and
-      MISSING: prefixes when it cannot verify them. This is the skill's
-      own discipline: no fabricated citations.
+      constraint set with per-constraint status and gaps.
     renderer: minijinja
     template_ref: principle-constraints/principle-derive
     gas_cap: 12000
@@ -95,25 +90,15 @@ steps:
       enforcement_hints: "{{ enforcement_hints | default([]) }}"
 
   - ordinal: 2
-    action: compute
-    compute_ref: lisp.eval
-    description: >
-      Deterministic convergence signal: returns 1 (stable) to let Cauchy
-      fire after min_iterations. The derivation is a single-pass operation.
-    gas_cap: 100
-    timeout_seconds: 10
-    input_mapping:
-      form: "1"
-      env: {}
-
-  - ordinal: 3
     action: loop
     description: >
-      Re-enter derivation if convergence is not met. Capped at
-      max_iterations: 1 — single-pass.
+      Single-pass derivation. The convergence signal is a constant (1.0)
+      because the derivation is a one-shot LLM inference — there is no
+      iterative refinement. The loop step is required by the cascade
+      executor but max_iterations: 1 ensures it exits after one pass.
     input_mapping:
       loop_target: "{{ 1 }}"
-      convergence_signal: "{{ step_2_result }}"
+      convergence_signal: "1.0"
 
 error_handling:
   on_gas_exceeded: abort
