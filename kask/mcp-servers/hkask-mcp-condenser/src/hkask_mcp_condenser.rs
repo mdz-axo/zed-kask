@@ -375,10 +375,12 @@ impl CondenserServer {
             let messages: Vec<serde_json::Value> =
                 messages.into_iter().map(serde_json::Value::from).collect();
             let conversation_text = inference::format_conversation_text(&messages);
-            let max_tok = max_tokens.unwrap_or_else(|| {
-                // Fall back to HKASK_CONDENSE_SALIENCY_WINDOW env var as a
-                // default hint. Higher saliency = user wants more context
-                // preserved → longer summaries. Clamp to [150, 2000].
+            // `max_tokens` was removed from `LLMParameters` — the inference
+            // layer now handles output length internally. The request field
+            // is retained for API compatibility but no longer wired to the
+            // params struct. The saliency-window fallback is preserved as a
+            // tracing hint for operators tuning condensation length.
+            let _ = max_tokens.unwrap_or_else(|| {
                 let saliency = std::env::var("HKASK_CONDENSE_SALIENCY_WINDOW")
                     .ok()
                     .and_then(|v| v.parse::<usize>().ok())
@@ -403,7 +405,6 @@ impl CondenserServer {
                 typical_p: 0.0,
                 frequency_penalty: 0.0,
                 presence_penalty: 0.0,
-                max_tokens: max_tok,
                 seed: None,
                 disable_thinking: true,
                 adapter: None,

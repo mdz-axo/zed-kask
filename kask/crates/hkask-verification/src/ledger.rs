@@ -305,6 +305,15 @@ impl VerificationStore {
     /// The caller does not need to modify the response — narrative
     /// grounding keeps the prose (paper §5.5: "keep, scan for claims it
     /// cannot support").
+    ///
+    /// **Monotone provenance does NOT apply to this path.** The
+    /// `enforce_monotone_provenance` (weakest-link) cap operates on
+    /// structured field provenance — it requires `upstream_blocks` from the
+    /// parent delegation's envelope `blocks` array, which carry per-field
+    /// provenance stamps. ABW cloud agents produce free prose (no structured
+    /// fields, no `blocks`), so there is nothing to cap. If ABW ever returns
+    /// structured JSON through this path, the caller must switch to
+    /// `enforce_and_stamp` with `upstream_blocks` to get the monotone cap.
     pub fn enforce_narrative(
         &self,
         source: &str,
