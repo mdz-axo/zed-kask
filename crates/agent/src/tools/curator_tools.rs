@@ -187,12 +187,29 @@ impl AgentTool for CuratorStatusTool {
                 .get("memory")
                 .and_then(|m| m.get("degraded"))
                 .and_then(|d| d.as_bool());
+            // Algedonic alert log cap status — surfaced so the operator (or
+            // the `algedonic-review` skill) can tell when the in-memory log is
+            // approaching its cap and review/clear is needed.
+            let alert_log_count = snapshot
+                .get("alert_log_count")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let alert_log_cap = snapshot
+                .get("alert_log_cap")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let alert_log_approaching_cap = snapshot
+                .get("alert_log_approaching_cap")
+                .and_then(|d| d.as_bool());
             // A degraded curator memory store is a health signal in its own
             // right — surface it in `status` so a caller reading only the
             // status line (not the structured fields) still sees it.
             let status = if memory_degraded == Some(true) {
                 "ok (memory degraded — curator episodic/semantic store down, \
                  self-healing re-open in progress)"
+                    .to_string()
+            } else if alert_log_approaching_cap == Some(true) {
+                "ok (algedonic log approaching cap — run algedonic-review to clear reviewed entries)"
                     .to_string()
             } else {
                 "ok".to_string()
@@ -208,6 +225,9 @@ impl AgentTool for CuratorStatusTool {
                     None
                 },
                 memory_degraded,
+                alert_log_count,
+                alert_log_cap,
+                alert_log_approaching_cap,
             })
         })
     }
@@ -221,7 +241,8 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
              Escalations: {}\n\
              Critical Alerts: {}\n\
              Variety Deficit: {}\n\
-             Memory: {}",
+             Memory: {}\n\
+             Algedonic Log: {}",
             output.status,
             output
                 .regulation_effectiveness
@@ -248,6 +269,17 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
                 Some(true) => "DEGRADED — curator memory store down".to_string(),
                 Some(false) => "ok".to_string(),
                 None => "not monitored".to_string(),
+            },
+            match (output.alert_log_count, output.alert_log_cap) {
+                (Some(count), Some(cap)) => {
+                    let suffix = if output.alert_log_approaching_cap == Some(true) {
+                        " — APPROACHING CAP, run algedonic-review"
+                    } else {
+                        ""
+                    };
+                    format!("{}/{}{}", count, cap, suffix)
+                }
+                _ => "not available".to_string(),
             },
         );
         language_model::LanguageModelToolResultContent::Text(text.into())
@@ -290,6 +322,172 @@ fn curator_directive_sink() -> Option<Arc<dyn CuratorDirectiveSink>> {
         .lock()
         .expect("CURATOR_DIRECTIVE_SINK poisoned")
         .clone()
+}
+
+// ── AlgedonicLogSink trait ────────────────────────────────────────────────────
+
+/// Sink for clearing the in-memory algedonic alert log — the composition root
+/// implements this over the `RegulationLedger` (which holds the
+/// `AlgedonicManager`). The trait lives here (not in `hkask-types`) so the
+/// agent crate can use it without depending on `hkask-regulation`.
+///
+/// The `algedonic-review` skill calls this after the operator has reviewed
+/// the log and confirmed that escalated alerts have been persisted to the
+/// `EscalationQueue`. Clearing reviewed entries frees the in-memory log
+/// before it reaches its cap and evicts entries unread.
+///
+/// Methods are async because the `RegulationLedger` is behind a
+/// `tokio::sync::RwLock` — the sink spawns the lock acquisition on the
+/// tokio runtime. The tool that calls this sink already runs in an async
+/// context (`background_executor().spawn`).
+#[async_trait::async_trait]
+pub trait AlgedonicLogSink: Send + Sync {
+    /// Clear reviewed alerts from the in-memory log. Retains unresolved
+    /// Critical alerts (those that have not been escalated yet) so the live
+    /// signal is not lost.
+    ///
+    /// Returns `Ok(cleared_count)` where `cleared_count` is the number of
+    /// alerts removed. Returns `Err` if the sink is unwired or the clear
+    /// failed.
+    async fn clear_reviewed_alerts(&self) -> Result<usize, String>;
+
+    /// Number of alerts currently in the in-memory log.
+    /// Returns `None` if the sink is unwired.
+    async fn alert_log_count(&self) -> Option<usize>;
+
+    /// Whether the in-memory log is approaching its cap (≥ 80%).
+    /// Returns `None` if the sink is unwired.
+    async fn alert_log_approaching_cap(&self) -> Option<bool>;
+}
+
+/// Global hook for the algedonic log sink.
+static ALGEDONIC_LOG_SINK: std::sync::Mutex<Option<Arc<dyn AlgedonicLogSink>>> =
+    std::sync::Mutex::new(None);
+
+/// Set the global algedonic log sink (composition root).
+///
+/// Re-settable — later calls replace the earlier sink.
+pub fn set_algedonic_log_sink(sink: Option<Arc<dyn AlgedonicLogSink>>) {
+    *ALGEDONIC_LOG_SINK
+        .lock()
+        .expect("ALGEDONIC_LOG_SINK poisoned") = sink;
+}
+
+fn algedonic_log_sink() -> Option<Arc<dyn AlgedonicLogSink>> {
+    ALGEDONIC_LOG_SINK
+        .lock()
+        .expect("ALGEDONIC_LOG_SINK poisoned")
+        .clone()
+}
+
+// ── Curator Clear Algedonic Log Tool ────────────────────────────────────────
+
+/// Clear reviewed alerts from the in-memory algedonic alert log.
+///
+/// Called by the `algedonic-review` skill after the operator has reviewed
+/// the log and confirmed that escalated alerts have been persisted to the
+/// `EscalationQueue`. Retains unresolved Critical alerts (those that have
+/// not been escalated yet) so the live signal is not lost.
+pub struct CuratorClearAlgedonicLogTool;
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CuratorClearAlgedonicLogInput {
+    /// When true, clear ALL alerts including unresolved Critical (use with
+    /// caution — loses live signals). Default false (retain unresolved).
+    #[serde(default)]
+    pub clear_all: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CuratorClearAlgedonicLogOutput {
+    pub cleared: usize,
+    pub remaining: usize,
+    pub message: String,
+}
+
+impl AgentTool for CuratorClearAlgedonicLogTool {
+    type Input = CuratorClearAlgedonicLogInput;
+    type Output = CuratorClearAlgedonicLogOutput;
+
+    const NAME: &'static str = "curator_clear_algedonic_log";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Execute
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "Clear Algedonic Log".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        let sink = algedonic_log_sink();
+        cx.background_executor().spawn(async move {
+            let input = input
+                .recv()
+                .await
+                .map_err(|_| CuratorClearAlgedonicLogOutput {
+                    cleared: 0,
+                    remaining: 0,
+                    message: "error: invalid input".to_string(),
+                })?;
+
+            let Some(sink) = sink else {
+                return Ok(CuratorClearAlgedonicLogOutput {
+                    cleared: 0,
+                    remaining: 0,
+                    message: "algedonic log sink not wired".to_string(),
+                });
+            };
+
+            // For now, `clear_all` is advisory — the sink always retains
+            // unresolved Critical alerts (the safe default). A future
+            // `clear_all=true` path could be added if the operator needs
+            // a hard reset, but the default (retain unresolved) is the
+            // correct behavior for the algedonic-review skill.
+            let _ = input.clear_all;
+
+            let cleared =
+                sink.clear_reviewed_alerts()
+                    .await
+                    .map_err(|e| CuratorClearAlgedonicLogOutput {
+                        cleared: 0,
+                        remaining: 0,
+                        message: format!("clear failed: {e}"),
+                    })?;
+            let remaining = sink.alert_log_count().await.unwrap_or(0);
+            let message = if cleared == 0 {
+                "No reviewed alerts to clear (log is empty or all alerts are unresolved Critical)"
+                    .to_string()
+            } else {
+                format!("Cleared {cleared} reviewed alerts, {remaining} remaining")
+            };
+            Ok(CuratorClearAlgedonicLogOutput {
+                cleared,
+                remaining,
+                message,
+            })
+        })
+    }
+}
+
+impl From<CuratorClearAlgedonicLogOutput> for language_model::LanguageModelToolResultContent {
+    fn from(output: CuratorClearAlgedonicLogOutput) -> Self {
+        let text = format!(
+            "Algedonic Log Clear: {}\nCleared: {}\nRemaining: {}",
+            output.message, output.cleared, output.remaining,
+        );
+        language_model::LanguageModelToolResultContent::Text(text.into())
+    }
 }
 
 // ── Curator Directive Tool ───────────────────────────────────────────────────

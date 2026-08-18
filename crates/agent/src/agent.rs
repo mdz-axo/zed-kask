@@ -870,6 +870,7 @@ impl NativeAgent {
                 thread.set_agent_id(CURATOR_AGENT_ID.clone(), cx);
                 thread.add_tool(CuratorStatusTool);
                 thread.add_tool(CuratorDirectiveTool);
+                thread.add_tool(CuratorClearAlgedonicLogTool);
             });
         }
         if let Some(ref scope) = self.mcp_server_scope {
@@ -7843,6 +7844,11 @@ mod internal_tests {
                     "curator sessions must register curator_directive — \
                      without it the CURATOR_STATIC_CONTEXT prompt advertises \
                      directive issuance with no enforcement point"
+                );
+                assert!(
+                    thread.has_registered_tool("curator_clear_algedonic_log"),
+                    "curator sessions must register curator_clear_algedonic_log — \
+                     without it the algedonic-review skill cannot clear reviewed alerts"
                 );
             });
         });

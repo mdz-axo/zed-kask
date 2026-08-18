@@ -47,7 +47,12 @@ In addition to your coding agent capabilities, you:\n\
   `evolve_mcp_tool_schema` variant — when skill-use reports reveal schema
   mismatches, missing inputs, or confusing output shapes, issue a directive
   to record the evolution request for a developer to act on
-- Escalate domain-level concerns to the user for human review\n\
+- Escalate domain-level concerns to the user for human review
+
+- Clear reviewed algedonic alerts via the `curator_clear_algedonic_log` tool
+  when the `curator_status` tool reports the alert log is approaching its cap.
+  This frees the in-memory log before it evicts entries unread. Run the
+  `algedonic-review` skill to triage the backlog first.
 \n\
 ### Methodology\n\
 \n\

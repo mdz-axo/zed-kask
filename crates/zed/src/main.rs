@@ -933,6 +933,17 @@ fn main() {
             std::sync::Arc::new(kask_bridge::BridgeCuratorDirectiveSink::new(directive_tx));
         agent::set_curator_directive_sink(Some(directive_sink));
         log::info!("Curator directive sink wired to CuratorDirectiveTool");
+
+        // zed-kask: algedonic log sink wiring.
+        // Wire the algedonic log sink so the CuratorClearAlgedonicLogTool
+        // can clear reviewed alerts from the in-memory AlgedonicManager log
+        // and query the log cap status. The sink wraps the RegulationLedger.
+        let algedonic_log_sink: std::sync::Arc<dyn agent::AlgedonicLogSink> =
+            std::sync::Arc::new(kask_bridge::BridgeAlgedonicLogSink::from_shared(
+                regulation_ledger.clone(),
+            ));
+        agent::set_algedonic_log_sink(Some(algedonic_log_sink));
+        log::info!("Algedonic log sink wired to CuratorClearAlgedonicLogTool");
         let mcp_runtime_for_startup = mcp_runtime.clone();
         let tool_port = mcp_runtime;
         // No capability token is threaded through the bridge. `McpRuntime::invoke`
