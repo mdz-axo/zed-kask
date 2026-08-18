@@ -129,10 +129,7 @@ impl AssertionsService {
         let namespace_map = Arc::new(namespace_map);
 
         // Open DB once, share across concurrent tasks
-        let dim = embedding_dim();
-        let store = Arc::new(MemoryStore::open(&db_path, &passphrase, dim).map_err(|e| {
-            McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
-        })?);
+        let store = Arc::new(crate::helpers::open_memory_store(&db_path, &passphrase)?);
         let webid = owner_webid(&owner);
         let classifier = hkask_inference::model_constants::classifier_model();
         // Namespace is fixed to "doc" for corpus chunk extraction (no longer a request field).

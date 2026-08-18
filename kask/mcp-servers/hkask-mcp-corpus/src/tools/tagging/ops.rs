@@ -6,7 +6,6 @@
 //! Every chunk gets at least one 5W1H dimension — no zero-tag chunks.
 
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
-use crate::helpers::map_corpus_io_error;
 use crate::{
     Arc, CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool_semantic,
     extract_json_from_response, json, normalize_concept, read_jsonl_stream,
@@ -379,9 +378,7 @@ impl CorpusServer {
                     .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?); // rr0044-ok: serde serialization of own struct
                 out.push('\n');
             }
-            let output_path = crate::path_safety::contain_for_write(&req.output)?;
-            std::fs::write(&output_path, &out)
-                .map_err(|e| map_corpus_io_error(e, &format!("Cannot write output '{}'", req.output)))?;
+            crate::helpers::write_contained(&req.output, &out)?;
 
             // Stats
             let dim_counts: std::collections::HashMap<&str, usize> = {
