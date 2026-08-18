@@ -44,7 +44,7 @@
 //! - `skill_execute` — run an hKask skill cascade on the zed side
 //!   (`SkillExecPort`, backed by the global `ManifestExecutor`); used by MCP
 //!   servers so a delegated agent's declared `skills` execute with the
-//!   executor's own gas/OCAP enforcement.
+//!   executor's own enforcement.
 //!
 //! Streaming methods (`generate_stream*`) are not supported over IPC — the
 //! IPC bridge collects the stream server-side and returns a single result.

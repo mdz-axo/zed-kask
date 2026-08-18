@@ -433,8 +433,7 @@ async fn parallel_step_joins_branch_results_in_order() {
     //    completion order — the sort by `branch_id` is the deterministic join.
     // 3. Each branch result is the sub-cascade's `extract_final_step_result`
     //    (the compute step's value), not the whole sub-cascade context.
-    // 4. Gas is shared (both branches charge the parent's `Arc<AtomicU64>`);
-    //    rJoule is settled after the wave (parent charges the sum).
+    // 4. rJoule is settled after the wave (parent charges the sum of both branches).
 
     // Write sub-manifests to a temp dir so `load_from_disk` resolves them.
     let tmp = std::env::temp_dir().join("hkask-parallel-test-");

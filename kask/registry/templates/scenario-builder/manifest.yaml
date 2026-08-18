@@ -74,6 +74,6 @@ flowdef:
     Convergent 7-step pipeline from focal-question refinement through
     scenario narratives, independent quality gate, implications extraction,
     and convergence. Implements convergence criteria (gate_pass +
-    parametric_variation_flag + stall detector) and gas accounting. The
+    parametric_variation_flag + stall detector) and rJoule accounting. The
     loop restarts at narrative generation (step 4) to preserve upstream
     work across iterations.

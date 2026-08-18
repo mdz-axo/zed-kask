@@ -116,4 +116,4 @@ flowdef:
     Cascading 10-step pipeline from triage through forecast recording,
     independent quality gate, and convergence. Implements convergence
     criteria (independent gate_pass, synthesis-calibration agreement,
-    materiality guard, min confidence "medium") and gas accounting.
+    materiality guard, min confidence "medium") and rJoule accounting.

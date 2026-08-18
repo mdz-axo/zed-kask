@@ -15,7 +15,7 @@
 # an ABW workspace with hired agents. Compound agents orchestrate via
 # execute_agent (text consult) and delegate_to_agent (full tool access, 1 cr
 # + tokens, delegation chains forbidden — delegates lose
-# delegate_to_agent/execute_agent). Gas (verified live 2026-08-02): own-
+# delegate_to_agent/execute_agent). rJoule (verified live 2026-08-02): own-
 # agent hire is a flat 2 cr /add fee, @mention 1 cr + tokens, delegation 1
 # cr + tokens; third-party /hire fee unverified. Compound agents declare
 # dependencies { required, optional } and auto-hire their team. Thagard

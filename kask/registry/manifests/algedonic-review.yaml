@@ -1,5 +1,5 @@
 # Algedonic Review Process Manifest
-# ℏKask v0.36.0 — Human-in-the-loop review and triage of the algedonic alert backlog.
+# ℏKask v0.35.0 — Human-in-the-loop review and triage of the algedonic alert backlog.
 #
 # Implements the Observe → Decide → Act phases of the gemba loop for the
 # algedonic alert subsystem. The cybernetics loop escalates alerts to a
@@ -36,7 +36,7 @@ manifest:
     the feedback loop. Invoked when the algedonic log approaches its cap or
     on operator demand.
   functional_role: flowdef
-  version: "0.36.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

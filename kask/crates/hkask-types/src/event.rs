@@ -574,7 +574,7 @@ pub enum SpanCategory {
     Episodic,
     /// `reg.wallet*` — wallet operations (balance, keys, deposits, withdrawals).
     Wallet,
-    /// `reg.skill*` — per-skill cybernetic feedback (variety, convergence, gas, outcome).
+    /// `reg.skill*` — per-skill cybernetic feedback (variety, convergence, rJoule, outcome).
     Skill,
     /// Any other namespace. Callers decide the fallback policy.
     Unknown,
@@ -1110,7 +1110,7 @@ mod tests {
             fn from_short_name_unknown_prefix(
                 prefix in "[a-z][a-z0-9_]*"
             ) {
-                prop_assume!(prefix != "variety" && prefix != "gas" && prefix != "outcome" && prefix != "alert"
+                prop_assume!(prefix != "variety" && prefix != "outcome" && prefix != "alert"
                     && prefix != "curation" && prefix != "spec"
                     && prefix != "inference"
                     && prefix != "pod" && prefix != "connector");
@@ -1131,7 +1131,7 @@ mod tests {
                 let prefix = short.split('.').next().unwrap_or(short);
 
                 let expected = match prefix {
-                    "variety" | "gas" | "outcome" | "alert" => SpanCategory::Cybernetics,
+                    "variety" | "outcome" | "alert" => SpanCategory::Cybernetics,
                     "curation" | "spec" => SpanCategory::Curation,
                     "inference" => SpanCategory::Inference,
                     "pod" | "connector" => SpanCategory::Episodic,

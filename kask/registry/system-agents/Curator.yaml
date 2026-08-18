@@ -41,7 +41,7 @@ responsibilities:
   - monitor: system_health_via_regulation
   - synthesize: bot_reports_into_system_state
   - perform: metacognition_on_system_performance
-  - calibrate: bot_gas_budgets_and_thresholds
+  - calibrate: bot_rjoule_budgets_and_thresholds
   - escalate: critical_alerts_to_administrator
   - maintain: system_evolution_dialogue
   - emit: hkask.template.metacognition
@@ -65,7 +65,7 @@ reporting:
     - variety_deficit_gt_100
     - bot_coordination_failure
     - system_degradation_detected
-    - gas_budget_critical
+    - rjoule_budget_critical
 
 standing_session:
   session_id: system-coordination-standing-session # Deferred (2026-06-14)
