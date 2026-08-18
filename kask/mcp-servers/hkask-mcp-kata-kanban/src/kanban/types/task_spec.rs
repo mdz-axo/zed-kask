@@ -24,7 +24,6 @@ pub struct TaskSpec {
     /// Optional phase grouping.
     pub phase_id: Option<PhaseId>,
     /// Software-compute gas budget for this task (template exec, tool dispatch).
-    pub gas_budget: Option<u64>,
     /// Inference/API rJoule budget (250k rJoules ≈ $1 inference spend).
     pub rjoule_budget: Option<u64>,
 }
@@ -44,7 +43,6 @@ impl TaskSpec {
             labels: Vec::new(),
             priority: None,
             phase_id: None,
-            gas_budget: None,
             rjoule_budget: None,
         }
     }
@@ -112,14 +110,6 @@ impl TaskSpec {
         self
     }
 
-    /// Set the compute gas budget for the subagent working on this task.
-    /// Gas measures compute cycles (250,000 gas = $1 USD). Distinct from rJoule
-    /// which measures inference/API expenditure.
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_gas_budget(mut self, gas: u64) -> Self {
-        self.gas_budget = Some(gas);
-        self
-    }
 
     /// Set the rJoule budget for the subagent working on this task.
     /// rJoule measures inference/API expenditure (250k rJoules ≈ $1).

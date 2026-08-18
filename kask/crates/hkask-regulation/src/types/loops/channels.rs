@@ -21,7 +21,6 @@ use hkask_types::WebID;
 pub struct ToolConsumptionEvent {
     pub tool_name: String,
     pub agent: WebID,
-    pub gas_cost: u64,
     pub success: bool,
 }
 

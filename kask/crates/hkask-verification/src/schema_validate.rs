@@ -447,4 +447,93 @@ mod tests {
         assert!(validate(&schema, &json!(42)).is_valid());
         assert!(!validate(&schema, &json!(42.5)).is_valid());
     }
+
+    // ── Proptest ─────────────────────────────────────────────────────────
+    //
+    // The .rules invariant: unsupported keywords are NOT a pass. The minimal
+    // validator supports 7 keywords (type, const, enum, properties, required,
+    // items, oneOf). Any other keyword in a schema object must surface in
+    // `result.unsupported`, making `is_valid()` false, rather than being
+    // silently ignored as if the schema were satisfied. The example tests
+    // above pin one supported keyword each; this falsifies the unsupported-
+    // surfacing contract across arbitrary unsupported keyword values.
+    use proptest::prelude::*;
+
+    // Names the minimal validator does NOT implement, drawn from real JSON
+    // Schema keywords a card author might reach for. Each must be reported,
+    // never silently accepted.
+    const UNSUPPORTED_KEYWORDS: &[&str] = &[
+        "minLength",
+        "maxLength",
+        "pattern",
+        "format",
+        "minimum",
+        "maximum",
+        "multipleOf",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "minProperties",
+        "maxProperties",
+        "additionalProperties",
+        "allOf",
+        "anyOf",
+        "not",
+        "description",
+        "title",
+        "$schema",
+        "$ref",
+    ];
+
+    fn arb_json_value() -> impl Strategy<Value = serde_json::Value> {
+        let leaf = prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            any::<i64>().prop_map(serde_json::Value::from),
+            prop::collection::vec(any::<char>(), 0..16)
+                .prop_map(|cs| serde_json::Value::String(cs.into_iter().collect())),
+        ];
+        leaf.prop_recursive(3, 16, 6, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..4).prop_map(serde_json::Value::Array),
+                prop::collection::vec(
+                    (
+                        prop::collection::vec(any::<char>(), 1..8)
+                            .prop_map(|cs| cs.into_iter().collect::<String>()),
+                        inner
+                    ),
+                    0..4,
+                )
+                .prop_map(|pairs| serde_json::Value::Object(pairs.into_iter().collect())),
+            ]
+        })
+    }
+
+    proptest! {
+        // A schema object whose only keyword is unsupported must NEVER
+        // validate as clean: the keyword surfaces in `unsupported` (so
+        // `is_valid()` is false), regardless of the doc or the keyword's value.
+        // This is the .rules mandate that a validator which silently ignores
+        // unsupported keywords is a silent pass.
+        #[test]
+        fn prop_unsupported_keyword_is_never_a_pass(
+            kw in prop::sample::select(UNSUPPORTED_KEYWORDS.to_vec()),
+            kw_value in arb_json_value(),
+            doc in arb_json_value(),
+        ) {
+            let schema = serde_json::Value::Object(
+                std::iter::once((kw.to_string(), kw_value)).collect(),
+            );
+            let result = validate(&schema, &doc);
+            prop_assert!(
+                !result.unsupported.is_empty(),
+                "unsupported keyword `{}` was silently ignored (not surfaced), result {:?}",
+                kw, result
+            );
+            prop_assert!(
+                !result.is_valid(),
+                "a schema with an unsupported keyword must not be valid (unsupported is NOT a pass)"
+            );
+        }
+    }
 }

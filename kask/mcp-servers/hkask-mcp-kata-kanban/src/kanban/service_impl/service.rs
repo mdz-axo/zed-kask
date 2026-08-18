@@ -23,7 +23,7 @@ use serde_json::Value;
 use super::types::KanbanError;
 
 use crate::kanban::{
-    Board, ColumnDef, GasEntry, Priority, Task, TaskFilter, TaskSpec, TaskStatus, Verification,
+    Board, ColumnDef, Priority, Task, TaskFilter, TaskSpec, TaskStatus, Verification,
     VerificationCriterion,
 };
 
@@ -902,29 +902,6 @@ impl KanbanService {
     /// Called by the delegating agent to refill a subagent's gas budget
     /// so it can continue work after exhausting its initial budget.
     #[must_use = "result must be used"]
-    pub fn task_add_gas(
-        &self,
-        task_id: TaskId,
-        amount: u64,
-        actor: WebID,
-    ) -> Result<Task, KanbanError> {
-        let mut task = self.require_task(task_id)?;
-        Self::require_task_owner(&task, actor)?;
-        let current = task.gas_remaining.unwrap_or(0);
-        task.gas_remaining = Some(current.saturating_add(amount));
-        task.gas_spend.push(GasEntry::gas_refill(amount));
-        task.updated_at = chrono::Utc::now();
-        self.update_task_triple(&task)?;
-        tracing::info!(
-            target: "hkask.kanban",
-            operation = "task_gas_added",
-            task_id = %task_id,
-            added = amount,
-            new_remaining = task.gas_remaining,
-            "REG"
-        );
-        Ok(task)
-    }
 
     /// Add rJoules to a task's inference/API budget.
     #[must_use = "result must be used"]
@@ -938,7 +915,7 @@ impl KanbanService {
         Self::require_task_owner(&task, actor)?;
         let current = task.rjoule_remaining.unwrap_or(0);
         task.rjoule_remaining = Some(current.saturating_add(amount));
-        task.gas_spend.push(GasEntry::rjoule_refill(amount));
+        task.spend_log.push(GasEntry::rjoule_refill(amount));
         task.updated_at = chrono::Utc::now();
         self.update_task_triple(&task)?;
         tracing::info!(

@@ -413,7 +413,6 @@ impl KanbanServer {
             description,
             criteria,
             idempotency_key,
-            gas_budget,
             rjoule_budget,
         }): Parameters<TaskCreateRequest>,
     ) -> String {
@@ -436,8 +435,6 @@ impl KanbanServer {
                             cs.into_iter().map(VerificationCriterion::new).collect(),
                         );
                     }
-                    if let Some(gas) = gas_budget {
-                        spec = spec.with_gas_budget(gas);
                     }
                     if let Some(rj) = rjoule_budget {
                         spec.rjoule_budget = Some(rj);
@@ -558,7 +555,6 @@ impl KanbanServer {
                                     status: t.status.to_string(),
                                     assignee: t.assignee.map(|a| a.to_string()),
                                     criteria_count: t.criteria.len(),
-                                    gas_remaining: t.gas_remaining,
                                     rjoule_remaining: t.rjoule_remaining,
                                     swarm_id: t.swarm_id,
                                     activity,
@@ -733,24 +729,18 @@ impl KanbanServer {
     #[tool(
         description = "Add gas/rJoules to a task's remaining budget so the subagent can continue"
     )]
-    pub async fn kanban_task_add_gas(
         &self,
         Parameters(TaskAddGasRequest { task_id, amount }): Parameters<TaskAddGasRequest>,
     ) -> String {
         execute_tool_semantic(
             self,
-            "kanban_task_add_gas",
-            kanban_type_to_pko("kanban_task_add_gas"),
             async {
                 let tid = parse_task_id(&task_id)?;
                 if amount == 0 {
                     return Err(McpToolError::invalid_argument("amount must be > 0"));
                 }
-                match self.service.task_add_gas(tid, amount, self.webid) {
                     Ok(task) => Ok(serde_json::to_value(TaskAddGasResponse {
                         task_id: task.id.to_string(),
-                        new_gas_remaining: task.gas_remaining.unwrap_or(0),
-                        ontology: kanban_type_to_pko("kanban_task_add_gas").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
@@ -906,7 +896,6 @@ impl KanbanServer {
         &self,
         Parameters(TaskReopenRequest {
             task_id,
-            gas_budget,
             rjoule_budget,
         }): Parameters<TaskReopenRequest>,
     ) -> String {
@@ -920,9 +909,7 @@ impl KanbanServer {
                     .task_reopen(tid, self.webid)
                     .map_err(map_kanban_error)?;
                 // Apply new budgets if specified
-                if let Some(g) = gas_budget {
                     self.service
-                        .task_add_gas(tid, g, self.webid)
                         .map_err(map_kanban_error)?;
                 }
                 if let Some(r) = rjoule_budget {
@@ -939,7 +926,6 @@ impl KanbanServer {
                 serde_json::to_value(TaskReopenResponse {
                     task_id: task.id.to_string(),
                     new_status: task.status.to_string(),
-                    gas_remaining: task.gas_remaining,
                     rjoule_remaining: task.rjoule_remaining,
                     ontology: kanban_type_to_pko("kanban_task_reopen").map(|s| s.to_string()),
                 })
@@ -1051,7 +1037,6 @@ impl KanbanServer {
             delegation_level,
             delegated_skills,
             memory_scope,
-            gas_budget,
             rjoule_budget,
             swarm_id,
         }): Parameters<TaskSpawnRequest>,
@@ -1069,7 +1054,6 @@ impl KanbanServer {
                         &task_id,
                         &delegation_level,
                         &memory_scope,
-                        &gas_budget,
                         &rjoule_budget,
                     )?;
                     let skills_for_agent = delegated_skills.clone();
@@ -1173,7 +1157,6 @@ impl KanbanServer {
 
                     // Fallback: in-memory spawn via LazyLocalSwarmRuntime.
                     let response = self
-                        .spawn_via_local_runtime(tid, &task, gas_budget, &agent)
                         .await?;
                     serde_json::to_value(response)
                         .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
@@ -1188,7 +1171,6 @@ impl KanbanServer {
         task_id: &str,
         delegation_level: &str,
         memory_scope: &Option<String>,
-        gas_budget: &Option<u64>,
         rjoule_budget: &Option<u64>,
     ) -> Result<hkask_types::TaskId, McpToolError> {
         let tid = parse_task_id(task_id)?;
@@ -1210,9 +1192,7 @@ impl KanbanServer {
                 }
             }
         }
-        if let Some(g) = gas_budget {
             self.service
-                .task_add_gas(tid, *g, self.webid)
                 .map_err(map_kanban_error)?;
         }
         if let Some(r) = rjoule_budget {
@@ -1297,7 +1277,6 @@ impl KanbanServer {
         &self,
         tid: hkask_types::TaskId,
         task: &Task,
-        gas_budget: Option<u64>,
         agent: &LocalAgentCard,
     ) -> Result<TaskSpawnResponse, McpToolError> {
         let task_text = match task.description.as_deref() {
@@ -1316,7 +1295,6 @@ impl KanbanServer {
             },
             Err(_) => 50,
         };
-        let credits_authorized = gas_budget
             .map(|g| (g.min(u32::MAX as u64) as u32).min(ceiling))
             .unwrap_or(10)
             .min(ceiling);

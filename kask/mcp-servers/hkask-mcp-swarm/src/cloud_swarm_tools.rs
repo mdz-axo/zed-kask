@@ -2302,12 +2302,15 @@ mod tests {
             );
         }
 
-        // Forwarding homomorphism: every direct-get field passes through
-        // UNCHANGED — present values verbatim, absent values as `Null` (which
-        // is what `a.get(field)` returns for a missing key, so the equality
-        // holds in both directions). `model` is the one derived field (from
-        // `capabilities.model`); `description` is the one transformed field
-        // (sanitized) and is verified by `prop_description_is_plain`.
+        // Forwarding homomorphism: every direct-get field's OUTPUT value
+        // equals the input value when present, and `Null` when absent. Note
+        // the asymmetry the proptest caught: `out.get(f)` is `Some(Null)` for
+        // an absent field (the key is always present — schema stability),
+        // while `a.get(f)` is `None` for an absent field. So the invariant is
+        // over VALUES (`out[f] == a[f] ?? Null`), not over `Option<&Value>`.
+        // `model` is the one derived field (from `capabilities.model`);
+        // `description` is the one transformed field (sanitized) and is
+        // verified by `prop_description_is_plain`.
         #[test]
         fn prop_forwards_direct_fields_unchanged(a in arb_json()) {
             let out = map_catalogue_agent(&a);
@@ -2319,18 +2322,22 @@ mod tests {
                 "model_ladder", "capability_gates", "updated_at",
             ];
             for f in direct {
+                let out_val = out.get(f).cloned().unwrap_or(serde_json::Value::Null);
+                let in_val = a.get(f).cloned().unwrap_or(serde_json::Value::Null);
                 prop_assert_eq!(
-                    out.get(f), a.get(f),
-                    "field {} must forward unchanged (absent -> null)",
+                    out_val, in_val,
+                    "field {} must forward its value unchanged (absent -> null)",
                     f
                 );
             }
             // `model` is derived from `capabilities.model`, not forwarded directly.
-            prop_assert_eq!(
-                out.get("model"),
-                a.get("capabilities").and_then(|c| c.get("model")),
-                "model must come from capabilities.model"
-            );
+            let out_model = out.get("model").cloned().unwrap_or(serde_json::Value::Null);
+            let in_model = a
+                .get("capabilities")
+                .and_then(|c| c.get("model"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            prop_assert_eq!(out_model, in_model, "model must come from capabilities.model");
         }
 
         // KA-01 sanitizer invariant: the forwarded `description` is ALWAYS a

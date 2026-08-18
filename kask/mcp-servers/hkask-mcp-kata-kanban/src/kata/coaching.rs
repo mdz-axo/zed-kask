@@ -8,7 +8,7 @@ impl KataEngine {
     /// pre:  state is initialized with learner_bot and gas budget
     /// post: returns KataResult with all questions answered and step experiences recorded
     /// post: if manifest has no questions → Err(KataError::NoSteps)
-    /// post: if gas exceeded → Err(KataError::GasExceeded)
+    /// post: if manifest has no questions → Err(KataError::NoSteps)
     pub(super) async fn run_coaching(
         &self,
         manifest: &KataManifest,
@@ -36,14 +36,6 @@ impl KataEngine {
                     "REG"
                 );
             }
-            let step_gas = 2000;
-            if state.gas_consumed + step_gas > manifest.gas.cap {
-                return Err(KataError::GasExceeded {
-                    consumed: state.gas_consumed,
-                    cap: manifest.gas.cap,
-                });
-            }
-
             let prev_context = state
                 .step_outputs
                 .iter()
@@ -101,7 +93,6 @@ impl KataEngine {
                 format!("q{}", q.number),
                 serde_json::json!({"response": response.text, "question": q.question}),
             );
-            state.gas_consumed += step_gas;
             state.current_step = q.number as usize;
 
             state.step_experiences.push(StepExperience {
@@ -110,7 +101,6 @@ impl KataEngine {
                 step_label: format!("q{}", q.number),
                 action: "coaching_question".into(),
                 output_summary: response.text.chars().take(200).collect(),
-                gas_used: step_gas,
                 timestamp: now_rfc3339(),
             });
 
@@ -134,8 +124,6 @@ impl KataEngine {
             kata_type: "coaching".into(),
             steps_completed: total,
             total_steps: total,
-            gas_consumed: state.gas_consumed,
-            gas_cap: manifest.gas.cap,
             state: state.clone(),
             outcome: None,
             improvement_signal: None,

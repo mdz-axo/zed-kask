@@ -43,15 +43,10 @@ pub struct Task {
     pub created_at: DateTime<Utc>,
     /// When the task was last updated.
     pub updated_at: DateTime<Utc>,
-    /// Gas/rJoules remaining in the subagent's budget for this task.
-    /// Initialized from `TaskSpec.gas_budget`. When this hits 0, the task
-    /// auto-completes via the gas exhaustion completion path.
-    pub gas_remaining: Option<u64>,
     /// rJoules remaining for inference/API calls (250k ≈ $1 spend).
     pub rjoule_remaining: Option<u64>,
-    /// Audit trail of gas and rJoule consumption/refills.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub gas_spend: Vec<GasEntry>,
+    pub spend_log: Vec<GasEntry>,
     /// The swarm this task belongs to, when the task is coordinated via a
     /// local swarm (`kanban_task_spawn`). `None` for tasks not yet delegated
     /// or delegated outside a swarm. The kanban board is the durable
@@ -103,9 +98,8 @@ impl Task {
             phase_id: None,
             created_at: now,
             updated_at: now,
-            gas_remaining: spec.gas_budget,
             rjoule_remaining: spec.rjoule_budget,
-            gas_spend: Vec::new(),
+            spend_log: Vec::new(),
             swarm_id: None,
             delegate_result: None,
             deterministic_verdict: None,

@@ -41,7 +41,7 @@ pub use history::{
     ImprovementDirection, ImprovementSignal, KataHistory, PracticeEntry, StepExperience,
 };
 pub use manifest::{
-    CoachQuestion, ErrorHandling, KataAuditConfig, KataGasConfig, KataLedgerConfig, KataManifest,
+    CoachQuestion, ErrorHandling, KataAuditConfig, KataLedgerConfig, KataManifest,
     KataStep, ManifestMeta, MetricDef, Outcome,
 };
 pub use state::{KataResult, KataState};
@@ -68,7 +68,7 @@ pub type LedgerObserverFn = Arc<dyn Fn(&str, u32, &str) + Send + Sync>;
 pub type MetricCollectorFn =
     Arc<dyn Fn(&str, &str) -> Result<serde_json::Value, KataError> + Send + Sync>;
 
-/// Task-scoped gas callback — deducts inference cost from a bound task.
+/// Task-scoped rJoule accountant callback — deducts inference cost from a bound task.
 pub type TaskGasAccountantFn = Arc<dyn Fn(u64, &str) -> Result<u64, KataError> + Send + Sync>;
 
 /// Execution engine for kata manifests.
@@ -250,7 +250,6 @@ impl KataEngine {
         kata_type: &str,
         practice_name: &str,
         steps_completed: usize,
-        gas_consumed: u64,
     ) -> Result<Option<i64>, KataError> {
         if let Some(ref store) = self.history_store {
             let id = store
@@ -260,7 +259,6 @@ impl KataEngine {
                     kata_type,
                     practice_name,
                     steps_completed,
-                    gas_consumed,
                 )
                 .map_err(|e| KataError::LoadFailed(format!("History store: {}", e)))?;
             Ok(Some(id))
@@ -292,7 +290,7 @@ impl KataEngine {
     ///
     /// `[P5]` Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
     /// pre:  manifest.manifest.kata_type must be "improvement" or "coaching"; learner_bot must be non-empty
-    /// post: returns KataResult with steps_completed, gas_consumed, and kata-type-specific outputs; Err(UnknownType) on invalid kata_type
+    /// post: returns KataResult with steps_completed and kata-type-specific outputs; Err(UnknownType) on invalid kata_type
     #[must_use = "result must be used"]
     pub async fn execute(
         &self,
@@ -342,7 +340,6 @@ impl KataEngine {
                         target: "reg.kata",
                         namespace = %manifest.ledger.span_namespace,
                         steps = result.steps_completed,
-                        gas = result.gas_consumed,
                         has_signal = result.improvement_signal.is_some(),
                         "REG"
                     );
@@ -376,7 +373,6 @@ impl KataEngine {
                         target: "reg.kata",
                         namespace = %manifest.ledger.span_namespace,
                         questions = result.steps_completed,
-                        gas = result.gas_consumed,
                         "REG"
                     );
                 }
@@ -399,7 +395,6 @@ fn default_llm_params() -> LLMParameters {
         presence_penalty: 0.0,
         min_p: 0.0,
         typical_p: 0.0,
-        max_tokens: 512,
         seed: None,
         disable_thinking: false,
         adapter: None,
