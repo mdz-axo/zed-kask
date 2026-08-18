@@ -90,7 +90,7 @@ steps:
     renderer: minijinja
     template_ref: harness-optimize/harness-optimize-report
     gas_cap: 4000
-    timeout_seconds: 90
+    timeout_seconds: 120
     input_mapping:
       trace_dir_n: "{{ trace_dir_n }}"
       task: "{{ task }}"

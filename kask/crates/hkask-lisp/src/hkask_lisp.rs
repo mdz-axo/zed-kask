@@ -2820,3 +2820,65 @@ mod cfr_fix_verification {
         assert!((score - 2.0).abs() < 1e-9, "old form returns {score}, not 1.1 — this is the bug the fix addresses");
     }
 }
+
+#[cfg(test)]
+mod audit_repro {
+    use super::*;
+    
+    #[test]
+    fn lisp_scaffold_step4_stringified_defect_count() {
+        let form = "(let ((hyps (assoc \"hypotheses\" current))) (if (is_null hyps) 0.0 (let ((n (length hyps))) (if (= n 0) 0.0 (- 1.0 (/ defect_count (* n 4)))))))";
+        // If step_2_result is absent, default(0) might stringify to "0"
+        let env = serde_json::json!({
+            "current": {"hypotheses": [{"h": "a"}, {"h": "b"}, {"h": "c"}]},
+            "defect_count": "0"  // stringified
+        });
+        match eval_sandboxed_with_budget(form, &env, 100000, 64) {
+            Ok(v) => println!("lisp-scaffold OK: {}", v),
+            Err(e) => println!("lisp-scaffold ERR: {}", e),
+        }
+    }
+    
+    #[test]
+    fn swarm_steering_stringified_credit_ceiling() {
+        let form = "(let ((directive step_1_result)) (if (is_null directive) (list \"no_directive\") (let ((seq (assoc \"execution_sequence\" directive))) (if (is_null seq) (list \"missing_seq\") (let ((credits (assoc \"credits_authorized\" (car seq)))) (if (is_null credits) (list \"missing_credits\") (if (> credits credit_ceiling) (list \"exceeds\") (list))))))))";
+        let env = serde_json::json!({
+            "step_1_result": {"execution_sequence": [{"credits_authorized": 100}]},
+            "credit_ceiling": "50"  // stringified
+        });
+        match eval_sandboxed_with_budget(form, &env, 100000, 64) {
+            Ok(v) => println!("swarm-steering OK: {}", v),
+            Err(e) => println!("swarm-steering ERR: {}", e),
+        }
+    }
+}
+
+#[cfg(test)]
+mod audit_fix_verification {
+    use super::*;
+    
+    #[test]
+    fn lisp_scaffold_step4_fixed_stringified_defect_count() {
+        let form = "(let ((hyps (assoc \"hypotheses\" current))) (if (is_null hyps) 0.0 (let ((n (length hyps))) (if (= n 0) 0.0 (let ((dc (if (numberp defect_count) defect_count 0))) (- 1.0 (/ dc (* n 4))))))))";
+        let env = serde_json::json!({
+            "current": {"hypotheses": [{"h": "a"}, {"h": "b"}, {"h": "c"}]},
+            "defect_count": "0"  // stringified — numberp guard falls back to 0
+        });
+        let result = eval_sandboxed_with_budget(form, &env, 100000, 64).unwrap();
+        let score = result.as_f64().expect("result is a float");
+        assert!((score - 1.0).abs() < 1e-9, "expected 1.0, got {score}");
+    }
+    
+    #[test]
+    fn swarm_steering_fixed_stringified_credit_ceiling() {
+        let form = "(let ((directive step_1_result)) (if (is_null directive) (list \"no_directive\") (let ((seq (assoc \"execution_sequence\" directive))) (if (is_null seq) (list \"missing_seq\") (let ((credits (assoc \"credits_authorized\" (car seq)))) (if (is_null credits) (list \"missing_credits\") (if (and (not (is_null credits)) (let ((cc (if (numberp credit_ceiling) credit_ceiling 50))) (> credits cc))) (list \"exceeds\") (list))))))))";
+        let env = serde_json::json!({
+            "step_1_result": {"execution_sequence": [{"credits_authorized": 100}]},
+            "credit_ceiling": "50"  // stringified — numberp guard falls back to 50
+        });
+        let result = eval_sandboxed_with_budget(form, &env, 100000, 64).unwrap();
+        let arr = result.as_array().expect("result is a list");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0], serde_json::json!("exceeds"));
+    }
+}

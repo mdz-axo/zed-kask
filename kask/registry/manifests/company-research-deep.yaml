@@ -263,8 +263,8 @@ steps:
       rotated board, not the raw Company Board.
     renderer: minijinja
     template_ref: company-research/falstaffian-competitive-rotation
-    gas_cap: 8000
-    timeout_seconds: 200
+    gas_cap: 10000
+    timeout_seconds: 250
     input_mapping:
       ticker: "{{ ticker }}"
       company_board: "{{ step_6_result }}"

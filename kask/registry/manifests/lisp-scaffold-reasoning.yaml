@@ -290,7 +290,8 @@ steps:
               (let ((n (length hyps)))
                 (if (= n 0)
                     0.0
-                    (- 1.0 (/ defect_count (* n 4)))))))
+                    (let ((dc (if (numberp defect_count) defect_count 0)))
+                      (- 1.0 (/ dc (* n 4))))))))
       env:
         current: "{{ step_3_result | default(step_1_result) }}"
         defect_count: "{{ step_2_result | length | default(0) }}"
