@@ -110,9 +110,9 @@ pub enum CuratorDirective {
     /// Replenish an agent's energy budget by a specific amount.
     ///
     /// Used when an agent has exhausted its budget but Curation
-    /// \[NORMATIVE\] determines it should continue operating. This is the Curator's (P9 — Homeostatic Self-Regulation).
-    /// ability to inject energy into the system, analogous to Ethereum's
-    /// gas refund mechanism but governed by human/curator authority.
+    /// \[NORMATIVE\] determines it should continue operating. This is the
+    /// Curator's ability to inject energy into the system (P9 — Homeostatic
+    /// Self-Regulation), governed by human/curator authority.
     ReplenishBudget {
         agent: WebID,
         amount: u64,

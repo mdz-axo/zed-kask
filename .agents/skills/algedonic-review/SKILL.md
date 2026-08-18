@@ -50,8 +50,9 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 ### VERIFY — Confirm backlog cleared (step 5)
 
 1. Call `curator_escalations` again to confirm the backlog is reduced.
-2. Render the `algedonic-review/verify-cleared` template to summarize what was resolved, what was dismissed, and what remains pending.
-3. If the backlog is not reduced (operator declined to act), the skill notes this and exits — the alerts remain for the next review cycle.
+2. Call `curator_clear_algedonic_log` to clear reviewed alerts from the in-memory log (frees the log before it evicts entries unread).
+3. Render the `algedonic-review/verify-cleared` template to summarize what was resolved, what was dismissed, and what remains pending.
+4. If the backlog is not reduced (operator declined to act), the skill notes this and exits — the alerts remain for the next review cycle.
 
 ## Registry Templates
 

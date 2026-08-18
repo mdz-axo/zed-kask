@@ -644,6 +644,45 @@ impl RegulationLedger {
         }
     }
 
+    /// Clear reviewed alerts from the in-memory algedonic log.
+    ///
+    /// Called by the `algedonic-review` skill (via the `AlgedonicLogSink`
+    /// bridge) after the operator has reviewed the log and confirmed that
+    /// escalated alerts have been persisted to the `EscalationQueue`. Retains
+    /// unresolved Critical alerts (those that have not been escalated yet)
+    /// so the live signal is not lost.
+    ///
+    /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation — clearing reviewed alerts closes the review loop
+    /// post: reviewed alerts cleared from the in-memory log; unresolved Critical alerts retained
+    pub async fn clear_reviewed_alerts(&self) {
+        let state = self.state.write().await;
+        let mut mgr = state.algedonic.write();
+        mgr.clear_reviewed(true);
+    }
+
+    /// Whether the in-memory algedonic log is approaching its cap.
+    ///
+    /// When true, the cybernetics loop emits an `AlgedonicLogApproachingCap`
+    /// signal so the operator (or the `algedonic-review` skill) can review
+    /// and clear reviewed entries before they are evicted unread.
+    ///
+    /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
+    /// post: returns true iff the log is ≥ 80% of the cap
+    pub async fn alert_log_approaching_cap(&self) -> bool {
+        let state = self.state.read().await;
+        state.algedonic.read().log_approaching_cap()
+    }
+
+    /// Number of alerts currently in the in-memory algedonic log.
+    ///
+    /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
+    /// post: returns the current alert count
+    pub async fn alert_log_count(&self) -> usize {
+        let state = self.state.read().await;
+        state.algedonic.read().alert_count()
+    }
+
     // ── Variety ──
 
     /// Get variety counts across all domains.

@@ -902,7 +902,7 @@ fn main() {
         // the grounding path is implemented but inert at runtime.
         let verification_store_for_model_task = verification_store.clone();
         let metacognition_loop = std::sync::Arc::new(
-            hkask_regulation::MetacognitionLoop::new(regulation_ledger)
+            hkask_regulation::MetacognitionLoop::new(regulation_ledger.clone())
                 .with_alert_receiver(alert_rx)
                 .with_alert_sink(alert_sink)
                 .with_verification_store(verification_store),
@@ -933,6 +933,17 @@ fn main() {
             std::sync::Arc::new(kask_bridge::BridgeCuratorDirectiveSink::new(directive_tx));
         agent::set_curator_directive_sink(Some(directive_sink));
         log::info!("Curator directive sink wired to CuratorDirectiveTool");
+
+        // zed-kask: algedonic log sink wiring.
+        // Wire the algedonic log sink so the CuratorClearAlgedonicLogTool
+        // can clear reviewed alerts from the in-memory AlgedonicManager log
+        // and query the log cap status. The sink wraps the RegulationLedger.
+        let algedonic_log_sink: std::sync::Arc<dyn agent::AlgedonicLogSink> =
+            std::sync::Arc::new(kask_bridge::BridgeAlgedonicLogSink::from_shared(
+                regulation_ledger,
+            ));
+        agent::set_algedonic_log_sink(Some(algedonic_log_sink));
+        log::info!("Algedonic log sink wired to CuratorClearAlgedonicLogTool");
         let mcp_runtime_for_startup = mcp_runtime.clone();
         let tool_port = mcp_runtime;
         // No capability token is threaded through the bridge. `McpRuntime::invoke`
