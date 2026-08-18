@@ -133,10 +133,11 @@ where
         open_file_paths,
         candidates,
     };
-    let mcp_tool_count = tool_map
-        .keys()
-        .filter(|name| !built_in_names.contains(name.as_ref()))
-        .count();
+    // `candidates` was built by filtering out built-in tools, so its length
+    // is the MCP tool count. The prior implementation re-iterated
+    // `tool_map.keys()` filtering against `built_in_names` to compute the
+    // same value — a redundant O(tools) pass on every `enabled_tools` call.
+    let mcp_tool_count = context.candidates.len();
     let selected = router.select_tools(&context);
 
     // An empty selection is not a selection — it is the scorer failing to find
@@ -269,15 +270,19 @@ impl ToolRouter for LazyToolRouter {
 
         // Decide whether to activate. The router is lazy — it only filters
         // when the request is complex or explicitly tool-directed.
-        if !self.should_activate(message, &context.open_file_paths) {
-            return None; // Not activated → fail-open.
-        }
-
-        let context_keywords = extract_context_keywords(context);
+        // `has_code_file` is computed once here and passed to `should_activate`
+        // (which uses it in branch 3) and reused for scoring below — the prior
+        // implementation recomputed it inside `should_activate` and discarded
+        // the result, then recomputed it again here.
         let has_code_file = context
             .open_file_paths
             .iter()
             .any(|path| is_code_file(path));
+        if !self.should_activate(message, has_code_file) {
+            return None; // Not activated → fail-open.
+        }
+
+        let context_keywords = extract_context_keywords(context);
 
         // Rank, then take a budget -- rather than admitting everything above an
         // absolute threshold.
@@ -354,7 +359,7 @@ impl LazyToolRouter {
     ///
     /// Does NOT activate for simple greetings, short questions, or messages
     /// with no tool-relevant signal.
-    fn should_activate(&self, message: &str, open_file_paths: &[String]) -> bool {
+    fn should_activate(&self, message: &str, has_code_file: bool) -> bool {
         let lower = message.to_lowercase();
         let word_count = message.split_whitespace().count();
 
@@ -387,7 +392,6 @@ impl LazyToolRouter {
 
         // 3. Code file open + file/edit/search keywords — activate to
         // narrow to relevant code tools.
-        let has_code_file = open_file_paths.iter().any(|path| is_code_file(path));
         if has_code_file {
             let code_signals = [
                 "edit",

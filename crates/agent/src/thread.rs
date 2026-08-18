@@ -65,7 +65,7 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle};
@@ -89,6 +89,16 @@ pub(crate) const FOLLOW_UP_PERMISSION_DENIED_OPTION_ID: &str = "follow_up_permis
 /// it with an actionable message so the model knows to retry with a simpler
 /// call instead of treating it as an arbitrary failure.
 pub(crate) const TOOL_INPUT_NOT_FULLY_RECEIVED: &str = "tool input was not fully received";
+
+/// Process-static `HashSet` of built-in tool names, built once from the
+/// compile-time `ALL_TOOL_NAMES` const. The input never changes for the
+/// process lifetime, so a `LazyLock` avoids rebuilding the `HashSet` on
+/// every `enabled_tools` call (which runs once per tool-call round).
+/// Uses the default hasher to match `apply_router_bypassing_built_ins`'s
+/// signature — the per-call cost difference vs `FxHashSet` is negligible
+/// for ~30 entries used only for `contains()` lookups.
+static BUILT_IN_TOOL_NAMES: LazyLock<std::collections::HashSet<&'static str>> =
+    LazyLock::new(|| crate::tools::ALL_TOOL_NAMES.iter().copied().collect());
 
 /// If `error` is the `ToolInput::recv()` channel-closed error, return a
 /// model-facing message that explains the cause and suggests a remedy.
@@ -5084,8 +5094,7 @@ impl Thread {
         // the model to discover the loss by getting "tool not found" errors
         // mid-turn.
         if let Some(router) = crate::tool_router() {
-            let built_in_names: std::collections::HashSet<&str> =
-                crate::tools::ALL_TOOL_NAMES.iter().copied().collect();
+            let built_in_names: &std::collections::HashSet<&'static str> = &BUILT_IN_TOOL_NAMES;
             let open_file_paths: Vec<String> = self
                 .project
                 .read(cx)

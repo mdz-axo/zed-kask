@@ -565,6 +565,13 @@ pub struct SwarmPanel {
     /// Per-view connection store for the Steer `ConversationView`. One store =
     /// one connection = one prompt, preventing cross-view prompt bleed.
     steer_connection_store: Option<Entity<AgentConnectionStore>>,
+    /// Last-seen `kask.swarm.mode` value, used to detect mode changes that
+    /// invalidate the Steer conversation's baked-in system prompt. The Steer
+    /// prompt interpolates the mode at construction (`ensure_steer_conversation`),
+    /// so a toggle after construction leaves the curator steering against the
+    /// wrong backend. The `SettingsStore` observer compares against this and
+    /// tears down the conversation when the mode actually changes.
+    last_swarm_mode: Option<kask_bridge::SwarmModeConfig>,
     /// R2: spend/consent state (balances, in-flight spend, hire consent,
     /// hire-flow errors).
     spend: SpendState,
@@ -711,7 +718,19 @@ impl SwarmPanel {
             // shown), but settings changes can still affect the entry list
             // indirectly (e.g. an MCP server restart re-fetches), so the
             // observer stays as a re-render trigger.
+            //
+            // The observer also detects `kask.swarm.mode` changes and tears
+            // down the Steer conversation — the Steer system prompt bakes the
+            // mode in at construction (`ensure_steer_conversation`), so a
+            // toggle would leave the curator steering against the wrong
+            // backend. Mirrors `kanban_panel::select_board`, which tears down
+            // on `selected_board_id` change for the same reason.
             let settings_sub = cx.observe_global::<SettingsStore>(|this, cx| {
+                let mode = Self::current_swarm_mode(cx);
+                if this.last_swarm_mode.as_ref() != Some(&mode) {
+                    this.last_swarm_mode = Some(mode);
+                    this.steer_conversation = None;
+                }
                 this.filter_entries(cx);
             });
             let subscriptions = [query_sub, settings_sub];
@@ -756,6 +775,7 @@ impl SwarmPanel {
                 compose,
                 steer_conversation: None,
                 steer_connection_store: None,
+                last_swarm_mode: Some(Self::current_swarm_mode(cx)),
                 spend: SpendState {
                     in_flight: None,
                     pending_hire: None,

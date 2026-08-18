@@ -59,15 +59,20 @@ const MEMORY_CONTEXT_CLOSE: &str = "--- End Memory Context ---";
 
 /// Kask-specific tool-use warnings appended to every coding-agent thread's
 /// system prompt via `inject_static_context`. The upstream Zed agent harness
-/// prompt already carries general tool-use guidance ("Do not waste tokens by
-/// re-reading files...", "send a brief preamble...", a 3-strikes loop rule);
-/// this const adds kask-specific warnings for tool failure modes we have
-/// observed in production (`read_file` returning "tool input was not fully
-/// received", `edit_file` `old_text` mismatch loops, opaque `terminal`
-/// commands with no preamble). The upstream tool implementations and prompt
-/// are out of scope per `DIVERGENCE.md` (don't edit upstream speculatively);
-/// this is the kask-owned lever — appended via the static-context injection
-/// path, never by editing `system_prompt.hbs`.
+/// prompt (`system_prompt.hbs`) already carries general tool-use guidance:
+/// "Do not waste tokens by re-reading files after `write_file`/`edit_file`"
+/// (L44), "send a brief one- to two-sentence preamble" (L45), and a 3-strike
+/// loop guardrail (L54). This const adds ONLY kask-specific failure-mode
+/// guidance not covered by the base prompt: the `read_file` "tool input was
+/// not fully received" fallback, the `edit_file` `old_text`-mismatch retry
+/// strategy, the `terminal` `timeout_ms` requirement, and the stale-diagnostics
+/// rule. The general anti-loop rule and the re-read-after-success rule are NOT
+/// restated here — they are already in `system_prompt.hbs`.
+///
+/// The upstream tool implementations and prompt are out of scope per
+/// `DIVERGENCE.md` (don't edit upstream speculatively); this is the kask-owned
+/// lever — appended via the static-context injection path, never by editing
+/// `system_prompt.hbs`.
 ///
 /// Rendered once per session (not per turn) and cached on
 /// `Thread.static_context`, so it lands in the system prompt after the
@@ -77,12 +82,11 @@ const MEMORY_CONTEXT_CLOSE: &str = "--- End Memory Context ---";
 pub(crate) const TOOL_WARNING_PROMPT: &str = "\
 ## Tool failure-mode warnings (kask)
 
-The built-in file/terminal tools have known failure modes. Follow these rules to avoid loops:
+The built-in file/terminal tools have known failure modes. Follow these rules:
 
-- `read_file`: Do not re-read a file after `write_file`/`edit_file`/`create_directory`/`delete_path` returns success — the tool fails loudly on error, so success means the change landed. Do not loop on stale per-file diagnostics (the crate lib root is authoritative). Do not read a path that hasn't been mentioned or discovered first. If `read_file` returns \"tool input was not fully received\" or an outline-only result, retry once with explicit `start_line`/`end_line`; if it fails again, fall back to `terminal` (`sed`/`cat`) for that read and note the malfunction.
-- `edit_file`: Read the file first; make surgical `old_text`/`new_text` edits. If an edit fails because `old_text` didn't match, re-read the targeted region once and retry with the exact current text — do not loop blindly on the same `old_text`, and do not fall back to `write_file` to overwrite unrelated content.
-- `terminal`: Always send a 1–2 sentence preamble before the call stating what the command does and why; never run a command whose effect the user can't infer from the preamble + command text; prefer `read_file`/`edit_file`/`grep`/`find_path` over shell for file inspection; bound long-running commands with `timeout_ms`.
-- General anti-loop rule: if the same tool call (same args, same target) fails or returns the same result 3× in a row, stop, summarize what was tried, and ask the user — do not continue the loop. This covers \"returns the same result\" (e.g. `read_file` returning the same outline) not just \"same error.\"";
+- `read_file`: Do not loop on stale per-file diagnostics (the crate lib root is authoritative). Do not read a path that hasn't been mentioned or discovered first. If `read_file` returns \"tool input was not fully received\" or an outline-only result, retry once with explicit `start_line`/`end_line`; if it fails again, fall back to `terminal` (`sed`/`cat`) for that read and note the malfunction.
+- `edit_file`: If an edit fails because `old_text` didn't match, re-read the targeted region once and retry with the exact current text — do not loop blindly on the same `old_text`, and do not fall back to `write_file` to overwrite unrelated content.
+- `terminal`: Never run a command whose effect the user can't infer from the preamble + command text; prefer `read_file`/`edit_file`/`grep`/`find_path` over shell for file inspection; bound long-running commands with `timeout_ms`.";
 
 /// Neutralize occurrences of the closing data-boundary marker inside snippet
 /// text so recalled content cannot close its own data frame and inject
@@ -498,8 +502,13 @@ mod tests {
     #[test]
     fn tool_warning_prompt_contains_key_warnings() {
         // D26 pin: the warning text must mention each tool and the
-        // anti-loop rule. If a warning is dropped from the const, this
-        // test fails — preventing silent regression of the guidance.
+        // kask-specific failure modes. If a warning is dropped from the
+        // const, this test fails — preventing silent regression of the
+        // guidance. The general 3-strike anti-loop rule is NOT asserted here
+        // because it lives in `system_prompt.hbs` (L54), not in this const —
+        // restating it here was duplication (the base prompt already carries
+        // it). Each assertion below is for a kask-specific failure mode not
+        // covered by the base prompt.
         assert!(
             TOOL_WARNING_PROMPT.contains("read_file"),
             "must warn about read_file"
@@ -517,8 +526,12 @@ mod tests {
             "must warn about the observed read_file glitch"
         );
         assert!(
-            TOOL_WARNING_PROMPT.contains("3×"),
-            "must contain the 3-strikes anti-loop rule"
+            TOOL_WARNING_PROMPT.contains("old_text"),
+            "must warn about the edit_file old_text-mismatch retry strategy"
+        );
+        assert!(
+            TOOL_WARNING_PROMPT.contains("timeout_ms"),
+            "must warn about bounding long-running terminal commands"
         );
     }
 }
