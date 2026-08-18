@@ -66,7 +66,11 @@ pub(crate) fn to_a2a_card(card: &LocalAgentCard, base_url: &str) -> AgentCard {
         .collect::<Vec<_>>();
 
     AgentCard {
-        name: card.agent_id.clone(),
+        name: if card.display_name.is_empty() {
+            card.agent_id.clone()
+        } else {
+            card.display_name.clone()
+        },
         description: description_or_fallback(card),
         version: "1.0.0".to_string(),
         supported_interfaces: vec![a2a::AgentInterface {

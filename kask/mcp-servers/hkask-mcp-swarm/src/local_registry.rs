@@ -561,6 +561,7 @@ mod tests {
             agent_id: "..".to_string(),
             agent_type: "x".to_string(),
             description: String::new(),
+            display_name: String::new(),
             accepts: vec![],
             produces: vec![],
             dependencies: LocalAgentDependencies::default(),
@@ -932,6 +933,64 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // ── unique_clone_id tests ────────────────────────────────────────────
+
+    fn write_minimal_card(dir: &std::path::Path, agent_id: &str) {
+        std::fs::create_dir_all(dir.join(agent_id)).unwrap();
+        std::fs::write(
+            dir.join(agent_id).join("agent_card.json"),
+            serde_json::json!({
+                "agent_id": agent_id,
+                "agent_type": "test",
+                "capabilities": { "system_prompt": "test" }
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn unique_clone_id_returns_clone_suffix_for_empty_registry() {
+        let dir = std::env::temp_dir().join("hkask_swarm_test_clone_id_empty");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+        registry.load().expect("load");
+        // No existing cards — first clone gets the bare `-clone` suffix.
+        assert_eq!(registry.unique_clone_id("xaman-ek"), "xaman-ek-clone");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unique_clone_id_appends_suffix_on_collision() {
+        let dir = std::env::temp_dir().join("hkask_swarm_test_clone_id_collision");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Pre-seed: `xaman-ek-clone` already exists.
+        write_minimal_card(&dir, "xaman-ek-clone");
+        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+        registry.load().expect("load");
+        // `-clone` is taken → next candidate is `-clone-2`.
+        assert_eq!(registry.unique_clone_id("xaman-ek"), "xaman-ek-clone-2");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unique_clone_id_finds_gap() {
+        let dir = std::env::temp_dir().join("hkask_swarm_test_clone_id_gap");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Pre-seed: `-clone` and `-clone-3` exist, `-clone-2` is free.
+        write_minimal_card(&dir, "xaman-ek-clone");
+        write_minimal_card(&dir, "xaman-ek-clone-3");
+        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+        registry.load().expect("load");
+        // The helper scans sequentially from suffix=2, so it fills the first
+        // gap: `-clone-2`.
+        assert_eq!(registry.unique_clone_id("xaman-ek"), "xaman-ek-clone-2");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // ── Property-based tests ──────────────────────────────────────────────
 
     use proptest::prelude::*;
@@ -966,6 +1025,7 @@ mod tests {
                         agent_id,
                         agent_type,
                         description,
+                        display_name: String::new(),
                         accepts,
                         produces,
                         dependencies: LocalAgentDependencies { required, optional },

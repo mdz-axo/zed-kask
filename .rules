@@ -72,6 +72,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Convention priors from `.rules` must be verified against the codebase before use — rules can be stale.
 * `thinking_budget` in template `[inference]` blocks must be `"full"`/`"on"` or `"off"`/`"none"` only. The parser at `step_actions.rs:260-278` does not recognize `"minimal"`, `"low"`, `"medium"`, `"standard"`, or `"high"` — these silently fall back to thinking-ON (the opposite of the author's intent for low-thinking steps). Wasted thinking tokens on low-budget steps cause the same empty-output failure as the Falstaffian bug.
 * `select` steps with `thinking_budget = "full"` must have `max_tokens >= 8192` when the template receives large JSON inputs (Company Board, axiom graph, charter context) or emits large structured outputs (10+ fields). Thinking tokens count against `max_tokens` — a 4096 budget with full thinking leaves ~2K for output, which triggers the empty-output guard at `step_actions.rs:394`.
+* Gas and rJoule are separate budgets with different units. Gas = compute cycles (250,000 gas = $1 USD). rJoule = inference/API expenditure (1 rJoule = $1 USD). Step-level `gas_cap` in manifests is gas (compute), not tokens — never set `gas_cap` to a token count (e.g. 4096, 8192). Token cost is charged to rJoule via `BudgetTracker::charge_rjoule` using `InferenceResult.cost_usd`, not to gas. The kata-kanban `deduct_task_rjoules` method charges `cost_usd` (as micro-rJoules) to `task.rjoule_remaining`, not token counts to `task.gas_remaining`.
 
 ## Settings and constants
 

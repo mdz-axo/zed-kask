@@ -112,7 +112,9 @@ impl TaskSpec {
         self
     }
 
-    /// Set the gas/rJoule budget for the subagent working on this task.
+    /// Set the compute gas budget for the subagent working on this task.
+    /// Gas measures compute cycles (250,000 gas = $1 USD). Distinct from rJoule
+    /// which measures inference/API expenditure.
     #[must_use = "builder methods must be chained or assigned"]
     pub fn with_gas_budget(mut self, gas: u64) -> Self {
         self.gas_budget = Some(gas);

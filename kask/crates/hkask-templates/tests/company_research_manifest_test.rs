@@ -107,16 +107,19 @@ fn company_research_flash_manifest_parses() {
 #[test]
 fn company_research_flash_has_expected_step_count() {
     let manifest = load_named_manifest("company-research-flash");
-    // 0 (forecast_list) + 1 (SCOUT) + 2/3/4 (INTEL) + 5 (semantic-classify) +
-    // 6/7 (listening) + 8 (FORENSIC pre) + 9/10 (CRITICAL FACTOR) +
-    // 11/12 (FORENSIC full) + 13/14/15/16/17 (VALUATION) + 18 (COMM) +
-    // 19/20 (KATA MCP) + 21 (calibration-measure) + 22 (kata-direction) +
-    // 23/24 (LENS MCP) + 25 (LENS) + 26 (convergence) + 27 (loop) +
-    // 28 (forecast_persist) = 29 steps.
+    // 0 (forecast_list) + 1 (SCOUT) + 2 (INTEL mcp_batch: research_search + web_search) +
+    // 3 (intel-mosaic) + 4 (semantic-classify) + 5 (company_transcript) +
+    // 6 (listening flowdef) + 7 (listening apply) + 8 (scenario_build) +
+    // 9 (CRITICAL FACTOR) + 10 (company_transcript) + 11 (FORENSIC full) +
+    // 12 (VALUATION mcp_batch: dcf + comparables + expectations + scenario_impact) +
+    // 13 (valuation-8step) + 14 (COMM) + 15 (market_check_resolutions) +
+    // 16 (market_calibration) + 17 (kata-direction) + 18 (kata-calibration-measure) +
+    // 19 (market_match) + 20 (evaluate_evidence) + 21 (LENS) + 22 (convergence) +
+    // 23 (loop) + 24 (forecast_persist) = 25 steps.
     assert_eq!(
         manifest.steps.len(),
-        29,
-        "company-research-flash must have 29 steps (27 original + 2 cross-skill adapters: semantic-classify step 5 + calibration-measure step 21), got {}",
+        25,
+        "company-research-flash must have 25 steps (consolidated mcp_batch steps reduce count from original 29), got {}",
         manifest.steps.len()
     );
 }
@@ -129,15 +132,17 @@ fn company_research_flash_execute_steps_have_mcp_fields() {
         .iter()
         .filter(|s| s.action == "execute")
         .collect();
-    // 0 (forecast_list) + 2 (research_search) + 3 (web_search) +
+    // 0 (forecast_list) + 2 (mcp_batch: research_search + web_search) +
     // 5 (company_transcript) + 8 (scenario_build) + 10 (company_transcript) +
-    // 12 (dcf_valuation) + 13 (comparable_analysis) + 14 (expectations_gap) +
-    // 15 (scenario_impact_valuation) + 18 (market_check_resolutions) +
-    // 19 (market_calibration) + 21 (market_match) + 22 (evaluate_evidence) +
-    // 26 (forecast_persist) = 15 execute steps.
+    // 12 (mcp_batch: dcf + comparables + expectations + scenario_impact) +
+    // 15 (market_check_resolutions) + 16 (market_calibration) +
+    // 19 (market_match) + 20 (evaluate_evidence) + 24 (forecast_persist) = 11 execute steps.
     assert_eq!(
         execute_steps.len(),
-        15,
+        11,
+        "expected 11 execute steps (consolidated mcp_batch steps reduce count from original 15), got {}",
+        execute_steps.len()
+    );
         "expected 15 execute steps (14 + forecast_persist step 26), got {}",
         execute_steps.len()
     );
