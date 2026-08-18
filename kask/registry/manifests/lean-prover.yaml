@@ -129,7 +129,7 @@ steps:
       Deterministic convergence signal: the counterexample count from the
       refutation step. Lower signal variance across iterations = convergence
       (Cauchy). Using lisp.eval instead of a Jinja expression makes the
-      computation explicitly deterministic, budgeted (gas_cap: 100), and
+      computation explicitly deterministic, budgeted (timeout_seconds: 10), and
       observable via a reg.skill.lean-prover span. Guards against a missing
       counterexamples field by returning 0 when absent.
     timeout_seconds: 10

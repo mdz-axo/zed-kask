@@ -66,7 +66,7 @@ steps:
       essentialist 3-gate elimination report. Lower signal variance across
       iterations = convergence (Cauchy). Using lisp.eval instead of a Jinja
       expression makes the computation explicitly deterministic, budgeted
-      (gas_cap: 100), and observable via a reg.skill.essentialist span.
+      (timeout_seconds: 10), and observable via a reg.skill.essentialist span.
       Guards against missing nested fields (elimination_report /
       essentialism_score / items_removed) by returning 0 when absent — a
       stable reading that lets Cauchy fire after min_iterations.

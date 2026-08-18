@@ -49,7 +49,7 @@ Validate **all skills** in the registry directory.
 | R4 | Template entry valid | Each entry has `id`, `path`, `type`, `description` |
 | R5 | template_type valid | Each .j2 `template_type` in {WordAct, KnowAct, FlowDef, RenderAct} |
 | R6 | Contract valid | Each .j2 has `contract.input` and `contract.output` with typed fields |
-| R7 | (removed) | energy_cap was removed — per-template token budget is controlled by `max_tokens` in the `[inference]` block, and per-step compute budget by `gas_cap` in the manifest |
+| R7 | (removed) | energy_cap was removed — per-step compute budget is no longer tracked; timeout is the sole kill switch |
 | R8 | Visibility valid | Each .j2 `visibility` in {Private, Public, Shared} |
 | R9 | .j2 file exists | Each template entry's `path` resolves to an actual .j2 file |
 | R10 | [inference] frontmatter valid | Each .j2 starts with `[inference]` block |
@@ -87,12 +87,10 @@ dispatches only canonical actions; non-canonical actions cause runtime errors.
 | ID | Check | Pass Criteria | Severity |
 |----|-------|---------------|----------|
 | E1 | Action compliance | Every step's `action` is one of: `select`, `populate`, `compute`, `execute`, `feedback`, `validate`, `retrieve`, `render`, `flowdef`, `loop`, `choice`, `abort`, `escalate`. No `evaluate`, `run_command`, `classify`, `mcp_tool`, `check`, `call`, `emit`, `recall`, `record`, or other non-canonical actions. | Critical |
-| E2 | Gas block present | Manifest has a `gas:` block with `cap > 0`, `cost_per_iteration`, `alert_threshold`, `hard_limit`. | Critical |
-| E3 | Gas cap adequate | `gas.cap` proportional to step count: simple KnowAct (1-3 steps) ≥ 5,000; multi-step FlowDef (4-7 steps) ≥ 50,000; media generation ≥ 100,000. | Medium |
-| E4 | rJoule block present | Manifest has an `rjoule:` block. If any step uses `action: select` (inference), `rjoule.cap` must be > 0. Cap proportional to inference calls: 1-2 for simple skills, 3-5 for multi-step, 5+ for media generation. | Critical |
-| E5 | Convergence block | For `category: skill` manifests: `convergence:` block with `convergence_mode` (e.g. "cauchy", "" for single-pass), `max_iterations`, `min_iterations`, `on_not_reached` ("abort", "escalate", or "proceed"). Cauchy-mode manifests should have `cauchy_epsilon` and `target_artifacts_field`. Legacy fields `threshold` and `convergence_field` are deprecated but tolerated. | Critical |
-| E6 | Category valid | `manifest.category` is one of: `skill`, `qa-script`, `runtime-config`, `daemon-process`, `pipeline`. Only `skill` manifests are agent-invokable. | Critical |
-| E7 | Template ref resolvable | Every `template_ref` (that is not a runtime-resolved `{% raw %}{{...}}{% endraw %}` or `{% raw %}${...}{% endraw %}` expression) resolves to an embedded `.j2` or `.yaml` file in `registry/templates/`. | Critical |
+| E2 | rJoule block present | Manifest has an `rjoule:` block. If any step uses `action: select` (inference), `rjoule.cap` must be > 0. Cap proportional to inference calls: 1-2 for simple skills, 3-5 for multi-step, 5+ for media generation. | Critical |
+| E3 | Convergence block | For `category: skill` manifests: `convergence:` block with `convergence_mode` (e.g. "cauchy", "" for single-pass), `max_iterations`, `min_iterations`, `on_not_reached` ("abort", "escalate", or "proceed"). Cauchy-mode manifests should have `cauchy_epsilon` and `target_artifacts_field`. Legacy fields `threshold` and `convergence_field` are deprecated but tolerated. | Critical |
+| E4 | Category valid | `manifest.category` is one of: `skill`, `qa-script`, `runtime-config`, `daemon-process`, `pipeline`. Only `skill` manifests are agent-invokable. | Critical |
+| E5 | Template ref resolvable | Every `template_ref` (that is not a runtime-resolved `{% raw %}{{...}}{% endraw %}` or `{% raw %}${...}{% endraw %}` expression) resolves to an embedded `.j2` or `.yaml` file in `registry/templates/`. | Critical |
 | E8 | Sub-manifest budgets | Any `template_ref` pointing to a `.yaml` sub-manifest (FlowDef recursion) must have `gas` and `rjoule` blocks in the sub-manifest. Sub-manifest `rjoule.cap` should be > 0 if the sub-manifest uses inference. | High |
 | E9 | Step description | Every step has a non-empty `description` field. | Critical |
 | E10 | Ordinal sequence | Step ordinals are sequential starting from 1 (or 0 for pre-processing steps). | Medium |

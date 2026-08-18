@@ -81,7 +81,7 @@ steps:
       the diagnostic step. Lower signal variance across iterations =
       convergence (Cauchy). Using lisp.eval instead of a Jinja expression
       makes the computation explicitly deterministic, budgeted
-      (gas_cap: 100), and observable via a reg.skill.pragmatic-cybernetics
+      (timeout_seconds: 10), and observable via a reg.skill.pragmatic-cybernetics
       span. Guards against a missing unviable_components field by returning
       0 when absent.
     timeout_seconds: 10

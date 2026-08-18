@@ -185,7 +185,7 @@ Default: integration test through public API.
 6. **Every test must reference the contract it validates.** The test function must carry an `// ANCHOR: dcterms:identifier=<qualified_name>` tag naming the codegraph entity it anchors to, plus a descriptive doc comment naming the contract's `expect:` statement. If a test has no `// ANCHOR:` tag, it tests implementation detail, not a codegraph entity.
 
    **Goal-principle anchoring rule** (`PRINCIPLES.md` §1.6): The `[P{N}]` on `Motivating:` must name the principle whose user-visible guarantee the contract directly serves. Selection logic:
-   - *"I need to check gas before executing"* → P9 (Homeostatic Self-Regulation)
+   - *"I need to check rJoules before executing"* → P9 (Homeostatic Self-Regulation)
    - *"I need to control my data"* → P1 (User Sovereignty)
    - *"I need to deploy with one binary"* → P5 (Essentialism)
    - *"I need my agent to respect capability boundaries"* → P4 (Clear Boundaries)
@@ -233,9 +233,9 @@ Respond with a JSON object:
 
 ```json
 {
-  "contract_code": "/// expect: \"I can check whether an agent has enough gas before executing\"\n/// [P9] Motivating: Homeostatic Self-Regulation — prevents runaway agent execution\n/// pre:  gas is a valid EnergyCost\n/// post: returns true iff budget has >= gas remaining\n/// inv:  does not consume gas\n/// [P4] Constraining: Clear Boundaries — cap enforces resource boundary\npub fn can_proceed(&self, gas: EnergyCost) -> bool { ... }",
+  "contract_code": "/// expect: \"I can check whether an agent has enough rJoules before executing\"\n/// [P9] Motivating: Homeostatic Self-Regulation — prevents runaway agent execution\n/// pre:  rJoules is a valid EnergyCost\n/// post: returns true iff budget has >= rJoules remaining\n/// inv:  does not consume rJoules\n/// [P4] Constraining: Clear Boundaries — cap enforces resource boundary\npub fn can_proceed(&self, rjoules: EnergyCost) -> bool { ... }",
   "contract_location": "path/to/implementation/file.rs:LINE",
-  "user_expectation": "I can check whether an agent has enough gas before executing",
+  "user_expectation": "I can check whether an agent has enough rJoules before executing",
   "goal_principle": {
     "principle": "P9",
     "name": "Homeostatic Self-Regulation",
@@ -248,7 +248,7 @@ Respond with a JSON object:
       "constraint": "Cap enforces resource boundary — no unbounded execution"
     }
   ],
-  "test_code": "// ANCHOR: dcterms:identifier=hkask_mcp::runtime::capabilities_match\n// expect: \"I can check whether an agent has enough gas before executing\"\n#[test]\nfn energy_budget_can_proceed() { ... }",
+  "test_code": "// ANCHOR: dcterms:identifier=hkask_mcp::runtime::capabilities_match\n// expect: \"I can check whether an agent has enough rJoules before executing\"\n#[test]\nfn energy_budget_can_proceed() { ... }",
   "test_file_path": "path/to/test/file.rs",
   "implementation_code": "// The minimal code to satisfy the contract",
   "implementation_file_path": "path/to/implementation/file.rs",
