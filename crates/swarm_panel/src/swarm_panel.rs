@@ -56,8 +56,8 @@ use anyhow::Result;
 use editor::Editor;
 use fs::Fs;
 use gpui::{
-    App, Context, Entity, EventEmitter, Focusable, Render, Task, UniformListScrollHandle,
-    WeakEntity, Window, actions, uniform_list,
+    App, Context, Entity, EventEmitter, Focusable, Render, ScrollHandle, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, uniform_list,
 };
 use hkask_types::tool_response::parse_tool_response;
 use marketplace_ui_common::{MarketplaceCard, marketplace_empty_state, marketplace_search_bar};
@@ -487,6 +487,18 @@ pub struct SwarmPanel {
     project: Entity<Project>,
     fs: std::sync::Arc<dyn Fs>,
     list: UniformListScrollHandle,
+    /// Scroll handle for the Author form's scrollable surface. The form is a
+    /// tall vertical stack (name, type, description, system prompt, tags,
+    /// visibility, valence, AI assist, action row) that overflows the panel
+    /// height when editing an agent with a complex prompt. Without a tracked
+    /// scroll handle the `overflow_y_scroll` div has no visible scrollbar and
+    /// the operator cannot reach the fields below the fold — keyed off the
+    /// same pattern `ConfigureContextServerModal` and `ThreadView` use.
+    author_scroll: ScrollHandle,
+    /// Scroll handle for the Compose form's scrollable surface. Same pattern
+    /// as `author_scroll` — the compose form (name, mission, agents, Xaman Ek
+    /// consultant, AI assist, action row) overflows on smaller panes.
+    compose_scroll: ScrollHandle,
     /// Number of fetch operations currently in flight (agents + swarms spawn
     /// independently). `is_fetching()` is true while any are in the air —
     /// avoids one fetch's completion hiding the other's spinner.
@@ -705,6 +717,8 @@ impl SwarmPanel {
             let subscriptions = [query_sub, settings_sub];
 
             let scroll_handle = UniformListScrollHandle::new();
+            let author_scroll = ScrollHandle::new();
+            let compose_scroll = ScrollHandle::new();
 
             let author = AuthorForm::new(window, cx);
             let compose = ComposeForm::new(window, cx);
@@ -719,6 +733,8 @@ impl SwarmPanel {
                 project,
                 fs,
                 list: scroll_handle,
+                author_scroll,
+                compose_scroll,
                 in_flight: 0,
                 agents_error: None,
                 swarms_error: None,
@@ -2745,25 +2761,44 @@ impl Render for SwarmPanel {
             .child(
                 v_flex()
                     .px_4()
-                    .size_full()
+                    .flex_1()
+                    .min_h_0()
                     .overflow_y_hidden()
                     .map(|this| match self.mode {
                         PanelMode::Author => this
                             .child(
-                                div()
-                                    .id("author-scroll")
-                                    .size_full()
-                                    .overflow_y_scroll()
-                                    .child(self.render_author(cx)),
+                                h_flex()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .child(
+                                        div()
+                                            .id("author-scroll")
+                                            .flex_1()
+                                            .min_h_0()
+                                            .overflow_y_scroll()
+                                            .track_scroll(&self.author_scroll)
+                                            .child(self.render_author(cx)),
+                                    )
+                                    .vertical_scrollbar_for(&self.author_scroll, window, cx)
+                                    .into_any_element(),
                             )
                             .into_any_element(),
                         PanelMode::Compose => {
                             this.child(
-                                div()
-                                    .id("compose-scroll")
-                                    .size_full()
-                                    .overflow_y_scroll()
-                                    .child(self.render_compose(cx)),
+                                h_flex()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .child(
+                                        div()
+                                            .id("compose-scroll")
+                                            .flex_1()
+                                            .min_h_0()
+                                            .overflow_y_scroll()
+                                            .track_scroll(&self.compose_scroll)
+                                            .child(self.render_compose(cx)),
+                                    )
+                                    .vertical_scrollbar_for(&self.compose_scroll, window, cx)
+                                    .into_any_element(),
                             )
                             .into_any_element()
                         }

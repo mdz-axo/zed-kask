@@ -1,0 +1,126 @@
+{# PDCA Kata-Pivot Template — Act phase with strategic method switching #}
+{# This is NOT a simple parameter tweak. It follows the kata-improvement #}
+{# pattern to diagnose WHY the current strategy failed and propose a #}
+{# DIFFERENT method (strategic pivot), not just adjusted parameters. #}
+{# #}
+{# Inputs: #}
+{#   phase, target_condition, actual_condition, missing_count, #}
+{#   strategy_used, iteration, max_iterations, step_output, #}
+{#   check_result, available_strategies #}
+{# #}
+{# Output: JSON with root_cause, next_strategy, strategy_params, #}
+{#   metacognition_notes, next_action #}
+You are the metacognition + kata-improvement layer of a PDCA COMPLETION gate.
+
+## Kata Improvement Cycle
+
+### Target Condition
+{{ target_condition }}
+
+### Actual Condition
+{{ actual_condition }}
+Missing: {{ missing_count }} items
+
+### Obstacles Analysis
+The current strategy ("{{ strategy_used }}") was used at iteration {{ iteration }} of {{ max_iterations }}.
+
+Previous step output:
+{{ step_output | tojson }}
+
+Check result:
+{{ check_result | tojson }}
+
+## Available Strategies (pivot ladder)
+{{ available_strategies }}
+
+## Task
+
+Follow the Toyota Improvement Kata:
+
+1. **Understand Direction**: The target is 100% completion — every item
+   processed. A 90% rate is NOT acceptable; it means 10% of the corpus
+   is missing.
+
+2. **Grasp Current Condition**: What specifically failed? How many items
+   are missing? What type of items (file types, sizes, formats)?
+
+3. **Establish Target Condition**: The next iteration must close the gap
+   to zero missing items. If the current strategy cannot achieve this,
+   pivot to a different strategy.
+
+4. **Experiment**: Propose the NEXT strategy from the pivot ladder. This
+   is a strategic pivot — a DIFFERENT method, not just tweaked parameters.
+   Only use the same strategy with different parameters if you believe
+   the failure was a parameter issue, not a method issue.
+
+## Strategy Selection Rules
+
+For the "{{ phase }}" phase:
+{% if phase == "convert" %}
+- corpus_convert: text extraction + OCR fallback. Fails on: OCR timeout,
+  inference bridge unavailable, scanned PDFs with no text layer.
+- corpus_ocr: direct OCR via inference bridge. Fails on: same inference
+  bridge issue, but per-file so timeouts are bounded.
+- direct_runpod_api: bypass corpus server, call RunPod endpoint directly
+  with curl. Works when inference bridge is down but RunPod API is up.
+- pdftotext: text-native PDFs only (no OCR). Fast, works for PDFs with
+  text layers. Fails on scanned PDFs.
+- skip_and_escalate: no more strategies. Log remaining files and proceed.
+{% elif phase == "chunk" %}
+- corpus_chunk_single_tier: simpler chunking, no multi-tier overhead.
+- corpus_chunk_smaller_tokens: reduce max_tokens for more, smaller chunks.
+- corpus_chunk_larger_tokens: increase max_tokens if chunks are too sparse.
+- re_run_convert: chunking failed because convert was incomplete — go back.
+- skip_and_escalate: no more strategies.
+{% elif phase == "tag" %}
+- reduce_concurrency: LLM rate limits — lower concurrency to 1-2.
+- switch_classifier_model: current model failing — try a different one.
+- batch_smaller: process chunks in smaller batches.
+- retry_untagged_only: only re-process chunks that weren't tagged.
+- skip_and_escalate: no more strategies.
+{% elif phase == "embed" %}
+- reduce_batch_size: embedding API rate limits — lower batch_size to 10-25.
+- switch_embedding_model: current model unavailable — try fallback.
+- retry_failed_only: only re-embed chunks that failed.
+- skip_and_escalate: no more strategies.
+{% elif phase == "extract_assertions" %}
+- reduce_concurrency: classifier rate limits — lower to 2-4.
+- switch_classifier_model: try a different classifier.
+- increase_max_assertions: chunks may need more extraction attempts.
+- retry_failed_only: only re-process chunks that failed.
+- skip_and_escalate: no more strategies.
+{% endif %}
+
+## Iteration Limit Check
+Current iteration: {{ iteration }}
+Max iterations: {{ max_iterations }}
+
+If iteration >= max_iterations - 1, you MUST select "skip_and_escalate"
+as the next strategy — the gate has exhausted its strategy ladder.
+
+## Output Format
+
+Return a JSON object:
+
+```json
+{
+  "root_cause": "<one-sentence diagnosis of WHY the current strategy failed>",
+  "obstacle_type": "timeout | rate_limit | model_unavailable | method_limitation | data_issue | unknown",
+  "next_strategy": "<the next strategy from the pivot ladder>",
+  "strategy_params": {
+    "<parameter_name>": "<value>"
+  },
+  "next_action": "retry | skip | escalate",
+  "predicted_completion": "<estimated completion % after applying this pivot>",
+  "metacognition_notes": "<kata reflection: what was learned about the failure mode that the next iteration should use>",
+  "kata_step": "understand_direction | grasp_current_condition | establish_target | experiment"
+}
+```
+
+The `strategy_params` object should contain the specific parameters the
+Do step needs for the next iteration (e.g., {"force_ocr": true} for convert,
+{"max_tokens": 256} for chunk, {"concurrency": 2} for tag).
+
+If next_strategy is "skip_and_escalate", set next_action to "escalate"
+and explain in metacognition_notes what was learned and what a human
+operator should do next.
