@@ -498,7 +498,11 @@ steps:
             (if (is_null cj) 1.0
               (if (is_null et) 1.0
                 (if (is_null rc) 1.0
-                  (/ (- 4.0 (+ cr cj et rc)) 4.0))))))
+                  (let ((cr-n (if (numberp cr) cr 1.0))
+                        (cj-n (if (numberp cj) cj 1.0))
+                        (et-n (if (numberp et) et 1.0))
+                        (rc-n (if (numberp rc) rc 1.0)))
+                    (/ (- 4.0 (+ cr-n cj-n et-n rc-n)) 4.0)))))))
       env:
         step_17_result: "{{ step_17_result }}"
 

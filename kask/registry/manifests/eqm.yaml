@@ -207,11 +207,11 @@ steps:
                                 (if (= count 0) 1.0 (/ acc count))
                                 (let ((k (car (car m1)))
                                       (v (cdr (car m1))))
-                                  (let ((curr-c (assoc "mean_composite" v))
+                                  (let ((curr-c-raw (assoc "mean_composite" v))
                                         (prior-v (assoc k m2)))
-                                    (let ((prior-c (if (is_null prior-v)
-                                                        0.0
-                                                        (assoc "mean_composite" prior-v))))
+                                    (let ((curr-c (if (numberp curr-c-raw) curr-c-raw nil))
+                                          (prior-c (let ((pv (if (is_null prior-v) nil (assoc "mean_composite" prior-v))))
+                                                     (if (numberp pv) pv 0.0))))
                                       (if (is_null curr-c)
                                           (compute-mean-delta (cdr m1) acc count)
                                           (compute-mean-delta

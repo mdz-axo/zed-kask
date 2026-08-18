@@ -145,7 +145,7 @@ steps:
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
-      form: "(- 1.0 (assoc \"resistance_rate\" step_3_result))"
+      form: "(let ((rr (assoc \"resistance_rate\" step_3_result))) (if (is_null rr) 1.0 (let ((rr-n (if (numberp rr) rr 1.0))) (- 1.0 rr-n))))"
       env:
         step_3_result: "{{ step_3_result }}"
       max_steps: 10000

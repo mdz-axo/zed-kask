@@ -176,14 +176,16 @@ steps:
                     (call_site_count (assoc "call_site_count" checks)))
                 (let ((compiled (if (string= compiled-raw "false") false compiled-raw))
                       (tests_passed (if (string= tests-raw "false") false tests-raw))
-                      (invariant_holds (if (string= invariant-raw "false") false invariant-raw)))
+                      (invariant_holds (if (string= invariant-raw "false") false invariant-raw))
+                      (mc (if (numberp marker_count) marker_count 0))
+                      (csc (if (numberp call_site_count) call_site_count 0)))
                   (if (and compiled tests_passed invariant_holds
-                           (>= marker_count (* call_site_count 0.5)))
+                           (>= mc (* csc 0.5)))
                       (list (list "verification_passed" true)
-                            (list "marker_density" (/ marker_count call_site_count))
+                            (list "marker_density" (if (= csc 0) 0.0 (/ mc csc)))
                             (list "convergence_metric" 1.0))
                       (list (list "verification_passed" false)
-                            (list "marker_density" (/ marker_count call_site_count))
+                            (list "marker_density" (if (= csc 0) 0.0 (/ mc csc)))
                             (list "convergence_metric" 0.0)))))))
       env:
         step_4_result: "{{ step_4_result }}"

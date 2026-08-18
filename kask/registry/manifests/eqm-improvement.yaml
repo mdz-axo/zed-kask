@@ -295,7 +295,7 @@ steps:
                                           (let ((find-curr
                                                   (lambda (css found)
                                                     (if (is_null css)
-                                                        0
+                                                        nil
                                                         (let ((c (car css)))
                                                           (if (string= (assoc "id" c) t-id)
                                                               (assoc "score" c)
@@ -303,8 +303,10 @@ steps:
                                             (let ((c-score (find-curr curr-scores 0)))
                                               (if (is_null c-score)
                                                   (compute-gap cs (cdr ts) acc count)
-                                                  (let ((delta (- t-score c-score)))
-                                                    (compute-gap cs (cdr ts) (+ acc (* delta delta)) (+ count 1))))))))))))
+                                                  (let ((t-n (if (numberp t-score) t-score 0.0))
+                                                        (c-n (if (numberp c-score) c-score 0.0)))
+                                                    (let ((delta (- t-n c-n)))
+                                                      (compute-gap cs (cdr ts) (+ acc (* delta delta)) (+ count 1))))))))))))
                           (compute-gap curr-scores targets 0.0 0)))))))
       env:
         step_6_result: "{{ step_6_result }}"
@@ -343,9 +345,10 @@ steps:
                 (let ((align-score (find-align scores)))
                   (if (is_null align-score)
                       1.0
-                      (if (< align-score 1)
-                          1.0
-                          0.0))))))
+                      (let ((as-n (if (numberp align-score) align-score 0.0)))
+                        (if (< as-n 1)
+                            1.0
+                            0.0))))))
       env:
         step_6_result: "{{ step_6_result }}"
       max_steps: 5000
@@ -398,9 +401,12 @@ steps:
                                   (let ((actual-score (find-score rescore)))
                                     (if (< actual-score 0)
                                         1.0
-                                        (let ((outcome (if (>= actual-score pred-target) 1 0)))
-                                          (let ((brier (* (- confidence outcome) (- confidence outcome))))
-                                            brier)))))))))))
+                                        (let ((as-n (if (numberp actual-score) actual-score 0.0))
+                                              (pt-n (if (numberp pred-target) pred-target 0.0))
+                                              (conf-n (if (numberp confidence) confidence 0.5)))
+                                          (let ((outcome (if (>= as-n pt-n) 1 0)))
+                                            (let ((brier (* (- conf-n outcome) (- conf-n outcome))))
+                                              brier)))))))))))
       env:
         step_4_result: "{{ step_4_result }}"
         step_6_result: "{{ step_6_result }}"
@@ -443,9 +449,11 @@ steps:
                   0.0
                   (if (is_null after)
                       0.0
-                      (if (<= after before)
-                          0.0
-                          1.0)))))
+                      (let ((b-n (if (numberp before) before 0.0))
+                            (a-n (if (numberp after) after 0.0)))
+                        (if (<= a-n b-n)
+                            0.0
+                            1.0))))))
       env:
         step_2_result: "{{ step_2_result }}"
         step_6_result: "{{ step_6_result }}"
