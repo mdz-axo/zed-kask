@@ -21,10 +21,6 @@ fn default_datetime() -> DateTime<Utc> {
 /// Default expected variety per domain
 pub(crate) const DEFAULT_EXPECTED_VARIETY: u64 = 10;
 
-/// Default maximum alerts retained in the in-memory `AlgedonicManager.alerts`
-/// log before oldest entries are evicted. Bounds memory growth in long-running
-/// sessions — the log is a diagnostic ring buffer, not an audit archive
-/// (escalated alerts are persisted to the `EscalationQueue` for durable review).
 /// Fraction of `max_alerts` at which the approaching-cap signal fires.
 /// 0.8 → 160 of 200. Gives the operator a window to review before eviction.
 pub(crate) const ALERT_CAP_APPROACHING_FRACTION: f64 = 0.8;
@@ -308,6 +304,8 @@ impl AlgedonicManager {
         self.push_alert(alert);
         self.alerts.last()
     }
+
+    /// Get the configured default threshold.
     ///
     /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
     pub(crate) fn default_threshold(&self) -> u64 {
@@ -446,7 +444,6 @@ impl AlgedonicManager {
     /// from `RegulationLedger`), only Info and Warning alerts and already-
     /// escalated Critical alerts are cleared. When `false`, the entire log
     /// is cleared (used by `session_reset`).
-    #[allow(dead_code)]
     pub(crate) fn clear_reviewed(&mut self, retain_unresolved: bool) {
         if retain_unresolved {
             // Retain Critical alerts that have not been escalated yet —

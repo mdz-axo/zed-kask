@@ -351,6 +351,15 @@ pub trait AlgedonicLogSink: Send + Sync {
     /// failed.
     async fn clear_reviewed_alerts(&self) -> Result<usize, String>;
 
+    /// Clear ALL alerts from the in-memory log, including unresolved Critical.
+    /// Use with caution — this loses live signals. The operator should only
+    /// call this when the log is being reset for a fresh session or when all
+    /// alerts have been reviewed and persisted to the `EscalationQueue`.
+    ///
+    /// Returns `Ok(cleared_count)` where `cleared_count` is the number of
+    /// alerts removed.
+    async fn clear_all_alerts(&self) -> Result<usize, String>;
+
     /// Number of alerts currently in the in-memory log.
     /// Returns `None` if the sink is unwired.
     async fn alert_log_count(&self) -> Option<usize>;
@@ -449,25 +458,29 @@ impl AgentTool for CuratorClearAlgedonicLogTool {
                 });
             };
 
-            // For now, `clear_all` is advisory — the sink always retains
-            // unresolved Critical alerts (the safe default). A future
-            // `clear_all=true` path could be added if the operator needs
-            // a hard reset, but the default (retain unresolved) is the
-            // correct behavior for the algedonic-review skill.
-            let _ = input.clear_all;
-
-            let cleared =
-                sink.clear_reviewed_alerts()
-                    .await
-                    .map_err(|e| CuratorClearAlgedonicLogOutput {
-                        cleared: 0,
-                        remaining: 0,
-                        message: format!("clear failed: {e}"),
-                    })?;
+            // Route `clear_all`: when true, clear ALL alerts (including
+            // unresolved Critical) — the hard-reset path. When false (default),
+            // clear only reviewed alerts, retaining unresolved Critical.
+            let cleared = if input.clear_all {
+                sink.clear_all_alerts().await
+            } else {
+                sink.clear_reviewed_alerts().await
+            }
+            .map_err(|e| CuratorClearAlgedonicLogOutput {
+                cleared: 0,
+                remaining: 0,
+                message: format!("clear failed: {e}"),
+            })?;
             let remaining = sink.alert_log_count().await.unwrap_or(0);
             let message = if cleared == 0 {
-                "No reviewed alerts to clear (log is empty or all alerts are unresolved Critical)"
-                    .to_string()
+                if input.clear_all {
+                    "No alerts to clear (log is empty)".to_string()
+                } else {
+                    "No reviewed alerts to clear (log is empty or all alerts are unresolved Critical)"
+                        .to_string()
+                }
+            } else if input.clear_all {
+                format!("Cleared ALL {cleared} alerts (hard reset), {remaining} remaining")
             } else {
                 format!("Cleared {cleared} reviewed alerts, {remaining} remaining")
             };
