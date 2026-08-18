@@ -500,7 +500,7 @@ steps:
     condition: "mode == 'semantic'"
     description: Re-enter semantic mode cycle if convergence is not met.
     input_mapping:
-      loop_target: {"{ 10 }"}
+      loop_target: "{{ 10 }}"
       # Push the semantic-report gap from the lisp.eval step (ordinal 18)
       # into convergence_signal. No default(1.0): a Lisp failure must surface.
       convergence_signal: "{{ step_18_result }}"
