@@ -40,7 +40,7 @@ convergence:
   target_artifacts_field: "current_artifacts"
 
 gas:
-  cap: 60000
+  cap: 70000
   cost_per_iteration: 100
   alert_threshold: 0.8
   hard_limit: true

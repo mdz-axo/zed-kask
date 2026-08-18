@@ -98,8 +98,6 @@ pub struct CorpusConfig {
     pub embedding: EmbeddingConfig,
     pub works: Vec<Work>,
     pub foundational_rules: Vec<FoundationalRule>,
-    #[serde(default)]
-    pub chunking: ChunkingConfig,
     pub centroid_entity_ref: String,
     pub validation: ValidationConfig,
 
@@ -270,25 +268,6 @@ pub struct FoundationalRule {
     /// Section type for this rule.
     #[serde(default)]
     pub section_type: Option<String>,
-}
-
-/// Chunking parameters for passage splitting.
-///
-/// Optional — when absent, defaults to zeros (no chunking constraints).
-/// The corpus pipeline's `chunk_directory` does not read this field;
-/// it uses `max_tokens`/`overlap_tokens` from the pipeline manifest,
-/// which fall through to `HkaskSettings::chunk_max_tokens()` (256 tokens).
-/// This field exists for the persona replica build path (`corpus_build_persona`)
-/// and is kept for backward compatibility with existing persona configs.
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ChunkingConfig {
-    #[serde(default)]
-    pub min_words: usize,
-    #[serde(default)]
-    pub max_words: usize,
-    #[serde(default)]
-    pub sentence_boundary: String,
 }
 
 /// Validation constraints for centroid distance and exemplar counts.

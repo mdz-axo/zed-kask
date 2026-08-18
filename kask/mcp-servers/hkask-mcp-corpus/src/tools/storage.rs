@@ -291,33 +291,19 @@ impl CorpusServer {
                 .purge_by_prefix(&req.prefix)
                 .map_err(|e| map_memory_store_error(e, "Purge embeddings failed"))?;
 
-            // Purge h_mems — old schema (entity="corpus:qa") vs new schema (entity starts with prefix)
+            // Purge all h_mems by entity prefix — assertions, training_qa_pairs,
+            // and any other attributes — so stale data from a previous pipeline
+            // run doesn't pollute the new run.
             let mut purged_h_mems = 0usize;
             let mut h_mem_errors = 0usize;
 
-            if req.prefix == "corpus:qa" {
-                // Old schema: entity is exactly "corpus:qa"
-                let h_mems = store
-                    .query_deduped(&req.prefix)
-                    .map_err(|e| map_memory_store_error(e, "Query h_mems failed"))?;
-                for h_mem in &h_mems {
-                    match store.delete_h_mem(&h_mem.id) {
-                        Ok(()) => purged_h_mems += 1,
-                        Err(_) => h_mem_errors += 1,
-                    }
-                }
-            } else {
-                // New schema: query ALL h_mems by entity prefix (assertions,
-                // training_qa_pairs, and any other attributes) so stale data
-                // from a previous pipeline run doesn't pollute the new run.
-                let h_mems = store
-                    .h_mems_by_entity_prefix(&req.prefix)
-                    .map_err(|e| map_memory_store_error(e, "Query h_mems by prefix failed"))?;
-                for h_mem in &h_mems {
-                    match store.delete_h_mem(&h_mem.id) {
-                        Ok(()) => purged_h_mems += 1,
-                        Err(_) => h_mem_errors += 1,
-                    }
+            let h_mems = store
+                .h_mems_by_entity_prefix(&req.prefix)
+                .map_err(|e| map_memory_store_error(e, "Query h_mems by prefix failed"))?;
+            for h_mem in &h_mems {
+                match store.delete_h_mem(&h_mem.id) {
+                    Ok(()) => purged_h_mems += 1,
+                    Err(_) => h_mem_errors += 1,
                 }
             }
 
@@ -378,7 +364,7 @@ pub struct ClearIndexRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PurgeQaRequest {
-    /// Entity-ref prefix to purge (e.g. "corpus:qa" for old schema, "training:qa:" for new).
+    /// Entity-ref prefix to purge (e.g. "corpus:researcher:").
     #[serde(default = "default_purge_prefix")]
     pub prefix: String,
     /// Path to the SQLCipher memory DB.
@@ -389,7 +375,7 @@ pub struct PurgeQaRequest {
 }
 
 fn default_purge_prefix() -> String {
-    "corpus:qa".to_string()
+    "corpus:researcher:".to_string()
 }
 
 fn default_purge_passphrase() -> String {
