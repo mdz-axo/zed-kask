@@ -198,25 +198,35 @@ steps:
       resolution_note: "{{ resolution_note | default('reviewed via algedonic-review skill') }}"
       briefing: "{{ step_2_result }}"
 
-  # ── VERIFY: Confirm backlog reduced (only if decisions were executed) ─
-  # Re-query curator_escalations to confirm the backlog is reduced.
+  # ── VERIFY: Confirm backlog reduced and clear in-memory log ─────────
+  # Re-query curator_escalations to confirm the backlog is reduced, then
+  # call curator_clear_algedonic_log to free the in-memory log.
   - ordinal: 5
     action: execute
     description: >
       Re-query curator_escalations to confirm the backlog is reduced after
-      the operator's decisions. Skipped on the first pass (no decisions
+      the operator's decisions, then call curator_clear_algedonic_log to
+      clear reviewed alerts from the in-memory log (frees the log before it
+      evicts entries unread). Skipped on the first pass (no decisions
       executed). The result is used by the verify-cleared template to
       summarize what was resolved, what was dismissed, and what remains.
-    mcp: curator_escalations
-    input_mapping: {}
+    mcp_batch:
+      - mcp: curator_escalations
+        key: post_escalations
+        input_mapping: {}
+      - mcp: curator_clear_algedonic_log
+        key: clear_result
+        input_mapping:
+          clear_all: false
     timeout_seconds: 30
     on_failure:
       action: report
       resume: >
-        The post-decision curator_escalations query failed. The resolve/dismiss
-        calls may have succeeded (check the execute-decisions step output for
-        per-ID results). The verification step is skipped — the operator can
-        manually check curator_escalations to confirm the backlog state.
+        The post-decision curator_escalations or curator_clear_algedonic_log
+        query failed. The resolve/dismiss calls may have succeeded (check the
+        execute-decisions step output for per-ID results). The verification
+        step is skipped — the operator can manually check curator_escalations
+        to confirm the backlog state.
     condition: "resolve_ids != '' OR dismiss_ids != ''"
 
   # ── VERIFY-REPORT: Summarize what was resolved/dismissed ────────────
@@ -235,7 +245,8 @@ steps:
       task: "{{ task }}"
       briefing: "{{ step_2_result }}"
       decisions: "{{ step_4_result }}"
-      post_escalations: "{{ step_5_result | default({}) }}"
+      post_escalations: "{{ step_5_result.post_escalations | default({}) }}"
+      clear_result: "{{ step_5_result.clear_result | default({}) }}"
       resolve_ids: "{{ resolve_ids | default('') }}"
       dismiss_ids: "{{ dismiss_ids | default('') }}"
 

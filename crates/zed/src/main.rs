@@ -902,7 +902,7 @@ fn main() {
         // the grounding path is implemented but inert at runtime.
         let verification_store_for_model_task = verification_store.clone();
         let metacognition_loop = std::sync::Arc::new(
-            hkask_regulation::MetacognitionLoop::new(regulation_ledger)
+            hkask_regulation::MetacognitionLoop::new(regulation_ledger.clone())
                 .with_alert_receiver(alert_rx)
                 .with_alert_sink(alert_sink)
                 .with_verification_store(verification_store),
@@ -940,7 +940,7 @@ fn main() {
         // and query the log cap status. The sink wraps the RegulationLedger.
         let algedonic_log_sink: std::sync::Arc<dyn agent::AlgedonicLogSink> =
             std::sync::Arc::new(kask_bridge::BridgeAlgedonicLogSink::from_shared(
-                regulation_ledger.clone(),
+                regulation_ledger,
             ));
         agent::set_algedonic_log_sink(Some(algedonic_log_sink));
         log::info!("Algedonic log sink wired to CuratorClearAlgedonicLogTool");

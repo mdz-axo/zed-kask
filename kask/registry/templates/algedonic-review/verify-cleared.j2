@@ -9,6 +9,7 @@ input.task = "The operator's review request"
 input.briefing = "The structured triage briefing JSON from step 2"
 input.decisions = "The decisions executed JSON from step 4"
 input.post_escalations = "Post-decision curator_escalations result (JSON: {count, escalations: [...]})"
+input.clear_result = "Result from curator_clear_algedonic_log (JSON: {cleared, remaining, message})"
 input.resolve_ids = "Comma-separated IDs that were resolved"
 input.dismiss_ids = "Comma-separated IDs that were dismissed"
 output.report = "string — the verification summary as markdown"
@@ -33,6 +34,11 @@ You are the algedonic review verification reporter. Your job is to summarize wha
 {{ post_escalations | tojson }}
 ```
 
+### Algedonic log clear result (if queried)
+```json
+{{ clear_result | tojson }}
+```
+
 ### Resolve IDs
 {{ resolve_ids | default("") }}
 
@@ -54,7 +60,7 @@ You are the algedonic review verification reporter. Your job is to summarize wha
 
 4. Format as markdown with headers and bullet lists.
 
-5. Close with a note: "The in-memory algedonic log will self-evict old entries as new alerts arrive. The durable escalation backlog has been updated by this review. Run `gemba-walk` for a broader system health review."
+5. Close with a note: "The in-memory algedonic log has been cleared of reviewed entries (X cleared, Y remaining). The durable escalation backlog has been updated by this review. Run `gemba-walk` for a broader system health review."
 
 ## Output
 
