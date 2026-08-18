@@ -53,44 +53,21 @@ manifest:
     training. Each phase has a blocking gate that verifies actual disk artifacts and presents stats to the user before proceeding.
 steps:
 - ordinal: 1
-  description: Verify the corpus MCP server is running and responsive by calling corpus_is_complex on a small source file.
-    If the tool is unavailable or returns an error, halt before any pipeline stage runs. The agent should attempt to restart
-    the server via sync_kask_mcp_servers before retrying this gate.
-  id: gate_corpus_server_alive
-  action: gate
-  command: |
-    python3 - <<'PY'
-    import json, sys
-    # This gate is a declarative contract — the agent executing the pipeline
-    # must invoke the corpus_is_complex MCP tool on a file from corpus/source-library
-    # and verify it returns a valid JSON response. The agent presents the result
-    # to the user before proceeding.
-    #
-    # If the tool is unavailable (MCP server not running), the agent should:
-    #   1. Check that kask.mcp.load_default is true in Zed settings
-    #   2. Call sync_kask_mcp_servers to re-register built-in servers
-    #   3. Wait for the ContextServerStore to restart the corpus server
-    #   4. Retry this gate
-    #
-    # The agent fills in the actual tool response here before asserting.
-    print(json.dumps({
-        "instruction": "Agent must call corpus_is_complex on any file in corpus/source-library,",
-        "verify": "tool returns valid JSON with 'is_complex' field",
-        "on_failure": "restart corpus MCP server via sync_kask_mcp_servers, then retry",
-    }, indent=2))
-    PY
-  on_failure:
-    action: halt
-    resume: restart corpus MCP server via sync_kask_mcp_servers, rerun this gate
-- ordinal: 2
-  description: Extract text from 138 source files (81 PDF + 48 HTML + 9 other)
+  description: |
+    Extract text from 138 source files (81 PDF + 48 HTML + 9 other).
+    The corpus_convert tool handles text-native PDFs, HTML, and other formats
+    directly. Scanned PDFs that produce near-empty text are caught by the
+    extract gate, which halts and directs the agent to run corpus_ocr on the
+    flagged files before re-running extraction. This is the real liveness
+    check — if the corpus MCP server is down, this step fails with an
+    unavailable error.
   id: extract_text
   action: execute
   mcp: corpus_convert
   input_mapping:
     path: corpus/source-library
     output: corpus/extracted/researcher
-- ordinal: 3
+- ordinal: 2
   description: Verify every source file was extracted to a non-empty .txt with sane size relative to its source. Present inventory
     and quality stats to the user before proceeding to chunking.
   id: gate_extract_complete
@@ -119,6 +96,11 @@ steps:
             suspicious.append({"source": source.name, "source_bytes": source_size, "extract_bytes": extract_size})
     extract_sizes = [path.stat().st_size for path in extracts.values()]
     extract_words = sum(len(path.read_text(errors="replace").split()) for path in extracts.values())
+    # Per-extract word count — a 500-page book that produced 200 words is broken.
+    per_extract_words = {name: len(path.read_text(errors="replace").split()) for name, path in extracts.items()}
+    low_word_extracts = sorted(
+        (name, words) for name, words in per_extract_words.items() if words < 50
+    )
     stats = {
         "sources": len(sources),
         "extracts": len(extracts),
@@ -126,6 +108,7 @@ steps:
         "orphaned": orphaned[:20],
         "too_small": too_small[:20],
         "suspicious_pairs": suspicious[:20],
+        "low_word_extracts": low_word_extracts[:20],
         "extract_bytes_total": sum(extract_sizes),
         "extract_bytes_min": min(extract_sizes) if extract_sizes else 0,
         "extract_bytes_max": max(extract_sizes) if extract_sizes else 0,
@@ -138,12 +121,17 @@ steps:
     assert not orphaned, f"orphan extracts: {orphaned[:10]}"
     assert not too_small, f"extracts <=100 bytes: {too_small[:10]}"
     assert not suspicious, f"large-source/tiny-extract pairs: {suspicious[:10]}"
+    assert not low_word_extracts, f"extracts with <50 words: {low_word_extracts[:10]}"
     print("GATE_PASS extract_complete")
     PY
   on_failure:
     action: halt
-    resume: repair extraction, rerun this gate, present stats to user
-- ordinal: 4
+    resume: |
+      For suspicious_pairs and low_word_extracts: the source PDFs are likely
+      scanned/image-based. Run corpus_ocr on each flagged file, then re-run
+      corpus_convert on the source directory. For missing extracts: check
+      file permissions and format support. After repair, rerun this gate.
+- ordinal: 3
   description: Chunk extracted text into ~256-token passages (paragraph-level, the HkaskSettings default) with 64-token overlap. Falls through to HKASK_CHUNK_MAX_TOKENS env var if set.
   id: chunk_all
   action: execute
@@ -153,7 +141,7 @@ steps:
     output: corpus/chunks/chunks.jsonl
     overlap_tokens: 64
     entity_ref_prefix: corpus:researcher
-- ordinal: 5
+- ordinal: 4
   description: Purge old embeddings and QA h_mems from DB for clean pipeline run
   id: purge_existing
   action: execute
@@ -161,7 +149,7 @@ steps:
   input_mapping:
     prefix: 'corpus:researcher:'
     db_path: corpus/memory/john-brooks.db
-- ordinal: 6
+- ordinal: 5
   description: Verify chunking produced valid JSONL covering all 138 sources with unique entity_refs, sane word counts, and
     no empty/degenerate chunks. Also verify the DB purge left a clean slate. Present chunk distribution and quality stats
     to the user before proceeding to tagging.
@@ -197,6 +185,16 @@ steps:
     chunk_words = sum(word_counts)
     ratio = chunk_words / max(extracted_words, 1)
     per_source = Counter(r["source"] for r in records)
+    # Chunk-size quality bounds. The chunker uses HkaskSettings::DEFAULT_CHUNK_MAX_TOKENS
+    # (256 tokens ≈ 192 words) with overlap_tokens=64 (≈48 words min, clamped to
+    # max/4). Sentence-boundary alignment allows some slack, but chunks outside
+    # [10, 384] words indicate a broken chunker — either degenerate tiny chunks
+    # or paragraphs that weren't split at all.
+    expected_max_words = 192  # tokens_to_words(256)
+    words_min_floor = 10      # no chunk should be below 10 words
+    words_max_ceiling = expected_max_words * 2  # 384 — 2x slack for long paragraphs
+    undersized = [i for i, wc in enumerate(word_counts) if wc < words_min_floor]
+    oversized = [i for i, wc in enumerate(word_counts) if wc > words_max_ceiling]
     stats = {
         "extract_sources": len(expected_sources),
         "chunk_sources": len(actual_sources),
@@ -213,6 +211,9 @@ steps:
         "words_avg": round(sum(word_counts) / max(len(word_counts), 1)),
         "words_median": sorted(word_counts)[len(word_counts) // 2] if word_counts else 0,
         "words_max": max(word_counts) if word_counts else 0,
+        "undersized_chunks": undersized[:20],
+        "oversized_chunks": oversized[:20],
+        "expected_max_words": expected_max_words,
         "chunks_per_source_min": min(per_source.values()) if per_source else 0,
         "chunks_per_source_max": max(per_source.values()) if per_source else 0,
         "top_5_sources": [(s, c) for s, c in per_source.most_common(5)],
@@ -227,12 +228,14 @@ steps:
     assert not orphan_sources, f"unknown chunk sources: {orphan_sources[:10]}"
     assert empty_chunks == 0, f"{empty_chunks} empty-text chunks"
     assert 0.90 <= ratio <= 1.35, f"word ratio {ratio:.3f} outside [0.90, 1.35]"
+    assert not undersized, f"{len(undersized)} chunks below {words_min_floor} words: {undersized[:10]}"
+    assert not oversized, f"{len(oversized)} chunks above {words_max_ceiling} words: {oversized[:10]}"
     print("GATE_PASS chunk_complete")
     PY
   on_failure:
     action: halt
     resume: repair chunking or purge, rerun this gate, present stats to user
-- ordinal: 7
+- ordinal: 6
   description: Tag chunks with 5W1H dimensions, Dublin Core, PKO, FIBO/GOLEM/ESO ontology tags, and expertise level. Must
     run BEFORE embed so embeddings can be ontology-anchored. May require batched execution due to file size.
   id: tag_chunks
@@ -242,7 +245,7 @@ steps:
     chunks_jsonl: corpus/chunks/chunks.jsonl
     output: corpus/chunks/tagged_ontology.jsonl
     concurrency: 128
-- ordinal: 8
+- ordinal: 7
   description: Verify every chunk has a structurally valid ontology tag record with exact entity_ref equality, valid dimensions,
     ontology_tags, and salience. Present tag coverage, dimension distribution, and quality stats to the user before proceeding
     to embedding.
@@ -312,7 +315,7 @@ steps:
   on_failure:
     action: halt
     resume: repair tagging, rerun this gate, present stats to user
-- ordinal: 9
+- ordinal: 8
   description: Embed all chunks with Qwen3-Embedding-0.6B using ontology tag annotations as embedding instructions. Stores
     vectors in the encrypted memory DB.
   id: embed_chunks
@@ -323,7 +326,7 @@ steps:
     tagged_jsonl: corpus/chunks/tagged_ontology.jsonl
     db_path: corpus/memory/john-brooks.db
     batch_size: 50
-- ordinal: 10
+- ordinal: 9
   description: Verify DB vector entity_refs exactly match chunk entity_refs — no missing, stale, or duplicate vectors. Present
     embedding coverage stats to the user before proceeding to assertion extraction. Requires sqlcipher CLI.
   id: gate_embed_complete
@@ -362,7 +365,7 @@ steps:
   on_failure:
     action: halt
     resume: repair embeddings, rerun this gate, present stats to user
-- ordinal: 11
+- ordinal: 10
   description: Extract assertions from each chunk with the canonical classifier model. Stores assertions as h_mems with entity=chunk_ref,
     attribute=predicate, value={subject, object}, and a dual-axis ontology blob (dc_type= dcterms:Assertion, dc_source=chunk_ref,
     5W1H dimension from predicate, optional ontology_tags for tagged namespaces). owner=john-brooks.
@@ -376,7 +379,7 @@ steps:
     owner: john-brooks
     max_assertions: 15
     concurrency: 64
-- ordinal: 12
+- ordinal: 11
   description: 'Verify the DB contains a non-trivial, distributed knowledge graph with assertion coverage across at least
     80% of chunks. Verify the ontology column is populated and well-formed for every assertion h_mem: dc_type must be dcterms:Assertion,
     dimensions must be non-empty, dc_source must match the chunk entity_ref. Present assertion distribution, coverage, and
@@ -438,7 +441,7 @@ steps:
   on_failure:
     action: halt
     resume: repair assertion extraction or ontology anchoring, rerun this gate, present stats to user
-- ordinal: 13
+- ordinal: 12
   description: Remove near-identical chunks using DB embeddings
   id: dedup_chunks
   action: execute
@@ -449,7 +452,7 @@ steps:
     db_path: corpus/memory/john-brooks.db
     prefix: 'corpus:researcher:'
     threshold: 0.85
-- ordinal: 14
+- ordinal: 13
   description: Verify deduped.jsonl is a unique, valid subset of tagged chunks with no implausible mass deletion (>50%). Present
     dedup stats including reduction rate and removed count to the user before proceeding to consolidation.
   id: gate_dedup_complete
@@ -490,7 +493,7 @@ steps:
   on_failure:
     action: halt
     resume: repair dedup, rerun this gate, present stats to user
-- ordinal: 15
+- ordinal: 14
   description: Cluster related chunks within source, LLM-synthesize multi-chunk clusters, re-embed
   id: consolidate_chunks
   action: execute
@@ -503,7 +506,7 @@ steps:
     threshold: 0.75
     concurrency: 12
     max_chunks_per_cluster: 5
-- ordinal: 16
+- ordinal: 15
   description: Verify consolidated.jsonl has unique identifiers, lossless lineage coverage of every deduped chunk, and no
     malformed records. Present consolidation stats including cluster counts and reduction rate to the user before proceeding
     to prompt building.
@@ -557,7 +560,7 @@ steps:
   on_failure:
     action: halt
     resume: repair consolidation, rerun this gate, present stats to user
-- ordinal: 17
+- ordinal: 16
   description: 'Build Bloom taxonomy prompts: 5 per chunk with KNN context scaffold, ontology context, concept graph, and
     h_mem knowledge graph.'
   id: build_prompts
@@ -572,7 +575,7 @@ steps:
     type_distribution: 1,1,1,1,1
     ontology_bloom_overrides: golem:0,1,2,1,1|fibo:2,1,1,1,0|pko:1,1,1,1,1|eso:1,1,2,1,0|epistemic:1,1,2,1,0
     owner: john-brooks
-- ordinal: 18
+- ordinal: 17
   description: Verify exactly 5 valid Bloom prompts per consolidated chunk with the configured ontology-specific type distribution.
     Present prompt matrix coverage and distribution stats to the user before proceeding to QA generation.
   id: gate_prompts_complete
@@ -635,7 +638,7 @@ steps:
   on_failure:
     action: halt
     resume: repair prompt building, rerun this gate, present stats to user
-- ordinal: 19
+- ordinal: 18
   description: Generate QA pairs via GLM-5.2 with per-Bloom sampling, thinking-mode JSON extraction, ContentGuard, and provenance-enriched
     output.
   id: generate_qas
@@ -646,7 +649,7 @@ steps:
     output: corpus/qa_pairs/generated.jsonl
     concurrency: 196
     model: '{{ qa_model }}'
-- ordinal: 20
+- ordinal: 19
   description: Verify every prompt key has a valid QA with non-empty instruction and output, no error records, no orphan keys,
     and no duplicate questions. Present QA coverage and quality stats to the user before proceeding to ingestion.
   id: gate_qa_generation_complete
@@ -701,7 +704,7 @@ steps:
   on_failure:
     action: halt
     resume: repair QA generation, rerun this gate, present stats to user
-- ordinal: 21
+- ordinal: 20
   description: Parse generated QAs, quality-filter, exact-match dedup, write training JSONL, store QA h_mems with 5W1H + Dublin
     Core + PKO provenance.
   id: ingest_qas
@@ -713,7 +716,7 @@ steps:
     db_path: corpus/memory/john-brooks.db
     dataset: capabilities-researcher
     owner: john-brooks
-- ordinal: 22
+- ordinal: 21
   description: 'Verify the training JSONL has required fields, quality minima, unique instructions, and that DB h_mem count
     matches the file. Verify the ontology column is populated for every QA h_mem: dc_type must be bibo:Document, pko_procedure
     must be corpus_generate_qa, dimensions must be non-empty. Present training dataset and ontology stats to the user before
@@ -794,7 +797,7 @@ steps:
   on_failure:
     action: halt
     resume: repair ingestion or ontology anchoring, rerun this gate, present stats to user
-- ordinal: 23
+- ordinal: 22
   description: Assemble stored QA h_mems into ChatML JSONL with 80/20 train/test split and the Capabilities Researcher system
     prompt.
   id: assemble_chatml
@@ -809,7 +812,7 @@ steps:
       and institutional analysis.
 
       '
-- ordinal: 24
+- ordinal: 23
   description: 'Final pre-spend gate: verify train/test split counts, ChatML role order, non-empty content, no duplicates
     or train/test overlap, and no oversized examples. Present dataset stats to the user for approval before authorizing training
     spend.'
@@ -863,7 +866,7 @@ steps:
   on_failure:
     action: halt
     resume: repair ChatML assembly, rerun this gate, present stats to user
-- ordinal: 25
+- ordinal: 24
   description: Submit typed EVA LoRA training job to RunPod H100
   id: train_lora
   action: execute
