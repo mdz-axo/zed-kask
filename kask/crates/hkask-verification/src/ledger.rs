@@ -50,6 +50,16 @@ use crate::types::GroundingRecord;
 /// UUID as the attribute (so each delegation is a distinct h_mem).
 const VERIFICATION_ENTITY: &str = "verification:grounding";
 
+/// A count of total delegations from an external source (e.g. the swarm
+/// ledger). Used by the liveness sensor to detect delegations that
+/// skipped grounding enforcement — the gap between "delegations that
+/// happened" and "delegations in the verification store."
+pub trait DelegationCounter: Send + Sync {
+    /// Total delegations in a time window. `None` on query failure
+    /// (absence ≠ 0 — a failed read is not a measured zero).
+    fn delegation_count(&self) -> Option<u64>;
+}
+
 /// The central grounding ledger. Wraps an `HMemStore` and a contract
 /// registry keyed by `agent_type`. Every MCP server that delegates to
 /// agents constructs one (sharing the same DB file) and calls
@@ -777,6 +787,7 @@ mod tests {
                 response_path: "".to_string(),
                 why: "A prose summary commissioned by the system prompt.".to_string(),
                 derived_from: None,
+                transform: None,
             },
         );
         store.register_contract(GroundingContract {
@@ -814,6 +825,7 @@ mod tests {
                 response_path: "".to_string(),
                 why: "A prose summary commissioned by the system prompt.".to_string(),
                 derived_from: None,
+                transform: None,
             },
         );
         store.register_contract(GroundingContract {

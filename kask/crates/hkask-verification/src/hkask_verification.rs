@@ -38,6 +38,6 @@ pub use grounding::{
     narrator_agent_contract, research_agent_contract, scan_narrative_for_leaks,
     task_agent_contract,
 };
-pub use ledger::{CoverageEntry, EnforcementOutcome, VerificationStore};
+pub use ledger::{CoverageEntry, DelegationCounter, EnforcementOutcome, VerificationStore};
 pub use trend::{GroundingTrendReport, TrendScope};
 pub use types::GroundingRecord;
