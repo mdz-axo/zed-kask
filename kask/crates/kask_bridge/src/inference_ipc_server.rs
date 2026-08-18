@@ -762,7 +762,7 @@ async fn dispatch(
     }
 
     // Skill-execute requests route to the zed-side `ManifestExecutor` (via
-    // the injected `SkillExecPort`). The cascade runs with its own gas/OCAP
+    // the injected `SkillExecPort`). The cascade runs with its own enforcement
     // enforcement on the zed side — the child process never holds token
     // material. Used by `hkask-mcp-swarm`'s local delegate to run an agent's
     // declared `skills` against the task before the LLM call.

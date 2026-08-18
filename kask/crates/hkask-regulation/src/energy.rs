@@ -1,9 +1,7 @@
-//! Per-agent tool-call cap — the honest replacement for the former gas hold-settle ritual.
+//! Per-agent tool-call cap.
 //!
 //! Model: 1 unit = 1 governed tool invocation. Each agent has a hard ceiling on
-//! calls per regulation cycle; the cap resets to the ceiling each tick. There is
-//! no reservation, no settlement, no half-charge-on-failure, no replenish-rate
-//! arithmetic, no alert-threshold bookkeeping inside the primitive — a call
+//! calls per regulation cycle; the cap resets to the ceiling each tick. A call
 //! either fits (`remaining > 0`) or it does not, and the regulation loop's
 //! `EnergyBudgetSensor` reads the usage ratio for its throttle set-point.
 //!

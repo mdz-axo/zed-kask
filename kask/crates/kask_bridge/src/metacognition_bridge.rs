@@ -57,6 +57,12 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
                 "blocked": s.regulation_health.blocked,
                 "grounding_clean_rate": s.grounding_clean_rate,
                 "grounding_coverage_rate": s.grounding_coverage_rate,
+                // Algedonic alert log cap status. When the log approaches its
+                // cap, the operator (or the algedonic-review skill) should
+                // review and clear reviewed entries before they are evicted.
+                "alert_log_count": s.ledger_health.alert_log_count,
+                "alert_log_cap": s.ledger_health.alert_log_cap,
+                "alert_log_approaching_cap": s.ledger_health.alert_log_approaching_cap,
             });
             // Merge the memory-health section — flat keys, so the merge is
             // just inserting the `memory` object. A degraded curator memory

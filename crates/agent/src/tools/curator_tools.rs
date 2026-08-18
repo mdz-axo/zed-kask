@@ -84,6 +84,17 @@ pub struct CuratorStatusOutput {
     /// succeeds. `None` when the memory probe isn't wired (pre-login or
     /// upstream Zed).
     pub memory_degraded: Option<bool>,
+    /// Number of alerts currently in the in-memory algedonic log.
+    /// `None` when the metacognition provider isn't wired.
+    pub alert_log_count: Option<usize>,
+    /// The configured cap for the in-memory algedonic log.
+    /// `None` when the metacognition provider isn't wired.
+    pub alert_log_cap: Option<usize>,
+    /// `true` when the alert log is ≥ 80% of its cap. The operator (or the
+    /// `algedonic-review` skill) should review and clear reviewed entries
+    /// before they are evicted unread. `None` when the metacognition provider
+    /// isn't wired.
+    pub alert_log_approaching_cap: Option<bool>,
 }
 
 impl AgentTool for CuratorStatusTool {
@@ -119,6 +130,9 @@ impl AgentTool for CuratorStatusTool {
                 critical_alerts: None,
                 variety_deficit: None,
                 memory_degraded: None,
+                alert_log_count: None,
+                alert_log_cap: None,
+                alert_log_approaching_cap: None,
             })?;
 
             // Distinguish "provider not wired" from "provider wired but
@@ -134,6 +148,9 @@ impl AgentTool for CuratorStatusTool {
                     critical_alerts: None,
                     variety_deficit: None,
                     memory_degraded: None,
+                    alert_log_count: None,
+                    alert_log_cap: None,
+                    alert_log_approaching_cap: None,
                 });
             };
             let Some(snapshot) = provider.health_snapshot_json().await else {
@@ -144,6 +161,9 @@ impl AgentTool for CuratorStatusTool {
                     critical_alerts: None,
                     variety_deficit: None,
                     memory_degraded: None,
+                    alert_log_count: None,
+                    alert_log_cap: None,
+                    alert_log_approaching_cap: None,
                 });
             };
             let effectiveness = snapshot
