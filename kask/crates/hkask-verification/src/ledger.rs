@@ -681,7 +681,9 @@ mod tests {
         let store = test_store();
         // Kanban delegation — clean (sourced deliverable_path).
         let output = json!({"deliverable_path": "/src/main.rs", "summary": "done"});
-        let tool_calls = vec![json!({ "tool": "zed/write_file", "ok": true })];
+        let tool_calls = vec![
+            json!({ "tool": "zed/write_file", "ok": true, "result": {"path": "/src/main.rs"} }),
+        ];
         store.enforce_for_agent(
             "kanban_task_spawn",
             "task_agent",
@@ -725,7 +727,9 @@ mod tests {
         let store = test_store();
         // Clean delegation.
         let output = json!({"deliverable_path": "/src/main.rs", "summary": "done"});
-        let tool_calls = vec![json!({ "tool": "zed/write_file", "ok": true })];
+        let tool_calls = vec![
+            json!({ "tool": "zed/write_file", "ok": true, "result": {"path": "/src/main.rs"} }),
+        ];
         store.enforce_for_agent(
             "kanban_task_spawn",
             "task_agent",
@@ -770,6 +774,7 @@ mod tests {
             "summary".to_string(),
             crate::grounding::FieldSpec {
                 sources: vec![],
+                response_path: "".to_string(),
                 why: "A prose summary commissioned by the system prompt.".to_string(),
             },
         );
@@ -805,6 +810,7 @@ mod tests {
             "summary".to_string(),
             crate::grounding::FieldSpec {
                 sources: vec![],
+                response_path: "".to_string(),
                 why: "A prose summary commissioned by the system prompt.".to_string(),
             },
         );
@@ -960,7 +966,7 @@ mod tests {
             "agent_a",
             "task",
             &json!({"deliverable_path": "/src/a.rs"}),
-            &[json!({ "tool": "zed/write_file", "ok": true })],
+            &[json!({ "tool": "zed/write_file", "ok": true, "result": {"path": "/src/a.rs"} })],
             "a",
         );
         store.enforce_for_agent(
@@ -1002,7 +1008,9 @@ mod tests {
             "summary": "did the work",
             "approach": "directly",
         });
-        let clean_tools = vec![json!({ "tool": "zed/write_file", "ok": true })];
+        let clean_tools = vec![
+            json!({ "tool": "zed/write_file", "ok": true, "result": {"path": "/src/clean.rs"} }),
+        ];
         let nulled_output = json!({
             "deliverable_path": "/src/fabricated.rs",
             "summary": "did the work",

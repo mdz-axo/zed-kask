@@ -79,7 +79,8 @@ fn grounding_keeps_deliverable_path_when_tool_succeeded() {
     });
     let tool_calls = vec![serde_json::json!({
         "tool": "zed/write_file",
-        "ok": true
+        "ok": true,
+        "result": {"path": "/src/main.rs"}
     })];
 
     let (result, cleaned) = grounding::enforce_grounding(&contract, &output, &tool_calls, "");

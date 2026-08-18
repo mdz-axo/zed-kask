@@ -845,6 +845,7 @@ mod grounding_sensor_tests {
         let clean_tools = vec![serde_json::json!({
             "tool": "zed/edit_file",
             "ok": true,
+            "result": {"path": "/src/lib.rs"},
         })];
         for _ in 0..n_clean {
             store.enforce_for_agent(
@@ -1077,7 +1078,11 @@ mod grounding_sensor_tests {
             "summary": "did the work",
             "approach": "directly",
         });
-        let clean_tools = vec![serde_json::json!({"tool": "zed/edit_file", "ok": true})];
+        let clean_tools = vec![serde_json::json!({
+            "tool": "zed/edit_file",
+            "ok": true,
+            "result": {"path": "/src/lib.rs"},
+        })];
         let nulled_output = serde_json::json!({
             "deliverable_path": "/src/fabricated.rs",
             "summary": "did the work",

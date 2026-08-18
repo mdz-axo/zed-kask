@@ -40,6 +40,12 @@ ignore = [
     { id = "RUSTSEC-2026-0098", reason = "rustls-webpki wildcard name constraints; rustls-webpki 0.101.7 via rustls 0.21 (upstream aws-smithy chain). Patched >=0.103.12. Not kask-introduced." },
     { id = "RUSTSEC-2026-0099", reason = "rustls-webpki CRL parsing panic; same 0.101.7 chain as 2026-0098. Patched >=0.103.12. Not kask-introduced." },
     { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101 URI name constraints; transitive via rustls 0.21 (upstream aws-smithy chain). Not kask-introduced." },
+    # h2 unbounded empty DATA frames (RUSTSEC-2026-0258, patched >= 0.4.16).
+    # The 0.4.x copy upgraded to 0.4.16. The 0.3.27 copy has no patched 0.3.x
+    # release — the 0.3 line is EOL for this advisory. Transitive via
+    # aws-smithy-http-client (upstream aws-smithy chain) and reqwest 0.11.x
+    # (upstream). Low severity. Re-review 2026-11-04.
+    { id = "RUSTSEC-2026-0258", reason = "h2 unbounded empty DATA frames; 0.3.27 via upstream aws-smithy/reqwest 0.11 chain, no 0.3.x patch. 0.4.x upgraded to 0.4.16. Not kask-introduced." },
     # quick-xml DoS pair (patched >= 0.41.0). The kask-owned XLSX path (corpus via
     # calamine 0.36 -> quick-xml 0.41.0) IS patched — see RR-0021. These ignores
     # cover the four sub-0.41 copies that remain transitively: 0.39.3 (zbus_xml <-
