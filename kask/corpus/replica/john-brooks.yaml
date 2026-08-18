@@ -36,11 +36,6 @@ foundational_rules:
   - slug: "capability-performance-gap"
     text: "The central analytical question: what is the economic significance of the gap between what a system is capable of and what it actually achieves?"
 
-chunking:
-  min_words: 40
-  max_words: 150
-  sentence_boundary: ".!? "
-
 centroid_entity_ref: "style:john-brooks:centroid"
 
 validation:

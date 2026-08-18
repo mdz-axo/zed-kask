@@ -144,14 +144,13 @@ steps:
     action: halt
     resume: repair extraction, rerun this gate, present stats to user
 - ordinal: 4
-  description: Chunk extracted text into ~512-token passages with 64-token overlap
+  description: Chunk extracted text into ~256-token passages (paragraph-level, the HkaskSettings default) with 64-token overlap. Falls through to HKASK_CHUNK_MAX_TOKENS env var if set.
   id: chunk_all
   action: execute
   mcp: corpus_chunk
   input_mapping:
     input_dir: corpus/extracted/researcher
     output: corpus/chunks/chunks.jsonl
-    max_tokens: 300
     overlap_tokens: 64
     entity_ref_prefix: corpus:researcher
 - ordinal: 5
