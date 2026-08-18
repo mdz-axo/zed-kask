@@ -907,6 +907,7 @@ mod grounding_sensor_tests {
                 &clean_output,
                 &clean_tools,
                 &clean_output.to_string(),
+                &[],
             );
         }
         let nulled_output = serde_json::json!({
@@ -923,6 +924,7 @@ mod grounding_sensor_tests {
                 &nulled_output,
                 &nulled_tools,
                 &nulled_output.to_string(),
+                &[],
             );
         }
         store
@@ -966,6 +968,7 @@ mod grounding_sensor_tests {
             &clean_output,
             &[],
             &clean_output.to_string(),
+            &[],
         );
         store.enforce_for_agent(
             "swarm_delegate_local",
@@ -974,6 +977,7 @@ mod grounding_sensor_tests {
             &clean_output,
             &[],
             &clean_output.to_string(),
+            &[],
         );
         let sensor = GroundingSensor::new(store, GroundingSensorMetric::CoverageRate, 0.8, 0.6);
         let signal = sensor.sense().await.expect("signal must fire below floor");
@@ -1009,6 +1013,7 @@ mod grounding_sensor_tests {
             &nulled_output,
             &[],
             &nulled_output.to_string(),
+            &[],
         );
         let signal = sensor.sense().await.expect("delta must fire on increase");
         assert_eq!(signal.metric, SignalMetric::GroundingViolationDelta);
@@ -1064,6 +1069,7 @@ mod grounding_sensor_tests {
             &nulled_output,
             &[],
             &nulled_output.to_string(),
+            &[],
         );
 
         // First read after recovery: delta is suppressed (spans the outage).
@@ -1084,6 +1090,7 @@ mod grounding_sensor_tests {
             &nulled_output,
             &[],
             &nulled_output.to_string(),
+            &[],
         );
 
         // Second read after recovery: normal operation resumes — delta fires.
@@ -1137,6 +1144,7 @@ mod grounding_sensor_tests {
             &output,
             &tool_calls,
             "",
+            &[],
         );
         let sensor =
             GroundingSensor::new(store.clone(), GroundingSensorMetric::LivenessGap, 0.0, 0.0);
@@ -1183,6 +1191,7 @@ mod grounding_sensor_tests {
                 &output,
                 &tool_calls,
                 "",
+                &[],
             );
         }
         // The swarm ledger reports 10 delegations — 2 skipped grounding.
@@ -1214,6 +1223,7 @@ mod grounding_sensor_tests {
             &output,
             &tool_calls,
             "",
+            &[],
         );
         let sensor =
             GroundingSensor::new(store.clone(), GroundingSensorMetric::LivenessGap, 0.0, 0.0);
@@ -1244,6 +1254,7 @@ mod grounding_sensor_tests {
             &output,
             &tool_calls,
             "",
+            &[],
         );
         // Counter query fails — returns None.
         let counter = Arc::new(MockDelegationCounter { count: None });
@@ -1301,6 +1312,7 @@ mod grounding_sensor_tests {
                     &clean_output,
                     &clean_tools,
                     &clean_output.to_string(),
+                    &[],
                 );
             }
             for _ in 0..n_nulled {
@@ -1311,6 +1323,7 @@ mod grounding_sensor_tests {
                     &nulled_output,
                     &[],
                     &nulled_output.to_string(),
+                    &[],
                 );
             }
             for _ in 0..n_gap {
@@ -1321,6 +1334,7 @@ mod grounding_sensor_tests {
                     &gap_output,
                     &[],
                     &gap_output.to_string(),
+                    &[],
                 );
             }
         }

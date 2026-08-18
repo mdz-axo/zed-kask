@@ -435,7 +435,6 @@ impl KanbanServer {
                             cs.into_iter().map(VerificationCriterion::new).collect(),
                         );
                     }
-                    }
                     if let Some(rj) = rjoule_budget {
                         spec.rjoule_budget = Some(rj);
                     }
@@ -1325,6 +1324,11 @@ impl KanbanServer {
             &agent.agent_type,
             &result.response,
             &result.tool_calls,
+            // Top-level delegation from the kanban task-spawn path — no
+            // parent envelope. The monotone-provenance cap applies to
+            // agent-to-agent composition hops, not the operator's first
+            // delegation into a task agent.
+            &[],
         );
         // Rung 2 (Schema validation): validate the cleaned document
         // AFTER grounding, BEFORE it persists. Unsupported keywords

@@ -57,8 +57,7 @@ pub(crate) async fn vision_ocr_bytes(
 ) -> Result<String, OcrError> {
     let b64_data = base64::engine::general_purpose::STANDARD.encode(bytes);
     let params = LLMParameters {
-        temperature: 0.1, // Low temperature for faithful extraction
-        max_tokens,
+        temperature: 0.1,
         ..Default::default()
     };
     let result = router
@@ -151,6 +150,7 @@ impl LlmOcrExecutor {
     pub fn new(router: Arc<dyn InferencePort>) -> Self {
         Self {
             router,
+            max_tokens: 4096,
             breaker: CircuitBreaker::new(5, 30), // 5 consecutive failures → 30s cooldown
         }
     }

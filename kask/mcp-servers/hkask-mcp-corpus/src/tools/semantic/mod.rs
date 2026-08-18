@@ -248,6 +248,18 @@ impl CorpusServer {
                 let handle = tokio::spawn(async move {
                     let _permit = sem.acquire().await;
 
+                    let params = LLMParameters {
+                        temperature: 0.3,
+                        top_p: 0.95,
+                        frequency_penalty: 0.0,
+                        presence_penalty: 0.0,
+                        top_k: 0,
+                        min_p: 0.0,
+                        typical_p: 0.0,
+                        disable_thinking: true,
+                        ..Default::default()
+                    };
+
                     let levels = prompt.bloom_levels.clone().unwrap_or_else(|| vec!["factual".to_string(), "conceptual".to_string()]);
                     let levels_str = levels.join(", ");
                     let mut vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();

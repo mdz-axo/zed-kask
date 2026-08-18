@@ -982,6 +982,9 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                 &raw_value,
                 tool_calls,
                 &response_str,
+                // Skill cascade: top-level skill execution, not an
+                // agent-to-agent composition hop. No parent envelope.
+                &[],
             );
             if let Some(ref gr) = grounding_result {
                 if !gr.nulled_fields.is_empty() {
@@ -1633,6 +1636,7 @@ mod tests {
             &raw_value,
             &outcome.tool_calls,
             &response_str,
+            &[],
         );
 
         assert!(
@@ -1690,6 +1694,7 @@ mod tests {
             &raw_value,
             &outcome.tool_calls,
             &response_str,
+            &[],
         );
 
         assert!(result.is_some());
@@ -1729,6 +1734,7 @@ mod tests {
             &raw_value,
             &outcome.tool_calls,
             &response_str,
+            &[],
         );
 
         assert!(
