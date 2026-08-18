@@ -1335,6 +1335,7 @@ mod tests {
         // A deliberately short why should fail the check.
         let bad_spec = FieldSpec {
             sources: vec!["zed/terminal".to_string()],
+            response_path: "".to_string(),
             why: "too short".to_string(),
         };
         assert!(bad_spec.why.len() < 40);

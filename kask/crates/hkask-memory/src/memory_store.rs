@@ -361,10 +361,7 @@ impl MemoryStore {
     /// Query all h_mems by entity prefix, without decay or dedup.
     /// Used by the purge tool to find all h_mems (assertions, QA pairs,
     /// and any other attributes) matching a corpus prefix for deletion.
-    pub fn h_mems_by_entity_prefix(
-        &self,
-        prefix: &str,
-    ) -> Result<Vec<HMem>, MemoryStoreError> {
+    pub fn h_mems_by_entity_prefix(&self, prefix: &str) -> Result<Vec<HMem>, MemoryStoreError> {
         self.h_mem_store
             .query_by_entity_prefix(prefix, 100_000)
             .map_err(Into::into)

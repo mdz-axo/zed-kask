@@ -440,6 +440,7 @@ mod tests {
                 "agent_id": "alpha_agent",
                 "agent_type": "research",
                 "description": "Alpha test agent",
+                "display_name": "",
                 "accepts": ["text"],
                 "produces": ["text"],
                 "dependencies": { "required": [], "optional": [] },
@@ -458,6 +459,8 @@ mod tests {
             serde_json::json!({
                 "agent_id": "beta_agent",
                 "agent_type": "sentiment",
+                "description": "Beta test agent",
+                "display_name": "",
                 "capabilities": {
                     "system_prompt": "You are beta."
                 }
@@ -504,6 +507,7 @@ mod tests {
                 "agent_id": "synced_agent",
                 "agent_type": "research",
                 "description": "Original",
+                "display_name": "",
                 "accepts": ["text"],
                 "produces": ["text"],
                 "dependencies": { "required": ["dep_a"], "optional": [] },
@@ -585,7 +589,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("has_card")).unwrap();
         std::fs::write(
             dir.join("has_card").join("agent_card.json"),
-            serde_json::json!({ "agent_id": "has_card", "agent_type": "test", "capabilities": { "system_prompt": "test" } }).to_string(),
+            serde_json::json!({ "agent_id": "has_card", "agent_type": "test", "description": "test", "display_name": "", "capabilities": { "system_prompt": "test" } }).to_string(),
         )
         .unwrap();
         std::fs::create_dir_all(dir.join("no_card")).unwrap(); // no agent_card.json
@@ -606,7 +610,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("first")).unwrap();
         std::fs::write(
             dir.join("first").join("agent_card.json"),
-            serde_json::json!({ "agent_id": "first", "agent_type": "test", "capabilities": { "system_prompt": "test" } }).to_string(),
+            serde_json::json!({ "agent_id": "first", "agent_type": "test", "description": "test", "display_name": "", "capabilities": { "system_prompt": "test" } }).to_string(),
         )
         .unwrap();
 
@@ -618,7 +622,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("second")).unwrap();
         std::fs::write(
             dir.join("second").join("agent_card.json"),
-            serde_json::json!({ "agent_id": "second", "agent_type": "test", "capabilities": { "system_prompt": "test" } }).to_string(),
+            serde_json::json!({ "agent_id": "second", "agent_type": "test", "description": "test", "display_name": "", "capabilities": { "system_prompt": "test" } }).to_string(),
         )
         .unwrap();
         assert_eq!(registry.load().unwrap(), 2);
@@ -710,13 +714,13 @@ mod tests {
         // Missing system_prompt — will be skipped.
         std::fs::write(
             dir.join("bad_agent").join("agent_card.json"),
-            serde_json::json!({ "agent_id": "bad_agent", "agent_type": "test" }).to_string(),
+            serde_json::json!({ "agent_id": "bad_agent", "agent_type": "test", "description": "test", "display_name": "" }).to_string(),
         )
         .unwrap();
         std::fs::create_dir_all(dir.join("good_agent")).unwrap();
         std::fs::write(
             dir.join("good_agent").join("agent_card.json"),
-            serde_json::json!({ "agent_id": "good_agent", "agent_type": "test", "capabilities": { "system_prompt": "test" } }).to_string(),
+            serde_json::json!({ "agent_id": "good_agent", "agent_type": "test", "description": "test", "display_name": "", "capabilities": { "system_prompt": "test" } }).to_string(),
         )
         .unwrap();
 
@@ -842,6 +846,8 @@ mod tests {
             serde_json::json!({
                 "agent_id": "agent_a",
                 "agent_type": "test",
+                "description": "test",
+                "display_name": "",
                 "produces": ["text", "json"],
                 "capabilities": { "system_prompt": "test" }
             })
@@ -854,6 +860,8 @@ mod tests {
             serde_json::json!({
                 "agent_id": "agent_b",
                 "agent_type": "test",
+                "description": "test",
+                "display_name": "",
                 "produces": ["task_result"],
                 "capabilities": { "system_prompt": "test" }
             })
@@ -894,6 +902,8 @@ mod tests {
             serde_json::json!({
                 "agent_id": "agent_a",
                 "agent_type": "test",
+                "description": "test",
+                "display_name": "",
                 "produces": ["text"],
                 "capabilities": { "system_prompt": "test" }
             })
