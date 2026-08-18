@@ -320,41 +320,28 @@ steps:
   - ordinal: 11
     action: execute
     description: >
-      Fetch all kanban boards via kanban_board_list (hkask-mcp-kata-kanban).
-      Deterministic — no inputs. The board list is available to the
-      monitor-board step for board identification. Condition-gated on the
-      operate phase.
-    mcp: kanban_board_list
-    gas_cap: 2000
+      Fetch all kanban boards and the task list concurrently via mcp_batch.
+      kanban_board_list returns all boards; kanban_task_list returns tasks
+      for the specified board_id. Both are independent — running them
+      concurrently cuts wall-clock time from 120s to 60s. Results are keyed
+      by boards and tasks in step_11_result.
+    mcp_batch:
+      - mcp: kanban_board_list
+        key: boards
+        input_mapping: {}
+      - mcp: kanban_task_list
+        key: tasks
+        input_mapping:
+          board_id: "{{ board_id | default('') }}"
+    gas_cap: 4000
     timeout_seconds: 60
     condition: "step_1_result.phase == 'operate'"
-    input_mapping: {}
     on_failure:
       action: report
       resume: >
-        kanban_board_list failed — the kata-kanban MCP server may be down.
-        Restart the server via sync_kask_mcp_servers and re-invoke.
-
-  - ordinal: 12
-    action: execute
-    description: >
-      Fetch the task list for the board via kanban_task_list
-      (hkask-mcp-kata-kanban). Deterministic — board_id from the cascade
-      input. The task list is the single source of truth for the operate
-      phase, replacing the former agent-mediated fetch. Condition-gated on
-      the operate phase.
-    mcp: kanban_task_list
-    gas_cap: 2000
-    timeout_seconds: 60
-    condition: "step_1_result.phase == 'operate'"
-    input_mapping:
-      board_id: "{{ board_id | default('') }}"
-    on_failure:
-      action: report
-      resume: >
-        kanban_task_list failed — the kata-kanban MCP server may be down or
-        the board_id may not exist. Restart the server via sync_kask_mcp_servers
-        and re-invoke.
+        kanban_board_list / kanban_task_list batch failed — the kata-kanban
+        MCP server may be down or the board_id may not exist. Restart the
+        server via sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 13
     action: select

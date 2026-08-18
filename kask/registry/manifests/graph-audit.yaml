@@ -110,7 +110,7 @@ inputs:
     description: "Workspace metadata and known references."
 
 steps:
-  # === CODE MODE (steps 1-8) — also used by DUAL mode for graph extraction ===
+  # === CODE MODE (steps 1-9) — also used by DUAL mode for graph extraction ===
   - ordinal: 1
     action: execute
     condition: "mode != 'semantic'"
@@ -246,8 +246,8 @@ steps:
     description: >
       CODE CONTEXT: Assemble token-budgeted context from the gathered
       analysis via codegraph_context MCP tool. Deterministic. Uses the goal
-      as the query and the analysis result (step 8) for context. Feeds the
-      code-context step (step 10) as context_result.
+      as the query and the analysis result (step 7) for context. Feeds the
+      code-context step (step 9) as context_result.
     mcp: codegraph_context
     gas_cap: 3000
     timeout_seconds: 60

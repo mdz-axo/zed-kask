@@ -490,6 +490,76 @@ impl LocalSwarmRuntime {
             raw_response: None,
         })
     }
+
+    /// Construct a `DelegationCounter` from this runtime's ledger. Used by
+    /// the regulation loop to detect delegations that skipped grounding
+    /// enforcement (the liveness gap). The counter queries the ledger for
+    /// debit transactions on the operator account; a failed query returns
+    /// `None` (absence ≠ 0 — a failed read is not a measured zero).
+    pub fn delegation_counter(&self) -> SwarmDelegationCounter {
+        SwarmDelegationCounter::new(
+            self.ledger.clone(),
+            self.operator_account.clone(),
+            self.asset.clone(),
+        )
+    }
+}
+
+/// Adapter that implements `DelegationCounter` for the swarm ledger.
+///
+/// Each delegation is a debit transaction with `metadata: { "action": "debit" }`
+/// (see `LocalSwarmRuntime::record_spend`). The count is the total number of
+/// debit transactions for the operator account — fund transactions are
+/// deposits, not delegations, and are filtered out.
+///
+/// Returns `None` on query failure rather than `Some(0)`: a database outage
+/// must not enter the regulation loop as "zero delegations" (the
+/// `.rules` broken-feedback-loop trap).
+pub struct SwarmDelegationCounter {
+    ledger: std::sync::Arc<hkask_ledger::Ledger>,
+    operator_account: String,
+    asset: String,
+}
+
+impl SwarmDelegationCounter {
+    pub fn new(
+        ledger: std::sync::Arc<hkask_ledger::Ledger>,
+        operator_account: String,
+        asset: String,
+    ) -> Self {
+        Self {
+            ledger,
+            operator_account,
+            asset,
+        }
+    }
+}
+
+impl hkask_verification::DelegationCounter for SwarmDelegationCounter {
+    fn delegation_count(&self) -> Option<u64> {
+        let range = hkask_ledger::DateRange {
+            start: "0000-01-01T00:00:00Z".to_string(),
+            end: "9999-12-31T23:59:59Z".to_string(),
+        };
+        let filter = hkask_ledger::QueryFilter {
+            account: Some(self.operator_account.clone()),
+            asset: Some(self.asset.clone()),
+            namespace: None,
+        };
+        let txs = self.ledger.query(&range, &filter).ok()?;
+        // Count only debit transactions (delegations). Fund transactions
+        // are deposits, not delegations.
+        Some(
+            txs.iter()
+                .filter(|tx| {
+                    tx.metadata
+                        .get("action")
+                        .and_then(|a| a.as_str())
+                        .is_some_and(|a| a == "debit")
+                })
+                .count() as u64,
+        )
+    }
 }
 
 /// Classify the request shape for the bind check (Rung 4). This heuristic
