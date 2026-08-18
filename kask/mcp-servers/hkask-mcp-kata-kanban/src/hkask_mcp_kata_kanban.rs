@@ -184,6 +184,7 @@ fn build_task_agent_card(
         agent_id: format!("kanban-task-{task_id}"),
         agent_type: "task".to_string(),
         description: title.to_string(),
+        display_name: title.to_string(),
         accepts: vec!["task".to_string()],
         produces: vec!["task_result".to_string()],
         dependencies: Default::default(),

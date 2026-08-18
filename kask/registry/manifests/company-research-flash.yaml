@@ -109,6 +109,14 @@ inputs:
       by the forecast_list execute step (0) from hkask-mcp-companies. This
       input is retained as a cascade-level override — the invoking agent may
       pre-populate it to bypass the fetch. Feeds KATA step 20 PDCA "check".
+  - name: now
+    type: string
+    required: false
+    description: >
+      Current date in ISO 8601 format (e.g. "2026-08-18"). Populated by the
+      invoking agent or the skill tool. Used by forecast_persist (step 24)
+      as the forecast_date. If absent, the persist step receives an empty
+      string and the forecast is stored without a date.
 
 ledger:
   span_namespace: reg.skill.company-research-flash

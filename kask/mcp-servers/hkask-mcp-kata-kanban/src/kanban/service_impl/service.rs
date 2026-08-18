@@ -54,14 +54,14 @@ impl KanbanService {
         Self { store }
     }
 
-    /// Create a task-scoped gas accountant bound to a specific kanban task.
+    /// Create a task-scoped rJoule accountant bound to a specific kanban task.
     ///
-    /// The accountant decrements `task.gas_remaining` via `task_consume_gas`
+    /// The accountant decrements `task.rjoule_remaining` via `task_consume_rjoules`
     /// after each inference call. Attach it to a `KataEngine` via
-    /// `with_task_gas_accountant` to close the per-task gas feedback loop.
+    /// `with_task_gas_accountant` to close the per-task rJoule feedback loop.
     ///
-    /// pre:  task_id refers to an existing task with a gas budget set
-    /// post: returns a callback that deducts from the task
+    /// pre:  task_id refers to an existing task with an rJoule budget set
+    /// post: returns a callback that deducts from the task's rJoule budget
     #[must_use]
     pub fn gas_accountant_for(
         self: &Arc<Self>,
@@ -70,9 +70,9 @@ impl KanbanService {
         let service = Arc::clone(self);
         Arc::new(move |cost, reason| {
             service
-                .task_consume_gas(task_id, cost, reason)
+                .task_consume_rjoules(task_id, cost, reason)
                 .map_err(|e| {
-                    crate::kata::KataError::InferenceFailed(format!("task gas deduction: {e}"))
+                    crate::kata::KataError::InferenceFailed(format!("task rJoule deduction: {e}"))
                 })
         })
     }

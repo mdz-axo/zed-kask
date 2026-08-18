@@ -74,14 +74,12 @@ pub fn validate_typing(
 pub struct LocalAgentCard {
     pub agent_id: String,
     pub agent_type: String,
-    #[serde(default)]
     pub description: String,
-    /// Human-readable label for UI display. When empty, the panel falls back
-    /// to `agent_id`. Cloned cards set this to the cloud agent's display name
-    /// so the local row reads "Xaman Ek (Clone)" rather than the kebab-cased
-    /// filesystem id (`xaman-ek-clone`). `#[serde(default)]` so existing cards
-    /// without this field still deserialize.
-    #[serde(default)]
+    /// Human-readable label for UI display. Cloned cards set this to the
+    /// cloud agent's display name (e.g. "Xaman Ek (Clone)") so the local
+    /// row is distinguishable from the cloud original. Locally-created cards
+    /// set this to the operator-supplied name; the panel falls back to
+    /// `agent_id` when empty.
     pub display_name: String,
     #[serde(default)]
     pub accepts: Vec<String>,
