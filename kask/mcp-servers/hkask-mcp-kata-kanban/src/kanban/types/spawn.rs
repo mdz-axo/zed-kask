@@ -26,7 +26,6 @@ pub struct SpawnSpec {
     /// Tool servers accessible to the spawned agent.
     pub(crate) tool_servers: Vec<String>,
     /// Maximum gas/energy budget for the spawned agent.
-    pub(crate) gas_budget: Option<u64>,
     /// Maximum time the spawned agent can run (seconds).
     pub(crate) timeout_seconds: Option<u64>,
     /// Template/skill registries accessible to the spawned agent.
@@ -52,7 +51,6 @@ impl SpawnSpec {
             delegated_skills: vec!["kanban".into()],
             memory_scope: "episodic".into(),
             tool_servers: vec!["kata-kanban".into()],
-            gas_budget: None,
             timeout_seconds: None,
             registries: Vec::new(),
             artifacts: Vec::new(),

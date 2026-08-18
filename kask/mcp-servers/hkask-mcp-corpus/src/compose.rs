@@ -377,7 +377,6 @@ impl ComposeService {
             typical_p: 0.0,
             frequency_penalty: 0.0,
             presence_penalty: 0.0,
-            max_tokens: 512,
             seed: None,
             disable_thinking: false,
             adapter: None,

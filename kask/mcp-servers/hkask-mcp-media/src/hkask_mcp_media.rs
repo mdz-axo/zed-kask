@@ -233,7 +233,7 @@ impl MediaServer {
     // enforced upstream at `McpRuntime::invoke` via `CyberneticsLoop`, so the
     // tracker's gas cap is constructed inert (large cap, `hard_limit: false`)
     // and never charged. We deliberately avoid `BudgetTracker::check_exhausted`
-    // because it returns `Gas` whenever `gas_used >= gas_cap` and would trip
+    // because it is redundant with our own pre-charge gate
     // spuriously when the gas cap is 0 — instead the rJoule gate is checked
     // directly via `remaining_rjoule()`.
 

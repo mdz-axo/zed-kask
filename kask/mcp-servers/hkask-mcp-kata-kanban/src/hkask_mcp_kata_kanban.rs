@@ -21,7 +21,7 @@ pub use kanban::{
 };
 pub use kata::{
     ImprovementDirection, ImprovementSignal, KataEngine, KataError, KataHistory, KataManifest,
-    KataResult, KataState, KataStep, PracticeEntry, StepExperience, TaskGasAccountantFn,
+    KataResult, KataState, KataStep, PracticeEntry, StepExperience, TaskRjouleAccountantFn,
 };
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)

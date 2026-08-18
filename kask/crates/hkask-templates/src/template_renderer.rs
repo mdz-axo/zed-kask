@@ -215,7 +215,7 @@ impl TemplateRenderer {
         let after_front_matter = strip_front_matter(template_content);
 
         // Strip the `[inference]` config block from the body. This TOML-like
-        // block declares per-step parameters (temperature, max_tokens,
+        // block declares per-step parameters (temperature
         // thinking_budget). Without stripping, it's sent to the LLM as prompt
         // text. The parsed config is extracted separately by the caller via
         // `parse_and_strip_inference_block` on the raw template content.
@@ -285,7 +285,6 @@ pub fn strip_front_matter(template_content: &str) -> &str {
 /// ```text
 /// [inference]
 /// temperature = 0.2
-/// max_tokens = 4096
 /// thinking_budget = "full"
 /// ```
 /// This struct captures the parsed values. Fields not present in the block
@@ -293,7 +292,6 @@ pub fn strip_front_matter(template_content: &str) -> &str {
 #[derive(Debug, Default, Clone)]
 pub struct InferenceBlock {
     pub temperature: Option<f32>,
-    pub max_tokens: Option<u32>,
     pub thinking_budget: Option<String>,
 }
 
@@ -344,8 +342,6 @@ pub fn parse_and_strip_inference_block(body: &str) -> (String, InferenceBlock) {
                 "temperature" => {
                     config.temperature = unquoted.parse().ok();
                 }
-                "max_tokens" => {
-                    config.max_tokens = unquoted.parse().ok();
                 }
                 "thinking_budget" => {
                     config.thinking_budget = Some(unquoted.to_string());
@@ -622,11 +618,9 @@ mod tests {
     // ── Inference block parsing tests ─────────────────────────────────────
 
     #[test]
-    fn parse_inference_block_extracts_temperature_and_max_tokens() {
-        let body = "[inference]\ntemperature = 0.2\nmax_tokens = 4096\nthinking_budget = \"full\"\n\nYou are a code reviewer.\n";
+    fn parse_inference_block_extracts_temperature() {
         let (stripped, config) = parse_and_strip_inference_block(body);
         assert_eq!(config.temperature, Some(0.2));
-        assert_eq!(config.max_tokens, Some(4096));
         assert_eq!(config.thinking_budget.as_deref(), Some("full"));
         assert!(stripped.starts_with("You are a code reviewer."));
         assert!(!stripped.contains("[inference]"));
@@ -638,17 +632,14 @@ mod tests {
         let body = "You are an evaluator. Respond with JSON.";
         let (stripped, config) = parse_and_strip_inference_block(body);
         assert_eq!(config.temperature, None);
-        assert_eq!(config.max_tokens, None);
         assert_eq!(config.thinking_budget, None);
         assert_eq!(stripped, body);
     }
 
     #[test]
     fn parse_inference_block_handles_partial_config() {
-        let body = "[inference]\nmax_tokens = 8192\n\nYou are a decomposer.\n";
         let (stripped, config) = parse_and_strip_inference_block(body);
         assert_eq!(config.temperature, None);
-        assert_eq!(config.max_tokens, Some(8192));
         assert_eq!(config.thinking_budget, None);
         assert!(stripped.starts_with("You are a decomposer."));
     }
