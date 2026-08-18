@@ -1361,6 +1361,10 @@ mod tests {
                 why: "Derived from deliverable_path by platform code \
                       (extension extraction). Not a tool call."
                     .to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "deliverable_path".to_string(),
+                    how: "path_extension".to_string(),
+                }),
             },
         );
         let contract = GroundingContract {
@@ -2599,6 +2603,212 @@ mod tests {
                 .contains(&"deliverable_path".to_string()),
             "'...' is the card's filler, not a fabrication: {:?}",
             result.nulled_fields
+        );
+    }
+
+    // ── Production-scar tests (Fermi adaptations) ─────────────────────
+    //
+    // These tests adapt Fermi's production scars to our agent types and
+    // the new value-matching + weakest-link enforcement. Each test pins a
+    // specific failure mode that surfaced in production and would regress
+    // if the enforcement logic were weakened.
+
+    #[test]
+    fn narrative_leaks_file_path_when_deliverable_not_sourced() {
+        // The narrative loophole scar: when the structured deliverable_path
+        // field is stripped (no tool call sourced it), the fabrication often
+        // moves to the prose channel — the agent mentions the path in the
+        // narrative as if it had been written. A leak in the narrative is
+        // still a leak, even though the structured field was nulled.
+        //
+        // Adapted from Fermi: the value-matching change closed the structured
+        // channel, so fabrication migrated to the narrative. This test pins
+        // that the narrative scanner catches it.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/very/long/path/to/main.rs",
+            "summary": "I wrote the file."
+        });
+        // No tool calls — deliverable_path is unsourced and will be nulled.
+        let tool_calls: Vec<serde_json::Value> = vec![];
+        // The narrative mentions the nulled value — this is the leak.
+        let narrative = "I wrote the file at /src/very/long/path/to/main.rs and it works.";
+
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, narrative);
+        // Structured field was nulled.
+        assert!(
+            result
+                .nulled_fields
+                .contains(&"deliverable_path".to_string()),
+            "deliverable_path must be nulled when no tool sourced it"
+        );
+        assert!(cleaned["deliverable_path"].is_null());
+        // Narrative leak detected — the fabrication migrated to prose.
+        assert_eq!(
+            result.narrative_leaks.len(),
+            1,
+            "narrative mentioning the nulled path is a leak: {:?}",
+            result.narrative_leaks
+        );
+        assert_eq!(result.narrative_leaks[0].1, "deliverable_path");
+    }
+
+    #[test]
+    fn sourced_field_with_wrong_value_from_right_tool_is_caught() {
+        // The ploidy scar: the right tool ran and returned a value, but the
+        // agent claimed a *different* value in the output. The tool returned
+        // {"path": "/src/real.rs"} but the agent claimed deliverable_path:
+        // "/src/fabricated.rs". Name-based sourcing would pass (the tool was
+        // called and succeeded); value-matching catches the discrepancy.
+        //
+        // Adapted from Fermi: a tool call's name matching the contract is
+        // necessary but not sufficient — the value must come from the tool.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/fabricated.rs",
+            "summary": "done"
+        });
+        // The right tool ran and returned a real path — but not the one
+        // the agent claimed.
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/real.rs"}),
+        )];
+
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(
+            result
+                .nulled_fields
+                .contains(&"deliverable_path".to_string()),
+            "a value not present in the tool's return must be nulled (ploidy scar)"
+        );
+        assert!(cleaned["deliverable_path"].is_null());
+        // Provenance is Unsourced — the tool ran, the value just didn't match.
+        match &result.provenance["deliverable_path"] {
+            ProvenanceTag::Unsourced { tool_failed, .. } => {
+                // The tool didn't fail — it ran successfully. The value
+                // didn't come from it, but the tool itself succeeded.
+                assert!(
+                    !tool_failed,
+                    "tool ran successfully, value just didn't match"
+                );
+            }
+            other => panic!("expected Unsourced, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn derived_chain_recurse_to_weakest() {
+        // The weakest-link scar, recursive form: a Derived field whose source
+        // is itself Derived from an Inferred field should be Inferred, not
+        // Derived. The weakest link propagates through the chain — a
+        // derivation cannot upgrade the provenance of its source.
+        //
+        // Adapted from Fermi: the chain is summary (Inferred) → summary_upper
+        // (Derived from summary) → summary_upper_len (Derived from
+        // summary_upper). The terminal derivation must inherit the weakest
+        // link (Inferred), not the intermediate Derived tag.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "summary".to_string(),
+            FieldSpec {
+                sources: vec![],
+                why: "A prose summary commissioned by the system prompt.".to_string(),
+                response_path: "".to_string(),
+                derived_from: None,
+            },
+        );
+        field_sources.insert(
+            "summary_upper".to_string(),
+            FieldSpec {
+                sources: vec![],
+                why: "Derived from summary by uppercasing transform.".to_string(),
+                response_path: "".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "summary".to_string(),
+                    how: "to_uppercase".to_string(),
+                }),
+            },
+        );
+        field_sources.insert(
+            "summary_upper_len".to_string(),
+            FieldSpec {
+                sources: vec![],
+                why: "Derived from summary_upper by length transform.".to_string(),
+                response_path: "".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "summary_upper".to_string(),
+                    how: "len".to_string(),
+                }),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({
+            "summary": "hi",
+            "summary_upper": "HI",
+            "summary_upper_len": 2
+        });
+        let tool_calls: Vec<serde_json::Value> = vec![];
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(result.nulled_fields.is_empty());
+        // summary is Inferred (commissioned, empty sources).
+        assert_eq!(result.provenance["summary"], ProvenanceTag::Inferred);
+        // summary_upper is Derived from summary, but summary is Inferred
+        // (strength 3 < Derived's 4) → weakest link → Inferred.
+        assert_eq!(
+            result.provenance["summary_upper"],
+            ProvenanceTag::Inferred,
+            "summary_upper must inherit Inferred from its source (weakest link)"
+        );
+        // summary_upper_len is Derived from summary_upper, which is itself
+        // downgraded to Inferred → weakest link propagates → Inferred.
+        assert_eq!(
+            result.provenance["summary_upper_len"],
+            ProvenanceTag::Inferred,
+            "weakest link must propagate through the derived chain to Inferred"
+        );
+    }
+
+    #[test]
+    fn enforcement_is_idempotent_after_value_matching() {
+        // A second pass of enforce_grounding on an already-enforced document
+        // must be clean. This pins the idempotency property after the
+        // value-matching change: the cleaned document (with nulled fields and
+        // provenance stamps) must not produce new violations on re-enforcement.
+        //
+        // Adapted from Fermi: value-matching added a new nulling path, and a
+        // re-read of a cached result must not log anomalies. The existing
+        // `enforce_grounding_is_idempotent` test covers the no-tool case; this
+        // test covers the value-mismatch case (tool ran, value didn't match).
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/fabricated.rs",
+            "summary": "done"
+        });
+        // The right tool ran but returned a different path — value-matching
+        // nulls deliverable_path on the first pass.
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/real.rs"}),
+        )];
+
+        let (first_result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(
+            !first_result.is_clean(),
+            "first pass should null the mismatched value"
+        );
+        assert!(cleaned["deliverable_path"].is_null());
+
+        // Second pass on the cleaned document — must find nothing new.
+        let (second_result, _re_cleaned) = enforce_grounding(&contract, &cleaned, &tool_calls, "");
+        assert!(
+            second_result.is_clean(),
+            "second pass must be clean; otherwise the validator would log an \
+             anomaly every time a cached value-mismatched result is re-read: {:?}",
+            second_result
         );
     }
 }

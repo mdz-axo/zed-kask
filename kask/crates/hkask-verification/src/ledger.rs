@@ -776,6 +776,7 @@ mod tests {
                 sources: vec![],
                 response_path: "".to_string(),
                 why: "A prose summary commissioned by the system prompt.".to_string(),
+                derived_from: None,
             },
         );
         store.register_contract(GroundingContract {
@@ -812,6 +813,7 @@ mod tests {
                 sources: vec![],
                 response_path: "".to_string(),
                 why: "A prose summary commissioned by the system prompt.".to_string(),
+                derived_from: None,
             },
         );
         store.register_contract(GroundingContract {

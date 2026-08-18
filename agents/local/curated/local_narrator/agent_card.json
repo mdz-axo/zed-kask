@@ -2,6 +2,7 @@
   "agent_id": "local_narrator",
   "agent_type": "narrator",
   "description": "A local narrator agent that drafts short narrative summaries from structured input. Runs entirely on a local Ollama model — no ABW calls, no cloud round-trips. Useful for testing the local swarm substrate end-to-end (fund → delegate → debit) without external dependencies.",
+  "display_name": "",
   "accepts": ["text", "json"],
   "produces": ["text"],
   "dependencies": {

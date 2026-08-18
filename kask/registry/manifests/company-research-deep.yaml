@@ -4,16 +4,16 @@
 # Design: kask/docs/plans/efra-ai-to-kask-company-research-skill.md
 #
 # Sequential pipeline mirroring EFRA-AI's research pipeline:
-#   COMPANY(1-6) → FALSTAFFIAN(6b) → GORILLA(7-8) → IMAGINE(9-10) → THESIS(11) →
-#   goal-analysis gate(12) → convergence(13) → loop(14)
+#   COMPANY(1-3) → FALSTAFFIAN(3b) → GORILLA(5-7) → IMAGINE(8-10) → THESIS(11) →
+#   goal-analysis gate(13) → convergence(14) → loop(15)
 #
 # Each agent feeds the next, building a comprehensive investment thesis.
 # COMPANY is a DEEPEN agent — it consumes company_transcript, dcf_valuation,
 # comparable_analysis, web_search, fetch MCP tool outputs (native execute
-# steps) and does LLM synthesis over them. FALSTAFFIAN (6b) rotates the
+# steps) and does LLM synthesis over them. FALSTAFFIAN (3b) rotates the
 # competitive framing before GORILLA scores it — structural defense against
 # frame capture by analyst narratives. IMAGINE consumes scenario_build and
-# the economic_trajectory probe (9b) which anchors imagination on falling
+# the economic_trajectory probe (6b) which anchors imagination on falling
 # costs, constraint removal, and the Kauffman adjacent possible. THESIS's
 # investment_grade / needs_work / incomplete verdict is the
 # convergence signal; needs_work loops back to COMPANY with THESIS gaps
@@ -109,7 +109,7 @@ inputs:
     required: false
     description: >
       Advisory: the rotated board from the previous PDCA iteration's
-      FALSTAFFIAN step (7). Carried forward by the loop (16) so the next
+      FALSTAFFIAN step (4). Carried forward by the loop (15) so the next
       FALSTAFFIAN pass can detect whether the COMPANY revision addressed the
       framing gaps or re-encoded the same analyst framing. Absent on first
       iteration.
@@ -118,7 +118,7 @@ inputs:
     required: false
     description: >
       Advisory: the economic trajectory from the previous PDCA iteration's
-      ECONOMIC TRAJECTORY step (11). Carried forward by the loop (16) so the
+      ECONOMIC TRAJECTORY step (9). Carried forward by the loop (15) so the
       next trajectory pass can detect whether the COMPANY revision addressed
       the trajectory gaps or re-encoded the same cost assumptions. Absent on
       first iteration.
@@ -241,7 +241,7 @@ steps:
   # ── Steps 5–6: GORILLA — 4-dimension framework ──
   # Fixed weights (25/30/25/20) — mcda rejected (essentialist Surface gate:
   # adds ceremony for fixed weights). Scoring is a lisp.eval compute step
-  # (9), not an mcda call. GORILLA consumes the ROTATED board (step 4),
+  # (7), not an mcda call. GORILLA consumes the ROTATED board (step 4),
   # not the raw Company Board (step 3) — the rotation corrects framing
   # errors before scoring.
   - ordinal: 5
@@ -250,7 +250,7 @@ steps:
       GORILLA — assess the 4 dimensions (Obvious Problem, Invisible Gorilla,
       Combinatorial Solution, Choke Point) against the ROTATED Company
       Board. Emits per-dimension qualitative assessments (0–100) that the
-      lisp.eval step (9) weights to the final gorilla_score.
+      lisp.eval step (7) weights to the final gorilla_score.
     renderer: minijinja
     template_ref: company-research/gorilla-4dim
     gas_cap: 6000
@@ -379,7 +379,7 @@ steps:
   # ── Step 9: ECONOMIC TRAJECTORY — falling-cost / Coase / adjacent possible ──
   # Economically-anchored imagination scaffold. Identifies the falling cost,
   # the constraint being removed, the Coasean firm-boundary shifts, and the
-  # Kauffman adjacent possible. IMAGINE (12) consumes this as the anchor for
+  # Kauffman adjacent possible. IMAGINE (10) consumes this as the anchor for
   # its 5/10/20Y scenarios. Anchored to MAIA "Focus and Imagination",
   # "More From Less", "Kauffman Readings", "The Future Is Faster",
   # "Bottlenecks and Critical Mass".
@@ -392,7 +392,7 @@ steps:
       Consumes the Company Board and the rotated board (if available).
       Emits economic_trajectory with falling_cost, constraint_being_removed,
       coasean_shifts, adjacent_possible_nodes, convergence_vectors, and
-      implications_for_subject. IMAGINE (12) consumes this as the anchor.
+      implications_for_subject. IMAGINE (10) consumes this as the anchor.
     renderer: minijinja
     template_ref: company-research/economic-trajectory
     gas_cap: 8000
@@ -404,8 +404,8 @@ steps:
       prior_economic_trajectory: "{{ prior_economic_trajectory | default(none) }}"
 
   # ── Step 10: IMAGINE — 5/10/20Y scenarios + digital stage ──
-  # Step 9 synthesizes the 5/10/20Y scenarios and falsifiable predictions.
-  # Scenarios are ANCHORED on the economic trajectory (step 8) and
+  # Step 10 synthesizes the 5/10/20Y scenarios and falsifiable predictions.
+  # Scenarios are ANCHORED on the economic trajectory (step 9) and
   # CHALLENGED by the Falstaffian rotations (step 4). The economic
   # trajectory is the focus that anchors imagination in reality (MAIA:
   # "Focus and Imagination"). The Falstaffian rotations are the perspective
@@ -446,7 +446,7 @@ steps:
       leadership), Valuation (3-stage: consensus → normalization →
       terminal). Emits thesis with the three pillars, but NOT the quality
       gate verdict — the verdict comes from the cross-skill goal-analysis
-      step (12) to avoid the LLM-improves-against-LLM-scored-target trap per
+      step (13) to avoid the LLM-improves-against-LLM-scored-target trap per
       .rules.
     renderer: minijinja
     template_ref: company-research/thesis-three-pillars

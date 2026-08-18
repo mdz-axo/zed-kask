@@ -89,136 +89,56 @@ ledger:
   escalation_target: Curator
 
 steps:
-  # ── SENSE: Query algedonic log for recent alerts ──────────────────────
-  # TAPOIF Thought: analyze signals from the regulation system.
+  # ── SENSE+GATHER: Five independent curator queries run concurrently ─────
+  # TAPOIF Thought+Action: collect all signal channels in one batch.
+  # All five calls are independent — no inter-step dependencies, no
+  # conditions. Running them concurrently cuts wall-clock time from
+  # 180s to 60s. Results are keyed by algedonic, escalations, memory,
+  # grounding_trend, and grounding_coverage in step_1_result.
   - ordinal: 1
     action: execute
     description: >
-      Query the algedonic event log for the configured lookback window.
-      Algedonic alerts are pain/pleasure signals from the cybernetics loop
-      — variety deficits, energy exhaustion, outcome plateaus. These are
-      the "real problems" (C.H. Robinson) the gemba walk starts from.
-    mcp: curator_algedonic_log
-    gas_cap: 1000
-    timeout_seconds: 30
-    input_mapping:
-      hours: "{{ algedonic_hours | default(24) }}"
-    on_failure:
-      action: report
-      resume: >
-        The algedonic log query failed. The curator MCP server may be down
-        or the regulation archive may not be wired. Check curator_status
-        and retry. The gemba walk can proceed with escalations and memory
-        signals, but the algedonic channel is a primary input — its
-        absence should be investigated.
-
-  # ── GATHER: Query pending escalations ────────────────────────────────
-  # TAPOIF Action: prepare the briefing by collecting escalation backlog.
-  - ordinal: 2
-    action: execute
-    description: >
-      Query pending escalations requiring review. Escalations are alerts
-      the cybernetics loop produced that need human attention — threshold
-      breaches, drift detections, blocked actions. The gemba walk reviews
-      this backlog so the operator can triage.
-    mcp: curator_escalations
-    gas_cap: 1000
-    timeout_seconds: 30
-    on_failure:
-      action: report
-      resume: >
-        The escalations query failed. The curator MCP server may be down
-        or the escalation queue may not be wired. Check curator_status
-        and retry. The gemba walk can proceed with algedonic and memory
-        signals, but the escalation backlog is a primary input — its
-        absence should be investigated.
-
-  # ── GATHER: Query curator memory for skill performance patterns ──────
-  # TAPOIF Action: collect skill-use issue reports and performance patterns
-  # from the curator's episodic + semantic memory.
-  - ordinal: 3
-    action: execute
-    description: >
-      Consult the curator's memory for skill performance patterns. The
-      curator ingests skill-use issue reports (via curator_report_skill_use_issue,
-      stored as episodic h_mem with entity "skill_use_issue:<skill_name>")
-      and other skill performance observations. This consultation retrieves
-      accumulated patterns so the briefing can surface skills with recurring
-      issues. When focus_skill is set, the consultation is scoped to that
-      skill; otherwise it asks for all skills with recent issues.
-    mcp: curator_consult
-    gas_cap: 2000
+      Query five independent curator signal channels concurrently via
+      mcp_batch: algedonic log, pending escalations, curator memory
+      consultation, grounding trend, and grounding coverage. All five
+      are independent inputs to the briefing synthesis. Results are keyed
+      by algedonic, escalations, memory, grounding_trend, and
+      grounding_coverage in step_1_result.
+    mcp_batch:
+      - mcp: curator_algedonic_log
+        key: algedonic
+        input_mapping:
+          hours: "{{ algedonic_hours | default(24) }}"
+      - mcp: curator_escalations
+        key: escalations
+        input_mapping: {}
+      - mcp: curator_consult
+        key: memory
+        input_mapping:
+          query: >
+            {% if focus_skill %}skill performance issues and patterns for skill "{{ focus_skill }}"{% else %}recent skill performance issues, skill-use failures, and drift patterns across all skills{% endif %}
+          limit: 20
+      - mcp: curator_grounding_trend
+        key: grounding_trend
+        input_mapping:
+          scope: "global"
+      - mcp: curator_grounding_coverage
+        key: grounding_coverage
+        input_mapping: {}
+    gas_cap: 6000
     timeout_seconds: 60
-    input_mapping:
-      query: >
-        {% if focus_skill %}skill performance issues and patterns for skill "{{ focus_skill }}"{% else %}recent skill performance issues, skill-use failures, and drift patterns across all skills{% endif %}
-      limit: 20
     on_failure:
       action: report
       resume: >
-        The curator memory consultation failed. The curator's memory store
-        may be down or partially degraded. Check curator_status for the
-        memory_degraded flag. The gemba walk can proceed with algedonic
-        and escalation signals, but the skill performance channel is a
-        primary input — its absence should be investigated.
-
-  # ── GATHER: Query grounding trend from the verification ledger ──────
-  # TAPOIF Action: collect grounding health signals (clean rate, coverage
-  # rate, violation counts) so the briefing surfaces whether grounding is
-  # improving or degrading. The lead metric is delegations_with_zero_nulled
-  # (deletion-resistant, paper Rule 5.4).
-  - ordinal: 4
-    action: execute
-    description: >
-      Query the global grounding trend from the central verification ledger.
-      The trend report includes delegations_with_zero_nulled (the lead
-      metric — deletion-resistant), clean_rate, coverage_rate, and violation
-      counts. This answers the paper's §4.1 question: is grounding getting
-      better? When the ledger is unavailable, the tool returns an error —
-      the gemba walk must not silently omit grounding health.
-    mcp: curator_grounding_trend
-    gas_cap: 1000
-    timeout_seconds: 30
-    input_mapping:
-      scope: "global"
-    on_failure:
-      action: report
-      resume: >
-        The grounding trend query failed. The verification ledger may be
-        down or the curator MCP server may not have the verification store
-        wired. Check curator_status and the HKASK_VERIFICATION_DB path.
-        The gemba walk can proceed with the other signal channels, but
-        grounding health is a primary input — its absence means the
-        operator cannot see whether grounding is improving.
-
-  # ── GATHER: Query grounding coverage from the verification ledger ────
-  # TAPOIF Action: collect the coverage gap report — which agent types
-  # have delegations but no grounding contract (paper §6).
-  - ordinal: 5
-    action: execute
-    description: >
-      Query the grounding coverage report from the central verification
-      ledger. The report lists each agent type that has received delegations,
-      with counts of delegations_with_contract vs. delegations_without_contract.
-      Agent types with delegations but no contract are coverage gaps (paper §6).
-      The operator uses this to see which agent types need a contract written.
-    mcp: curator_grounding_coverage
-    gas_cap: 1000
-    timeout_seconds: 30
-    on_failure:
-      action: report
-      resume: >
-        The grounding coverage query failed. The verification ledger may
-        be down or the curator MCP server may not have the verification
-        store wired. Check curator_status and the HKASK_VERIFICATION_DB
-        path. The gemba walk can proceed with the other signal channels,
-        but coverage gaps are a primary input — their absence means the
-        operator cannot see which agent types lack grounding contracts.
+        One or more curator signal channel queries failed. The curator MCP
+        server may be down or partially degraded. The briefing synthesis
+        proceeds with whichever results are available; missing channels are
+        noted as gaps. Check curator_status and retry.
 
   # ── ANALYZE: Synthesize the structured briefing ──────────────────────
   # TAPOIF Observation: retrieve and structure the answers from the five
   # signal channels into a coherent briefing.
-  - ordinal: 6
+  - ordinal: 2
     action: select
     description: >
       Synthesize the five signal channels (algedonic, escalations, memory,
@@ -239,16 +159,16 @@ steps:
     input_mapping:
       task: "{{ task | default('show me the system health') }}"
       focus_skill: "{{ focus_skill | default('') }}"
-      algedonic_result: "{{ step_1_result }}"
-      escalations_result: "{{ step_2_result }}"
-      memory_result: "{{ step_3_result }}"
-      grounding_trend_result: "{{ step_4_result }}"
-      grounding_coverage_result: "{{ step_5_result }}"
+      algedonic_result: "{{ step_1_result.algedonic | default({}) }}"
+      escalations_result: "{{ step_1_result.escalations | default([]) }}"
+      memory_result: "{{ step_1_result.memory | default({}) }}"
+      grounding_trend_result: "{{ step_1_result.grounding_trend | default({}) }}"
+      grounding_coverage_result: "{{ step_1_result.grounding_coverage | default({}) }}"
 
   # ── PRESENT: Render the conversational briefing ──────────────────────
   # TAPOIF Inform: present the findings to the operator as a readable
   # summary with structured tables.
-  - ordinal: 7
+  - ordinal: 3
     action: select
     description: >
       Render the structured briefing as a conversational summary with
@@ -266,12 +186,12 @@ steps:
     input_mapping:
       task: "{{ task }}"
       focus_skill: "{{ focus_skill | default('') }}"
-      briefing: "{{ step_6_result }}"
+      briefing: "{{ step_2_result }}"
 
   # ── RECOMMEND: Propose actions for operator approval ─────────────────
   # TAPOIF Follow-up: track decisions. The skill proposes, the operator
   # decides (human-in-the-loop design principle).
-  - ordinal: 8
+  - ordinal: 4
     action: select
     description: >
       Propose refinement actions for operator approval. For each skill with
@@ -291,10 +211,10 @@ steps:
     input_mapping:
       task: "{{ task }}"
       focus_skill: "{{ focus_skill | default('') }}"
-      briefing: "{{ step_6_result }}"
+      briefing: "{{ step_2_result }}"
 
   # ── LOOP: Convergence check ─────────────────────────────────────────
-  - ordinal: 9
+  - ordinal: 5
     action: compute
     compute_ref: lisp.eval
     description: >
@@ -311,12 +231,12 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((bc (assoc "briefing_complete" step_6_result)))
+        (let ((bc (assoc "briefing_complete" step_2_result)))
           (if (is_null bc) 0 (if (string= bc "true") 1 (if (= bc true) 1 0))))
       env:
-        step_6_result: "{{ step_6_result | default({}) }}"
+        step_2_result: "{{ step_2_result | default({}) }}"
 
-  - ordinal: 10
+  - ordinal: 6
     action: loop
     description: >
       Re-enter the cascade if the briefing has not converged (the synthesize
@@ -326,10 +246,10 @@ steps:
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: "{{ 6 }}"
+      loop_target: "{{ 2 }}"
       # Convergence signal from the deterministic lisp.eval compute step
-      # (step 9). No default(1.0): a Lisp failure must surface.
-      convergence_signal: "{{ step_9_result }}"
+      # (step 5). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_5_result }}"
 
 error_handling:
   on_gas_exceeded: abort
