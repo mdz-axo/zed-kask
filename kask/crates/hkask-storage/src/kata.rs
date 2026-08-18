@@ -53,7 +53,7 @@ impl KataHistoryStore {
     ) -> Result<i64, KataHistoryError> {
         let driver = &*self.driver;
         driver.execute(
-            "INSERT INTO kata_history (agent_name, date, kata_type, practice_name, steps_completed) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO kata_history (agent_name, date, kata_type, practice_name, steps_completed) VALUES (?1, ?2, ?3, ?4, ?5)",
             &[
                 DbValue::Text(agent_name.to_string()),
                 DbValue::Text(date.to_string()),
@@ -88,7 +88,7 @@ impl KataHistoryStore {
                     kata_type: row.get_str(3)?.to_string(),
                     practice_name: row.get_str(4)?.to_string(),
                     steps_completed: row.get_int(5)? as usize,
-                    created_at: row.get_str(7)?.to_string(),
+                    created_at: row.get_str(6)?.to_string(),
                 })
             },
         )?)
@@ -143,7 +143,7 @@ impl KataHistoryStore {
                     kata_type: row.get_str(3)?.to_string(),
                     practice_name: row.get_str(4)?.to_string(),
                     steps_completed: row.get_int(5)? as usize,
-                    created_at: row.get_str(7)?.to_string(),
+                    created_at: row.get_str(6)?.to_string(),
                 })
             },
         )?)
@@ -172,7 +172,7 @@ impl KataHistoryStore {
                     kata_type: row.get_str(3)?.to_string(),
                     practice_name: row.get_str(4)?.to_string(),
                     steps_completed: row.get_int(5)? as usize,
-                    created_at: row.get_str(7)?.to_string(),
+                    created_at: row.get_str(6)?.to_string(),
                 })
             },
         )?)
@@ -223,13 +223,7 @@ mod tests {
             .record("Alice", "2026-06-15", "starter", "starter-kata", 3)
             .unwrap();
         store
-            .record(
-                "Bob",
-                "2026-06-15",
-                "improvement",
-                "improvement-kata",
-                4,
-            )
+            .record("Bob", "2026-06-15", "improvement", "improvement-kata", 4)
             .unwrap();
         assert_eq!(store.count_entries_for_agent("Alice").unwrap(), 2);
         assert_eq!(store.count_entries_on("Alice", "2026-06-15").unwrap(), 1);
@@ -243,13 +237,7 @@ mod tests {
             .record("Alice", "2026-06-14", "starter", "starter-kata", 5)
             .unwrap();
         store
-            .record(
-                "Alice",
-                "2026-06-15",
-                "improvement",
-                "improvement-kata",
-                4,
-            )
+            .record("Alice", "2026-06-15", "improvement", "improvement-kata", 4)
             .unwrap();
         let last = store.last_entry_for_agent("Alice").unwrap().unwrap();
         assert_eq!(last.date, "2026-06-15");
@@ -273,13 +261,7 @@ mod tests {
             .record("Alice", "2026-06-14", "starter", "starter-kata", 5)
             .unwrap();
         store
-            .record(
-                "Alice",
-                "2026-06-15",
-                "improvement",
-                "improvement-kata",
-                4,
-            )
+            .record("Alice", "2026-06-15", "improvement", "improvement-kata", 4)
             .unwrap();
         let deleted = store.delete_entries_before("2026-06-14").unwrap();
         assert_eq!(deleted, 1);

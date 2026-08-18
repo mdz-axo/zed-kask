@@ -322,9 +322,8 @@ fn resolve_mcp_binary(server_id: &str, command: &str) -> String {
 
 /// MCP runtime manager
 ///
-/// Also serves as the OCAP/gas/Regulation governance boundary for tool invocations.
-/// The `invoke` method verifies the delegation token, reserves gas via the
-/// CyberneticsLoop, emits a Regulation span, calls the tool, settles gas, and emits
+/// Also serves as the Regulation governance boundary for tool invocations.
+/// The `invoke` method emits a Regulation span, calls the tool, and emits
 /// the outcome span. This collapses the former `GovernedTool` wrapper —
 /// one tool, one path.
 #[derive(Clone)]
@@ -395,7 +394,7 @@ pub struct McpRuntime {
 
 impl McpRuntime {
     /// Create a new MCP runtime with no governance configured.
-    /// Tool invocations will bypass OCAP/gas/Regulation — use `with_governance`
+    /// Tool invocations will bypass Regulation — use `with_governance`
     /// to wire the cybernetic membrane.
     #[must_use]
     pub fn new() -> Self {
@@ -1327,7 +1326,7 @@ impl hkask_capability::ToolPort for McpRuntime {
                 use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
                 let record = RegulationRecord::new(
                     agent,
-                    Span::from_kind(SpanKind::GasSettled),
+                    Span::from_kind(SpanKind::ToolCompleted),
                     CyclePhase::Act,
                     serde_json::json!({ "server": server, "tool": tool, "calls": 1, "status": status }),
                     0,

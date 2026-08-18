@@ -1,7 +1,7 @@
 //! Core Regulation (Cybernetic Nervous System) types for hKask
 //!
 //! Core spans: reg.tool.*, reg.inference.*, reg.agent_pod.*,
-//! reg.gas.*, reg.curation.*, reg.heal.*, reg.memory.encode.*
+//! reg.curation.*, reg.heal.*, reg.memory.encode.*
 //!
 //! Domain-specific spans have moved to their respective domain crates.
 //!
@@ -112,8 +112,6 @@ pub enum RegulationSpan {
     Inference,
     /// Agent pod lifecycle events.
     AgentPod,
-    /// Gas (energy) consumption tracking.
-    Gas,
     /// Curation loop operations — registry sync, pod sync, directive issuance.
     Curation,
     /// Self-healing operation span. Canonical string: `"reg.heal"`.
@@ -261,7 +259,6 @@ impl RegulationSpan {
             },
             RegulationSpan::Inference => "reg.inference",
             RegulationSpan::AgentPod => "reg.pod",
-            RegulationSpan::Gas => "reg.gas",
             RegulationSpan::Curation => "reg.curation",
             RegulationSpan::SelfHeal => "reg.heal",
             RegulationSpan::MemoryEncode => "reg.memory.encode",
@@ -352,7 +349,6 @@ impl std::str::FromStr for RegulationSpan {
             }),
             "reg.inference" => Ok(RegulationSpan::Inference),
             "reg.pod" => Ok(RegulationSpan::AgentPod),
-            "reg.gas" => Ok(RegulationSpan::Gas),
             "reg.curation" => Ok(RegulationSpan::Curation),
             "reg.heal" => Ok(RegulationSpan::SelfHeal),
             "reg.memory.encode" => Ok(RegulationSpan::MemoryEncode),
@@ -377,7 +373,6 @@ mod reg_span_tests {
         );
         assert_eq!(RegulationSpan::Inference.to_string(), "reg.inference");
         assert_eq!(RegulationSpan::AgentPod.to_string(), "reg.pod");
-        assert_eq!(RegulationSpan::Gas.to_string(), "reg.gas");
         assert_eq!(RegulationSpan::Curation.to_string(), "reg.curation");
         assert_eq!(RegulationSpan::SelfHeal.to_string(), "reg.heal");
         assert_eq!(
@@ -417,7 +412,6 @@ mod reg_span_tests {
             "reg.tool.swarm",
             "reg.inference",
             "reg.pod",
-            "reg.gas",
             "reg.curation",
             "reg.heal",
             "reg.memory.encode",
@@ -505,7 +499,6 @@ mod reg_span_tests {
             },
             RegulationSpan::Inference,
             RegulationSpan::AgentPod,
-            RegulationSpan::Gas,
             RegulationSpan::Curation,
             RegulationSpan::SelfHeal,
             RegulationSpan::MemoryEncode,
@@ -532,11 +525,11 @@ mod reg_span_tests {
                 variant, s, parsed
             );
         }
-        // Assert count matches enum variant count (6 core + 18 specific ToolSubsystem = 24).
+        // Assert count matches enum variant count (5 core + 18 specific ToolSubsystem = 23).
         // If this fails, a new RegulationSpan variant was added without updating this test.
         assert!(
-            all_variants.len() == 24,
-            "Regulation span exhaustive test should cover all RegulationSpan variants, found {} (expected 24)",
+            all_variants.len() == 23,
+            "Regulation span exhaustive test should cover all RegulationSpan variants, found {} (expected 23)",
             all_variants.len()
         );
     }

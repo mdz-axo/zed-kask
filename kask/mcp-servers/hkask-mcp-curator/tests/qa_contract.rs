@@ -181,22 +181,31 @@ fn make_server_with_archive_events(count: usize) -> CuratorServer {
 
 /// Persist a synthetic Regulation event through the archive's
 /// `RegulationSink` surface, as the escalation resolve/dismiss paths do.
-/// Uses the `gas` span category so the event is visible to the algedonic
+/// Uses the `reg.variety` span category so the event is visible to the algedonic
 /// replay (`query_algedonic` filters on `ALGEDONIC_SPAN_CATEGORIES`, which
 /// does not include `curation`).
 fn persist_regulation_event(store: &RegulationArchive, operation: &str) {
-    persist_regulation_event_with_span(store, RegulationSpan::Gas, operation);
+    let ns = SpanNamespace::new("reg.variety").expect("reg.variety must be canonical");
+    persist_regulation_event_with_namespace(store, ns, operation);
 }
 
 /// Persist a synthetic Regulation event with a specific span category.
 /// Used by the `reg_query` namespace-filter test to create mixed-namespace
-/// events (e.g. `reg.gas` + `reg.pod`) that are both algedonic-visible.
+/// events (e.g. `reg.variety` + `reg.pod`) that are both algedonic-visible.
 fn persist_regulation_event_with_span(
     store: &RegulationArchive,
     span: RegulationSpan,
     operation: &str,
 ) {
     let ns = SpanNamespace::try_from(span).expect("canonical span");
+    persist_regulation_event_with_namespace(store, ns, operation);
+}
+
+fn persist_regulation_event_with_namespace(
+    store: &RegulationArchive,
+    ns: SpanNamespace,
+    operation: &str,
+) {
     let record = RegulationRecord::new(
         WebID::from_persona(b"curator"),
         Span::new(ns, operation),
@@ -854,7 +863,7 @@ mod reg_query {
     /// in-memory `.take(limit)` (now removed) used to hide.
     #[tokio::test]
     async fn namespace_filter_yields_subset_of_sql_capped_set() {
-        // 4 `reg.gas` events + 2 `reg.pod` events (both algedonic-visible).
+        // 4 `reg.variety` events + 2 `reg.pod` events (both algedonic-visible).
         let escalation_queue = Arc::new(
             EscalationQueue::from_driver(SqliteDriver::in_memory_driver())
                 .expect("escalation queue"),
@@ -895,7 +904,7 @@ mod reg_query {
         assert_eq!(v.get("filtered_count").and_then(|c| c.as_u64()), Some(2));
 
         // Now limit to 3. The SQL returns 3 events (the first 3 inserted —
-        // all `reg.gas`), the namespace filter `reg.pod` keeps 0. This pins
+        // all `reg.variety`), the namespace filter `reg.pod` keeps 0. This pins
         // that the limit is pre-filter: a low limit can starve the namespace
         // filter entirely, and no in-memory `take` can add events back.
         let req = params::<RegQueryRequest>(

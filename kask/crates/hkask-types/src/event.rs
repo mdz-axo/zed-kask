@@ -185,9 +185,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.deploy.backup_upload",
     "reg.deploy.session_close",
     "reg.deploy.session_open",
-    // ── Gas / Energy ──
-    "reg.gas",
-    "reg.gas.calibration",
     // ── Goal ──
     "reg.goal",
     // ── Healing ──
@@ -288,10 +285,8 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.skill.convergence",
     "reg.skill.convergence.converged",
     "reg.skill.convergence.escalated",
-    // Budget: gas and rjoule limits
+    // Budget: rjoule limits
     "reg.skill.budget",
-    "reg.skill.budget.gas_exhausted",
-    "reg.skill.budget.gas_alert",
     "reg.skill.budget.rjoule_exhausted",
     "reg.skill.budget.rjoule_alert",
     // Provenance + profile enforcement (skill_executor / manifest executor)
@@ -569,7 +564,7 @@ impl SpanNamespace {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpanCategory {
-    /// `reg.variety*`, `reg.gas*` — the cybernetics loop.
+    /// `reg.variety*` — the cybernetics loop.
     Cybernetics,
     /// `reg.curation*`, `reg.spec*` — the curation loop.
     Curation,
@@ -592,7 +587,7 @@ impl SpanCategory {
     pub fn from_short_name(s: &str) -> Self {
         let prefix = s.split('.').next().unwrap_or(s);
         match prefix {
-            "variety" | "gas" | "outcome" | "alert" => Self::Cybernetics,
+            "variety" | "outcome" | "alert" => Self::Cybernetics,
             "curation" | "spec" => Self::Curation,
             "inference" => Self::Inference,
             "pod" | "connector" => Self::Episodic,
@@ -737,14 +732,6 @@ pub enum SpanKind {
     /// Tool invocation errored: `reg.tool.error`
     ToolError,
 
-    // ── Gas/energy spans (reg.gas.*) ──
-    /// Gas reserved for an operation: `reg.gas.reserved`
-    GasReserved,
-    /// Gas settled after an operation: `reg.gas.settled`
-    GasSettled,
-    /// Gas budget depleted: `reg.gas.depleted`
-    GasDepleted,
-
     // ── Curation spans (reg.curation.*) ──
     /// Curation directive acknowledged: `reg.curation.directive_acknowledged`
     CurationDirectiveAcknowledged,
@@ -787,9 +774,6 @@ impl SpanKind {
             SpanKind::ToolInvoked => ("reg.tool", "invoked"),
             SpanKind::ToolCompleted => ("reg.tool", "completed"),
             SpanKind::ToolError => ("reg.tool", "error"),
-            SpanKind::GasReserved => ("reg.gas", "reserved"),
-            SpanKind::GasSettled => ("reg.gas", "settled"),
-            SpanKind::GasDepleted => ("reg.gas", "depleted"),
             SpanKind::CurationDirectiveAcknowledged => ("reg.curation", "directive_acknowledged"),
             SpanKind::CurationEscalation => ("reg.curation", "escalation"),
             SpanKind::AgentPodRegistered => ("reg.pod", "registered"),
@@ -927,10 +911,6 @@ mod tests {
             SpanCategory::Cybernetics
         );
         assert_eq!(
-            SpanNamespace::new("reg.gas").unwrap().category(),
-            SpanCategory::Cybernetics
-        );
-        assert_eq!(
             SpanNamespace::new("reg.curation").unwrap().category(),
             SpanCategory::Curation
         );
@@ -995,14 +975,6 @@ mod tests {
         assert_eq!(
             Span::from_kind(SpanKind::ToolCompleted).as_str(),
             "reg.tool.completed"
-        );
-        assert_eq!(
-            Span::from_kind(SpanKind::GasReserved).as_str(),
-            "reg.gas.reserved"
-        );
-        assert_eq!(
-            Span::from_kind(SpanKind::GasSettled).as_str(),
-            "reg.gas.settled"
         );
         assert_eq!(
             Span::from_kind(SpanKind::CurationDirectiveAcknowledged).as_str(),
@@ -1121,7 +1093,7 @@ mod tests {
             #[test]
             fn from_short_name_known_prefixes(
                 prefix in prop_oneof![
-                    Just("variety"), Just("gas"), Just("outcome"), Just("alert"),
+                    Just("variety"), Just("outcome"), Just("alert"),
                     Just("curation"), Just("spec"),
                     Just("inference"),
                     Just("pod"), Just("connector"),

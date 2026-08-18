@@ -56,7 +56,6 @@ pub struct WeightedEvent {
 /// Matched against the stored `span_category` column (which holds the
 /// full `short_name()` — e.g., `"wallet.key_expired"`).
 const ALGEDONIC_SPAN_CATEGORIES: &[&str] = &[
-    "gas",
     "variety",
     "pod",
     "wallet.key_expired",
@@ -112,7 +111,7 @@ impl RegulationArchive {
     /// weight below `config.weight_threshold` are excluded.
     ///
     /// The domain is determined from the event's span namespace:
-    /// - "variety", "gas" → cybernetics_lambda
+    /// - "variety" → cybernetics_lambda
     /// - "curation", "spec" → curation_lambda
     /// - "inference" → inference_lambda
     /// - "agent_pod", "connector" → episodic_lambda
@@ -449,9 +448,9 @@ fn row_to_regulation_record(
             target: "reg.storage",
             namespace_str = %namespace_str,
             "Failed to parse span namespace from stored span_category — \
-             defaulting to reg.gas. The stored span_category may be corrupt."
+             defaulting to reg.inference. The stored span_category may be corrupt."
         );
-        SpanNamespace::new("reg.gas").expect("reg.gas must be canonical")
+        SpanNamespace::new("reg.inference").expect("reg.inference must be canonical")
     });
     // Extract the local path part after the namespace prefix.
     let ns_str = namespace.as_str();
@@ -525,29 +524,29 @@ mod tests {
 
     #[test]
     fn local_path_extraction_does_not_panic_on_short_span_path() {
-        let ns = SpanNamespace::new("reg.gas").unwrap();
+        let ns = SpanNamespace::new("reg.inference").unwrap();
         let span = Span::new(ns, "short");
         let (cat, path) = super::span_to_columns(&span);
-        assert_eq!(cat, "gas");
+        assert_eq!(cat, "inference");
         assert!(!path.is_empty());
     }
 
     #[test]
     fn local_path_extraction_does_not_panic_on_exact_namespace_match() {
-        let ns = SpanNamespace::new("reg.gas").unwrap();
-        let span = Span::new(ns, "reg.gas");
+        let ns = SpanNamespace::new("reg.inference").unwrap();
+        let span = Span::new(ns, "reg.inference");
         let (cat, path) = super::span_to_columns(&span);
-        assert_eq!(cat, "gas");
+        assert_eq!(cat, "inference");
         assert!(!path.is_empty());
     }
 
     #[test]
     fn local_path_extraction_succeeds_on_well_formed_path() {
-        let ns = SpanNamespace::new("reg.gas").unwrap();
+        let ns = SpanNamespace::new("reg.inference").unwrap();
         let span = Span::new(ns, "agent_pod.monitor");
         let (cat, path) = super::span_to_columns(&span);
-        assert_eq!(cat, "gas");
-        assert_eq!(path, "reg.gas.agent_pod.monitor");
+        assert_eq!(cat, "inference");
+        assert_eq!(path, "reg.inference.agent_pod.monitor");
     }
 
     #[test]
