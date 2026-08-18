@@ -118,6 +118,36 @@ pub(crate) fn read_text_capped(path: &str, label: &str) -> Result<String, McpToo
     })
 }
 
+/// Open a `MemoryStore` at the caller-supplied `db_path` with the corpus
+/// embedding dimension. Single enforcement point for the `MemoryStore::open`
+/// + `map_database_error` pattern duplicated across `corpus_dedup_chunks`,
+/// `corpus_ingest_qa`, `corpus_purge_qa`, `embed_batch_from_jsonl`, and the
+/// consolidation/prompt-builder/assertions services. A passphrase mismatch or
+/// missing `HKASK_DB_PASSPHRASE` surfaces as `permission_denied` (the
+/// `.rules` missing-credential pattern); a corrupted DB is `invalid_argument`;
+/// SQLite/SQLCipher failures are `internal`.
+pub(crate) fn open_memory_store(
+    db_path: &str,
+    passphrase: &str,
+) -> Result<hkask_memory::MemoryStore, McpToolError> {
+    let dim = crate::embedding_dim();
+    hkask_memory::MemoryStore::open(db_path, passphrase, dim)
+        .map_err(|e| map_database_error(e, "Cannot open memory DB"))
+}
+
+/// Resolve `output` through `contain_for_write` and write `content` to the
+/// contained path. Single enforcement point for the `contain_for_write` +
+/// `std::fs::write` + `map_corpus_io_error` pattern duplicated across
+/// `corpus_dedup_chunks`, `corpus_ingest_qa`, `corpus_prepare_training_dataset`,
+/// `corpus_tag_chunks`, `ConsolidationService::consolidate`, and
+/// `PromptBuilderService::build_prompts`. An escaping path is rejected with
+/// `invalid_argument` before any write reaches disk.
+pub(crate) fn write_contained(output: &str, content: &str) -> Result<(), McpToolError> {
+    let path = crate::path_safety::contain_for_write(output)?;
+    std::fs::write(&path, content)
+        .map_err(|e| map_corpus_io_error(e, &format!("Cannot write output '{output}'")))
+}
+
 /// Stream a JSONL file line-by-line, parsing each non-empty line into `T`.
 ///
 /// Unlike [`read_jsonl`], this does NOT read the entire file into memory —

@@ -725,30 +725,6 @@ impl KanbanServer {
         .await
     }
 
-    #[tool(
-        description = "Add gas/rJoules to a task's remaining budget so the subagent can continue"
-    )]
-        &self,
-        Parameters(TaskAddGasRequest { task_id, amount }): Parameters<TaskAddGasRequest>,
-    ) -> String {
-        execute_tool_semantic(
-            self,
-            async {
-                let tid = parse_task_id(&task_id)?;
-                if amount == 0 {
-                    return Err(McpToolError::invalid_argument("amount must be > 0"));
-                }
-                    Ok(task) => Ok(serde_json::to_value(TaskAddGasResponse {
-                        task_id: task.id.to_string(),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
-                    Err(e) => Err(map_kanban_error(e)),
-                }
-            },
-        )
-        .await
-    }
-
     #[tool(description = "Add rJoules to a task's inference/API budget (250k ≈ $1 spend)")]
     pub async fn kanban_task_add_rjoules(
         &self,
@@ -908,9 +884,6 @@ impl KanbanServer {
                     .task_reopen(tid, self.webid)
                     .map_err(map_kanban_error)?;
                 // Apply new budgets if specified
-                    self.service
-                        .map_err(map_kanban_error)?;
-                }
                 if let Some(r) = rjoule_budget {
                     self.service
                         .task_add_rjoules(tid, r, self.webid)
@@ -1190,9 +1163,6 @@ impl KanbanServer {
                     )));
                 }
             }
-        }
-            self.service
-                .map_err(map_kanban_error)?;
         }
         if let Some(r) = rjoule_budget {
             self.service
