@@ -1040,8 +1040,6 @@ proptest! {
     fn finalize_report_writes_status_field(
         status_idx in 0u32..4,
         iteration in 0u32..20,
-        gas_used in any::<u64>(),
-        gas_cap in any::<u64>(),
         rjoule_used in arb_finite_f64(),
         rjoule_cap in arb_finite_f64(),
     ) {
@@ -1059,8 +1057,6 @@ proptest! {
             status,
             "test-reason",
             iteration,
-            gas_used,
-            gas_cap,
             rjoule_used,
             rjoule_cap,
         );
@@ -1087,16 +1083,14 @@ proptest! {
         );
     }
 
-    /// `finalize_report` is total: it never panics on arbitrary gas/rJoule
-    /// values, including `gas_cap == 0` (the `gas_pct` branch guards this) and
-    /// `rjoule_used > rjoule_cap` (the `rjoule_remaining` uses `.max(0.0)`).
+    /// `finalize_report` is total: it never panics on arbitrary rJoule
+    /// values, including `rjoule_used > rjoule_cap` (the `rjoule_remaining`
+    /// uses `.max(0.0)`).
     /// P4 (Clear Boundaries): the output surface is total over its numeric args.
     #[test]
     fn finalize_report_never_panics_on_arbitrary_args(
         status_idx in 0u32..4,
         iteration in any::<u32>(),
-        gas_used in any::<u64>(),
-        gas_cap in any::<u64>(),
         rjoule_used in any::<f64>(),
         rjoule_cap in any::<f64>(),
     ) {
@@ -1115,15 +1109,13 @@ proptest! {
                 status,
                 "test",
                 iteration,
-                gas_used,
-                gas_cap,
                 rjoule_used,
                 rjoule_cap,
             );
         }));
         prop_assert!(
             result.is_ok(),
-            "finalize_report panicked on args (gas {gas_used}/{gas_cap}, rjoule {rjoule_used}/{rjoule_cap})"
+            "finalize_report panicked on args (rjoule {rjoule_used}/{rjoule_cap})"
         );
     }
 
@@ -1135,15 +1127,13 @@ proptest! {
     #[test]
     fn inject_running_writes_running_status(
         iteration in 0u32..20,
-        gas_used in any::<u64>(),
-        gas_cap in any::<u64>(),
         rjoule_used in arb_finite_f64(),
         rjoule_cap in arb_finite_f64(),
     ) {
         let config = ConvergenceConfig::default();
         let tracker = ConvergenceTracker::new(&config);
         let mut context = HashMap::new();
-        tracker.inject_running(&mut context, iteration, gas_used, gas_cap, rjoule_used, rjoule_cap);
+        tracker.inject_running(&mut context, iteration, rjoule_used, rjoule_cap);
 
         let conv = context.get("_convergence").expect("_convergence must be injected");
         let payload = json!({

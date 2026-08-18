@@ -9,15 +9,13 @@
 //! 2. **Convergence config consistency** — if `convergence_mode` includes
 //!    "gap", target fields must be set; if "calibration", prediction/result
 //!    fields must be set.
-//! 3. **Gas budget adequacy** — `gas.cap` must be >= sum of per-step
-//!    `gas_cap` values × `min_iterations`.
-//! 4. **No orphan .j2 files** — every `.j2` file in a skill's template
+//! 3. **No orphan .j2 files** — every `.j2` file in a skill's template
 //!    directory should be listed in the crate manifest.
-//! 5. **Crate manifest paths resolve** — every `path` in the crate manifest
+//! 4. **Crate manifest paths resolve** — every `path` in the crate manifest
 //!    resolves to an existing file.
-//! 6. **Span namespace format** — `span_namespace` matches `reg.skill.<id>`.
-//! 7. **Template inference block consistency** — templates with inference
-//!    parameters (temperature, max_tokens) must declare `template_type`
+//! 5. **Span namespace format** — `span_namespace` matches `reg.skill.<id>`.
+//! 6. **Template inference block consistency** — templates with inference
+//!    parameters (temperature) must declare `template_type`
 //!    KnowAct or WordAct, not FlowDef or RenderAct.
 
 use hkask_templates::load_manifest_from_yaml;
@@ -273,70 +271,7 @@ fn convergence_config_is_internally_consistent() {
     );
 }
 
-/// 3. Gas budget adequacy — `gas.cap` must be >= sum of per-step `gas_cap`
-///    values × `min_iterations`.
-///
-/// This catches manifests where the total gas budget is too small for the
-/// cascade to complete even one minimum iteration cycle. A manifest with
-/// 5 steps each with `gas_cap: 6000` and `min_iterations: 2` needs at least
-/// `60000` gas.
-#[test]
-fn gas_budget_is_adequate_for_min_iterations() {
-    let dir = registry_manifests_dir();
-    if !dir.exists() {
-        return;
-    }
-
-    let mut errors = Vec::new();
-    let mut checked = 0;
-
-    for entry in walkdir::WalkDir::new(&dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-        if path.extension().is_none_or(|e| e != "yaml") {
-            continue;
-        }
-        let yaml = std::fs::read_to_string(path).unwrap();
-        if !yaml.contains("\nmanifest:") && !yaml.starts_with("manifest:") {
-            continue;
-        }
-        let manifest = match load_manifest_from_yaml(&yaml) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let fname = path.file_name().unwrap().to_string_lossy();
-        checked += 1;
-
-        let total_step_gas: u64 = manifest.steps.iter().map(|s| s.gas_cap as u64).sum();
-        let min_needed = total_step_gas * manifest.convergence.min_iterations as u64;
-        let gas_cap = manifest.gas.cap as u64;
-
-        if gas_cap < min_needed {
-            errors.push(format!(
-                "{fname}: gas.cap={gas_cap} but sum(step.gas_cap)={total_step_gas} × min_iterations={} = {min_needed} needed",
-                manifest.convergence.min_iterations
-            ));
-        }
-    }
-
-    eprintln!(
-        "Gas budget adequacy: {checked} manifests checked — {} errors",
-        errors.len()
-    );
-    for err in &errors {
-        eprintln!("  ERR: {err}");
-    }
-    assert!(
-        errors.is_empty(),
-        "{} gas budget errors:\n{}",
-        errors.len(),
-        errors.join("\n")
-    );
-}
-
-/// 4. No orphan .j2 files — every `.j2` file in a skill's template directory
+/// 3. No orphan .j2 files — every `.j2` file in a skill's template directory
 ///    should be listed in the crate manifest's `templates` array.
 ///
 /// Catches templates that were added to the filesystem but not registered in

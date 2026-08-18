@@ -1237,15 +1237,14 @@ steps:
     description: Refine bundle via goal-delta evolution
     renderer: minijinja
     template_ref: skill-bundler/bundler-evolve
-    gas_cap: 6000
     timeout_seconds: 60
     input_mapping:
-      bundle_name: \"{{ bundle_name }}\"
-      current_manifest: \"{{ current_manifest }}\"
-      changed_skills: \"{{ changed_skills }}\"
-      goal_context: \"{{ goal_context }}\"
-      goal_delta: \"{{ goal_delta }}\"
-      convergence_failure_reason: \"{{ convergence_failure_reason }}\"
+      bundle_name: "{{ bundle_name }}"
+      current_manifest: "{{ current_manifest }}"
+      changed_skills: "{{ changed_skills }}"
+      goal_context: "{{ goal_context }}"
+      goal_delta: "{{ goal_delta }}"
+      convergence_failure_reason: "{{ convergence_failure_reason }}"
 ";
 
         let refine_manifest = load_manifest_from_yaml(refine_manifest_yaml)
@@ -1513,10 +1512,6 @@ mod tests {
             exit_kind: ExitKind::Converged,
             last_result_step: last,
             budget_snapshot: BudgetSnapshot {
-                gas_used: 0,
-                gas_cap: 0,
-                gas_remaining: 0,
-                gas_cost_per_iteration: 0,
                 rjoule_used: 0.0,
                 rjoule_cap: 0.0,
                 rjoule_remaining: 0.0,
@@ -1853,7 +1848,7 @@ mod tests {
                 "description": "test step",
                 "renderer": "minijinja",
                 "template_ref": "some/template.j2",
-                "gas_cap": 1000,
+                
                 "timeout_seconds": 30
             }],
             "skills": [{
@@ -1903,15 +1898,14 @@ steps:
     description: Refine bundle via goal-delta evolution
     renderer: minijinja
     template_ref: skill-bundler/bundler-evolve
-    gas_cap: 6000
     timeout_seconds: 60
     input_mapping:
-      bundle_name: \"{{ bundle_name }}\"
-      current_manifest: \"{{ current_manifest }}\"
-      changed_skills: \"{{ changed_skills }}\"
-      goal_context: \"{{ goal_context }}\"
-      goal_delta: \"{{ goal_delta }}\"
-      convergence_failure_reason: \"{{ convergence_failure_reason }}\"
+      bundle_name: "{{ bundle_name }}"
+      current_manifest: "{{ current_manifest }}"
+      changed_skills: "{{ changed_skills }}"
+      goal_context: "{{ goal_context }}"
+      goal_delta: "{{ goal_delta }}"
+      convergence_failure_reason: "{{ convergence_failure_reason }}"
 ";
 
         let manifest =
