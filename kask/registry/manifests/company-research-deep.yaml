@@ -68,11 +68,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "thesis_verdict"
 
-gas:
-  cap: 320000
-  cost_per_iteration: 300
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 12
@@ -168,7 +163,6 @@ steps:
         input_mapping:
           query: "{{ ticker }} investor relations about company business"
           num_results: 10
-    gas_cap: 20000
     timeout_seconds: 300
     on_failure:
       action: report
@@ -187,7 +181,6 @@ steps:
       step_2_result. Conditioned on web_search returning a URL.
     mcp: web_extract
     condition: "step_1_result.web_search"
-    gas_cap: 3000
     timeout_seconds: 90
     input_mapping:
       url: "{{ step_1_result.web_search.results[0].url }}"
@@ -213,7 +206,6 @@ steps:
       as data_gaps entries, never collapse to None.
     renderer: minijinja
     template_ref: company-research/company-8part
-    gas_cap: 12000
     timeout_seconds: 300
     input_mapping:
       ticker: "{{ ticker }}"
@@ -243,7 +235,6 @@ steps:
       rotated board, not the raw Company Board.
     renderer: minijinja
     template_ref: company-research/falstaffian-competitive-rotation
-    gas_cap: 10000
     timeout_seconds: 250
     input_mapping:
       ticker: "{{ ticker }}"
@@ -275,7 +266,6 @@ steps:
       GORILLA (step 6) and ECONOMIC TRAJECTORY (step 10) consume the output.
     renderer: minijinja
     template_ref: company-research/wardley-anchor
-    gas_cap: 8000
     timeout_seconds: 200
     input_mapping:
       ticker: "{{ ticker }}"
@@ -301,7 +291,6 @@ steps:
       that the lisp.eval step (8) weights to the final gorilla_score.
     renderer: minijinja
     template_ref: company-research/gorilla-4dim
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       ticker: "{{ ticker }}"
@@ -333,7 +322,6 @@ steps:
       lands in step_7_result and feeds the lisp.eval scoring step (step 8).
     renderer: minijinja
     template_ref: company-research/gorilla-capability-reason
-    gas_cap: 5000
     timeout_seconds: 180
     input_mapping:
       ticker: "{{ ticker }}"
@@ -359,7 +347,6 @@ steps:
       from zero. v0.36.0: dimensions with maturity blocks (from
       step_7_result) are treated as nil — a blocked dimension's score is
       not credible. The convergence check treats nil as 1.0 (escalate).
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -411,7 +398,6 @@ steps:
       Deterministic. Result lands in step_9_result and feeds IMAGINE
       synthesis (11).
     mcp: scenario_build
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       subject: "{{ ticker }} 5 10 20 year future scenarios digital transformation"
@@ -449,7 +435,6 @@ steps:
       consumes this as the anchor.
     renderer: minijinja
     template_ref: company-research/economic-trajectory
-    gas_cap: 8000
     timeout_seconds: 200
     input_mapping:
       ticker: "{{ ticker }}"
@@ -481,7 +466,6 @@ steps:
       implications), trajectory_anchoring, falstaffian_challenge.
     renderer: minijinja
     template_ref: company-research/imagine-longrange
-    gas_cap: 12000
     timeout_seconds: 300
     input_mapping:
       ticker: "{{ ticker }}"
@@ -506,7 +490,6 @@ steps:
       Business Franchise pillar's moat analysis in the value-chain structure.
     renderer: minijinja
     template_ref: company-research/thesis-three-pillars
-    gas_cap: 10000
     timeout_seconds: 240
     input_mapping:
       ticker: "{{ ticker }}"
@@ -542,7 +525,6 @@ steps:
       lands in step_13_result.
     renderer: minijinja
     template_ref: company-research/thesis-essentialist
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       ticker: "{{ ticker }}"
@@ -560,7 +542,6 @@ steps:
       convergence signal.
     renderer: minijinja
     template_ref: goal-analysis/judge
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       goal_text: "Three-pillar investment thesis for {{ ticker }}: Business Franchise (moat strength, value creation, durability), Management Quality (capital allocation, leadership), Valuation (3-stage: consensus → normalization → terminal). Verdict: investment_grade / needs_work / incomplete."
@@ -593,7 +574,6 @@ steps:
       continue=0.5 (re-enter COMPANY with gaps), blocked=1.0 (escalate).
       Missing verdict surfaces as 1.0 (worst case), not silently converged
       — per .rules no unwrap_or(0) on regulation signals.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

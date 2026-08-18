@@ -34,11 +34,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -84,7 +79,6 @@ steps:
     description: Explore architecture friction and shallow-module patterns.
     renderer: minijinja
     template_ref: refactor-architecture/ra-explore
-    gas_cap: 7000
     timeout_seconds: 180
     input_mapping:
       focus_area: "{{ task | default(focus_area) }}"
@@ -96,7 +90,6 @@ steps:
     description: Rank deepening candidates from exploration findings.
     renderer: minijinja
     template_ref: refactor-architecture/ra-candidates
-    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       friction_points: "{{ step_1_result.friction_points | default([]) }}"
@@ -109,7 +102,6 @@ steps:
     description: Walk the design tree for the user-selected candidate — define deepened module shape, identify seams, confirm test surface. Human-in-the-loop grilling.
     renderer: minijinja
     template_ref: refactor-architecture/ra-deepen
-    gas_cap: 8000
     timeout_seconds: 180
     condition: "step_2_result.candidates"
     input_mapping:
@@ -123,7 +115,6 @@ steps:
     description: Route the deepened design — proceed to refactor (audit), need more data (diagnose), or defer.
     renderer: minijinja
     template_ref: refactor-architecture/ra-route
-    gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       deepened_design: "{{ step_3_result }}"
@@ -135,7 +126,6 @@ steps:
     description: Audit cross-surface duplication and extraction viability.
     renderer: minijinja
     template_ref: refactor-architecture/ra-audit
-    gas_cap: 7000
     timeout_seconds: 180
     condition: "step_4_result.decision == 'proceed_to_refactor'"
     input_mapping:
@@ -150,7 +140,6 @@ steps:
     description: Plan strangler-fig migration for selected service domain.
     renderer: minijinja
     template_ref: refactor-architecture/ra-strangle
-    gas_cap: 7000
     timeout_seconds: 180
     condition: "step_4_result.decision == 'proceed_to_refactor'"
     input_mapping:
@@ -167,7 +156,6 @@ steps:
     description: Verify migration completeness and boundary discipline.
     renderer: minijinja
     template_ref: refactor-architecture/ra-verify
-    gas_cap: 5000
     timeout_seconds: 150
     condition: "step_4_result.decision == 'proceed_to_refactor'"
     input_mapping:
@@ -191,7 +179,6 @@ steps:
       proceed_to_refactor), step_7_result is nil and the score is 1.0
       (not converged — no verification happened). No `default(1.0)`
       fallback: the nil-guard is explicit and surfaces the skip.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

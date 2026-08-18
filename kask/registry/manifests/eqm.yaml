@@ -48,11 +48,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "forecaster_composite"
 
-gas:
-  cap: 50000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 5
@@ -106,7 +101,6 @@ steps:
       estimate (~$0.007 per rationale).
     renderer: minijinja
     template_ref: eqm/eqm-select
-    gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
       rationales: "{{ task | default(rationales) }}"
@@ -126,7 +120,6 @@ steps:
       single source of truth for 12-EQM LLM scoring.
     mcp: hkask-mcp-prediction-markets
     tool: market_score_rationale
-    gas_cap: 8000
     timeout_seconds: 120
     input_mapping:
       rationale: "{{ item.rationale }}"
@@ -151,7 +144,6 @@ steps:
       Produce the improvement_target_profile that eqm-improvement consumes.
     renderer: minijinja
     template_ref: eqm/eqm-aggregate
-    gas_cap: 3000
     timeout_seconds: 150
     input_mapping:
       per_rationale_scores: "{{ step_2_result.per_rationale_scores | default([]) }}"
@@ -168,7 +160,6 @@ steps:
       realized_outcomes absent → returns Undetermined (not Ready-with-empty).
     renderer: minijinja
     template_ref: eqm/eqm-validate
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       forecaster_level_composite: "{{ step_3_result.forecaster_level_composite | default({}) }}"
@@ -191,7 +182,6 @@ steps:
       forecaster_level_composite is absent, the form errors (no silent
       default), surfacing a broken aggregate step rather than masking it
       with a flat 1.0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -235,7 +225,6 @@ steps:
       red-flag-weighted decision rule and the improvement_target_profile
       for eqm-improvement.
     mcp: null
-    gas_cap: 500
     timeout_seconds: 10
     feedback:
       overconfidence_bias: "{{ step_3_result.overconfidence_bias | default(0.0) }}"

@@ -29,11 +29,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -67,7 +62,6 @@ steps:
     description: Extract structured goal from user intent with explicit completion criteria.
     renderer: minijinja
     template_ref: goal-analysis/create
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       user_intent: "{{ task | default(user_intent) }}"
@@ -78,7 +72,6 @@ steps:
     description: Emit Regulation span for goal creation and attach criteria. Tracks goal in storage.
     renderer: minijinja
     template_ref: goal-analysis/goal-activate
-    gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
       goal: "{{ step_1_result }}"
@@ -90,7 +83,6 @@ steps:
     description: Judge goal completion against explicit criteria, outcome summary, and artifacts.
     renderer: minijinja
     template_ref: goal-analysis/judge
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       goal_text: "{{ step_1_result.goal_text | default(user_intent) }}"
@@ -107,7 +99,6 @@ steps:
       Lower = more converged (a confident verdict moves toward 0). If
       confidence is absent, the form errors (no silent default), surfacing
       a broken judge step rather than masking it with a flat 1.0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(let ((c (assoc \"confidence\" step_3_result))) (if (is_null c) 1.0 (let ((c-n (if (numberp c) c 1.0))) (- 1.0 c-n))))"
@@ -121,7 +112,6 @@ steps:
     description: Resolve goal state and emit Regulation spans based on verdict.
     renderer: minijinja
     template_ref: goal-analysis/goal-resolve
-    gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
       verdict: "{{ step_3_result.verdict }}"

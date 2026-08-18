@@ -45,11 +45,6 @@ convergence:
   target_artifacts_field: "idiomatic_rust_verdict"
   on_not_reached: escalate
 
-gas:
-  cap: 120000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -115,7 +110,6 @@ steps:
       present (feedback loop closure).
     renderer: minijinja
     template_ref: idiomatic-rust/idiomatic-rust-inquiry
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       design_problem: "{{ task | default(design_problem) }}"
@@ -138,7 +132,6 @@ steps:
       goals, not to propose refactors blind.
     renderer: minijinja
     template_ref: idiomatic-rust/idiomatic-rust-design
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       design_problem: "{{ design_problem }}"
@@ -160,7 +153,6 @@ steps:
       with specific refinement directives for potential re-design.
     renderer: minijinja
     template_ref: idiomatic-rust/idiomatic-rust-challenge
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       design_problem: "{{ design_problem }}"

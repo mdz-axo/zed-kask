@@ -34,11 +34,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -95,7 +90,6 @@ steps:
       forecasts, the tool returns a valid result with guidance noting
       insufficient data — this is not a failure.
     mcp: scenario_calibration
-    gas_cap: 2000
     timeout_seconds: 60
     input_mapping:
       subject: "{{ domain | default(null) }}"
@@ -112,7 +106,6 @@ steps:
     description: Refine and bound focal question.
     renderer: minijinja
     template_ref: scenario-builder/focal-question
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       focal_question: "{{ task | default(focal_question) }}"
@@ -135,7 +128,6 @@ steps:
       forces by likelihood. Result lands in step_3_result and feeds the
       key-forces step's market_context input.
     mcp: market_match
-    gas_cap: 2000
     timeout_seconds: 60
     input_mapping:
       question: "{{ step_2_result.refined_question | default(focal_question) }}"
@@ -153,7 +145,6 @@ steps:
     description: Enumerate key microenvironment forces.
     renderer: minijinja
     template_ref: scenario-builder/key-forces
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       refined_question: "{{ step_2_result.refined_question | default(focal_question) }}"
@@ -166,7 +157,6 @@ steps:
     description: Map macro driving forces and identify critical uncertainties.
     renderer: minijinja
     template_ref: scenario-builder/driving-forces
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       refined_question: "{{ step_2_result.refined_question | default(focal_question) }}"
@@ -177,7 +167,6 @@ steps:
     description: Generate 2x2 axes and scenario narratives.
     renderer: minijinja
     template_ref: scenario-builder/axes-and-narratives
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       refined_question: "{{ step_2_result.refined_question | default(focal_question) }}"
@@ -189,7 +178,6 @@ steps:
     description: Independent quality gate — evaluates divergence, consistency, and coverage.
     renderer: minijinja
     template_ref: scenario-builder/scenario-quality-gate
-    gas_cap: 4000
     timeout_seconds: 150
     input_mapping:
       refined_question: "{{ step_2_result.refined_question | default(focal_question) }}"
@@ -200,7 +188,6 @@ steps:
     description: Extract implications, robust strategies, and indicators.
     renderer: minijinja
     template_ref: scenario-builder/implications-indicators
-    gas_cap: 5000
     timeout_seconds: 150
     condition: "step_7_result.gate_pass"
     input_mapping:
@@ -223,7 +210,6 @@ steps:
       now in the forecast store where scenario_score can later Brier-score
       them.
     mcp: scenario_build
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       subject: "{{ step_2_result.refined_question | default(focal_question) }}"
@@ -253,7 +239,6 @@ steps:
       gate with no parametric variation scores near 0.0; a failing gate
       approaches 1.0. No `default(1.0)` fallback: missing fields surface
       as nil and are guarded explicitly.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

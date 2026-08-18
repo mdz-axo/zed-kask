@@ -48,12 +48,6 @@ convergence:
   min_iterations: 1
   on_not_reached: escalate
 
-gas:
-  # 2 LLM calls (match + adapt) + 1 deterministic conservation check + 1 deterministic render.
-  cap: 20000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 1
@@ -94,7 +88,6 @@ steps:
       the Total Revenue node as sources (Revenue + |Loss| = Total Expenses).
     renderer: minijinja
     template_ref: sankey-flow/sankey-match
-    gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
       prompt: "{{ task | default(prompt) }}"
@@ -113,7 +106,6 @@ steps:
       structure if the draft deviates.
     renderer: minijinja
     template_ref: sankey-flow/sankey-adapt
-    gas_cap: 8000
     timeout_seconds: 60
     input_mapping:
       domain: "{{ step_1_result.domain }}"
@@ -143,7 +135,6 @@ steps:
       for float precision). Returns conservation_verified (bool),
       source_total, sink_total, and delta. For non-mandatory modes, returns
       conservation_verified: true (skipped). No LLM call.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -230,7 +221,6 @@ steps:
       and references. Deterministic (no LLM call) — pure Jinja2 formatting.
     renderer: minijinja
     template_ref: sankey-flow/present-sankey
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       mermaid_source: "{{ step_2_result.mermaid_source }}"

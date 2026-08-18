@@ -56,11 +56,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 150000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -103,7 +98,6 @@ steps:
       prior_validation_failures when present (feedback loop closure).
     renderer: minijinja
     template_ref: create-skill/create-skill-research
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       user_description: "{{ task | default(user_description) }}"
@@ -119,7 +113,6 @@ steps:
       Identify delegates, span namespace, and ontology annotations.
     renderer: minijinja
     template_ref: create-skill/create-skill-describe
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       user_description: "{{ user_description }}"
@@ -137,7 +130,6 @@ steps:
       capabilities; (4) SKILL.md companion with ontology references.
     renderer: minijinja
     template_ref: create-skill/create-skill-scaffold
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       skill_spec: "{{ step_2_result }}"
@@ -151,7 +143,6 @@ steps:
       compliance). Produces fix suggestions for any failures.
     renderer: minijinja
     template_ref: create-skill/create-skill-validate
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       scaffolded_crate: "{{ step_3_result }}"
@@ -190,7 +181,6 @@ steps:
       Lower = more converged (zero failures = scaffolded crate is valid).
       If fail_count is absent, the form errors (no silent default),
       surfacing a broken validation step rather than masking it.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(assoc \"fail_count\" step_4_result)"

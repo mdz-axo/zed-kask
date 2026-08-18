@@ -24,11 +24,6 @@ convergence:
   min_iterations: 2
   on_not_reached: escalate
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -59,7 +54,6 @@ steps:
     description: Select best-fit improv mode for the current context (KnowAct).
     renderer: minijinja
     template_ref: improv/improv-select
-    gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       context: "{{ context | default({}) }}"
@@ -83,7 +77,6 @@ steps:
     description: Apply Plussing mode — extract agreeable, build constructively.
     renderer: minijinja
     template_ref: improv/improv-plussing
-    gas_cap: 5000
     timeout_seconds: 120
     condition: "step_1_result.mode == 'plussing'"
     input_mapping:
@@ -95,7 +88,6 @@ steps:
     description: Apply Yes And mode — accept whole, extend additively.
     renderer: minijinja
     template_ref: improv/improv-yes-and
-    gas_cap: 5000
     timeout_seconds: 120
     condition: "step_1_result.mode == 'yes-and'"
     input_mapping:
@@ -107,7 +99,6 @@ steps:
     description: Apply Yes But mode — accept whole, constrain scope.
     renderer: minijinja
     template_ref: improv/improv-yes-but
-    gas_cap: 5000
     timeout_seconds: 120
     condition: "step_1_result.mode == 'yes-but'"
     input_mapping:
@@ -119,7 +110,6 @@ steps:
     description: Apply Freestyling mode — rapid collaborative cycling.
     renderer: minijinja
     template_ref: improv/improv-freestyling
-    gas_cap: 5000
     timeout_seconds: 120
     condition: "step_1_result.mode == 'freestyling'"
     input_mapping:
@@ -131,7 +121,6 @@ steps:
     description: Apply Riffing mode — solo divergent exploration.
     renderer: minijinja
     template_ref: improv/improv-riffing
-    gas_cap: 5000
     timeout_seconds: 120
     condition: "step_1_result.mode == 'riffing'"
     input_mapping:
@@ -146,7 +135,6 @@ steps:
     description: Fallback — default to Plussing when no specific mode was selected.
     renderer: minijinja
     template_ref: improv/improv-plussing
-    gas_cap: 5000
     timeout_seconds: 120
     condition: "step_2_result == null and step_3_result == null and step_4_result == null and step_5_result == null and step_6_result == null"
     input_mapping:
@@ -165,7 +153,6 @@ steps:
       lisp.eval instead of a Jinja expression makes the computation
       explicitly deterministic, budgeted (gas_cap: 100), and observable via
       a reg.skill.improv span. Returns 0 when no mode produced a response.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

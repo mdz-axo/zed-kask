@@ -49,11 +49,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "briefing"
 
-gas:
-  cap: 150000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 5
@@ -125,7 +120,6 @@ steps:
       - mcp: curator_grounding_coverage
         key: grounding_coverage
         input_mapping: {}
-    gas_cap: 6000
     timeout_seconds: 60
     on_failure:
       action: report
@@ -154,7 +148,6 @@ steps:
       not a silent omission.
     renderer: minijinja
     template_ref: gemba-walk/synthesize-briefing
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       task: "{{ task | default('show me the system health') }}"
@@ -181,7 +174,6 @@ steps:
       (the Observe phase happens outside the skill cascade).
     renderer: minijinja
     template_ref: gemba-walk/present-briefing
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       task: "{{ task }}"
@@ -206,7 +198,6 @@ steps:
       reviews and decides which to execute in the regular conversation.
     renderer: minijinja
     template_ref: gemba-walk/recommend-actions
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       task: "{{ task }}"
@@ -227,7 +218,6 @@ steps:
       briefing_complete field by returning 0 when absent — the previous
       Jinja default(true) would silently report convergence on a missing
       field; this surfaces the failure.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -243,7 +233,6 @@ steps:
       step produced an incomplete briefing or the present step flagged
       missing signal channels). Bounded by max_iterations (3) — a gemba
       walk that cannot produce a briefing in 3 passes escalates.
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 2 }}"

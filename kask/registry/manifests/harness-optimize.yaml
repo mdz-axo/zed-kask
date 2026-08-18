@@ -22,11 +22,6 @@ convergence:
   on_not_reached: abort
   target_artifacts_field: "proposed_diff"
 
-gas:
-  cap: 120000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -58,7 +53,6 @@ steps:
       and N-1. Compare mutation scores, failure patterns, and bug-hunt findings.
     renderer: minijinja
     template_ref: harness-optimize/harness-optimize-identify
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       trace_dir_n: "{{ trace_dir_n }}"
@@ -72,7 +66,6 @@ steps:
       in generate_only mode for under-tested functions with surviving mutants.
     renderer: minijinja
     template_ref: harness-optimize/harness-optimize-propose
-    gas_cap: 12000
     timeout_seconds: 180
     input_mapping:
       trace_dir_n: "{{ trace_dir_n }}"
@@ -89,7 +82,6 @@ steps:
       evidence, and expected impact.
     renderer: minijinja
     template_ref: harness-optimize/harness-optimize-report
-    gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       trace_dir_n: "{{ trace_dir_n }}"

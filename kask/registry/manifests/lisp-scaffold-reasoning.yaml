@@ -72,11 +72,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -113,7 +108,6 @@ steps:
       Lisp step (ordinal 2) catches those deterministically.
     renderer: minijinja
     template_ref: lisp-scaffold-reasoning/propose-hypotheses
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target: "{{ target }}"
@@ -155,7 +149,6 @@ steps:
       (no duplicate hypothesis text). Returns a list of defect strings — empty
       list = passed; non-empty = LLM must refine (step 3 condition gates on
       this). No LLM round-trip.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       # The form walks the hypothesis set and returns a list of defect strings.
@@ -242,7 +235,6 @@ steps:
       Lisp step re-checks.
     renderer: minijinja
     template_ref: lisp-scaffold-reasoning/refine-hypotheses
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target: "{{ target }}"
@@ -280,7 +272,6 @@ steps:
       defect count and hypothesis count: 1.0 minus defect rate normalized by
       the four-invariant maximum. Sensitive to all four invariant classes.
       Feeds the Cauchy criterion. No LLM round-trip.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -305,7 +296,6 @@ steps:
     description: >
       Re-enter the propose→check→refine cycle if convergence is not met.
       Carries the prior Lisp defects so the LLM repairs cumulatively.
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"
@@ -322,7 +312,6 @@ steps:
       scaffolding auditable — which defects did Lisp catch that the LLM missed?
     renderer: minijinja
     template_ref: lisp-scaffold-reasoning/report
-    gas_cap: 2000
     timeout_seconds: 60
     input_mapping:
       target: "{{ target }}"

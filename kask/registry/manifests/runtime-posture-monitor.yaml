@@ -24,11 +24,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -83,7 +78,6 @@ steps:
       Select signal sources and discover runtime telemetry for threat detection.
     renderer: minijinja
     template_ref: runtime-posture-monitor/select-signal
-    gas_cap: 2000
     timeout_seconds: 120
   - ordinal: 2
     action: select
@@ -91,7 +85,6 @@ steps:
       Classify runtime threats from telemetry (endpoint abuse, bot traffic, LLM anomalies).
     renderer: minijinja
     template_ref: runtime-posture-monitor/classify-threat
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       signal_sources: "{{ step_1_result.signal_sources | default(signal_sources) | default([]) }}"
@@ -102,7 +95,6 @@ steps:
       Emit regulation events for detected threats and produce the posture report.
     renderer: minijinja
     template_ref: runtime-posture-monitor/emit-regulation
-    gas_cap: 2000
     timeout_seconds: 120
   - ordinal: 4
     action: compute
@@ -114,7 +106,6 @@ steps:
       explicitly deterministic, budgeted (gas_cap: 100), and observable via
       a reg.skill.runtime-posture-monitor span. Guards against a missing
       threats field by returning 0 when absent.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

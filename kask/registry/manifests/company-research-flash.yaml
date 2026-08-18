@@ -52,11 +52,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "lens_verdict"
 
-gas:
-  cap: 300000
-  cost_per_iteration: 200
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 8
@@ -136,7 +131,6 @@ steps:
       Result lands in step_0_result and feeds the prior_outcomes input of
       step 16.
     mcp: forecast_list
-    gas_cap: 2000
     timeout_seconds: 60
     input_mapping:
       symbol: "{{ ticker }}"
@@ -158,7 +152,6 @@ steps:
       decision (MUST_COVER / REVIEW_ZONE / DROP — DROP is terminal).
     renderer: minijinja
     template_ref: company-research/scout-alpha-score
-    gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       ticker: "{{ ticker }}"
@@ -191,7 +184,6 @@ steps:
           strategy: "news"
           num_results: 20
     condition: "step_1_result.decision != 'DROP'"
-    gas_cap: 10000
     timeout_seconds: 120
     on_failure:
       action: report
@@ -214,7 +206,6 @@ steps:
     renderer: minijinja
     template_ref: company-research/intel-mosaic
     condition: "step_1_result.decision != 'DROP'"
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       ticker: "{{ ticker }}"
@@ -248,7 +239,6 @@ steps:
     renderer: minijinja
     template_ref: company-research/intel-semantic-classify
     condition: "step_1_result.decision != 'DROP' AND step_3_result.mosaic_clear"
-    gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       ticker: "{{ ticker }}"
@@ -267,7 +257,6 @@ steps:
       and feeds the listening template (step 6).
     mcp: company_transcript
     condition: "step_1_result.decision != 'DROP'"
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       symbol: "{{ ticker }}"
@@ -292,7 +281,6 @@ steps:
       INTEL business context and FORENSIC full management profile.
     template_ref: listening
     condition: "step_1_result.decision != 'DROP'"
-    gas_cap: 120000
     timeout_seconds: 300
     input_mapping:
       company_symbol: "{{ ticker }}"
@@ -311,7 +299,6 @@ steps:
     renderer: minijinja
     template_ref: company-research/forensic-pre-screen
     condition: "step_3_result.mosaic_clear"
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       ticker: "{{ ticker }}"
@@ -328,7 +315,6 @@ steps:
       and feeds CRITICAL FACTOR synthesis (step 9).
     mcp: scenario_build
     condition: "step_3_result.mosaic_clear AND step_7_result.recommendation != 'BLOCK'"
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       subject: "{{ ticker }} critical factors Bull Base Bear"
@@ -356,7 +342,6 @@ steps:
     renderer: minijinja
     template_ref: company-research/critical-factor
     condition: "step_3_result.mosaic_clear AND step_7_result.recommendation != 'BLOCK'"
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       ticker: "{{ ticker }}"
@@ -377,7 +362,6 @@ steps:
       record). Deterministic. Result lands in step_10_result.
     mcp: company_transcript
     condition: "step_9_result.factors"
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       symbol: "{{ ticker }}"
@@ -403,7 +387,6 @@ steps:
     renderer: minijinja
     template_ref: company-research/forensic-full
     condition: "step_9_result.factors"
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       ticker: "{{ ticker }}"
@@ -444,7 +427,6 @@ steps:
           scenario_tree: "{{ step_8_result | tojson }}"
           impact_mappings: "{{ step_9_result.impact_mappings | default([]) | tojson }}"
     condition: "step_9_result.factors AND step_11_result.recommendation != 'BLOCK'"
-    gas_cap: 20000
     timeout_seconds: 120
     on_failure:
       action: report
@@ -467,7 +449,6 @@ steps:
     renderer: minijinja
     template_ref: company-research/valuation-8step
     condition: "step_9_result.factors AND step_11_result.recommendation != 'BLOCK'"
-    gas_cap: 10000
     timeout_seconds: 240
     input_mapping:
       ticker: "{{ ticker }}"
@@ -494,7 +475,6 @@ steps:
     renderer: minijinja
     template_ref: company-research/communication-enter
     condition: "step_13_result AND (step_13_result.rr_ratio >= 2.0 OR step_13_result.rating != 'UNDERPERFORM')"
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       ticker: "{{ ticker }}"
@@ -529,7 +509,6 @@ steps:
         input_mapping:
           bucket: "economics"
     condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
-    gas_cap: 6000
     timeout_seconds: 90
     on_failure:
       action: report
@@ -570,7 +549,6 @@ steps:
     renderer: minijinja
     template_ref: kata-improvement/improvement-step1-direction
     condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       challenge: "Audit the research process for {{ ticker }}: identify knowledge gaps, untested assumptions, and the next PDCA experiment that would move research to higher confidence."
@@ -597,7 +575,6 @@ steps:
     renderer: minijinja
     template_ref: company-research/kata-calibration-measure
     condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       ticker: "{{ ticker }}"
@@ -630,7 +607,6 @@ steps:
           question: "Is the investment thesis for {{ ticker }} supported by the evidence?"
           artifacts: "{{ step_2_result.news.results | default([]) }}"
     condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
-    gas_cap: 7000
     timeout_seconds: 120
     on_failure:
       action: report
@@ -652,7 +628,6 @@ steps:
     renderer: minijinja
     template_ref: company-research/lens-five-frameworks
     condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
-    gas_cap: 10000
     timeout_seconds: 240
     input_mapping:
       ticker: "{{ ticker }}"
@@ -682,7 +657,6 @@ steps:
       INCONSISTENT=1.0 (escalate). Missing verdict surfaces as 1.0 (worst
       case), not silently converged — per .rules no unwrap_or(0) on
       regulation signals.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -736,7 +710,6 @@ steps:
     on_failure:
       action: report
       resume: "forecast_persist failed — the price target was not stored for Brier calibration. The research note is still published; calibration will not run for this PT."
-    gas_cap: 2000
     timeout_seconds: 60
     input_mapping:
       symbol: "{{ ticker }}"

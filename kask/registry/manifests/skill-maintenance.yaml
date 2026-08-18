@@ -30,11 +30,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -65,7 +60,6 @@ steps:
     description: Run staleness and health audit for target scope.
     renderer: minijinja
     template_ref: skill-maintenance/skill-maintenance-audit
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       skill_name: "{{ skill_name | default('') }}"
@@ -76,7 +70,6 @@ steps:
     description: Run corpus coverage analysis for uncovered/partial capabilities.
     renderer: minijinja
     template_ref: skill-maintenance/skill-maintenance-coverage
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       skill_catalog: "{{ skill_catalog | default([]) }}"
@@ -93,7 +86,6 @@ steps:
       converged. If either step's output is missing a field, the form errors
       (no silent default) — a broken audit or coverage step surfaces as a
       loud failure rather than masking with a flat 0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

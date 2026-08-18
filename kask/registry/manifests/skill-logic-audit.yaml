@@ -31,11 +31,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 50000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -64,7 +59,6 @@ steps:
       or manifest.yaml file. Strip comment markers, preserve exact goal text.
     renderer: minijinja
     template_ref: skill-logic-audit/logic-load-goal
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       target_path: "{{ target_path }}"
@@ -79,7 +73,6 @@ steps:
       severity, and suggested fix.
     renderer: minijinja
     template_ref: skill-logic-audit/logic-critique-template
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target_path: "{{ target_path }}"
@@ -94,7 +87,6 @@ steps:
       valid, goal-anchored concerns from spurious ones.
     renderer: minijinja
     template_ref: skill-logic-audit/logic-critique-critique
-    gas_cap: 2000
     timeout_seconds: 150
     input_mapping:
       goal: "{{ step_1_result.goal }}"
@@ -107,7 +99,6 @@ steps:
       from the calibrated concerns.
     renderer: minijinja
     template_ref: skill-logic-audit/logic-compose-proposal
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target_path: "{{ target_path }}"
@@ -123,7 +114,6 @@ steps:
       accept/reject/counter-proposal.
     renderer: minijinja
     template_ref: skill-logic-audit/logic-user-choice
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       target_path: "{{ target_path }}"
@@ -141,7 +131,6 @@ steps:
       output. The logic-compose-proposal template produces `confidence` (0–1,
       higher = more confident in the revision). The score is 1 - confidence so
       lower = more converged.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

@@ -25,11 +25,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -56,7 +51,6 @@ steps:
     description: Detect and prioritize capability gaps in the corpus.
     renderer: minijinja
     template_ref: skill-discovery/skill-discovery-detect-gap
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       task_patterns: "{{ task_patterns | default([]) }}"
@@ -67,7 +61,6 @@ steps:
     description: Search the skill catalog for candidates matching the top-priority gap.
     renderer: minijinja
     template_ref: skill-discovery/skill-discovery-search
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       gap_description: "{{ step_1_result.gap_list[0].description | default('') }}"
@@ -79,7 +72,6 @@ steps:
     description: Evaluate a candidate skill against format/quality/safety gates.
     renderer: minijinja
     template_ref: skill-discovery/skill-discovery-evaluate
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       candidate_skill_content: "{{ candidate_skill_content | default('') }}"
@@ -115,7 +107,6 @@ steps:
       `overall_score` (0–22, higher = better). The score is normalized to
       1 - overall_score/22 so lower = more converged. Replaces the phantom
       `convergence_metric` binding that silently defaulted to 1.0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >

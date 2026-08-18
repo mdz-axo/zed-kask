@@ -26,11 +26,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -78,7 +73,6 @@ steps:
       the function where the bug is located. Feeds the spec-anchor step (step 1)
       so the diagnosis knows the bug's impact scope.
     mcp: codegraph_impact
-    gas_cap: 2000
     timeout_seconds: 60
     on_failure:
       action: report
@@ -96,7 +90,6 @@ steps:
       map symptom to FR# references, flag spec gaps.
     renderer: minijinja
     template_ref: diagnose/diagnose-spec-anchor.j2
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       bug_description: "{{ task | default(bug_description) }}"
@@ -110,7 +103,6 @@ steps:
     description: Build deterministic repro loop for the target bug.
     renderer: minijinja
     template_ref: diagnose/diagnose-loop.j2
-    gas_cap: 6000
     timeout_seconds: 120
     input_mapping:
       bug_description: "{{ bug_description }}"
@@ -127,7 +119,6 @@ steps:
       predictions, and falsifiers; discards vibes at generation.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-hypothesize
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       admitted_target: "{{ symptom | default(bug_description, true) }}"
@@ -154,7 +145,6 @@ steps:
       completeness (every hypothesis has prediction + falsifier keys), diversity
       (>=2 distinct likelihoods), mutual exclusivity (no duplicate hypothesis
       text). Returns a list of defect strings. No LLM round-trip.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -227,7 +217,6 @@ steps:
       the hypothesis set is structurally valid.
     renderer: minijinja
     template_ref: diagnose/diagnose-instrument.j2
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       bug_description: "{{ bug_description }}"
@@ -241,7 +230,6 @@ steps:
     description: Apply fix with regression test, verify repro no longer reproduces, clean up instrumentation.
     renderer: minijinja
     template_ref: diagnose/diagnose-fix.j2
-    gas_cap: 6000
     timeout_seconds: 120
     input_mapping:
       bug_description: "{{ bug_description }}"
@@ -261,7 +249,6 @@ steps:
       (gas_cap: 100), and observable via a reg.skill.diagnose span. Step 4
       always runs, so the signal is always present; the guard returns 0 for
       a null result (defensive — should not occur in practice).
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -276,7 +263,6 @@ steps:
       falsification. If the Lisp hypothesis check (step 4) found defects,
       re-enters at step 3 (hypothesize) so the LLM repairs the structural
       defects before instrumentation runs.
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 3 if (step_4_result | default([]) | length > 0) else 5 }}"

@@ -42,11 +42,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -90,7 +85,6 @@ steps:
       discovers surfaces from the filesystem.
     renderer: minijinja
     template_ref: kali-audit/select-surface
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       target_surface: "{{ task | default(target_surface) }}"
@@ -111,7 +105,6 @@ steps:
       probing between audit and report steps.
     renderer: minijinja
     template_ref: kali-audit/audit
-    gas_cap: 8000
     timeout_seconds: 300
     input_mapping:
       selected_surface: "{{ step_1_result.selected_surface | default(target_surface) }}"
@@ -129,7 +122,6 @@ steps:
       Identify top 3 fixes and defense-layer gaps.
     renderer: minijinja
     template_ref: kali-audit/report
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       findings: "{{ step_2_result.findings | default([]) }}"
@@ -148,7 +140,6 @@ steps:
       YAML entries. Skipped for non-supply-chain surfaces.
     renderer: minijinja
     template_ref: kali-audit/taxonomy-map
-    gas_cap: 2000
     timeout_seconds: 120
     condition: "step_1_result.selected_surface == 'supply-chain'"
     input_mapping:
@@ -167,7 +158,6 @@ steps:
       (zero critical/high findings = converged clean). If report or any
       severity array is absent, the form errors (no silent default),
       surfacing a broken report step rather than masking it with a flat 1.0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(+ (length (assoc \"critical\" (assoc \"findings_by_severity\" (assoc \"report\" step_3_result)))) (length (assoc \"high\" (assoc \"findings_by_severity\" (assoc \"report\" step_3_result)))))"

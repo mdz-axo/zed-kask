@@ -28,11 +28,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -67,7 +62,6 @@ steps:
     description: Extract structured goal from user intent with explicit completion criteria.
     renderer: minijinja
     template_ref: goal-analysis/create
-    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       user_intent: "{{ task | default(user_intent) }}"
@@ -77,7 +71,6 @@ steps:
     description: Compose a candidate skill set with PKO-anchored ordering from provided skills and goal context. On recomposition iterations, uses the evolved manifest as a base.
     renderer: minijinja
     template_ref: skill-bundler/bundler-compose
-    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       skill_names: "{{ skill_names }}"
@@ -100,7 +93,6 @@ steps:
       of same-phase skill pairs with matching artifact_contract targets.
       These override the LLM's self-computed values in step_2_result so
       the convergence score (ordinal 6) reads reproducible numbers.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -133,7 +125,6 @@ steps:
     description: Synthesize the composed skills into a single optimized composite PKO Procedure. Parse each skill's PDCA graph into RDF triples, detect isomorphic substructures, decimate redundant nodes, fuse shared patterns, and generate novel loop structures.
     renderer: minijinja
     template_ref: skill-bundler/bundler-synthesize
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       composed_skills: "{{ step_2_result.bundle_manifest.skills }}"
@@ -145,7 +136,6 @@ steps:
     description: Validate the synthesized composite manifest against composition rules and ontological anchoring requirements.
     renderer: minijinja
     template_ref: skill-bundler/bundler-validate
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       bundle_manifest: "{{ step_4_result.candidates[0].composite_manifest }}"
@@ -187,7 +177,6 @@ steps:
       makes the score non-reproducible (the LLM's self-assessment is
       non-deterministic), so the loop would drift on re-runs of the same
       input (the falsifier test pins this).
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -210,7 +199,6 @@ steps:
     description: Evolve the composite via goal-delta-driven recomposition when convergence has not been met.
     renderer: minijinja
     template_ref: skill-bundler/bundler-evolve
-    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       bundle_name: "{{ step_4_result.candidates[0].name | default('composite-skill') }}"

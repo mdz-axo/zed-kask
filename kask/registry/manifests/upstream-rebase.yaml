@@ -43,11 +43,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 150000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 5
@@ -84,7 +79,6 @@ steps:
       the functional inventory extraction.
     renderer: minijinja
     template_ref: upstream-rebase/assess
-    gas_cap: 8000
     timeout_seconds: 150
     input_mapping:
       target_file: "{{ target_file }}"
@@ -101,7 +95,6 @@ steps:
       graph-audit (semantic mode) for the constraint-force classification.
     renderer: minijinja
     template_ref: upstream-rebase/map
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       target_file: "{{ target_file }}"
@@ -119,7 +112,6 @@ steps:
       re-application is necessary.
     renderer: minijinja
     template_ref: upstream-rebase/decide
-    gas_cap: 4000
     timeout_seconds: 60
     input_mapping:
       target_file: "{{ target_file }}"
@@ -137,7 +129,6 @@ steps:
       Delegate to coding-guidelines for surgical-change guardrails.
     renderer: minijinja
     template_ref: upstream-rebase/execute
-    gas_cap: 10000
     timeout_seconds: 180
     input_mapping:
       target_file: "{{ target_file }}"
@@ -156,7 +147,6 @@ steps:
       coercion guard handles LLMs that return "false" as a string instead of a
       JSON boolean — without it, is_truthy treats String("false") as true.
     compute_ref: lisp.eval
-    gas_cap: 100
     timeout_seconds: 30
     input_mapping:
       # The form returns an alist (JSON object) with verification_passed,
@@ -199,7 +189,6 @@ steps:
       units re-applied, markers added, tests added, and verification results.
     renderer: minijinja
     template_ref: upstream-rebase/document
-    gas_cap: 4000
     timeout_seconds: 60
     input_mapping:
       target_file: "{{ target_file }}"
@@ -220,7 +209,6 @@ steps:
       step, an upstream merge silently recreates the collision surface that
       caused zed-kask to hijack Zed's desktop identity (commit 853542beab).
     compute_ref: shell.exec
-    gas_cap: 100
     timeout_seconds: 60
     input_mapping:
       command: >
@@ -257,7 +245,6 @@ steps:
       absent — the previous Jinja default(0.0) would silently disable
       convergence detection on a compute failure; this lisp.eval step
       surfaces the failure instead.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -272,7 +259,6 @@ steps:
       Re-enter at step 4 (execute) if verification failed. The loop converges
       when all verification checks pass (step_5_result.verification_passed
       is true) and the Cauchy criterion on the verification signal is met.
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 4 }}"

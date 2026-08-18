@@ -24,11 +24,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -66,7 +61,6 @@ steps:
     description: Plan contract-anchored TDD behaviors and seams.
     renderer: minijinja
     template_ref: tdd/tdd-plan
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       task_description: "{{ task | default(task_description) }}"
@@ -80,7 +74,6 @@ steps:
     description: Execute one tracer bullet (contract → test → minimal implementation).
     renderer: minijinja
     template_ref: tdd/tdd-tracer
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       behavior_description: "{{ step_1_result.behaviors_to_test[0].behavior | default(task_description) }}"
@@ -100,7 +93,6 @@ steps:
       plan (contract). Skips cleanly for hardcoded (fixed-value) contracts.
     renderer: minijinja
     template_ref: tdd/tdd-strengthen
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       contract_code: "{{ step_2_result.contract_code | default('') }}"
@@ -118,7 +110,6 @@ steps:
     description: Propose safe GREEN-phase refactors.
     renderer: minijinja
     template_ref: tdd/tdd-refactor
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       crate_scope: "{{ crate_scope }}"
@@ -134,7 +125,6 @@ steps:
       step 3 to confirm the universal test passes.
     renderer: minijinja
     template_ref: tdd/tdd-verify
-    gas_cap: 4000
     timeout_seconds: 60
     input_mapping:
       crate_scope: "{{ crate_scope }}"
@@ -152,7 +142,6 @@ steps:
       a prior harness-evolve-cycle run) as additional gap sources.
     renderer: minijinja
     template_ref: tdd/tdd-gap-check
-    gas_cap: 4000
     timeout_seconds: 150
     input_mapping:
       spec_requirements: "{{ step_1_result.planned_entities | default([]) }}"
@@ -172,7 +161,6 @@ steps:
       (P0) — not on every low-risk slice.
     renderer: minijinja
     template_ref: tdd/tdd-explore
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       crate_scope: "{{ crate_scope }}"
@@ -194,7 +182,6 @@ steps:
       If gaps or coverage_percentage is absent, the form errors (no silent
       default), surfacing a broken gap-check step rather than masking it
       with a flat 1.0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(let ((g (assoc \"gaps\" step_6_result)) (c (assoc \"coverage_percentage\" step_6_result))) (let ((gc (if (is_null g) 0 (length g))) (cc (if (numberp c) c 0.0))) (+ gc (/ (- 100 cc) 100))))"

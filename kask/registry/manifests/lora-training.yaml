@@ -70,11 +70,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -228,7 +223,6 @@ steps:
       skipped when dataset_path is absent.
     renderer: minijinja
     template_ref: lora-training/preflight-dataset
-    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       dataset_path: "{{ dataset_path | default('undetermined') }}"
@@ -247,7 +241,6 @@ steps:
       G-D0 dataset format compatibility before proceeding.
     renderer: minijinja
     template_ref: lora-training/select-method
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       training_config_path: "{{ training_config_path }}"
@@ -279,7 +272,6 @@ steps:
       enforcement, mechanical not voluntary).
     renderer: minijinja
     template_ref: lora-training/audit-config
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       config_paths: "{{ [training_config_path] }}"
@@ -296,7 +288,6 @@ steps:
       recommendations from readiness, propose evidence-backed regressions.
     renderer: minijinja
     template_ref: lora-training/report
-    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       findings: "{{ step_2_result.findings | default([]) }}"
@@ -314,7 +305,6 @@ steps:
       config passes all gates cleanly). If findings is absent, the form
       errors (no silent default), surfacing a broken report step rather
       than masking it with a flat 1.0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(let ((f (assoc \"findings\" step_3_result))) (if (is_null f) 0 (length f)))"

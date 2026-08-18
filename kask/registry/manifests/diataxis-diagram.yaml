@@ -39,11 +39,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 70000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -83,7 +78,6 @@ steps:
       with rationale.
     renderer: minijinja
     template_ref: diataxis-diagram/diataxis-diagram-classify
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target: "{{ task | default(target) }}"
@@ -104,7 +98,6 @@ steps:
       the existing data.
     renderer: minijinja
     template_ref: diataxis-diagram/diataxis-diagram-extract
-    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       diagram_type: "{{ step_1_result.diagram_type }}"
@@ -123,7 +116,6 @@ steps:
       improvement.
     renderer: minijinja
     template_ref: diataxis-diagram/diataxis-diagram-generate
-    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       diagram_type: "{{ step_1_result.diagram_type }}"
@@ -142,7 +134,6 @@ steps:
       specific refinement directives for criteria above threshold.
     renderer: minijinja
     template_ref: diataxis-diagram/diataxis-diagram-evaluate
-    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       diagram_type: "{{ step_1_result.diagram_type }}"
@@ -167,7 +158,6 @@ steps:
       are actually being resolved across iterations. No `default(1.0)`
       fallback: a missing `weighted_total` surfaces as nil and is guarded
       to 1.0 ("no score reported" = not converged), not masked.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
@@ -188,7 +178,6 @@ steps:
       paragraph, includes cross-links, and produces the final markdown.
     renderer: minijinja
     template_ref: diataxis-diagram/diataxis-diagram-write
-    gas_cap: 5000
     timeout_seconds: 30
     input_mapping:
       diagram_type: "{{ step_1_result.diagram_type }}"
@@ -213,7 +202,6 @@ steps:
       The render action is deterministic (no LLM call).
     renderer: minijinja
     template_ref: diataxis-diagram/present-diagram
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       file_content: "{{ step_6_result.file_content }}"

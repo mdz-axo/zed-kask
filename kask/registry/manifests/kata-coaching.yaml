@@ -24,11 +24,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3
@@ -52,7 +47,6 @@ steps:
     description: Q1 — establish target condition.
     renderer: minijinja
     template_ref: kata-coaching/coaching-q1-target.j2
-    gas_cap: 2500
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ task | default(challenge) }}"
@@ -63,7 +57,6 @@ steps:
     description: Q2 — clarify actual condition.
     renderer: minijinja
     template_ref: kata-coaching/coaching-q2-actual.j2
-    gas_cap: 2500
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
@@ -75,7 +68,6 @@ steps:
     description: Q3 — identify obstacles and focus obstacle.
     renderer: minijinja
     template_ref: kata-coaching/coaching-q3-obstacles.j2
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
@@ -87,7 +79,6 @@ steps:
     description: Q4 — define next experiment and prediction.
     renderer: minijinja
     template_ref: kata-coaching/coaching-q4-experiment.j2
-    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
@@ -98,7 +89,6 @@ steps:
     description: Q5 — define feedback loop timing and learning checkpoint.
     renderer: minijinja
     template_ref: kata-coaching/coaching-q5-learn.j2
-    gas_cap: 2500
     timeout_seconds: 120
     input_mapping:
       challenge: "{{ challenge }}"
@@ -115,7 +105,6 @@ steps:
       "open-loop" (vague timing, not yet converged). Lower = more converged.
       If coach_assessment is absent, the form errors (no silent default),
       surfacing a broken Q5 step rather than masking it with a flat 1.0.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "(if (string= (assoc \"coach_assessment\" step_5_result) \"tight-loop\") 0.0 1.0)"
@@ -125,7 +114,6 @@ steps:
   - ordinal: 7
     action: loop
     description: Re-enter coaching cycle if convergence is not met.
-    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"

@@ -53,11 +53,6 @@ convergence:
   min_iterations: 0
   on_not_reached: escalate
 
-gas:
-  cap: 20000
-  cost_per_iteration: 150
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -122,7 +117,6 @@ steps:
       validation verdict (action=validate).
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-compose-guide
-    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       action: "{{ action }}"

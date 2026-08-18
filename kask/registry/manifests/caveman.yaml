@@ -22,11 +22,6 @@ convergence:
   min_iterations: 2
   on_not_reached: escalate
 
-gas:
-  cap: 100000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 2
@@ -50,7 +45,6 @@ steps:
     description: Compress draft response into caveman mode.
     renderer: minijinja
     template_ref: caveman/caveman-compress
-    gas_cap: 3000
     timeout_seconds: 30
     input_mapping:
       draft_response: "{{ task | default(draft_response) }}"
@@ -66,7 +60,6 @@ steps:
       computation explicitly deterministic, budgeted (gas_cap: 100), and
       observable via a reg.skill.caveman span. Guards against a missing
       compression_ratio field by returning 0 when absent.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
