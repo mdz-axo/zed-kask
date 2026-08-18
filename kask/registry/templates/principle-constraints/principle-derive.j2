@@ -19,6 +19,12 @@ contract:
     existing_constraints:
       type: array
       description: 'For verify mode: the previously-derived constraint set to re-check.'
+    codegraph_results:
+      type: array
+      description: 'Symbol search results from codegraph_query. Contains symbol names, file paths, and line numbers.'
+    code_context:
+      type: string
+      description: 'Optional: pre-gathered code context (file contents, grep results, DIVERGENCE.md excerpts) provided by the caller.'
   output:
     constraint_set:
       type: object
@@ -62,11 +68,39 @@ Starting points for locating enforcement (verify, do not trust):
 {% endfor %}
 {% endif %}
 
+## Mode
+
+{% if mode == "verify" %}
+**VERIFY mode**: re-check an existing constraint set against the current codebase. For each constraint: does `enforced_at` still point to real code? Does the falsifier test still exist and pass? Has the principle been weakened or strengthened? Emit a `drift_report` per constraint.
+{% else %}
+**DERIVE mode**: produce a new constraint set from the principle. Locate enforcement code, identify existing tests, flag gaps.
+{% endif %}
+
+{% if code_context %}
+## Code Context (caller-provided)
+
+The caller has provided pre-gathered code context. Use this to locate enforcement code, cite file:line locations, and identify falsifier tests. This context may include file contents, grep results, DIVERGENCE.md excerpts, or other codebase artifacts.
+
+```
+{{ code_context }}
+```
+{% endif %}
+
+{% if codegraph_results and codegraph_results != [] %}
+## Code Graph Results
+
+A prior step queried the code graph for symbols matching the enforcement hints. Use these results to locate enforcement code and cite file:line locations.
+
+```
+{{ codegraph_results | tojson }}
+```
+{% endif %}
+
 ## Discipline
 
 A constraint you emit is *your* conclusion. It must be grounded in real code. Specifically:
-1. Every constraint must have an `enforced_at` location (file:line or `UNKNOWN`).
-2. Every constraint must have a `falsifier` (test name or `MISSING: <suggested name>`).
+1. Every constraint must have an `enforced_at` location (file:line or `UNKNOWN`). Use the code graph results or code context to cite exact locations. If you cannot locate enforcement, use `UNKNOWN`.
+2. Every constraint must have a `falsifier` (test name or `MISSING: <suggested name>`). Use the code context to identify tests. If no test exists, use `MISSING:`.
 3. A constraint without located enforcement is `gap`, not `enforced`.
 4. The code may enforce more than the prose states — read carefully.
 5. Label each constraint's `kind` as `structural` or `review`.
