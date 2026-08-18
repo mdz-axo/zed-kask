@@ -13,7 +13,7 @@ use hkask_types::WebID;
 
 // ── Tool consumption channel: McpRuntime::invoke → Cybernetics ────────────
 
-/// Per-tool gas consumption report from `McpRuntime::invoke` (in `hkask-mcp`) to Cybernetics.
+/// Per-tool consumption report from `McpRuntime::invoke` (in `hkask-mcp`) to Cybernetics.
 ///
 /// Replaces `LoopPayload::ToolConsumption`. Sent on a dedicated
 /// `tokio::sync::mpsc::Sender<ToolConsumptionEvent>` channel.

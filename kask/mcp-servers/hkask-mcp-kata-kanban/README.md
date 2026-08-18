@@ -23,7 +23,6 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 ### Budget management
 | Tool | Description |
 |------|-------------|
-| `kanban_task_add_gas` | Add gas/rJoules to a task's remaining budget |
 | `kanban_task_add_rjoules` | Add rJoules to a task's inference/API budget (250k ≈ $1 spend) |
 
 ### Communication

@@ -8,7 +8,7 @@ use hkask_types::regulation::QueueDepth;
 
 /// Default minimum energy budget remaining ratio (20%).
 ///
-/// When gas remaining drops below this ratio, the Cybernetics Loop produces
+/// When energy remaining drops below this ratio, the Cybernetics Loop produces
 /// a throttle action to reduce consumption.
 pub const DEFAULT_ENERGY_MIN_REMAINING_RATIO: f64 = 0.2;
 

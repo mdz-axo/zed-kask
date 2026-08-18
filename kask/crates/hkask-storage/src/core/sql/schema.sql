@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS agent_registry (name TEXT PRIMARY KEY, agent_kind TEX
 CREATE INDEX IF NOT EXISTS idx_agent_registry_kind ON agent_registry(agent_kind);
 CREATE TABLE IF NOT EXISTS loop_cursors (key TEXT PRIMARY KEY, value INTEGER NOT NULL, updated_at TEXT NOT NULL);
 -- Kata practice history — tracks practice frequency, streaks, and automaticity across sessions
-CREATE TABLE IF NOT EXISTS kata_history (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_name TEXT NOT NULL, date TEXT NOT NULL, kata_type TEXT NOT NULL, practice_name TEXT NOT NULL, steps_completed INTEGER NOT NULL DEFAULT 0, gas_consumed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS kata_history (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_name TEXT NOT NULL, date TEXT NOT NULL, kata_type TEXT NOT NULL, practice_name TEXT NOT NULL, steps_completed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE INDEX IF NOT EXISTS idx_kata_history_agent ON kata_history(agent_name);
 CREATE INDEX IF NOT EXISTS idx_kata_history_date ON kata_history(date);
 CREATE INDEX IF NOT EXISTS idx_kata_history_type ON kata_history(kata_type);

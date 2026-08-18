@@ -162,7 +162,7 @@ impl RegulationPolicy {
 
         Self {
             rules: vec![
-                // ── Energy / Gas (Cybernetics Loop 6) ──
+                // ── Energy (Cybernetics Loop 6) ──
                 RegulationRule {
                     metric: EnergyRemaining,
                     direction: BelowSetPoint,
