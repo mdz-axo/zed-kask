@@ -112,7 +112,7 @@ Beyond coverage, verify that each contract's layers (per Contract Architecture) 
 8. **`expect:` quality (scored 0-3)**:
    - **0 (empty/missing)**: No `expect:` field — triple `Contract → hasUserExpectation → EMPTY` is broken.
    - **1 (vacuous)**: `expect:` restates the function name (e.g., `expect: "can_proceed checks if can proceed" [P9]`) — adds no information beyond the function signature.
-   - **2 (functional)**: `expect:` describes what the user needs, not how (e.g., `expect: "I can check remaining gas before execution" [P9]`).
+   - **2 (functional)**: `expect:` describes what the user needs, not how (e.g., `expect: "I can check remaining rJoules before execution" [P9]`).
    - **3 (anchored)**: `expect:` describes what the user functionally needs AND names the motivating principle with clear rationale — the full traceability chain is intact.
 
 9. **Goal principle correctness**: Does the `[P{N}]` on `expect:` match the entity's declared goal principle? Does the principle's semantic guarantee actually justify this contract? A mismatch is a gap — correct the principle annotation. Triple: `Contract → hasGoalPrinciple → WRONG_Principle`.
@@ -212,7 +212,7 @@ Respond with a JSON object:
       "mds_category": "Trust",
       "declared_constraints": ["P4"],
       "missing_magna_carta": ["P1", "P2"],
-      "rationale": "P1 (User Sovereignty) missing — should constrain 'who can check gas?' P2 (Affirmative Consent) missing — should constrain 'who approved this budget?' Magna Carta principle P4 is declared but P1 and P2 are not."
+      "rationale": "P1 (User Sovereignty) missing — should constrain 'who can check rJoules?' P2 (Affirmative Consent) missing — should constrain 'who approved this budget?' Magna Carta principle P4 is declared but P1 and P2 are not."
     }
   ],
   "expectation_quality": [
@@ -220,7 +220,7 @@ Respond with a JSON object:
       "entity_identifier": "hkask_regulation::energy_budget::can_proceed",
       "score": 3,
       "assessment": "anchored",
-      "expect_text": "I can check whether an agent has enough gas before executing",
+      "expect_text": "I can check whether an agent has enough rJoules before executing",
       "rationale": "User-voice expectation names the motivating principle (P9) and provides clear rationale. The full traceability chain is intact."
     }
   ]

@@ -161,7 +161,7 @@ steps:
       operationalize step's alignment_check. Lower signal variance across
       iterations = convergence (Cauchy). Using lisp.eval instead of a Jinja
       expression makes the computation explicitly deterministic, budgeted
-      (gas_cap: 100), and observable via a reg.skill.hypothesis-framer span.
+      (timeout_seconds: 10), and observable via a reg.skill.hypothesis-framer span.
       Guards against missing nested fields (alignment_check / misalignments)
       by returning 0 when absent — when step 4 was skipped (PICO defects),
       the 0 does not cause false convergence because loop_target re-enters

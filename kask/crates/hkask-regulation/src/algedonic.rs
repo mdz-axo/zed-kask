@@ -446,6 +446,7 @@ impl AlgedonicManager {
     /// from `RegulationLedger`), only Info and Warning alerts and already-
     /// escalated Critical alerts are cleared. When `false`, the entire log
     /// is cleared (used by `session_reset`).
+    #[allow(dead_code)]
     pub(crate) fn clear_reviewed(&mut self, retain_unresolved: bool) {
         if retain_unresolved {
             // Retain Critical alerts that have not been escalated yet —

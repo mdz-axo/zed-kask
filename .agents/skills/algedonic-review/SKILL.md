@@ -2,7 +2,7 @@
 name: algedonic-review
 core: true
 visibility: public
-description: "Human-in-the-loop review and triage of the algedonic alert backlog. Queries pending escalations, the algedonic event log, and system health, then synthesizes a structured triage briefing with per-alert severity, domain, and recommended action (resolve, dismiss, investigate, escalate-to-human). The operator reviews and acts on each alert, closing the feedback loop. Invoked when the algedonic log approaches its cap or on operator demand.
+description: "Human-in-the-loop review and triage of the algedonic alert backlog. Queries pending escalations, the algedonic event log, and system health, then synthesizes a structured triage briefing with per-alert severity, domain, and recommended action (resolve, dismiss, investigate, escalate-to-human). The operator reviews and acts on each alert, closing the feedback loop. Invoked when the algedonic log approaches its cap or on operator demand."
 ---
 
 # Algedonic Review

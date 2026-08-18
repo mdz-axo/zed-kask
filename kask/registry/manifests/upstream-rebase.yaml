@@ -240,7 +240,7 @@ steps:
       verification compute step (step 5). Lower signal variance across
       iterations = convergence (Cauchy). Using lisp.eval instead of a Jinja
       expression makes the computation explicitly deterministic, budgeted
-      (gas_cap: 100), and observable via a reg.skill.upstream-rebase span.
+      (timeout_seconds: 10), and observable via a reg.skill.upstream-rebase span.
       Guards against a missing convergence_metric field by returning 0 when
       absent — the previous Jinja default(0.0) would silently disable
       convergence detection on a compute failure; this lisp.eval step

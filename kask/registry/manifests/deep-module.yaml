@@ -115,7 +115,7 @@ steps:
       If step 3 was skipped (DELETE/MERGE recommendation), step_3_result
       is undefined — guard to 0 (stable, Cauchy fires after min_iterations).
       Using lisp.eval instead of a Jinja expression makes the computation
-      explicitly deterministic, budgeted (gas_cap: 100), and observable
+      explicitly deterministic, budgeted (timeout_seconds: 10), and observable
       via a reg.skill.deep-module span.
     timeout_seconds: 10
     input_mapping:

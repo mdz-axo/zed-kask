@@ -10,12 +10,8 @@
 //! dependency on `InferencePort`, `ToolPort`, or the executor — it's a leaf
 //! module that the executor composes.
 //!
-//! # Removed: gas
-//!
-//! Gas (compute cycle budget) has been removed. The cascade no longer tracks
-//! or enforces a gas budget. Timeout is the sole kill switch for runaway
-//! processes. rJoule remains as the budget/feedback/calibration metric for
-//! inference spend.
+//! Timeout is the sole kill switch for runaway processes. rJoule is the
+//! budget/feedback/calibration metric for inference spend.
 
 use crate::bundle::config::RjouleConfig;
 use crate::step_context::ContextMap;
@@ -277,7 +273,6 @@ mod tests {
         tracker.inject_into_context(&mut ctx);
 
         assert!(ctx.contains_key("_rjoule"));
-        assert!(!ctx.contains_key("_gas"));
     }
 
     #[test]

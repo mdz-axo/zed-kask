@@ -16,7 +16,7 @@ visibility: Public
 {# goal: Execute each mutated artifact against the eval set, collect scores. #}
 {#
   Group: G (Optimization — evolutionary)
-  This is the most gas-intensive step — each variant must be executed
+  This is the most rJoule-intensive step — each variant must be executed
   against the full eval set. Only artifact_type "prompt" is implemented in v1.
 #}
 
@@ -36,7 +36,7 @@ For each variant:
 2. Execute it against the eval set (from target_artifact.eval_set).
 3. For each eval input, capture the output and score it against each objective.
 4. Aggregate scores per variant (mean, min, max per objective).
-5. Record the cost (number of rollouts, gas consumed, inference latency).
+5. Record the cost (number of rollouts, rJoules consumed, inference latency).
 {% elif artifact_type == "manifest" %}
 NOT YET IMPLEMENTED. Return empty tested_variants with test_notes.
 {% elif artifact_type == "template" %}
@@ -78,7 +78,7 @@ Return JSON only:
       },
       "cost": {
         "rollouts": 0,
-        "gas": 0,
+        "rjoules": 0,
         "latency_ms": 0
       },
       "hypothesis_confirmed": true,

@@ -151,7 +151,7 @@ steps:
       first non-null response field across steps 2-7 and returns its length.
       Lower signal variance across iterations = convergence (Cauchy). Using
       lisp.eval instead of a Jinja expression makes the computation
-      explicitly deterministic, budgeted (gas_cap: 100), and observable via
+      explicitly deterministic, budgeted (timeout_seconds: 10), and observable via
       a reg.skill.improv span. Returns 0 when no mode produced a response.
     timeout_seconds: 10
     input_mapping:
