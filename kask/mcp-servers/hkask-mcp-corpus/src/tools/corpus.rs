@@ -604,10 +604,18 @@ impl CorpusServer {
                 ));
             }
 
-            // Generate lora-training config recommendations
-            // based on the 5-gate decision (G1-G5). The heuristic lives in
-            // `lora_config::build_lora_config`, which DUPLICATES the
-            // lora-training skill's gates — keep them in sync.
+            // Generate a preview PEFT config recommendation based on the 5-gate
+            // heuristic (G1-G5). This is a PREVIEW — the authoritative
+            // recommendation comes from the `lora-training` skill's full 8-gate
+            // refinement (G0, G-D0, G1-G6) with operator accept/override. The
+            // operator should invoke `lora-training/select-method` before
+            // training. See `lora_config.rs` doc for the drift hazard.
+            tracing::info!(
+                target: "hkask.corpus.training_dataset",
+                base_model = %req.base_model,
+                n_samples,
+                "PEFT config preview generated — invoke the lora-training skill for the authoritative 8-gate recommendation before training",
+            );
             let config_recommendation = build_lora_config(&req.base_model, n_samples);
             let use_qlora = config_recommendation
                 .get("use_qlora")

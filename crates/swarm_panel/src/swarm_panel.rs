@@ -3764,7 +3764,7 @@ mod tests {
             serde_json::from_value(serde_json::json!({"agent_id": "no_alias"}))
                 .expect("display_alias is #[serde(default)]-optional");
         assert_eq!(none_agent.display_alias, None);
-        assert_eq!(none_agent.display_alias.clone().unwrap_or_default(), "");
+        assert_eq!(none_agent.display_alias.unwrap_or_default(), "");
     }
 
     // Pin the empty-state message contract: when the API key IS configured

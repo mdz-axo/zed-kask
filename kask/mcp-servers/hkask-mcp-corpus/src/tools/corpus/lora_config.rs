@@ -1,11 +1,17 @@
 //! LoRA/PEFT config recommendation heuristic for `corpus_prepare_training_dataset`.
 //!
-//! DUPLICATES the lora-training skill's G1–G5 gate decisions. This is an inline
-//! heuristic in the corpus server so that `corpus_prepare_training_dataset` can
-//! return a ready-to-use PEFT config without invoking the skill cascade. Keep
-//! this in sync with the lora-training skill's gate logic (see
-//! `.agents/skills/lora-training/SKILL.md`); drift here produces config
-//! recommendations that disagree with the skill's actual gates.
+//! **This is a preview heuristic, not a substitute for the lora-training skill.**
+//! The skill (`lora-training/select-method`) runs a full 8-gate refinement
+//! (G0, G-D0, G1–G6) with operator-accept/override/reject and runtime contract
+//! enforcement. This inline function models only 5 gates (G1–G5) with fixed
+//! defaults so `corpus_prepare_training_dataset` can return a ready-to-use PEFT
+//! config without invoking the skill cascade. The operator should invoke the
+//! `lora-training` skill for the authoritative recommendation before training.
+//!
+//! Drift hazard: keep the G1–G5 logic here aligned with the skill's gate
+//! definitions (see `.agents/skills/lora-training/SKILL.md`). The skill is the
+//! canonical source; this is a simplified preview. If the skill's gates change,
+//! update this function in the same PR.
 //!
 //! The five gates modeled here:
 //! - G1 inference: LoRA-family (must-merge) — fixed.
