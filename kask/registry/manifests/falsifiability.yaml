@@ -72,7 +72,7 @@ steps:
       claims; propose a refined testable reformulation if salvageable.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-admit
-    gas_cap: 3072
+    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       target: "{{ task | default(target) }}"
@@ -88,7 +88,7 @@ steps:
       (refined reformulation if the admit gate produced one, else the original).
     renderer: minijinja
     template_ref: falsifiability/falsifiability-hypothesize
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       admitted_target: "{{ step_1_result.refined_target | default(target, true) }}"
@@ -204,7 +204,7 @@ steps:
       set is structurally valid.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-counterfactual
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       hypotheses: "{{ step_2_result.hypotheses | default([]) }}"
@@ -220,7 +220,7 @@ steps:
       surviving hypothesis must be falsifiable by at least one designed test.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-discriminate
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       hypotheses: "{{ step_2_result.hypotheses | default([]) }}"
@@ -237,7 +237,7 @@ steps:
       tests_pending.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-eliminate
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       hypotheses: "{{ step_2_result.hypotheses | default([]) }}"

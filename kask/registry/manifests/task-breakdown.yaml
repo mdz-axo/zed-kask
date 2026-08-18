@@ -171,7 +171,7 @@ steps:
       code is written.
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-plan
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       # The user's natural-language request (injected by the skill tool as
@@ -191,7 +191,7 @@ steps:
       multi-task plan, no ACs) as algedonic short-circuit.
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-decompose
-    gas_cap: 8192
+    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       context_summary: "{{ step_1_result.context_summary | default('') }}"
@@ -252,7 +252,7 @@ steps:
       gaps in its scoring.
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-evaluate
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       tasks: "{{ step_2_result.tasks | default([]) }}"
@@ -272,7 +272,7 @@ steps:
       project-specific convention checking.
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-quality-gate
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       tasks: "{{ step_2_result.tasks | default([]) }}"
@@ -315,7 +315,7 @@ steps:
       across PDCA iterations.
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-write-plan
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 180
     input_mapping:
       context_summary: "{{ step_1_result.context_summary | default('') }}"

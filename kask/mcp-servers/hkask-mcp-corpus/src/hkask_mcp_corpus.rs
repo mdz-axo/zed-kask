@@ -770,7 +770,17 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         "hkask-mcp-corpus",
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::ServerContext| {
-            let ocr_model = std::env::var("HKASK_OCR_MODEL").ok();
+            let ocr_model = std::env::var("HKASK_OCR_MODEL")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    // Fall back to HkaskSettings (which itself falls back to
+                    // DEFAULT_OCR_MODEL = "RunPod/kask-ocr"). Without this,
+                    // the corpus server has no OCR model when the env var is
+                    // unset, and scanned PDFs silently produce empty text.
+                    let model = hkask_services_core::HkaskSettings::load().ocr_model();
+                    if model.is_empty() { None } else { Some(model) }
+                });
 
             let ocr_thresholds = ThresholdConfig::from_env();
 

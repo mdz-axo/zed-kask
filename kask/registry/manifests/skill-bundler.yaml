@@ -133,7 +133,7 @@ steps:
     description: Synthesize the composed skills into a single optimized composite PKO Procedure. Parse each skill's PDCA graph into RDF triples, detect isomorphic substructures, decimate redundant nodes, fuse shared patterns, and generate novel loop structures.
     renderer: minijinja
     template_ref: skill-bundler/bundler-synthesize
-    gas_cap: 8192
+    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       composed_skills: "{{ step_2_result.bundle_manifest.skills }}"

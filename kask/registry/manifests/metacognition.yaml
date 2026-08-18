@@ -219,7 +219,7 @@ steps:
       cycles, the target persists.
     renderer: minijinja
     template_ref: metacognition/meta-establish-target
-    gas_cap: 4096
+    gas_cap: 5000
     # thinking_budget = "medium"; 120s aligns with DEFAULT_STEP_TIMEOUT_SECONDS.
     # The 90s override was too tight for cold-cache cloud LLM calls.
     timeout_seconds: 120
@@ -243,7 +243,7 @@ steps:
       the Brier score tracks whether the agent's confidence is calibrated.
     renderer: minijinja
     template_ref: metacognition/meta-predict
-    gas_cap: 4096
+    gas_cap: 5000
     # thinking_budget = "off" (set in the template, not "medium" as the
     # prior comment claimed). 120s aligns with DEFAULT_STEP_TIMEOUT_SECONDS
     # — the 90s override was too tight for cold-cache cloud LLM calls
@@ -274,7 +274,7 @@ steps:
       the new current_artifacts and current_procedure.
     renderer: minijinja
     template_ref: metacognition/meta-experiment
-    gas_cap: 6144
+    gas_cap: 6000
     # thinking_budget = "full" + max_tokens 3000 — heaviest inference step.
     # 150s matches capabilities-reasoner's heavy step (300s would be safer
     # but the Kata cycle runs this 4-step loop up to 10 times; 150s balances

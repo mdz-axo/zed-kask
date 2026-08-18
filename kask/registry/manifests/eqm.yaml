@@ -106,7 +106,7 @@ steps:
       estimate (~$0.007 per rationale).
     renderer: minijinja
     template_ref: eqm/eqm-select
-    gas_cap: 2048
+    gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
       rationales: "{{ task | default(rationales) }}"
@@ -126,7 +126,7 @@ steps:
       single source of truth for 12-EQM LLM scoring.
     mcp: hkask-mcp-prediction-markets
     tool: market_score_rationale
-    gas_cap: 8192
+    gas_cap: 8000
     timeout_seconds: 120
     input_mapping:
       rationale: "{{ item.rationale }}"
@@ -151,7 +151,7 @@ steps:
       Produce the improvement_target_profile that eqm-improvement consumes.
     renderer: minijinja
     template_ref: eqm/eqm-aggregate
-    gas_cap: 3072
+    gas_cap: 3000
     timeout_seconds: 150
     input_mapping:
       per_rationale_scores: "{{ step_2_result.per_rationale_scores | default([]) }}"
@@ -168,7 +168,7 @@ steps:
       realized_outcomes absent → returns Undetermined (not Ready-with-empty).
     renderer: minijinja
     template_ref: eqm/eqm-validate
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       forecaster_level_composite: "{{ step_3_result.forecaster_level_composite | default({}) }}"

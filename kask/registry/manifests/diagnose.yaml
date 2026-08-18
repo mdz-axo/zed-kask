@@ -96,7 +96,7 @@ steps:
       map symptom to FR# references, flag spec gaps.
     renderer: minijinja
     template_ref: diagnose/diagnose-spec-anchor.j2
-    gas_cap: 3072
+    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       bug_description: "{{ task | default(bug_description) }}"
@@ -127,7 +127,7 @@ steps:
       predictions, and falsifiers; discards vibes at generation.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-hypothesize
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       admitted_target: "{{ symptom | default(bug_description, true) }}"
@@ -227,7 +227,7 @@ steps:
       the hypothesis set is structurally valid.
     renderer: minijinja
     template_ref: diagnose/diagnose-instrument.j2
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       bug_description: "{{ bug_description }}"
@@ -241,7 +241,7 @@ steps:
     description: Apply fix with regression test, verify repro no longer reproduces, clean up instrumentation.
     renderer: minijinja
     template_ref: diagnose/diagnose-fix.j2
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 120
     input_mapping:
       bug_description: "{{ bug_description }}"

@@ -119,7 +119,7 @@ steps:
       target_procedure (which inquiry steps must be complete).
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-target
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       problem: "{{ problem }}"
@@ -135,7 +135,7 @@ steps:
       Carry a confidence in [0,1]. The Brier score tracks calibration.
     renderer: minijinja
     template_ref: sequential-inquiry/sequential-inquiry-predict
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       problem: "{{ problem }}"

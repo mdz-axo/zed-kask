@@ -99,7 +99,7 @@ steps:
       — variety deficits, energy exhaustion, outcome plateaus. These are
       the "real problems" (C.H. Robinson) the gemba walk starts from.
     mcp: curator_algedonic_log
-    gas_cap: 1024
+    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       hours: "{{ algedonic_hours | default(24) }}"
@@ -122,7 +122,7 @@ steps:
       breaches, drift detections, blocked actions. The gemba walk reviews
       this backlog so the operator can triage.
     mcp: curator_escalations
-    gas_cap: 1024
+    gas_cap: 1000
     timeout_seconds: 30
     on_failure:
       action: report
@@ -147,7 +147,7 @@ steps:
       issues. When focus_skill is set, the consultation is scoped to that
       skill; otherwise it asks for all skills with recent issues.
     mcp: curator_consult
-    gas_cap: 2048
+    gas_cap: 2000
     timeout_seconds: 60
     input_mapping:
       query: >
@@ -177,7 +177,7 @@ steps:
       better? When the ledger is unavailable, the tool returns an error —
       the gemba walk must not silently omit grounding health.
     mcp: curator_grounding_trend
-    gas_cap: 1024
+    gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       scope: "global"
@@ -203,7 +203,7 @@ steps:
       Agent types with delegations but no contract are coverage gaps (paper §6).
       The operator uses this to see which agent types need a contract written.
     mcp: curator_grounding_coverage
-    gas_cap: 1024
+    gas_cap: 1000
     timeout_seconds: 30
     on_failure:
       action: report
@@ -234,7 +234,7 @@ steps:
       not a silent omission.
     renderer: minijinja
     template_ref: gemba-walk/synthesize-briefing
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       task: "{{ task | default('show me the system health') }}"
@@ -261,7 +261,7 @@ steps:
       (the Observe phase happens outside the skill cascade).
     renderer: minijinja
     template_ref: gemba-walk/present-briefing
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       task: "{{ task }}"
@@ -286,7 +286,7 @@ steps:
       reviews and decides which to execute in the regular conversation.
     renderer: minijinja
     template_ref: gemba-walk/recommend-actions
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 120
     input_mapping:
       task: "{{ task }}"

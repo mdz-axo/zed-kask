@@ -64,7 +64,7 @@ steps:
       or manifest.yaml file. Strip comment markers, preserve exact goal text.
     renderer: minijinja
     template_ref: skill-logic-audit/logic-load-goal
-    gas_cap: 2048
+    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       target_path: "{{ target_path }}"
@@ -79,7 +79,7 @@ steps:
       severity, and suggested fix.
     renderer: minijinja
     template_ref: skill-logic-audit/logic-critique-template
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target_path: "{{ target_path }}"
@@ -94,7 +94,7 @@ steps:
       valid, goal-anchored concerns from spurious ones.
     renderer: minijinja
     template_ref: skill-logic-audit/logic-critique-critique
-    gas_cap: 2048
+    gas_cap: 2000
     timeout_seconds: 150
     input_mapping:
       goal: "{{ step_1_result.goal }}"
@@ -107,7 +107,7 @@ steps:
       from the calibrated concerns.
     renderer: minijinja
     template_ref: skill-logic-audit/logic-compose-proposal
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target_path: "{{ target_path }}"
@@ -123,7 +123,7 @@ steps:
       accept/reject/counter-proposal.
     renderer: minijinja
     template_ref: skill-logic-audit/logic-user-choice
-    gas_cap: 2048
+    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       target_path: "{{ target_path }}"

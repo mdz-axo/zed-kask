@@ -257,7 +257,7 @@ steps:
       1.0 + trivial_task flag; empty swarm → diversity 0.0, variety 0.0.
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-sense
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       swarm_id: "{{ swarm_id }}"
@@ -286,7 +286,7 @@ steps:
       capabilities)?
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-orient
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       swarm_state: "{{ step_3_result }}"
@@ -318,7 +318,7 @@ steps:
       (required/optional) and the no-delegation-chains invariant.
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-decide
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       swarm_state: "{{ step_3_result }}"
@@ -369,7 +369,7 @@ steps:
       consent gate must actually block, not just warn.
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-act
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       decisions: "{{ step_6_result }}"
@@ -443,7 +443,7 @@ steps:
       loop (C2) covers the task-success gap, never an LLM judge.
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-check
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       pre_act_state: "{{ step_3_result }}"
