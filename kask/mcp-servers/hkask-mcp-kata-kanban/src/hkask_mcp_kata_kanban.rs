@@ -1348,12 +1348,12 @@ impl KanbanServer {
             &result.response,
             &result.tool_calls,
         );
+        // Rung 2 (Schema validation): validate the cleaned document
+        // AFTER grounding, BEFORE it persists. Unsupported keywords
+        // are NOT a pass. Logged at warn — schema violations are
+        // diagnostic, not blocking (the cleaned document is still
+        // the best available output).
         if let Some(ref gr) = outcome.result {
-            // Rung 2 (Schema validation): validate the cleaned document
-            // AFTER grounding, BEFORE it persists. Unsupported keywords
-            // are NOT a pass. Logged at warn — schema violations are
-            // diagnostic, not blocking (the cleaned document is still
-            // the best available output).
             let validation = hkask_verification::schema_validate::validate(
                 &serde_json::json!({
                     "type": "object",
@@ -1384,37 +1384,63 @@ impl KanbanServer {
                     "schema validation: unsupported keyword(s) — NOT a pass",
                 );
             }
-            // Build the delegation envelope so provenance survives the
-            // hop to the caller (N2). The envelope is additive — it
-            // carries the enforced payload, provenance, and violations.
-            let envelope = hkask_verification::envelope::build(
-                &result.agent_id,
-                Some(&outcome.cleaned),
-                gr,
-                true,
-            );
-            // Replace the response with the cleaned JSON (with provenance
-            // stamps and nulled unsourced fields).
+            let _ = gr; // used below via outcome.result.as_ref()
+        }
+        // Build the delegation envelope so provenance survives the hop to
+        // the caller (N2). The envelope is additive — it carries the enforced
+        // payload, provenance, violations, and validation status. Built in
+        // all three branches so every delegation carries grounding status.
+        //
+        // Grounding status mapping:
+        // - Enforced:     contract ran (outcome.result.is_some())
+        // - NoContract:   output was an object but no contract for this agent_type
+        // - Unenforceable: output was not a JSON object (contract couldn't run)
+        //
+        // Payload status mapping:
+        // - NoResponse: raw response string is empty
+        // - Document:   output was a JSON object
+        // - ProseOnly:  output was non-empty but not an object
+        let grounding_status = if outcome.result.is_some() {
+            hkask_verification::envelope::GroundingStatus::Enforced
+        } else if outcome.was_object {
+            hkask_verification::envelope::GroundingStatus::NoContract
+        } else {
+            hkask_verification::envelope::GroundingStatus::Unenforceable
+        };
+        let payload_status = if outcome.raw_response.is_empty() {
+            hkask_verification::envelope::PayloadStatus::NoResponse
+        } else if outcome.was_object {
+            hkask_verification::envelope::PayloadStatus::Document
+        } else {
+            hkask_verification::envelope::PayloadStatus::ProseOnly
+        };
+        let envelope = hkask_verification::envelope::build(
+            &result.agent_id,
+            if outcome.was_object {
+                Some(&outcome.cleaned)
+            } else {
+                None
+            },
+            grounding_status,
+            payload_status,
+            outcome.result.as_ref(),
+            None,
+        );
+        // Replace the response with the cleaned JSON (with provenance
+        // stamps and nulled unsourced fields) when grounding ran.
+        if outcome.result.is_some() {
             result.response =
                 serde_json::to_string(&outcome.cleaned).unwrap_or_else(|_| result.response.clone());
-            // Retain the raw response for audit and future reprocessing.
-            result.raw_response = Some(outcome.raw_response);
-            // Log the envelope at debug — it's diagnostic, not blocking.
-            tracing::debug!(
-                target: "hkask.mcp.kata_kanban",
-                task_id = %tid,
-                envelope = %envelope,
-                "delegation envelope built",
-            );
-        } else if outcome.was_object {
-            // No contract for this agent_type — the verification store
-            // wrote a coverage-gap record. The raw response is retained
-            // for audit even when grounding did not run.
-            result.raw_response = Some(outcome.raw_response);
         }
-        // When the output was not a JSON object, the verification store
-        // wrote an unenforceable record (had_contract: true, was_enforced:
-        // false). The raw response is retained above when applicable.
+        // Retain the raw response for audit and future reprocessing.
+        result.raw_response = Some(outcome.raw_response);
+        // Log the envelope at debug — it's diagnostic, not blocking.
+        tracing::debug!(
+            target: "hkask.mcp.kata_kanban",
+            task_id = %tid,
+            envelope = %envelope,
+            "delegation envelope built",
+        );
 
         let verdict = result.task_success.clone();
         if let Err(error) =

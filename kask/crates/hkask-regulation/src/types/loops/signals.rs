@@ -106,6 +106,16 @@ pub enum SignalMetric {
     /// regulation signal that something changed: a tool broke, an agent's
     /// prompt drifted, a model was swapped).
     GroundingViolationDelta,
+    /// Grounding liveness gap (Cybernetics Loop 6).
+    /// Count of delegations that should have produced a grounding record
+    /// but didn't. A delegation that skipped `enforce_for_agent` entirely
+    /// produces no record — absence of a record is indistinguishable from
+    /// "clean." This metric surfaces that gap. Requires a second data
+    /// source (swarm ledger) to compute the true gap; until then, returns
+    /// 0.0 when records exist and None when the store is empty (absence ≠ 0).
+    /// Set-point: 0 (any positive value is a deviation — delegations are
+    /// happening without grounding enforcement).
+    GroundingLivenessGap,
 }
 
 impl std::fmt::Display for SignalMetric {
@@ -157,6 +167,7 @@ impl SignalMetric {
             SignalMetric::GroundingCleanRate => "grounding_clean_rate",
             SignalMetric::GroundingCoverageRate => "grounding_coverage_rate",
             SignalMetric::GroundingViolationDelta => "grounding_violation_delta",
+            SignalMetric::GroundingLivenessGap => "grounding_liveness_gap",
         }
     }
 }

@@ -64,6 +64,16 @@ pub enum ProvenanceTag {
     },
 }
 
+/// Specification for a derived field: what field it's computed from
+/// and how (the transform name, for auditability).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DerivedSpec {
+    /// The sourced field this is computed from (dotted path).
+    pub from: String,
+    /// The transform, named so a reader can check it.
+    pub how: String,
+}
+
 /// A field's source specification: which tools can supply it, and why
 /// the contract declares this disposition.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -79,6 +89,12 @@ pub struct FieldSpec {
     pub response_path: String,
     /// Why this field has the disposition it has. Mandatory (≥40 chars).
     pub why: String,
+    /// When present, this field is Derived from the named field via a
+    /// deterministic transform. The provenance is the weakest link: if the
+    /// source field is Inferred, this field is Inferred, not Derived.
+    /// A derivation from an Unsourced (nulled) field is itself nulled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_from: Option<DerivedSpec>,
 }
 
 /// A field → tool map for one agent type's structured output.
@@ -147,6 +163,7 @@ pub fn task_agent_contract() -> GroundingContract {
             why: "A file path the agent claims to have written. Must be sourced \
                   from a file-writing tool that succeeded."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
@@ -157,6 +174,7 @@ pub fn task_agent_contract() -> GroundingContract {
             why: "A pass/fail claim about tests. Must be sourced from a terminal \
                   tool call that succeeded (the test runner)."
                 .to_string(),
+            derived_from: None,
         },
     );
     // Commissioned judgments — empty source list = Inferred, not Unsourced.
@@ -168,6 +186,7 @@ pub fn task_agent_contract() -> GroundingContract {
             why: "A prose summary of what the agent did. Commissioned by the \
                   system prompt — the agent was asked to summarize."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
@@ -178,6 +197,7 @@ pub fn task_agent_contract() -> GroundingContract {
             why: "A description of the approach taken. Commissioned by the \
                   system prompt — the agent was asked to describe its approach."
                 .to_string(),
+            derived_from: None,
         },
     );
     GroundingContract {
@@ -216,6 +236,7 @@ pub fn research_agent_contract() -> GroundingContract {
             why: "A list of sources the agent claims to have found. Must be \
                   sourced from a research or web search tool that succeeded."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
@@ -226,6 +247,7 @@ pub fn research_agent_contract() -> GroundingContract {
             why: "A prose summary of what the agent found. Commissioned by \
                   the system prompt — the agent was asked to analyze and report."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
@@ -236,6 +258,7 @@ pub fn research_agent_contract() -> GroundingContract {
             why: "A prose summary of the research. Commissioned by the \
                   system prompt — the agent was asked to summarize."
                 .to_string(),
+            derived_from: None,
         },
     );
     GroundingContract {
@@ -266,6 +289,7 @@ pub fn narrator_agent_contract() -> GroundingContract {
             why: "The main prose output. Commissioned by the system prompt — \
                   the agent was asked to produce narrative content."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
@@ -276,6 +300,7 @@ pub fn narrator_agent_contract() -> GroundingContract {
             why: "A prose summary of the narrative. Commissioned by the \
                   system prompt — the agent was asked to summarize."
                 .to_string(),
+            derived_from: None,
         },
     );
     GroundingContract {
@@ -321,6 +346,7 @@ pub fn skill_agent_contract() -> GroundingContract {
                   from a file-writing tool that succeeded. Skills that produce \
                   code may fabricate file paths without actually writing files."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
@@ -331,6 +357,7 @@ pub fn skill_agent_contract() -> GroundingContract {
             why: "A pass/fail claim about tests. Must be sourced from a terminal \
                   tool call that succeeded (the test runner)."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
@@ -341,6 +368,7 @@ pub fn skill_agent_contract() -> GroundingContract {
             why: "The main diagram or structured output. Commissioned by the \
                   skill's template — the skill was asked to produce this."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
@@ -351,6 +379,7 @@ pub fn skill_agent_contract() -> GroundingContract {
             why: "A prose summary of the skill output. Commissioned by the \
                   skill's template — the skill was asked to summarize."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
@@ -361,6 +390,7 @@ pub fn skill_agent_contract() -> GroundingContract {
             why: "A list of recommendations produced by the skill. Commissioned \
                   by the skill's template — the skill was asked to propose actions."
                 .to_string(),
+            derived_from: None,
         },
     );
     GroundingContract {
@@ -746,6 +776,20 @@ fn scan_narrative_for_leak(
     }
 }
 
+/// Total ordering of provenance strength. Used by the weakest-link
+/// rule: a Derived field's provenance is min(its own strength, its
+/// source field's strength). Higher = stronger.
+fn provenance_strength(tag: &ProvenanceTag) -> u8 {
+    match tag {
+        ProvenanceTag::Sourced { .. } => 5,
+        ProvenanceTag::Derived { .. } => 4,
+        ProvenanceTag::Inferred => 3,
+        ProvenanceTag::UncommissionedInference => 2,
+        ProvenanceTag::Narrative => 1,
+        ProvenanceTag::Unsourced { .. } => 0,
+    }
+}
+
 /// Run the grounding contract against a delegation output.
 ///
 /// - Sourced fields: keep, mark verified.
@@ -855,6 +899,57 @@ pub fn enforce_grounding(
                 continue;
             }
             let tag = match contract.field_sources.get(field) {
+                Some(spec) if spec.derived_from.is_some() => {
+                    let derived = spec.derived_from.as_ref().unwrap();
+                    let from_tag = result.provenance.get(&derived.from);
+                    match from_tag {
+                        None => {
+                            // Source field not in the output — can't derive.
+                            ProvenanceTag::Unsourced {
+                                removed_preview: truncate_preview(value),
+                                tool_failed: false,
+                            }
+                        }
+                        Some(ProvenanceTag::Unsourced { .. }) => {
+                            // Source was nulled — derivation from nothing is nothing.
+                            // Null this field too.
+                            let removed = null_path(&mut cleaned, field);
+                            if removed.is_some() {
+                                result.nulled_fields.push(field.clone());
+                            }
+                            ProvenanceTag::Unsourced {
+                                removed_preview: String::new(),
+                                tool_failed: false,
+                            }
+                        }
+                        Some(from_tag) => {
+                            let weakest = std::cmp::min(
+                                provenance_strength(&ProvenanceTag::Derived {
+                                    from: derived.from.clone(),
+                                    how: derived.how.clone(),
+                                }),
+                                provenance_strength(from_tag),
+                            );
+                            // Downgrade to the weaker tag if needed.
+                            if weakest < 4 {
+                                // Source is weaker than Derived — downgrade.
+                                match from_tag {
+                                    ProvenanceTag::Inferred => ProvenanceTag::Inferred,
+                                    ProvenanceTag::UncommissionedInference => {
+                                        ProvenanceTag::UncommissionedInference
+                                    }
+                                    ProvenanceTag::Narrative => ProvenanceTag::Narrative,
+                                    _ => ProvenanceTag::Inferred, // fallback
+                                }
+                            } else {
+                                ProvenanceTag::Derived {
+                                    from: derived.from.clone(),
+                                    how: derived.how.clone(),
+                                }
+                            }
+                        }
+                    }
+                }
                 Some(spec) if spec.sources.is_empty() => ProvenanceTag::Inferred,
                 Some(spec) => {
                     if let Some(tool) = is_value_sourced(
@@ -1244,8 +1339,20 @@ mod tests {
     #[test]
     fn derived_field_survives_and_is_marked() {
         // A derived field is computed by platform code from a sourced value.
-        // It should survive grounding (not nulled) and be marked Derived.
+        // It should survive grounding (not nulled) and be marked Derived when
+        // its source field is Sourced.
         let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "deliverable_path".to_string(),
+            FieldSpec {
+                sources: vec!["zed/write_file".to_string()],
+                response_path: "".to_string(),
+                why: "A file path the agent claims to have written. Must be sourced \
+                      from a file-writing tool that succeeded."
+                    .to_string(),
+                derived_from: None,
+            },
+        );
         field_sources.insert(
             "file_extension".to_string(),
             FieldSpec {
@@ -1256,24 +1363,189 @@ mod tests {
                     .to_string(),
             },
         );
-        // Override: mark as Derived by using empty sources (Inferred path)
-        // — a true Derived would need platform code to compute it, which
-        // is outside the grounding checker's scope. The tag exists so
-        // platform code can stamp it when it computes a derivation.
         let contract = GroundingContract {
             agent_type: "task".to_string(),
             field_sources,
         };
-        let output = json!({"file_extension": "rs"});
-        let tool_calls: Vec<serde_json::Value> = vec![];
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "file_extension": "rs"
+        });
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/main.rs"}),
+        )];
 
         let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
         assert!(result.nulled_fields.is_empty());
         assert_eq!(cleaned["file_extension"], "rs");
-        // With empty sources, it's Inferred (commissioned). A Derived tag
-        // would be stamped by platform code after grounding, not by the
-        // grounding checker itself.
-        assert_eq!(result.provenance["file_extension"], ProvenanceTag::Inferred);
+        // Source field is Sourced, so the derived field is Derived.
+        assert_eq!(
+            result.provenance["file_extension"],
+            ProvenanceTag::Derived {
+                from: "deliverable_path".to_string(),
+                how: "path_extension".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn derived_from_sourced_is_derived() {
+        // Source field is Sourced → derived field is Derived.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "path".to_string(),
+            FieldSpec {
+                sources: vec!["zed/write_file".to_string()],
+                response_path: "".to_string(),
+                why: "A file path sourced from a file-writing tool that succeeded.".to_string(),
+                derived_from: None,
+            },
+        );
+        field_sources.insert(
+            "ext".to_string(),
+            FieldSpec {
+                sources: vec![],
+                response_path: "".to_string(),
+                why: "Derived from path by platform code (extension extraction).".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "path".to_string(),
+                    how: "path_extension".to_string(),
+                }),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({"path": "/x.rs", "ext": "rs"});
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/x.rs"}),
+        )];
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(result.nulled_fields.is_empty());
+        assert_eq!(
+            result.provenance["ext"],
+            ProvenanceTag::Derived {
+                from: "path".to_string(),
+                how: "path_extension".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn derived_from_inferred_is_inferred() {
+        // Source field is Inferred (commissioned, empty sources) → derived
+        // field is downgraded to Inferred by the weakest-link rule.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "summary".to_string(),
+            FieldSpec {
+                sources: vec![],
+                response_path: "".to_string(),
+                why: "A prose summary commissioned by the system prompt.".to_string(),
+                derived_from: None,
+            },
+        );
+        field_sources.insert(
+            "summary_upper".to_string(),
+            FieldSpec {
+                sources: vec![],
+                response_path: "".to_string(),
+                why: "Derived from summary by uppercasing transform.".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "summary".to_string(),
+                    how: "to_uppercase".to_string(),
+                }),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({"summary": "hi", "summary_upper": "HI"});
+        let tool_calls: Vec<serde_json::Value> = vec![];
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(result.nulled_fields.is_empty());
+        // Weakest link: source is Inferred (strength 3) < Derived (4).
+        assert_eq!(result.provenance["summary_upper"], ProvenanceTag::Inferred);
+    }
+
+    #[test]
+    fn derived_from_nulled_is_nulled() {
+        // Source field was nulled in pass 1 (Unsourced) → derived field is
+        // also nulled. A derivation from nothing is nothing.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "path".to_string(),
+            FieldSpec {
+                sources: vec!["zed/write_file".to_string()],
+                response_path: "".to_string(),
+                why: "A file path sourced from a file-writing tool that succeeded.".to_string(),
+                derived_from: None,
+            },
+        );
+        field_sources.insert(
+            "ext".to_string(),
+            FieldSpec {
+                sources: vec![],
+                response_path: "".to_string(),
+                why: "Derived from path by platform code (extension extraction).".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "path".to_string(),
+                    how: "path_extension".to_string(),
+                }),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        // No tool calls — path is unsourced and nulled in pass 1.
+        let output = json!({"path": "/x.rs", "ext": "rs"});
+        let tool_calls: Vec<serde_json::Value> = vec![];
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        // Both fields nulled.
+        assert!(result.nulled_fields.contains(&"path".to_string()));
+        assert!(result.nulled_fields.contains(&"ext".to_string()));
+        assert!(cleaned["path"].is_null());
+        assert!(cleaned["ext"].is_null());
+        assert!(matches!(
+            result.provenance.get("ext"),
+            Some(ProvenanceTag::Unsourced { .. })
+        ));
+    }
+
+    #[test]
+    fn derived_from_absent_is_unsourced() {
+        // Source field is not in the output at all → derived field is
+        // Unsourced (can't derive from a missing source).
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "ext".to_string(),
+            FieldSpec {
+                sources: vec![],
+                response_path: "".to_string(),
+                why: "Derived from path by platform code (extension extraction).".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "path".to_string(),
+                    how: "path_extension".to_string(),
+                }),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        // path is absent from the output.
+        let output = json!({"ext": "rs"});
+        let tool_calls: Vec<serde_json::Value> = vec![];
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(matches!(
+            result.provenance.get("ext"),
+            Some(ProvenanceTag::Unsourced { .. })
+        ));
     }
 
     #[test]
@@ -1446,6 +1718,7 @@ mod tests {
             sources: vec!["zed/terminal".to_string()],
             response_path: "".to_string(),
             why: "too short".to_string(),
+            derived_from: None,
         };
         assert!(bad_spec.why.len() < 40);
     }
@@ -1535,6 +1808,7 @@ mod tests {
                 why: "Each deliverable's path must be sourced from a \
                       file-writing tool that succeeded."
                     .to_string(),
+                derived_from: None,
             },
         );
         let contract = GroundingContract {
@@ -1578,6 +1852,7 @@ mod tests {
                 why: "Each deliverable's path must be sourced from a \
                       file-writing tool that succeeded."
                     .to_string(),
+                derived_from: None,
             },
         );
         let contract = GroundingContract {
@@ -1615,6 +1890,7 @@ mod tests {
                 why: "Each deliverable's path must be sourced from a \
                       file-writing tool that succeeded."
                     .to_string(),
+                derived_from: None,
             },
         );
         let contract = GroundingContract {
