@@ -71,8 +71,6 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * `LazyToolRouter` filters MCP tools only — built-in Zed tools must bypass the router.
 * Convention priors from `.rules` must be verified against the codebase before use — rules can be stale.
 * `thinking_budget` in template `[inference]` blocks must be `"full"`/`"on"` or `"off"`/`"none"` only. The parser at `step_actions.rs:260-278` does not recognize `"minimal"`, `"low"`, `"medium"`, `"standard"`, or `"high"` — these silently fall back to thinking-ON (the opposite of the author's intent for low-thinking steps). Wasted thinking tokens on low-budget steps cause the same empty-output failure as the Falstaffian bug.
-* `select` steps with `thinking_budget = "full"` must have `max_tokens >= 8192` when the template receives large JSON inputs (Company Board, axiom graph, charter context) or emits large structured outputs (10+ fields). Thinking tokens count against `max_tokens` — a 4096 budget with full thinking leaves ~2K for output, which triggers the empty-output guard at `step_actions.rs:394`.
-* Gas and rJoule are separate budgets with different units. Gas = compute cycles (250,000 gas = $1 USD). rJoule = inference/API expenditure (1 rJoule = $1 USD). Step-level `gas_cap` in manifests is gas (compute), not tokens — never set `gas_cap` to a token count (e.g. 4096, 8192). Token cost is charged to rJoule via `BudgetTracker::charge_rjoule` using `InferenceResult.cost_usd`, not to gas. The kata-kanban `deduct_task_rjoules` method charges `cost_usd` (as micro-rJoules) to `task.rjoule_remaining`, not token counts to `task.gas_remaining`.
 
 ## Settings and constants
 
@@ -97,7 +95,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 * Trait-with-one-impl is speculative generality — grep for `self.<field>` before merging; if only constructor matches, it's unwired. This generalizes to: convention helpers with only test callers are dead code, and folded-service modules with no production callers outside the subtree are dead surface.
 * Advertised invariants (doc comments claiming security gates, audit surfaces, migrations) must point to the enforcement line. If no enforcement point exists, the doc must say "not yet enforced." Validation gates must return `Undetermined`/`Skipped` when the check wasn't performed, not `Ready` with empty findings.
-* `Manifest `ocap:` is declared config, not a security gate. The real gates are `McpRuntime::invoke` (token + gas) and per-agent `mcp_tools` allowlist. Token expiry is NOT enforced. Don't re-add `ocap:` blocks or `OcapConfig` without wiring into the runtime gate.
+* `Manifest `ocap:` is declared config, not a security gate. The real gates are `McpRuntime::invoke` (per-tick call ceiling / runaway-loop breaker) and per-agent `mcp_tools` allowlist. Token expiry is NOT enforced. Don't re-add `ocap:` blocks or `OcapConfig` without wiring into the runtime gate.
 * Cargo.toml deps outlive their consumers — when deleting a source file, grep for `use <dep>` in remaining `src/` and `tests/`; zero hits = remove the dep.
 
 ## Other traps
