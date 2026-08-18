@@ -255,7 +255,19 @@ steps:
       compute_ref expects `form` (the Lisp expression string) and `env`
       (a JSON object whose keys become top-level bindings).
     input_mapping:
-      form: "hypervolume_delta + 0.05 * new_non_dominated"
+      # Prefix form with numberp guards — the established pattern across
+      # all other lisp.eval convergence steps (see tdd, diataxis, wardley,
+      # structured-extraction, scenario manifests). The guards handle two
+      # failure modes: (a) Jinja stringification of ternary/default filter
+      # output when the upstream field is absent (first iteration — no prior
+      # frontier history), and (b) bare infix `a + b * c` silently produces
+      # the wrong result because expand_infix cannot handle mixed-precedence
+      # chains (it expands to three separate forms, returning the last
+      # bare symbol's value instead of the arithmetic result).
+      form: >
+        (let ((hd (if (numberp hypervolume_delta) hypervolume_delta 1.0))
+              (nd (if (numberp new_non_dominated) new_non_dominated 1)))
+          (+ hd (* 0.05 nd)))
       env:
         hypervolume_delta: "{{ step_7_result.frontier_changed | default(true) | ternary(1.0, 0.0) }}"
         new_non_dominated: "{{ step_7_result.new_non_dominated | default(1) }}"

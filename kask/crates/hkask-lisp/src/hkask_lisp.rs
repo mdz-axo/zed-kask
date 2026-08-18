@@ -2771,3 +2771,52 @@ mod tests {
         assert!((score - 4.0).abs() < 1e-9);
     }
 }
+
+#[cfg(test)]
+mod cfr_fix_verification {
+    use super::*;
+    /// The fixed CFR convergence form must:
+    /// 1. Compute correctly when env values are numeric: 1.0 + 0.05*2 = 1.1
+    /// 2. Not error when env values are stringified (Jinja stringification):
+    ///    numberp guards fall back to defaults (1.0 and 1) → 1.0 + 0.05*1 = 1.05
+    /// 3. Not silently return the wrong value (the bare-infix bug).
+    #[test]
+    fn cfr_fixed_form_numeric_env() {
+        let form = "(let ((hd (if (numberp hypervolume_delta) hypervolume_delta 1.0)) (nd (if (numberp new_non_dominated) new_non_dominated 1))) (+ hd (* 0.05 nd)))";
+        let env = serde_json::json!({
+            "hypervolume_delta": 1.0,
+            "new_non_dominated": 2
+        });
+        let result = eval_sandboxed_with_budget(form, &env, 100000, 64).unwrap();
+        let score = result.as_f64().expect("result is a float");
+        assert!((score - 1.1).abs() < 1e-9, "expected 1.1, got {score}");
+    }
+
+    #[test]
+    fn cfr_fixed_form_string_env_no_error() {
+        let form = "(let ((hd (if (numberp hypervolume_delta) hypervolume_delta 1.0)) (nd (if (numberp new_non_dominated) new_non_dominated 1))) (+ hd (* 0.05 nd)))";
+        // Jinja stringification: values are strings, not numbers.
+        // numberp returns false → defaults kick in: hd=1.0, nd=1 → 1.05
+        let env = serde_json::json!({
+            "hypervolume_delta": "true",
+            "new_non_dominated": "1"
+        });
+        let result = eval_sandboxed_with_budget(form, &env, 100000, 64).unwrap();
+        let score = result.as_f64().expect("result is a float");
+        assert!((score - 1.05).abs() < 1e-9, "expected 1.05, got {score}");
+    }
+
+    /// Pin the old broken behavior to document what the fix prevents.
+    #[test]
+    fn cfr_old_bare_infix_form_silent_wrong_result() {
+        let form = "hypervolume_delta + 0.05 * new_non_dominated";
+        let env = serde_json::json!({
+            "hypervolume_delta": 1.0,
+            "new_non_dominated": 2
+        });
+        // The old form returns 2 (new_non_dominated's value), not 1.1.
+        let result = eval_sandboxed_with_budget(form, &env, 100000, 64).unwrap();
+        let score = result.as_f64().expect("result is a float");
+        assert!((score - 2.0).abs() < 1e-9, "old form returns {score}, not 1.1 — this is the bug the fix addresses");
+    }
+}
