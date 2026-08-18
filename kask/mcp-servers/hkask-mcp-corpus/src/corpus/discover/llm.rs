@@ -76,7 +76,6 @@ pub(crate) async fn extract_concepts(
     // LanguageModelRegistry via the IPC bridge).
     let params = hkask_types::template::LLMParameters {
         temperature: 0.3,
-        max_tokens: 1024,
         ..Default::default()
     };
 
@@ -171,7 +170,6 @@ pub(crate) async fn infer_methods(
     // Call inference through the shared port.
     let params = hkask_types::template::LLMParameters {
         temperature: 0.3,
-        max_tokens: 1024,
         ..Default::default()
     };
 

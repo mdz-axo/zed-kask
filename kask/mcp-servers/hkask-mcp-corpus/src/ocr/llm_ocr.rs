@@ -151,7 +151,6 @@ impl LlmOcrExecutor {
     pub fn new(router: Arc<dyn InferencePort>) -> Self {
         Self {
             router,
-            max_tokens: 4096,
             breaker: CircuitBreaker::new(5, 30), // 5 consecutive failures → 30s cooldown
         }
     }

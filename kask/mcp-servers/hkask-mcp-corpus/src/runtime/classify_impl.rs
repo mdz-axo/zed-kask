@@ -120,7 +120,6 @@ impl Default for ClassifierDef {
             timeout_secs: 30,
             system_prompt: String::new(),
             temperature: 0.0,
-            max_tokens: 15,
             fallback_category: "Statement".to_string(),
             cost_input_nj_per_token: 0,
             cost_output_nj_per_token: 0,

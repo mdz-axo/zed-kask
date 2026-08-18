@@ -204,7 +204,7 @@ mod tests {
     fn record_and_retrieve_entry() {
         let store = make_test_store();
         store
-            .record("Alice", "2026-06-15", "starter", "starter-kata", 5, 0)
+            .record("Alice", "2026-06-15", "starter", "starter-kata", 5)
             .unwrap();
         let entries = store.entries_for_agent("Alice").unwrap();
         assert_eq!(entries.len(), 1);
@@ -217,10 +217,10 @@ mod tests {
     fn count_entries_per_date() {
         let store = make_test_store();
         store
-            .record("Alice", "2026-06-14", "coaching", "coaching-kata", 5, 200)
+            .record("Alice", "2026-06-14", "coaching", "coaching-kata", 5)
             .unwrap();
         store
-            .record("Alice", "2026-06-15", "starter", "starter-kata", 3, 0)
+            .record("Alice", "2026-06-15", "starter", "starter-kata", 3)
             .unwrap();
         store
             .record(
@@ -229,7 +229,6 @@ mod tests {
                 "improvement",
                 "improvement-kata",
                 4,
-                15000,
             )
             .unwrap();
         assert_eq!(store.count_entries_for_agent("Alice").unwrap(), 2);
@@ -241,7 +240,7 @@ mod tests {
     fn last_entry_for_agent() {
         let store = make_test_store();
         store
-            .record("Alice", "2026-06-14", "starter", "starter-kata", 5, 0)
+            .record("Alice", "2026-06-14", "starter", "starter-kata", 5)
             .unwrap();
         store
             .record(
@@ -250,13 +249,11 @@ mod tests {
                 "improvement",
                 "improvement-kata",
                 4,
-                15000,
             )
             .unwrap();
         let last = store.last_entry_for_agent("Alice").unwrap().unwrap();
         assert_eq!(last.date, "2026-06-15");
         assert_eq!(last.kata_type, "improvement");
-        assert_eq!(last.15000);
     }
 
     #[test]
@@ -270,10 +267,10 @@ mod tests {
     fn delete_entries_before() {
         let store = make_test_store();
         store
-            .record("Alice", "2026-06-13", "starter", "starter-kata", 5, 0)
+            .record("Alice", "2026-06-13", "starter", "starter-kata", 5)
             .unwrap();
         store
-            .record("Alice", "2026-06-14", "starter", "starter-kata", 5, 0)
+            .record("Alice", "2026-06-14", "starter", "starter-kata", 5)
             .unwrap();
         store
             .record(
@@ -282,7 +279,6 @@ mod tests {
                 "improvement",
                 "improvement-kata",
                 4,
-                15000,
             )
             .unwrap();
         let deleted = store.delete_entries_before("2026-06-14").unwrap();
