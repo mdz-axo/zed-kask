@@ -478,4 +478,3 @@ audit:
   enabled: true
   include_input: true
   include_output: true
-  include_gas_cost: true

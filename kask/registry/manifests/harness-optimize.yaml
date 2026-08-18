@@ -93,7 +93,6 @@ steps:
       rationale: "{{ step_2_result.rationale | default('') }}"
 
 error_handling:
-  on_gas_exceeded: abort
   on_timeout: retry
   max_retries: 1
   retry_backoff_seconds: 1

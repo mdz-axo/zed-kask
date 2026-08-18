@@ -641,7 +641,7 @@ mod tests {
         let body = "[inference]\nthinking_budget = \"off\"\n\nYou are a decomposer.";
         let (stripped, config) = parse_and_strip_inference_block(body);
         assert_eq!(config.temperature, None);
-        assert_eq!(config.thinking_budget, None);
+        assert_eq!(config.thinking_budget.as_deref(), Some("off"));
         assert!(stripped.starts_with("You are a decomposer."));
     }
 
