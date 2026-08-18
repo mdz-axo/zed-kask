@@ -217,7 +217,7 @@ steps:
         calls may have succeeded (check the execute-decisions step output for
         per-ID results). The verification step is skipped — the operator can
         manually check curator_escalations to confirm the backlog state.
-    condition: "{{ resolve_ids | default('') | length > 0 or dismiss_ids | default('') | length > 0 }}"
+    condition: "resolve_ids != '' OR dismiss_ids != ''"
 
   # ── VERIFY-REPORT: Summarize what was resolved/dismissed ────────────
   - ordinal: 6

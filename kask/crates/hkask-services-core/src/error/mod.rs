@@ -83,7 +83,7 @@ pub enum ServiceError {
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
-    /// Inference / embedding — carries retryability for Regulation gas budget.
+    /// Inference / embedding — carries retryability for Regulation energy budget.
     ///
     /// When `retryable` is true, `kind()` returns `ServiceUnavailable`
     /// regardless of the explicit `kind` field.

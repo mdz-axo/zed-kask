@@ -4,7 +4,7 @@
 templates:
   - name: triage-briefing
     type: KnowAct
-    file: triage-briefing.j2
+    path: triage-briefing.j2
     description: >
       Structure the alert backlog into a triage list with per-alert severity,
       domain, and recommended action.
@@ -13,7 +13,7 @@ templates:
 
   - name: present-triage
     type: WordAct
-    file: present-triage.j2
+    path: present-triage.j2
     description: >
       Render the triage list as a conversational summary with markdown tables.
     generates_spans:
@@ -21,7 +21,7 @@ templates:
 
   - name: execute-decisions
     type: KnowAct
-    file: execute-decisions.j2
+    path: execute-decisions.j2
     description: >
       Produce a structured list of resolve/dismiss calls for operator-confirmed
       decisions.
@@ -30,7 +30,7 @@ templates:
 
   - name: verify-cleared
     type: WordAct
-    file: verify-cleared.j2
+    path: verify-cleared.j2
     description: >
       Summarize what was resolved, dismissed, and what remains pending.
     generates_spans:

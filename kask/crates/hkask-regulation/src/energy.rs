@@ -1,4 +1,4 @@
-//! Per-agent tool-call cap — the honest replacement for the gas hold-settle ritual.
+//! Per-agent tool-call cap — the honest replacement for the former gas hold-settle ritual.
 //!
 //! Model: 1 unit = 1 governed tool invocation. Each agent has a hard ceiling on
 //! calls per regulation cycle; the cap resets to the ceiling each tick. There is
@@ -157,7 +157,7 @@ struct OverrideRecord {
 ///
 /// The cap/override maps are interior-mutable (`Arc<RwLock<..>>`) so the manager
 /// can be shared behind an `Arc<RwLock<CallCapManager>>` while still exposing
-/// `&self` async methods — matching the prior `GasBudgetManager` shape callers
+/// `&self` async methods — matching the prior budget manager shape callers
 /// depend on. Agents without a registered cap are denied (fail-closed); the
 /// composition root must seed a cap for every agent making governed tool calls.
 pub struct CallCapManager {

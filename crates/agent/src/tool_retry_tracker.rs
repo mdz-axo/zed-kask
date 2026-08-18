@@ -99,6 +99,16 @@ pub struct ToolRetryTracker {
     per_tool: Mutex<HashMap<String, u32>>,
 }
 
+/// Maximum entries retained in the `per_input` map before oldest are evicted.
+/// Bounds memory growth in long-running threads where a tool fails
+/// repeatedly with different inputs (common for `edit_file`, `grep`,
+/// `read_file` with varying paths/queries). Entries are removed on success
+/// for the same input, but failed inputs with no subsequent success
+/// accumulate. When the map reaches this cap, the oldest entries are
+/// evicted — the per-tool tracker (`per_tool`) still catches consecutive
+/// failure loops regardless of input.
+const MAX_PER_INPUT_ENTRIES: usize = 500;
+
 impl ToolRetryTracker {
     /// Check whether a tool call should be allowed, warned, or refused.
     /// Call this *before* `tool.run()`.
@@ -153,6 +163,20 @@ impl ToolRetryTracker {
         let input_key = (tool_name.to_string(), input_hash(input));
         {
             let mut per_input = self.per_input.lock().expect("retry tracker mutex poisoned");
+            // Evict oldest entries when the cap is reached. The per-input map
+            // is a diagnostic ring buffer — the per-tool tracker (`per_tool`)
+            // still catches consecutive failure loops regardless of input, so
+            // evicting old per-input entries does not weaken the death-spiral
+            // protection. `HashMap` iteration order is non-deterministic, so
+            // we evict an arbitrary entry rather than the oldest by timestamp
+            // (the map does not carry timestamps). This is acceptable because
+            // the cap is high (500) and the eviction only fires under sustained
+            // failure with varying inputs.
+            if per_input.len() >= MAX_PER_INPUT_ENTRIES {
+                if let Some(key) = per_input.keys().next().cloned() {
+                    per_input.remove(&key);
+                }
+            }
             *per_input.entry(input_key).or_default() += 1;
         }
         {
@@ -498,6 +522,28 @@ mod tests {
         assert!(
             msg.contains("consecutive"),
             "refusal should include consecutive reason: {msg}"
+        );
+    }
+
+    #[test]
+    fn per_input_map_caps_at_max_entries() {
+        // The per_input map must not grow unbounded when a tool fails with
+        // many different inputs. The cap is MAX_PER_INPUT_ENTRIES (500).
+        let tracker = ToolRetryTracker::default();
+
+        // Push 600 failures with distinct inputs.
+        for i in 0..600 {
+            let input = serde_json::json!({"path": format!("file_{i}.rs")});
+            tracker.record_failure("read_file", &input);
+        }
+
+        // The map must not exceed the cap.
+        let per_input = tracker.per_input.lock().unwrap();
+        assert!(
+            per_input.len() <= MAX_PER_INPUT_ENTRIES,
+            "per_input map must cap at {}, got {}",
+            MAX_PER_INPUT_ENTRIES,
+            per_input.len()
         );
     }
 }

@@ -37,7 +37,7 @@ pub enum SignalMetric {
     CircuitBreakerState,
     /// Inference availability 0.0/1.0 (Inference Loop 1)
     InferenceAvailable,
-    /// Inference gas remaining fraction (Inference Loop 1)
+    /// Inference energy remaining fraction (Inference Loop 1)
     /// Model availability 0.0/1.0 (Inference Loop 1)
     InferenceModelAvailable,
     /// Algedonic event count (Cybernetics Loop 6)

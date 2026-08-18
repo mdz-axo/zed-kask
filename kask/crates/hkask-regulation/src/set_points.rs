@@ -172,7 +172,7 @@ pub const DEFAULT_MAX_ALERTS: usize = 200;
 #[derive(Debug, Clone)]
 pub struct SetPoints {
     /// Minimum energy budget remaining ratio (0.0-1.0). Default: 0.2 (20% remaining)
-    pub gas_min_remaining: f64,
+    pub energy_min_remaining: f64,
     /// Maximum variety deficit before escalation. Default: 100
     pub variety_max_deficit: f64,
     /// Maximum error rate (0.0-1.0). Default: 0.3 (30% errors)
@@ -274,7 +274,7 @@ pub use hkask_types::curator::CurationThresholdConfig;
 /// Missing fields fall back to the `SetPoints::default()` values.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct SetPointsConfig {
-    pub gas_min_remaining: Option<f64>,
+    pub energy_min_remaining: Option<f64>,
     pub variety_max_deficit: Option<f64>,
     pub error_rate_max: Option<f64>,
     pub connector_latency_max_secs: Option<f64>,
@@ -320,7 +320,7 @@ impl SetPointsConfig {
 impl Default for SetPoints {
     fn default() -> Self {
         Self {
-            gas_min_remaining: DEFAULT_ENERGY_MIN_REMAINING_RATIO,
+            energy_min_remaining: DEFAULT_ENERGY_MIN_REMAINING_RATIO,
             variety_max_deficit: DEFAULT_VARIETY_MAX_DEFICIT,
             error_rate_max: DEFAULT_ERROR_RATE_MAX,
             connector_latency_max_secs: DEFAULT_CONNECTOR_LATENCY_MAX_SECS,
@@ -355,9 +355,9 @@ impl SetPoints {
     pub fn from_config(config: &SetPointsConfig) -> Self {
         let defaults = SetPoints::default();
         Self {
-            gas_min_remaining: config
-                .gas_min_remaining
-                .unwrap_or(defaults.gas_min_remaining),
+            energy_min_remaining: config
+                .energy_min_remaining
+                .unwrap_or(defaults.energy_min_remaining),
             variety_max_deficit: config
                 .variety_max_deficit
                 .unwrap_or(defaults.variety_max_deficit),
@@ -431,7 +431,7 @@ impl SetPoints {
     /// Validate set-point invariants.
     pub fn validate(&self) -> anyhow::Result<()> {
         for (name, value) in [
-            ("gas_min_remaining", self.gas_min_remaining),
+            ("energy_min_remaining", self.energy_min_remaining),
             ("error_rate_max", self.error_rate_max),
             ("seam_coverage_min", self.seam_coverage_min),
             ("coverage_floor", self.coverage_floor),
@@ -608,14 +608,14 @@ mod tests {
     }
 
     #[test]
-    fn reject_gas_min_remaining_out_of_range() {
+    fn reject_energy_min_remaining_out_of_range() {
         let mut sp = SetPoints {
-            gas_min_remaining: 2.0,
+            energy_min_remaining: 2.0,
             ..Default::default()
         };
         assert!(sp.validate().is_err());
         sp = SetPoints {
-            gas_min_remaining: -0.1,
+            energy_min_remaining: -0.1,
             ..Default::default()
         };
         assert!(sp.validate().is_err());
