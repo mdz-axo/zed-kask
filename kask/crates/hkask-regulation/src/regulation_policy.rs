@@ -161,8 +161,8 @@ impl RegulationPolicy {
         // resolve the ambiguity.
         use RegulationReason::*;
         use SignalMetric::{
-            ActionDecisionBlocked, ActionIneffective, MetacognitionCriticalAlerts,
-            MetacognitionVarietyDeficit, *,
+            ActionDecisionBlocked, ActionIneffective, AlgedonicLogApproachingCap,
+            MetacognitionCriticalAlerts, MetacognitionVarietyDeficit, *,
         };
 
         Self {
@@ -345,7 +345,7 @@ impl RegulationPolicy {
                     proposed: &[ProposedAction {
                         target: Curation,
                         action_type: Escalate,
-                        reason: AlgedonicLogApproachingCap,
+                        reason: RegulationReason::AlgedonicLogApproachingCap,
                     }],
                 },
                 RegulationRule {
