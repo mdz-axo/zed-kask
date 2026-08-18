@@ -76,6 +76,13 @@ pub struct LocalAgentCard {
     pub agent_type: String,
     #[serde(default)]
     pub description: String,
+    /// Human-readable label for UI display. When empty, the panel falls back
+    /// to `agent_id`. Cloned cards set this to the cloud agent's display name
+    /// so the local row reads "Xaman Ek (Clone)" rather than the kebab-cased
+    /// filesystem id (`xaman-ek-clone`). `#[serde(default)]` so existing cards
+    /// without this field still deserialize.
+    #[serde(default)]
+    pub display_name: String,
     #[serde(default)]
     pub accepts: Vec<String>,
     #[serde(default)]
@@ -314,6 +321,42 @@ impl LocalAgentRegistry {
     #[cfg(test)]
     pub(crate) fn is_loaded(&self) -> bool {
         self.cards.lock().unwrap().is_some()
+    }
+
+    /// Produce a clone-specific agent id that does not collide with any card
+    /// already in the registry. The base is the cloud agent's sanitized id;
+    /// the result appends `-clone`, then `-clone-2`, `-clone-3`, etc. on
+    /// collision. Checks the in-memory cache (loaded once at entry) rather
+    /// than re-reading disk per iteration — a collision loop must not do N
+    /// disk reads. The caller is responsible for sanitizing the base id
+    /// before passing it here.
+    pub fn unique_clone_id(&self, base: &str) -> String {
+        // Load once so the cache is fresh for all collision checks below.
+        if let Err(e) = self.load() {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                "local registry reload failed during clone-id allocation (proceeding with cached cards): {e}"
+            );
+        }
+        let cards = self.cards.lock().unwrap();
+        let taken = |candidate: &str| -> bool {
+            cards
+                .as_ref()
+                .map(|cs| cs.iter().any(|c| c.agent_id == candidate))
+                .unwrap_or(false)
+        };
+        let first = format!("{base}-clone");
+        if !taken(&first) {
+            return first;
+        }
+        let mut suffix = 2;
+        loop {
+            let candidate = format!("{first}-{suffix}");
+            if !taken(&candidate) {
+                return candidate;
+            }
+            suffix += 1;
+        }
     }
 
     /// Write (or overwrite) a local agent card to

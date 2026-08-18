@@ -243,7 +243,7 @@ steps:
   input_mapping:
     chunks_jsonl: corpus/chunks/chunks.jsonl
     output: corpus/chunks/tagged_ontology.jsonl
-    concurrency: 128
+    concurrency: 16
 - ordinal: 7
   description: Verify every chunk has a structurally valid ontology tag record with exact entity_ref equality, valid dimensions,
     ontology_tags, and salience. Present tag coverage, dimension distribution, and quality stats to the user before proceeding

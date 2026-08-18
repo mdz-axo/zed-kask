@@ -443,27 +443,11 @@ steps:
       env:
         step_7_result: "{{ step_7_result }}"
 
-  - ordinal: 19
-    action: select
-    condition: "mode == 'semantic'"
-    description: >
-      SEMANTIC CONVERGENCE: The semantic-report step (ordinal 14) already computes
-      the graph-health convergence metric. This step passes it through.
-    renderer: minijinja
-    template_ref: graph-audit/semantic-report
-    gas_cap: 2000
-    timeout_seconds: 150
-    input_mapping:
-      nodes: "{{ nodes }}"
-      edges: "{{ edges }}"
-      classified_edges: "{{ step_10_result }}"
-      analysis: "{{ step_11_result }}"
-      structural_issues: "{{ step_12_result }}"
-      domain: "{{ domain }}"
-
   # Semantic mode: lisp.eval computes a structural score from the
   # semantic-report's blockers array length (deterministic count),
   # replacing the phantom LLM-generated convergence_metric.
+  # References step_13_result (the original semantic-report) directly —
+  # the previous step 19 was a redundant re-render of the same template.
   - ordinal: 20
     action: compute
     condition: "mode == 'semantic'"
@@ -480,12 +464,12 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((blockers (assoc "blockers" step_19_result)))
+        (let ((blockers (assoc "blockers" step_13_result)))
           (let ((n (if (is_null blockers) 0 (length blockers))))
             (let ((raw (/ n 5)))
               (if (> raw 1.0) 1.0 raw))))
       env:
-        step_19_result: "{{ step_19_result }}"
+        step_13_result: "{{ step_13_result }}"
 
   # Dual mode: lisp.eval computes a structural score from the dual
   # semantic-report's blockers array length.
