@@ -27,7 +27,7 @@ visibility: Public
 {# shapes and decision tree. #}
 
 [inference]
-max_tokens = 6144
+max_tokens = 8192
 temperature = 0.4
 work_effort = "high"
 verbosity = "detailed"
@@ -219,3 +219,4 @@ The `rotated_board` MUST be a FULL Company Board — all sections from the input
 - The Wardley stage classification must be justified with evidence from the Company Board or the industry context. Do not fabricate classifications.
 - Per the Falstaffian tension verification: if the rotation produces either bitterness or naivety, flag it in `rationale` and emit `confidence: "low"`.
 - The `rotated_board` MUST be a FULL Company Board, not a partial overlay. Echo back every section from the input Company Board unchanged, replacing only `business_franchise` with the rotated version. If the input Company Board has sections you don't see in the output schema above (e.g., additional fields beyond the 8 standard sections), echo those back too. Downstream steps (GORILLA) need the full board to score all 4 dimensions — a partial board with only `business_franchise` would silently drop 6 of 8 sections and corrupt the scoring.
+- OUTPUT MODE: Emit ONLY the structured JSON output defined above. Do NOT call any MCP tools. Do NOT emit tool calls. Do NOT emit conversational text. If you need to reason, use the thinking channel — your entire text output must be the JSON object and nothing else. The structured-output tool is the only tool available; call it with the JSON as args.
