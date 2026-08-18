@@ -660,7 +660,7 @@ steps:
     timeout_seconds: 120
     input_mapping:
       question: "Is the investment thesis for {{ ticker }} supported by the evidence?"
-      artifacts: "{{ step_3_result.results | default([]) }}"
+      artifacts: "{{ step_2_result.news.results | default([]) }}"
     on_failure:
       action: report
       resume: >
