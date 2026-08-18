@@ -8,7 +8,6 @@ impl KataEngine {
     /// pre:  state is initialized with learner_bot and gas budget
     /// post: returns KataResult with all steps executed, outputs validated against schema
     /// post: if manifest has no steps → Err(KataError::NoSteps)
-    /// post: if gas exceeded → Err(KataError::GasExceeded)
     pub(super) async fn run_improvement(
         &self,
         manifest: &KataManifest,
@@ -35,14 +34,6 @@ impl KataEngine {
                 );
             }
 
-            let step_gas = step.gas_cap.unwrap_or(2000);
-            if state.gas_consumed + step_gas > manifest.gas.cap {
-                return Err(KataError::GasExceeded {
-                    consumed: state.gas_consumed,
-                    cap: manifest.gas.cap,
-                });
-            }
-
             let output = self.execute_step(manifest, step, state).await?;
 
             let check_result = self.check_step_output(step, &output);
@@ -59,7 +50,6 @@ impl KataEngine {
             state
                 .step_outputs
                 .insert(step.ordinal.to_string(), output.clone());
-            state.gas_consumed += step_gas;
             state.current_step = step.ordinal as usize;
 
             let summary = output
@@ -75,7 +65,6 @@ impl KataEngine {
                 step_label: format!("{}", step.ordinal),
                 action: step.action.clone(),
                 output_summary: summary,
-                gas_used: step_gas,
                 timestamp: now_rfc3339(),
             });
 
@@ -84,7 +73,6 @@ impl KataEngine {
                     target: "reg.kata",
                     namespace = %manifest.ledger.span_namespace,
                     step = step.ordinal,
-                    gas = state.gas_consumed,
                     "REG"
                 );
             }
@@ -105,8 +93,6 @@ impl KataEngine {
             kata_type: "improvement".into(),
             steps_completed: total_steps,
             total_steps,
-            gas_consumed: state.gas_consumed,
-            gas_cap: manifest.gas.cap,
             state: state.clone(),
             outcome: None,
             improvement_signal: None,

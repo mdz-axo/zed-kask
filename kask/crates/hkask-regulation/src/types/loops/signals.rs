@@ -38,7 +38,6 @@ pub enum SignalMetric {
     /// Inference availability 0.0/1.0 (Inference Loop 1)
     InferenceAvailable,
     /// Inference gas remaining fraction (Inference Loop 1)
-    InferenceGasRemaining,
     /// Model availability 0.0/1.0 (Inference Loop 1)
     InferenceModelAvailable,
     /// Algedonic event count (Cybernetics Loop 6)
@@ -144,7 +143,6 @@ impl SignalMetric {
 
             SignalMetric::CircuitBreakerState => "circuit_breaker_state",
             SignalMetric::InferenceAvailable => "inference_available",
-            SignalMetric::InferenceGasRemaining => "inference_gas_remaining",
             SignalMetric::InferenceModelAvailable => "inference_model_available",
             SignalMetric::AlgedonicEvents => "algedonic_events",
             SignalMetric::PendingEscalations => "pending_escalations",

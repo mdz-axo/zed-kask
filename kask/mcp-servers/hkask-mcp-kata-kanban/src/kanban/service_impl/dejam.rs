@@ -48,19 +48,6 @@ impl KanbanService {
                 });
             }
 
-            // Report tasks that are out of gas
-            if (task.status == TaskStatus::InProgress || task.status == TaskStatus::Review)
-                && let Some(remaining) = task.gas_remaining
-                && remaining == 0
-            {
-                items.push(UnjamItem {
-                    task_id: task.id,
-                    task_title: task.title.clone(),
-                    issue: "Out of gas — software budget exhausted.".into(),
-                    suggestion: "Task will auto-complete. Reopen with more gas to continue.".into(),
-                });
-            }
-
             // Report tasks that are out of rJoules
             if (task.status == TaskStatus::InProgress || task.status == TaskStatus::Review)
                 && let Some(remaining) = task.rjoule_remaining
@@ -122,24 +109,7 @@ impl KanbanService {
                 }
             }
 
-            // Gas exhaustion: auto-complete tasks that have run out of gas
-            // and have been sitting at zero gas for > 1 hour (grace period for
-            // the delegator to respond with more gas or verification).
-            if (task.status == TaskStatus::InProgress || task.status == TaskStatus::Review)
-                && let Some(remaining) = task.gas_remaining
-                && remaining == 0
-            {
-                self.push_exhaust_fix(
-                    task,
-                    now,
-                    &mut fixes,
-                    |id| self.task_gas_exhaust(id),
-                    "Auto-completed (gas exhausted, no response)",
-                    "Gas-exhaust failed",
-                );
-            }
-
-            // rJoule exhaustion: same logic, separate budget. Routes through
+            // rJoule exhaustion: same logic, separate budget.
             // `task_rjoule_exhaust`, which stamps an rJoule-specific verification
             // reason (distinct from the gas-exhaust reason).
             if (task.status == TaskStatus::InProgress || task.status == TaskStatus::Review)
@@ -200,11 +170,9 @@ impl KanbanService {
     /// Internal authority: called only by the regulation/unjam loop, not
     /// exposed as an MCP tool. Must not be exposed as a tool without an
     /// actor/authority check.
-    pub fn task_gas_exhaust(&self, task_id: TaskId) -> Result<Task, KanbanError> {
         self.exhaust_task(
             task_id,
             "Gas exhausted — subagent budget consumed.",
-            "task_gas_exhausted",
         )
     }
 
@@ -268,24 +236,6 @@ impl KanbanService {
     /// Internal authority: called only by the gas-accountant closure wired via
     /// `gas_accountant_for`, not exposed as an MCP tool. Must not be exposed as
     /// a tool without an actor/authority check.
-    pub fn task_consume_gas(
-        &self,
-        task_id: TaskId,
-        amount: u64,
-        reason: &str,
-    ) -> Result<u64, KanbanError> {
-        let mut task = self.require_task(task_id)?;
-
-        let remaining = task.gas_remaining.unwrap_or(0);
-        let new_remaining = remaining.saturating_sub(amount);
-        task.gas_remaining = Some(new_remaining);
-        task.gas_spend
-            .push(GasEntry::gas_spend(amount, reason.to_string()));
-        task.updated_at = chrono::Utc::now();
-        self.update_task_triple(&task)?;
-
-        Ok(new_remaining)
-    }
 
     /// Deduct rJoules from a task's inference/API budget.
     ///
@@ -307,7 +257,7 @@ impl KanbanService {
         let remaining = task.rjoule_remaining.unwrap_or(0);
         let new_remaining = remaining.saturating_sub(amount);
         task.rjoule_remaining = Some(new_remaining);
-        task.gas_spend
+        task.spend_log
             .push(GasEntry::rjoule_spend(amount, reason.to_string()));
         task.updated_at = chrono::Utc::now();
         self.update_task_triple(&task)?;

@@ -65,8 +65,6 @@ impl From<KataError> for KanbanError {
             KataError::NoSteps(manifest_id) => {
                 KanbanError::InvalidInput(format!("kata manifest '{manifest_id}' has no steps"))
             }
-            KataError::GasExceeded { consumed, cap } => KanbanError::InvalidInput(format!(
-                "kata gas exceeded: consumed {consumed}, cap {cap}"
             )),
             KataError::InferenceFailed(msg) => {
                 KanbanError::Internal(format!("kata inference failed: {msg}"))

@@ -3349,4 +3349,87 @@ mod tests {
             "fields not in upstream must not be modified"
         );
     }
+
+    // ── Additional proptests ─────────────────────────────────────────────
+    //
+    // The proptest block above (L2242) covers single-pass robustness:
+    // never-panics, nulled-fields-subset, nulled-fields-have-unsourced-
+    // provenance, and cleaned-output-preserves-sourced. Two invariants it
+    // does NOT cover are added here — both boundary-sensitive, both flagged
+    // load-bearing by the .rules ("a grounding check that has never been
+    // falsified is inert"):
+    //   * the `value_contains` 10-char guard (short needles match only by
+    //     exact equality, never substring),
+    //   * document idempotency (a second pass nulls no NEW fields).
+    //
+    // `proptest::prelude::*`, `arb_tool_calls`, and `hkask_test_harness::
+    // arb_json_value` are already in scope from the block above.
+
+    fn arb_short_string(max_len: usize) -> impl Strategy<Value = String> {
+        prop::collection::vec(any::<char>(), 0..max_len).prop_map(|cs| cs.into_iter().collect())
+    }
+
+    // The 10-char guard (paper Rule 5.2 / .rules): a short needle string
+    // (< 10 chars, loose=false) must match a string haystack ONLY by exact
+    // `Value` equality — never by substring. Otherwise "pass"/"ok"/"0" would
+    // match enormous swaths of tool output, defeating the grounding contract.
+    // A long needle (>= 10) may match by substring. The existing example pins
+    // one case ("bypassing the check" vs "pass"); this falsifies the boundary
+    // across arbitrary strings, including the empty-needle edge.
+    proptest! {
+        #[test]
+        fn prop_value_contains_10_char_guard_holds_for_all_strings(
+            needle in arb_short_string(40),
+            haystack in arb_short_string(200),
+        ) {
+            let n = serde_json::Value::String(needle.clone());
+            let h = serde_json::Value::String(haystack.clone());
+            let matched = value_contains(&h, &n, false);
+            if needle.len() < 10 {
+                // Substring matching is disabled for short needles: only the
+                // exact-equality check at the top of `value_contains` matches.
+                prop_assert_eq!(matched, haystack == needle);
+            } else {
+                // Substring matching enabled (exact equality is a superset of
+                // substring containment, so `contains` covers both).
+                prop_assert_eq!(matched, haystack.contains(&needle));
+            }
+        }
+    }
+
+    // Document idempotency: a second pass of `enforce_grounding` over the
+    // cleaned output must not null any NEW fields. This is the load-bearing
+    // half of `is_clean()` — without it, every cached/re-read result would
+    // re-process and re-log. It holds universally because `is_claim(null) ==
+    // false`: a field nulled on pass 1 is skipped on pass 2 (no longer a
+    // claim), so it is never re-added to `nulled_fields`.
+    //
+    // NOTE on scope: the existing `enforce_grounding_is_idempotent` example
+    // asserts the STRICTER `is_clean()` (which also requires no narrative
+    // leaks) but only for an EMPTY narrative. `scan_narrative_for_leaks` is a
+    // pure function of the narrative text alone (it checks static
+    // `ABW_NARRATIVE_LEAK_RULES`, independent of the document), so a
+    // narrative that triggers a leak rule re-detects it on pass 2 and makes
+    // `is_clean()` false. The universal, document-side invariant is therefore
+    // `nulled_fields.is_empty()` — the part that prevents re-nulling cascades.
+    // The narrative side is a separate, narrative-content property.
+    proptest! {
+        #[test]
+        fn prop_enforce_grounding_second_pass_nulls_no_new_fields(
+            output in hkask_test_harness::arb_json_value(),
+            tool_calls in arb_tool_calls(),
+            narrative in arb_short_string(120),
+        ) {
+            let contract = task_agent_contract();
+            let (_first, cleaned) =
+                enforce_grounding(&contract, &output, &tool_calls, &narrative);
+            let (second, _re_cleaned) =
+                enforce_grounding(&contract, &cleaned, &tool_calls, &narrative);
+            prop_assert!(
+                second.nulled_fields.is_empty(),
+                "second pass must not re-null fields (document idempotency), got {:?}",
+                second.nulled_fields
+            );
+        }
+    }
 }

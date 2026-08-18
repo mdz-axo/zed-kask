@@ -2,7 +2,7 @@
 //! automaticity scoring, and streak computation.
 //!
 //! Each practice session logs agent name, date, kata type, practice name,
-//! steps completed, and gas consumed.
+//! steps completed..
 use crate::database::driver::{query_map, query_row};
 use crate::database::value::DbValue;
 use crate::{define_driver_store, impl_from_db_error};
@@ -18,7 +18,6 @@ pub struct KataHistoryEntry {
     pub kata_type: String,
     pub practice_name: String,
     pub steps_completed: usize,
-    pub gas_consumed: u64,
     pub created_at: String,
 }
 
@@ -51,18 +50,16 @@ impl KataHistoryStore {
         kata_type: &str,
         practice_name: &str,
         steps_completed: usize,
-        gas_consumed: u64,
     ) -> Result<i64, KataHistoryError> {
         let driver = &*self.driver;
         driver.execute(
-            "INSERT INTO kata_history (agent_name, date, kata_type, practice_name, steps_completed, gas_consumed) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO kata_history (agent_name, date, kata_type, practice_name, steps_completed) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             &[
                 DbValue::Text(agent_name.to_string()),
                 DbValue::Text(date.to_string()),
                 DbValue::Text(kata_type.to_string()),
                 DbValue::Text(practice_name.to_string()),
                 DbValue::Integer(steps_completed as i64),
-                DbValue::Integer(gas_consumed as i64),
             ],
         )?;
         Ok(
@@ -81,7 +78,7 @@ impl KataHistoryStore {
     ) -> Result<Vec<KataHistoryEntry>, KataHistoryError> {
         Ok(query_map(
             &*self.driver,
-            "SELECT id, agent_name, date, kata_type, practice_name, steps_completed, gas_consumed, created_at FROM kata_history WHERE agent_name = ?1 ORDER BY date DESC",
+            "SELECT id, agent_name, date, kata_type, practice_name, steps_completed, created_at FROM kata_history WHERE agent_name = ?1 ORDER BY date DESC",
             &[DbValue::Text(agent_name.to_string())],
             |row| {
                 Ok(KataHistoryEntry {
@@ -91,7 +88,6 @@ impl KataHistoryStore {
                     kata_type: row.get_str(3)?.to_string(),
                     practice_name: row.get_str(4)?.to_string(),
                     steps_completed: row.get_int(5)? as usize,
-                    gas_consumed: row.get_int(6)? as u64,
                     created_at: row.get_str(7)?.to_string(),
                 })
             },
@@ -137,7 +133,7 @@ impl KataHistoryStore {
     ) -> Result<Option<KataHistoryEntry>, KataHistoryError> {
         Ok(query_row(
             &*self.driver,
-            "SELECT id, agent_name, date, kata_type, practice_name, steps_completed, gas_consumed, created_at FROM kata_history WHERE agent_name = ?1 ORDER BY date DESC, id DESC LIMIT 1",
+            "SELECT id, agent_name, date, kata_type, practice_name, steps_completed, created_at FROM kata_history WHERE agent_name = ?1 ORDER BY date DESC, id DESC LIMIT 1",
             &[DbValue::Text(agent_name.to_string())],
             |row| {
                 Ok(KataHistoryEntry {
@@ -147,7 +143,6 @@ impl KataHistoryStore {
                     kata_type: row.get_str(3)?.to_string(),
                     practice_name: row.get_str(4)?.to_string(),
                     steps_completed: row.get_int(5)? as usize,
-                    gas_consumed: row.get_int(6)? as u64,
                     created_at: row.get_str(7)?.to_string(),
                 })
             },
@@ -163,7 +158,7 @@ impl KataHistoryStore {
     ) -> Result<Vec<KataHistoryEntry>, KataHistoryError> {
         Ok(query_map(
             &*self.driver,
-            "SELECT id, agent_name, date, kata_type, practice_name, steps_completed, gas_consumed, created_at FROM kata_history WHERE agent_name = ?1 AND date >= ?2 AND date <= ?3 ORDER BY date DESC",
+            "SELECT id, agent_name, date, kata_type, practice_name, steps_completed, created_at FROM kata_history WHERE agent_name = ?1 AND date >= ?2 AND date <= ?3 ORDER BY date DESC",
             &[
                 DbValue::Text(agent_name.to_string()),
                 DbValue::Text(from_date.to_string()),
@@ -177,7 +172,6 @@ impl KataHistoryStore {
                     kata_type: row.get_str(3)?.to_string(),
                     practice_name: row.get_str(4)?.to_string(),
                     steps_completed: row.get_int(5)? as usize,
-                    gas_consumed: row.get_int(6)? as u64,
                     created_at: row.get_str(7)?.to_string(),
                 })
             },
@@ -262,7 +256,7 @@ mod tests {
         let last = store.last_entry_for_agent("Alice").unwrap().unwrap();
         assert_eq!(last.date, "2026-06-15");
         assert_eq!(last.kata_type, "improvement");
-        assert_eq!(last.gas_consumed, 15000);
+        assert_eq!(last.15000);
     }
 
     #[test]

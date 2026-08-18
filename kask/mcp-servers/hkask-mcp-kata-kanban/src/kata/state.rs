@@ -75,8 +75,6 @@ pub struct KataResult {
     pub kata_type: String,
     pub steps_completed: usize,
     pub total_steps: usize,
-    pub gas_consumed: u64,
-    pub gas_cap: u64,
     pub state: KataState,
     pub outcome: Option<String>,
     pub improvement_signal: Option<ImprovementSignal>,

@@ -231,6 +231,5 @@ pub struct StepExperience {
     pub step_label: String,
     pub action: String,
     pub output_summary: String,
-    pub gas_used: u64,
     pub timestamp: String,
 }
