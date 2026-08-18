@@ -105,7 +105,6 @@ pub fn build_chat_request_messages(
         typical_p: params.typical_p,
         frequency_penalty: params.frequency_penalty,
         presence_penalty: params.presence_penalty,
-        max_tokens: 0,
         seed: params.seed,
         n_probs,
         stream,
