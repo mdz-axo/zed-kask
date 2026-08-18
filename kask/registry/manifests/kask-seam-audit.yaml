@@ -560,7 +560,6 @@ steps:
       iterations: "{{ _convergence.iteration | default(1) }}"
 
 error_handling:
-  on_gas_exceeded: abort
   on_timeout: retry
   max_retries: 1
   retry_backoff_seconds: 1
@@ -571,5 +570,4 @@ audit:
   log_level: info
   include_input: true
   include_output: true
-  include_gas_cost: true
   include_reg_events: true

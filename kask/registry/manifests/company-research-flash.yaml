@@ -719,7 +719,6 @@ steps:
       current_price: "{{ step_13_result.pt_components.market_price | default(0) }}"
 
 error_handling:
-  on_gas_exceeded: abort
   on_timeout: retry
   max_retries: 1
   retry_backoff_seconds: 1

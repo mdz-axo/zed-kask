@@ -381,7 +381,6 @@ steps:
       convergence_signal: "{{ step_9_result }}"
 
 error_handling:
-  on_gas_exceeded: abort
   # on_timeout: retry is now enforced — StepMachine::dispatch_with_retry
   # retries a TemplateError::Timeout up to max_retries times with
   # retry_backoff_seconds between attempts. A thinking-mode model that
