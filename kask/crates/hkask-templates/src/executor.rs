@@ -211,7 +211,7 @@ impl ManifestExecutor {
         )?;
         let graph = StepGraph::new(&manifest.steps, manifest.convergence.max_iterations);
         let context = StepContext::new(initial_context);
-        let budget = BudgetTracker::new(&manifest.gas, &manifest.rjoule);
+        let budget = BudgetTracker::new(&manifest.rjoule);
         let convergence = ConvergenceTracker::new(&manifest.convergence);
 
         let infra = Infra {
@@ -331,10 +331,6 @@ mod tests {
             exit_kind: ExitKind::Converged,
             last_result_step: last,
             budget_snapshot: BudgetSnapshot {
-                gas_used: 0,
-                gas_cap: 0,
-                gas_remaining: 0,
-                gas_cost_per_iteration: 0,
                 rjoule_used: 0.0,
                 rjoule_cap: 0.0,
                 rjoule_remaining: 0.0,

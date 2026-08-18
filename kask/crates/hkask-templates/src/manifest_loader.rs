@@ -2,13 +2,13 @@
 //!
 //! The YAML files in `registry/manifests/` use a top-level structure where
 //! the `manifest:` key contains identity fields (id, name, description, etc.)
-//! while `steps:`, `gas:`, `error_handling:`, etc. are top-level peers.
+//! while `steps:`, `error_handling:`, etc. are top-level peers.
 //! This module provides a deserialization wrapper that flattens this structure
 //! into the canonical `BundleManifest` type.
 
 use crate::bundle::manifest::default_concurrency;
 use crate::bundle::{
-    BundleAuditConfig, BundleComplementarity, BundleConflict, BundleGasConfig, BundleLedgerConfig,
+    BundleAuditConfig, BundleComplementarity, BundleConflict, BundleLedgerConfig,
     BundleManifest, BundleManifestStep, BundleSkill, ConvergenceConfig, ErrorHandlingConfig,
     RjouleConfig,
 };
@@ -29,8 +29,6 @@ use crate::ports::ManifestResolveError;
 /// steps:
 ///   - ordinal: 1
 ///     ...
-/// gas:
-///   ...
 /// error_handling:
 ///   ...
 /// ```rust,no_run
@@ -51,8 +49,6 @@ struct ManifestFile {
     complementarities: Vec<BundleComplementarity>,
     #[serde(default)]
     convergence: Option<ConvergenceConfig>,
-    #[serde(default)]
-    gas: Option<BundleGasConfig>,
     #[serde(default)]
     rjoule: Option<RjouleConfig>,
     #[serde(default)]
@@ -155,7 +151,6 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
         complementarities: file.complementarities,
         steps: file.steps,
         convergence: file.convergence.unwrap_or_default(),
-        gas: file.gas.unwrap_or_default(),
         rjoule: file.rjoule.unwrap_or_default(),
         error_handling: file.error_handling.unwrap_or_default(),
         ledger: file.ledger.unwrap_or_default(),

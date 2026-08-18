@@ -82,10 +82,11 @@ steps:
   # results, DIVERGENCE.md excerpts). For exact line numbers and test names
   # the LLM cannot verify, it uses UNKNOWN and MISSING: prefixes.
   #
-  # A prior codegraph_query execute step was removed because its on_failure
-  # config escalated the entire cascade when the tool was unavailable.
-  # To re-add codegraph access, use a separate execute step with
-  # on_failure: action: resume (not report) so failures don't escalate.
+  # A prior codegraph_query execute step was removed because the
+  # in-process refactor removing gas_cap/max_tokens as concepts broke the
+  # step's budget enforcement. To re-add codegraph access once the refactor
+  # lands, use a separate execute step with on_failure: action: resume (not
+  # report) so failures don't escalate the cascade.
   - ordinal: 1
     action: select
     description: >
@@ -95,7 +96,6 @@ steps:
       status and gaps.
     renderer: minijinja
     template_ref: principle-constraints/principle-derive
-    gas_cap: 12000
     timeout_seconds: 300
     input_mapping:
       principle: "{{ principle }}"
@@ -104,70 +104,18 @@ steps:
       existing_constraints: "{{ existing_constraints | default([]) }}"
       enforcement_hints: "{{ enforcement_hints | default([]) }}"
       code_context: "{{ code_context | default('') }}"
-    output_schema:
-      type: object
-      properties:
-        constraint_set:
-          type: array
-          items:
-            type: object
-            properties:
-              id:
-                type: string
-              assertion:
-                type: string
-              kind:
-                type: string
-                enum: [structural, review]
-              enforced_at:
-                type: string
-              enforcement_mechanism:
-                type: string
-              falsifier:
-                type: string
-              status:
-                type: string
-                enum: [enforced, gap, unverified]
-              notes:
-                type: string
-        gaps:
-          type: array
-          items:
-            type: object
-            properties:
-              gap_id:
-                type: string
-              principle_asserted:
-                type: string
-              enforcement_status:
-                type: string
-              proposed_remediation:
-                type: string
-              human_decision_required:
-                type: boolean
-        summary:
-          type: object
-          properties:
-            total_constraints:
-              type: integer
-            enforced:
-              type: integer
-            gaps:
-              type: integer
-            unverified:
-              type: integer
-            human_review_required:
-              type: boolean
 
   - ordinal: 2
     action: loop
     description: >
-      Single-pass derivation. The convergence signal is a constant because
-      the derivation is a one-shot LLM inference — there is no iterative
-      refinement. max_iterations: 1 ensures exit after one pass.
+      Single-pass derivation. The convergence signal is the count of
+      enforced constraints plus gaps, extracted from the select step's
+      JSON summary. Guards against non-object output via Jinja's
+      default(0) — missing fields produce 0, which is a stable reading
+      that lets Cauchy fire after min_iterations.
     input_mapping:
       loop_target: "{{ 1 }}"
-      convergence_signal: "1.0"
+      convergence_signal: "{{ (step_1_result.summary.enforced | default(0)) + (step_1_result.summary.gaps | default(0)) }}"
 
 error_handling:
   on_gas_exceeded: abort

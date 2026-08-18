@@ -86,7 +86,7 @@ pub enum ControlFlow {
 pub enum ExitKind {
     /// `abort` action or convergence threshold met — success.
     Converged,
-    /// `max_iterations` exhausted or gas/rJoule budget spent.
+    /// `max_iterations` exhausted or rJoule budget spent.
     MaxedOut,
     /// `escalate` action or `on_not_reached: escalate` — blocked.
     Escalated,
@@ -112,7 +112,6 @@ pub struct StepNode {
     pub branching: Option<Arc<HashMap<String, u32>>>,
     pub branching_field: Option<Arc<str>>,
     pub profile: Option<Arc<str>>,
-    pub gas_cap: u32,
     pub timeout_seconds: u32,
     pub phase: Arc<str>,
     pub on_complete: ControlFlow,
@@ -196,7 +195,6 @@ impl StepGraph {
                 branching: step.branching.clone().map(Arc::new),
                 branching_field: step.branching_field.clone().map(Arc::from),
                 profile: step.profile.clone().map(Arc::from),
-                gas_cap: step.gas_cap,
                 timeout_seconds: step.timeout_seconds,
                 phase: Arc::from(step.phase_str()),
                 on_complete,
@@ -266,7 +264,6 @@ mod tests {
             template_ref: None,
             mcp: None,
             compute_ref: None,
-            gas_cap: 0,
             timeout_seconds: 0,
             input_mapping: None,
             output_schema: None,
