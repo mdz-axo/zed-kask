@@ -115,7 +115,8 @@ pub struct CascadeOutcome {
     /// cascade escalated and how to resume.
     pub resume_text: Option<String>,
     /// Tool calls made during this cascade (execute steps only). Each entry
-    /// is `{"tool": "server/tool_name", "ok": true/false}` — same shape as
+    /// is `{"tool": "server/tool_name", "ok": true/false, "result": <value>}`
+    /// on success (no `result` on failure) — same shape as
     /// `LocalDelegateResult.tool_calls`. Surfaced for grounding enforcement
     /// (Phase 5: skill cascade grounding). Empty when no execute steps ran
     /// or all tool calls failed before recording.

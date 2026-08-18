@@ -559,12 +559,19 @@ impl EmbedService {
 
             let cleaned = crate::text::strip_gutenberg_headers(&text);
             let entity_ref_prefix = format!("style:{}:{}", config.author, work.slug);
-            let chunker = crate::corpus::embed::WordCountChunker {
-                min_words: config.chunking.min_words,
-                max_words: config.chunking.max_words,
-                sentence_boundary: config.chunking.sentence_boundary.clone(),
-            };
-            let chunks = chunker.chunk(&cleaned, &entity_ref_prefix);
+            // Use the canonical chunker with HkaskSettings defaults (256 tokens
+            // ≈ 192 words max, 48 words min). This is the same chunker the QA
+            // pipeline uses via corpus_chunk — single source of truth.
+            let settings = hkask_services_core::HkaskSettings::load();
+            let max_words = crate::helpers::tokens_to_words(settings.chunk_max_tokens());
+            let min_words = (max_words / 4).max(1);
+            let chunks = crate::text::chunk_text(
+                &cleaned,
+                &entity_ref_prefix,
+                min_words,
+                max_words,
+                ".!? ",
+            );
 
             // Tag each chunk
             let total_chunks = chunks.len();

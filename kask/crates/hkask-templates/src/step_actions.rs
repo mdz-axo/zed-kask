@@ -615,7 +615,6 @@ impl StepMachine {
         // "the tool ran," not "the value came from the tool." Recorded
         // before the `?` so both success and failure paths are captured.
         // On failure, `result` is absent (a failed call supplied no data).
-        let ok = tool_result.is_ok();
         let summary = match &tool_result {
             Ok(value) => serde_json::json!({
                 "tool": mcp_ref_for_tracking,

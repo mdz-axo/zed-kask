@@ -143,13 +143,10 @@ fn company_research_flash_execute_steps_have_mcp_fields() {
         "expected 11 execute steps (consolidated mcp_batch steps reduce count from original 15), got {}",
         execute_steps.len()
     );
-        "expected 15 execute steps (14 + forecast_persist step 26), got {}",
-        execute_steps.len()
-    );
     for step in &execute_steps {
         assert!(
-            step.mcp.is_some(),
-            "execute step {} must have an mcp reference",
+            step.mcp.is_some() || step.mcp_batch.is_some(),
+            "execute step {} must have an mcp or mcp_batch reference",
             step.ordinal
         );
     }

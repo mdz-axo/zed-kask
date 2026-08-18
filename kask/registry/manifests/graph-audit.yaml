@@ -511,7 +511,7 @@ steps:
     description: Re-enter semantic mode cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 11 }}"
-      # Push the semantic-report gap from the lisp.eval step (ordinal 21)
+      # Push the semantic-report gap from the lisp.eval step (ordinal 19)
       # into convergence_signal. No default(1.0): a Lisp failure must surface.
       convergence_signal: "{{ step_19_result }}"
 
@@ -521,7 +521,7 @@ steps:
     description: Re-enter dual mode cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 3 }}"
-      # Push the dual-report gap from the lisp.eval step (ordinal 22)
+      # Push the dual-report gap from the lisp.eval step (ordinal 20)
       # into convergence_signal. No default(1.0): a Lisp failure must surface.
       convergence_signal: "{{ step_20_result }}"
 
