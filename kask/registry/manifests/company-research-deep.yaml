@@ -39,19 +39,22 @@ manifest:
     Partners). Sequential flowdef: COMPANY deep 8-part analysis (6 native
     MCP tool calls + LLM synthesis) → FALSTAFFIAN competitive perspective
     rotation (cross-skill metacognition, anchored to MAIA "Falstaff: Give
-    Me Life" + "Competition: Readings vs Reality") → GORILLA 4-dimension
-    framework (fixed weights, lisp.eval scoring, consumes rotated board)
-    → ECONOMIC TRAJECTORY probe (falling costs, Coasean shifts, Kauffman
-    adjacent possible, anchored to MAIA "Focus and Imagination" + "More
-    From Less" + "Kauffman Readings") → IMAGINE 5/10/20Y scenarios
-    anchored on the economic trajectory and challenged by the Falstaffian
-    rotations + digital stage (scenario_build MCP tool call + LLM
-    synthesis) → THESIS three-pillar synthesis (cross-skill goal-analysis
-    quality gate) → convergence check → loop on needs_work. MCP tool calls
-    are native `action: execute` steps; templates do LLM synthesis over
-    their outputs. Converges on THESIS investment_grade verdict.
+    Me Life" + "Competition: Readings vs Reality") → WARDLEY compressed
+    value-chain map (v0.36.0, cross-skill adapter compressing wardley-mapper's
+    6-step cascade into one LLM call over the rotated board) → GORILLA 4-
+    dimension framework (fixed weights, lisp.eval scoring, consumes rotated
+    board + Wardley map) → ECONOMIC TRAJECTORY probe (falling costs, Coasean
+    shifts, Kauffman adjacent possible, anchored to MAIA "Focus and
+    Imagination" + "More From Less" + "Kauffman Readings", consumes Wardley
+    commoditization candidates) → IMAGINE 5/10/20Y scenarios anchored on the
+    economic trajectory and challenged by the Falstaffian rotations + digital
+    stage (scenario_build MCP tool call + LLM synthesis) → THESIS three-pillar
+    synthesis (cross-skill goal-analysis quality gate) → convergence check →
+    loop on needs_work. MCP tool calls are native `action: execute` steps;
+    templates do LLM synthesis over their outputs. Converges on THESIS
+    investment_grade verdict.
   functional_role: flowdef
-  version: "0.35.0"
+  version: "0.36.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true
@@ -66,13 +69,13 @@ convergence:
   target_artifacts_field: "thesis_verdict"
 
 gas:
-  cap: 270000
+  cap: 320000
   cost_per_iteration: 300
   alert_threshold: 0.8
   hard_limit: true
 
 rjoule:
-  cap: 10
+  cap: 12
   alert_threshold: 0.8
   hard_limit: true
 
@@ -118,9 +121,18 @@ inputs:
     required: false
     description: >
       Advisory: the economic trajectory from the previous PDCA iteration's
-      ECONOMIC TRAJECTORY step (9). Carried forward by the loop (15) so the
+      ECONOMIC TRAJECTORY step (10). Carried forward by the loop (16) so the
       next trajectory pass can detect whether the COMPANY revision addressed
       the trajectory gaps or re-encoded the same cost assumptions. Absent on
+      first iteration.
+  - name: prior_wardley_map
+    type: object
+    required: false
+    description: >
+      Advisory: the Wardley map from the previous PDCA iteration's WARDLEY
+      step (5). Carried forward by the loop (16) so the next WARDLEY pass
+      can detect whether the COMPANY revision addressed the value-chain
+      gaps or re-encoded the same evolution classifications. Absent on
       first iteration.
 
 ledger:
@@ -238,19 +250,55 @@ steps:
       company_board: "{{ step_3_result }}"
       prior_rotated_board: "{{ prior_rotated_board | default(none) }}"
 
-  # ── Steps 5–6: GORILLA — 4-dimension framework ──
+  # ── Step 5: WARDLEY — compressed value-chain map (v0.36.0) ──
+  # Cross-skill adapter: company-research/wardley-anchor compresses
+  # wardley-mapper's 6-step cascade (inventory → classify → map → movement
+  # → recommendations → present) into a single LLM call over the rotated
+  # Company Board. Emits wardley_map with components, evolution classifications,
+  # movements, commoditization_candidates, choke_points, and
+  # invisible_gorillas. GORILLA (step 6) consumes choke_points and
+  # invisible_gorillas to ground its Invisible Gorilla and Choke Point
+  # dimensions. ECONOMIC TRAJECTORY (step 10) consumes commoditization_candidates
+  # as the falling-cost anchor. The full wardley-mapper skill is available for
+  # standalone use — this adapter exists to ground the deep pipeline's
+  # strategic analysis without adding a 6-step sub-cascade.
+  - ordinal: 5
+    action: select
+    description: >
+      WARDLEY — compressed value-chain map of the rotated Company Board.
+      Single LLM call that inventories components, classifies each on the
+      Wardley evolution axis (Genesis → Custom → Product → Commodity), maps
+      them on the value chain (visibility vs evolution), identifies strategic
+      movement, and surfaces commoditization candidates, choke points, and
+      invisible gorillas. Consumes the rotated board (step 4) — the map
+      reflects the ROTATED competitive framing, not the raw analyst narrative.
+      GORILLA (step 6) and ECONOMIC TRAJECTORY (step 10) consume the output.
+    renderer: minijinja
+    template_ref: company-research/wardley-anchor
+    gas_cap: 8000
+    timeout_seconds: 200
+    input_mapping:
+      ticker: "{{ ticker }}"
+      rotated_board: "{{ step_4_result.rotated_board | default(step_3_result) }}"
+      business_franchise: "{{ step_3_result.company_board.business_franchise | default('') }}"
+
+  # ── Steps 6–7: GORILLA — 4-dimension framework ──
   # Fixed weights (25/30/25/20) — mcda rejected (essentialist Surface gate:
   # adds ceremony for fixed weights). Scoring is a lisp.eval compute step
-  # (7), not an mcda call. GORILLA consumes the ROTATED board (step 4),
+  # (8), not an mcda call. GORILLA consumes the ROTATED board (step 4),
   # not the raw Company Board (step 3) — the rotation corrects framing
-  # errors before scoring.
-  - ordinal: 5
+  # errors before scoring. v0.36.0: GORILLA also consumes the Wardley map
+  # (step 5) to ground its Invisible Gorilla and Choke Point dimensions.
+  - ordinal: 6
     action: select
     description: >
       GORILLA — assess the 4 dimensions (Obvious Problem, Invisible Gorilla,
       Combinatorial Solution, Choke Point) against the ROTATED Company
-      Board. Emits per-dimension qualitative assessments (0–100) that the
-      lisp.eval step (7) weights to the final gorilla_score.
+      Board and the Wardley map. The Wardley map's invisible_gorillas and
+      choke_points fields ground the Invisible Gorilla and Choke Point
+      dimensions — the LLM reasons over Wardley's value-chain substrate
+      instead of free-form. Emits per-dimension qualitative assessments (0–100)
+      that the lisp.eval step (8) weights to the final gorilla_score.
     renderer: minijinja
     template_ref: company-research/gorilla-4dim
     gas_cap: 6000
@@ -258,8 +306,9 @@ steps:
     input_mapping:
       ticker: "{{ ticker }}"
       company_board: "{{ step_4_result.rotated_board | default(step_3_result) }}"
+      wardley_map: "{{ step_5_result.wardley_map | default(none) }}"
 
-  # ── Step 6: GORILLA — capabilities-reasoner floor/ceiling/maturity (v0.36.0) ──
+  # ── Step 7: GORILLA — capabilities-reasoner floor/ceiling/maturity (v0.36.0) ──
   # Cross-skill adapter: company-research/gorilla-capability-reason adapts
   # capabilities-reasoner/capability-reason to the GORILLA 4-dim framework.
   # Types each GORILLA dimension against a capability registry with floor,
@@ -268,20 +317,20 @@ steps:
   # score is credible against the company's observed behavior and maturity.
   # Emits capability_assessments, floor_violations, ceiling_violations,
   # maturity_blocks. A maturity block on a dimension means the lisp.eval
-  # scoring step (now step 7) should treat that dimension's score as nil.
-  - ordinal: 6
+  # scoring step (now step 8) should treat that dimension's score as nil.
+  - ordinal: 7
     action: select
     description: >
       GORILLA — capabilities-reasoner floor/ceiling/maturity assessment.
       Adapts capabilities-reasoner/capability-reason to the GORILLA 4-dim
-      framework (step 5). Types each dimension (Obvious Problem, Invisible
+      framework (step 6). Types each dimension (Obvious Problem, Invisible
       Gorilla, Combinatorial Solution, Choke Point) against a capability
       registry with floor, ceiling, and maturity-gate limits. Evaluates
       whether the GORILLA scores are defensible given the company's
       capability maturity. Emits capability_assessments, floor_violations,
       ceiling_violations, maturity_blocks. A maturity block means the
       lisp.eval scoring step should treat that dimension as nil. Result
-      lands in step_6_result and feeds the lisp.eval scoring step (step 7).
+      lands in step_7_result and feeds the lisp.eval scoring step (step 8).
     renderer: minijinja
     template_ref: company-research/gorilla-capability-reason
     gas_cap: 5000
@@ -289,14 +338,15 @@ steps:
     input_mapping:
       ticker: "{{ ticker }}"
       company_board: "{{ step_4_result.rotated_board | default(step_3_result.company_board) }}"
-      gorilla_scores: "{{ step_5_result }}"
+      gorilla_scores: "{{ step_6_result }}"
+      wardley_map: "{{ step_5_result.wardley_map | default(none) }}"
 
-  # ── Step 7: GORILLA — deterministic weighted score with capability gates ──
-  # v0.36.0: now also consumes step_6_result (gorilla-capability-reason) to
+  # ── Step 8: GORILLA — deterministic weighted score with capability gates ──
+  # v0.36.0: now also consumes step_7_result (gorilla-capability-reason) to
   # nil out dimensions with maturity blocks. A maturity block means the
   # dimension's score is not credible without its prerequisite — the lisp.eval
   # form treats it as nil, not as the elicited value.
-  - ordinal: 7
+  - ordinal: 8
     action: compute
     compute_ref: lisp.eval
     description: >
@@ -307,17 +357,17 @@ steps:
       (not a number), the form emits nil for gorilla_score and a data_gaps
       list naming the missing dimensions, rather than silently computing
       from zero. v0.36.0: dimensions with maturity blocks (from
-      step_6_result) are treated as nil — a blocked dimension's score is
+      step_7_result) are treated as nil — a blocked dimension's score is
       not credible. The convergence check treats nil as 1.0 (escalate).
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((op (assoc "obvious_problem" step_5_result))
-              (ig (assoc "invisible_gorilla" step_5_result))
-              (cs (assoc "combinatorial_solution" step_5_result))
-              (cp (assoc "choke_point" step_5_result))
-              (maturity-blocks (assoc "maturity_blocks" step_6_result)))
+        (let ((op (assoc "obvious_problem" step_6_result))
+              (ig (assoc "invisible_gorilla" step_6_result))
+              (cs (assoc "combinatorial_solution" step_6_result))
+              (cp (assoc "choke_point" step_6_result))
+              (maturity-blocks (assoc "maturity_blocks" step_7_result)))
           (let ((op-blocked (member "obvious_problem" maturity-blocks))
                 (ig-blocked (member "invisible_gorilla" maturity-blocks))
                 (cs-blocked (member "combinatorial_solution" maturity-blocks))
@@ -348,18 +398,18 @@ steps:
                               (cons "combinatorial_solution" cs-val)
                               (cons "choke_point" cp-val)))))))))
       env:
-        step_5_result: "{{ step_5_result | default({}) }}"
         step_6_result: "{{ step_6_result | default({}) }}"
+        step_7_result: "{{ step_7_result | default({}) }}"
 
-  # ── Step 8: IMAGINE — scenario_build MCP tool ──
-  # Step 8 generates the scenario tree via scenario_build MCP tool.
-  # Step 9 (economic trajectory) and step 10 (IMAGINE synthesis) follow.
-  - ordinal: 8
+  # ── Step 9: IMAGINE — scenario_build MCP tool ──
+  # Step 9 generates the scenario tree via scenario_build MCP tool.
+  # Step 10 (economic trajectory) and step 11 (IMAGINE synthesis) follow.
+  - ordinal: 9
     action: execute
     description: >
       IMAGINE — generate 5/10/20Y scenario tree via scenario_build MCP tool.
-      Deterministic. Result lands in step_8_result and feeds IMAGINE
-      synthesis (10).
+      Deterministic. Result lands in step_9_result and feeds IMAGINE
+      synthesis (11).
     mcp: scenario_build
     gas_cap: 5000
     timeout_seconds: 120
@@ -371,28 +421,32 @@ steps:
       action: report
       resume: >
         scenario_build failed — the scenario MCP server may be down. The
-        IMAGINE synthesis (step 10) proceeds without the structured scenario
-        tree; the economic trajectory (step 9) and IMAGINE template will
+        IMAGINE synthesis (step 11) proceeds without the structured scenario
+        tree; the economic trajectory (step 10) and IMAGINE template will
         generate scenarios without the event-tree scaffold. Restart the server
         via sync_kask_mcp_servers and re-invoke.
 
-  # ── Step 9: ECONOMIC TRAJECTORY — falling-cost / Coase / adjacent possible ──
+  # ── Step 10: ECONOMIC TRAJECTORY — falling-cost / Coase / adjacent possible ──
   # Economically-anchored imagination scaffold. Identifies the falling cost,
   # the constraint being removed, the Coasean firm-boundary shifts, and the
-  # Kauffman adjacent possible. IMAGINE (10) consumes this as the anchor for
-  # its 5/10/20Y scenarios. Anchored to MAIA "Focus and Imagination",
-  # "More From Less", "Kauffman Readings", "The Future Is Faster",
-  # "Bottlenecks and Critical Mass".
-  - ordinal: 9
+  # Kauffman adjacent possible. IMAGINE (11) consumes this as the anchor for
+  # its 5/10/20Y scenarios. v0.36.0: also consumes the Wardley map's
+  # commoditization_candidates (step 5) as the falling-cost anchor — what's
+  # becoming commodity IS the falling-cost trajectory, named differently.
+  # Anchored to MAIA "Focus and Imagination", "More From Less", "Kauffman
+  # Readings", "The Future Is Faster", "Bottlenecks and Critical Mass".
+  - ordinal: 10
     action: select
     description: >
       ECONOMIC TRAJECTORY — identify the falling-cost trajectory in the
       subject's industry, the design constraint being removed, the Coasean
       firm-boundary shifts, and the Kauffman adjacent possible nodes.
-      Consumes the Company Board and the rotated board (if available).
-      Emits economic_trajectory with falling_cost, constraint_being_removed,
-      coasean_shifts, adjacent_possible_nodes, convergence_vectors, and
-      implications_for_subject. IMAGINE (10) consumes this as the anchor.
+      Consumes the Company Board, the rotated board (if available), and the
+      Wardley map's commoditization_candidates (step 5) as the falling-cost
+      anchor. Emits economic_trajectory with falling_cost,
+      constraint_being_removed, coasean_shifts, adjacent_possible_nodes,
+      convergence_vectors, and implications_for_subject. IMAGINE (11)
+      consumes this as the anchor.
     renderer: minijinja
     template_ref: company-research/economic-trajectory
     gas_cap: 8000
@@ -401,23 +455,24 @@ steps:
       ticker: "{{ ticker }}"
       company_board: "{{ step_3_result }}"
       rotated_board: "{{ step_4_result.rotated_board | default(none) }}"
+      wardley_map: "{{ step_5_result.wardley_map | default(none) }}"
       prior_economic_trajectory: "{{ prior_economic_trajectory | default(none) }}"
 
-  # ── Step 10: IMAGINE — 5/10/20Y scenarios + digital stage ──
-  # Step 10 synthesizes the 5/10/20Y scenarios and falsifiable predictions.
-  # Scenarios are ANCHORED on the economic trajectory (step 9) and
+  # ── Step 11: IMAGINE — 5/10/20Y scenarios + digital stage ──
+  # Step 11 synthesizes the 5/10/20Y scenarios and falsifiable predictions.
+  # Scenarios are ANCHORED on the economic trajectory (step 10) and
   # CHALLENGED by the Falstaffian rotations (step 4). The economic
   # trajectory is the focus that anchors imagination in reality (MAIA:
   # "Focus and Imagination"). The Falstaffian rotations are the perspective
   # shifts that a rapidly evolving trajectory demands.
-  - ordinal: 10
+  - ordinal: 11
     action: select
     description: >
       IMAGINE — project the business at 5, 10, 20 years and walk it back
       analytically. Digital Transformation Stages (MODEL / SHADOW / TWIN /
       SOURCE), Growth Driver Classification (innovation / demographic /
-      both / neither). Reasons over scenario_build output (8) and the
-      economic_trajectory probe (9). Scenarios MUST be anchored on the
+      both / neither). Reasons over scenario_build output (9) and the
+      economic_trajectory probe (10). Scenarios MUST be anchored on the
       economic trajectory and challenged by the Falstaffian rotations (4).
       Emits ImagineBoard with digital stage, growth driver, 3 scenarios,
       3–5 falsifiable predictions (tagged by 5/10/20Y horizon for the
@@ -431,13 +486,13 @@ steps:
     input_mapping:
       ticker: "{{ ticker }}"
       company_board: "{{ step_3_result }}"
-      scenario_build_result: "{{ step_8_result }}"
-      economic_trajectory: "{{ step_9_result | default(none) }}"
+      scenario_build_result: "{{ step_9_result }}"
+      economic_trajectory: "{{ step_10_result | default(none) }}"
       falstaffian_rotations: "{{ step_4_result | default(none) }}"
       prior_outcomes: "{{ prior_outcomes | default({}) }}"
 
-  # ── Step 11: THESIS — three-pillar synthesis ──
-  - ordinal: 11
+  # ── Step 12: THESIS — three-pillar synthesis ──
+  - ordinal: 12
     action: select
     description: >
       THESIS — synthesize all prior research into a formal investment thesis
@@ -446,8 +501,9 @@ steps:
       leadership), Valuation (3-stage: consensus → normalization →
       terminal). Emits thesis with the three pillars, but NOT the quality
       gate verdict — the verdict comes from the cross-skill goal-analysis
-      step (13) to avoid the LLM-improves-against-LLM-scored-target trap per
-      .rules.
+      step (14) to avoid the LLM-improves-against-LLM-scored-target trap per
+      .rules. v0.36.0: also consumes the Wardley map (step 5) to ground the
+      Business Franchise pillar's moat analysis in the value-chain structure.
     renderer: minijinja
     template_ref: company-research/thesis-three-pillars
     gas_cap: 10000
@@ -455,44 +511,45 @@ steps:
     input_mapping:
       ticker: "{{ ticker }}"
       company_board: "{{ step_3_result }}"
-      gorilla_verdict: "{{ step_7_result }}"
-      gorilla_capability: "{{ step_6_result | default({}) }}"
-      imagine_board: "{{ step_10_result }}"
+      gorilla_verdict: "{{ step_8_result }}"
+      gorilla_capability: "{{ step_7_result | default({}) }}"
+      imagine_board: "{{ step_11_result }}"
       rotated_board: "{{ step_4_result.rotated_board | default(none) }}"
-      economic_trajectory: "{{ step_9_result | default(none) }}"
+      economic_trajectory: "{{ step_10_result | default(none) }}"
+      wardley_map: "{{ step_5_result.wardley_map | default(none) }}"
 
-  # ── Steps 12–13: THESIS quality gate — cross-skill goal-analysis ──
+  # ── Steps 13–14: THESIS quality gate — cross-skill goal-analysis ──
   # Per .rules: LLM-improves-against-LLM-scored-target loops must be grounded
   # in real sources. The quality gate uses goal-analysis/judge (semantic
   # evaluator), not LLM self-assessment inside the thesis template.
-  # ── Step 12: THESIS — essentialist 3-gate eliminative interrogation (v0.36.0) ──
+  # ── Step 13: THESIS — essentialist 3-gate eliminative interrogation (v0.36.0) ──
   # Cross-skill adapter: company-research/thesis-essentialist adapts
   # essentialist/essentialist-flow to the three-pillar investment thesis.
   # Runs a single pass of the 3-gate protocol (Exist, Surface, Contract) on
   # the thesis to enforce parsimony. Mode is autonomous. The elimination_report
-  # feeds the goal-analysis quality gate (now step 13) as additional evidence.
-  - ordinal: 12
+  # feeds the goal-analysis quality gate (now step 14) as additional evidence.
+  - ordinal: 13
     action: select
     description: >
       THESIS — essentialist 3-gate eliminative interrogation. Adapts
       essentialist/essentialist-flow to the three-pillar investment thesis
-      (step 11). Runs a single pass of the 3-gate protocol (Exist, Surface,
+      (step 12). Runs a single pass of the 3-gate protocol (Exist, Surface,
       Contract) to enforce parsimony — does each pillar earn its place? Is
       the thesis at the right abstraction level? Can it be stated more
       tersely? Mode is autonomous (no human in the loop). The
-      elimination_report feeds the goal-analysis quality gate (step 13) as
+      elimination_report feeds the goal-analysis quality gate (step 14) as
       additional evidence — it does not block the thesis directly. Result
-      lands in step_12_result.
+      lands in step_13_result.
     renderer: minijinja
     template_ref: company-research/thesis-essentialist
     gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       ticker: "{{ ticker }}"
-      thesis: "{{ step_11_result }}"
+      thesis: "{{ step_12_result }}"
       company_board: "{{ step_3_result.company_board }}"
 
-  - ordinal: 13
+  - ordinal: 14
     action: select
     description: >
       THESIS quality gate — cross-skill goal-analysis/judge semantic
@@ -514,19 +571,20 @@ steps:
         - "Thesis statement is durable, timeless, and covers all three pillars"
         - "If economic trajectory is present: the thesis is consistent with the falling-cost trajectory and the adjacent possible — it does not project a steady-state terminal that ignores the trajectory's impact"
         - "If Falstaffian rotation is present: the thesis does not reproduce framing errors the rotation corrected (e.g., calling a market creator a competitor)"
+        - "If wardley_map is present: the thesis is consistent with the value-chain movement — it does not project a terminal value for a component the map classifies as commodity-bound, and the moat analysis reflects the Wardley evolution classifications"
         - "If essentialist_report is present: no gate failed (G1 Exist, G2 Surface, G3 Contract) — no decorative pillars, no restatement risk, no label abstractions, no hedge verdicts. A failed gate means the thesis has parsimony issues and is needs_work, not investment_grade."
-      outcome_summary: "{{ step_11_result.thesis_statement }}"
-      essentialist_report: "{{ step_12_result | default({}) }}"
+      outcome_summary: "{{ step_12_result.thesis_statement }}"
+      essentialist_report: "{{ step_13_result | default({}) }}"
       artifacts:
-        - "{{ step_11_result.business_franchise }}"
-        - "{{ step_11_result.management_quality }}"
-        - "{{ step_11_result.valuation }}"
+        - "{{ step_12_result.business_franchise }}"
+        - "{{ step_12_result.management_quality }}"
+        - "{{ step_12_result.valuation }}"
 
-  # ── Step 14: Convergence check — THESIS verdict ──
+  # ── Step 15: Convergence check — THESIS verdict ──
   # goal-analysis/judge emits "done|continue|blocked". Map: done=0.0
   # (converged), continue=0.5 (loop), blocked=1.0 (escalate). No
   # unwrap_or(0) — missing verdict surfaces as 1.0.
-  - ordinal: 14
+  - ordinal: 15
     action: compute
     compute_ref: lisp.eval
     description: >
@@ -539,38 +597,41 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((v (assoc "verdict" step_13_result)))
+        (let ((v (assoc "verdict" step_14_result)))
           (cond
             ((eq v "done") 0.0)
             ((eq v "continue") 0.5)
             ((eq v "blocked") 1.0)
             (t 1.0)))
       env:
-        step_13_result: "{{ step_13_result | default({}) }}"
+        step_14_result: "{{ step_14_result | default({}) }}"
 
-  # ── Step 15: Loop back to COMPANY if THESIS flags needs_work ──
+  # ── Step 16: Loop back to COMPANY if THESIS flags needs_work ──
   # Re-runs COMPANY (3) with THESIS gaps injected. incomplete (1.0) does
   # not loop — it escalates via on_not_reached. max_iterations: 3 bounds.
-  # Carries prior rotation and trajectory forward so the PDCA loop has
-  # memory of its own perspective-shifts — the next FALSTAFFIAN (4) and
-  # ECONOMIC TRAJECTORY (9) passes can detect whether the COMPANY
-  # revision addressed the framing/trajectory gaps or re-encoded them.
-  - ordinal: 15
+  # Carries prior rotation, trajectory, and wardley map forward so the PDCA
+  # loop has memory of its own perspective-shifts — the next FALSTAFFIAN (4),
+  # WARDLEY (5), and ECONOMIC TRAJECTORY (10) passes can detect whether the
+  # COMPANY revision addressed the framing/trajectory/value-chain gaps or
+  # re-encoded them.
+  - ordinal: 16
     action: loop
     description: >
       Re-enter COMPANY synthesis (step 3) if THESIS flags needs_work (0.5).
       THESIS gap analysis is injected into the next COMPANY pass via the
-      loop's input_mapping. Prior rotated board and economic trajectory are
-      carried forward as advisory context for the next FALSTAFFIAN (4) and
-      ECONOMIC TRAJECTORY (9) passes. incomplete (1.0) does not loop — it
-      escalates via on_not_reached. max_iterations: 3 bounds the loop.
-    condition: "step_14_result > 0.0 AND step_14_result < 1.0"
+      loop's input_mapping. Prior rotated board, economic trajectory, and
+      wardley map are carried forward as advisory context for the next
+      FALSTAFFIAN (4), WARDLEY (5), and ECONOMIC TRAJECTORY (10) passes.
+      incomplete (1.0) does not loop — it escalates via on_not_reached.
+      max_iterations: 3 bounds the loop.
+    condition: "step_15_result > 0.0 AND step_15_result < 1.0"
     input_mapping:
       loop_target: "{{ 3 }}"
-      thesis_gaps: "{{ step_13_result.gap_analysis | default([]) }}"
-      convergence_signal: "{{ step_14_result }}"
+      thesis_gaps: "{{ step_14_result.gap_analysis | default([]) }}"
+      convergence_signal: "{{ step_15_result }}"
       prior_rotated_board: "{{ step_4_result.rotated_board | default(none) }}"
-      prior_economic_trajectory: "{{ step_9_result | default(none) }}"
+      prior_economic_trajectory: "{{ step_10_result | default(none) }}"
+      prior_wardley_map: "{{ step_5_result.wardley_map | default(none) }}"
 
 error_handling:
   on_gas_exceeded: abort

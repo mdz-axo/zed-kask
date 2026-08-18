@@ -118,7 +118,7 @@ steps:
     gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
-      components: "{{ step_1_result.components | default(step_1_result) }}"
+      components: "{{ step_1_result.components }}"
 
   - ordinal: 3
     action: select
@@ -133,7 +133,7 @@ steps:
     gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
-      classified_components: "{{ step_2_result.components | default(step_2_result) }}"
+      classified_components: "{{ step_2_result.components }}"
 
   - ordinal: 4
     action: select
@@ -148,7 +148,7 @@ steps:
     gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
-      current_map: "{{ step_3_result.map | default(step_3_result) }}"
+      current_map: "{{ step_3_result.map }}"
       previous_map: "{{ previous_map | default('') }}"
 
   - ordinal: 5
@@ -164,7 +164,7 @@ steps:
     timeout_seconds: 60
     input_mapping:
       movement_analysis: "{{ step_4_result }}"
-      current_map: "{{ step_3_result.map | default(step_3_result) }}"
+      current_map: "{{ step_3_result.map }}"
 
   - ordinal: 6
     action: compute

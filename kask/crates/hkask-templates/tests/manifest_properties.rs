@@ -808,8 +808,12 @@ fn bare_step_result_passing_is_annotated() {
     //   - graph-audit steps 6-12: pass bare step_N_result as `classified_edges`
     //     or `structural_issues` (matching output field names). The consumers
     //     may access both the named field and the metadata. Review needed.
-    //   - wardley-mapper step 2: passes bare step_1_result as `components`
-    //     (matching output field name). Review needed.
+    //   - wardley-mapper step 2: FIXED in v0.36.0 — now passes
+    //     step_1_result.components (not bare step_1_result). The bare-result
+    //     passing was a type mismatch: step 1 outputs {components, inventory_notes}
+    //     and step 2's template expects `components` as an array. Passing the
+    //     whole object would render inventory_notes as part of the components
+    //     JSON, breaking the classify-evolution template's tojson filter.
     //   - gradient-hunter step 3: passes bare step_2_result as `actual_field`
     //     (matching output field name). Review needed.
     //   - company-research-flash step 25 (LENS) semantic_tags: passes full
