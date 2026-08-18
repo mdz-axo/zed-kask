@@ -420,6 +420,7 @@ impl SwarmPanel {
                                         id: local.agent_id,
                                         agent_type: local.agent_type,
                                         description: local.description,
+                                        display_name: local.display_name,
                                         author: String::new(),
                                         executions: 0,
                                         updated_at: None,

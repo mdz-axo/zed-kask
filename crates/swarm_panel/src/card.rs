@@ -69,9 +69,15 @@ impl SwarmPanel {
                                     }
                                 }))
                                 .child(
-                                    Label::new(agent.id.clone())
-                                        .color(Color::Default)
-                                        .truncate(),
+                                    Label::new(
+                                        if agent.display_name.is_empty() {
+                                            agent.id.clone()
+                                        } else {
+                                            agent.display_name.clone()
+                                        },
+                                    )
+                                    .color(Color::Default)
+                                    .truncate(),
                                 )
                                 .child(
                                     Label::new(agent.description)

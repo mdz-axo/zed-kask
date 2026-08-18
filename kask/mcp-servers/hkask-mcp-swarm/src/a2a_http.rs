@@ -460,6 +460,7 @@ mod tests {
                 agent_id: agent_id.to_string(),
                 agent_type: "test".to_string(),
                 description: "a test agent".to_string(),
+                display_name: String::new(),
                 accepts: vec![],
                 produces: vec![],
                 dependencies: Default::default(),

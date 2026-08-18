@@ -25,7 +25,7 @@ pub use ocr::ocr_pdf_bytes;
 pub use service::EmbedService;
 pub use strategies::WordCountChunker;
 pub use types::{
-    ChunkingConfig, CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult,
+    CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult,
     EmbeddingConfig, Entity, EntityConfig, FoundationalRule, ProgressFn, TagSet, ValidationConfig,
     Work,
 };

@@ -609,12 +609,25 @@ impl StepMachine {
 
         // Record the tool call for grounding enforcement (Phase 5). The
         // summary shape matches `LocalDelegateResult.tool_calls`:
-        // `{"tool": "server/tool_name", "ok": true/false}`. Recorded
+        // `{"tool": "server/tool_name", "ok": true/false, "result": <value>}`.
+        // The `result` field carries the tool's return value so grounding
+        // can value-match (Truth rung) — without it, "sourced" only means
+        // "the tool ran," not "the value came from the tool." Recorded
         // before the `?` so both success and failure paths are captured.
-        self.tool_calls.push(serde_json::json!({
-            "tool": mcp_ref_for_tracking,
-            "ok": tool_result.is_ok(),
-        }));
+        // On failure, `result` is absent (a failed call supplied no data).
+        let ok = tool_result.is_ok();
+        let summary = match &tool_result {
+            Ok(value) => serde_json::json!({
+                "tool": mcp_ref_for_tracking,
+                "ok": true,
+                "result": value,
+            }),
+            Err(_) => serde_json::json!({
+                "tool": mcp_ref_for_tracking,
+                "ok": false,
+            }),
+        };
+        self.tool_calls.push(summary);
 
         let result = tool_result?;
 
@@ -812,10 +825,18 @@ impl StepMachine {
                 &entry.mcp,
                 &self.context,
             );
-            self.tool_calls.push(serde_json::json!({
-                "tool": rendered,
-                "ok": result.is_ok(),
-            }));
+            let summary = match result {
+                Ok(value) => serde_json::json!({
+                    "tool": rendered,
+                    "ok": true,
+                    "result": value,
+                }),
+                Err(_) => serde_json::json!({
+                    "tool": rendered,
+                    "ok": false,
+                }),
+            };
+            self.tool_calls.push(summary);
         }
 
         // Charge gas: one iteration per tool in the batch. Charged on BOTH
