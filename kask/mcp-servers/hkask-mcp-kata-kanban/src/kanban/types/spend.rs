@@ -5,7 +5,7 @@ use super::*;
 /// Each entry tracks what operation consumed or granted rJoules, how much,
 /// and when. This is the audit trail for subagent resource usage.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GasEntry {
+pub struct SpendEntry {
     /// Amount consumed (positive) or added (also positive, context is in `kind`).
     pub amount: u64,
     /// "rJoule spend (consumed) or refill (added by delegator).
@@ -17,7 +17,7 @@ pub struct GasEntry {
     pub at: DateTime<Utc>,
 }
 
-impl GasEntry {
+impl SpendEntry {
     pub fn rjoule_spend(amount: u64, reason: String) -> Self {
         Self {
             amount,

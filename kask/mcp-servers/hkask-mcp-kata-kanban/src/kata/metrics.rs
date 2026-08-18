@@ -148,7 +148,7 @@ impl KataEngine {
     ///
     /// `[P9]` Motivating: Homeostatic Self-Regulation — closes the per-task rJoule loop.
     /// pre:  result is a valid InferenceResult with cost_usd data
-    /// post: task.rjoule_remaining is decremented by cost_usd (as micro-rJoules); GasEntry appended to audit trail
+    /// post: task.rjoule_remaining is decremented by cost_usd (as micro-rJoules); SpendEntry appended to audit trail
     pub(super) fn deduct_task_rjoules(
         &self,
         result: &hkask_types::InferenceResult,

@@ -29,8 +29,8 @@
 
 use hkask_mcp_kata_kanban::types::{
     BoardCreateRequest, BoardListRequest, ColumnDefInput, ContractProposeExpect,
-    TaskAddDeliverableRequest, TaskAddGasRequest, TaskAddRjoulesRequest, TaskAssignRequest,
-    TaskCommentRequest, TaskCommentsSinceRequest, TaskCreateRequest, TaskKataCoachingRequest,
+    TaskAddDeliverableRequest, TaskAddRjoulesRequest, TaskAssignRequest, TaskCommentRequest,
+    TaskCommentsSinceRequest, TaskCreateRequest, TaskKataCoachingRequest,
     TaskKataImprovementRequest, TaskKataPracticeRequest, TaskListRequest, TaskMoveRequest,
     TaskReopenRequest, TaskSpawnRequest, TaskVerifyRequest,
 };
@@ -142,7 +142,6 @@ proptest! {
         assert_deser_total!(TaskMoveRequest, value, panicked);
         assert_deser_total!(TaskAssignRequest, value, panicked);
         assert_deser_total!(TaskVerifyRequest, value, panicked);
-        assert_deser_total!(TaskAddGasRequest, value, panicked);
         assert_deser_total!(TaskAddRjoulesRequest, value, panicked);
         assert_deser_total!(TaskCommentRequest, value, panicked);
         assert_deser_total!(TaskCommentsSinceRequest, value, panicked);

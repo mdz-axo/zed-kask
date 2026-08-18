@@ -46,7 +46,7 @@ pub struct Task {
     /// rJoules remaining for inference/API calls (250k ≈ $1 spend).
     pub rjoule_remaining: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub spend_log: Vec<GasEntry>,
+    pub spend_log: Vec<SpendEntry>,
     /// The swarm this task belongs to, when the task is coordinated via a
     /// local swarm (`kanban_task_spawn`). `None` for tasks not yet delegated
     /// or delegated outside a swarm. The kanban board is the durable

@@ -23,7 +23,6 @@ pub struct TaskSpec {
     pub priority: Option<Priority>,
     /// Optional phase grouping.
     pub phase_id: Option<PhaseId>,
-    /// Software-compute gas budget for this task (template exec, tool dispatch).
     /// Inference/API rJoule budget (250k rJoules ≈ $1 inference spend).
     pub rjoule_budget: Option<u64>,
 }
@@ -109,7 +108,6 @@ impl TaskSpec {
         self.phase_id = Some(phase_id);
         self
     }
-
 
     /// Set the rJoule budget for the subagent working on this task.
     /// rJoule measures inference/API expenditure (250k rJoules ≈ $1).

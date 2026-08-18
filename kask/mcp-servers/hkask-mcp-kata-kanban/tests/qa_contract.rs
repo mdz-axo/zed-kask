@@ -632,9 +632,6 @@ mod task_verify {
     }
 }
 
-// ── kanban_task_add_gas ────────────────────────────────────────────────────
-
-
 // ── kanban_task_add_rjoules ────────────────────────────────────────────────
 
 mod task_add_rjoules {

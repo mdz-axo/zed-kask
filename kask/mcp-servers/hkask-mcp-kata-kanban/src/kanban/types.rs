@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 pub(crate) mod board;
 pub(crate) mod column;
 
-pub(crate) mod gas;
 pub(crate) mod phase;
 pub(crate) mod priority;
 pub(crate) mod spawn;
+pub(crate) mod spend;
 pub(crate) mod task;
 pub(crate) mod task_spec;
 pub(crate) mod tests;
@@ -26,11 +26,11 @@ pub(crate) mod verification;
 pub use board::Board;
 pub use column::ColumnDef;
 
-pub use gas::GasEntry;
 pub use hkask_types::TaskStatus;
 pub use phase::KanbanPhase;
 pub use priority::Priority;
 pub use spawn::SpawnSpec;
+pub use spend::SpendEntry;
 pub use task::{Comment, Task, TaskFilter};
 pub use task_spec::TaskSpec;
 pub use verification::{Verification, VerificationCriterion};
