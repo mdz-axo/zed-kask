@@ -224,6 +224,16 @@ impl VerificationStore {
     ///
     /// `source` identifies the calling tool ("kanban_task_spawn",
     /// "swarm_delegate_local", etc.) for cross-tool trend analysis.
+    ///
+    /// `upstream_blocks` is the `blocks` array from the parent delegation's
+    /// envelope (envelope.rs `build()`). When non-empty AND grounding ran,
+    /// `enforce_monotone_provenance` is applied to the result before it is
+    /// returned — the "conclusions-never-become-facts" rule (paper §6 /
+    /// .rules): a downstream field's provenance may never be stronger than
+    /// the same-named upstream field's. Top-level delegations (no parent)
+    /// pass `&[]`; agent-to-agent composition hops (e.g. `swarm_pipeline_local`
+    /// passing the previous step's envelope blocks) pass the real blocks.
+    /// Backward-compatible: callers that pass `&[]` get today's behavior.
     pub fn enforce_for_agent(
         &self,
         source: &str,
@@ -232,6 +242,7 @@ impl VerificationStore {
         output_json: &Value,
         tool_calls: &[Value],
         response: &str,
+        upstream_blocks: &[Value],
     ) -> (Option<GroundingResult>, Value) {
         let contract = {
             let contracts = self.contracts.lock().expect("contracts mutex poisoned");
@@ -248,8 +259,18 @@ impl VerificationStore {
                     self.record_unenforceable(source, agent_id, agent_type);
                     return (None, output_json.clone());
                 }
-                let (result, cleaned) =
+                let (mut result, cleaned) =
                     enforce_grounding(&contract, output_json, tool_calls, response);
+                // Weakest-link cap (paper §6 / .rules): a downstream field's
+                // provenance may never exceed the same-named upstream field's.
+                // Applied AFTER `enforce_grounding` and BEFORE the record is
+                // written, so the ledger stamps the capped provenance. Only
+                // applies when the caller passed a non-empty `upstream_blocks`
+                // (i.e. this is an agent-to-agent composition hop, not a
+                // top-level delegation).
+                if !upstream_blocks.is_empty() {
+                    crate::grounding::enforce_monotone_provenance(&mut result, upstream_blocks);
+                }
                 self.record_grounding(source, agent_id, agent_type, &result);
                 (Some(result), cleaned)
             }
@@ -362,6 +383,11 @@ impl VerificationStore {
     ///   when `outcome.result.is_some()`.
     /// - Setting `result.raw_response = Some(outcome.raw_response)` when
     ///   `outcome.result.is_some() || outcome.was_object`.
+    ///
+    /// `upstream_blocks` is forwarded to `enforce_for_agent` for the
+    /// monotone-provenance (weakest-link) cap. Pass the parent delegation's
+    /// envelope `blocks` array for agent-to-agent composition hops; pass `&[]`
+    /// for top-level delegations (no parent).
     pub fn enforce_and_stamp(
         &self,
         source: &str,
@@ -369,6 +395,7 @@ impl VerificationStore {
         agent_type: &str,
         response: &str,
         tool_calls: &[Value],
+        upstream_blocks: &[Value],
     ) -> EnforcementOutcome {
         let output_json = serde_json::from_str::<Value>(response).unwrap_or(Value::Null);
         let raw_response = response.to_string();
@@ -386,6 +413,7 @@ impl VerificationStore {
             &output_json,
             tool_calls,
             narrative,
+            upstream_blocks,
         );
         if let Some(ref gr) = result {
             if !gr.nulled_fields.is_empty() {
@@ -619,6 +647,7 @@ mod tests {
             &output,
             &[],
             "I wrote the file.",
+            &[],
         );
         let result = result.expect("contract exists for task agent_type");
         assert_eq!(result.nulled_fields, vec!["deliverable_path"]);
@@ -643,6 +672,7 @@ mod tests {
             &output,
             &[],
             "done",
+            &[],
         );
         assert!(result.is_none(), "no contract → no grounding result");
         assert_eq!(cleaned, output, "output unchanged when no contract");
@@ -670,6 +700,7 @@ mod tests {
             &output,
             &[],
             "just prose",
+            &[],
         );
         assert!(result.is_none(), "non-object output → no grounding");
         assert_eq!(cleaned, output, "output unchanged when not an object");
@@ -701,6 +732,7 @@ mod tests {
             &output,
             &tool_calls,
             "done",
+            &[],
         );
         // Swarm delegation — coverage gap (unknown agent_type, no contract).
         store.enforce_for_agent(
@@ -710,6 +742,7 @@ mod tests {
             &json!({"summary": "research done"}),
             &[],
             "research done",
+            &[],
         );
         // Global trend sees both.
         let global = store
@@ -747,6 +780,7 @@ mod tests {
             &output,
             &tool_calls,
             "done",
+            &[],
         );
         // Violation delegation.
         store.enforce_for_agent(
@@ -756,6 +790,7 @@ mod tests {
             &json!({"deliverable_path": "/src/fake.rs"}),
             &[],
             "I wrote /src/fake.rs",
+            &[],
         );
         let since = Utc::now() - chrono::Duration::hours(1);
         let violations = store
@@ -776,6 +811,7 @@ mod tests {
             &json!({"summary": "done"}),
             &[],
             "done",
+            &[],
         );
         assert!(result.is_none());
         // Register a contract for "custom_analysis".
@@ -802,6 +838,7 @@ mod tests {
             &json!({"summary": "done"}),
             &[],
             "done",
+            &[],
         );
         assert!(result.is_some(), "contract registered → grounding runs");
     }
@@ -905,6 +942,7 @@ mod tests {
             &output,
             &[],
             &output.to_string(),
+            &[],
         );
         assert!(result.is_some(), "skill contract exists → grounding runs");
         let gr = result.unwrap();
@@ -934,6 +972,7 @@ mod tests {
             &output,
             &[],
             &output.to_string(),
+            &[],
         );
         let gr = result.as_ref().expect("grounding ran");
         assert!(gr.nulled_fields.is_empty(), "no fields should be nulled");
@@ -952,6 +991,7 @@ mod tests {
             &output,
             &[],
             &output.to_string(),
+            &[],
         );
         // The trend should count this delegation.
         let trend = store
@@ -982,6 +1022,7 @@ mod tests {
             &json!({"deliverable_path": "/src/a.rs"}),
             &[json!({ "tool": "zed/write_file", "ok": true, "result": {"path": "/src/a.rs"} })],
             "a",
+            &[],
         );
         store.enforce_for_agent(
             "kanban_task_spawn",
@@ -990,6 +1031,7 @@ mod tests {
             &json!({"deliverable_path": "/src/b.rs"}),
             &[],
             "b",
+            &[],
         );
         let agent_a = store
             .grounding_trend(&TrendScope::ByAgent("agent_a".to_string()))
@@ -1040,6 +1082,7 @@ mod tests {
                 &clean_output,
                 &clean_tools,
                 &clean_output.to_string(),
+                &[],
             );
         }
         let trend_before = store
@@ -1059,6 +1102,7 @@ mod tests {
                 &nulled_output,
                 &[],
                 &nulled_output.to_string(),
+                &[],
             );
         }
         let trend_after = store
@@ -1309,6 +1353,7 @@ mod proptests {
                 &action.output,
                 &action.tool_calls,
                 &action.narrative,
+                &[], // top-level delegations — no parent envelope
             );
         }
         store
@@ -1467,6 +1512,7 @@ mod proptests {
                 &output,
                 &tool_calls,
                 &narrative,
+                &[], // no upstream blocks — top-level delegation
             );
             // When the output is a JSON object, both must agree.
             if output.is_object() {

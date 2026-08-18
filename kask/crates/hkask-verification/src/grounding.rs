@@ -1173,16 +1173,30 @@ pub fn enforce_grounding(
 /// This is a post-processing step after `enforce_grounding`. It mutates
 /// the `GroundingResult` in place.
 ///
-/// **Not yet wired.** As of this writing `enforce_monotone_provenance` is
-/// `pub` but is NOT called from the production enforcement path
-/// (`VerificationStore::enforce_and_stamp` in `ledger.rs`) and is not
-/// re-exported at the crate root. Its behavior is unit-tested below (and
-/// the `downgrade_to` weakest-link cap is proptested), so the invariant is
-/// correct and falsifiable, but the "conclusions-never-become-facts" rule is
-/// not yet enforced on live delegations. Wiring it in is a separate change
-/// that must decide where `upstream_blocks` come from in the composition
-/// envelope (paper §6). (Per the .rules: an advertised invariant without an
-/// enforcement point must say so rather than imply it is live.)
+/// **Wired.** `enforce_monotone_provenance` is called from the production
+/// enforcement path: `VerificationStore::enforce_for_agent` (ledger.rs)
+/// invokes it after `enforce_grounding` when the caller passes a non-empty
+/// `upstream_blocks`. The higher-level wrapper `enforce_and_stamp` forwards
+/// `upstream_blocks` to `enforce_for_agent`. The function is re-exported at
+/// the crate root (`hkask_verification::enforce_monotone_provenance`).
+///
+/// **Source of `upstream_blocks`.** The parent delegation's envelope `blocks`
+/// array (built by `envelope::build()` from the parent's `GroundingResult.
+/// provenance`). The canonical production caller is `swarm_pipeline_local`
+/// (hkask-mcp-swarm/src/local_tools.rs), which passes the previous step's
+/// envelope `blocks` so a downstream field cannot be re-emitted with stronger
+/// provenance than the same-named upstream field (the laundering case). Top-
+/// level delegations (`swarm_delegate_local`, `swarm_fanout_local`,
+/// `swarm_execute_plan_local`, `kanban_task_spawn`, `skill_cascade`) pass
+/// `&[]` — no parent envelope — so they get today's behavior unchanged. The
+/// cloud `swarm_delegate` path uses `enforce_narrative` (prose-only, no
+/// structured fields), so the monotone rule does not apply there.
+///
+/// The invariant is falsifiable: the integration test
+/// `monotone_provenance_wired_via_enforce_for_agent` (ledger.rs) breaks if
+/// the `enforce_monotone_provenance` call in `enforce_for_agent` is removed,
+/// and the proptest `prop_monotone_provenance_never_exceeds_upstream_via_store`
+/// exercises the wired path end-to-end.
 pub fn enforce_monotone_provenance(
     result: &mut GroundingResult,
     upstream_blocks: &[serde_json::Value],

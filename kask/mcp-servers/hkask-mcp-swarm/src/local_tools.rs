@@ -108,6 +108,11 @@ impl SwarmServer {
                 &agent.agent_type,
                 &result.response,
                 &result.tool_calls,
+                // Top-level delegation — no parent envelope. The
+                // monotone-provenance cap applies to agent-to-agent
+                // composition hops (e.g. `swarm_pipeline_local`), not to
+                // the operator's first delegation into the swarm.
+                &[],
             );
             result.apply_grounding(outcome);
             // Rung 2 (Typing) post-invocation: validate the agent's output
@@ -224,6 +229,11 @@ impl SwarmServer {
                                 &agent.agent_type,
                                 &r.response,
                                 &r.tool_calls,
+                                // Fan-out: each delegation is a parallel
+                                // top-level dispatch from the caller, not an
+                                // agent-to-agent composition hop. No parent
+                                // envelope to cap against.
+                                &[],
                             );
                             r.apply_grounding(outcome);
                             total_cost += r.cost;
@@ -302,6 +312,16 @@ impl SwarmServer {
                 let ceiling = self.client.config().max_credits_per_dispatch;
                 let mut results = Vec::new();
                 let mut prev_output = String::new();
+                // Track the previous step's envelope `blocks` array so the
+                // next step's grounding enforcement can apply the
+                // monotone-provenance (weakest-link) cap — a downstream
+                // field's provenance may never exceed the same-named upstream
+                // field's (paper §6 / .rules). The pipeline is the canonical
+                // agent-to-agent composition hop: step N receives step N-1's
+                // output via `{prev_output}`, so step N's provenance is capped
+                // by step N-1's envelope blocks. `prev_upstream_blocks` is
+                // empty for the first step (no parent).
+                let mut prev_upstream_blocks: Vec<serde_json::Value> = Vec::new();
                 let mut total_cost = 0i64;
                 // Sum the uncapped figures too: `total_cost` is the sum of per-delegation
                 // capped costs, so it inherits their understatement. Reporting both
@@ -343,14 +363,32 @@ impl SwarmServer {
                             // (grounded) response is what feeds the next
                             // pipeline step via `prev_output`, so ungrounded
                             // fields do not propagate down the chain.
+                            //
+                            // Monotone provenance (paper §6 / .rules): pass
+                            // the previous step's envelope `blocks` as
+                            // `upstream_blocks` so a downstream field cannot
+                            // be re-emitted with stronger provenance than the
+                            // same-named upstream field (the laundering case).
                             let outcome = self.verification_store.enforce_and_stamp(
                                 "swarm_pipeline_local",
                                 &step.agent_name,
                                 &agent.agent_type,
                                 &r.response,
                                 &r.tool_calls,
+                                &prev_upstream_blocks,
                             );
                             r.apply_grounding(outcome);
+                            // Capture this step's envelope blocks for the next
+                            // iteration's weakest-link cap. When grounding did
+                            // not run (no contract / unenforceable), the
+                            // envelope carries an empty `blocks` array —
+                            // passing it is a no-op (no fields to cap).
+                            prev_upstream_blocks = r
+                                .envelope
+                                .as_ref()
+                                .and_then(|env| env.get("blocks").cloned())
+                                .and_then(|blocks| blocks.as_array().cloned())
+                                .unwrap_or_default();
                             prev_output = r.response.clone();
                             total_cost += r.cost;
                             total_cost_uncapped += r.cost_uncapped;
@@ -1423,6 +1461,11 @@ impl SwarmServer {
                                 &agent.agent_type,
                                 &r.response,
                                 &r.tool_calls,
+                                // Execute-plan: each delegation is a
+                                // top-level dispatch from the Curator's plan,
+                                // not an agent-to-agent composition hop. No
+                                // parent envelope to cap against.
+                                &[],
                             );
                             r.apply_grounding(outcome);
                             // Record stigmergy (same as swarm_delegate_local).

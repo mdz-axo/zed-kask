@@ -2726,6 +2726,7 @@ mod tests {
             &clean_output,
             &clean_tools,
             &clean_output.to_string(),
+            &[],
         );
         for _ in 0..2 {
             store.enforce_for_agent(
@@ -2735,6 +2736,7 @@ mod tests {
                 &nulled_output,
                 &[],
                 &nulled_output.to_string(),
+                &[],
             );
         }
         // Wire the loop with the verification store and a capturing escalation sink.
@@ -2805,6 +2807,7 @@ mod tests {
             &clean_output,
             &clean_tools,
             &clean_output.to_string(),
+            &[],
         );
         store.enforce_for_agent(
             "kanban_task_spawn",
@@ -2813,6 +2816,7 @@ mod tests {
             &nulled_output,
             &[],
             &nulled_output.to_string(),
+            &[],
         );
         let loop_instance = CyberneticsLoop::new(ledger).with_verification_store(store.clone());
         // Build a grounding action with before_val = 0.5 (clean_rate at alert time).
