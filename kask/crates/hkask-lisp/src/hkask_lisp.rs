@@ -1825,9 +1825,11 @@ mod tests {
 
     #[test]
     fn test_principle_constraints_form_with_string() {
-        // The principle-constraints manifest's lisp.eval form must guard
-        // against step_2_result being a string (when the LLM emits text
-        // instead of a JSON object).
+        // The principle-constraints manifest's lisp.eval form (designed for a
+        // future 3-step manifest with a compute step) must guard against
+        // step_2_result being a string. Currently unused — the manifest uses
+        // a constant convergence_signal. Kept for when the compute step is
+        // re-added with a non-escalating on_failure config.
         let form = "(if (listp step_2_result) (let ((summary (assoc \"summary\" step_2_result))) (if (is_null summary) 0 (let ((enforced (assoc \"enforced\" summary)) (gaps (assoc \"gaps\" summary))) (+ (if (is_null enforced) 0 enforced) (if (is_null gaps) 0 gaps))))) 0)";
         let env = json!({"step_2_result": "some text"});
         assert_eq!(eval_sandboxed(form, &env).unwrap(), json!(0));
@@ -1837,6 +1839,8 @@ mod tests {
     fn test_principle_constraints_form_with_object() {
         // When the select step produces valid JSON, the form extracts
         // summary.enforced + summary.gaps as the convergence signal.
+        // Currently unused — the manifest uses a constant convergence_signal.
+        // Kept for when the compute step is re-added.
         let form = "(if (listp step_2_result) (let ((summary (assoc \"summary\" step_2_result))) (if (is_null summary) 0 (let ((enforced (assoc \"enforced\" summary)) (gaps (assoc \"gaps\" summary))) (+ (if (is_null enforced) 0 enforced) (if (is_null gaps) 0 gaps))))) 0)";
         let env = json!({
             "step_2_result": {

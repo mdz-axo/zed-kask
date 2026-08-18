@@ -19,9 +19,6 @@ contract:
     existing_constraints:
       type: array
       description: 'For verify mode: the previously-derived constraint set to re-check.'
-    codegraph_results:
-      type: array
-      description: 'Symbol search results from codegraph_query. Contains symbol names, file paths, and line numbers.'
     code_context:
       type: string
       description: 'Optional: pre-gathered code context (file contents, grep results, DIVERGENCE.md excerpts) provided by the caller.'
@@ -83,16 +80,6 @@ The caller has provided pre-gathered code context. Use this to locate enforcemen
 
 ```
 {{ code_context }}
-```
-{% endif %}
-
-{% if codegraph_results and codegraph_results != [] %}
-## Code Graph Results
-
-A prior step queried the code graph for symbols matching the enforcement hints. Use these results to locate enforcement code and cite file:line locations.
-
-```
-{{ codegraph_results | tojson }}
 ```
 {% endif %}
 
