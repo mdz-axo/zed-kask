@@ -196,43 +196,33 @@ steps:
     action: execute
     condition: "mode != 'semantic'"
     description: >
-      CODE TRAVERSE: Traverse the dependency graph (forward and reverse) for
-      matched symbols via codegraph_traverse MCP tool. Deterministic. Uses
-      the top symbol from the query results (step 5) as the traversal root.
-      Feeds the code-analyze step (step 8) as traverse_results.
-    mcp: codegraph_traverse
-    gas_cap: 3000
+      CODE TRAVERSE + ANALYSIS: Traverse the dependency graph and run quality
+      analysis concurrently via mcp_batch. codegraph_traverse walks the
+      dependency graph for the top matched symbol; codegraph_analysis runs
+      complexity/dead_code analysis. Both are independent — running them
+      concurrently cuts wall-clock time from 120s to 60s. Results are keyed
+      by traverse and analysis in step_5_result.
+    mcp_batch:
+      - mcp: codegraph_traverse
+        key: traverse
+        input_mapping:
+          symbol: "{{ step_4_result.matched_symbols[0].name | default(step_2_result.entry_symbols[0].name | default('')) }}"
+          direction: "forward"
+          max_depth: 3
+      - mcp: codegraph_analysis
+        key: analysis
+        input_mapping:
+          kind: "complexity"
+    gas_cap: 6000
     timeout_seconds: 60
     on_failure:
       action: report
       resume: >
-        codegraph_traverse failed — dependency traversal results are not
-        available. The code-analyze step proceeds without traversal data.
-    input_mapping:
-      symbol: "{{ step_4_result.matched_symbols[0].name | default(step_2_result.entry_symbols[0].name | default('')) }}"
-      direction: "forward"
-      max_depth: 3
+        codegraph_traverse / codegraph_analysis batch failed — the codegraph
+        MCP server may be down. The code-analyze step proceeds without
+        traversal and/or analysis data.
 
   - ordinal: 6
-    action: execute
-    condition: "mode != 'semantic'"
-    description: >
-      CODE ANALYSIS: Run quality analysis (complexity, dead_code) via
-      codegraph_analysis MCP tool. Deterministic. Feeds the code-analyze
-      step (step 8) as analysis_results.
-    mcp: codegraph_analysis
-    gas_cap: 3000
-    timeout_seconds: 60
-    on_failure:
-      action: report
-      resume: >
-        codegraph_analysis failed — quality analysis results are not
-        available. The code-analyze step proceeds without complexity/dead
-        code data.
-    input_mapping:
-      kind: "complexity"
-
-  - ordinal: 7
     action: select
     condition: "mode != 'semantic'"
     description: >
@@ -247,17 +237,17 @@ steps:
       goal: "{{ goal }}"
       discovery: "{{ step_2_result }}"
       query_results: "{{ step_4_result }}"
-      traverse_results: "{{ step_5_result | default({}) }}"
-      analysis_results: "{{ step_6_result | default({}) }}"
+      traverse_results: "{{ step_5_result.traverse | default({}) }}"
+      analysis_results: "{{ step_5_result.analysis | default({}) }}"
 
-  - ordinal: 8
+  - ordinal: 7
     action: execute
     condition: "mode != 'semantic' AND requires_context"
     description: >
       CODE CONTEXT: Assemble token-budgeted context from the gathered
       analysis via codegraph_context MCP tool. Deterministic. Uses the goal
-      as the query and the analysis result (step 8) for context. Feeds the
-      code-context step (step 10) as context_result.
+      as the query and the analysis result (step 7) for context. Feeds the
+      code-context step (step 9) as context_result.
     mcp: codegraph_context
     gas_cap: 3000
     timeout_seconds: 60
@@ -270,7 +260,7 @@ steps:
       query: "{{ goal | default('') }}"
       budget: "{{ context_budget | default('standard') }}"
 
-  - ordinal: 9
+  - ordinal: 8
     action: select
     condition: "mode != 'semantic' AND requires_context"
     description: >
@@ -282,12 +272,12 @@ steps:
     timeout_seconds: 120
     input_mapping:
       goal: "{{ goal }}"
-      context_result: "{{ step_8_result | default({}) }}"
+      context_result: "{{ step_7_result | default({}) }}"
       analysis_result: "{{ step_7_result }}"
       budget: "{{ context_budget | default('standard') }}"
 
-  # === SEMANTIC MODE (steps 11-14) ===
-  - ordinal: 10
+  # === SEMANTIC MODE (steps 10-13) ===
+  - ordinal: 9
     action: select
     condition: "mode == 'semantic'"
     description: >
@@ -302,7 +292,7 @@ steps:
       edges: "{{ edges }}"
       domain: "{{ domain }}"
 
-  - ordinal: 11
+  - ordinal: 10
     action: select
     condition: "mode == 'semantic'"
     description: >
@@ -315,10 +305,10 @@ steps:
     input_mapping:
       nodes: "{{ nodes }}"
       edges: "{{ edges }}"
-      classified_edges: "{{ step_10_result }}"
+      classified_edges: "{{ step_9_result }}"
       domain: "{{ domain }}"
 
-  - ordinal: 12
+  - ordinal: 11
     action: select
     condition: "mode == 'semantic'"
     description: >
@@ -331,10 +321,10 @@ steps:
     input_mapping:
       nodes: "{{ nodes }}"
       edges: "{{ edges }}"
-      classified_edges: "{{ step_10_result }}"
-      analysis: "{{ step_11_result }}"
+      classified_edges: "{{ step_9_result }}"
+      analysis: "{{ step_10_result }}"
 
-  - ordinal: 13
+  - ordinal: 12
     action: select
     condition: "mode == 'semantic'"
     description: >
@@ -347,13 +337,13 @@ steps:
     input_mapping:
       nodes: "{{ nodes }}"
       edges: "{{ edges }}"
-      classified_edges: "{{ step_10_result }}"
-      analysis: "{{ step_11_result }}"
-      structural_issues: "{{ step_12_result }}"
+      classified_edges: "{{ step_9_result }}"
+      analysis: "{{ step_10_result }}"
+      structural_issues: "{{ step_11_result }}"
       domain: "{{ domain }}"
 
   # === DUAL MODE — semantic audit on extracted code graph ===
-  - ordinal: 14
+  - ordinal: 13
     action: select
     condition: "mode == 'dual'"
     description: >
@@ -369,7 +359,7 @@ steps:
       edges: "{{ step_7_result.dependencies | default([]) }}"
       domain: "code: {{ goal | default('codebase') }}"
 
-  - ordinal: 15
+  - ordinal: 14
     action: select
     condition: "mode == 'dual'"
     description: >
@@ -381,10 +371,10 @@ steps:
     input_mapping:
       nodes: "{{ step_7_result.symbols | default([]) }}"
       edges: "{{ step_7_result.dependencies | default([]) }}"
-      classified_edges: "{{ step_14_result }}"
+      classified_edges: "{{ step_13_result }}"
       domain: "code: {{ goal | default('codebase') }}"
 
-  - ordinal: 16
+  - ordinal: 15
     action: select
     condition: "mode == 'dual'"
     description: >
@@ -396,10 +386,10 @@ steps:
     input_mapping:
       nodes: "{{ step_7_result.symbols | default([]) }}"
       edges: "{{ step_7_result.dependencies | default([]) }}"
-      classified_edges: "{{ step_14_result }}"
-      analysis: "{{ step_15_result }}"
+      classified_edges: "{{ step_13_result }}"
+      analysis: "{{ step_14_result }}"
 
-  - ordinal: 17
+  - ordinal: 16
     action: select
     condition: "mode == 'dual'"
     description: >
@@ -411,15 +401,15 @@ steps:
     input_mapping:
       nodes: "{{ step_7_result.symbols | default([]) }}"
       edges: "{{ step_7_result.dependencies | default([]) }}"
-      classified_edges: "{{ step_14_result }}"
-      analysis: "{{ step_15_result }}"
-      structural_issues: "{{ step_16_result }}"
+      classified_edges: "{{ step_13_result }}"
+      analysis: "{{ step_14_result }}"
+      structural_issues: "{{ step_15_result }}"
       domain: "code: {{ goal | default('codebase') }}"
 
   # === CONVERGENCE — mode-specific ===
-  # Code mode: lisp.eval computes a structural score from step 8's
+  # Code mode: lisp.eval computes a structural score from step 7's
   # quality_findings count, then the ConvergenceTracker checks it (Cauchy criterion).
-  - ordinal: 18
+  - ordinal: 17
     action: compute
     condition: "mode != 'semantic' AND mode != 'dual'"
     compute_ref: lisp.eval
@@ -446,9 +436,9 @@ steps:
   # Semantic mode: lisp.eval computes a structural score from the
   # semantic-report's blockers array length (deterministic count),
   # replacing the phantom LLM-generated convergence_metric.
-  # References step_13_result (the original semantic-report) directly —
-  # the previous step 19 was a redundant re-render of the same template.
-  - ordinal: 19
+  # References step_12_result (the original semantic-report) directly —
+  # the previous step 18 was a redundant re-render of the same template.
+  - ordinal: 18
     action: compute
     condition: "mode == 'semantic'"
     compute_ref: lisp.eval
@@ -464,22 +454,22 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((blockers (assoc "blockers" step_13_result)))
+        (let ((blockers (assoc "blockers" step_12_result)))
           (let ((n (if (is_null blockers) 0 (length blockers))))
             (let ((raw (/ n 5)))
               (if (> raw 1.0) 1.0 raw))))
       env:
-        step_13_result: "{{ step_13_result }}"
+        step_12_result: "{{ step_12_result }}"
 
   # Dual mode: lisp.eval computes a structural score from the dual
   # semantic-report's blockers array length.
-  - ordinal: 20
+  - ordinal: 19
     action: compute
     condition: "mode == 'dual'"
     compute_ref: lisp.eval
     description: >
       COMPUTE DUAL-REPORT GAP (dual mode): Deterministic Lisp
-      computation that turns the dual semantic-report step's (ordinal 18)
+      computation that turns the dual semantic-report step's (ordinal 17)
       output into a scalar convergence signal. Lower = more converged
       (fewer blockers). The score is `min(blockers_count / 5, 1.0)` —
       capped at 1.0. No `default(1.0)` fallback: a missing `blockers`
@@ -488,42 +478,42 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((blockers (assoc "blockers" step_17_result)))
+        (let ((blockers (assoc "blockers" step_16_result)))
           (let ((n (if (is_null blockers) 0 (length blockers))))
             (let ((raw (/ n 5)))
               (if (> raw 1.0) 1.0 raw))))
       env:
-        step_17_result: "{{ step_17_result }}"
+        step_16_result: "{{ step_16_result }}"
 
-  - ordinal: 21
+  - ordinal: 20
     action: loop
     condition: "mode != 'semantic' AND mode != 'dual'"
     description: Re-enter code mode cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 3 }}"
-      # Push the code-analysis gap from the lisp.eval step (ordinal 19)
+      # Push the code-analysis gap from the lisp.eval step (ordinal 18)
+      # into convergence_signal. No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_17_result }}"
+
+  - ordinal: 21
+    action: loop
+    condition: "mode == 'semantic'"
+    description: Re-enter semantic mode cycle if convergence is not met.
+    input_mapping:
+      loop_target: "{{ 10 }}"
+      # Push the semantic-report gap from the lisp.eval step (ordinal 18)
       # into convergence_signal. No default(1.0): a Lisp failure must surface.
       convergence_signal: "{{ step_18_result }}"
 
   - ordinal: 22
     action: loop
-    condition: "mode == 'semantic'"
-    description: Re-enter semantic mode cycle if convergence is not met.
-    input_mapping:
-      loop_target: "{{ 11 }}"
-      # Push the semantic-report gap from the lisp.eval step (ordinal 19)
-      # into convergence_signal. No default(1.0): a Lisp failure must surface.
-      convergence_signal: "{{ step_19_result }}"
-
-  - ordinal: 23
-    action: loop
     condition: "mode == 'dual'"
     description: Re-enter dual mode cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 3 }}"
-      # Push the dual-report gap from the lisp.eval step (ordinal 20)
+      # Push the dual-report gap from the lisp.eval step (ordinal 19)
       # into convergence_signal. No default(1.0): a Lisp failure must surface.
-      convergence_signal: "{{ step_20_result }}"
+      convergence_signal: "{{ step_19_result }}"
 
 error_handling:
   on_gas_exceeded: abort

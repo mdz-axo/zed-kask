@@ -642,6 +642,11 @@ pub struct GroundingSensor {
     /// next successful read, the violation-delta sensor suppresses the delta
     /// (it spans the outage, not a single tick) and resets this flag.
     was_outage: parking_lot::Mutex<bool>,
+    /// Optional external delegation counter (e.g. the swarm ledger). When
+    /// present, the liveness-gap sensor computes the true gap: external
+    /// delegations minus verification-store records. When absent, the gap
+    /// is 0.0 (honest: "no gap detected" because we can't measure it).
+    delegation_counter: Option<Arc<dyn hkask_verification::DelegationCounter>>,
 }
 
 /// Which grounding metric this sensor instance produces.
@@ -668,7 +673,21 @@ impl GroundingSensor {
             coverage_rate_floor,
             previous_nulled: parking_lot::Mutex::new(None),
             was_outage: parking_lot::Mutex::new(false),
+            delegation_counter: None,
         }
+    }
+
+    /// Wire an external delegation counter (e.g. the swarm ledger). When
+    /// present, the liveness-gap sensor computes the true gap: external
+    /// delegations minus verification-store records. Without this, the
+    /// sensor returns 0.0 (honest: "no gap detected" because we can't
+    /// measure it).
+    pub fn with_delegation_counter(
+        mut self,
+        counter: Arc<dyn hkask_verification::DelegationCounter>,
+    ) -> Self {
+        self.delegation_counter = Some(counter);
+        self
     }
 
     /// Read the trend from the verification ledger. Each sensor instance
@@ -791,10 +810,12 @@ impl GroundingSensor {
     }
 
     /// Produce the `GroundingLivenessGap` signal. Returns the count of
-    /// delegations without grounding records. Currently returns 0.0 when
-    /// records exist (the infrastructure is in place; the true gap requires
-    /// wiring the swarm ledger). Returns `None` when the store is empty
-    /// (absence ≠ 0 — can't distinguish "no delegations" from "no records").
+    /// delegations without grounding records. When a `DelegationCounter` is
+    /// wired, computes the true gap: external delegations minus verification-
+    /// store records. When no counter is wired, returns 0.0 (honest: "no gap
+    /// detected" because we can't measure it). Returns `None` when the store
+    /// is empty (absence ≠ 0 — can't distinguish "no delegations" from "no
+    /// records") or when the counter query fails (absence ≠ 0).
     fn sense_liveness_gap(
         &self,
         report: &hkask_verification::GroundingTrendReport,
@@ -802,14 +823,17 @@ impl GroundingSensor {
         if report.total_delegations == 0 {
             return None;
         }
-        // Infrastructure: the true gap = (swarm_ledger_delegations) - (total_delegations).
-        // Until the swarm ledger is wired, report 0.0 (no gap detected).
-        // This is honest: we can't detect a gap we can't measure, and returning
-        // 0.0 with a set-point of 0.0 means "no deviation detected" — not "no gap."
+        let gap = match &self.delegation_counter {
+            Some(counter) => {
+                let total = counter.delegation_count()?;
+                total.saturating_sub(report.total_delegations as u64) as f64
+            }
+            None => 0.0, // Can't measure — honest: "no gap detected"
+        };
         Some(Signal::new(
             LoopId::Cybernetics,
             SignalMetric::GroundingLivenessGap,
-            0.0,
+            gap,
             0.0,
         ))
     }
@@ -1125,6 +1149,114 @@ mod grounding_sensor_tests {
             signal.unwrap().value,
             0.0,
             "no gap detected (infrastructure only)"
+        );
+    }
+
+    /// A mock `DelegationCounter` that returns a fixed count. Used by the
+    /// liveness-gap tests to verify the true-gap computation.
+    struct MockDelegationCounter {
+        count: Option<u64>,
+    }
+
+    impl hkask_verification::DelegationCounter for MockDelegationCounter {
+        fn delegation_count(&self) -> Option<u64> {
+            self.count
+        }
+    }
+
+    #[test]
+    fn liveness_gap_detects_missing_records_when_counter_wired() {
+        // When the counter reports more delegations than the verification
+        // store has records, the gap is the difference. This catches
+        // delegations that skipped `enforce_for_agent`.
+        let store = Arc::new(VerificationStore::in_memory());
+        // Seed 8 clean delegations.
+        let output = serde_json::json!({"deliverable_path": "/src/main.rs", "summary": "done"});
+        let tool_calls = vec![
+            serde_json::json!({"tool": "zed/write_file", "ok": true, "result": {"path": "/src/main.rs"}}),
+        ];
+        for _ in 0..8 {
+            store.enforce_for_agent(
+                "kanban_task_spawn",
+                "test_agent",
+                "task",
+                &output,
+                &tool_calls,
+                "",
+            );
+        }
+        // The swarm ledger reports 10 delegations — 2 skipped grounding.
+        let counter = Arc::new(MockDelegationCounter { count: Some(10) });
+        let sensor =
+            GroundingSensor::new(store.clone(), GroundingSensorMetric::LivenessGap, 0.0, 0.0)
+                .with_delegation_counter(counter);
+        let report = store
+            .grounding_trend(&hkask_verification::TrendScope::Global)
+            .unwrap();
+        let signal = sensor.sense_liveness_gap(&report);
+        let signal = signal.expect("signal must fire when records exist");
+        assert_eq!(signal.value, 2.0, "gap = 10 (ledger) - 8 (store) = 2");
+    }
+
+    #[test]
+    fn liveness_gap_returns_zero_when_counter_absent() {
+        // Without a counter wired, the sensor returns 0.0 — honest: "no
+        // gap detected" because we can't measure it.
+        let store = Arc::new(VerificationStore::in_memory());
+        let output = serde_json::json!({"deliverable_path": "/src/main.rs", "summary": "done"});
+        let tool_calls = vec![
+            serde_json::json!({"tool": "zed/write_file", "ok": true, "result": {"path": "/src/main.rs"}}),
+        ];
+        store.enforce_for_agent(
+            "kanban_task_spawn",
+            "test_agent",
+            "task",
+            &output,
+            &tool_calls,
+            "",
+        );
+        let sensor =
+            GroundingSensor::new(store.clone(), GroundingSensorMetric::LivenessGap, 0.0, 0.0);
+        let report = store
+            .grounding_trend(&hkask_verification::TrendScope::Global)
+            .unwrap();
+        let signal = sensor.sense_liveness_gap(&report);
+        let signal = signal.expect("signal must fire when records exist");
+        assert_eq!(
+            signal.value, 0.0,
+            "no counter wired — honest: no gap detected"
+        );
+    }
+
+    #[test]
+    fn liveness_gap_returns_none_when_counter_fails() {
+        // When the counter query fails (returns None), the sensor returns
+        // None — absence ≠ 0 (a failed read is not a measured zero).
+        let store = Arc::new(VerificationStore::in_memory());
+        let output = serde_json::json!({"deliverable_path": "/src/main.rs", "summary": "done"});
+        let tool_calls = vec![
+            serde_json::json!({"tool": "zed/write_file", "ok": true, "result": {"path": "/src/main.rs"}}),
+        ];
+        store.enforce_for_agent(
+            "kanban_task_spawn",
+            "test_agent",
+            "task",
+            &output,
+            &tool_calls,
+            "",
+        );
+        // Counter query fails — returns None.
+        let counter = Arc::new(MockDelegationCounter { count: None });
+        let sensor =
+            GroundingSensor::new(store.clone(), GroundingSensorMetric::LivenessGap, 0.0, 0.0)
+                .with_delegation_counter(counter);
+        let report = store
+            .grounding_trend(&hkask_verification::TrendScope::Global)
+            .unwrap();
+        let signal = sensor.sense_liveness_gap(&report);
+        assert!(
+            signal.is_none(),
+            "counter query failed — absence ≠ 0 (failed read is not a measured zero)"
         );
     }
 

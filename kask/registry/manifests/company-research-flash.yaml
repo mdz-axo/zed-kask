@@ -114,7 +114,7 @@ inputs:
     required: false
     description: >
       Current date in ISO 8601 format (e.g. "2026-08-18"). Populated by the
-      invoking agent or the skill tool. Used by forecast_persist (step 23)
+      invoking agent or the skill tool. Used by forecast_persist (step 22)
       as the forecast_date. If absent, the persist step receives an empty
       string and the forecast is stored without a date.
 
@@ -640,8 +640,8 @@ steps:
         results are available; missing channels are noted as gaps. Restart
         the server via sync_kask_mcp_servers and re-invoke.
 
-  # ── Step 21: LENS — five-framework audit (LLM synthesis) ──
-  - ordinal: 20
+  # ── Step 20: LENS — five-framework audit (LLM synthesis) ──
+  - ordinal: 19
     action: select
     description: >
       LENS five-framework consistency audit: The Loop, Superforecasting,
@@ -669,11 +669,11 @@ steps:
       market_outside_view: "{{ step_18_result.market_match | default({}) }}"
       evidence_audit: "{{ step_18_result.evidence_quality | default({}) }}"
 
-  # ── Step 22: Convergence check — LENS verdict consistency ──
+  # ── Step 21: Convergence check — LENS verdict consistency ──
   # Deterministic lisp.eval: CONSISTENT=0.0, PARTIAL=0.5, INCONSISTENT=1.0.
   # No unwrap_or(0) on regulation signals — missing verdict surfaces as 1.0
   # (worst case), not silently "converged."
-  - ordinal: 21
+  - ordinal: 20
     action: compute
     compute_ref: lisp.eval
     description: >
@@ -686,33 +686,33 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((v (assoc "overall_verdict" step_20_result)))
+        (let ((v (assoc "overall_verdict" step_19_result)))
           (cond
             ((eq v "CONSISTENT") 0.0)
             ((eq v "PARTIAL") 0.5)
             ((eq v "INCONSISTENT") 1.0)
             (t 1.0)))
       env:
-        step_20_result: "{{ step_20_result | default({}) }}"
+        step_19_result: "{{ step_19_result | default({}) }}"
 
-  # ── Step 23: Loop back to VALUATION synthesis if LENS flags PARTIAL ──
+  # ── Step 22: Loop back to VALUATION synthesis if LENS flags PARTIAL ──
   # Re-runs valuation (13) with LENS tensions injected. INCONSISTENT (1.0)
   # does not loop — it escalates via on_not_reached. max_iterations: 3
   # bounds the loop.
-  - ordinal: 22
+  - ordinal: 21
     action: loop
     description: >
       Re-enter VALUATION synthesis (step 13) if LENS flags PARTIAL (0.5).
       LENS key_tensions are injected into the next VALUATION pass via the
       loop's input_mapping. INCONSISTENT (1.0) does not loop — it escalates
       via on_not_reached. max_iterations: 3 bounds the loop.
-    condition: "step_21_result > 0.0 AND step_21_result < 1.0"
+    condition: "step_20_result > 0.0 AND step_20_result < 1.0"
     input_mapping:
       loop_target: "{{ 13 }}"
-      lens_tensions: "{{ step_20_result.key_tensions | default([]) }}"
-      convergence_signal: "{{ step_21_result }}"
+      lens_tensions: "{{ step_19_result.key_tensions | default([]) }}"
+      convergence_signal: "{{ step_20_result }}"
 
-  # ── Step 24: Persist the price target for Brier calibration ──
+  # ── Step 23: Persist the price target for Brier calibration ──
   # Runs after the convergence loop exits (CONSISTENT or INCONSISTENT) and
   # only when the research was published. Persists the pre-computed PT from
   # the valuation synthesis (step 13) via forecast_persist — stores it without
@@ -722,7 +722,7 @@ steps:
   # outcome; forecast_persist accepts a pre-computed PT from the flowdef.
   # Conditioned on publication_possible so unpublished research (DROP / HALT /
   # BLOCK) doesn't pollute the forecast store.
-  - ordinal: 23
+  - ordinal: 22
     action: execute
     description: >
       PERSIST — store the valuation price target via forecast_persist MCP
@@ -730,7 +730,7 @@ steps:
       synthesis PT (step 13) and the communication gate (step 14). The
       stored forecast_id can be passed to forecast_record when the 12-month
       horizon passes to close the calibration loop. Result lands in
-      step_23_result.
+      step_22_result.
     mcp: forecast_persist
     condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
     on_failure:

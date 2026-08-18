@@ -66,7 +66,7 @@ pub enum ProvenanceTag {
 
 /// Specification for a derived field: what field it's computed from
 /// and how (the transform name, for auditability).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DerivedSpec {
     /// The sourced field this is computed from (dotted path).
     pub from: String,
@@ -76,7 +76,7 @@ pub struct DerivedSpec {
 
 /// A field's source specification: which tools can supply it, and why
 /// the contract declares this disposition.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FieldSpec {
     /// Tools that can source this field. Empty = Inferred (commissioned
     /// judgment), not Unsourced.
@@ -95,6 +95,14 @@ pub struct FieldSpec {
     /// A derivation from an Unsourced (nulled) field is itself nulled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub derived_from: Option<DerivedSpec>,
+    /// When present, the agent may transform the tool's output before
+    /// emitting it (e.g. extract a path from a JSON result). Value-matching
+    /// falls back to substring containment for strings, which is looser
+    /// but covers honest agents that do normal extraction. The transform
+    /// name documents what the agent does (e.g. "extract_path",
+    /// "normalize_url") for auditability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform: Option<String>,
 }
 
 /// A field → tool map for one agent type's structured output.
@@ -164,6 +172,7 @@ pub fn task_agent_contract() -> GroundingContract {
                   from a file-writing tool that succeeded."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     field_sources.insert(
@@ -175,6 +184,7 @@ pub fn task_agent_contract() -> GroundingContract {
                   tool call that succeeded (the test runner)."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     // Commissioned judgments — empty source list = Inferred, not Unsourced.
@@ -187,6 +197,7 @@ pub fn task_agent_contract() -> GroundingContract {
                   system prompt — the agent was asked to summarize."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     field_sources.insert(
@@ -198,6 +209,7 @@ pub fn task_agent_contract() -> GroundingContract {
                   system prompt — the agent was asked to describe its approach."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     GroundingContract {
@@ -237,6 +249,7 @@ pub fn research_agent_contract() -> GroundingContract {
                   sourced from a research or web search tool that succeeded."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     field_sources.insert(
@@ -248,6 +261,7 @@ pub fn research_agent_contract() -> GroundingContract {
                   the system prompt — the agent was asked to analyze and report."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     field_sources.insert(
@@ -259,6 +273,7 @@ pub fn research_agent_contract() -> GroundingContract {
                   system prompt — the agent was asked to summarize."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     GroundingContract {
@@ -290,6 +305,7 @@ pub fn narrator_agent_contract() -> GroundingContract {
                   the agent was asked to produce narrative content."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     field_sources.insert(
@@ -301,6 +317,7 @@ pub fn narrator_agent_contract() -> GroundingContract {
                   system prompt — the agent was asked to summarize."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     GroundingContract {
@@ -347,6 +364,7 @@ pub fn skill_agent_contract() -> GroundingContract {
                   code may fabricate file paths without actually writing files."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     field_sources.insert(
@@ -358,6 +376,7 @@ pub fn skill_agent_contract() -> GroundingContract {
                   tool call that succeeded (the test runner)."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     field_sources.insert(
@@ -369,6 +388,7 @@ pub fn skill_agent_contract() -> GroundingContract {
                   skill's template — the skill was asked to produce this."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     field_sources.insert(
@@ -380,6 +400,7 @@ pub fn skill_agent_contract() -> GroundingContract {
                   skill's template — the skill was asked to summarize."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     field_sources.insert(
@@ -391,6 +412,7 @@ pub fn skill_agent_contract() -> GroundingContract {
                   by the skill's template — the skill was asked to propose actions."
                 .to_string(),
             derived_from: None,
+            transform: None,
         },
     );
     GroundingContract {
@@ -449,6 +471,7 @@ fn is_value_sourced(
     field_value: &serde_json::Value,
     tool_calls: &[serde_json::Value],
     response_path: &str,
+    loose: bool,
 ) -> Option<String> {
     let field_values = match field_value {
         serde_json::Value::Array(arr) => arr.clone(),
@@ -472,7 +495,7 @@ fn is_value_sourced(
         };
         let all_found = field_values
             .iter()
-            .all(|fv| targets.iter().any(|t| value_contains(t, fv)));
+            .all(|fv| targets.iter().any(|t| value_contains(t, fv, loose)));
         if all_found && !field_values.is_empty() {
             return Some(tool.to_string());
         }
@@ -486,15 +509,15 @@ fn is_value_sourced(
 /// (e.g. "pass", "ok", "0") would match enormous swaths of tool output,
 /// defeating the grounding contract. This mirrors the 10-char guard in
 /// `scan_narrative_for_leak`.
-fn value_contains(haystack: &serde_json::Value, needle: &serde_json::Value) -> bool {
+fn value_contains(haystack: &serde_json::Value, needle: &serde_json::Value, loose: bool) -> bool {
     if haystack == needle {
         return true;
     }
     match haystack {
-        serde_json::Value::Array(arr) => arr.iter().any(|v| value_contains(v, needle)),
-        serde_json::Value::Object(obj) => obj.values().any(|v| value_contains(v, needle)),
+        serde_json::Value::Array(arr) => arr.iter().any(|v| value_contains(v, needle, loose)),
+        serde_json::Value::Object(obj) => obj.values().any(|v| value_contains(v, needle, loose)),
         serde_json::Value::String(s) => match needle {
-            serde_json::Value::String(n) if n.len() >= 10 => s.contains(n),
+            serde_json::Value::String(n) if loose || n.len() >= 10 => s.contains(n),
             _ => false, // short string or non-string needle: exact match only (handled above)
         },
         _ => false,
@@ -857,6 +880,7 @@ pub fn enforce_grounding(
             field_value,
             tool_calls,
             &spec.response_path,
+            spec.transform.is_some(),
         )
         .is_some()
         {
@@ -935,6 +959,7 @@ pub fn enforce_grounding(
                         value,
                         tool_calls,
                         &spec.response_path,
+                        spec.transform.is_some(),
                     ) {
                         ProvenanceTag::Sourced { tool }
                     } else if !is_claim(value) {
@@ -1403,6 +1428,7 @@ mod tests {
                       from a file-writing tool that succeeded."
                     .to_string(),
                 derived_from: None,
+                transform: None,
             },
         );
         field_sources.insert(
@@ -1417,6 +1443,7 @@ mod tests {
                     from: "deliverable_path".to_string(),
                     how: "path_extension".to_string(),
                 }),
+                transform: None,
             },
         );
         let contract = GroundingContract {
@@ -1456,6 +1483,7 @@ mod tests {
                 response_path: "".to_string(),
                 why: "A file path sourced from a file-writing tool that succeeded.".to_string(),
                 derived_from: None,
+                transform: None,
             },
         );
         field_sources.insert(
@@ -1468,6 +1496,7 @@ mod tests {
                     from: "path".to_string(),
                     how: "path_extension".to_string(),
                 }),
+                transform: None,
             },
         );
         let contract = GroundingContract {
@@ -1502,6 +1531,7 @@ mod tests {
                 response_path: "".to_string(),
                 why: "A prose summary commissioned by the system prompt.".to_string(),
                 derived_from: None,
+                transform: None,
             },
         );
         field_sources.insert(
@@ -1514,6 +1544,7 @@ mod tests {
                     from: "summary".to_string(),
                     how: "to_uppercase".to_string(),
                 }),
+                transform: None,
             },
         );
         let contract = GroundingContract {
@@ -1540,6 +1571,7 @@ mod tests {
                 response_path: "".to_string(),
                 why: "A file path sourced from a file-writing tool that succeeded.".to_string(),
                 derived_from: None,
+                transform: None,
             },
         );
         field_sources.insert(
@@ -1552,6 +1584,7 @@ mod tests {
                     from: "path".to_string(),
                     how: "path_extension".to_string(),
                 }),
+                transform: None,
             },
         );
         let contract = GroundingContract {
@@ -1588,6 +1621,7 @@ mod tests {
                     from: "path".to_string(),
                     how: "path_extension".to_string(),
                 }),
+                transform: None,
             },
         );
         let contract = GroundingContract {
@@ -1775,6 +1809,7 @@ mod tests {
             response_path: "".to_string(),
             why: "too short".to_string(),
             derived_from: None,
+            transform: None,
         };
         assert!(bad_spec.why.len() < 40);
     }
@@ -1865,6 +1900,7 @@ mod tests {
                       file-writing tool that succeeded."
                     .to_string(),
                 derived_from: None,
+                transform: None,
             },
         );
         let contract = GroundingContract {
@@ -1909,6 +1945,7 @@ mod tests {
                       file-writing tool that succeeded."
                     .to_string(),
                 derived_from: None,
+                transform: None,
             },
         );
         let contract = GroundingContract {
@@ -1947,6 +1984,7 @@ mod tests {
                       file-writing tool that succeeded."
                     .to_string(),
                 derived_from: None,
+                transform: None,
             },
         );
         let contract = GroundingContract {
@@ -2768,6 +2806,7 @@ mod tests {
                 why: "A prose summary commissioned by the system prompt.".to_string(),
                 response_path: "".to_string(),
                 derived_from: None,
+                transform: None,
             },
         );
         field_sources.insert(
@@ -2780,6 +2819,7 @@ mod tests {
                     from: "summary".to_string(),
                     how: "to_uppercase".to_string(),
                 }),
+                transform: None,
             },
         );
         field_sources.insert(
@@ -2792,6 +2832,7 @@ mod tests {
                     from: "summary_upper".to_string(),
                     how: "len".to_string(),
                 }),
+                transform: None,
             },
         );
         let contract = GroundingContract {
@@ -2840,6 +2881,7 @@ mod tests {
                 response_path: "".to_string(),
                 why: "A file path sourced from a file-writing tool that succeeded.".to_string(),
                 derived_from: None,
+                transform: None,
             },
         );
         field_sources.insert(
@@ -2852,6 +2894,7 @@ mod tests {
                     from: "path".to_string(),
                     how: "path_extension".to_string(),
                 }),
+                transform: None,
             },
         );
         let contract = GroundingContract {
@@ -2887,22 +2930,91 @@ mod tests {
         let haystack = serde_json::json!("bypassing the check");
         let short_needle = serde_json::json!("pass");
         assert!(
-            !value_contains(&haystack, &short_needle),
+            !value_contains(&haystack, &short_needle, false),
             "short needle must not match via substring"
         );
         // Exact match still works for short strings.
         let exact = serde_json::json!("pass");
-        assert!(value_contains(&exact, &short_needle));
+        assert!(value_contains(&exact, &short_needle, false));
         // Long needle (>= 10 chars) uses substring containment.
         let long_haystack = serde_json::json!("the quick brown fox jumps");
         let long_needle = serde_json::json!("quick brown");
-        assert!(value_contains(&long_haystack, &long_needle));
+        assert!(value_contains(&long_haystack, &long_needle, false));
         // Short needle inside an array — still no substring match.
         let arr_haystack = serde_json::json!(["bypassing", "ok"]);
-        assert!(!value_contains(&arr_haystack, &short_needle));
+        assert!(!value_contains(&arr_haystack, &short_needle, false));
         // But exact match inside an array works.
         let arr_exact = serde_json::json!(["pass", "fail"]);
-        assert!(value_contains(&arr_exact, &short_needle));
+        assert!(value_contains(&arr_exact, &short_needle, false));
+    }
+
+    #[test]
+    fn sourced_field_with_transform_hint_matches_extracted_value() {
+        // The transform hint: an agent that legitimately runs a tool but
+        // transforms the output before emitting it (e.g. extracts a short
+        // value from a longer string) should be marked Sourced, not
+        // Unsourced. Without the hint, short values (< 10 chars) require
+        // exact equality — a transformed value won't match. With the hint,
+        // substring matching is used for ALL string lengths.
+        //
+        // Example: the agent emits test_verdict: "pass" and the tool return
+        // contains "passed: 3 tests". Without the transform hint, "pass"
+        // (4 chars) requires exact equality, which fails. With the hint,
+        // substring matching is used, which matches.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "test_verdict".to_string(),
+            FieldSpec {
+                sources: vec!["zed/terminal".to_string()],
+                response_path: "".to_string(),
+                why: "A pass/fail claim about tests. Must be sourced from a terminal \
+                      tool call that succeeded (the test runner)."
+                    .to_string(),
+                derived_from: None,
+                transform: Some("extract_verdict".to_string()),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({"test_verdict": "pass"});
+        let tool_calls = vec![tool_call_with_result(
+            "zed/terminal",
+            json!("passed: 3 tests ran, 0 failed"),
+        )];
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(
+            result.nulled_fields.is_empty(),
+            "with transform hint, short extracted value must match: {:?}",
+            result.nulled_fields
+        );
+        assert_eq!(cleaned["test_verdict"], "pass");
+        match &result.provenance["test_verdict"] {
+            ProvenanceTag::Sourced { tool } => {
+                assert_eq!(tool, "zed/terminal");
+            }
+            other => panic!("expected Sourced, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sourced_field_without_transform_hint_does_not_match_short_substring() {
+        // Without the transform hint, a short value (< 10 chars) that is a
+        // substring of a tool return must NOT match — this is the existing
+        // 10-char guard, preserved when loose matching is off.
+        let contract = task_agent_contract();
+        let output = json!({"test_verdict": "pass"});
+        let tool_calls = vec![tool_call_with_result(
+            "zed/terminal",
+            json!("passed: 3 tests ran, 0 failed"),
+        )];
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(
+            result.nulled_fields.contains(&"test_verdict".to_string()),
+            "without transform hint, short substring must not match (10-char guard)"
+        );
+        assert!(cleaned["test_verdict"].is_null());
     }
 
     #[test]

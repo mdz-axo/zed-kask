@@ -313,12 +313,28 @@ impl AgentExecutor {
                             .await
                         {
                             Ok(value) => {
-                                let text = serde_json::to_string(&value)
-                                    .unwrap_or_else(|_| value.to_string());
+                                // Cap large string returns to prevent unbounded
+                                // memory growth in the tool_calls summary. The
+                                // grounding check only needs to find short
+                                // field values (paths, URLs, verdicts) in the
+                                // result — a 64KB prefix is sufficient. Object
+                                // and array returns are typically structured
+                                // and small enough; only raw string returns
+                                // (file contents, terminal output) grow large.
+                                let capped = match &value {
+                                    serde_json::Value::String(s) if s.len() > 64 * 1024 => {
+                                        serde_json::Value::String(
+                                            s.chars().take(64 * 1024).collect(),
+                                        )
+                                    }
+                                    _ => value,
+                                };
+                                let text = serde_json::to_string(&capped)
+                                    .unwrap_or_else(|_| capped.to_string());
                                 let summary = serde_json::json!({
                                     "tool": qualified,
                                     "ok": true,
-                                    "result": value,
+                                    "result": capped,
                                 });
                                 (
                                     format!("Tool call '{qualified}' returned:\n{text}"),

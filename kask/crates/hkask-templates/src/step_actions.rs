@@ -616,11 +616,26 @@ impl StepMachine {
         // before the `?` so both success and failure paths are captured.
         // On failure, `result` is absent (a failed call supplied no data).
         let summary = match &tool_result {
-            Ok(value) => serde_json::json!({
-                "tool": mcp_ref_for_tracking,
-                "ok": true,
-                "result": value,
-            }),
+            Ok(value) => {
+                // Cap large string returns to prevent unbounded memory
+                // growth in the tool_calls summary. The grounding
+                // check only needs to find short field values (paths,
+                // URLs, verdicts) in the result — a 64KB prefix is
+                // sufficient. Only raw string returns (file contents,
+                // terminal output) grow large; structured returns are
+                // typically small enough.
+                let capped = match value {
+                    serde_json::Value::String(s) if s.len() > 64 * 1024 => {
+                        serde_json::Value::String(s.chars().take(64 * 1024).collect())
+                    }
+                    _ => value.clone(),
+                };
+                serde_json::json!({
+                    "tool": mcp_ref_for_tracking,
+                    "ok": true,
+                    "result": capped,
+                })
+            }
             Err(_) => serde_json::json!({
                 "tool": mcp_ref_for_tracking,
                 "ok": false,
@@ -825,11 +840,21 @@ impl StepMachine {
                 &self.context,
             );
             let summary = match result {
-                Ok(value) => serde_json::json!({
-                    "tool": rendered,
-                    "ok": true,
-                    "result": value,
-                }),
+                Ok((_, value)) => {
+                    // Cap large string returns (same logic as
+                    // execute_tool_invoke). See that function for rationale.
+                    let capped = match value {
+                        serde_json::Value::String(s) if s.len() > 64 * 1024 => {
+                            serde_json::Value::String(s.chars().take(64 * 1024).collect())
+                        }
+                        _ => value.clone(),
+                    };
+                    serde_json::json!({
+                        "tool": rendered,
+                        "ok": true,
+                        "result": capped,
+                    })
+                }
                 Err(_) => serde_json::json!({
                     "tool": rendered,
                     "ok": false,
