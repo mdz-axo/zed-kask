@@ -905,8 +905,6 @@ steps:
         gradient_checkpointing: 'true'
         bf16: true
         eval_split_ratio: 0.0012
-gas:
-  cap: 500000
 rjoule:
   cap: 5
 convergence:

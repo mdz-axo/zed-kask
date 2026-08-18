@@ -1445,7 +1445,7 @@ fn extract_final_step_result(outcome: &CascadeOutcome) -> String {
 /// The on-disk format wraps the header fields (`id`, `name`, `description`,
 /// `version`, `editor`, `visibility`, `functional_role`, `category`,
 /// `enforce_inputs`) under a `manifest:` key, with `steps`, `skills`,
-/// `conflicts`, `complementarities`, `convergence`, `gas`, `rjoule`,
+/// `conflicts`, `complementarities`, `convergence`, `rjoule`,
 /// `error_handling`, `ledger`, `audit`, `inputs`, `principles` as siblings.
 ///
 /// This is the inverse of the flattening `load_manifest_from_yaml` performs
@@ -1473,7 +1473,6 @@ fn reshape_composite_to_manifest_file(composite: &serde_json::Value) -> serde_js
         "conflicts",
         "complementarities",
         "convergence",
-        "gas",
         "rjoule",
         "error_handling",
         "ledger",
@@ -1680,6 +1679,7 @@ mod tests {
         outcome.tool_calls = vec![json!({
             "tool": "zed/write_file",
             "ok": true,
+            "result": {"path": "/src/new_file.rs"}
         })];
 
         let raw_value = hkask_templates::extract_final_step_result(&outcome);
@@ -1761,8 +1761,7 @@ mod tests {
             "visibility": "Public",
             "steps": [{"ordinal": 1, "action": "know", "description": "step 1"}],
             "skills": [{"id": "skill-a", "polarity": "proposer", "manifest_ref": "skill-a", "content_hash": "abc"}],
-            "convergence": {"max_iterations": 3, "threshold": 0.1, "convergence_field": "score"},
-            "gas": {"cap": 10000}
+            "convergence": {"max_iterations": 3, "threshold": 0.1, "convergence_field": "score"}
         });
 
         let reshaped = reshape_composite_to_manifest_file(&composite);
@@ -1786,7 +1785,6 @@ mod tests {
         assert!(reshaped.get("steps").is_some());
         assert!(reshaped.get("skills").is_some());
         assert!(reshaped.get("convergence").is_some());
-        assert!(reshaped.get("gas").is_some());
     }
 
     /// The reshape must not leak header fields to the top level (would
@@ -1863,8 +1861,7 @@ mod tests {
                 "manifest_ref": "skill-a",
                 "content_hash": "abc123"
             }],
-            "convergence": {"max_iterations": 3, "threshold": 0.1, "convergence_field": "score"},
-            "gas": {"cap": 10000}
+            "convergence": {"max_iterations": 3, "threshold": 0.1, "convergence_field": "score"}
         });
 
         let reshaped = reshape_composite_to_manifest_file(&composite);

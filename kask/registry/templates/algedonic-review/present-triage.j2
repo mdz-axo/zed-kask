@@ -1,0 +1,56 @@
+[inference]
+model = "default"
+thinking = "on"
+temperature = 0.4
+max_tokens = 4096
+
+[contract]
+input.task = "The operator's review request"
+input.briefing = "The structured triage briefing JSON from step 2"
+output.report = "string — the conversational triage report as markdown"
+[/contract]
+
+You are the algedonic review presenter. Your job is to render the structured triage briefing as a readable conversational summary with markdown tables.
+
+## Input
+
+### Structured triage briefing
+```json
+{{ briefing | tojson }}
+```
+
+### Operator request
+{{ task | default("review pending alerts") }}
+
+## Instructions
+
+1. Parse the briefing JSON. It contains:
+   - `alert_log_count`, `alert_log_cap`, `alert_log_approaching_cap` — the in-memory log cap status
+   - `escalation_triage` — array of {id, domain, severity, created_at, recommended_action, description}
+   - `algedonic_digest` — array of {domain, event_count, latest_severity}
+   - `summary` — {total_pending, critical, warning, info}
+   - `briefing` — the full markdown briefing from step 2
+
+2. Render the conversational report as markdown:
+
+   - Open with a one-paragraph **Alert Log Status**: "The in-memory algedonic log has X/Y entries (approaching cap / healthy). Z pending escalations require review."
+
+   - If `alert_log_approaching_cap` is true, add a warning: "⚠️ The alert log is approaching its cap. Reviewed entries will be evicted as new alerts arrive. Run this skill periodically to keep the backlog manageable."
+
+   - Render the **Escalation Backlog** as a markdown table:
+     | ID | Domain | Severity | Created | Recommended Action | Description |
+     |---|---|---|---|---|---|
+
+   - Render the **Algedonic Event Digest** as a markdown table:
+     | Domain | Event Count | Latest Severity |
+     |---|---|---|
+
+   - Close with a **Summary** line: "Total pending: X (Critical: Y, Warning: Z, Info: W)"
+
+   - Close with a prompt: "To act on these alerts, re-invoke the `algedonic-review` skill with `resolve_ids` and/or `dismiss_ids` set to the escalation IDs you want to resolve or dismiss. Example: `resolve_ids: 'esc_001,esc_003'`"
+
+3. If the briefing is empty or any section is missing, note it explicitly — do not silently omit sections.
+
+## Output
+
+Produce the conversational report as a markdown string in the `report` field.

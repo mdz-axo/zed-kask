@@ -74,7 +74,7 @@ Generate at least one `.j2` template with:
 Template types (Pattern A):
 - **KnowAct**: Cognitive/reasoning steps — rendered `.j2` + inference + JSON parse (default for agent companion skills)
 - **WordAct**: Deterministic text transformation — rendered `.j2` without inference (format, extract, compress)
-- **FlowDef**: Multi-step workflow orchestration — `.yaml` sub-manifest with its own steps, gas, and convergence
+- **FlowDef**: Multi-step workflow orchestration — `.yaml` sub-manifest with its own steps, rJoule, and convergence
 - **RenderAct**: Reference content — rendered `.j2` or `.yaml` without inference (macros, reference docs)
 
 ## Step 1b: Build the Process Manifest (registry/manifests/<skill-name>.yaml)
@@ -103,12 +103,6 @@ convergence:
   convergence_field: step_N_result.convergence_metric  # last step's convergence field
   on_not_reached: escalate  # "abort" or "escalate"
 
-gas:
-  cap: 50000               # proportional to step count: 5000-10000 simple, 50000-150000 multi-step, 100000+ media
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
-
 rjoule:
   cap: 2                   # proportional to inference calls: 1-2 simple, 3-5 multi-step, 5+ media. 0 if no inference.
   alert_threshold: 0.8
@@ -120,7 +114,6 @@ steps:
     description: <what this step does>
     renderer: minijinja
     template_ref: <skill-name>/<template-name>
-    gas_cap: 3000
     timeout_seconds: 30
     input_mapping:
       <param>: "{{ <param> }}"
@@ -130,7 +123,6 @@ steps:
     description: <convergence check description>
     renderer: minijinja
     template_ref: <skill-name>/<convergence-check>
-    gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
       primary_result: "{{ step_1_result }}"
@@ -172,14 +164,14 @@ ledger:
 | `abort` | Control Flow | Exit with success (converged) |
 | `escalate` | Control Flow | Exit with error (blocked) |
 
-### Gas/rJoule Budget Guidelines
+### rJoule Budget Guidelines
 
-| Skill complexity | Step count | gas.cap | rjoule.cap |
-|-----------------|-----------|---------|------------|
-| Simple KnowAct | 1-3 | 5,000-10,000 | 1-2 |
-| Multi-step FlowDef | 4-7 | 50,000-150,000 | 3-5 |
-| Media generation | 5+ | 100,000+ | 5+ |
-| Infrastructure (no inference) | any | 10,000-50,000 | 0 |
+| Skill complexity | Step count | rjoule.cap |
+|-----------------|-----------|------------|
+| Simple KnowAct | 1-3 | 1-2 |
+| Multi-step FlowDef | 4-7 | 3-5 |
+| Media generation | 5+ | 5+ |
+| Infrastructure (no inference) | any | 0 |
 
 ## Step 2: Derive SKILL.md Companion
 
@@ -246,7 +238,6 @@ Respond with a JSON object:
     "contract_valid": true,
     "vocabulary_coverage": true,
     "actions_canonical": true,
-    "gas_block_present": true,
     "rjoule_block_present": true,
     "convergence_block_present": true
   }
@@ -260,7 +251,7 @@ Respond with a JSON object:
 - Every .j2 template must have a valid `[inference]` frontmatter with template_type in {WordAct, KnowAct, FlowDef, RenderAct}.
 - Every .j2 template must have a contract with structured input and output types.
 - Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate).
-- The process manifest must have a `gas:` block with `cap > 0`.
+- The process manifest must have a `rjoule:` block with `cap > 0` if any step uses `action: select` (inference).
 - The process manifest must have an `rjoule:` block with `cap > 0` if any step uses `action: select` (inference).
 - The process manifest must have a `convergence:` block with threshold, max_iterations, min_iterations, convergence_field, and on_not_reached.
 - The process manifest must have a `ledger:` block with `span_namespace: reg.skill.<manifest.id>` (CI-enforced). The `spans:` list is abolished — do not add it.

@@ -1,0 +1,58 @@
+[inference]
+model = "default"
+thinking = "on"
+temperature = 0.2
+max_tokens = 4096
+
+[contract]
+input.task = "The operator's review request"
+input.resolve_ids = "Comma-separated escalation IDs to resolve"
+input.dismiss_ids = "Comma-separated escalation IDs to dismiss"
+input.resolution_note = "Resolution note for each resolved/dismissed escalation"
+input.briefing = "The structured triage briefing JSON from step 2"
+output.decisions_executed = "boolean — true if any resolve/dismiss calls were made"
+output.resolved = "array of {id, success, error}"
+output.dismissed = "array of {id, success, error}"
+output.summary = "string — one-line summary of what was executed"
+output.tool_calls = "array of MCP tool call instructions for the agent to execute"
+[/contract]
+
+You are the algedonic review decision executor. Your job is to produce a structured list of MCP tool calls for the operator's resolve/dismiss decisions.
+
+## Inputs
+
+### Resolve IDs
+{{ resolve_ids | default("") }}
+
+### Dismiss IDs
+{{ dismiss_ids | default("") }}
+
+### Resolution note
+{{ resolution_note | default("reviewed via algedonic-review skill") }}
+
+### Triage briefing (for context)
+```json
+{{ briefing | tojson }}
+```
+
+## Instructions
+
+1. Parse `resolve_ids` and `dismiss_ids` (comma-separated strings). If both are empty, this is a first-pass review — produce a "no decisions to execute" result.
+
+2. For each ID in `resolve_ids`, produce an MCP tool call instruction:
+   - tool: `curator_escalation_resolve`
+   - input: `{"id": "<escalation_id>", "resolution": "<resolution_note>"}`
+
+3. For each ID in `dismiss_ids`, produce an MCP tool call instruction:
+   - tool: `curator_escalation_dismiss`
+   - input: `{"id": "<escalation_id>", "reason": "<resolution_note>"}`
+
+4. The `tool_calls` array contains these instructions. The agent executing this skill will make the actual MCP calls based on these instructions.
+
+5. Set `decisions_executed` to `true` if any tool calls were produced, `false` otherwise.
+
+6. Produce a one-line summary: "Resolved X escalations, dismissed Y escalations" or "No decisions to execute (first-pass review)".
+
+## Output
+
+Produce a JSON object with the fields defined in the contract above. The `tool_calls` field is an array of {tool, input, id} objects — the agent will execute each as an MCP tool call.

@@ -28,11 +28,11 @@ an issue in an upstream non-D-seam file, report it with `deferred: true` and
 `deferred_reason: "upstream non-D-seam"`.
 
 ## Priority surfaces (OWASP LLM Top-10 2025, MITRE ATLAS v5.1, NIST SSDF SP 800-218A)
-1. MCP runtime gate — `McpRuntime::invoke`: OCAP capability match + gas, fail-closed. Verify token expiry is NOT enforced.
+1. MCP runtime gate — `McpRuntime::invoke`: per-tick call ceiling / runaway-loop breaker, fail-closed. Verify no per-call authorization gate remains (removed RR-0056).
 2. Credential/config scoping per MCP server — each `BuiltinMcpServer` uses `Some(&[])` minimum (not `None`); allowlist content aligns with what the server reads.
 3. `AnyJsonValue` vs `serde_json::Value` in MCP tool input structs (schemars renders `Value` as bare `true`).
 4. `unwrap_or(0)` on regulation-loop sense inputs.
-5. Inference IPC dispatch — delegated-tool allowlist enforced before token mint; gas fail-closed for unbudgeted agents.
+5. Inference IPC dispatch — delegated-tool allowlist enforced before dispatch; per-tick call ceiling for unbudgeted agents.
 6. Marketplace signing — Ed25519 verify + expiry window, fail-closed.
 7. `input_mapping` taint propagation before `context.insert`.
 8. MCP tool error classification — per-variant, not blanket `McpToolError::internal`.
@@ -65,14 +65,13 @@ severity). Do not hunt for the phantom's enforcement point.
   ],
   "defense_layer_coverage": {
     "layers": [
-      { "id": 1, "name": "McpRuntime invoke gate", "status": "covered|missing", "enforcement_point": "path:line", "notes": "..." },
+      { "id": 1, "name": "McpRuntime invoke gate", "status": "...", "enforcement_point": "path:line", "notes": "..." },
       { "id": 2, "name": "Per-agent mcp_tools allowlist", "status": "...", "enforcement_point": "..." },
-      { "id": 3, "name": "Gas gate", "status": "...", "enforcement_point": "..." },
-      { "id": 4, "name": "Credential scoping per MCP server", "status": "...", "enforcement_point": "..." },
-      { "id": 5, "name": "Schema validation (AnyJsonValue)", "status": "...", "enforcement_point": "..." },
-      { "id": 6, "name": "Signing / expiry (marketplace)", "status": "...", "enforcement_point": "..." },
-      { "id": 7, "name": "Taint propagation / IFC (FIDES)", "status": "...", "enforcement_point": "..." },
-      { "id": 8, "name": "Error classification (per-variant)", "status": "...", "enforcement_point": "..." }
+      { "id": 3, "name": "Credential scoping per MCP server", "status": "...", "enforcement_point": "..." },
+      { "id": 4, "name": "Schema validation (AnyJsonValue)", "status": "...", "enforcement_point": "..." },
+      { "id": 5, "name": "Signing / expiry (marketplace)", "status": "...", "enforcement_point": "..." },
+      { "id": 6, "name": "Taint propagation / IFC (FIDES)", "status": "...", "enforcement_point": "..." },
+      { "id": 7, "name": "Error classification (per-variant)", "status": "...", "enforcement_point": "..." }
     ],
     "verdict": "Pass|Conditional|Fail"
   }

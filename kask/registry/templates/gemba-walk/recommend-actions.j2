@@ -18,7 +18,7 @@ visibility: Public
 
    Recommendation types (from the gemba loop spec Phase 4: Decide):
    - curator_directive: adjust a threshold or energy budget for a skill
-     (e.g. raise the gas cap for a skill that keeps hitting hard_limit)
+     (e.g. raise the rJoule cap for a skill that keeps hitting hard_limit)
    - skill-maintenance: refine a skill's manifest or templates (e.g. fix
      a template that produces malformed JSON)
    - validate_golden_outputs: run golden-output validation for a skill
@@ -61,19 +61,19 @@ of recommendation objects:
   {
     "skill_id": "...",
     "action_type": "curator_directive | skill-maintenance | validate_golden_outputs | direct_edit | no_action",
-    "target": "What to change (e.g. 'gas cap for superforecasting', 'template_ref in step 3 of scenario-builder')",
+    "target": "What to change (e.g. 'rJoule cap for superforecasting', 'template_ref in step 3 of scenario-builder')",
     "rationale": "Why this action — grounded in the briefing signals (issue count, failure patterns, health classification)",
-    "specific_change": "The concrete change proposed (e.g. 'raise gas.cap from 100000 to 150000', 'fix the JSON schema in synthesize-briefing.j2')",
+    "specific_change": "The concrete change proposed (e.g. 'raise rjoule.cap from 2 to 5', 'fix the JSON schema in synthesize-briefing.j2')",
     "priority": "high | medium | low",
-    "operator_instruction": "What the operator should do to execute this (e.g. 'Issue a curator_directive to raise the gas cap', 'Run skill-maintenance on the scenario-builder manifest')"
+    "operator_instruction": "What the operator should do to execute this (e.g. 'Issue a curator_directive to raise the rJoule cap', 'Run skill-maintenance on the scenario-builder manifest')"
   }
 ]
 ```
 
 ## Recommendation Selection Rules
 
-- **curator_directive**: Propose when a skill is hitting energy/gas limits
-  (e.g. the briefing shows repeated gas-exceeded errors) or when a
+- **curator_directive**: Propose when a skill is hitting energy/rJoule limits
+  (e.g. the briefing shows repeated rJoule-exceeded errors) or when a
   threshold needs adjustment (e.g. the drift detector is too sensitive).
   The directive adjusts the regulation loop's parameters, not the skill
   itself.

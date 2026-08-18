@@ -25,12 +25,6 @@ pub(crate) const DEFAULT_EXPECTED_VARIETY: u64 = 10;
 /// log before oldest entries are evicted. Bounds memory growth in long-running
 /// sessions — the log is a diagnostic ring buffer, not an audit archive
 /// (escalated alerts are persisted to the `EscalationQueue` for durable review).
-/// When the log reaches this cap, the cybernetics loop emits an
-/// `AlgedonicLogApproachingCap` signal so the operator (or the
-/// `algedonic-review` skill) can review and clear reviewed entries before
-/// they are evicted unread.
-pub(crate) const DEFAULT_MAX_ALERTS: usize = 200;
-
 /// Fraction of `max_alerts` at which the approaching-cap signal fires.
 /// 0.8 → 160 of 200. Gives the operator a window to review before eviction.
 pub(crate) const ALERT_CAP_APPROACHING_FRACTION: f64 = 0.8;
@@ -216,8 +210,13 @@ pub(crate) struct AlgedonicManager {
 }
 
 impl AlgedonicManager {
+    #[allow(dead_code)]
     pub(crate) fn new(threshold: u64, default_expected_variety: u64) -> Self {
-        Self::with_max_alerts(threshold, default_expected_variety, DEFAULT_MAX_ALERTS)
+        Self::with_max_alerts(
+            threshold,
+            default_expected_variety,
+            crate::set_points::DEFAULT_MAX_ALERTS,
+        )
     }
 
     /// Construct with a custom alert-log cap. Used by `with_set_points` to
@@ -510,7 +509,7 @@ mod tests {
     // independently, so a deficit in one domain does not suppress alerts in another.
     #[test]
     fn algedonic_manager_accumulates_alerts_across_domains() {
-        let mut mgr = AlgedonicManager::new(100, 10);
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
 
         // Domain A: low variety (5 distinct states, expected 10 → deficit 5)
         let mut tracker_a = VarietyTracker::new();
@@ -540,7 +539,7 @@ mod tests {
     // < 0.50 → Warning, ≥ 0.50 → healthy (no alert).
     #[test]
     fn check_outcome_classifies_success_rate_correctly() {
-        let mut mgr = AlgedonicManager::new(100, 10);
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
 
         // Critical: 20% success rate (80% failure)
         let alert = mgr.check_outcome("test_domain", 0.20, 10);
@@ -563,7 +562,7 @@ mod tests {
 
     #[test]
     fn check_outcome_alert_message_includes_domain_and_rate() {
-        let mut mgr = AlgedonicManager::new(100, 10);
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
         let alert = mgr.check_outcome("hkask-mcp-research", 0.15, 20).unwrap();
         assert!(alert.message.contains("hkask-mcp-research"));
         assert!(alert.message.contains("15.0%"));
@@ -573,7 +572,7 @@ mod tests {
 
     #[test]
     fn check_outcome_domain_prefixed_with_outcome() {
-        let mut mgr = AlgedonicManager::new(100, 10);
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
         let alert = mgr.check_outcome("tool", 0.10, 10).unwrap();
         assert!(alert.domain.starts_with("outcome:"));
         assert!(alert.domain.contains("tool"));
@@ -581,7 +580,7 @@ mod tests {
 
     #[test]
     fn set_outcome_thresholds_overrides_defaults() {
-        let mut mgr = AlgedonicManager::new(100, 10);
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
         // Set custom thresholds: warning at 0.80, critical at 0.60
         mgr.set_outcome_thresholds(0.80, 0.60);
 
@@ -606,6 +605,135 @@ mod tests {
         assert!(
             alert.is_none(),
             "85% should be healthy with custom thresholds"
+        );
+    }
+
+    // ── Alert cap tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn alert_log_caps_at_max_alerts() {
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 5);
+        let mut tracker = VarietyTracker::new();
+        tracker.increment("state");
+
+        // Push 10 alerts into a cap-5 log.
+        for _ in 0..10 {
+            mgr.check(&tracker, "domain");
+        }
+
+        // The log must not exceed the cap.
+        assert_eq!(mgr.alert_count(), 5, "log must cap at max_alerts");
+        assert_eq!(mgr.max_alerts(), 5);
+    }
+
+    #[test]
+    fn alert_log_evicts_oldest_on_overflow() {
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 3);
+
+        // Push 4 alerts — the first should be evicted.
+        for i in 0..4 {
+            let mut t = VarietyTracker::new();
+            t.increment(&format!("state_{i}"));
+            mgr.check(&t, &format!("domain_{i}"));
+        }
+
+        // The log should have the last 3 alerts (domains 1, 2, 3).
+        assert_eq!(mgr.alert_count(), 3);
+        let domains: Vec<&str> = mgr.alerts().iter().map(|a| a.domain.as_str()).collect();
+        assert!(
+            !domains.contains(&"domain_0"),
+            "oldest alert must be evicted"
+        );
+        assert!(
+            domains.contains(&"domain_3"),
+            "newest alert must be retained"
+        );
+    }
+
+    #[test]
+    fn log_approaching_cap_fires_at_80_percent() {
+        // Cap = 10, approaching threshold = 8 (80%).
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 10);
+        let mut tracker = VarietyTracker::new();
+        tracker.increment("state");
+
+        // 7 alerts → not approaching (7 < 8).
+        for _ in 0..7 {
+            mgr.check(&tracker, "domain");
+        }
+        assert!(!mgr.log_approaching_cap(), "7/10 should not be approaching");
+
+        // 8th alert → approaching (8 >= 8).
+        mgr.check(&tracker, "domain");
+        assert!(mgr.log_approaching_cap(), "8/10 should be approaching");
+    }
+
+    #[test]
+    fn clear_reviewed_retains_unresolved_critical() {
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
+
+        // Push a mix: Info, Warning, escalated Critical, un-escalated Critical.
+        let info = RuntimeAlert {
+            domain: "info_domain".to_string(),
+            deficit: 10,
+            threshold: 100,
+            severity: AlertSeverity::Info,
+            escalated: false,
+            timestamp: Utc::now(),
+            message: "info".to_string(),
+        };
+        let warning = RuntimeAlert {
+            domain: "warning_domain".to_string(),
+            deficit: 60,
+            threshold: 100,
+            severity: AlertSeverity::Warning,
+            escalated: false,
+            timestamp: Utc::now(),
+            message: "warning".to_string(),
+        };
+        let escalated_critical = RuntimeAlert {
+            domain: "escalated_critical".to_string(),
+            deficit: 150,
+            threshold: 100,
+            severity: AlertSeverity::Critical,
+            escalated: true,
+            timestamp: Utc::now(),
+            message: "escalated critical".to_string(),
+        };
+        let unresolved_critical = RuntimeAlert {
+            domain: "unresolved_critical".to_string(),
+            deficit: 150,
+            threshold: 100,
+            severity: AlertSeverity::Critical,
+            escalated: false,
+            timestamp: Utc::now(),
+            message: "unresolved critical".to_string(),
+        };
+        mgr.push_alert(info);
+        mgr.push_alert(warning);
+        mgr.push_alert(escalated_critical);
+        mgr.push_alert(unresolved_critical);
+
+        // Clear reviewed — retain unresolved Critical (not escalated).
+        mgr.clear_reviewed(true);
+
+        // Only the unresolved Critical should survive.
+        assert_eq!(mgr.alert_count(), 1);
+        assert_eq!(mgr.alerts()[0].domain, "unresolved_critical");
+    }
+
+    #[test]
+    fn clear_reviewed_false_clears_all() {
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
+        let mut tracker = VarietyTracker::new();
+        tracker.increment("state");
+        mgr.check(&tracker, "domain");
+        assert!(!mgr.alerts().is_empty());
+
+        mgr.clear_reviewed(false);
+        assert!(
+            mgr.alerts().is_empty(),
+            "retain_unresolved=false must clear all"
         );
     }
 }

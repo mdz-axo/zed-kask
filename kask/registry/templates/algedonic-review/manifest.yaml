@@ -1,0 +1,37 @@
+# Template manifest for algedonic-review skill.
+# Each template is a Jinja2 file rendered by the ManifestExecutor.
+
+templates:
+  - name: triage-briefing
+    type: KnowAct
+    file: triage-briefing.j2
+    description: >
+      Structure the alert backlog into a triage list with per-alert severity,
+      domain, and recommended action.
+    generates_spans:
+      - reg.algedonic_review.triage
+
+  - name: present-triage
+    type: WordAct
+    file: present-triage.j2
+    description: >
+      Render the triage list as a conversational summary with markdown tables.
+    generates_spans:
+      - reg.algedonic_review.present
+
+  - name: execute-decisions
+    type: KnowAct
+    file: execute-decisions.j2
+    description: >
+      Produce a structured list of resolve/dismiss calls for operator-confirmed
+      decisions.
+    generates_spans:
+      - reg.algedonic_review.execute
+
+  - name: verify-cleared
+    type: WordAct
+    file: verify-cleared.j2
+    description: >
+      Summarize what was resolved, dismissed, and what remains pending.
+    generates_spans:
+      - reg.algedonic_review.verify

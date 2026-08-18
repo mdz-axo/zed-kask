@@ -1,0 +1,291 @@
+# Algedonic Review Process Manifest
+# ℏKask v0.36.0 — Human-in-the-loop review and triage of the algedonic alert backlog.
+#
+# Implements the Observe → Decide → Act phases of the gemba loop for the
+# algedonic alert subsystem. The cybernetics loop escalates alerts to a
+# durable review queue (EscalationQueue on curator.db); this skill reviews
+# that queue, synthesizes a triage briefing, and guides the operator through
+# resolving or dismissing each alert.
+#
+# Design references:
+# - Beer's Viable System Model — algedonic signals are the S1→S5 escalation
+#   path (System 1 pain → System 5 executive attention).
+# - Ashby's Law — the alert backlog is the variety the regulator could not
+#   absorb autonomously; human review is the external variety amplifier.
+# - Conant-Ashby theorem — the triage briefing is the operator's model of
+#   the regulation system's state.
+# - Toyota Andon cord — algedonic alerts are the digital Andon; this skill
+#   is the structured response (not just acknowledgment).
+#
+# The skill calls existing curator MCP tools (curator_escalations,
+# curator_algedonic_log, curator_status, curator_escalation_resolve,
+# curator_escalation_dismiss). The in-memory algedonic log is a capped ring
+# buffer (default 200) that self-evicts; this skill reviews the durable
+# escalation queue, which is the actionable backlog.
+
+manifest:
+  id: algedonic-review
+  category: skill
+  name: Algedonic Review
+  description: >
+    Human-in-the-loop review and triage of the algedonic alert backlog.
+    Queries pending escalations, the algedonic event log, and system health,
+    then synthesizes a structured triage briefing with per-alert severity,
+    domain, and recommended action (resolve, dismiss, investigate,
+    escalate-to-human). The operator reviews and acts on each alert, closing
+    the feedback loop. Invoked when the algedonic log approaches its cap or
+    on operator demand.
+  functional_role: flowdef
+  version: "0.36.0"
+  editor: curator-or-human-admin
+  visibility: Public
+  enforce_inputs: true
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.05
+  cauchy_window: 2
+  max_iterations: 3
+  min_iterations: 1
+  on_not_reached: escalate
+  target_artifacts_field: "triage_complete"
+
+
+rjoule:
+  cap: 5
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: task
+    type: string
+    required: false
+    description: >
+      The operator's review request (e.g. "review pending alerts" or
+      "triage the backlog"). Carried as context so templates can reference
+      the operator's intent.
+  - name: algedonic_hours
+    type: integer
+    required: false
+    description: >
+      Lookback window for the algedonic event log (hours). Default 24.
+  - name: resolve_ids
+    type: string
+    required: false
+    description: >
+      Comma-separated escalation IDs the operator has reviewed and wants to
+      resolve (e.g. "esc_001,esc_003"). Empty on the first pass — the skill
+      presents the backlog, the operator reviews, then re-invokes with
+      resolve_ids set.
+  - name: dismiss_ids
+    type: string
+    required: false
+    description: >
+      Comma-separated escalation IDs the operator has reviewed and wants to
+      dismiss as not actionable. Empty on the first pass.
+  - name: resolution_note
+    type: string
+    required: false
+    description: >
+      Optional resolution note appended to each resolved/dismissed escalation.
+      Default "reviewed via algedonic-review skill".
+
+ledger:
+  span_namespace: reg.skill.algedonic-review
+  emit_spans: true
+  telemetry_namespace: hkask.template.algedonic-review
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+
+steps:
+  # ── SENSE: Query alert backlog and system health concurrently ───────
+  # Three independent curator queries run concurrently via mcp_batch.
+  # Results are keyed by escalations, algedonic, and status in step_1_result.
+  - ordinal: 1
+    action: execute
+    description: >
+      Query three independent curator signal channels concurrently via
+      mcp_batch: pending escalations, algedonic event log (24h lookback),
+      and curator status (alert log count, approaching cap, critical alerts).
+      All three are independent inputs to the triage synthesis. Results are
+      keyed by escalations, algedonic, and status in step_1_result.
+    mcp_batch:
+      - mcp: curator_escalations
+        key: escalations
+        input_mapping: {}
+      - mcp: curator_algedonic_log
+        key: algedonic
+        input_mapping:
+          hours: "{{ algedonic_hours | default(24) }}"
+      - mcp: curator_status
+        key: status
+        input_mapping: {}
+    timeout_seconds: 60
+    on_failure:
+      action: report
+      resume: >
+        One or more curator signal channel queries failed. The curator MCP
+        server may be down or partially degraded. The triage synthesis
+        proceeds with whichever results are available; missing channels are
+        noted as gaps. Check curator_status and retry.
+
+  # ── TRIAGE: Synthesize the structured triage briefing ───────────────
+  # Structure the alerts into a triage list with per-alert severity,
+  # domain, and recommended action.
+  - ordinal: 2
+    action: select
+    description: >
+      Synthesize the three signal channels (escalations, algedonic, status)
+      into a structured triage briefing. The briefing has four sections:
+      (1) alert log cap status (count/cap, approaching flag), (2) escalation
+      backlog triage table with per-alert severity, domain, created_at,
+      recommended action (resolve, dismiss, investigate, escalate_to_human),
+      and a one-line description, (3) algedonic event digest (recent events
+      grouped by domain), (4) summary counts (total pending, critical,
+      warning, info). The briefing explicitly notes when the alert log is
+      approaching its cap — the operator should act before eviction.
+    renderer: minijinja
+    template_ref: algedonic-review/triage-briefing
+    timeout_seconds: 120
+    input_mapping:
+      task: "{{ task | default('review pending alerts') }}"
+      escalations_result: "{{ step_1_result.escalations | default({}) }}"
+      algedonic_result: "{{ step_1_result.algedonic | default({}) }}"
+      status_result: "{{ step_1_result.status | default({}) }}"
+
+  # ── PRESENT: Render the conversational triage report ────────────────
+  # Present the triage briefing as a readable summary with markdown tables.
+  - ordinal: 3
+    action: select
+    description: >
+      Render the structured triage briefing as a conversational summary with
+      markdown tables. The summary opens with the alert log cap status
+      (count/cap, approaching flag), then the escalation backlog table
+      (ID, domain, severity, created_at, recommended action, description),
+      then the algedonic event digest (grouped by domain). The presentation
+      closes with a prompt for the operator to specify which alerts to
+      resolve or dismiss (by ID), and a note that re-invoking the skill
+      with resolve_ids/dismiss_ids will execute the decisions.
+    renderer: minijinja
+    template_ref: algedonic-review/present-triage
+    timeout_seconds: 120
+    input_mapping:
+      task: "{{ task }}"
+      briefing: "{{ step_2_result }}"
+
+  # ── ACT: Execute operator-confirmed decisions ───────────────────────
+  # If resolve_ids or dismiss_ids are set, call curator_escalation_resolve
+  # and curator_escalation_dismiss for each ID. Otherwise, skip (first pass).
+  - ordinal: 4
+    action: select
+    description: >
+      Execute the operator's resolve/dismiss decisions. For each ID in
+      resolve_ids, call curator_escalation_resolve with the ID and the
+      resolution note. For each ID in dismiss_ids, call
+      curator_escalation_dismiss with the ID and the reason. If both
+      resolve_ids and dismiss_ids are empty (first pass), this step produces
+      a "no decisions to execute" result — the operator reviews the briefing
+      and re-invokes with IDs set. The skill does NOT autonomously resolve
+      or dismiss — the operator must specify the IDs.
+    renderer: minijinja
+    template_ref: algedonic-review/execute-decisions
+    timeout_seconds: 120
+    input_mapping:
+      task: "{{ task }}"
+      resolve_ids: "{{ resolve_ids | default('') }}"
+      dismiss_ids: "{{ dismiss_ids | default('') }}"
+      resolution_note: "{{ resolution_note | default('reviewed via algedonic-review skill') }}"
+      briefing: "{{ step_2_result }}"
+
+  # ── VERIFY: Confirm backlog reduced (only if decisions were executed) ─
+  # Re-query curator_escalations to confirm the backlog is reduced.
+  - ordinal: 5
+    action: execute
+    description: >
+      Re-query curator_escalations to confirm the backlog is reduced after
+      the operator's decisions. Skipped on the first pass (no decisions
+      executed). The result is used by the verify-cleared template to
+      summarize what was resolved, what was dismissed, and what remains.
+    mcp: curator_escalations
+    input_mapping: {}
+    timeout_seconds: 30
+    on_failure:
+      action: report
+      resume: >
+        The post-decision curator_escalations query failed. The resolve/dismiss
+        calls may have succeeded (check the execute-decisions step output for
+        per-ID results). The verification step is skipped — the operator can
+        manually check curator_escalations to confirm the backlog state.
+    condition: "{{ resolve_ids | default('') | length > 0 or dismiss_ids | default('') | length > 0 }}"
+
+  # ── VERIFY-REPORT: Summarize what was resolved/dismissed ────────────
+  - ordinal: 6
+    action: select
+    description: >
+      Render the verification summary: what was resolved, what was dismissed,
+      what remains pending, and the new backlog count. If no decisions were
+      executed (first pass), this step produces a "review complete, no actions
+      taken" summary — the operator reviews the briefing and re-invokes with
+      IDs set if they want to act.
+    renderer: minijinja
+    template_ref: algedonic-review/verify-cleared
+    timeout_seconds: 60
+    input_mapping:
+      task: "{{ task }}"
+      briefing: "{{ step_2_result }}"
+      decisions: "{{ step_4_result }}"
+      post_escalations: "{{ step_5_result | default({}) }}"
+      resolve_ids: "{{ resolve_ids | default('') }}"
+      dismiss_ids: "{{ dismiss_ids | default('') }}"
+
+  # ── LOOP: Convergence check ─────────────────────────────────────────
+  - ordinal: 7
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence signal: the triage_complete flag from the
+      triage synthesis step (step 2), as a numeric value (1 = complete, 0 =
+      incomplete). Using lisp.eval instead of a Jinja expression makes the
+      computation explicitly deterministic, budgeted (gas_cap: 100), and
+      observable via a reg.skill.algedonic-review span. Guards against a
+      missing triage_complete field by returning 0 when absent.
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((tc (assoc "triage_complete" step_2_result)))
+          (if (is_null tc) 0 (if (string= tc "true") 1 (if (= tc true) 1 0))))
+      env:
+        step_2_result: "{{ step_2_result | default({}) }}"
+
+  - ordinal: 8
+    action: loop
+    description: >
+      Re-enter the cascade if the triage has not converged (the synthesis
+      step produced an incomplete briefing). Bounded by max_iterations (3)
+      — an algedonic review that cannot produce a triage in 3 passes
+      escalates.
+    timeout_seconds: 30
+    input_mapping:
+      loop_target: "{{ 2 }}"
+      convergence_signal: "{{ step_7_result }}"
+
+error_handling:
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+# The algedonic-review skill is itself tracked by the regulation system.
+# BridgeManifestExecutor::execute_skill records reg.skill.algedonic-review.outcome
+# and reg.skill.algedonic-review.convergence spans after each invocation, so the
+# next review can check the previous review's outcome — the loop closes on itself.
+#
+# The in-memory algedonic log (AlgedonicManager.alerts) is a capped ring buffer
+# (default 200, configurable via max_alerts in SetPoints). When the log
+# approaches 80% of the cap, the cybernetics loop emits an
+# AlgedonicLogApproachingCap signal, which escalates to the curator. The
+# curator should invoke this skill to review the durable backlog before the
+# in-memory log evicts entries unread. The skill does NOT clear the in-memory
+# log directly — the ring buffer self-evicts, and the durable backlog (which
+# the skill DOES review and resolve) is the actionable surface.

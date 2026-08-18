@@ -16,8 +16,6 @@ use hkask_inference::InferenceConfig;
 // Public so standalone CLI commands (without a ServiceConfig) can use the
 // same defaults instead of duplicating string literals.
 
-const DEFAULT_ENERGY_BUDGET_CAP: u64 = 10_000;
-const DEFAULT_GAS_REPLENISH_RATE: u64 = 1_000;
 const DEFAULT_REG_THRESHOLD: u64 = 100;
 /// Default template cache path, resolved from the platform cache directory.
 ///
@@ -80,12 +78,6 @@ pub struct ServiceConfig {
 
     /// Regulation variety threshold for algedonic alerts.
     pub reg_threshold: u64,
-
-    /// Gas budget cap per session (units).
-    pub energy_budget_cap: u64,
-
-    /// Gas replenish rate per turn (units).
-    pub gas_replenish_rate: u64,
 
     /// Whether to use in-memory databases (for tests).
     pub in_memory: bool,
@@ -181,8 +173,6 @@ impl ServiceConfig {
             default_model,
             inference_config,
             reg_threshold: DEFAULT_REG_THRESHOLD,
-            energy_budget_cap: DEFAULT_ENERGY_BUDGET_CAP,
-            gas_replenish_rate: DEFAULT_GAS_REPLENISH_RATE,
             in_memory: false,
             user_name,
             template_cache_path,
@@ -232,8 +222,6 @@ impl ServiceConfig {
             db_passphrase,
             inference_config: inference_config.clone(),
             reg_threshold: DEFAULT_REG_THRESHOLD,
-            energy_budget_cap: DEFAULT_ENERGY_BUDGET_CAP,
-            gas_replenish_rate: DEFAULT_GAS_REPLENISH_RATE,
             in_memory: false,
             default_model: inference_config.default_model,
             user_name,
@@ -258,8 +246,6 @@ impl ServiceConfig {
             db_passphrase: String::new(),
             inference_config: inference_config.clone(),
             reg_threshold: DEFAULT_REG_THRESHOLD,
-            energy_budget_cap: DEFAULT_ENERGY_BUDGET_CAP,
-            gas_replenish_rate: DEFAULT_GAS_REPLENISH_RATE,
             in_memory: true,
             default_model: inference_config.default_model,
             user_name: TEST_USER_NAME.to_string(),
