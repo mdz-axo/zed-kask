@@ -190,10 +190,6 @@ foundational_rules:
       going to do anything wrong; she was only going to do something that
       she knew would be thought wrong.
 
-chunking:
-  min_words: 50
-  max_words: 200
-  sentence_boundary: ".!? "
 
 validation:
   centroid_distance_max: 0.20

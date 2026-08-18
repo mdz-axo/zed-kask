@@ -12,7 +12,7 @@ pub use discover::{
     slugify,
 };
 pub use embed::{
-    ChunkingConfig, CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult,
+    CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult,
     EmbedService, EmbeddingConfig, Entity, EntityConfig, FoundationalRule, ProgressFn, TagSet,
     ValidationConfig, Work, ocr_pdf_bytes, strip_html_tags,
 };

@@ -5,10 +5,6 @@ embedding:
   batch_size: 64
 works: []
 foundational_rules: []
-chunking:
-  min_words: 50
-  max_words: 200
-  sentence_boundary: '.!? '
 centroid_entity_ref: style:david-dunning:centroid
 validation:
   centroid_distance_max: 0.25

@@ -35,19 +35,6 @@ fn assert_required_contract(
         config.embedding.batch_size > 0,
         "batch_size must be positive"
     );
-    // Chunking is optional — when absent, defaults to zeros (the pipeline
-    // uses HkaskSettings::chunk_max_tokens instead). Only assert invariants
-    // when the persona config explicitly declares chunking params.
-    if config.chunking.max_words > 0 {
-        assert!(
-            !config.chunking.sentence_boundary.is_empty(),
-            "sentence_boundary must be non-empty when chunking is declared"
-        );
-        assert!(
-            config.chunking.min_words < config.chunking.max_words,
-            "chunking min_words must be less than max_words when chunking is declared"
-        );
-    }
     assert!(
         config.validation.exemplar_count_min <= config.validation.exemplar_count_max,
         "exemplar_count_min must be <= exemplar_count_max"

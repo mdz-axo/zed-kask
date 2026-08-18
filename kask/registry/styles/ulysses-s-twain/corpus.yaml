@@ -127,10 +127,6 @@ foundational_rules:
       Wrinkles should merely indicate where smiles have been. There is no
       humor in heaven.
 
-chunking:
-  min_words: 50
-  max_words: 200
-  sentence_boundary: ".!? "
 
 validation:
   centroid_distance_max: 0.18

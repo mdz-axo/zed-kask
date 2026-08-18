@@ -94,8 +94,8 @@ pub struct KataEngine {
     /// Optional Regulation runtime for variety counter increments and algedonic alert checks.
     /// When present, replaces tracing-only spans with actual Regulation state mutations.
     ledger_runtime: Option<Arc<RwLock<RegulationLedger>>>,
-    /// Optional task-scoped gas accountant. When present, each inference
-    /// call deducts its token cost from the bound kanban task's budget.
+    /// Optional task-scoped rJoule accountant. When present, each inference
+    /// call deducts its USD cost from the bound kanban task's rJoule budget.
     task_gas_accountant: Option<TaskGasAccountantFn>,
 }
 
@@ -214,17 +214,17 @@ impl KataEngine {
         self
     }
 
-    /// Bind a task-scoped gas accountant that deducts inference token cost
-    /// from a kanban task's `gas_remaining` budget after each inference call.
+    /// Bind a task-scoped rJoule accountant that deducts inference cost
+    /// from a kanban task's `rjoule_remaining` budget after each inference call.
     ///
-    /// This closes the per-task gas feedback loop: when the kata engine runs
+    /// This closes the per-task rJoule feedback loop: when the kata engine runs
     /// on behalf of a kanban task (via the CLI `kask kata start --task <id>`
-    /// or future subagent wiring), each inference step's actual token usage
-    /// is recorded against the task's budget. When `gas_remaining` hits 0,
-    /// the `unjam_fix` auto-completion path can detect the exhausted task
-    /// and complete it.
+    /// or future subagent wiring), each inference step's observed USD cost
+    /// is recorded against the task's rJoule budget. When `rjoule_remaining`
+    /// hits 0, the `unjam_fix` auto-completion path can detect the exhausted
+    /// task and complete it.
     ///
-    /// `[P9]` Motivating: Homeostatic Self-Regulation — closes the gas consumption loop.
+    /// `[P9]` Motivating: Homeostatic Self-Regulation — closes the rJoule consumption loop.
     /// pre:  accountant must be bound to a task
     /// post: returns self with task_gas_accountant set; each inference call will deduct cost
     #[must_use]

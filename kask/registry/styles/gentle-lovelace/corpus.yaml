@@ -303,10 +303,6 @@ foundational_rules:
     section_type: Statement
 
 # ── Pipeline configuration ────────────────────────────────────────────────
-chunking:
-  min_words: 50
-  max_words: 300
-  sentence_boundary: "."
 
 validation:
   centroid_distance_max: 0.85
