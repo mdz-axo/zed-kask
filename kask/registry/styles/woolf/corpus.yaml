@@ -71,10 +71,6 @@ foundational_rules:
       And when human relations change there is at the same time a change in religion, conduct, politics, and literature.
 
 # ── Chunking Configuration ─────────────────────────────────────────────────────
-chunking:
-  min_words: 50
-  max_words: 200
-  sentence_boundary: ".!? "
 
 centroid_entity_ref: "style:woolf:centroid"
 

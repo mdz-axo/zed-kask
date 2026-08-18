@@ -315,7 +315,11 @@ impl AgentExecutor {
                             Ok(value) => {
                                 let text = serde_json::to_string(&value)
                                     .unwrap_or_else(|_| value.to_string());
-                                let summary = serde_json::json!({ "tool": qualified, "ok": true });
+                                let summary = serde_json::json!({
+                                    "tool": qualified,
+                                    "ok": true,
+                                    "result": value,
+                                });
                                 (
                                     format!("Tool call '{qualified}' returned:\n{text}"),
                                     summary,

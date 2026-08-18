@@ -83,10 +83,6 @@ foundational_rules:
 # Short paragraphs are concatenated until min_words is reached.
 # Long paragraphs are split at sentence boundaries to stay under max_words.
 
-chunking:
-  min_words: 50
-  max_words: 200
-  sentence_boundary: ".!? "
 
 # ── Entity Reference Format ────────────────────────────────────────────────────
 # How passages are indexed in sqlite-vec for KNN retrieval.

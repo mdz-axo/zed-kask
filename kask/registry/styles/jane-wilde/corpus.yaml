@@ -130,10 +130,6 @@ foundational_rules:
       There is no such thing as a moral or an immoral book. Books are well written,
       or badly written. That is all. The artist is the creator of beautiful things.
 
-chunking:
-  min_words: 50
-  max_words: 200
-  sentence_boundary: ".!? "
 
 validation:
   centroid_distance_max: 0.18
