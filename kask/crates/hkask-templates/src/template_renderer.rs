@@ -3,7 +3,7 @@
 //! This module owns the template-resolution ladder (embedded `.j2` → embedded
 //! `.yaml` → filesystem `.j2` → filesystem `.yaml`) and the minijinja/inline
 //! rendering dispatch. It is a pure function of `(template_ref, context,
-//! base_path)` — it has no dependency on `InferencePort`, `ToolPort`, gas, or
+//! base_path)` — it has no dependency on `InferencePort`, `ToolPort`, or
 //! convergence, which is why it lives outside the executor.
 //!
 //! # Security

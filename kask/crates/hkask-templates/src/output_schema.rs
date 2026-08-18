@@ -367,7 +367,6 @@ mod tests {
             template_ref: Some("test/template".to_string()),
             mcp: None,
             compute_ref: None,
-            gas_cap: 1000,
             timeout_seconds: 30,
             input_mapping: None,
             output_schema: Some(serde_json::json!({
@@ -418,7 +417,6 @@ mod tests {
             template_ref: Some("test/template".to_string()),
             mcp: None,
             compute_ref: None,
-            gas_cap: 1000,
             timeout_seconds: 30,
             input_mapping: None,
             output_schema: None,
@@ -465,7 +463,6 @@ mod tests {
             template_ref: Some("test/template".to_string()),
             mcp: None,
             compute_ref: None,
-            gas_cap: 1000,
             timeout_seconds: 30,
             input_mapping: None,
             output_schema: None,
