@@ -4,14 +4,14 @@
 //! declaring conflicts, complementarities, and cascade steps that govern
 //! how the bundled skills execute together.
 //!
-//! The config sub-structs (ConvergenceConfig, BundleGasConfig, etc.) mirror the
+//! The config sub-structs (ConvergenceConfig, etc.) mirror the
 //! fields found in existing process manifests under `registry/manifests/`.
 
 use serde::{Deserialize, Serialize};
 
 use super::composition::{BundleComplementarity, BundleConflict};
 use super::config::{
-    BundleAuditConfig, BundleGasConfig, BundleLedgerConfig, ConvergenceConfig, ErrorHandlingConfig,
+    BundleAuditConfig, BundleLedgerConfig, ConvergenceConfig, ErrorHandlingConfig,
     RjouleConfig,
 };
 use hkask_types::SkillPolarity;
@@ -416,7 +416,7 @@ impl BundleManifest {
             }
         }
 
-        // Skill validity: iterative manifests must have loop + threshold + gas + exit
+        // Skill validity: iterative manifests must have loop + threshold + exit
         if self.convergence.max_iterations > 1 {
             let has_loop = self.steps.iter().any(|s| s.action == "loop");
             if !has_loop {
@@ -536,11 +536,6 @@ convergence:
   max_iterations: 1
   min_iterations: 1
   on_not_reached: abort
-gas:
-  cap: 50000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 rjoule:
   cap: 1
   alert_threshold: 0.8
@@ -585,11 +580,6 @@ convergence:
   max_iterations: 1
   min_iterations: 1
   on_not_reached: abort
-gas:
-  cap: 50000
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
 rjoule:
   cap: 1
   alert_threshold: 0.8

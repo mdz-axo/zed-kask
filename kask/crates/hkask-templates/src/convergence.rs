@@ -11,7 +11,7 @@
 //! # Design
 //!
 //! `ConvergenceTracker` is a pure state machine over `(context, config)` —
-//! it has no dependency on `InferencePort`, `ToolPort`, gas, or rJoule. The
+//! it has no dependency on `InferencePort`, `ToolPort`, or rJoule. The
 //! executor constructs one per cascade, calls `check_met` after each pass,
 //! and calls `finalize_report` at exit. The `_convergence` JSON shape is
 //! owned by this module, not assembled ad-hoc at 11 call sites.
@@ -526,8 +526,6 @@ impl ConvergenceTracker {
         status: ConvergenceStatus,
         reason: &str,
         iteration: u32,
-        gas_used: u64,
-        gas_cap: u64,
         rjoule_used: f64,
         rjoule_cap: f64,
     ) {
@@ -564,10 +562,6 @@ impl ConvergenceTracker {
                 "brier_window": self.brier_window,
                 "convergence_mode": self.convergence_mode,
                 "kata_enabled": self.kata_enabled(),
-                "gas_used": gas_used as f64,
-                "gas_cap": gas_cap as f64,
-                "gas_remaining": (gas_cap as f64 - gas_used as f64).max(0.0),
-                "gas_pct": if gas_cap > 0 { (gas_used as f64 / gas_cap as f64) * 100.0 } else { 0.0 },
                 "rjoule_used": rjoule_used,
                 "rjoule_cap": rjoule_cap,
             }),
@@ -581,8 +575,6 @@ impl ConvergenceTracker {
         &self,
         context: &mut M,
         iteration: u32,
-        gas_used: u64,
-        gas_cap: u64,
         rjoule_used: f64,
         rjoule_cap: f64,
     ) {
@@ -608,9 +600,6 @@ impl ConvergenceTracker {
                 "brier_window": self.brier_window,
                 "convergence_mode": self.convergence_mode,
                 "kata_enabled": self.kata_enabled(),
-                "gas_cap": gas_cap,
-                "gas_used": gas_used,
-                "gas_remaining": gas_cap.saturating_sub(gas_used),
                 "rjoule_cap": rjoule_cap,
                 "rjoule_used": rjoule_used,
                 "rjoule_remaining": (rjoule_cap - rjoule_used).max(0.0),
@@ -966,8 +955,6 @@ mod tests {
             ConvergenceStatus::Converged,
             "quality_met",
             2,
-            500,
-            1000,
             1.5,
             5.0,
         );
@@ -978,19 +965,15 @@ mod tests {
         assert_eq!(conv["quality_at_exit"], 0.10);
         assert_eq!(conv["threshold"], 0.15);
         assert_eq!(conv["field"], "composite");
-        assert_eq!(conv["gas_used"], 500.0);
-        assert_eq!(conv["gas_cap"], 1000.0);
-        assert_eq!(conv["gas_remaining"], 500.0);
-        assert_eq!(conv["gas_pct"], 50.0);
         assert_eq!(conv["rjoule_used"], 1.5);
         assert_eq!(conv["rjoule_cap"], 5.0);
-        // 14 fields total (status, reason, iterations_completed, quality_at_exit,
+        // Fields: status, reason, iterations_completed, quality_at_exit,
         // threshold, field, improvement_achieved, improvement_pct,
-        // improvement_target, baseline_quality, gas_used, gas_cap, gas_remaining,
-        // gas_pct, rjoule_used, rjoule_cap) — note: improvement_achieved and
-        // improvement_pct are null when baseline is None, but still present.
+        // improvement_target, baseline_quality, rjoule_used, rjoule_cap —
+        // note: improvement_achieved and improvement_pct are null when
+        // baseline is None, but still present.
         let obj = conv.as_object().unwrap();
-        assert!(obj.len() >= 14, "expected >=14 fields, got {}", obj.len());
+        assert!(obj.len() >= 12, "expected >=12 fields, got {}", obj.len());
     }
 
     #[test]
@@ -998,12 +981,12 @@ mod tests {
         let cfg = config(0.15, "composite", 3, 0);
         let tracker = ConvergenceTracker::new(&cfg);
         let mut ctx = HashMap::new();
-        tracker.inject_running(&mut ctx, 2, 300, 1000, 1.0, 5.0);
+        tracker.inject_running(&mut ctx, 2, 1.0, 5.0);
         let conv = ctx.get("_convergence").unwrap();
         assert_eq!(conv["status"], "running");
         assert_eq!(conv["iterations_completed"], 2);
-        assert_eq!(conv["gas_used"], 300);
-        assert_eq!(conv["gas_remaining"], 700);
+        assert_eq!(conv["rjoule_used"], 1.0);
+        assert_eq!(conv["rjoule_remaining"], 4.0);
     }
 
     #[test]

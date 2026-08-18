@@ -46,6 +46,7 @@
 
 - [ ] **Task 1: Re-add codegraph_query execute step** (after in-process refactor lands)
   - The in-process refactor removing `gas_cap`/`max_tokens` as concepts broke the codegraph step's budget enforcement
+  - The refactor has partially landed: `max_tokens` was removed from all templates but the inference layer still defaults to `max_tokens: 2048` (too low for `thinking_budget = "on"`). The principle-constraints template has `max_tokens = 8192` added back as a temporary measure until the refactor provides an alternative mechanism (e.g. step-level or manifest-level token budgets)
   - Once the refactor lands, add a step 1 `execute` with `mcp: codegraph_query` and `on_failure: action: resume` (not `report` — `report` escalates the entire cascade)
   - Pass codegraph results to the select step as `codegraph_results` template variable
   - Re-add `codegraph_results` to the template's contract and discipline sections
