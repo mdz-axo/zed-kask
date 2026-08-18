@@ -1,5 +1,5 @@
 # Capabilities Research Pipeline — Corpus Extraction with PDCA Completion Gates
-# ℏKask v0.36.0
+# ℏKask v0.35.0
 #
 # DESIGN PRINCIPLES (learned from skill-maintenance + capabilities-reasoner):
 #
@@ -41,7 +41,7 @@ manifest:
     until that number reaches 0. The Act phase embeds metacognition and
     kata-improvement to diagnose failures and pivot strategies.
   functional_role: flowdef
-  version: "0.36.0"
+  version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

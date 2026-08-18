@@ -440,9 +440,10 @@ async fn supervisor_restarts_crashed_server_without_a_tool_call() {
     // The supervisor checks every 1s (env var set above), so this should
     // complete within a few seconds. Polling is the honest way to observe
     // async healing — a fixed sleep would be flaky.
-    wait_until("supervisor restarts the crashed server without a tool call", || async {
-        runtime.is_connected(server_id).await
-    })
+    wait_until(
+        "supervisor restarts the crashed server without a tool call",
+        || async { runtime.is_connected(server_id).await },
+    )
     .await;
 
     // The restarted server must be a different process.
@@ -529,9 +530,10 @@ async fn supervisor_does_not_give_up_after_max_failures() {
     // at 1s intervals = 2s) and then attempt at least one restart on the
     // degraded interval (2s). Total: ~4-6s. The supervisor's restart should
     // heal the server even after the threshold.
-    wait_until("supervisor restarts the crashed server after exceeding the failure threshold", || async {
-        runtime.is_connected(server_id).await
-    })
+    wait_until(
+        "supervisor restarts the crashed server after exceeding the failure threshold",
+        || async { runtime.is_connected(server_id).await },
+    )
     .await;
 
     // The server must be back and answering — proving the supervisor did not
