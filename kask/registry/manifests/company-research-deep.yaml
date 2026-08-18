@@ -132,66 +132,42 @@ steps:
   - ordinal: 1
     action: execute
     description: >
-      COMPANY — fetch earnings transcript via company_transcript MCP tool
-      for Self-View (how the company describes itself) and Management Skill
-      (CEO/CFO scorecards). Deterministic. Result lands in step_1_result.
-    mcp: company_transcript
-    gas_cap: 5000
+      COMPANY — three independent MCP tool calls run concurrently via
+      mcp_batch: company_transcript (earnings), dcf_valuation (3-stage
+      DCF), and comparable_analysis (peer comparables). All take the same
+      symbol. Running them concurrently cuts wall-clock time by ~2/3 vs
+      three sequential 120s timeouts. Results are keyed by transcript,
+      dcf, and comparables in step_1_result.
+    mcp_batch:
+      - mcp: company_transcript
+        key: transcript
+        input_mapping:
+          symbol: "{{ ticker }}"
+          mode: "earnings"
+          quarters_back: 4
+      - mcp: dcf_valuation
+        key: dcf
+        input_mapping:
+          symbol: "{{ ticker }}"
+      - mcp: comparable_analysis
+        key: comparables
+        input_mapping:
+          symbol: "{{ ticker }}"
+    gas_cap: 15000
     timeout_seconds: 120
-    input_mapping:
-      symbol: "{{ ticker }}"
-      mode: "earnings"
-      quarters_back: 4
     on_failure:
       action: report
       resume: >
-        company_transcript failed — the companies MCP server may be down or
-        the credential is missing. The COMPANY synthesis (step 6) proceeds
-        without the transcript; Self-View and Management Skill will rely on
-        web_search context only. Restart the server via sync_kask_mcp_servers
-        and re-invoke.
+        One or more COMPANY MCP tools failed — the companies MCP server
+        may be down. The COMPANY synthesis proceeds with whichever results
+        are available; missing tools surface as data_gaps. Restart the
+        server via sync_kask_mcp_servers and re-invoke.
 
   - ordinal: 2
     action: execute
     description: >
-      COMPANY — DCF via dcf_valuation MCP tool for Financial Profile
-      (3-stage valuation). Deterministic. Result lands in step_2_result.
-    mcp: dcf_valuation
-    gas_cap: 5000
-    timeout_seconds: 120
-    input_mapping:
-      symbol: "{{ ticker }}"
-    on_failure:
-      action: report
-      resume: >
-        dcf_valuation failed — the companies MCP server may be down. The
-        COMPANY synthesis (step 6) proceeds without the DCF model; Financial
-        Profile will rely on comparable_analysis (step 3) only. Restart the
-        server via sync_kask_mcp_servers and re-invoke.
-
-  - ordinal: 3
-    action: execute
-    description: >
-      COMPANY — peer comparables via comparable_analysis MCP tool for
-      Financial Profile. Deterministic. Result lands in step_3_result.
-    mcp: comparable_analysis
-    gas_cap: 5000
-    timeout_seconds: 120
-    input_mapping:
-      symbol: "{{ ticker }}"
-    on_failure:
-      action: report
-      resume: >
-        comparable_analysis failed — the companies MCP server may be down.
-        The COMPANY synthesis (step 6) proceeds without peer comparables;
-        Financial Profile will rely on dcf_valuation (step 2) only. Restart
-        the server via sync_kask_mcp_servers and re-invoke.
-
-  - ordinal: 4
-    action: execute
-    description: >
       COMPANY — fetch IR pages / self-description via web_search MCP tool
-      for Self-View (Part 1). Deterministic. Result lands in step_4_result.
+      for Self-View (Part 1). Deterministic. Result lands in step_2_result.
     mcp: web_search
     gas_cap: 5000
     timeout_seconds: 120
@@ -199,18 +175,18 @@ steps:
       query: "{{ ticker }} investor relations about company business"
       num_results: 10
 
-  - ordinal: 5
+  - ordinal: 3
     action: execute
     description: >
       COMPANY — fetch IR page content via web_extract MCP tool for Self-View
       verbatim company description. Deterministic. Result lands in
-      step_5_result. Conditioned on web_search returning a URL.
+      step_3_result. Conditioned on web_search returning a URL.
     mcp: web_extract
-    condition: "step_4_result"
+    condition: "step_2_result"
     gas_cap: 3000
     timeout_seconds: 90
     input_mapping:
-      url: "{{ step_4_result.results[0].url }}"
+      url: "{{ step_2_result.results[0].url }}"
     on_failure:
       action: report
       resume: >
@@ -219,7 +195,7 @@ steps:
         Self-View will rely on web_search snippets only. Restart the server
         via sync_kask_mcp_servers and re-invoke.
 
-  - ordinal: 6
+  - ordinal: 4
     action: select
     description: >
       COMPANY 8-part synthesis: Self-View, Business Franchise, Management
@@ -237,11 +213,11 @@ steps:
     timeout_seconds: 300
     input_mapping:
       ticker: "{{ ticker }}"
-      transcript_result: "{{ step_1_result }}"
-      dcf_result: "{{ step_2_result }}"
-      comparables_result: "{{ step_3_result }}"
-      web_search_result: "{{ step_4_result }}"
-      fetch_result: "{{ step_5_result }}"
+      transcript_result: "{{ step_1_result.transcript | default({}) }}"
+      dcf_result: "{{ step_1_result.dcf | default({}) }}"
+      comparables_result: "{{ step_1_result.comparables | default({}) }}"
+      web_search_result: "{{ step_2_result }}"
+      fetch_result: "{{ step_3_result }}"
       flash_pipeline_output: "{{ flash_pipeline_output | default({}) }}"
       thesis_gaps: "{{ thesis_gaps | default([]) }}"
 
@@ -250,7 +226,7 @@ steps:
   # GORILLA scores it. Prevents GORILLA from scoring a frame-contaminated
   # board. Anchored to MAIA "Falstaff: Give Me Life", "Competition: Readings
   # vs Reality", "Company Analysis", "Thinking Like an Owner".
-  - ordinal: 7
+  - ordinal: 5
     action: select
     description: >
       FALSTAFFIAN — rotate the competitive framing of the Company Board
@@ -267,7 +243,7 @@ steps:
     timeout_seconds: 250
     input_mapping:
       ticker: "{{ ticker }}"
-      company_board: "{{ step_6_result }}"
+      company_board: "{{ step_4_result }}"
       prior_rotated_board: "{{ prior_rotated_board | default(none) }}"
 
   # ── Steps 8–9: GORILLA — 4-dimension framework ──
@@ -276,7 +252,7 @@ steps:
   # (9), not an mcda call. GORILLA consumes the ROTATED board (step 7),
   # not the raw Company Board (step 6) — the rotation corrects framing
   # errors before scoring.
-  - ordinal: 8
+  - ordinal: 6
     action: select
     description: >
       GORILLA — assess the 4 dimensions (Obvious Problem, Invisible Gorilla,
@@ -289,7 +265,7 @@ steps:
     timeout_seconds: 150
     input_mapping:
       ticker: "{{ ticker }}"
-      company_board: "{{ step_7_result.rotated_board | default(step_6_result) }}"
+      company_board: "{{ step_5_result.rotated_board | default(step_4_result) }}"
 
   # ── Step 9: GORILLA — capabilities-reasoner floor/ceiling/maturity (v0.36.0) ──
   # Cross-skill adapter: company-research/gorilla-capability-reason adapts
@@ -301,7 +277,7 @@ steps:
   # Emits capability_assessments, floor_violations, ceiling_violations,
   # maturity_blocks. A maturity block on a dimension means the lisp.eval
   # scoring step (now step 10) should treat that dimension's score as nil.
-  - ordinal: 9
+  - ordinal: 7
     action: select
     description: >
       GORILLA — capabilities-reasoner floor/ceiling/maturity assessment.
@@ -313,22 +289,22 @@ steps:
       capability maturity. Emits capability_assessments, floor_violations,
       ceiling_violations, maturity_blocks. A maturity block means the
       lisp.eval scoring step should treat that dimension as nil. Result
-      lands in step_9_result and feeds the lisp.eval scoring step (step 10).
+      lands in step_7_result and feeds the lisp.eval scoring step (step 10).
     renderer: minijinja
     template_ref: company-research/gorilla-capability-reason
-    gas_cap: 5000
-    timeout_seconds: 120
+    gas_cap: 10000
+    timeout_seconds: 200
     input_mapping:
       ticker: "{{ ticker }}"
-      company_board: "{{ step_7_result.rotated_board | default(step_6_result.company_board) }}"
-      gorilla_scores: "{{ step_8_result }}"
+      company_board: "{{ step_5_result.rotated_board | default(step_4_result.company_board) }}"
+      gorilla_scores: "{{ step_6_result }}"
 
   # ── Step 10: GORILLA — deterministic weighted score with capability gates ──
-  # v0.36.0: now also consumes step_9_result (gorilla-capability-reason) to
+  # v0.36.0: now also consumes step_7_result (gorilla-capability-reason) to
   # nil out dimensions with maturity blocks. A maturity block means the
   # dimension's score is not credible without its prerequisite — the lisp.eval
   # form treats it as nil, not as the elicited value.
-  - ordinal: 10
+  - ordinal: 8
     action: compute
     compute_ref: lisp.eval
     description: >
@@ -339,17 +315,17 @@ steps:
       (not a number), the form emits nil for gorilla_score and a data_gaps
       list naming the missing dimensions, rather than silently computing
       from zero. v0.36.0: dimensions with maturity blocks (from
-      step_9_result) are treated as nil — a blocked dimension's score is
+      step_7_result) are treated as nil — a blocked dimension's score is
       not credible. The convergence check treats nil as 1.0 (escalate).
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((op (assoc "obvious_problem" step_8_result))
-              (ig (assoc "invisible_gorilla" step_8_result))
-              (cs (assoc "combinatorial_solution" step_8_result))
-              (cp (assoc "choke_point" step_8_result))
-              (maturity-blocks (assoc "maturity_blocks" step_9_result)))
+        (let ((op (assoc "obvious_problem" step_6_result))
+              (ig (assoc "invisible_gorilla" step_6_result))
+              (cs (assoc "combinatorial_solution" step_6_result))
+              (cp (assoc "choke_point" step_6_result))
+              (maturity-blocks (assoc "maturity_blocks" step_7_result)))
           (let ((op-blocked (member "obvious_problem" maturity-blocks))
                 (ig-blocked (member "invisible_gorilla" maturity-blocks))
                 (cs-blocked (member "combinatorial_solution" maturity-blocks))
@@ -380,17 +356,17 @@ steps:
                               (cons "combinatorial_solution" cs-val)
                               (cons "choke_point" cp-val)))))))))
       env:
-        step_8_result: "{{ step_8_result | default({}) }}"
-        step_9_result: "{{ step_9_result | default({}) }}"
+        step_6_result: "{{ step_6_result | default({}) }}"
+        step_7_result: "{{ step_7_result | default({}) }}"
 
   # ── Step 10: IMAGINE — scenario_build MCP tool ──
   # Step 10 generates the scenario tree via scenario_build MCP tool.
   # Step 11 (economic trajectory) and step 12 (IMAGINE synthesis) follow.
-  - ordinal: 11
+  - ordinal: 9
     action: execute
     description: >
       IMAGINE — generate 5/10/20Y scenario tree via scenario_build MCP tool.
-      Deterministic. Result lands in step_11_result and feeds IMAGINE
+      Deterministic. Result lands in step_9_result and feeds IMAGINE
       synthesis (12).
     mcp: scenario_build
     gas_cap: 5000
@@ -398,7 +374,7 @@ steps:
     input_mapping:
       subject: "{{ ticker }} 5 10 20 year future scenarios digital transformation"
       time_horizon: "20 years"
-      context: "{{ step_7_result.rotated_board.business_franchise | default(step_6_result.company_board.business_franchise) | default('') }}"
+      context: "{{ step_5_result.rotated_board.business_franchise | default(step_4_result.company_board.business_franchise) | default('') }}"
     on_failure:
       action: report
       resume: >
@@ -415,7 +391,7 @@ steps:
   # its 5/10/20Y scenarios. Anchored to MAIA "Focus and Imagination",
   # "More From Less", "Kauffman Readings", "The Future Is Faster",
   # "Bottlenecks and Critical Mass".
-  - ordinal: 12
+  - ordinal: 10
     action: select
     description: >
       ECONOMIC TRAJECTORY — identify the falling-cost trajectory in the
@@ -431,8 +407,8 @@ steps:
     timeout_seconds: 200
     input_mapping:
       ticker: "{{ ticker }}"
-      company_board: "{{ step_6_result }}"
-      rotated_board: "{{ step_7_result.rotated_board | default(none) }}"
+      company_board: "{{ step_4_result }}"
+      rotated_board: "{{ step_5_result.rotated_board | default(none) }}"
       prior_economic_trajectory: "{{ prior_economic_trajectory | default(none) }}"
 
   # ── Step 12: IMAGINE — 5/10/20Y scenarios + digital stage ──
@@ -442,7 +418,7 @@ steps:
   # trajectory is the focus that anchors imagination in reality (MAIA:
   # "Focus and Imagination"). The Falstaffian rotations are the perspective
   # shifts that a rapidly evolving trajectory demands.
-  - ordinal: 13
+  - ordinal: 11
     action: select
     description: >
       IMAGINE — project the business at 5, 10, 20 years and walk it back
@@ -462,14 +438,14 @@ steps:
     timeout_seconds: 300
     input_mapping:
       ticker: "{{ ticker }}"
-      company_board: "{{ step_6_result }}"
-      scenario_build_result: "{{ step_11_result }}"
-      economic_trajectory: "{{ step_12_result | default(none) }}"
-      falstaffian_rotations: "{{ step_7_result | default(none) }}"
+      company_board: "{{ step_4_result }}"
+      scenario_build_result: "{{ step_9_result }}"
+      economic_trajectory: "{{ step_10_result | default(none) }}"
+      falstaffian_rotations: "{{ step_5_result | default(none) }}"
       prior_outcomes: "{{ prior_outcomes | default({}) }}"
 
   # ── Step 11: THESIS — three-pillar synthesis ──
-  - ordinal: 14
+  - ordinal: 12
     action: select
     description: >
       THESIS — synthesize all prior research into a formal investment thesis
@@ -486,12 +462,12 @@ steps:
     timeout_seconds: 240
     input_mapping:
       ticker: "{{ ticker }}"
-      company_board: "{{ step_6_result }}"
-      gorilla_verdict: "{{ step_10_result }}"
-      gorilla_capability: "{{ step_9_result | default({}) }}"
-      imagine_board: "{{ step_13_result }}"
-      rotated_board: "{{ step_7_result.rotated_board | default(none) }}"
-      economic_trajectory: "{{ step_12_result | default(none) }}"
+      company_board: "{{ step_4_result }}"
+      gorilla_verdict: "{{ step_8_result }}"
+      gorilla_capability: "{{ step_7_result | default({}) }}"
+      imagine_board: "{{ step_11_result }}"
+      rotated_board: "{{ step_5_result.rotated_board | default(none) }}"
+      economic_trajectory: "{{ step_10_result | default(none) }}"
 
   # ── Step 12: THESIS quality gate — cross-skill goal-analysis ──
   # Per .rules: LLM-improves-against-LLM-scored-target loops must be grounded
@@ -503,7 +479,7 @@ steps:
   # Runs a single pass of the 3-gate protocol (Exist, Surface, Contract) on
   # the thesis to enforce parsimony. Mode is autonomous. The elimination_report
   # feeds the goal-analysis quality gate (now step 16) as additional evidence.
-  - ordinal: 15
+  - ordinal: 13
     action: select
     description: >
       THESIS — essentialist 3-gate eliminative interrogation. Adapts
@@ -514,17 +490,17 @@ steps:
       tersely? Mode is autonomous (no human in the loop). The
       elimination_report feeds the goal-analysis quality gate (step 16) as
       additional evidence — it does not block the thesis directly. Result
-      lands in step_15_result.
+      lands in step_13_result.
     renderer: minijinja
     template_ref: company-research/thesis-essentialist
     gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       ticker: "{{ ticker }}"
-      thesis: "{{ step_14_result }}"
-      company_board: "{{ step_6_result.company_board }}"
+      thesis: "{{ step_12_result }}"
+      company_board: "{{ step_4_result.company_board }}"
 
-  - ordinal: 16
+  - ordinal: 14
     action: select
     description: >
       THESIS quality gate — cross-skill goal-analysis/judge semantic
@@ -547,18 +523,18 @@ steps:
         - "If economic trajectory is present: the thesis is consistent with the falling-cost trajectory and the adjacent possible — it does not project a steady-state terminal that ignores the trajectory's impact"
         - "If Falstaffian rotation is present: the thesis does not reproduce framing errors the rotation corrected (e.g., calling a market creator a competitor)"
         - "If essentialist_report is present: no gate failed (G1 Exist, G2 Surface, G3 Contract) — no decorative pillars, no restatement risk, no label abstractions, no hedge verdicts. A failed gate means the thesis has parsimony issues and is needs_work, not investment_grade."
-      outcome_summary: "{{ step_14_result.thesis_statement }}"
-      essentialist_report: "{{ step_15_result | default({}) }}"
+      outcome_summary: "{{ step_12_result.thesis_statement }}"
+      essentialist_report: "{{ step_13_result | default({}) }}"
       artifacts:
-        - "{{ step_14_result.business_franchise }}"
-        - "{{ step_14_result.management_quality }}"
-        - "{{ step_14_result.valuation }}"
+        - "{{ step_12_result.business_franchise }}"
+        - "{{ step_12_result.management_quality }}"
+        - "{{ step_12_result.valuation }}"
 
   # ── Step 13: Convergence check — THESIS verdict ──
   # goal-analysis/judge emits "done|continue|blocked". Map: done=0.0
   # (converged), continue=0.5 (loop), blocked=1.0 (escalate). No
   # unwrap_or(0) — missing verdict surfaces as 1.0.
-  - ordinal: 17
+  - ordinal: 15
     action: compute
     compute_ref: lisp.eval
     description: >
@@ -571,14 +547,14 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((v (assoc "verdict" step_16_result)))
+        (let ((v (assoc "verdict" step_14_result)))
           (cond
             ((eq v "done") 0.0)
             ((eq v "continue") 0.5)
             ((eq v "blocked") 1.0)
             (t 1.0)))
       env:
-        step_16_result: "{{ step_16_result | default({}) }}"
+        step_14_result: "{{ step_14_result | default({}) }}"
 
   # ── Step 16: Loop back to COMPANY if THESIS flags needs_work ──
   # Re-runs COMPANY (6) with THESIS gaps injected. incomplete (1.0) does
@@ -587,7 +563,7 @@ steps:
   # memory of its own perspective-shifts — the next FALSTAFFIAN (7) and
   # ECONOMIC TRAJECTORY (11) passes can detect whether the COMPANY
   # revision addressed the framing/trajectory gaps or re-encoded them.
-  - ordinal: 18
+  - ordinal: 16
     action: loop
     description: >
       Re-enter COMPANY synthesis (step 6) if THESIS flags needs_work (0.5).
@@ -596,13 +572,13 @@ steps:
       carried forward as advisory context for the next FALSTAFFIAN (7) and
       ECONOMIC TRAJECTORY (11) passes. incomplete (1.0) does not loop — it
       escalates via on_not_reached. max_iterations: 3 bounds the loop.
-    condition: "step_17_result > 0.0 AND step_17_result < 1.0"
+    condition: "step_15_result > 0.0 AND step_15_result < 1.0"
     input_mapping:
       loop_target: "{{ 6 }}"
-      thesis_gaps: "{{ step_16_result.gap_analysis | default([]) }}"
-      convergence_signal: "{{ step_17_result }}"
-      prior_rotated_board: "{{ step_7_result.rotated_board | default(none) }}"
-      prior_economic_trajectory: "{{ step_12_result | default(none) }}"
+      thesis_gaps: "{{ step_14_result.gap_analysis | default([]) }}"
+      convergence_signal: "{{ step_15_result }}"
+      prior_rotated_board: "{{ step_5_result.rotated_board | default(none) }}"
+      prior_economic_trajectory: "{{ step_10_result | default(none) }}"
 
 error_handling:
   on_gas_exceeded: abort

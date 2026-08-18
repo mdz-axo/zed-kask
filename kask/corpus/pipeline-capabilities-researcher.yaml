@@ -151,8 +151,7 @@ steps:
     db_path: corpus/memory/john-brooks.db
 - ordinal: 5
   description: Verify chunking produced valid JSONL covering all 138 sources with unique entity_refs, sane word counts, and
-    no empty/degenerate chunks. Also verify the DB purge left a clean slate. Present chunk distribution and quality stats
-    to the user before proceeding to tagging.
+    no empty/degenerate chunks. Present chunk distribution and quality stats to the user before proceeding to tagging.
   id: gate_chunk_complete
   action: gate
   command: |
@@ -193,8 +192,8 @@ steps:
     expected_max_words = 192  # tokens_to_words(256)
     words_min_floor = 10      # no chunk should be below 10 words
     words_max_ceiling = expected_max_words * 2  # 384 — 2x slack for long paragraphs
-    undersized = [i for i, wc in enumerate(word_counts) if wc < words_min_floor]
-    oversized = [i for i, wc in enumerate(word_counts) if wc > words_max_ceiling]
+    undersized = [records[i]["entity_ref"] for i, wc in enumerate(word_counts) if wc < words_min_floor]
+    oversized = [records[i]["entity_ref"] for i, wc in enumerate(word_counts) if wc > words_max_ceiling]
     stats = {
         "extract_sources": len(expected_sources),
         "chunk_sources": len(actual_sources),
@@ -234,7 +233,7 @@ steps:
     PY
   on_failure:
     action: halt
-    resume: repair chunking or purge, rerun this gate, present stats to user
+    resume: repair chunking, rerun this gate, present stats to user
 - ordinal: 6
   description: Tag chunks with 5W1H dimensions, Dublin Core, PKO, FIBO/GOLEM/ESO ontology tags, and expertise level. Must
     run BEFORE embed so embeddings can be ontology-anchored. May require batched execution due to file size.
