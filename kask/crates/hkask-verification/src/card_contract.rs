@@ -35,6 +35,8 @@
 //! 2. Every `sourced` entry must name at least one tool.
 //! 3. Every `why` must be ≥40 chars.
 //! 4. `derived` entries must name `from` (the sourced field they derive from).
+//! 5. `sourced` entries without `response_path` get a warning (loose match).
+//! 6. `derived` entries' `from` must name a key in the same grounding object.
 
 use serde_json::Value;
 
@@ -164,6 +166,24 @@ pub fn validate(grounding: Option<&Value>, tool_names: &[String]) -> Vec<Finding
                                 }
                             }
                         }
+                        // Warn when `response_path` is absent — the system
+                        // silently defaults to the loosest matching mode (whole
+                        // result), which admits false positives. Not an error
+                        // for backward compat with existing cards.
+                        if spec.get("response_path").is_none() {
+                            out.push(finding(
+                                "grounding_sourced_response_path",
+                                format!(
+                                    "`grounding.{field}` is `sourced` but has \
+                                     no `response_path`. Without it, the \
+                                     grounding check matches the field value \
+                                     against the entire tool result (the \
+                                     loosest mode), which admits false \
+                                     positives. Declare `response_path` to \
+                                     scope the match to the relevant sub-value."
+                                ),
+                            ));
+                        }
                     }
                     _ => {
                         out.push(finding(
@@ -186,6 +206,19 @@ pub fn validate(grounding: Option<&Value>, tool_names: &[String]) -> Vec<Finding
                             "`grounding.{field}` is `derived` but names no \
                              `from` field. A derivation must state which \
                              sourced field it is computed from."
+                        ),
+                    ));
+                } else if !entries.contains_key(from) {
+                    // `from` names a field that doesn't exist in the same
+                    // grounding object — a dangling reference that would pass
+                    // admission but fail at runtime (source not found).
+                    out.push(finding(
+                        "grounding_derived_source_exists",
+                        format!(
+                            "`grounding.{field}` is `derived` from \
+                             `{from}`, but there is no `grounding.{from}` \
+                             entry. A derivation must reference a field \
+                             declared in the same grounding object."
                         ),
                     ));
                 }
@@ -233,6 +266,7 @@ mod tests {
             "deliverable_path": {
                 "status": "sourced",
                 "tools": ["zed/write_file"],
+                "response_path": "path",
                 "why": "A file path the agent claims to have written. Must be sourced from a file-writing tool."
             }
         });
@@ -258,6 +292,12 @@ mod tests {
     #[test]
     fn valid_derived_entry_passes() {
         let grounding = json!({
+            "deliverable_path": {
+                "status": "sourced",
+                "tools": ["zed/write_file"],
+                "response_path": "path",
+                "why": "A file path the agent claims to have written. Must be sourced from a file-writing tool."
+            },
             "file_extension": {
                 "status": "derived",
                 "from": "deliverable_path",
@@ -265,7 +305,7 @@ mod tests {
                 "why": "Computed from deliverable_path by platform code. Reproducible and auditable."
             }
         });
-        let findings = validate(Some(&grounding), &[]);
+        let findings = validate(Some(&grounding), &tools(&["zed/write_file"]));
         assert!(
             findings.is_empty(),
             "valid derived should pass: {findings:?}"
@@ -331,6 +371,7 @@ mod tests {
             "field": {
                 "status": "sourced",
                 "tools": ["zed/write_file"],
+                "response_path": "path",
                 "why": "A field sourced from a tool the agent does not declare in mcp_tools."
             }
         });
@@ -385,5 +426,81 @@ mod tests {
         assert!(!GROUNDING_STATUSES.contains(&"estimated"));
         assert!(!GROUNDING_STATUSES.contains(&"guess"));
         assert!(!GROUNDING_STATUSES.contains(&"approximate"));
+    }
+
+    #[test]
+    fn sourced_without_response_path_is_warned() {
+        // A sourced entry without response_path silently defaults to the
+        // loosest matching mode — warn so the author knows to scope it.
+        let grounding = json!({
+            "deliverable_path": {
+                "status": "sourced",
+                "tools": ["zed/write_file"],
+                "why": "A file path the agent claims to have written. Must be sourced from a file-writing tool."
+            }
+        });
+        let findings = validate(Some(&grounding), &tools(&["zed/write_file"]));
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].check, "grounding_sourced_response_path");
+    }
+
+    #[test]
+    fn sourced_with_response_path_passes() {
+        // A sourced entry with response_path is the happy path — no warning.
+        let grounding = json!({
+            "deliverable_path": {
+                "status": "sourced",
+                "tools": ["zed/write_file"],
+                "response_path": "path",
+                "why": "A file path the agent claims to have written. Must be sourced from a file-writing tool."
+            }
+        });
+        let findings = validate(Some(&grounding), &tools(&["zed/write_file"]));
+        assert!(
+            findings.is_empty(),
+            "sourced with response_path should pass: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn derived_with_dangling_from_is_reported() {
+        // A derived entry whose `from` names a non-existent field is a
+        // dangling reference — it would pass admission but fail at runtime.
+        let grounding = json!({
+            "file_extension": {
+                "status": "derived",
+                "from": "nonexistent_field",
+                "how": "extension extraction",
+                "why": "Computed from deliverable_path by platform code. Reproducible and auditable."
+            }
+        });
+        let findings = validate(Some(&grounding), &[]);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].check, "grounding_derived_source_exists");
+    }
+
+    #[test]
+    fn derived_with_existing_from_passes() {
+        // A derived entry whose `from` names a sibling in the same grounding
+        // object is the happy path — no finding.
+        let grounding = json!({
+            "deliverable_path": {
+                "status": "sourced",
+                "tools": ["zed/write_file"],
+                "response_path": "path",
+                "why": "A file path the agent claims to have written. Must be sourced from a file-writing tool."
+            },
+            "file_extension": {
+                "status": "derived",
+                "from": "deliverable_path",
+                "how": "extension extraction",
+                "why": "Computed from deliverable_path by platform code. Reproducible and auditable."
+            }
+        });
+        let findings = validate(Some(&grounding), &tools(&["zed/write_file"]));
+        assert!(
+            findings.is_empty(),
+            "derived with existing from should pass: {findings:?}"
+        );
     }
 }

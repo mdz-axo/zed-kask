@@ -18,7 +18,7 @@
 #
 # Cross-skill composition:
 #   - step 6 reuses `listening/apply-template` (MAIA v3 earnings-call listening)
-#   - step 17 reuses `kata-improvement/improvement-step1-direction` (PDCA)
+#   - step 16 reuses `kata-improvement/improvement-step1-direction` (PDCA)
 # Same pattern as superforecasting reusing `falsifiability/*` templates.
 
 manifest:
@@ -108,13 +108,13 @@ inputs:
       and prediction-market resolutions with Brier scores). Fetched natively
       by the forecast_list execute step (0) from hkask-mcp-companies. This
       input is retained as a cascade-level override — the invoking agent may
-      pre-populate it to bypass the fetch. Feeds KATA step 17 PDCA "check".
+      pre-populate it to bypass the fetch. Feeds KATA step 16 PDCA "check".
   - name: now
     type: string
     required: false
     description: >
       Current date in ISO 8601 format (e.g. "2026-08-18"). Populated by the
-      invoking agent or the skill tool. Used by forecast_persist (step 24)
+      invoking agent or the skill tool. Used by forecast_persist (step 23)
       as the forecast_date. If absent, the persist step receives an empty
       string and the forecast is stored without a date.
 
@@ -134,7 +134,7 @@ steps:
       (hkask-mcp-companies). Persistence-grounded learning — the KATA PDCA
       step (17) uses prior forecast outcomes to calibrate process confidence.
       Result lands in step_0_result and feeds the prior_outcomes input of
-      step 17.
+      step 16.
     mcp: forecast_list
     gas_cap: 2000
     timeout_seconds: 60
@@ -507,49 +507,38 @@ steps:
   # ── Steps 15–18: KATA — PDCA process audit (cross-skill reuse) ──
   # Two native execute steps (15/16) for forecast-to-outcome calibration loop
   # + cross-skill reuse of kata-improvement (17) + calibration gap (18).
-  # Condition: COMMUNICATION publication_possible.
+  # ── Steps 15–16: KATA — calibration data fetch (concurrent) ──
+  # Two independent MCP calls with the same condition. Running concurrently
+  # cuts wall-clock time from 180s to 90s.
   - ordinal: 15
     action: execute
     description: >
-      KATA — fetch resolved prediction-market outcomes for PDCA "check" via
-      market_check_resolutions MCP tool. This is the highest-value cybernetic
-      integration: closes the forecast-to-outcome calibration loop that
-      EFRA-AI's KATA agent describes but cannot close (no outcome data).
-      Deterministic. Result lands in step_15_result.
-    mcp: market_check_resolutions
+      KATA — fetch resolved prediction-market outcomes and calibration Brier
+      score concurrently via mcp_batch. market_check_resolutions closes the
+      forecast-to-outcome calibration loop; market_calibration provides the
+      Brier score for process_confidence adjustment. Both are independent
+      and share the same publication condition. Results are keyed by
+      resolved_outcomes and calibration_brier in step_15_result.
+    mcp_batch:
+      - mcp: market_check_resolutions
+        key: resolved_outcomes
+        input_mapping:
+          limit: 50
+      - mcp: market_calibration
+        key: calibration_brier
+        input_mapping:
+          bucket: "economics"
     condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
-    gas_cap: 3000
+    gas_cap: 6000
     timeout_seconds: 90
-    input_mapping:
-      limit: 50
     on_failure:
       action: report
       resume: >
-        market_check_resolutions failed — the prediction-markets MCP server
-        may be down. The KATA calibration loop (step 18) proceeds without
-        resolved outcomes; the calibration gap will surface as 1.0 (maximum).
-        Restart the server via sync_kask_mcp_servers and re-invoke.
-
-  - ordinal: 16
-    action: execute
-    description: >
-      KATA — fetch calibration Brier score via market_calibration MCP tool.
-      Strengthens the calibration loop: market_calibration Brier score →
-      KATA process_confidence adjustment. Deterministic. Result lands in
-      step_16_result.
-    mcp: market_calibration
-    condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
-    gas_cap: 3000
-    timeout_seconds: 90
-    input_mapping:
-      bucket: "economics"
-    on_failure:
-      action: report
-      resume: >
-        market_calibration failed — the prediction-markets MCP server may
-        be down. The KATA calibration loop (step 18) proceeds without the
-        Brier score; the calibration gap will surface as 1.0 (maximum).
-        Restart the server via sync_kask_mcp_servers and re-invoke.
+        KATA calibration data fetch failed — the prediction-markets MCP server
+        may be down. The KATA calibration loop (step 17) proceeds without
+        resolved outcomes and/or Brier score; the calibration gap will surface
+        as 1.0 (maximum). Restart the server via sync_kask_mcp_servers and
+        re-invoke.
 
   # ── Step 18: KATA — metacognition calibration gap measurement (v0.36.0) ──
   # Cross-skill adapter: company-research/kata-calibration-measure adapts
@@ -558,17 +547,17 @@ steps:
   # never measures the gap. This step measures the analyst's calibration gap
   # using the market_calibration Brier score (step 16) and resolved_outcomes
   # (step 15), then re-measures the current condition. Emits calibration_gap
-  # (0.0 calibrated → 1.0 maximum gap) that LENS (step 21) consumes as a 6th
+  # (0.0 calibrated → 1.0 maximum gap) that LENS (step 20) consumes as a 6th
   # axis alongside the existing five frameworks. No prediction recorded by
   # the KATA direction step = maximum gap (1.0) — a broken feedback loop,
   # not a neutral state.
   # ── Steps 17–18: KATA — direction first, then calibration gap measurement ──
-  # Ordinals swapped from original: step 17 (direction) must run BEFORE step 18
-  # (calibration gap) because step 18 consumes step_17_result.prediction.
-  # The original ordering had calibration gap referencing step_17_result before
+  # Ordinals swapped from original: step 16 (direction) must run BEFORE step 17
+  # (calibration gap) because step 17 consumes step_16_result.prediction.
+  # The original ordering had calibration gap referencing step_16_result before
   # direction ran — a forward-reference bug that always produced
   # calibration_gap = 1.0.
-  - ordinal: 17
+  - ordinal: 16
     action: select
     description: >
       KATA — cross-skill reuse of kata-improvement/improvement-step1-direction
@@ -577,7 +566,7 @@ steps:
       experiment. Consumes resolved outcomes (15) and calibration Brier (16)
       plus prior_outcomes input. Emits KataBoard with process_confidence,
       next_review_date. Never blocks publication. Result lands in
-      step_17_result and feeds step 18 (calibration gap) and LENS (step 21).
+      step_16_result and feeds step 17 (calibration gap) and LENS (step 20).
     renderer: minijinja
     template_ref: kata-improvement/improvement-step1-direction
     condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
@@ -587,24 +576,24 @@ steps:
       challenge: "Audit the research process for {{ ticker }}: identify knowledge gaps, untested assumptions, and the next PDCA experiment that would move research to higher confidence."
       context:
         ticker: "{{ ticker }}"
-        resolved_outcomes: "{{ step_15_result }}"
-        calibration_brier: "{{ step_16_result }}"
+        resolved_outcomes: "{{ step_15_result.resolved_outcomes | default([]) }}"
+        calibration_brier: "{{ step_15_result.calibration_brier | default({}) }}"
         prior_outcomes: "{{ step_0_result | default(prior_outcomes | default({})) }}"
         valuation: "{{ step_13_result }}"
         communication: "{{ step_14_result }}"
 
-  - ordinal: 18
+  - ordinal: 17
     action: select
     description: >
       KATA — metacognition calibration gap measurement. Adapts
-      metacognition/meta-experiment to close the open kata loop: step 17
+      metacognition/meta-experiment to close the open kata loop: step 16
       (kata-improvement-step1-direction) sets the direction and emits the
       KataBoard with process_confidence and prediction. This step measures
       the analyst calibration gap using the market_calibration Brier score
       (step 16) and resolved_outcomes (step 15). Emits calibration_gap
       (0.0 calibrated → 1.0 maximum gap) that LENS consumes as a 6th axis.
       No prediction recorded = 1.0 (broken feedback loop, not neutral).
-      Result lands in step_18_result and feeds LENS (step 21).
+      Result lands in step_17_result and feeds LENS (step 20).
     renderer: minijinja
     template_ref: company-research/kata-calibration-measure
     condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
@@ -613,64 +602,46 @@ steps:
     input_mapping:
       ticker: "{{ ticker }}"
       goal: "Close the calibration loop for {{ ticker }}: measure whether the analyst's process_confidence matches the market_calibration Brier score."
-      current_condition: "{{ step_17_result | default({}) }}"
-      prediction: "{{ step_17_result.prediction | default(none) }}"
-      calibration_brier: "{{ step_16_result }}"
-      resolved_outcomes: "{{ step_15_result }}"
+      current_condition: "{{ step_16_result | default({}) }}"
+      prediction: "{{ step_16_result.prediction | default(none) }}"
+      calibration_brier: "{{ step_15_result.calibration_brier | default({}) }}"
+      resolved_outcomes: "{{ step_15_result.resolved_outcomes | default([]) }}"
       context_text: "{{ step_14_result.cascade_note | default('') }}"
 
-  # ── Steps 19–20: LENS — outside view + evidence quality (native execute) ──
-  # Condition: COMMUNICATION publication_possible (KATA and LENS skip if not
-  # published — graceful: pipeline completes with a "not published" verdict).
-  - ordinal: 19
+  # ── Steps 18–19: LENS — outside view + evidence quality (concurrent) ──
+  # Two independent MCP calls with the same condition. Running concurrently
+  # cuts wall-clock time from 210s to 120s.
+  - ordinal: 18
     action: execute
     description: >
-      LENS Lens 2 — find prediction markets about {{ ticker }} via the
-      market_match MCP tool (entity resolution from a forecasting question
-      to candidate markets about the same underlying event). Provides the
-      outside-view market-implied probabilities for the Tetlock
-      superforecasting lens. Deterministic. Result lands in step_19_result
-      and feeds LENS synthesis (step 21).
-    mcp: market_match
+      LENS — find prediction markets (market_match) and evaluate evidence
+      quality (evaluate_evidence) concurrently via mcp_batch. Both are
+      independent inputs to the LENS synthesis. Results are keyed by
+      market_match and evidence_quality in step_18_result.
+    mcp_batch:
+      - mcp: market_match
+        key: market_match
+        input_mapping:
+          question: "Will {{ ticker }} outperform the market over the next 12 months?"
+          limit: 10
+      - mcp: evaluate_evidence
+        key: evidence_quality
+        input_mapping:
+          question: "Is the investment thesis for {{ ticker }} supported by the evidence?"
+          artifacts: "{{ step_2_result.news.results | default([]) }}"
     condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
-    gas_cap: 3000
-    timeout_seconds: 90
-    input_mapping:
-      question: "Will {{ ticker }} outperform the market over the next 12 months?"
-      limit: 10
-    on_failure:
-      action: report
-      resume: >
-        market_match failed — the prediction-markets MCP server may be down.
-        The LENS synthesis (step 21) proceeds without the outside-view
-        market-implied probabilities; the LENS audit will note the missing
-        outside view. Restart the server via sync_kask_mcp_servers and
-        re-invoke.
-
-  - ordinal: 20
-    action: execute
-    description: >
-      LENS — evaluate evidence quality via evaluate_evidence MCP tool.
-      Structured evidence quality audit against the investment thesis
-      question. Deterministic. Result lands in step_20_result and feeds LENS
-      synthesis (step 21).
-    mcp: evaluate_evidence
-    condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
-    gas_cap: 4000
+    gas_cap: 7000
     timeout_seconds: 120
-    input_mapping:
-      question: "Is the investment thesis for {{ ticker }} supported by the evidence?"
-      artifacts: "{{ step_2_result.news.results | default([]) }}"
     on_failure:
       action: report
       resume: >
-        evaluate_evidence failed — the research MCP server may be down. The
-        LENS synthesis (step 21) proceeds without the evidence quality audit;
-        the LENS audit will note the missing evidence evaluation. Restart
+        LENS data fetch failed — the prediction-markets or research MCP server
+        may be down. The LENS synthesis (step 20) proceeds with whichever
+        results are available; missing channels are noted as gaps. Restart
         the server via sync_kask_mcp_servers and re-invoke.
 
   # ── Step 21: LENS — five-framework audit (LLM synthesis) ──
-  - ordinal: 21
+  - ordinal: 20
     action: select
     description: >
       LENS five-framework consistency audit: The Loop, Superforecasting,
@@ -692,17 +663,17 @@ steps:
       cf: "{{ step_9_result }}"
       valuation: "{{ step_13_result }}"
       communication: "{{ step_14_result }}"
-      kata: "{{ step_17_result | default({}) }}"
-      calibration_gap: "{{ step_18_result.calibration_gap | default(none) }}"
+      kata: "{{ step_16_result | default({}) }}"
+      calibration_gap: "{{ step_17_result.calibration_gap | default(none) }}"
       semantic_tags: "{{ step_4_result | default({}) }}"
-      market_outside_view: "{{ step_19_result }}"
-      evidence_audit: "{{ step_20_result }}"
+      market_outside_view: "{{ step_18_result.market_match | default({}) }}"
+      evidence_audit: "{{ step_18_result.evidence_quality | default({}) }}"
 
   # ── Step 22: Convergence check — LENS verdict consistency ──
   # Deterministic lisp.eval: CONSISTENT=0.0, PARTIAL=0.5, INCONSISTENT=1.0.
   # No unwrap_or(0) on regulation signals — missing verdict surfaces as 1.0
   # (worst case), not silently "converged."
-  - ordinal: 22
+  - ordinal: 21
     action: compute
     compute_ref: lisp.eval
     description: >
@@ -715,31 +686,31 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((v (assoc "overall_verdict" step_21_result)))
+        (let ((v (assoc "overall_verdict" step_20_result)))
           (cond
             ((eq v "CONSISTENT") 0.0)
             ((eq v "PARTIAL") 0.5)
             ((eq v "INCONSISTENT") 1.0)
             (t 1.0)))
       env:
-        step_21_result: "{{ step_21_result | default({}) }}"
+        step_20_result: "{{ step_20_result | default({}) }}"
 
   # ── Step 23: Loop back to VALUATION synthesis if LENS flags PARTIAL ──
   # Re-runs valuation (13) with LENS tensions injected. INCONSISTENT (1.0)
   # does not loop — it escalates via on_not_reached. max_iterations: 3
   # bounds the loop.
-  - ordinal: 23
+  - ordinal: 22
     action: loop
     description: >
       Re-enter VALUATION synthesis (step 13) if LENS flags PARTIAL (0.5).
       LENS key_tensions are injected into the next VALUATION pass via the
       loop's input_mapping. INCONSISTENT (1.0) does not loop — it escalates
       via on_not_reached. max_iterations: 3 bounds the loop.
-    condition: "step_22_result > 0.0 AND step_22_result < 1.0"
+    condition: "step_21_result > 0.0 AND step_21_result < 1.0"
     input_mapping:
       loop_target: "{{ 13 }}"
-      lens_tensions: "{{ step_21_result.key_tensions | default([]) }}"
-      convergence_signal: "{{ step_22_result }}"
+      lens_tensions: "{{ step_20_result.key_tensions | default([]) }}"
+      convergence_signal: "{{ step_21_result }}"
 
   # ── Step 24: Persist the price target for Brier calibration ──
   # Runs after the convergence loop exits (CONSISTENT or INCONSISTENT) and
@@ -751,7 +722,7 @@ steps:
   # outcome; forecast_persist accepts a pre-computed PT from the flowdef.
   # Conditioned on publication_possible so unpublished research (DROP / HALT /
   # BLOCK) doesn't pollute the forecast store.
-  - ordinal: 24
+  - ordinal: 23
     action: execute
     description: >
       PERSIST — store the valuation price target via forecast_persist MCP
@@ -759,7 +730,7 @@ steps:
       synthesis PT (step 13) and the communication gate (step 14). The
       stored forecast_id can be passed to forecast_record when the 12-month
       horizon passes to close the calibration loop. Result lands in
-      step_24_result.
+      step_23_result.
     mcp: forecast_persist
     condition: "step_14_result.publication_possible AND step_14_result.final_confidence >= 0.50"
     on_failure:

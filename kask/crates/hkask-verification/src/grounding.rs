@@ -64,6 +64,16 @@ pub enum ProvenanceTag {
     },
 }
 
+/// Specification for a derived field: what field it's computed from
+/// and how (the transform name, for auditability).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DerivedSpec {
+    /// The sourced field this is computed from (dotted path).
+    pub from: String,
+    /// The transform, named so a reader can check it.
+    pub how: String,
+}
+
 /// A field's source specification: which tools can supply it, and why
 /// the contract declares this disposition.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -71,11 +81,20 @@ pub struct FieldSpec {
     /// Tools that can source this field. Empty = Inferred (commissioned
     /// judgment), not Unsourced.
     pub sources: Vec<String>,
-    /// Why this field has the disposition it has. Mandatory (≥40 chars) —
-    /// an unexplained entry is how the contract rots. The next author
-    /// cannot tell a considered `unavailable` from a lazy one, so they
-    /// copy whichever is nearest.
+    /// Dotted path into the tool's `result` where this field's value
+    /// should appear. Required for Sourced fields — value-matching
+    /// (Truth rung) checks the output value appears in the tool's return.
+    /// Empty string means "search the entire result."
+    #[serde(default)]
+    pub response_path: String,
+    /// Why this field has the disposition it has. Mandatory (≥40 chars).
     pub why: String,
+    /// When present, this field is Derived from the named field via a
+    /// deterministic transform. The provenance is the weakest link: if the
+    /// source field is Inferred, this field is Inferred, not Derived.
+    /// A derivation from an Unsourced (nulled) field is itself nulled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_from: Option<DerivedSpec>,
 }
 
 /// A field → tool map for one agent type's structured output.
@@ -140,18 +159,22 @@ pub fn task_agent_contract() -> GroundingContract {
                 "zed/write_file".to_string(),
                 "zed/terminal".to_string(),
             ],
+            response_path: "".to_string(),
             why: "A file path the agent claims to have written. Must be sourced \
                   from a file-writing tool that succeeded."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
         "test_verdict".to_string(),
         FieldSpec {
             sources: vec!["zed/terminal".to_string()],
+            response_path: "".to_string(),
             why: "A pass/fail claim about tests. Must be sourced from a terminal \
                   tool call that succeeded (the test runner)."
                 .to_string(),
+            derived_from: None,
         },
     );
     // Commissioned judgments — empty source list = Inferred, not Unsourced.
@@ -159,18 +182,22 @@ pub fn task_agent_contract() -> GroundingContract {
         "summary".to_string(),
         FieldSpec {
             sources: vec![],
+            response_path: "".to_string(),
             why: "A prose summary of what the agent did. Commissioned by the \
                   system prompt — the agent was asked to summarize."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
         "approach".to_string(),
         FieldSpec {
             sources: vec![],
+            response_path: "".to_string(),
             why: "A description of the approach taken. Commissioned by the \
                   system prompt — the agent was asked to describe its approach."
                 .to_string(),
+            derived_from: None,
         },
     );
     GroundingContract {
@@ -205,27 +232,33 @@ pub fn research_agent_contract() -> GroundingContract {
                 "zed/web_extract".to_string(),
                 "zed/fetch".to_string(),
             ],
+            response_path: "".to_string(),
             why: "A list of sources the agent claims to have found. Must be \
                   sourced from a research or web search tool that succeeded."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
         "findings".to_string(),
         FieldSpec {
             sources: vec![],
+            response_path: "".to_string(),
             why: "A prose summary of what the agent found. Commissioned by \
                   the system prompt — the agent was asked to analyze and report."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
         "summary".to_string(),
         FieldSpec {
             sources: vec![],
+            response_path: "".to_string(),
             why: "A prose summary of the research. Commissioned by the \
                   system prompt — the agent was asked to summarize."
                 .to_string(),
+            derived_from: None,
         },
     );
     GroundingContract {
@@ -252,18 +285,22 @@ pub fn narrator_agent_contract() -> GroundingContract {
         "content".to_string(),
         FieldSpec {
             sources: vec![],
+            response_path: "".to_string(),
             why: "The main prose output. Commissioned by the system prompt — \
                   the agent was asked to produce narrative content."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
         "summary".to_string(),
         FieldSpec {
             sources: vec![],
+            response_path: "".to_string(),
             why: "A prose summary of the narrative. Commissioned by the \
                   system prompt — the agent was asked to summarize."
                 .to_string(),
+            derived_from: None,
         },
     );
     GroundingContract {
@@ -304,46 +341,56 @@ pub fn skill_agent_contract() -> GroundingContract {
                 "zed/write_file".to_string(),
                 "zed/terminal".to_string(),
             ],
+            response_path: "".to_string(),
             why: "A file path the skill claims to have written. Must be sourced \
                   from a file-writing tool that succeeded. Skills that produce \
                   code may fabricate file paths without actually writing files."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
         "test_verdict".to_string(),
         FieldSpec {
             sources: vec!["zed/terminal".to_string()],
+            response_path: "".to_string(),
             why: "A pass/fail claim about tests. Must be sourced from a terminal \
                   tool call that succeeded (the test runner)."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
         "diagram".to_string(),
         FieldSpec {
             sources: vec![],
+            response_path: "".to_string(),
             why: "The main diagram or structured output. Commissioned by the \
                   skill's template — the skill was asked to produce this."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
         "summary".to_string(),
         FieldSpec {
             sources: vec![],
+            response_path: "".to_string(),
             why: "A prose summary of the skill output. Commissioned by the \
                   skill's template — the skill was asked to summarize."
                 .to_string(),
+            derived_from: None,
         },
     );
     field_sources.insert(
         "recommendations".to_string(),
         FieldSpec {
             sources: vec![],
+            response_path: "".to_string(),
             why: "A list of recommendations produced by the skill. Commissioned \
                   by the skill's template — the skill was asked to propose actions."
                 .to_string(),
+            derived_from: None,
         },
     );
     GroundingContract {
@@ -390,11 +437,68 @@ fn failed_tools(tool_calls: &[serde_json::Value]) -> std::collections::HashSet<S
         .collect()
 }
 
-/// Check whether a field's value could have been sourced from any of the
-/// declared tools. Returns true if at least one declared tool was called
-/// successfully.
-fn is_sourced(field_tools: &[String], successful: &std::collections::HashSet<String>) -> bool {
-    field_tools.iter().any(|t| successful.contains(t))
+/// Check whether a field's value was sourced from a declared tool.
+///
+/// Truth rung: "sourced" means the value came from the tool's return,
+/// not merely that the tool ran. Containment check: the field value
+/// must appear in the values selected by `response_path` from the tool's
+/// `result`. Returns the tool name if matched.
+fn is_value_sourced(
+    field_tools: &[String],
+    successful: &std::collections::HashSet<String>,
+    field_value: &serde_json::Value,
+    tool_calls: &[serde_json::Value],
+    response_path: &str,
+) -> Option<String> {
+    let field_values = match field_value {
+        serde_json::Value::Array(arr) => arr.clone(),
+        _ => vec![field_value.clone()],
+    };
+    for tc in tool_calls {
+        let tool = tc.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+        if !field_tools.iter().any(|t| t == tool) || !successful.contains(tool) {
+            continue;
+        }
+        let Some(result) = tc.get("result") else {
+            continue;
+        };
+        let targets: Vec<serde_json::Value> = if response_path.is_empty() {
+            vec![result.clone()]
+        } else {
+            select(result, &segments(response_path))
+                .into_iter()
+                .cloned()
+                .collect()
+        };
+        let all_found = field_values
+            .iter()
+            .all(|fv| targets.iter().any(|t| value_contains(t, fv)));
+        if all_found && !field_values.is_empty() {
+            return Some(tool.to_string());
+        }
+    }
+    None
+}
+
+/// Does `haystack` contain `needle`? Recurses into arrays/objects.
+/// For strings, checks substring containment (handles paths in stdout),
+/// but only when the needle is at least 10 characters — shorter needles
+/// (e.g. "pass", "ok", "0") would match enormous swaths of tool output,
+/// defeating the grounding contract. This mirrors the 10-char guard in
+/// `scan_narrative_for_leak`.
+fn value_contains(haystack: &serde_json::Value, needle: &serde_json::Value) -> bool {
+    if haystack == needle {
+        return true;
+    }
+    match haystack {
+        serde_json::Value::Array(arr) => arr.iter().any(|v| value_contains(v, needle)),
+        serde_json::Value::Object(obj) => obj.values().any(|v| value_contains(v, needle)),
+        serde_json::Value::String(s) => match needle {
+            serde_json::Value::String(n) if n.len() >= 10 => s.contains(n),
+            _ => false, // short string or non-string needle: exact match only (handled above)
+        },
+        _ => false,
+    }
 }
 
 /// Check whether any of the field's declared tools was called but failed.
@@ -482,6 +586,13 @@ fn select<'a>(doc: &'a serde_json::Value, segs: &[&str]) -> Vec<&'a serde_json::
 /// Does any value this path selects constitute a claim?
 fn path_has_claim(doc: &serde_json::Value, path: &str) -> bool {
     select(doc, &segments(path)).iter().any(|v| is_claim(v))
+}
+
+/// First value selected by a dotted path (which may contain `[]` segments).
+/// Returns `None` if the path selects nothing. Used by value-matching to pull
+/// the field value out of the output before checking it against tool results.
+fn get_path<'a>(doc: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    select(doc, &segments(path)).into_iter().next()
 }
 
 /// Null every value the path selects, returning the non-null ones removed.
@@ -672,6 +783,29 @@ fn scan_narrative_for_leak(
     }
 }
 
+/// Total ordering of provenance strength. Used by the weakest-link
+/// rule: a Derived field's provenance is min(its own strength, its
+/// source field's strength). Higher = stronger.
+///
+/// `Derived` is rated 4 (a ceiling), not an absolute strength: a Derived
+/// field's actual strength is `min(4, source_strength)`, computed by
+/// the weakest-link rule in `enforce_grounding`. The number 4 is above
+/// `Inferred` (3) so that a derivation from a Sourced field (5) keeps
+/// the `Derived` tag, while a derivation from an `Inferred` field (3)
+/// triggers the downgrade (`weakest < 4`). The reproducibility
+/// distinction is captured by the tag variant itself, not by this
+/// number alone.
+fn provenance_strength(tag: &ProvenanceTag) -> u8 {
+    match tag {
+        ProvenanceTag::Sourced { .. } => 5,
+        ProvenanceTag::Derived { .. } => 4,
+        ProvenanceTag::Inferred => 3,
+        ProvenanceTag::UncommissionedInference => 2,
+        ProvenanceTag::Narrative => 1,
+        ProvenanceTag::Unsourced { .. } => 0,
+    }
+}
+
 /// Run the grounding contract against a delegation output.
 ///
 /// - Sourced fields: keep, mark verified.
@@ -714,7 +848,18 @@ pub fn enforce_grounding(
             continue;
         }
 
-        if is_sourced(&spec.sources, &successful) {
+        // Value-matching (Truth rung): the field value must appear in
+        // the tool's return, not merely have the tool's name match.
+        let field_value = get_path(output, field).unwrap_or(&serde_json::Value::Null);
+        if is_value_sourced(
+            &spec.sources,
+            &successful,
+            field_value,
+            tool_calls,
+            &spec.response_path,
+        )
+        .is_some()
+        {
             // Sourced — mark the block as having sourced content.
             sourced_blocks.insert(block_of(field).to_string());
             continue;
@@ -746,7 +891,14 @@ pub fn enforce_grounding(
 
     // ── Pass 2: mark Sourced, Inferred, and UncommissionedInference ──
     // for fields that were not nulled in pass 1.
+    //
+    // Split into two sub-passes to fix an ordering bug: HashMap iteration
+    // is non-deterministic, so a derived field processed before its source
+    // would find no source provenance and be incorrectly tagged Unsourced.
+    // Pass 2a resolves all non-derived fields first; pass 2b then resolves
+    // derived fields with their sources guaranteed present.
     if let serde_json::Value::Object(map) = &output {
+        // Pass 2a: non-derived fields.
         for (field, value) in map {
             // Skip provenance stamps from a previous enforcement pass.
             if field.ends_with("_provenance") {
@@ -769,18 +921,22 @@ pub fn enforce_grounding(
             }) {
                 continue;
             }
-            let tag = match contract.field_sources.get(field) {
+            // Defer derived fields to pass 2b so their source is resolved.
+            let spec = contract.field_sources.get(field);
+            if spec.and_then(|s| s.derived_from.as_ref()).is_some() {
+                continue;
+            }
+            let tag = match spec {
                 Some(spec) if spec.sources.is_empty() => ProvenanceTag::Inferred,
                 Some(spec) => {
-                    if is_sourced(&spec.sources, &successful) {
-                        ProvenanceTag::Sourced {
-                            tool: spec
-                                .sources
-                                .iter()
-                                .find(|t| successful.contains(*t))
-                                .cloned()
-                                .unwrap_or_default(),
-                        }
+                    if let Some(tool) = is_value_sourced(
+                        &spec.sources,
+                        &successful,
+                        value,
+                        tool_calls,
+                        &spec.response_path,
+                    ) {
+                        ProvenanceTag::Sourced { tool }
                     } else if !is_claim(value) {
                         ProvenanceTag::Unsourced {
                             removed_preview: String::new(),
@@ -796,6 +952,81 @@ pub fn enforce_grounding(
                     }
                 }
                 None => ProvenanceTag::UncommissionedInference,
+            };
+            result.provenance.insert(field.clone(), tag.clone());
+            // Stamp provenance on the document.
+            if let serde_json::Value::Object(clean_map) = &mut cleaned {
+                clean_map.insert(
+                    format!("{field}_provenance"),
+                    serde_json::Value::String(provenance_stamp(&tag).to_string()),
+                );
+            }
+        }
+
+        // Pass 2b: derived fields — sources are now guaranteed resolved.
+        for (field, value) in map {
+            if field.ends_with("_provenance") {
+                continue;
+            }
+            if result.provenance.contains_key(field) {
+                continue;
+            }
+            let spec = match contract.field_sources.get(field) {
+                Some(spec) if spec.derived_from.is_some() => spec,
+                _ => continue, // handled in pass 2a or not a derived field
+            };
+            let derived = spec.derived_from.as_ref().unwrap();
+            let from_tag = result.provenance.get(&derived.from);
+            let tag = match from_tag {
+                None => {
+                    // Source field not in the output — can't derive.
+                    ProvenanceTag::Unsourced {
+                        removed_preview: truncate_preview(value),
+                        tool_failed: false,
+                    }
+                }
+                Some(ProvenanceTag::Unsourced { .. }) => {
+                    // Source was nulled — derivation from nothing is nothing.
+                    // Null this field too.
+                    let removed = null_path(&mut cleaned, field);
+                    if removed.is_some() {
+                        result.nulled_fields.push(field.clone());
+                    }
+                    ProvenanceTag::Unsourced {
+                        removed_preview: String::new(),
+                        tool_failed: false,
+                    }
+                }
+                Some(from_tag) => {
+                    let weakest = std::cmp::min(
+                        provenance_strength(&ProvenanceTag::Derived {
+                            from: derived.from.clone(),
+                            how: derived.how.clone(),
+                        }),
+                        provenance_strength(from_tag),
+                    );
+                    // Downgrade to the weaker tag if the source is
+                    // weaker than Derived's ceiling (4). This triggers
+                    // for Inferred (3) and below, so a derivation from
+                    // an Inferred field is tagged Inferred, not Derived.
+                    // See `provenance_strength` doc for why 4 is a ceiling.
+                    if weakest < 4 {
+                        // Source is weaker than Derived — downgrade.
+                        match from_tag {
+                            ProvenanceTag::Inferred => ProvenanceTag::Inferred,
+                            ProvenanceTag::UncommissionedInference => {
+                                ProvenanceTag::UncommissionedInference
+                            }
+                            ProvenanceTag::Narrative => ProvenanceTag::Narrative,
+                            _ => ProvenanceTag::Inferred, // fallback
+                        }
+                    } else {
+                        ProvenanceTag::Derived {
+                            from: derived.from.clone(),
+                            how: derived.how.clone(),
+                        }
+                    }
+                }
             };
             result.provenance.insert(field.clone(), tag.clone());
             // Stamp provenance on the document.
@@ -857,6 +1088,14 @@ mod tests {
         json!({ "tool": tool, "ok": ok })
     }
 
+    /// Construct a successful tool call carrying a `result` payload. The
+    /// `result` field is the data the tool returned — value-matching (Truth
+    /// rung) checks an output field's value appears in this payload. Tests
+    /// that only need name-based sourcing still pass because `ok` is true.
+    fn tool_call_with_result(tool: &str, result: serde_json::Value) -> serde_json::Value {
+        json!({ "tool": tool, "ok": true, "result": result })
+    }
+
     // ── GroundingTrendReport tests live in crate::trend ────────────────
 
     #[test]
@@ -866,7 +1105,12 @@ mod tests {
             "deliverable_path": "/src/main.rs",
             "summary": "I wrote the file."
         });
-        let tool_calls = vec![tool_call("zed/write_file", true)];
+        // The tool's result contains the path — value-matching (Truth rung)
+        // checks the output's deliverable_path appears in the tool's return.
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/main.rs"}),
+        )];
 
         let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
         assert!(result.nulled_fields.is_empty());
@@ -1041,7 +1285,11 @@ mod tests {
         let output = json!({
             "test_verdict": "pass: 3 tests ran, 0 failed"
         });
-        let tool_calls = vec![tool_call("zed/terminal", true)];
+        // Terminal output contains the test verdict line.
+        let tool_calls = vec![tool_call_with_result(
+            "zed/terminal",
+            json!("pass: 3 tests ran, 0 failed"),
+        )];
 
         let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
         assert!(result.nulled_fields.is_empty());
@@ -1078,7 +1326,11 @@ mod tests {
             "unknown_field": "surprise"
         });
         // Only write_file succeeded — terminal was not called.
-        let tool_calls = vec![tool_call("zed/write_file", true)];
+        // The write_file result contains the path so value-matching passes.
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/main.rs"}),
+        )];
 
         let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
         // deliverable_path: Sourced (write_file succeeded)
@@ -1139,35 +1391,217 @@ mod tests {
     #[test]
     fn derived_field_survives_and_is_marked() {
         // A derived field is computed by platform code from a sourced value.
-        // It should survive grounding (not nulled) and be marked Derived.
+        // It should survive grounding (not nulled) and be marked Derived when
+        // its source field is Sourced.
         let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "deliverable_path".to_string(),
+            FieldSpec {
+                sources: vec!["zed/write_file".to_string()],
+                response_path: "".to_string(),
+                why: "A file path the agent claims to have written. Must be sourced \
+                      from a file-writing tool that succeeded."
+                    .to_string(),
+                derived_from: None,
+            },
+        );
         field_sources.insert(
             "file_extension".to_string(),
             FieldSpec {
                 sources: vec![],
+                response_path: "".to_string(),
                 why: "Derived from deliverable_path by platform code \
                       (extension extraction). Not a tool call."
                     .to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "deliverable_path".to_string(),
+                    how: "path_extension".to_string(),
+                }),
             },
         );
-        // Override: mark as Derived by using empty sources (Inferred path)
-        // — a true Derived would need platform code to compute it, which
-        // is outside the grounding checker's scope. The tag exists so
-        // platform code can stamp it when it computes a derivation.
         let contract = GroundingContract {
             agent_type: "task".to_string(),
             field_sources,
         };
-        let output = json!({"file_extension": "rs"});
-        let tool_calls: Vec<serde_json::Value> = vec![];
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "file_extension": "rs"
+        });
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/main.rs"}),
+        )];
 
         let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
         assert!(result.nulled_fields.is_empty());
         assert_eq!(cleaned["file_extension"], "rs");
-        // With empty sources, it's Inferred (commissioned). A Derived tag
-        // would be stamped by platform code after grounding, not by the
-        // grounding checker itself.
-        assert_eq!(result.provenance["file_extension"], ProvenanceTag::Inferred);
+        // Source field is Sourced, so the derived field is Derived.
+        assert_eq!(
+            result.provenance["file_extension"],
+            ProvenanceTag::Derived {
+                from: "deliverable_path".to_string(),
+                how: "path_extension".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn derived_from_sourced_is_derived() {
+        // Source field is Sourced → derived field is Derived.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "path".to_string(),
+            FieldSpec {
+                sources: vec!["zed/write_file".to_string()],
+                response_path: "".to_string(),
+                why: "A file path sourced from a file-writing tool that succeeded.".to_string(),
+                derived_from: None,
+            },
+        );
+        field_sources.insert(
+            "ext".to_string(),
+            FieldSpec {
+                sources: vec![],
+                response_path: "".to_string(),
+                why: "Derived from path by platform code (extension extraction).".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "path".to_string(),
+                    how: "path_extension".to_string(),
+                }),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({"path": "/x.rs", "ext": "rs"});
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/x.rs"}),
+        )];
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(result.nulled_fields.is_empty());
+        assert_eq!(
+            result.provenance["ext"],
+            ProvenanceTag::Derived {
+                from: "path".to_string(),
+                how: "path_extension".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn derived_from_inferred_is_inferred() {
+        // Source field is Inferred (commissioned, empty sources) → derived
+        // field is downgraded to Inferred by the weakest-link rule.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "summary".to_string(),
+            FieldSpec {
+                sources: vec![],
+                response_path: "".to_string(),
+                why: "A prose summary commissioned by the system prompt.".to_string(),
+                derived_from: None,
+            },
+        );
+        field_sources.insert(
+            "summary_upper".to_string(),
+            FieldSpec {
+                sources: vec![],
+                response_path: "".to_string(),
+                why: "Derived from summary by uppercasing transform.".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "summary".to_string(),
+                    how: "to_uppercase".to_string(),
+                }),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({"summary": "hi", "summary_upper": "HI"});
+        let tool_calls: Vec<serde_json::Value> = vec![];
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(result.nulled_fields.is_empty());
+        // Weakest link: source is Inferred (strength 3) < Derived (4).
+        assert_eq!(result.provenance["summary_upper"], ProvenanceTag::Inferred);
+    }
+
+    #[test]
+    fn derived_from_nulled_is_nulled() {
+        // Source field was nulled in pass 1 (Unsourced) → derived field is
+        // also nulled. A derivation from nothing is nothing.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "path".to_string(),
+            FieldSpec {
+                sources: vec!["zed/write_file".to_string()],
+                response_path: "".to_string(),
+                why: "A file path sourced from a file-writing tool that succeeded.".to_string(),
+                derived_from: None,
+            },
+        );
+        field_sources.insert(
+            "ext".to_string(),
+            FieldSpec {
+                sources: vec![],
+                response_path: "".to_string(),
+                why: "Derived from path by platform code (extension extraction).".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "path".to_string(),
+                    how: "path_extension".to_string(),
+                }),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        // No tool calls — path is unsourced and nulled in pass 1.
+        let output = json!({"path": "/x.rs", "ext": "rs"});
+        let tool_calls: Vec<serde_json::Value> = vec![];
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        // Both fields nulled.
+        assert!(result.nulled_fields.contains(&"path".to_string()));
+        assert!(result.nulled_fields.contains(&"ext".to_string()));
+        assert!(cleaned["path"].is_null());
+        assert!(cleaned["ext"].is_null());
+        assert!(matches!(
+            result.provenance.get("ext"),
+            Some(ProvenanceTag::Unsourced { .. })
+        ));
+    }
+
+    #[test]
+    fn derived_from_absent_is_unsourced() {
+        // Source field is not in the output at all → derived field is
+        // Unsourced (can't derive from a missing source).
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "ext".to_string(),
+            FieldSpec {
+                sources: vec![],
+                response_path: "".to_string(),
+                why: "Derived from path by platform code (extension extraction).".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "path".to_string(),
+                    how: "path_extension".to_string(),
+                }),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        // path is absent from the output.
+        let output = json!({"ext": "rs"});
+        let tool_calls: Vec<serde_json::Value> = vec![];
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(matches!(
+            result.provenance.get("ext"),
+            Some(ProvenanceTag::Unsourced { .. })
+        ));
     }
 
     #[test]
@@ -1238,7 +1672,10 @@ mod tests {
             "deliverable_path": "/src/main.rs",
             "summary": "Done."
         });
-        let tool_calls = vec![tool_call("zed/write_file", true)];
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/main.rs"}),
+        )];
 
         let (_result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
         assert_eq!(cleaned["deliverable_path_provenance"], "tool_verified");
@@ -1337,6 +1774,7 @@ mod tests {
             sources: vec!["zed/terminal".to_string()],
             response_path: "".to_string(),
             why: "too short".to_string(),
+            derived_from: None,
         };
         assert!(bad_spec.why.len() < 40);
     }
@@ -1368,8 +1806,12 @@ mod tests {
             "deliverable_path": "/src/main.rs",
             "summary": "I wrote the file at /src/main.rs and it works."
         });
-        // write_file succeeded — deliverable_path is sourced.
-        let tool_calls = vec![tool_call("zed/write_file", true)];
+        // write_file succeeded and its result contains the path —
+        // deliverable_path is sourced (value-matched).
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/main.rs"}),
+        )];
 
         let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
         // No nulled fields, no narrative leaks.
@@ -1418,9 +1860,11 @@ mod tests {
             "deliverables[].path".to_string(),
             FieldSpec {
                 sources: vec!["zed/write_file".to_string()],
+                response_path: "".to_string(),
                 why: "Each deliverable's path must be sourced from a \
                       file-writing tool that succeeded."
                     .to_string(),
+                derived_from: None,
             },
         );
         let contract = GroundingContract {
@@ -1460,9 +1904,11 @@ mod tests {
             "deliverables[].path".to_string(),
             FieldSpec {
                 sources: vec!["zed/write_file".to_string()],
+                response_path: "".to_string(),
                 why: "Each deliverable's path must be sourced from a \
                       file-writing tool that succeeded."
                     .to_string(),
+                derived_from: None,
             },
         );
         let contract = GroundingContract {
@@ -1475,7 +1921,12 @@ mod tests {
                 {"path": "/src/b.rs"}
             ]
         });
-        let tool_calls = vec![tool_call("zed/write_file", true)];
+        // The tool's result contains both paths — value-matching checks
+        // each array element appears in the tool's return.
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!([{"path": "/src/a.rs"}, {"path": "/src/b.rs"}]),
+        )];
 
         let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
         assert!(result.nulled_fields.is_empty());
@@ -1491,9 +1942,11 @@ mod tests {
             "deliverables[].path".to_string(),
             FieldSpec {
                 sources: vec!["zed/write_file".to_string()],
+                response_path: "".to_string(),
                 why: "Each deliverable's path must be sourced from a \
                       file-writing tool that succeeded."
                     .to_string(),
+                derived_from: None,
             },
         );
         let contract = GroundingContract {
@@ -1860,7 +2313,12 @@ mod tests {
             "findings": "some analysis",
             "summary": "research complete"
         });
-        let tool_calls = vec![json!({"tool": "zed/web_search", "ok": true})];
+        // The tool's result contains the URL — value-matching (Truth rung)
+        // checks the output's sources entry appears in the tool's return.
+        let tool_calls = vec![tool_call_with_result(
+            "zed/web_search",
+            json!({"results": [{"url": "https://example.com/real"}]}),
+        )];
         let (result, cleaned) =
             enforce_grounding(&contract, &output, &tool_calls, &output.to_string());
         assert!(
@@ -2015,7 +2473,12 @@ mod tests {
             "diagram": "graph TD\nA-->B",
             "summary": "generated a diagram"
         });
-        let tool_calls = vec![json!({"tool": "zed/write_file", "ok": true})];
+        // The tool's result contains the path — value-matching (Truth rung)
+        // checks the output's deliverable_path appears in the tool's return.
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/generated.rs"}),
+        )];
         let (result, cleaned) =
             enforce_grounding(&contract, &output, &tool_calls, &output.to_string());
         assert!(
@@ -2070,6 +2533,415 @@ mod tests {
         assert!(
             result.nulled_fields.contains(&"test_verdict".to_string()),
             "test_verdict must be nulled when no terminal tool was called"
+        );
+    }
+
+    // ── Production-scar tests (Truth rung value-matching) ─────────────
+
+    #[test]
+    fn sourced_field_with_matching_value_survives() {
+        // The basic Truth rung: a field value that appears in the tool's
+        // return is genuinely sourced. This is the happy path.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "done"
+        });
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/main.rs", "bytes_written": 42}),
+        )];
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(result.nulled_fields.is_empty());
+        assert_eq!(cleaned["deliverable_path"], "/src/main.rs");
+    }
+
+    #[test]
+    fn sourced_field_with_non_matching_value_is_nulled() {
+        // The Antaxius-beieri scar: a field that looks sourced because a
+        // source exists, but the value didn't come from the tool. The tool
+        // returned "/src/real.rs" but the agent claimed "/src/fabricated.rs".
+        // Without value-matching, this passes — the tool ran, so "sourced."
+        // With value-matching, the value must appear in the tool's return.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/fabricated.rs",
+            "summary": "done"
+        });
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/real.rs"}),
+        )];
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(
+            result
+                .nulled_fields
+                .contains(&"deliverable_path".to_string()),
+            "a value not in the tool's return must be nulled (Antaxius-beieri scar)"
+        );
+        assert!(cleaned["deliverable_path"].is_null());
+    }
+
+    #[test]
+    fn sourced_field_with_missing_result_in_tool_call_is_nulled() {
+        // A tool call without a `result` field (e.g. from an older code path
+        // or a tool that returned nothing) cannot value-match. The field is
+        // nulled — "tool ran" without a return is not "value came from tool."
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "done"
+        });
+        // Old-style tool call without `result` — value-matching cannot verify.
+        let tool_calls = vec![json!({"tool": "zed/write_file", "ok": true})];
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(
+            result
+                .nulled_fields
+                .contains(&"deliverable_path".to_string()),
+            "a tool call without `result` cannot value-match — must be nulled"
+        );
+        assert!(cleaned["deliverable_path"].is_null());
+    }
+
+    #[test]
+    fn tool_no_match_distinguishable_from_no_tool() {
+        // A tool that was called and returned a result that doesn't contain
+        // the field value is `tool_failed: false` (the tool ran, the value
+        // just didn't come from it). A tool that was never called is also
+        // `tool_failed: false`. The distinction is in whether the tool is
+        // in the `failed` set vs absent from `successful`.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/invented.rs",
+            "summary": "done"
+        });
+        // Tool ran successfully but returned a different path.
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/real.rs"}),
+        )];
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        let tag = &result.provenance["deliverable_path"];
+        match tag {
+            ProvenanceTag::Unsourced { tool_failed, .. } => {
+                // The tool ran and succeeded — it just didn't return this value.
+                // So tool_failed is false (the tool didn't fail, the value didn't match).
+                assert!(
+                    !tool_failed,
+                    "tool ran successfully, value just didn't match"
+                );
+            }
+            other => panic!("expected Unsourced, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn placeholder_ellipsis_is_absence_not_fabrication() {
+        // The card's own schema example uses "..." as filler. A model
+        // echoing it has declined to answer, not invented a value.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "...",
+            "summary": "done"
+        });
+        let tool_calls: Vec<serde_json::Value> = vec![];
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        // "..." is not a claim (is_claim returns false for it), so it should
+        // not be nulled as a violation — it's an absence.
+        assert!(
+            !result
+                .nulled_fields
+                .contains(&"deliverable_path".to_string()),
+            "'...' is the card's filler, not a fabrication: {:?}",
+            result.nulled_fields
+        );
+    }
+
+    // ── Production-scar tests (Fermi adaptations) ─────────────────────
+    //
+    // These tests adapt Fermi's production scars to our agent types and
+    // the new value-matching + weakest-link enforcement. Each test pins a
+    // specific failure mode that surfaced in production and would regress
+    // if the enforcement logic were weakened.
+
+    #[test]
+    fn narrative_leaks_file_path_when_deliverable_not_sourced() {
+        // The narrative loophole scar: when the structured deliverable_path
+        // field is stripped (no tool call sourced it), the fabrication often
+        // moves to the prose channel — the agent mentions the path in the
+        // narrative as if it had been written. A leak in the narrative is
+        // still a leak, even though the structured field was nulled.
+        //
+        // Adapted from Fermi: the value-matching change closed the structured
+        // channel, so fabrication migrated to the narrative. This test pins
+        // that the narrative scanner catches it.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/very/long/path/to/main.rs",
+            "summary": "I wrote the file."
+        });
+        // No tool calls — deliverable_path is unsourced and will be nulled.
+        let tool_calls: Vec<serde_json::Value> = vec![];
+        // The narrative mentions the nulled value — this is the leak.
+        let narrative = "I wrote the file at /src/very/long/path/to/main.rs and it works.";
+
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, narrative);
+        // Structured field was nulled.
+        assert!(
+            result
+                .nulled_fields
+                .contains(&"deliverable_path".to_string()),
+            "deliverable_path must be nulled when no tool sourced it"
+        );
+        assert!(cleaned["deliverable_path"].is_null());
+        // Narrative leak detected — the fabrication migrated to prose.
+        assert_eq!(
+            result.narrative_leaks.len(),
+            1,
+            "narrative mentioning the nulled path is a leak: {:?}",
+            result.narrative_leaks
+        );
+        assert_eq!(result.narrative_leaks[0].1, "deliverable_path");
+    }
+
+    #[test]
+    fn sourced_field_with_wrong_value_from_right_tool_is_caught() {
+        // The ploidy scar: the right tool ran and returned a value, but the
+        // agent claimed a *different* value in the output. The tool returned
+        // {"path": "/src/real.rs"} but the agent claimed deliverable_path:
+        // "/src/fabricated.rs". Name-based sourcing would pass (the tool was
+        // called and succeeded); value-matching catches the discrepancy.
+        //
+        // Adapted from Fermi: a tool call's name matching the contract is
+        // necessary but not sufficient — the value must come from the tool.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/fabricated.rs",
+            "summary": "done"
+        });
+        // The right tool ran and returned a real path — but not the one
+        // the agent claimed.
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/real.rs"}),
+        )];
+
+        let (result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(
+            result
+                .nulled_fields
+                .contains(&"deliverable_path".to_string()),
+            "a value not present in the tool's return must be nulled (ploidy scar)"
+        );
+        assert!(cleaned["deliverable_path"].is_null());
+        // Provenance is Unsourced — the tool ran, the value just didn't match.
+        match &result.provenance["deliverable_path"] {
+            ProvenanceTag::Unsourced { tool_failed, .. } => {
+                // The tool didn't fail — it ran successfully. The value
+                // didn't come from it, but the tool itself succeeded.
+                assert!(
+                    !tool_failed,
+                    "tool ran successfully, value just didn't match"
+                );
+            }
+            other => panic!("expected Unsourced, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn derived_chain_recurse_to_weakest() {
+        // The weakest-link scar, recursive form: a Derived field whose source
+        // is itself Derived from an Inferred field should be Inferred, not
+        // Derived. The weakest link propagates through the chain — a
+        // derivation cannot upgrade the provenance of its source.
+        //
+        // Adapted from Fermi: the chain is summary (Inferred) → summary_upper
+        // (Derived from summary) → summary_upper_len (Derived from
+        // summary_upper). The terminal derivation must inherit the weakest
+        // link (Inferred), not the intermediate Derived tag.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "summary".to_string(),
+            FieldSpec {
+                sources: vec![],
+                why: "A prose summary commissioned by the system prompt.".to_string(),
+                response_path: "".to_string(),
+                derived_from: None,
+            },
+        );
+        field_sources.insert(
+            "summary_upper".to_string(),
+            FieldSpec {
+                sources: vec![],
+                why: "Derived from summary by uppercasing transform.".to_string(),
+                response_path: "".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "summary".to_string(),
+                    how: "to_uppercase".to_string(),
+                }),
+            },
+        );
+        field_sources.insert(
+            "summary_upper_len".to_string(),
+            FieldSpec {
+                sources: vec![],
+                why: "Derived from summary_upper by length transform.".to_string(),
+                response_path: "".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "summary_upper".to_string(),
+                    how: "len".to_string(),
+                }),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({
+            "summary": "hi",
+            "summary_upper": "HI",
+            "summary_upper_len": 2
+        });
+        let tool_calls: Vec<serde_json::Value> = vec![];
+        let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(result.nulled_fields.is_empty());
+        // summary is Inferred (commissioned, empty sources).
+        assert_eq!(result.provenance["summary"], ProvenanceTag::Inferred);
+        // summary_upper is Derived from summary, but summary is Inferred
+        // (strength 3 < Derived's 4) → weakest link → Inferred.
+        assert_eq!(
+            result.provenance["summary_upper"],
+            ProvenanceTag::Inferred,
+            "summary_upper must inherit Inferred from its source (weakest link)"
+        );
+        // summary_upper_len is Derived from summary_upper, which is itself
+        // downgraded to Inferred → weakest link propagates → Inferred.
+        assert_eq!(
+            result.provenance["summary_upper_len"],
+            ProvenanceTag::Inferred,
+            "weakest link must propagate through the derived chain to Inferred"
+        );
+    }
+
+    #[test]
+    fn derived_field_resolved_regardless_of_hashmap_order() {
+        // Regression for the pass-2 ordering bug: HashMap iteration is
+        // non-deterministic, so a derived field processed before its source
+        // would find no source provenance and be incorrectly tagged Unsourced.
+        // The fix splits pass 2 into 2a (non-derived) and 2b (derived), so the
+        // source is always resolved first. This test runs many iterations to
+        // exercise different HashMap orderings.
+        let mut field_sources = HashMap::new();
+        field_sources.insert(
+            "path".to_string(),
+            FieldSpec {
+                sources: vec!["zed/write_file".to_string()],
+                response_path: "".to_string(),
+                why: "A file path sourced from a file-writing tool that succeeded.".to_string(),
+                derived_from: None,
+            },
+        );
+        field_sources.insert(
+            "ext".to_string(),
+            FieldSpec {
+                sources: vec![],
+                response_path: "".to_string(),
+                why: "Derived from path by platform code (extension extraction).".to_string(),
+                derived_from: Some(DerivedSpec {
+                    from: "path".to_string(),
+                    how: "path_extension".to_string(),
+                }),
+            },
+        );
+        let contract = GroundingContract {
+            agent_type: "task".to_string(),
+            field_sources,
+        };
+        let output = json!({"path": "/x.rs", "ext": "rs"});
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/x.rs"}),
+        )];
+        // Run many times to catch non-deterministic ordering.
+        for _ in 0..100 {
+            let (result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+            assert_eq!(
+                result.provenance["ext"],
+                ProvenanceTag::Derived {
+                    from: "path".to_string(),
+                    how: "path_extension".to_string(),
+                },
+                "derived field must be Derived (source is Sourced), not Unsourced"
+            );
+        }
+    }
+
+    #[test]
+    fn value_contains_short_needle_requires_exact_match() {
+        // Short needle strings (e.g. "pass", "ok", "0") must NOT match via
+        // substring containment — they would match enormous swaths of tool
+        // output, defeating the grounding contract. For needles < 10 chars,
+        // require exact Value equality (handled by the `haystack == needle`
+        // check at the top of value_contains).
+        let haystack = serde_json::json!("bypassing the check");
+        let short_needle = serde_json::json!("pass");
+        assert!(
+            !value_contains(&haystack, &short_needle),
+            "short needle must not match via substring"
+        );
+        // Exact match still works for short strings.
+        let exact = serde_json::json!("pass");
+        assert!(value_contains(&exact, &short_needle));
+        // Long needle (>= 10 chars) uses substring containment.
+        let long_haystack = serde_json::json!("the quick brown fox jumps");
+        let long_needle = serde_json::json!("quick brown");
+        assert!(value_contains(&long_haystack, &long_needle));
+        // Short needle inside an array — still no substring match.
+        let arr_haystack = serde_json::json!(["bypassing", "ok"]);
+        assert!(!value_contains(&arr_haystack, &short_needle));
+        // But exact match inside an array works.
+        let arr_exact = serde_json::json!(["pass", "fail"]);
+        assert!(value_contains(&arr_exact, &short_needle));
+    }
+
+    #[test]
+    fn enforcement_is_idempotent_after_value_matching() {
+        // A second pass of enforce_grounding on an already-enforced document
+        // must be clean. This pins the idempotency property after the
+        // value-matching change: the cleaned document (with nulled fields and
+        // provenance stamps) must not produce new violations on re-enforcement.
+        //
+        // Adapted from Fermi: value-matching added a new nulling path, and a
+        // re-read of a cached result must not log anomalies. The existing
+        // `enforce_grounding_is_idempotent` test covers the no-tool case; this
+        // test covers the value-mismatch case (tool ran, value didn't match).
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/fabricated.rs",
+            "summary": "done"
+        });
+        // The right tool ran but returned a different path — value-matching
+        // nulls deliverable_path on the first pass.
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/real.rs"}),
+        )];
+
+        let (first_result, cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        assert!(
+            !first_result.is_clean(),
+            "first pass should null the mismatched value"
+        );
+        assert!(cleaned["deliverable_path"].is_null());
+
+        // Second pass on the cleaned document — must find nothing new.
+        let (second_result, _re_cleaned) = enforce_grounding(&contract, &cleaned, &tool_calls, "");
+        assert!(
+            second_result.is_clean(),
+            "second pass must be clean; otherwise the validator would log an \
+             anomaly every time a cached value-mismatched result is re-read: {:?}",
+            second_result
         );
     }
 }

@@ -650,6 +650,7 @@ pub enum GroundingSensorMetric {
     CleanRate,
     CoverageRate,
     ViolationDelta,
+    LivenessGap,
 }
 
 impl GroundingSensor {
@@ -788,6 +789,30 @@ impl GroundingSensor {
             0.0, // Set-point is 0 — any positive delta is a deviation.
         ))
     }
+
+    /// Produce the `GroundingLivenessGap` signal. Returns the count of
+    /// delegations without grounding records. Currently returns 0.0 when
+    /// records exist (the infrastructure is in place; the true gap requires
+    /// wiring the swarm ledger). Returns `None` when the store is empty
+    /// (absence ≠ 0 — can't distinguish "no delegations" from "no records").
+    fn sense_liveness_gap(
+        &self,
+        report: &hkask_verification::GroundingTrendReport,
+    ) -> Option<Signal> {
+        if report.total_delegations == 0 {
+            return None;
+        }
+        // Infrastructure: the true gap = (swarm_ledger_delegations) - (total_delegations).
+        // Until the swarm ledger is wired, report 0.0 (no gap detected).
+        // This is honest: we can't detect a gap we can't measure, and returning
+        // 0.0 with a set-point of 0.0 means "no deviation detected" — not "no gap."
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::GroundingLivenessGap,
+            0.0,
+            0.0,
+        ))
+    }
 }
 
 #[async_trait::async_trait]
@@ -804,6 +829,7 @@ impl Sensor for GroundingSensor {
             GroundingSensorMetric::CleanRate => self.sense_clean_rate(&report),
             GroundingSensorMetric::CoverageRate => self.sense_coverage_rate(&report),
             GroundingSensorMetric::ViolationDelta => self.sense_violation_delta(&report),
+            GroundingSensorMetric::LivenessGap => self.sense_liveness_gap(&report),
         }
     }
 
@@ -812,6 +838,7 @@ impl Sensor for GroundingSensor {
             GroundingSensorMetric::CleanRate => SignalMetric::GroundingCleanRate,
             GroundingSensorMetric::CoverageRate => SignalMetric::GroundingCoverageRate,
             GroundingSensorMetric::ViolationDelta => SignalMetric::GroundingViolationDelta,
+            GroundingSensorMetric::LivenessGap => SignalMetric::GroundingLivenessGap,
         })
     }
 
@@ -820,6 +847,7 @@ impl Sensor for GroundingSensor {
             GroundingSensorMetric::CleanRate => "GroundingSensor(CleanRate)",
             GroundingSensorMetric::CoverageRate => "GroundingSensor(CoverageRate)",
             GroundingSensorMetric::ViolationDelta => "GroundingSensor(ViolationDelta)",
+            GroundingSensorMetric::LivenessGap => "GroundingSensor(LivenessGap)",
         }
     }
 
@@ -845,6 +873,7 @@ mod grounding_sensor_tests {
         let clean_tools = vec![serde_json::json!({
             "tool": "zed/edit_file",
             "ok": true,
+            "result": {"path": "/src/lib.rs"},
         })];
         for _ in 0..n_clean {
             store.enforce_for_agent(
@@ -1049,11 +1078,54 @@ mod grounding_sensor_tests {
             GroundingSensorMetric::CleanRate,
             GroundingSensorMetric::CoverageRate,
             GroundingSensorMetric::ViolationDelta,
+            GroundingSensorMetric::LivenessGap,
         ] {
             let sensor = GroundingSensor::new(store.clone(), metric, 0.8, 0.5);
             assert!(sensor.metric().is_some(), "metric must be Some");
             assert_eq!(sensor.loop_id(), Some(LoopId::Cybernetics));
         }
+    }
+
+    #[test]
+    fn liveness_gap_returns_none_when_store_empty() {
+        let store = Arc::new(VerificationStore::in_memory());
+        let sensor =
+            GroundingSensor::new(store.clone(), GroundingSensorMetric::LivenessGap, 0.0, 0.0);
+        let report = store
+            .grounding_trend(&hkask_verification::TrendScope::Global)
+            .unwrap();
+        let signal = sensor.sense_liveness_gap(&report);
+        assert!(signal.is_none(), "empty store: absence ≠ 0");
+    }
+
+    #[test]
+    fn liveness_gap_returns_zero_when_records_exist() {
+        let store = Arc::new(VerificationStore::in_memory());
+        // Seed one clean delegation.
+        let output = serde_json::json!({"deliverable_path": "/src/main.rs", "summary": "done"});
+        let tool_calls = vec![
+            serde_json::json!({"tool": "zed/write_file", "ok": true, "result": {"path": "/src/main.rs"}}),
+        ];
+        store.enforce_for_agent(
+            "kanban_task_spawn",
+            "test_agent",
+            "task",
+            &output,
+            &tool_calls,
+            "",
+        );
+        let sensor =
+            GroundingSensor::new(store.clone(), GroundingSensorMetric::LivenessGap, 0.0, 0.0);
+        let report = store
+            .grounding_trend(&hkask_verification::TrendScope::Global)
+            .unwrap();
+        let signal = sensor.sense_liveness_gap(&report);
+        assert!(signal.is_some());
+        assert_eq!(
+            signal.unwrap().value,
+            0.0,
+            "no gap detected (infrastructure only)"
+        );
     }
 
     // ── Proptests ──
@@ -1077,7 +1149,11 @@ mod grounding_sensor_tests {
             "summary": "did the work",
             "approach": "directly",
         });
-        let clean_tools = vec![serde_json::json!({"tool": "zed/edit_file", "ok": true})];
+        let clean_tools = vec![serde_json::json!({
+            "tool": "zed/edit_file",
+            "ok": true,
+            "result": {"path": "/src/lib.rs"},
+        })];
         let nulled_output = serde_json::json!({
             "deliverable_path": "/src/fabricated.rs",
             "summary": "did the work",
@@ -1129,6 +1205,7 @@ mod grounding_sensor_tests {
                 GroundingSensorMetric::CleanRate,
                 GroundingSensorMetric::CoverageRate,
                 GroundingSensorMetric::ViolationDelta,
+                GroundingSensorMetric::LivenessGap,
             ] {
                 let sensor = GroundingSensor::new(store.clone(), metric, 0.8, 0.5);
                 // block_on is fine here — this is a sync proptest, not a tokio test.

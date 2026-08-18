@@ -619,7 +619,8 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         | SignalMetric::MutationScore
         | SignalMetric::GroundingCleanRate
         | SignalMetric::GroundingCoverageRate
-        | SignalMetric::GroundingViolationDelta => &[],
+        | SignalMetric::GroundingViolationDelta
+        | SignalMetric::GroundingLivenessGap => &[],
     }
 }
 
