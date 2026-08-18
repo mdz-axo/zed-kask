@@ -403,10 +403,16 @@ impl SwarmPanel {
                                         })
                                         .collect();
                                 for local in local_agents {
-                                    // Skip if already present as a cloud/synced agent.
-                                    if existing_cloud_swarm_ids.contains(&local.agent_id)
-                                        || local_cloud_swarm_ids.contains(&local.agent_id)
-                                    {
+                                    // Skip if a cloud row already displays this
+                                    // local agent — the cloud card is the display
+                                    // row for synced agents, and the local card is
+                                    // the execution target. With clone-specific
+                                    // agent_ids (`xaman-ek-clone` vs `xaman-ek`),
+                                    // a local clone is only suppressed when its
+                                    // cloud counterpart is present in the cloud
+                                    // fetch. When the cloud fetch fails, the clone
+                                    // appears as a standalone Local row.
+                                    if existing_cloud_swarm_ids.contains(&local.agent_id) {
                                         continue;
                                     }
                                     this.entries.push(SwarmEntry::Agent(AgentCard {

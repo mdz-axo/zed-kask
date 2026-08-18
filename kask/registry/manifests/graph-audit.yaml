@@ -448,7 +448,7 @@ steps:
   # replacing the phantom LLM-generated convergence_metric.
   # References step_13_result (the original semantic-report) directly —
   # the previous step 19 was a redundant re-render of the same template.
-  - ordinal: 20
+  - ordinal: 19
     action: compute
     condition: "mode == 'semantic'"
     compute_ref: lisp.eval
@@ -473,7 +473,7 @@ steps:
 
   # Dual mode: lisp.eval computes a structural score from the dual
   # semantic-report's blockers array length.
-  - ordinal: 21
+  - ordinal: 20
     action: compute
     condition: "mode == 'dual'"
     compute_ref: lisp.eval
@@ -495,7 +495,7 @@ steps:
       env:
         step_17_result: "{{ step_17_result }}"
 
-  - ordinal: 22
+  - ordinal: 21
     action: loop
     condition: "mode != 'semantic' AND mode != 'dual'"
     description: Re-enter code mode cycle if convergence is not met.
@@ -505,7 +505,7 @@ steps:
       # into convergence_signal. No default(1.0): a Lisp failure must surface.
       convergence_signal: "{{ step_18_result }}"
 
-  - ordinal: 23
+  - ordinal: 22
     action: loop
     condition: "mode == 'semantic'"
     description: Re-enter semantic mode cycle if convergence is not met.
@@ -513,9 +513,9 @@ steps:
       loop_target: "{{ 11 }}"
       # Push the semantic-report gap from the lisp.eval step (ordinal 21)
       # into convergence_signal. No default(1.0): a Lisp failure must surface.
-      convergence_signal: "{{ step_20_result }}"
+      convergence_signal: "{{ step_19_result }}"
 
-  - ordinal: 24
+  - ordinal: 23
     action: loop
     condition: "mode == 'dual'"
     description: Re-enter dual mode cycle if convergence is not met.
@@ -523,7 +523,7 @@ steps:
       loop_target: "{{ 3 }}"
       # Push the dual-report gap from the lisp.eval step (ordinal 22)
       # into convergence_signal. No default(1.0): a Lisp failure must surface.
-      convergence_signal: "{{ step_21_result }}"
+      convergence_signal: "{{ step_20_result }}"
 
 error_handling:
   on_gas_exceeded: abort

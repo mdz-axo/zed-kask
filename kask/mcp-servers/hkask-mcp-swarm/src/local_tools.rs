@@ -471,6 +471,17 @@ impl SwarmServer {
                             "agent_id from ABW contains no safe characters".to_string(),
                         )
                     })?;
+                // The local clone gets a distinct agent_id so it cannot collide
+                // with the cloud agent's id. This is the root-cause fix for the
+                // panel merge bug where a cloned card with `agent_id ==
+                // cloud_swarm_id` self-suppressed and never appeared as a Local
+                // row. The `-clone` suffix also differentiates the local card
+                // from the cloud card in `swarm_delegate_local` lookups.
+                let clone_agent_id = self.local_registry.unique_clone_id(&safe_agent_id);
+                // Display label: prefer the ABW agent_name (human-readable),
+                // append " (Clone)" so the operator can distinguish the local
+                // clone from the cloud original in the panel.
+                let display_name = format!("{} (Clone)", req.agent_name);
                 let agent_type = abw_card
                     .get("agent_type")
                     .and_then(|v| v.as_str())
@@ -551,9 +562,10 @@ impl SwarmServer {
                 let skills =
                     filter_declared_skills(string_list(abw_caps.and_then(|c| c.get("skills"))));
                 let local_card = LocalAgentCard {
-                    agent_id: safe_agent_id.clone(),
+                    agent_id: clone_agent_id.clone(),
                     agent_type,
                     description,
+                    display_name,
                     accepts,
                     produces,
                     dependencies: deps,
@@ -565,7 +577,7 @@ impl SwarmServer {
                         skills,
                         ..Default::default()
                     },
-                    cloud_swarm_id: Some(req.agent_name.clone()),
+                    cloud_swarm_id: Some(req.agent_name),
                     tags: Vec::new(),
                     visibility: String::new(),
                     valence: None,
@@ -578,8 +590,8 @@ impl SwarmServer {
                     .write_card(&local_card)
                     .map_err(map_local_swarm_error)?;
                 Ok(serde_json::json!({
-                    "cloned": safe_agent_id,
-                    "cloud_id": req.agent_name,
+                    "cloned": clone_agent_id,
+                    "cloud_id": local_card.cloud_swarm_id,
                     "path": card_path,
                     "synced": true,
                 }))
@@ -811,6 +823,7 @@ impl SwarmServer {
                     agent_id: safe_id.clone(),
                     agent_type: req.agent_type,
                     description: req.description,
+                    display_name: String::new(),
                     accepts: req.accepts,
                     produces: req.produces,
                     dependencies: LocalAgentDependencies::default(),
