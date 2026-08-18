@@ -304,8 +304,7 @@ impl Default for RjouleConfig {
 /// `retry_backoff_seconds` between attempts. Only timeouts are retried —
 /// other errors (validation, not-found, render) propagate immediately.
 ///
-/// **Gas and validation policies are not yet enforced** (`on_gas_exceeded`,
-/// `on_validation_failure`): a step that fails `validate_inputs` aborts the
+/// **Validation policy is not yet enforced** (`on_validation_failure`): a step that fails `validate_inputs` aborts the
 /// cascade immediately regardless of these fields. They are retained for
 /// schema stability.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -415,7 +414,7 @@ pub struct BundleAuditConfig {
     pub log_level: String,
     pub include_input: bool,
     pub include_output: bool,
-    pub include_gas_cost: bool,
+    pub include_rjoule_cost: bool,
     pub include_reg_events: bool,
 }
 impl Default for BundleAuditConfig {
@@ -425,7 +424,7 @@ impl Default for BundleAuditConfig {
             log_level: "info".into(),
             include_input: true,
             include_output: true,
-            include_gas_cost: true,
+            include_rjoule_cost: true,
             include_reg_events: true,
         }
     }

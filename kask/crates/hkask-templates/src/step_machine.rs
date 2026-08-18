@@ -167,8 +167,6 @@ impl StepMachine {
         self.convergence.inject_running(
             &mut self.context,
             0,
-            snap.gas_used,
-            snap.gas_cap,
             snap.rjoule_used,
             snap.rjoule_cap,
         );
@@ -180,8 +178,6 @@ impl StepMachine {
             self.convergence.inject_running(
                 &mut self.context,
                 self.iteration,
-                snap.gas_used,
-                snap.gas_cap,
                 snap.rjoule_used,
                 snap.rjoule_cap,
             );
@@ -622,12 +618,6 @@ impl StepMachine {
                     .store_named(step_id, node.ordinal, &suffix, value);
                 self.last_result_step = Some(step_id);
             }
-            crate::step_actions::Effect::ConsumedGas(amount) => {
-                // Gas is charged per iteration, not per step — the budget
-                // tracker's `charge_iteration` handles this. This effect is
-                // for per-step gas (e.g. flowdef sub-cascade consumption).
-                let _ = amount; // handled by charge_iteration in the pass loop
-            }
             crate::step_actions::Effect::ConsumedRJoule(cost) => {
                 self.budget.charge_rjoule(cost);
             }
@@ -718,8 +708,6 @@ impl StepMachine {
             status,
             reason,
             self.iteration,
-            snap.gas_used,
-            snap.gas_cap,
             snap.rjoule_used,
             snap.rjoule_cap,
         );

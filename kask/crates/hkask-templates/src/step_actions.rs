@@ -46,7 +46,6 @@ pub enum Effect {
     Reenter(StepId),
     Exit(crate::step_graph::ExitKind),
     NoOp,
-    ConsumedGas(u32),
     ConsumedRJoule(f64),
 }
 
@@ -246,16 +245,13 @@ impl StepMachine {
         let tools: Option<Vec<ChatToolDefinition>> = structured_tool.map(|tool| vec![tool]);
 
         // Merge per-step inference parameters from the template's `[inference]`
-        // block over the default params. Templates declare temperature,
-        // max_tokens, and thinking_budget per step — without this, every call
-        // uses the default (temperature 0.6, max_tokens 2048), which is too
+        // block over the default params. Templates declare temperature
+        // and thinking_budget per step — without this, every call
+        // uses the default (temperature 0.6), which is too
         // low for complex templates that need thinking + a full JSON response.
         let mut params = infra.default_params.clone();
         if let Some(temp) = inference_block.temperature {
             params.temperature = temp;
-        }
-        if let Some(max_tok) = inference_block.max_tokens {
-            params.max_tokens = max_tok;
         }
         match inference_block.thinking_budget.as_deref() {
             Some("full") | Some("on") => {
@@ -342,9 +338,6 @@ impl StepMachine {
         if let Some(cost) = cost_usd {
             self.budget.charge_rjoule(cost);
         }
-
-        // Charge gas (one iteration of compute).
-        self.budget.charge_iteration();
 
         // Extract the parsed result.
         let parsed: Value = if let Some(tool_call) = tool_calls.first() {
@@ -660,18 +653,14 @@ impl StepMachine {
     ///
     /// Error semantics: if any tool fails, the step fails (the first error
     /// propagates). A partial-success mode (collect errors per-key) is a
-    /// future extension. Gas is charged one iteration per tool (keeps the
-    /// gas model honest — a 6-tool batch costs 6 iterations, not 1).
+    /// future extension.
     ///
     /// Join mode (read from `input_mapping.join`):
     ///   - `list` (default, backward-compat): Promise.all — first tool `Err`
     ///     aborts the batch. Sibling tool results are dropped.
     ///   - `allSettled`: Promise.allSettled (ECMA-262 §27.2.4.2) — collect
     ///     every tool outcome, store Ok results under `results` with an
-    ///     `errors` sidecar. No tool outcome is silently dropped. Gas is
-    ///     charged on both paths (the wave already ran every tool).
-    /// Gas is charged one iteration per tool on BOTH the success and error
-    /// paths — previously the error path returned early and under-charged.
+    ///     `errors` sidecar. No tool outcome is silently dropped.
     pub(crate) async fn execute_tool_batch(
         &mut self,
         node: crate::step_graph::StepNode,
@@ -863,15 +852,6 @@ impl StepMachine {
             self.tool_calls.push(summary);
         }
 
-        // Charge gas: one iteration per tool in the batch. Charged on BOTH
-        // the success and error paths — previously gas was under-charged on
-        // the error path (the early `?` returned before this loop ran), which
-        // made the gas model dishonest (a 6-tool batch that failed after 5
-        // tools completed charged 0 iterations).
-        for _ in 0..batch.len() {
-            self.budget.charge_iteration();
-        }
-
         // Join mode: `list` (default, backward-compat) = Promise.all — first
         // Err aborts. `allSettled` = Promise.allSettled — collect every tool
         // outcome, store Ok results with an `errors` sidecar. Read from the
@@ -1041,7 +1021,6 @@ impl StepMachine {
         )?;
 
         // Cap the sub-cascade's budget to the parent's remaining budget.
-        let sub_gas_cap = (sub_manifest.gas.cap as u64).min(self.budget.remaining_gas());
         let sub_rjoule_cap_f64 =
             (sub_manifest.rjoule.cap as f64).min(self.budget.remaining_rjoule().max(0.0));
         let sub_rjoule_cap = if sub_rjoule_cap_f64.is_finite() {
@@ -1053,7 +1032,6 @@ impl StepMachine {
             );
             0.0
         };
-        sub_manifest.gas.cap = sub_gas_cap as u32;
         sub_manifest.rjoule.cap = sub_rjoule_cap as u32;
 
         // Apply input_mapping.
@@ -1070,7 +1048,7 @@ impl StepMachine {
             &sub_manifest.steps,
             sub_manifest.convergence.max_iterations,
         );
-        let sub_budget = crate::budget::BudgetTracker::new(&sub_manifest.gas, &sub_manifest.rjoule);
+        let sub_budget = crate::budget::BudgetTracker::new(&sub_manifest.rjoule);
         let sub_convergence =
             crate::convergence::ConvergenceTracker::new(&sub_manifest.convergence);
 
@@ -1114,9 +1092,8 @@ impl StepMachine {
             &parent_named_keys,
         );
 
-        // Deduct the sub-cascade's actual gas/rJoule consumption.
+        // Deduct the sub-cascade's actual rJoule consumption.
         self.budget.consume_child(
-            sub_outcome.budget_snapshot.gas_used,
             sub_outcome.budget_snapshot.rjoule_used,
         );
 
@@ -1129,8 +1106,7 @@ impl StepMachine {
     /// **Parallel** — run a list of sub-cascades concurrently (K2). Branches
     /// live under `input_mapping.branches`; `concurrency_cap` bounds in-flight
     /// branches; `join` is `"list"` (first cut). Each branch: its own
-    /// `ConvergenceTracker` + a `BudgetTracker` that shares the parent's gas
-    /// `Arc<AtomicU64>` (enforced during the wave) + owns its rJoule (joined
+    /// `ConvergenceTracker` + a `BudgetTracker` that owns its rJoule (joined
     /// after via `charge_rjoule`). Results join by `branch_id` — deterministic,
     /// not completion order.
     pub(crate) async fn execute_parallel(
@@ -1175,9 +1151,7 @@ impl StepMachine {
         // Drop `mapping` — everything below is owned, no borrows from locals.
         drop(mapping);
 
-        // Shared gas (enforced during the wave); per-branch rJoule (settled after).
-        let shared_gas = self.budget.gas_atomic();
-        let gas_cap = self.budget.gas_cap();
+        // Per-branch rJoule (settled after the wave).
         let rjoule_remaining = self.budget.remaining_rjoule();
         let context_template = self.context.clone();
         let parent_manifest_id = self.manifest_id.clone();
@@ -1191,7 +1165,6 @@ impl StepMachine {
             .unwrap_or(branches.len());
 
         let branch_futs = branches.into_iter().enumerate().map(|(branch_id, spec)| {
-            let shared_gas = Arc::clone(&shared_gas);
             // `run` now owns the `Infra` (so its future is `Send + 'static` and
             // tokio-spawnable); clone `infra` + `context_template` per branch so
             // each `async move` owns its own.
@@ -1270,9 +1243,7 @@ impl StepMachine {
                             step_ordinal, branch_id, template_ref
                         ),
                     )?;
-                    let sub_budget = crate::budget::BudgetTracker::from_remaining_shared(
-                        Arc::clone(&shared_gas),
-                        gas_cap,
+                    let sub_budget = crate::budget::BudgetTracker::from_remaining(
                         rjoule_remaining,
                     );
                     let sub_convergence =
@@ -1408,13 +1379,10 @@ impl StepMachine {
 
         // `list` mode (default): Promise.all semantics. The first Err aborts
         // the step. rJoule from completed branches is settled before
-        // propagating so the parent's budget doesn't underreport (the branches
-        // already charged gas to the shared `Arc<AtomicU64>`; rJoule is
-        // settled post-wave and was previously lost on this path).
+        // propagating so the parent's budget doesn't underreport.
         if join_mode == "list" {
             if let Some(first_err) = errs.into_iter().next() {
-                // Settle rJoule from completed branches even on the error path —
-                // they charged gas to the shared atomic; rJoule must follow.
+                // Settle rJoule from completed branches even on the error path.
                 let sum_rjoule: f64 = oks
                     .iter()
                     .filter_map(|r| r.as_ref().ok())
@@ -1467,9 +1435,7 @@ impl StepMachine {
             oks.into_iter().map(|r| r.unwrap()).collect();
         ordered.sort_by_key(|(id, _)| *id);
 
-        // Settle rJoule from completed branches (was missing on the error
-        // path — branches charged gas to the shared `Arc<AtomicU64>`; rJoule
-        // is settled post-wave).
+        // Settle rJoule from completed branches (settled post-wave).
         let sum_rjoule: f64 = ordered
             .iter()
             .map(|(_, o)| o.budget_snapshot.rjoule_used)
