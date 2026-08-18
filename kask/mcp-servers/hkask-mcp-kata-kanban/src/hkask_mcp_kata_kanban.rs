@@ -1164,11 +1164,6 @@ impl KanbanServer {
                 }
             }
         }
-        if let Some(r) = rjoule_budget {
-            self.service
-                .task_add_rjoules(tid, *r, self.webid)
-                .map_err(map_kanban_error)?;
-        }
         Ok(tid)
     }
 

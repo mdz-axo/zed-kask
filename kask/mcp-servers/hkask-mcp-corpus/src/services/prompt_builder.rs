@@ -111,10 +111,7 @@ impl PromptBuilderService {
         });
 
         // Bulk-load embeddings for in-memory KNN
-        let dim = embedding_dim();
-        let store = MemoryStore::open(&db_path, &passphrase, dim).map_err(|e| {
-            McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
-        })?;
+        let store = crate::helpers::open_memory_store(&db_path, &passphrase)?;
 
         let text_map: std::collections::HashMap<&str, &str> = chunks
             .iter()
@@ -466,9 +463,7 @@ impl PromptBuilderService {
             ti += prompts_per_chunk;
         }
 
-        let output_path = crate::path_safety::contain_for_write(&output)?;
-        std::fs::write(&output_path, &out)
-            .map_err(|e| map_corpus_io_error(e, &format!("Cannot write output '{}'", output)))?;
+        crate::helpers::write_contained(&output, &out)?;
 
         let result = json!({
             "total_chunks": total,
