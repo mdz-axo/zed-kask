@@ -188,8 +188,8 @@ steps:
     timeout_seconds: 120
     input_mapping:
       mutant: "{{ step_3_result.mutant | default({}) }}"
-      source_ontology: "{{ seed_concepts[_loop.seed_index | default(0)].source_ontology | default(seed_concepts[0].source_ontology) | default({}) }}"
-      target_ontology: "{{ seed_concepts[_loop.seed_index | default(0)].target_ontology | default(seed_concepts[0].target_ontology) | default({}) }}"
+      source_ontology: "{{ seed_concepts[seed_index | default(0)].source_ontology | default(seed_concepts[0].source_ontology) | default({}) }}"
+      target_ontology: "{{ seed_concepts[seed_index | default(0)].target_ontology | default(seed_concepts[0].target_ontology) | default({}) }}"
       rater: "{{ rater | default('human') }}"
 
   - ordinal: 6
@@ -291,7 +291,7 @@ steps:
       # evolution design). The seed_index is carried forward as a loop
       # variable; the Represent step (ordinal 1) uses it to select
       # seed_concepts[seed_index].
-      seed_index: "{{ _loop.seed_index | default(0) + 1 }}"
+      seed_index: "{{ seed_index | default(0) + 1 }}"
 
 error_handling:
   on_gas_exceeded: abort

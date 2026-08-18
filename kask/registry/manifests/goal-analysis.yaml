@@ -110,7 +110,7 @@ steps:
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
-      form: "(- 1.0 (assoc \"confidence\" step_3_result))"
+      form: "(let ((c (assoc \"confidence\" step_3_result))) (if (is_null c) 1.0 (let ((c-n (if (numberp c) c 1.0))) (- 1.0 c-n))))"
       env:
         step_3_result: "{{ step_3_result }}"
       max_steps: 10000
