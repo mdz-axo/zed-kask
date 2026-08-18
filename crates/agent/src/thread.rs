@@ -4262,6 +4262,7 @@ impl Thread {
                     attempt,
                     consecutive,
                     probability,
+                    crate::tool_retry_tracker::hard_cap_for(tool_name_str),
                 );
                 log::warn!(
                     "Tool '{tool_name_str}' retry warning (attempt {attempt}, consecutive {consecutive}, P(success)={:.0}%)",

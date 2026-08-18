@@ -1104,6 +1104,74 @@ pub fn enforce_grounding(
     (result, cleaned)
 }
 
+/// Enforce the monotone provenance rule: a field's provenance can never
+/// be stronger than its source. `Sourced` can only come from a tool call
+/// in the *current* delegation, never from inheriting an upstream tag.
+///
+/// This is the "conclusions-never-become-facts" rule from the narrative:
+/// an `Inferred` tag on input must produce at most `Inferred` on output
+/// across composition hops. Without this, an agent that receives an
+/// `Inferred` field from an upstream delegation can re-emit it as
+/// `Sourced` in its own output, laundering the provenance.
+///
+/// `upstream_blocks` is the `blocks` array from the upstream envelope
+/// (each entry has `field` and `provenance`). When a field in the current
+/// output is `Sourced` and the same field name appears in the upstream
+/// blocks with a weaker provenance, downgrade the current tag to match.
+///
+/// This is a post-processing step after `enforce_grounding`. It mutates
+/// the `GroundingResult` in place.
+pub fn enforce_monotone_provenance(
+    result: &mut GroundingResult,
+    upstream_blocks: &[serde_json::Value],
+) {
+    // Build a map of field → provenance_strength from the upstream blocks.
+    let upstream: std::collections::HashMap<&str, u8> = upstream_blocks
+        .iter()
+        .filter_map(|block| {
+            let field = block.get("field")?.as_str()?;
+            let prov = block.get("provenance")?.as_str()?;
+            let strength = match prov {
+                "tool_verified" => 5,
+                "platform_derived" => 4,
+                "model_inference" => 3,
+                "uncommissioned_inference" => 2,
+                "narrative" => 1,
+                "tool_no_match" | "unavailable_no_tool_source" => 0,
+                _ => return None,
+            };
+            Some((field, strength))
+        })
+        .collect();
+
+    for (field, tag) in result.provenance.iter_mut() {
+        if let Some(&upstream_strength) = upstream.get(field.as_str()) {
+            let current_strength = provenance_strength(tag);
+            if upstream_strength < current_strength {
+                // Downgrade to the upstream's provenance level.
+                *tag = downgrade_to(tag, upstream_strength);
+            }
+        }
+    }
+}
+
+/// Downgrade a provenance tag to the target strength level.
+/// Preserves the tag's structure where possible (e.g. Unsourced keeps
+/// its removed_preview and tool_failed).
+fn downgrade_to(tag: &ProvenanceTag, target_strength: u8) -> ProvenanceTag {
+    match (tag, target_strength) {
+        (_, 0) => ProvenanceTag::Unsourced {
+            removed_preview: String::new(),
+            tool_failed: false,
+        },
+        (_, 1) => ProvenanceTag::Narrative,
+        (_, 2) => ProvenanceTag::UncommissionedInference,
+        (_, 3) => ProvenanceTag::Inferred,
+        // 4 and 5 are not downgrades from Sourced — they're stronger.
+        _ => tag.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3054,6 +3122,162 @@ mod tests {
             "second pass must be clean; otherwise the validator would log an \
              anomaly every time a cached value-mismatched result is re-read: {:?}",
             second_result
+        );
+    }
+
+    // ── Monotone provenance across composition hops ────────────────────
+
+    #[test]
+    fn monotone_provenance_downgrades_sourced_to_inferred_when_upstream_is_inferred() {
+        // A field is `Sourced` in the current delegation but `Inferred` in
+        // the upstream envelope → downgraded to `Inferred`. This is the core
+        // "conclusions-never-become-facts" rule: an upstream judgment cannot
+        // be laundered into a fact by a downstream agent.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "done"
+        });
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/main.rs"}),
+        )];
+        let (mut result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        // Sanity: before monotone enforcement, deliverable_path is Sourced.
+        assert!(matches!(
+            &result.provenance["deliverable_path"],
+            ProvenanceTag::Sourced { .. }
+        ));
+
+        let upstream_blocks = vec![json!({
+            "field": "deliverable_path",
+            "provenance": "model_inference"
+        })];
+        enforce_monotone_provenance(&mut result, &upstream_blocks);
+
+        assert_eq!(
+            result.provenance["deliverable_path"],
+            ProvenanceTag::Inferred,
+            "Sourced field with Inferred upstream must downgrade to Inferred"
+        );
+    }
+
+    #[test]
+    fn monotone_provenance_keeps_sourced_when_upstream_is_sourced() {
+        // Both current and upstream are `Sourced` (strength 5) → no downgrade.
+        // The upstream agent legitimately sourced the value from a tool, so
+        // the downstream agent's own tool call is not a regression.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "done"
+        });
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/main.rs"}),
+        )];
+        let (mut result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+
+        let upstream_blocks = vec![json!({
+            "field": "deliverable_path",
+            "provenance": "tool_verified"
+        })];
+        enforce_monotone_provenance(&mut result, &upstream_blocks);
+
+        match &result.provenance["deliverable_path"] {
+            ProvenanceTag::Sourced { tool } => assert_eq!(tool, "zed/write_file"),
+            other => panic!("expected Sourced, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn monotone_provenance_downgrades_sourced_to_unsourced_when_upstream_is_unsourced() {
+        // Upstream was `Unsourced` (strength 0) → downgraded to `Unsourced`.
+        // The downstream agent cannot resurrect a value the upstream had to
+        // null; the null must propagate across composition hops.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "done"
+        });
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/main.rs"}),
+        )];
+        let (mut result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+
+        let upstream_blocks = vec![json!({
+            "field": "deliverable_path",
+            "provenance": "unavailable_no_tool_source"
+        })];
+        enforce_monotone_provenance(&mut result, &upstream_blocks);
+
+        match &result.provenance["deliverable_path"] {
+            ProvenanceTag::Unsourced {
+                removed_preview,
+                tool_failed,
+            } => {
+                assert_eq!(removed_preview, "");
+                assert!(
+                    !tool_failed,
+                    "monotone downgrade must not imply tool failure"
+                );
+            }
+            other => panic!("expected Unsourced, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn monotone_provenance_no_op_when_no_upstream_blocks() {
+        // Empty upstream → no changes. This is the base case for a delegation
+        // with no upstream envelope (e.g. a top-level delegation).
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "done"
+        });
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/main.rs"}),
+        )];
+        let (mut result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        let before = result.provenance.clone();
+
+        enforce_monotone_provenance(&mut result, &[]);
+
+        assert_eq!(
+            result.provenance, before,
+            "empty upstream must not modify provenance"
+        );
+    }
+
+    #[test]
+    fn monotone_provenance_no_op_for_fields_not_in_upstream() {
+        // A field not present in the upstream blocks → no change. The
+        // monotone rule only constrains fields that have an upstream provenance;
+        // a field the upstream never saw is unconstrained.
+        let contract = task_agent_contract();
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "done"
+        });
+        let tool_calls = vec![tool_call_with_result(
+            "zed/write_file",
+            json!({"path": "/src/main.rs"}),
+        )];
+        let (mut result, _cleaned) = enforce_grounding(&contract, &output, &tool_calls, "");
+        let before = result.provenance.clone();
+
+        // Upstream has a different field — deliverable_path is not mentioned.
+        let upstream_blocks = vec![json!({
+            "field": "some_other_field",
+            "provenance": "model_inference"
+        })];
+        enforce_monotone_provenance(&mut result, &upstream_blocks);
+
+        assert_eq!(
+            result.provenance, before,
+            "fields not in upstream must not be modified"
         );
     }
 }

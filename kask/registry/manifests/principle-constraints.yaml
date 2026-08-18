@@ -101,13 +101,15 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((summary (assoc "summary" step_1_result)))
-          (if (is_null summary)
-              0
-              (let ((enforced (assoc "enforced" summary))
-                    (gaps (assoc "gaps" summary)))
-                (+ (if (is_null enforced) 0 enforced)
-                   (if (is_null gaps) 0 gaps)))))
+        (if (listp step_1_result)
+            (let ((summary (assoc "summary" step_1_result)))
+              (if (is_null summary)
+                  0
+                  (let ((enforced (assoc "enforced" summary))
+                        (gaps (assoc "gaps" summary)))
+                    (+ (if (is_null enforced) 0 enforced)
+                       (if (is_null gaps) 0 gaps)))))
+            0)
       env:
         step_1_result: "{{ step_1_result | default({}) }}"
 

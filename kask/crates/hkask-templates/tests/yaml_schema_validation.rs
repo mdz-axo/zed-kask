@@ -512,16 +512,17 @@ fn scenario_builder_manifest_loads_with_execute_steps() {
 }
 
 /// Verify the kanban-task-management manifest loads correctly after Co-evolution
-/// Phase 1 migration. Five native MCP `execute` steps replace the
+/// Phase 1 migration. Four native MCP `execute` steps plus one `mcp_batch`
+/// step (kanban_board_list + kanban_task_list run concurrently) replace the
 /// "post-cascade instructions for the agent" pattern for deterministic
 /// single-call tool invocations:
 ///   - Step 6: kanban_board_create (decompose phase — create the board)
 ///   - Step 8: kanban_task_spawn (delegate phase — spawn the subagent)
 ///   - Step 10: kanban_task_comment (delegate phase — post status comment)
-///   - Step 11: kanban_board_list (operate phase — fetch board state)
-///   - Step 12: kanban_task_list (operate phase — fetch task list)
+///   - Step 11: mcp_batch { kanban_board_list, kanban_task_list }
+///             (operate phase — fetch board state + task list concurrently)
 /// Multi-task creation and LLM-judgment tool calls remain agent-mediated.
-/// The manifest grew from 14 to 19 steps.
+/// The manifest has 19 steps (was 20 before the step 11/12 batch merge).
 #[test]
 fn kanban_task_management_manifest_loads_with_execute_steps() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -535,16 +536,20 @@ fn kanban_task_management_manifest_loads_with_execute_steps() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load kanban-task-management manifest: {e}"));
 
-    // 13 select steps + 5 execute steps + 1 compute step + 1 loop step = 20 total.
+    // 13 select steps + 4 execute steps (3 single-mcp + 1 mcp_batch) +
+    // 1 compute step + 1 loop step = 19 total. The mcp_batch step replaces
+    // two execute steps (board_list + task_list) with one concurrent batch.
     // The compute step (lisp.eval) extracts the convergence signal
     // deterministically from the last completed phase's result.
     assert_eq!(
         manifest.steps.len(),
-        20,
-        "expected 20 steps after Co-evolution Phase 1 (5 execute steps + 1 lisp.eval convergence-signal step)"
+        19,
+        "expected 19 steps after Co-evolution Phase 1 + step 11/12 batch merge (3 execute + 1 mcp_batch + 1 lisp.eval convergence-signal step)"
     );
 
-    // Five execute steps, each condition-gated on a triage phase.
+    // Four execute steps: three single-mcp (board_create, task_spawn,
+    // task_comment) plus one mcp_batch (board_list + task_list). Each is
+    // condition-gated on a triage phase.
     let execute_steps: Vec<_> = manifest
         .steps
         .iter()
@@ -552,56 +557,75 @@ fn kanban_task_management_manifest_loads_with_execute_steps() {
         .collect();
     assert_eq!(
         execute_steps.len(),
-        5,
-        "manifest must have 5 execute steps (Co-evolution Phase 1)"
+        4,
+        "manifest must have 4 execute steps after step 11/12 batch merge (3 single-mcp + 1 mcp_batch)"
     );
+    // Single-mcp execute steps (exclude the mcp_batch step).
+    let single_mcp_execute: Vec<_> = execute_steps.iter().filter(|s| s.mcp.is_some()).collect();
+    assert_eq!(single_mcp_execute.len(), 3, "3 single-mcp execute steps");
     assert_eq!(
-        execute_steps[0].ordinal, 6,
+        single_mcp_execute[0].ordinal, 6,
         "kanban_board_create execute at ordinal 6"
     );
     assert_eq!(
-        execute_steps[0].mcp.as_deref(),
+        single_mcp_execute[0].mcp.as_deref(),
         Some("kanban_board_create"),
         "step 6 must call kanban_board_create"
     );
     assert_eq!(
-        execute_steps[1].ordinal, 8,
+        single_mcp_execute[1].ordinal, 8,
         "kanban_task_spawn execute at ordinal 8"
     );
     assert_eq!(
-        execute_steps[1].mcp.as_deref(),
+        single_mcp_execute[1].mcp.as_deref(),
         Some("kanban_task_spawn"),
         "step 8 must call kanban_task_spawn"
     );
     assert_eq!(
-        execute_steps[2].ordinal, 10,
+        single_mcp_execute[2].ordinal, 10,
         "kanban_task_comment execute at ordinal 10"
     );
     assert_eq!(
-        execute_steps[2].mcp.as_deref(),
+        single_mcp_execute[2].mcp.as_deref(),
         Some("kanban_task_comment"),
         "step 10 must call kanban_task_comment"
     );
+
+    // The mcp_batch step at ordinal 11 runs kanban_board_list and
+    // kanban_task_list concurrently.
+    let batch_step = manifest
+        .steps
+        .iter()
+        .find(|s| s.action == "execute" && s.mcp_batch.is_some())
+        .expect("manifest must have an mcp_batch step");
     assert_eq!(
-        execute_steps[3].ordinal, 11,
-        "kanban_board_list execute at ordinal 11"
+        batch_step.ordinal, 11,
+        "mcp_batch step should be ordinal 11"
     );
     assert_eq!(
-        execute_steps[3].mcp.as_deref(),
-        Some("kanban_board_list"),
-        "step 11 must call kanban_board_list"
+        batch_step.mcp_batch.as_ref().unwrap().len(),
+        2,
+        "mcp_batch at step 11 must have 2 sub-calls (board_list + task_list)"
     );
-    assert_eq!(
-        execute_steps[4].ordinal, 12,
-        "kanban_task_list execute at ordinal 12"
+    let batch_mcps: Vec<_> = batch_step
+        .mcp_batch
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|c| c.mcp.as_str())
+        .collect();
+    assert!(
+        batch_mcps.contains(&"kanban_board_list"),
+        "mcp_batch must include kanban_board_list"
     );
-    assert_eq!(
-        execute_steps[4].mcp.as_deref(),
-        Some("kanban_task_list"),
-        "step 12 must call kanban_task_list"
+    assert!(
+        batch_mcps.contains(&"kanban_task_list"),
+        "mcp_batch must include kanban_task_list"
     );
-    // Every execute step must have on_failure and a condition gate.
-    for step in &execute_steps {
+
+    // Every execute step (including the mcp_batch step) must have on_failure
+    // and a condition gate.
+    for step in manifest.steps.iter().filter(|s| s.action == "execute") {
         assert!(
             step.on_failure.is_some(),
             "execute step {} must have on_failure config (no silent collapse)",
@@ -614,15 +638,15 @@ fn kanban_task_management_manifest_loads_with_execute_steps() {
         );
     }
 
-    // The loop step (ordinal 20) must reference the final phase outputs.
-    // Ordinal shifted from 19 to 20 when a lisp.eval convergence-signal
-    // compute step was inserted at ordinal 19.
+    // The loop step (ordinal 19) must reference the final phase outputs.
+    // Ordinal shifted from 20 to 19 when the step 11/12 batch merge removed
+    // one step.
     let loop_step = manifest
         .steps
         .iter()
         .find(|s| s.action == "loop")
         .expect("manifest must have a loop step");
-    assert_eq!(loop_step.ordinal, 20, "loop step should be ordinal 20");
+    assert_eq!(loop_step.ordinal, 19, "loop step should be ordinal 19");
 }
 
 /// Verify the swarm-intelligence manifest loads correctly after Co-evolution
@@ -750,20 +774,18 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
 /// the gemba loop (docs/reports/gemba-loop-specification.md). It is a
 /// single-pass briefing generator — not an interactive session.
 ///
-/// Step structure (10 steps):
-///   - Step 1: execute (curator_algedonic_log) — SENSE
-///   - Step 2: execute (curator_escalations) — GATHER
-///   - Step 3: execute (curator_consult) — GATHER
-///   - Step 4: execute (curator_grounding_trend) — GATHER
-///   - Step 5: execute (curator_grounding_coverage) — GATHER
-///   - Step 6: select (synthesize-briefing) — ANALYZE
-///   - Step 7: select (present-briefing) — PRESENT
-///   - Step 8: select (recommend-actions) — RECOMMEND
-///   - Step 9: compute (lisp.eval) — convergence check
-///   - Step 10: loop — re-enter if not converged
+/// Step structure (6 steps):
+///   - Step 1: execute mcp_batch (curator_algedonic_log + curator_escalations
+///     + curator_consult + curator_grounding_trend + curator_grounding_coverage)
+///     — SENSE + GATHER (5 concurrent curator queries)
+///   - Step 2: select (synthesize-briefing) — ANALYZE
+///   - Step 3: select (present-briefing) — PRESENT
+///   - Step 4: select (recommend-actions) — RECOMMEND
+///   - Step 5: compute (lisp.eval) — convergence check
+///   - Step 6: loop — re-enter if not converged
 ///
-/// Five execute steps call existing curator MCP tools. Three select steps
-/// render Jinja2 templates. One compute step extracts the convergence
+/// One mcp_batch step calls five curator MCP tools concurrently. Three select
+/// steps render Jinja2 templates. One compute step extracts the convergence
 /// signal. One loop step bounds the cascade.
 #[test]
 fn gemba_walk_manifest_loads_with_correct_structure() {
@@ -778,15 +800,16 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load gemba-walk manifest: {e}"));
 
-    // 5 execute steps + 3 select steps + 1 compute step + 1 loop step = 10 total.
-    // The compute step (lisp.eval) extracts the convergence signal
-    // deterministically from the synthesize step's briefing_complete field.
-    // Steps 4-5 (grounding trend + coverage) were added in Phase 3 to close
-    // the human-in-the-loop feedback loop for grounding health.
+    // 1 mcp_batch execute step + 3 select steps + 1 compute step + 1 loop step = 6 total.
+    // The 5 curator queries (algedonic_log, escalations, consult, grounding_trend,
+    // grounding_coverage) were merged into a single mcp_batch at step 1 for
+    // concurrency (~120s savings). The compute step (lisp.eval) extracts the
+    // convergence signal deterministically from the synthesize step's
+    // briefing_complete field.
     assert_eq!(
         manifest.steps.len(),
-        10,
-        "expected 10 steps: algedonic_log → escalations → consult → grounding_trend → grounding_coverage → synthesize → present → recommend → compute → loop"
+        6,
+        "expected 6 steps: mcp_batch(5 curator queries) → synthesize → present → recommend → compute → loop"
     );
 
     // Verify step ordinals are sequential starting at 1.
@@ -798,7 +821,7 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
         );
     }
 
-    // Verify the five execute steps call the expected curator MCP tools.
+    // Verify the mcp_batch step at step 1 calls all five curator MCP tools.
     let execute_steps: Vec<_> = manifest
         .steps
         .iter()
@@ -806,50 +829,39 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
         .collect();
     assert_eq!(
         execute_steps.len(),
+        1,
+        "manifest must have 1 execute step (mcp_batch with 5 curator queries)"
+    );
+    assert_eq!(execute_steps[0].ordinal, 1, "mcp_batch at ordinal 1");
+    let batch = execute_steps[0]
+        .mcp_batch
+        .as_ref()
+        .expect("step 1 must have an mcp_batch");
+    assert_eq!(
+        batch.len(),
         5,
-        "manifest must have 5 execute steps (curator MCP tool calls)"
+        "mcp_batch must have 5 sub-calls (algedonic_log + escalations + consult + grounding_trend + grounding_coverage)"
     );
-    assert_eq!(
-        execute_steps[0].ordinal, 1,
-        "curator_algedonic_log at ordinal 1"
+    let batch_mcps: Vec<&str> = batch.iter().map(|c| c.mcp.as_str()).collect();
+    assert!(
+        batch_mcps.contains(&"curator_algedonic_log"),
+        "mcp_batch must include curator_algedonic_log"
     );
-    assert_eq!(
-        execute_steps[0].mcp.as_deref(),
-        Some("curator_algedonic_log"),
-        "step 1 must call curator_algedonic_log"
+    assert!(
+        batch_mcps.contains(&"curator_escalations"),
+        "mcp_batch must include curator_escalations"
     );
-    assert_eq!(
-        execute_steps[1].ordinal, 2,
-        "curator_escalations at ordinal 2"
+    assert!(
+        batch_mcps.contains(&"curator_consult"),
+        "mcp_batch must include curator_consult"
     );
-    assert_eq!(
-        execute_steps[1].mcp.as_deref(),
-        Some("curator_escalations"),
-        "step 2 must call curator_escalations"
+    assert!(
+        batch_mcps.contains(&"curator_grounding_trend"),
+        "mcp_batch must include curator_grounding_trend"
     );
-    assert_eq!(execute_steps[2].ordinal, 3, "curator_consult at ordinal 3");
-    assert_eq!(
-        execute_steps[2].mcp.as_deref(),
-        Some("curator_consult"),
-        "step 3 must call curator_consult"
-    );
-    assert_eq!(
-        execute_steps[3].ordinal, 4,
-        "curator_grounding_trend at ordinal 4"
-    );
-    assert_eq!(
-        execute_steps[3].mcp.as_deref(),
-        Some("curator_grounding_trend"),
-        "step 4 must call curator_grounding_trend"
-    );
-    assert_eq!(
-        execute_steps[4].ordinal, 5,
-        "curator_grounding_coverage at ordinal 5"
-    );
-    assert_eq!(
-        execute_steps[4].mcp.as_deref(),
-        Some("curator_grounding_coverage"),
-        "step 5 must call curator_grounding_coverage"
+    assert!(
+        batch_mcps.contains(&"curator_grounding_coverage"),
+        "mcp_batch must include curator_grounding_coverage"
     );
 
     // Every execute step must have on_failure (no silent collapse to defaults).
@@ -873,36 +885,36 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
         "manifest must have 3 select steps (Jinja2 template rendering)"
     );
     assert_eq!(
-        select_steps[0].ordinal, 6,
-        "synthesize-briefing at ordinal 6"
+        select_steps[0].ordinal, 2,
+        "synthesize-briefing at ordinal 2"
     );
     assert_eq!(
         select_steps[0].template_ref.as_deref(),
         Some("gemba-walk/synthesize-briefing"),
-        "step 6 must reference gemba-walk/synthesize-briefing"
+        "step 2 must reference gemba-walk/synthesize-briefing"
     );
-    assert_eq!(select_steps[1].ordinal, 7, "present-briefing at ordinal 7");
+    assert_eq!(select_steps[1].ordinal, 3, "present-briefing at ordinal 3");
     assert_eq!(
         select_steps[1].template_ref.as_deref(),
         Some("gemba-walk/present-briefing"),
-        "step 7 must reference gemba-walk/present-briefing"
+        "step 3 must reference gemba-walk/present-briefing"
     );
-    assert_eq!(select_steps[2].ordinal, 8, "recommend-actions at ordinal 8");
+    assert_eq!(select_steps[2].ordinal, 4, "recommend-actions at ordinal 4");
     assert_eq!(
         select_steps[2].template_ref.as_deref(),
         Some("gemba-walk/recommend-actions"),
-        "step 8 must reference gemba-walk/recommend-actions"
+        "step 4 must reference gemba-walk/recommend-actions"
     );
 
-    // Verify the loop step (ordinal 10) re-enters at step 6 (synthesize).
-    // Ordinal shifted from 8 to 10 when two grounding execute steps were
-    // inserted at ordinals 4-5 (Phase 3: gemba walk grounding integration).
+    // Verify the loop step (ordinal 6) re-enters at step 2 (synthesize).
+    // Ordinal shifted from 10 to 6 when five curator execute steps were
+    // merged into one mcp_batch at step 1.
     let loop_step = manifest
         .steps
         .iter()
         .find(|s| s.action == "loop")
         .expect("manifest must have a loop step");
-    assert_eq!(loop_step.ordinal, 10, "loop step should be ordinal 10");
+    assert_eq!(loop_step.ordinal, 6, "loop step should be ordinal 6");
     let loop_mapping = loop_step
         .input_mapping
         .as_ref()
@@ -913,8 +925,8 @@ fn gemba_walk_manifest_loads_with_correct_structure() {
         .and_then(|v| v.as_str())
         .expect("loop step has loop_target");
     assert!(
-        loop_target.contains("6"),
-        "loop_target must re-enter at step 6 (synthesize-briefing), got: {loop_target}"
+        loop_target.contains("2"),
+        "loop_target must re-enter at step 2 (synthesize-briefing), got: {loop_target}"
     );
 
     // Verify the convergence block uses the Cauchy model with a generous
