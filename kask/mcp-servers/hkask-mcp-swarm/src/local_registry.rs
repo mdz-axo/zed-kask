@@ -942,6 +942,8 @@ mod tests {
             serde_json::json!({
                 "agent_id": agent_id,
                 "agent_type": "test",
+                "description": "test",
+                "display_name": "",
                 "capabilities": { "system_prompt": "test" }
             })
             .to_string(),

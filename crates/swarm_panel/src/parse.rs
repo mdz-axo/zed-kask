@@ -65,7 +65,6 @@ pub(crate) struct AgentCard {
     /// Human-readable label for UI display. When empty, the panel falls back
     /// to `id`. Cloned cards carry a display name like "Xaman Ek (Clone)" so
     /// the operator can distinguish the local clone from the cloud original.
-    #[serde(default)]
     pub(crate) display_name: String,
     /// Where this agent card lives: cloud (ABW only), local (local registry
     /// only), or synced (both, linked by `cloud_swarm_id`).

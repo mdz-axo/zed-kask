@@ -17,13 +17,11 @@ mod html;
 mod ocr;
 mod passage;
 mod service;
-mod strategies;
 mod types;
 
 pub use html::strip_html_tags;
 pub use ocr::ocr_pdf_bytes;
 pub use service::EmbedService;
-pub use strategies::WordCountChunker;
 pub use types::{
     CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult,
     EmbeddingConfig, Entity, EntityConfig, FoundationalRule, ProgressFn, TagSet, ValidationConfig,

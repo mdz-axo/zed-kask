@@ -72,8 +72,6 @@ fn default_corpus_config_has_correct_defaults() {
     assert_eq!(config.author, "test-author");
     assert_eq!(config.corpus_type, "literary");
     assert_eq!(config.embedding.dim, 1024);
-    assert_eq!(config.chunking.min_words, 50);
-    assert_eq!(config.chunking.max_words, 200);
     assert_eq!(config.centroid_entity_ref, "style:test-author:centroid");
     assert!(config.works.is_empty());
     assert!(config.methods.is_empty());

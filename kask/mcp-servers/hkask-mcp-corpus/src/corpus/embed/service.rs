@@ -243,7 +243,7 @@ fn compute_centroids(
     if config.dimension_centroids.is_empty() {
         // ── Single-centroid path ──
         tracing::info!("Computing style centroid (single)");
-        let rule_prefix = format!("style:{}:rule:", &config.author);
+        let rule_prefix = format!("style:{}:rule:", config.author);
         let centroid_result = store
             .compute_centroid(
                 author_prefix,
@@ -463,7 +463,7 @@ impl EmbedService {
         })?;
 
         let author = config.author.clone();
-        let author_prefix = format!("style:{}:", &author);
+        let author_prefix = format!("style:{}:", author);
         let centroid_ref = config.centroid_entity_ref.clone();
         let validation = config.validation.clone();
         let curator_webid = WebID::from_persona(CURATOR_PERSONA);
@@ -558,13 +558,20 @@ impl EmbedService {
             let text = resolve_work_text(work, &cache_path, &*inference_port).await?;
 
             let cleaned = crate::text::strip_gutenberg_headers(&text);
-            let entity_ref_prefix = format!("style:{}:{}", &config.author, work.slug);
-            let chunker = crate::corpus::embed::WordCountChunker {
-                min_words: config.chunking.min_words,
-                max_words: config.chunking.max_words,
-                sentence_boundary: config.chunking.sentence_boundary.clone(),
-            };
-            let chunks = chunker.chunk(&cleaned, &entity_ref_prefix);
+            let entity_ref_prefix = format!("style:{}:{}", config.author, work.slug);
+            // Use the canonical chunker with HkaskSettings defaults (256 tokens
+            // ≈ 192 words max, 48 words min). This is the same chunker the QA
+            // pipeline uses via corpus_chunk — single source of truth.
+            let settings = hkask_services_core::HkaskSettings::load();
+            let max_words = crate::helpers::tokens_to_words(settings.chunk_max_tokens());
+            let min_words = (max_words / 4).max(1);
+            let chunks = crate::text::chunk_text(
+                &cleaned,
+                &entity_ref_prefix,
+                min_words,
+                max_words,
+                ".!? ",
+            );
 
             // Tag each chunk
             let total_chunks = chunks.len();
@@ -623,7 +630,7 @@ impl EmbedService {
 
         // Append foundational rules as passages (no tagging, position=0.5, low salience)
         for rule in &config.foundational_rules {
-            let entity_ref = format!("style:{}:rule:{}", &config.author, rule.slug);
+            let entity_ref = format!("style:{}:rule:{}", config.author, rule.slug);
             let signals = salience::compute_method_signals(&rule.text);
             all_passages.push(TaggedPassage {
                 entity_ref,

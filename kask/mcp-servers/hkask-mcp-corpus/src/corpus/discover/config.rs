@@ -99,7 +99,7 @@ pub fn generate_corpus_yaml(
 ///
 /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
 /// pre:  author_slug must be non-empty
-/// post: returns CorpusConfig with default embedding, chunking, validation, and budget settings
+/// post: returns CorpusConfig with default embedding, validation, and budget settings
 #[must_use]
 pub fn default_corpus_config(author_slug: &str) -> CorpusConfig {
     CorpusConfig {
@@ -111,11 +111,6 @@ pub fn default_corpus_config(author_slug: &str) -> CorpusConfig {
         },
         works: vec![],
         foundational_rules: vec![],
-        chunking: crate::corpus::embed::ChunkingConfig {
-            min_words: 50,
-            max_words: 200,
-            sentence_boundary: ".!? ".to_string(),
-        },
         centroid_entity_ref: format!("style:{author_slug}:centroid"),
         validation: crate::corpus::embed::ValidationConfig {
             centroid_distance_max: 0.25,
