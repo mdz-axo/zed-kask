@@ -16,8 +16,6 @@ use hkask_inference::InferenceConfig;
 // Public so standalone CLI commands (without a ServiceConfig) can use the
 // same defaults instead of duplicating string literals.
 
-const DEFAULT_ENERGY_BUDGET_CAP: u64 = 10_000;
-const DEFAULT_GAS_REPLENISH_RATE: u64 = 1_000;
 const DEFAULT_REG_THRESHOLD: u64 = 100;
 /// Default template cache path, resolved from the platform cache directory.
 ///
@@ -80,12 +78,6 @@ pub struct ServiceConfig {
 
     /// Regulation variety threshold for algedonic alerts.
     pub reg_threshold: u64,
-
-    /// Gas budget cap per session (units).
-    pub energy_budget_cap: u64,
-
-    /// Gas replenish rate per turn (units).
-    pub gas_replenish_rate: u64,
 
     /// Whether to use in-memory databases (for tests).
     pub in_memory: bool,

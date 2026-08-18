@@ -1679,6 +1679,7 @@ mod tests {
         outcome.tool_calls = vec![json!({
             "tool": "zed/write_file",
             "ok": true,
+            "result": {"path": "/src/new_file.rs"}
         })];
 
         let raw_value = hkask_templates::extract_final_step_result(&outcome);
