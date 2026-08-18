@@ -147,12 +147,6 @@ convergence:
   on_not_reached: escalate
   target_artifacts_field: "current_artifacts"
 
-gas:
-  cap: <50000-180000>
-  cost_per_iteration: 100
-  alert_threshold: 0.8
-  hard_limit: true
-
 rjoule:
   cap: <2-5>
   alert_threshold: 0.8
@@ -180,7 +174,6 @@ steps:
       Deterministic. Feeds the first select step so the skill knows its
       past performance.
     mcp: <mcp_tool_name>
-    gas_cap: 2000
     timeout_seconds: 60
     on_failure:
       action: report
@@ -196,7 +189,6 @@ steps:
       <phase description>
     renderer: minijinja
     template_ref: <skill_name>/<phase-1>
-    gas_cap: <2048-8192>
     timeout_seconds: <30-300>
     input_mapping:
       <field>: "{{ <input> }}"
@@ -211,7 +203,6 @@ steps:
     compute_ref: lisp.eval
     description: >
       Deterministic invariant check on step N-1's output.
-    gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: "<lisp form>"
@@ -229,7 +220,6 @@ steps:
         lessons_learned: "{{ step_(N-1)_result.lessons_learned | default([]) }}"
 
 error_handling:
-  on_gas_exceeded: abort
   on_timeout: retry
   max_retries: 1
   retry_backoff_seconds: 1

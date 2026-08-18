@@ -80,7 +80,7 @@ These instructions are for the agent running the skill, not for the template's L
    - `title`: the task title
    - `description`: the task description
    - `criteria`: the acceptance criteria array
-   - `gas_budget`: estimated_hours × 1000 (or story_points × 500, minimum 2000)
+   - `rjoule_budget`: estimated_hours × 1000 (or story_points × 500, minimum 2000)
    If a task creation fails, record the error and continue with remaining tasks.
 3. Call `kanban_task_list` with `{"board_id": "..."}` to get all tasks. Verify the count matches.
 4. Emit the combined result as a ```kanban fenced block for KanbanWidget rendering:
@@ -99,7 +99,7 @@ These instructions are for the agent running the skill, not for the template's L
     {"status": "done"}
   ],
   "tasks": [
-    {"task_id": "...", "title": "...", "status": "backlog", "gas_remaining": ...}
+    {"task_id": "...", "title": "...", "status": "backlog", "rjoule_remaining": ...}
   ],
   "provenance": {
     "tool": "kanban_task_list",

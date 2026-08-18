@@ -1093,9 +1093,8 @@ impl StepMachine {
         );
 
         // Deduct the sub-cascade's actual rJoule consumption.
-        self.budget.consume_child(
-            sub_outcome.budget_snapshot.rjoule_used,
-        );
+        self.budget
+            .consume_child(sub_outcome.budget_snapshot.rjoule_used);
 
         Ok(Effect::Stored {
             step_id: node.id,
@@ -1243,9 +1242,7 @@ impl StepMachine {
                             step_ordinal, branch_id, template_ref
                         ),
                     )?;
-                    let sub_budget = crate::budget::BudgetTracker::from_remaining(
-                        rjoule_remaining,
-                    );
+                    let sub_budget = crate::budget::BudgetTracker::from_remaining(rjoule_remaining);
                     let sub_convergence =
                         crate::convergence::ConvergenceTracker::new(&sub_manifest.convergence);
                     let sub_graph = crate::step_graph::StepGraph::new(

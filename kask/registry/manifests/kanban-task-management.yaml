@@ -45,7 +45,7 @@ manifest:
     Unified kanban task management across the full task lifecycle. Three
     phases triaged at runtime: (1) decompose projects into INVEST-compliant
     tasks with recomposition strategy, (2) delegate tasks to subagents with
-    spawn configuration and gas budgeting, (3) monitor boards, coordinate
+    spawn configuration and rJoule budgeting, (3) monitor boards, coordinate
     agents, track deliverables, move tasks, verify completion, and escalate.
     Deterministic single-call MCP tool invocations (kanban_board_create,
     kanban_task_spawn, kanban_task_comment, kanban_board_list,
@@ -247,7 +247,7 @@ steps:
       task_id: "{{ task_to_delegate.task_id | default('') }}"
       delegation_level: "{{ step_7_result.delegation_level | default('standard') }}"
       delegated_skills: "{{ step_7_result.delegated_skills | default([]) }}"
-      gas_budget: "{{ step_7_result.gas_budget | default(null) }}"
+      rjoule_budget: "{{ step_7_result.rjoule_budget | default(null) }}"
       rjoule_budget: "{{ step_7_result.rjoule_budget | default(null) }}"
     on_failure:
       action: report

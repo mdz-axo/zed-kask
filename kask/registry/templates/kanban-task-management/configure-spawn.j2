@@ -11,14 +11,14 @@ contract:
     delegated_skills: array
     memory_scope: string
     tool_servers: array
-    gas_budget: integer
+    rjoule_budget: integer
     timeout_seconds: integer
 visibility: Public
 ---
 {# Template: kanban-task-management/configure-spawn.j2 #}
 {# Functional Role: KnowAct — Configure a consent-mediated agent spawn for one kanban task #}
 {# Implementation: Jinja2 prompt #}
-{# Produces: delegation_level, delegated_skills, memory_scope, tool_servers, gas_budget, timeout_seconds #}
+{# Produces: delegation_level, delegated_skills, memory_scope, tool_servers, rjoule_budget, timeout_seconds #}
 
 [inference]
 temperature = 0.1
@@ -47,7 +47,7 @@ You are a kanban task delegation planner. Configure the minimum capable sub-user
 - Choose `minimal` for focused, low-risk work with few dependencies; `standard` for normal implementation or analysis; `maximal` only when the task genuinely requires broad context or multiple coordinated capabilities.
 - Delegate only skills and tool servers necessary to satisfy the task's acceptance criteria.
 - Use `none`, `episodic`, or `full` memory scope. Prefer the narrowest scope that provides the task's needed context.
-- Set a bounded gas budget and timeout appropriate to the estimated work. Do not exceed the task's needs.
+- Set a bounded rJoule budget and timeout appropriate to the estimated work. Do not exceed the task's needs.
 
 ## Output Format
 
@@ -59,7 +59,7 @@ Return a JSON object:
   "delegated_skills": ["available skill name"],
   "memory_scope": "none|episodic|full",
   "tool_servers": ["available tool server name"],
-  "gas_budget": 0,
+  "rjoule_budget": 0,
   "timeout_seconds": 0,
   "rationale": "Brief explanation tying every selected capability to a task requirement"
 }
@@ -77,7 +77,7 @@ These instructions are for the agent running the skill, not for the template's L
    - `delegation_level`: from this output
    - `delegated_skills`: from this output
    - `memory_scope`: from this output (or omit if "none")
-   - `gas_budget`: from this output (or omit if 0)
+   - `rjoule_budget`: from this output (or omit if 0)
 2. If `swarm_id` is available in the task context, include it in the spawn call.
 3. After the spawn completes, call `kanban_task_delegate_result` with the `task_id` to read the structured result.
 4. The spawn result (agent_id, model, tokens, cost, response) is recorded on the task as a comment by the server.

@@ -423,6 +423,7 @@ impl RegState {
             threshold,
             crate::set_points::DEFAULT_MAX_REGULATION_HISTORY,
             crate::set_points::DEFAULT_MAX_SKILL_SPAN_HISTORY,
+            crate::set_points::DEFAULT_MAX_ALERTS,
         )
     }
 
@@ -430,10 +431,12 @@ impl RegState {
         threshold: u64,
         max_regulation_history: usize,
         max_skill_span_history: usize,
+        max_alerts: usize,
     ) -> Self {
-        let algedonic = Arc::new(ParkingRwLock::new(AlgedonicManager::new(
+        let algedonic = Arc::new(ParkingRwLock::new(AlgedonicManager::with_max_alerts(
             threshold,
             DEFAULT_EXPECTED_VARIETY,
+            max_alerts,
         )));
         let tracker = VarietyMonitor::new();
         let outcome = HashMap::new();
@@ -441,6 +444,7 @@ impl RegState {
         let regulation_history = VecDeque::with_capacity(max_regulation_history);
         let tool_stats = Arc::new(ToolStats::new());
         let skill_spans = SkillSpanStore::with_capacity(max_skill_span_history);
+
         Self {
             algedonic,
             tracker,
@@ -488,6 +492,7 @@ impl RegulationLedger {
                 threshold,
                 set_points.max_regulation_history,
                 set_points.max_skill_span_history,
+                set_points.max_alerts,
             ))),
         }
     }

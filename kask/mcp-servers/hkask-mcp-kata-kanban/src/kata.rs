@@ -41,8 +41,8 @@ pub use history::{
     ImprovementDirection, ImprovementSignal, KataHistory, PracticeEntry, StepExperience,
 };
 pub use manifest::{
-    CoachQuestion, ErrorHandling, KataAuditConfig, KataLedgerConfig, KataManifest,
-    KataStep, ManifestMeta, MetricDef, Outcome,
+    CoachQuestion, ErrorHandling, KataAuditConfig, KataLedgerConfig, KataManifest, KataStep,
+    ManifestMeta, MetricDef, Outcome,
 };
 pub use state::{KataResult, KataState};
 
@@ -253,13 +253,7 @@ impl KataEngine {
     ) -> Result<Option<i64>, KataError> {
         if let Some(ref store) = self.history_store {
             let id = store
-                .record(
-                    agent_name,
-                    date,
-                    kata_type,
-                    practice_name,
-                    steps_completed,
-                )
+                .record(agent_name, date, kata_type, practice_name, steps_completed)
                 .map_err(|e| KataError::LoadFailed(format!("History store: {}", e)))?;
             Ok(Some(id))
         } else {

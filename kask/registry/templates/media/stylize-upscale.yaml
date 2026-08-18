@@ -22,11 +22,6 @@ primary_model: "fal.ai/flux/dev"
 # HKASK_FUSION_PANEL_MODELS. Recommend the default image generation model
 # (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step and the fal.ai
 # flux/dev img2img endpoint for the style-transfer step.
-gas:
-  cap: 80000
-  cost_per_iteration: 4000
-  alert_threshold: 0.8
-  hard_limit: true
 
 rjoule:
   cap: 3

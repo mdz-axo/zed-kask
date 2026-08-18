@@ -59,6 +59,17 @@ pub struct LedgerHealth {
     /// Session-level EMA of domain variety (survives window resets).
     /// 0.0 when no domains have been tracked.
     pub variety_ema: f64,
+    /// Number of alerts currently in the in-memory algedonic log.
+    /// The log is a capped ring buffer (default 200); when this approaches
+    /// `alert_log_cap`, the operator should run the `algedonic-review` skill
+    /// to review and clear reviewed entries.
+    pub alert_log_count: usize,
+    /// The configured cap for the in-memory algedonic log.
+    pub alert_log_cap: usize,
+    /// `true` when the alert log is ≥ 80% of the cap. The cybernetics loop
+    /// emits an `AlgedonicLogApproachingCap` signal when this is true so the
+    /// operator (or the `algedonic-review` skill) can review before eviction.
+    pub alert_log_approaching_cap: bool,
 }
 
 /// Regulation loop health — the Curator's window into regulatory effectiveness.

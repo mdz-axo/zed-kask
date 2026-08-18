@@ -87,12 +87,10 @@ same meaning — or fix suggestions will reference the wrong check.
 
 Validate:
 - E1: Action compliance — every step's `action` is canonical (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate). No non-canonical actions.
-- E2: Gas block present — `gas:` block with `cap > 0`, `cost_per_iteration`, `alert_threshold`, `hard_limit`.
-- E3: Gas cap adequate — `gas.cap` proportional to step count (simple KnowAct ≥ 5,000; multi-step FlowDef ≥ 50,000; media ≥ 100,000).
-- E4: rJoule block present — `rjoule:` block; `rjoule.cap` > 0 if any step uses `action: select` (inference).
-- E5: Convergence block — for `category: skill`: `convergence:` with `convergence_mode` (e.g. "cauchy", "" for single-pass), `max_iterations`, `min_iterations`, `on_not_reached` (abort or escalate). Cauchy-mode manifests should have `cauchy_epsilon` and `target_artifacts_field`.
-- E6: Category valid — `manifest.category` is one of: skill, qa-script, runtime-config, daemon-process, pipeline.
-- E7: Template ref resolvable — every `template_ref` resolves to an embedded `.j2` or `.yaml` in `registry/templates/`.
+- E2: rJoule block present — `rjoule:` block; `rjoule.cap` > 0 if any step uses `action: select` (inference).
+- E3: Convergence block — for `category: skill`: `convergence:` with `convergence_mode` (e.g. "cauchy", "" for single-pass), `max_iterations`, `min_iterations`, `on_not_reached` (abort or escalate). Cauchy-mode manifests should have `cauchy_epsilon` and `target_artifacts_field`.
+- E4: Category valid — `manifest.category` is one of: skill, qa-script, runtime-config, daemon-process, pipeline.
+- E5: Template ref resolvable — every `template_ref` resolves to an embedded `.j2` or `.yaml` in `registry/templates/`.
 - E8: Sub-manifest budgets — any `template_ref` to a `.yaml` sub-manifest (FlowDef recursion) has `gas` and `rjoule` blocks.
 - E9: Step description — every step has a non-empty `description` field.
 - E10: Ordinal sequence — step ordinals are sequential starting from 1 (or 0 for pre-processing steps).

@@ -164,12 +164,8 @@ impl StepMachine {
         // no merge into a parallel map. Inject initial convergence context
         // (status: running, iteration 0).
         let snap = self.budget.snapshot();
-        self.convergence.inject_running(
-            &mut self.context,
-            0,
-            snap.rjoule_used,
-            snap.rjoule_cap,
-        );
+        self.convergence
+            .inject_running(&mut self.context, 0, snap.rjoule_used, snap.rjoule_cap);
 
         let exit_kind = loop {
             // Start of a new iteration.

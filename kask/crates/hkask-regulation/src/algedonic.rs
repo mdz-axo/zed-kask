@@ -21,6 +21,20 @@ fn default_datetime() -> DateTime<Utc> {
 /// Default expected variety per domain
 pub(crate) const DEFAULT_EXPECTED_VARIETY: u64 = 10;
 
+/// Default maximum alerts retained in the in-memory `AlgedonicManager.alerts`
+/// log before oldest entries are evicted. Bounds memory growth in long-running
+/// sessions — the log is a diagnostic ring buffer, not an audit archive
+/// (escalated alerts are persisted to the `EscalationQueue` for durable review).
+/// When the log reaches this cap, the cybernetics loop emits an
+/// `AlgedonicLogApproachingCap` signal so the operator (or the
+/// `algedonic-review` skill) can review and clear reviewed entries before
+/// they are evicted unread.
+pub(crate) const DEFAULT_MAX_ALERTS: usize = 200;
+
+/// Fraction of `max_alerts` at which the approaching-cap signal fires.
+/// 0.8 → 160 of 200. Gives the operator a window to review before eviction.
+pub(crate) const ALERT_CAP_APPROACHING_FRACTION: f64 = 0.8;
+
 /// Alert severity levels — simple binary threshold classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AlertSeverity {
@@ -188,7 +202,13 @@ pub(crate) struct AlgedonicManager {
     threshold: u64,
     default_expected_variety: u64,
     expected_variety: HashMap<String, u64>,
+    /// Diagnostic alert ring buffer. Capped at `max_alerts`; oldest entries
+    /// are evicted on overflow. Escalated (Critical) alerts are persisted to
+    /// the `EscalationQueue` separately, so eviction from this log loses only
+    /// the diagnostic trail, not the actionable backlog.
     alerts: Vec<RuntimeAlert>,
+    /// Maximum alerts retained before oldest are evicted.
+    max_alerts: usize,
     /// Outcome success rate warning threshold. Falls back to DEFAULT_OUTCOME_WARNING_THRESHOLD.
     outcome_warning_threshold: f64,
     /// Outcome success rate critical threshold. Falls back to DEFAULT_OUTCOME_CRITICAL_THRESHOLD.
@@ -197,11 +217,23 @@ pub(crate) struct AlgedonicManager {
 
 impl AlgedonicManager {
     pub(crate) fn new(threshold: u64, default_expected_variety: u64) -> Self {
+        Self::with_max_alerts(threshold, default_expected_variety, DEFAULT_MAX_ALERTS)
+    }
+
+    /// Construct with a custom alert-log cap. Used by `with_set_points` to
+    /// thread the operator-configured `max_alerts` through.
+    pub(crate) fn with_max_alerts(
+        threshold: u64,
+        default_expected_variety: u64,
+        max_alerts: usize,
+    ) -> Self {
+        let max_alerts = max_alerts.max(1);
         Self {
             threshold,
             default_expected_variety,
             expected_variety: HashMap::new(),
-            alerts: Vec::new(),
+            alerts: Vec::with_capacity(max_alerts),
+            max_alerts,
             outcome_warning_threshold: Self::DEFAULT_OUTCOME_WARNING_THRESHOLD,
             outcome_critical_threshold: Self::DEFAULT_OUTCOME_CRITICAL_THRESHOLD,
         }
@@ -274,11 +306,9 @@ impl AlgedonicManager {
             );
         }
 
-        self.alerts.push(alert);
+        self.push_alert(alert);
         self.alerts.last()
     }
-
-    /// Get the configured default threshold.
     ///
     /// expect: "The system escalates variety deficits through binary-threshold algedonic alerting"
     pub(crate) fn default_threshold(&self) -> u64 {
@@ -372,8 +402,61 @@ impl AlgedonicManager {
             );
         }
 
-        self.alerts.push(alert);
+        self.push_alert(alert);
         self.alerts.last()
+    }
+
+    /// Push an alert onto the log, evicting the oldest entry if the cap is
+    /// reached. Called by both `check` and `check_outcome` — the single
+    /// chokepoint for log growth.
+    fn push_alert(&mut self, alert: RuntimeAlert) {
+        if self.alerts.len() >= self.max_alerts {
+            self.alerts.remove(0);
+        }
+        self.alerts.push(alert);
+    }
+
+    /// Number of alerts currently in the log.
+    pub(crate) fn alert_count(&self) -> usize {
+        self.alerts.len()
+    }
+
+    /// The configured alert-log cap.
+    pub(crate) fn max_alerts(&self) -> usize {
+        self.max_alerts
+    }
+
+    /// Whether the alert log is approaching the cap (≥
+    /// `ALERT_CAP_APPROACHING_FRACTION * max_alerts`). When true, the
+    /// cybernetics loop should emit an `AlgedonicLogApproachingCap` signal
+    /// so the operator (or the `algedonic-review` skill) can review and
+    /// clear reviewed entries before they are evicted unread.
+    pub(crate) fn log_approaching_cap(&self) -> bool {
+        let threshold = (self.max_alerts as f64 * ALERT_CAP_APPROACHING_FRACTION) as usize;
+        self.alerts.len() >= threshold
+    }
+
+    /// Clear reviewed alerts from the log. Called by the `algedonic-review`
+    /// skill (via `RegulationLedger::clear_reviewed_alerts`) after the
+    /// operator has reviewed the log and the escalated alerts have been
+    /// persisted to the `EscalationQueue`. Retains unresolved Critical
+    /// alerts that have not yet been persisted to the escalation queue —
+    /// clearing those would lose the live signal.
+    ///
+    /// `retain_unresolved` controls what survives: when `true` (the default
+    /// from `RegulationLedger`), only Info and Warning alerts and already-
+    /// escalated Critical alerts are cleared. When `false`, the entire log
+    /// is cleared (used by `session_reset`).
+    pub(crate) fn clear_reviewed(&mut self, retain_unresolved: bool) {
+        if retain_unresolved {
+            // Retain Critical alerts that have not been escalated yet —
+            // these are the live signals the operator needs to act on.
+            // Everything else (Info, Warning, escalated Critical) has been
+            // reviewed or persisted and can be cleared.
+            self.alerts.retain(|a| a.is_critical() && !a.escalated);
+        } else {
+            self.alerts.clear();
+        }
     }
 }
 
@@ -385,6 +468,9 @@ pub(crate) fn reg_health_check(manager: &AlgedonicManager, variety_ema: f64) -> 
         warning_count: manager.alerts().iter().filter(|a| a.is_warning()).count(),
         healthy: manager.critical_alerts().is_empty(),
         variety_ema,
+        alert_log_count: manager.alert_count(),
+        alert_log_cap: manager.max_alerts(),
+        alert_log_approaching_cap: manager.log_approaching_cap(),
     }
 }
 

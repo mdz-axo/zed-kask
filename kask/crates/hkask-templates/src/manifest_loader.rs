@@ -8,9 +8,8 @@
 
 use crate::bundle::manifest::default_concurrency;
 use crate::bundle::{
-    BundleAuditConfig, BundleComplementarity, BundleConflict, BundleLedgerConfig,
-    BundleManifest, BundleManifestStep, BundleSkill, ConvergenceConfig, ErrorHandlingConfig,
-    RjouleConfig,
+    BundleAuditConfig, BundleComplementarity, BundleConflict, BundleLedgerConfig, BundleManifest,
+    BundleManifestStep, BundleSkill, ConvergenceConfig, ErrorHandlingConfig, RjouleConfig,
 };
 use hkask_types::Visibility;
 use serde::Deserialize;

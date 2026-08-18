@@ -23,11 +23,6 @@ primary_model: "fal.ai/flux/dev"
 # one queue-mode). No fusion block — model selection is operator-configured
 # via kask.fusion / HKASK_FUSION_PANEL_MODELS; recommend the default image
 # generation model (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step.
-gas:
-  cap: 80000
-  cost_per_iteration: 4000
-  alert_threshold: 0.8
-  hard_limit: true
 
 # rJoule: generate_image (flux/dev) + image_remove_background + upscale_image.
 rjoule:
