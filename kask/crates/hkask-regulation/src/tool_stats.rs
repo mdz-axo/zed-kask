@@ -37,7 +37,7 @@ pub const DEFAULT_RELIABILITY_THRESHOLD: f64 = 0.80;
 /// Statistical state for a single MCP tool.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ToolState {
-    /// Settled gas cost observations (gas units charged, not raw resource usage).
+    /// Settled cost observations (units charged, not raw resource usage).
     costs: VecDeque<f64>,
     /// Count of successful invocations.
     successes: u64,
@@ -83,9 +83,9 @@ impl ToolStats {
         }
     }
 
-    /// Record a settled gas cost and success/failure outcome.
+    /// Record a settled cost and success/failure outcome.
     ///
-    /// `settled_cost` is the gas units actually charged (the settled value,
+    /// `settled_cost` is the units actually charged (the settled value,
     /// which may differ from the initial reserve estimate). Guarded to ≥1
     /// to prevent `ln(0) = -inf` from degenerating the distribution.
     pub async fn record(&self, tool_name: &str, settled_cost: u64, success: bool) {

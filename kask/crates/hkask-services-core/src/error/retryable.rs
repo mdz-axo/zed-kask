@@ -1,14 +1,14 @@
 //! Retryability semantics for `ServiceError`.
 //!
 //! The Regulation energy budget needs to know whether retrying an operation will
-//! consume gas for a potentially successful retry or waste gas on a
+//! consume energy for a potentially successful retry or waste energy on a
 //! guaranteed failure. This module provides that signal.
 
 use super::{ErrorKind, ServiceError};
 
 impl ServiceError {
     /// Whether this error represents a transient condition that may succeed
-    /// on retry (with backoff). Used by the Regulation gas budget to decide whether
+    /// on retry (with backoff). Used by the Regulation energy budget to decide whether
     /// to allow retry loops.
     ///
     /// Retryable: network I/O, inference connection/timeout, circuit breaker

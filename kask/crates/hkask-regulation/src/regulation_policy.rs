@@ -565,7 +565,7 @@ pub(crate) fn classify_decision(
 pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [ActionType] {
     use ActionType::*;
     match metric {
-        // ── Energy / Gas ──
+        // ── Energy ──
         SignalMetric::EnergyRemaining => &[Throttle, AdjustEnergyBudget, Escalate],
         // ── Variety ──
         SignalMetric::VarietyDeficit => &[Escalate, Calibrate, OverrideEnergyBudget],

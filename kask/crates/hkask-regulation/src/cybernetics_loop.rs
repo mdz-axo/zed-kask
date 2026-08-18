@@ -156,7 +156,7 @@ impl CyberneticsLoop {
             let registry = SensorBus::new();
             registry.register(Arc::new(EnergyBudgetSensor::new(
                 Arc::clone(&call_cap_manager),
-                set_points.gas_min_remaining,
+                set_points.energy_min_remaining,
             )));
             registry.register(Arc::new(VarietySensor::new(
                 Arc::clone(&ledger),
@@ -651,7 +651,7 @@ impl CyberneticsLoop {
     /// regulation tick). The composition root must seed a cap for every agent
     /// that makes governed tool calls — agents without one are denied (fail-closed).
     ///
-    /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
+    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
     pub async fn register_call_cap(&self, agent: WebID, ceiling: u32) {
         self.call_cap_manager
             .read()
@@ -662,14 +662,14 @@ impl CyberneticsLoop {
 
     /// Check whether an agent still has calls available this tick.
     ///
-    /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
+    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
     pub async fn can_proceed(&self, agent: &WebID) -> bool {
         self.call_cap_manager.read().await.can_proceed(agent).await
     }
 
     /// Consume one call. Returns `Err` if the agent has no cap or it is exhausted.
     ///
-    /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
+    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
     pub async fn charge_call(&self, agent: &WebID) -> Result<(), CallCapError> {
         self.call_cap_manager.read().await.charge(agent).await
     }
@@ -678,7 +678,7 @@ impl CyberneticsLoop {
     /// default runaway ceiling. The tool-dispatch path uses this rather than
     /// [`Self::charge_call`] — see [`CallCapManager::charge_metered`].
     ///
-    /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
+    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
     pub async fn charge_call_metered(&self, agent: &WebID) -> CallMeterOutcome {
         self.call_cap_manager
             .read()
@@ -689,21 +689,21 @@ impl CyberneticsLoop {
 
     /// Returns `None` if the agent has no registered cap.
     ///
-    /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
+    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
     pub async fn agent_call_cap_status(&self, agent: &WebID) -> Option<AgentCallCapStatus> {
         self.call_cap_manager.read().await.agent_status(agent).await
     }
 
     /// Reset every registered cap to its ceiling (one regulation tick).
     ///
-    /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
+    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
     pub async fn reset_all_caps(&self) {
         self.call_cap_manager.read().await.reset_all().await;
     }
 
     /// Credit `amount` calls to an agent (used by `CuratorDirective::ReplenishBudget`).
     ///
-    /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
+    /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
     pub async fn credit_calls(&self, agent: &WebID, amount: u32) {
         self.call_cap_manager
             .read()

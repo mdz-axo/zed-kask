@@ -718,4 +718,78 @@ mod tests {
         // Should succeed — future timestamps should not panic in weight calculation
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn delete_older_than_removes_old_records() {
+        use crate::RegulationArchive;
+        use crate::database::sqlite::SqliteDriver;
+        use crate::database::value::DbValue;
+        use hkask_types::event::{CyclePhase, RegulationRecord, RegulationSink};
+        use hkask_types::id::WebID;
+        use std::sync::Arc;
+
+        let pool = SqliteDriver::in_memory_pool().expect("in-memory SQLite pool");
+        let store = RegulationArchive::from_driver(Arc::new(SqliteDriver::new(pool)))
+            .expect("regulation archive init");
+
+        // Insert an old record (2 days ago).
+        let old_event = RegulationRecord::new(
+            WebID::from_persona(b"listener"),
+            Span::new(
+                SpanNamespace::new("reg.communication.message").unwrap(),
+                "old",
+            ),
+            CyclePhase::Act,
+            serde_json::json!({"source_event_id": "$old"}),
+            0,
+        );
+        // Manually set the timestamp to 2 days ago by inserting directly.
+        let old_ts = chrono::Utc::now() - chrono::Duration::days(2);
+        let (span_category, span_path) = super::span_to_columns(&old_event.span);
+        store
+            .driver
+            .execute(
+                "INSERT INTO reg_records (id, timestamp, observer_webid, span_category, span_path, phase, observation, regulation, outcome, recursion_depth, parent_event, visibility) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                &[
+                    DbValue::Text(old_event.id.to_string()),
+                    DbValue::Text(old_ts.to_rfc3339()),
+                    DbValue::Text(old_event.observer_webid.to_string()),
+                    DbValue::Text(span_category.to_string()),
+                    DbValue::Text(span_path.to_string()),
+                    DbValue::Text(old_event.phase.as_str().to_string()),
+                    DbValue::Text(serde_json::to_string(&old_event.observation).unwrap()),
+                    DbValue::Null,
+                    DbValue::Null,
+                    DbValue::Integer(0),
+                    DbValue::Null,
+                    DbValue::Text("internal".to_string()),
+                ],
+            )
+            .expect("insert old record");
+
+        // Insert a recent record (now).
+        let recent_event = RegulationRecord::new(
+            WebID::from_persona(b"listener"),
+            Span::new(
+                SpanNamespace::new("reg.communication.message").unwrap(),
+                "recent",
+            ),
+            CyclePhase::Act,
+            serde_json::json!({"source_event_id": "$recent"}),
+            0,
+        );
+        store
+            .persist_if_absent("$recent", &recent_event)
+            .expect("persist recent");
+
+        // Delete records older than 1 day ago.
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(1);
+        let deleted = store.delete_older_than(cutoff).expect("delete older than");
+        assert_eq!(deleted, 1, "should delete the old record");
+
+        // The recent record should still be there.
+        let since = chrono::Utc::now() - chrono::Duration::days(7);
+        let remaining = store.query_algedonic(since, 100).expect("query");
+        assert_eq!(remaining.len(), 1, "recent record should survive");
+    }
 }
