@@ -1129,6 +1129,7 @@ impl KanbanServer {
 
                     // Fallback: in-memory spawn via LazyLocalSwarmRuntime.
                     let response = self
+                        .spawn_via_local_runtime(tid, &task, &agent)
                         .await?;
                     serde_json::to_value(response)
                         .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
@@ -1143,7 +1144,7 @@ impl KanbanServer {
         task_id: &str,
         delegation_level: &str,
         memory_scope: &Option<String>,
-        rjoule_budget: &Option<u64>,
+        _rjoule_budget: &Option<u64>,
     ) -> Result<hkask_types::TaskId, McpToolError> {
         let tid = parse_task_id(task_id)?;
         match delegation_level {
@@ -1259,15 +1260,13 @@ impl KanbanServer {
             },
             Err(_) => 50,
         };
-            .map(|g| (g.min(u32::MAX as u64) as u32).min(ceiling))
-            .unwrap_or(10)
-            .min(ceiling);
+        let credits = 10_u32.min(ceiling);
 
         let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
             McpToolError::unavailable(format!("local swarm runtime initialization failed: {e}"))
         })?;
         let mut result = runtime
-            .delegate(agent, &task_text, credits_authorized, ceiling)
+            .delegate(agent, &task_text, credits, ceiling)
             .await
             .map_err(|e| {
                 hkask_mcp_server::server::McpToolError::unavailable(format!(

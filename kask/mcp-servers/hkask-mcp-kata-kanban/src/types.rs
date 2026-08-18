@@ -92,8 +92,6 @@ pub struct TaskCreateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
 
-    /// Gas/rJoule budget for the subagent working on this task.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Inference/API rJoule budget (250k ≈ $1 spend).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rjoule_budget: Option<u64>,
@@ -149,7 +147,6 @@ pub struct TaskInfo {
     pub status: String,
     pub assignee: Option<String>,
     pub criteria_count: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rjoule_remaining: Option<u64>,
     /// The swarm this task belongs to, when coordinated via a local swarm.
@@ -304,8 +301,6 @@ pub struct TaskAddDeliverableResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaskReopenRequest {
     pub task_id: String,
-    /// Optional new gas budget to grant on reopen.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Optional new rJoule budget to grant on reopen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rjoule_budget: Option<u64>,
@@ -383,8 +378,6 @@ pub struct TaskSpawnRequest {
     /// Memory scope: "none", "episodic", or "full".
     #[serde(default)]
     pub memory_scope: Option<String>,
-    /// Gas budget to grant on spawn.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     /// rJoule budget to grant on spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rjoule_budget: Option<u64>,

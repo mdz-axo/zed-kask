@@ -7,11 +7,11 @@
 //!
 //!   gather → process (chunk/tag/embed/assertions) → output (QA training | persona)
 //!
-//! Tools (24):
-//! - Gather:     corpus_discover, corpus_cache_work
-//! - Process:    corpus_convert, corpus_ocr, corpus_chunk, corpus_tag_chunks,
-//!   corpus_embed, corpus_extract_assertions, corpus_dedup_chunks,
-//!   corpus_consolidate_chunks
+//! Tools (27):
+//! - Gather:     corpus_discover, corpus_cache_work, corpus_discover_company
+//! - Process:    corpus_convert, corpus_ocr, corpus_is_complex, corpus_chunk,
+//!   corpus_tag_chunks, corpus_embed, corpus_extract_assertions,
+//!   corpus_dedup_chunks, corpus_consolidate_chunks
 //! - QA output:  corpus_build_prompts, corpus_generate_qa, corpus_generate_qa_batch,
 //!   corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa
 //! - Persona:    corpus_build_persona, corpus_compose, corpus_rewrite, corpus_mashup,
@@ -59,7 +59,6 @@ pub(crate) use hkask_types::json_extract::extract_json_from_response;
 use crate::ocr::ThresholdConfig;
 use hkask_bridge_ontology::{dc_bibo, eso, golem, pko};
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
-use hkask_memory::MemoryStore;
 use hkask_services_core::settings::HkaskSettings;
 use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;

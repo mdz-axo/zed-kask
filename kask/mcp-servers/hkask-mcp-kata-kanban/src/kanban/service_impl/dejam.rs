@@ -161,21 +161,6 @@ impl KanbanService {
         });
     }
 
-    /// Mark a task as Done due to gas exhaustion.
-    ///
-    /// Gas exhaustion is a completion path: subagents burn gas/rJoules from a
-    /// budget explicitly set on the task. When gas hits zero mid-work, the
-    /// task auto-completes. The delegator can reopen with more gas to continue.
-    ///
-    /// Internal authority: called only by the regulation/unjam loop, not
-    /// exposed as an MCP tool. Must not be exposed as a tool without an
-    /// actor/authority check.
-        self.exhaust_task(
-            task_id,
-            "Gas exhausted — subagent budget consumed.",
-        )
-    }
-
     /// Mark a task as Done due to rJoule exhaustion.
     ///
     /// rJoule exhaustion is a completion path: subagents burn rJoules (inference
@@ -223,19 +208,6 @@ impl KanbanService {
 
         Ok(task)
     }
-
-    /// Deduct gas from a task's remaining budget.
-    ///
-    /// Called by the subagent execution framework after each inference step,
-    /// template execution, or tool dispatch. Logs a GasEntry recording what
-    /// consumed the gas and how much.
-    ///
-    /// `reason` describes the cost: "inference: deepseek-v4 (500 tokens)",
-    /// "template: bug-hunt", "tool: kanban_task_list", etc.
-    ///
-    /// Internal authority: called only by the gas-accountant closure wired via
-    /// `gas_accountant_for`, not exposed as an MCP tool. Must not be exposed as
-    /// a tool without an actor/authority check.
 
     /// Deduct rJoules from a task's inference/API budget.
     ///
