@@ -434,6 +434,29 @@ impl AlgedonicManager {
         let threshold = (self.max_alerts as f64 * ALERT_CAP_APPROACHING_FRACTION) as usize;
         self.alerts.len() >= threshold
     }
+
+    /// Clear reviewed alerts from the log. Called by the `algedonic-review`
+    /// skill (via `RegulationLedger::clear_reviewed_alerts`) after the
+    /// operator has reviewed the log and the escalated alerts have been
+    /// persisted to the `EscalationQueue`. Retains unresolved Critical
+    /// alerts that have not yet been persisted to the escalation queue —
+    /// clearing those would lose the live signal.
+    ///
+    /// `retain_unresolved` controls what survives: when `true` (the default
+    /// from `RegulationLedger`), only Info and Warning alerts and already-
+    /// escalated Critical alerts are cleared. When `false`, the entire log
+    /// is cleared (used by `session_reset`).
+    pub(crate) fn clear_reviewed(&mut self, retain_unresolved: bool) {
+        if retain_unresolved {
+            // Retain Critical alerts that have not been escalated yet —
+            // these are the live signals the operator needs to act on.
+            // Everything else (Info, Warning, escalated Critical) has been
+            // reviewed or persisted and can be cleared.
+            self.alerts.retain(|a| a.is_critical() && !a.escalated);
+        } else {
+            self.alerts.clear();
+        }
+    }
 }
 
 /// Construct LedgerHealth from the algedonic manager's current state.
@@ -582,6 +605,135 @@ mod tests {
         assert!(
             alert.is_none(),
             "85% should be healthy with custom thresholds"
+        );
+    }
+
+    // ── Alert cap tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn alert_log_caps_at_max_alerts() {
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 5);
+        let mut tracker = VarietyTracker::new();
+        tracker.increment("state");
+
+        // Push 10 alerts into a cap-5 log.
+        for _ in 0..10 {
+            mgr.check(&tracker, "domain");
+        }
+
+        // The log must not exceed the cap.
+        assert_eq!(mgr.alert_count(), 5, "log must cap at max_alerts");
+        assert_eq!(mgr.max_alerts(), 5);
+    }
+
+    #[test]
+    fn alert_log_evicts_oldest_on_overflow() {
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 3);
+
+        // Push 4 alerts — the first should be evicted.
+        for i in 0..4 {
+            let mut t = VarietyTracker::new();
+            t.increment(&format!("state_{i}"));
+            mgr.check(&t, &format!("domain_{i}"));
+        }
+
+        // The log should have the last 3 alerts (domains 1, 2, 3).
+        assert_eq!(mgr.alert_count(), 3);
+        let domains: Vec<&str> = mgr.alerts().iter().map(|a| a.domain.as_str()).collect();
+        assert!(
+            !domains.contains(&"domain_0"),
+            "oldest alert must be evicted"
+        );
+        assert!(
+            domains.contains(&"domain_3"),
+            "newest alert must be retained"
+        );
+    }
+
+    #[test]
+    fn log_approaching_cap_fires_at_80_percent() {
+        // Cap = 10, approaching threshold = 8 (80%).
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 10);
+        let mut tracker = VarietyTracker::new();
+        tracker.increment("state");
+
+        // 7 alerts → not approaching (7 < 8).
+        for _ in 0..7 {
+            mgr.check(&tracker, "domain");
+        }
+        assert!(!mgr.log_approaching_cap(), "7/10 should not be approaching");
+
+        // 8th alert → approaching (8 >= 8).
+        mgr.check(&tracker, "domain");
+        assert!(mgr.log_approaching_cap(), "8/10 should be approaching");
+    }
+
+    #[test]
+    fn clear_reviewed_retains_unresolved_critical() {
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
+
+        // Push a mix: Info, Warning, escalated Critical, un-escalated Critical.
+        let info = RuntimeAlert {
+            domain: "info_domain".to_string(),
+            deficit: 10,
+            threshold: 100,
+            severity: AlertSeverity::Info,
+            escalated: false,
+            timestamp: Utc::now(),
+            message: "info".to_string(),
+        };
+        let warning = RuntimeAlert {
+            domain: "warning_domain".to_string(),
+            deficit: 60,
+            threshold: 100,
+            severity: AlertSeverity::Warning,
+            escalated: false,
+            timestamp: Utc::now(),
+            message: "warning".to_string(),
+        };
+        let escalated_critical = RuntimeAlert {
+            domain: "escalated_critical".to_string(),
+            deficit: 150,
+            threshold: 100,
+            severity: AlertSeverity::Critical,
+            escalated: true,
+            timestamp: Utc::now(),
+            message: "escalated critical".to_string(),
+        };
+        let unresolved_critical = RuntimeAlert {
+            domain: "unresolved_critical".to_string(),
+            deficit: 150,
+            threshold: 100,
+            severity: AlertSeverity::Critical,
+            escalated: false,
+            timestamp: Utc::now(),
+            message: "unresolved critical".to_string(),
+        };
+        mgr.push_alert(info);
+        mgr.push_alert(warning);
+        mgr.push_alert(escalated_critical);
+        mgr.push_alert(unresolved_critical);
+
+        // Clear reviewed — retain unresolved Critical (not escalated).
+        mgr.clear_reviewed(true);
+
+        // Only the unresolved Critical should survive.
+        assert_eq!(mgr.alert_count(), 1);
+        assert_eq!(mgr.alerts()[0].domain, "unresolved_critical");
+    }
+
+    #[test]
+    fn clear_reviewed_false_clears_all() {
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
+        let mut tracker = VarietyTracker::new();
+        tracker.increment("state");
+        mgr.check(&tracker, "domain");
+        assert!(!mgr.alerts().is_empty());
+
+        mgr.clear_reviewed(false);
+        assert!(
+            mgr.alerts().is_empty(),
+            "retain_unresolved=false must clear all"
         );
     }
 }
