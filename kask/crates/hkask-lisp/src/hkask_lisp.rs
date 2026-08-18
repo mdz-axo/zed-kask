@@ -1823,6 +1823,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_principle_constraints_form_with_string() {
+        // The principle-constraints manifest's lisp.eval form must guard
+        // against step_1_result being a string (when the LLM emits text
+        // instead of a JSON object).
+        let form = "(if (listp step_1_result) (let ((summary (assoc \"summary\" step_1_result))) (if (is_null summary) 0 (let ((enforced (assoc \"enforced\" summary)) (gaps (assoc \"gaps\" summary))) (+ (if (is_null enforced) 0 enforced) (if (is_null gaps) 0 gaps))))) 0)";
+        let env = json!({"step_1_result": "some text"});
+        assert_eq!(eval_sandboxed(form, &env).unwrap(), json!(0));
+    }
+
     // ── lisp-scaffold-reasoning manifest form tests ──
     // Pins the exact form used in kask/registry/manifests/lisp-scaffold-reasoning.yaml
     // step 2. If the interpreter changes in a way that breaks this form, these
