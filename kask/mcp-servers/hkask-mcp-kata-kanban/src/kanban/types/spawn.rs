@@ -25,7 +25,6 @@ pub struct SpawnSpec {
     pub(crate) memory_scope: String,
     /// Tool servers accessible to the spawned agent.
     pub(crate) tool_servers: Vec<String>,
-    /// Maximum gas/energy budget for the spawned agent.
     /// Maximum time the spawned agent can run (seconds).
     pub(crate) timeout_seconds: Option<u64>,
     /// Template/skill registries accessible to the spawned agent.

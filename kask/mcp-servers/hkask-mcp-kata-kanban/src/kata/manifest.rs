@@ -76,8 +76,6 @@ pub struct CoachQuestion {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ErrorHandling {
     #[serde(default)]
-    pub on_gas_exceeded: Option<String>,
-    #[serde(default)]
     pub on_timeout: Option<String>,
     #[serde(default)]
     pub max_retries: Option<u32>,
@@ -88,7 +86,6 @@ pub struct ErrorHandling {
 impl Default for ErrorHandling {
     fn default() -> Self {
         Self {
-            on_gas_exceeded: Some("abort".into()),
             on_timeout: Some("retry".into()),
             max_retries: Some(2),
             retry_backoff_seconds: Some(1),

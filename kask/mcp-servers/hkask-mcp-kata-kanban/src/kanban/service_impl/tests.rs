@@ -443,7 +443,7 @@ fn board_delete_removes_board_and_tasks() {
 #[test]
 fn rjoule_exhaust_stamps_rjoule_reason() {
     // rJoule exhaustion marks the task Done with an rJoule-specific
-    // verification reason, distinct from the gas-exhaust reason.
+    // verification reason.
     let (svc, board, owner) = make_service_with_board();
     let spec = TaskSpec::new("Inference-heavy task".into()).with_rjoule_budget(0);
     let task = svc.task_create(board.id, spec, owner).unwrap();
@@ -459,10 +459,6 @@ fn rjoule_exhaust_stamps_rjoule_reason() {
     assert_eq!(
         verification.reasoning,
         "rJoules exhausted — inference budget consumed."
-    );
-    assert_ne!(
-        verification.reasoning, "Gas exhausted — subagent budget consumed.",
-        "rJoule reason must not collide with the gas-exhaust reason"
     );
 }
 

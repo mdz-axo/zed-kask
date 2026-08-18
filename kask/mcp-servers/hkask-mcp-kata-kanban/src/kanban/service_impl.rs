@@ -21,7 +21,7 @@
 // Imports needed by child submodules via `use super::*`
 #[allow(unused_imports)]
 use crate::kanban::{
-    Comment, GasEntry, KanbanPhase, Priority, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus,
+    Comment, KanbanPhase, Priority, SpawnSpec, SpendEntry, Task, TaskFilter, TaskSpec, TaskStatus,
     Verification, VerificationCriterion,
 };
 use hkask_types::NotFound;

@@ -65,7 +65,7 @@ impl KanbanService {
         Ok(items)
     }
 
-    /// Auto-resolve jammed tasks: unassign idle, reopen unverified, gas-exhaust.
+    /// Auto-resolve jammed tasks: unassign idle, reopen unverified, rJoule-exhaust.
     pub fn unjam_fix(&self, board_id: BoardId) -> Result<Vec<UnjamFix>, KanbanError> {
         let tasks = self.task_list(board_id, TaskFilter::all())?;
         let now = chrono::Utc::now();
@@ -111,7 +111,7 @@ impl KanbanService {
 
             // rJoule exhaustion: same logic, separate budget.
             // `task_rjoule_exhaust`, which stamps an rJoule-specific verification
-            // reason (distinct from the gas-exhaust reason).
+            // reason.
             if (task.status == TaskStatus::InProgress || task.status == TaskStatus::Review)
                 && let Some(remaining) = task.rjoule_remaining
                 && remaining == 0
@@ -166,8 +166,7 @@ impl KanbanService {
     /// rJoule exhaustion is a completion path: subagents burn rJoules (inference
     /// spend) from a budget explicitly set on the task. When rJoules hit zero
     /// mid-work, the task auto-completes with an rJoule-specific verification
-    /// reason (distinct from the gas-exhaust reason). The delegator can reopen
-    /// with more rJoules to continue.
+    /// reason. The delegator can reopen with more rJoules to continue.
     ///
     /// Internal authority: called only by the regulation/unjam loop, not
     /// exposed as an MCP tool. Must not be exposed as a tool without an
@@ -182,8 +181,8 @@ impl KanbanService {
 
     /// Shared completion path for budget exhaustion: stamp a failed
     /// `Verification`, set `Done`, and emit the `REG` span. The `reason`
-    /// distinguishes gas vs rJoule in the verification record; `operation`
-    /// distinguishes them in the tracing span.
+    /// is the verification record; `operation` distinguishes them in the
+    /// tracing span.
     fn exhaust_task(
         &self,
         task_id: TaskId,
@@ -211,8 +210,8 @@ impl KanbanService {
 
     /// Deduct rJoules from a task's inference/API budget.
     ///
-    /// Same pattern as `task_consume_gas` but for the rJoule budget
-    /// (250k rJoules ≈ $1 inference spend). Logs a GasEntry with kind
+    /// Called by the inference accounting path after each inference step.
+    /// (250k rJoules ≈ $1 inference spend). Logs a SpendEntry with kind
     /// "rjoule_spend".
     ///
     /// Internal authority: called only by the inference accounting path, not
@@ -230,7 +229,7 @@ impl KanbanService {
         let new_remaining = remaining.saturating_sub(amount);
         task.rjoule_remaining = Some(new_remaining);
         task.spend_log
-            .push(GasEntry::rjoule_spend(amount, reason.to_string()));
+            .push(SpendEntry::rjoule_spend(amount, reason.to_string()));
         task.updated_at = chrono::Utc::now();
         self.update_task_triple(&task)?;
 

@@ -5,7 +5,7 @@ impl KataEngine {
     ///
     /// \[P9\] Motivating: Homeostatic Self-Regulation — regulated coaching kata execution
     /// pre:  manifest has at least one question
-    /// pre:  state is initialized with learner_bot and gas budget
+    /// pre:  state is initialized with learner_bot and rJoule budget
     /// post: returns KataResult with all questions answered and step experiences recorded
     /// post: if manifest has no questions → Err(KataError::NoSteps)
     /// post: if manifest has no questions → Err(KataError::NoSteps)

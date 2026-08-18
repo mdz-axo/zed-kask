@@ -209,23 +209,6 @@ pub struct TaskVerifyResponse {
     pub ontology: Option<String>,
 }
 
-// ── Gas management ──────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskAddGasRequest {
-    pub task_id: String,
-    /// Amount of gas/rJoules to add to the task's remaining budget.
-    pub amount: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TaskAddGasResponse {
-    pub task_id: String,
-    /// Ontology concept: <https://www.w3.org/ns/prov#used>
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ontology: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaskAddRjoulesRequest {
     pub task_id: String,
@@ -365,7 +348,7 @@ pub struct TaskSpawnRequest {
     pub task_id: String,
     /// Opaque client-generated key making this spawn replay-safe.
     ///
-    /// Load-bearing here beyond duplicate rows: a spawn burns gas and starts a
+    /// Load-bearing here beyond duplicate rows: a spawn burns rJoules and starts a
     /// subagent, so a blind retry costs real budget. See
     /// [`BoardCreateRequest::idempotency_key`].
     #[serde(default, skip_serializing_if = "Option::is_none")]

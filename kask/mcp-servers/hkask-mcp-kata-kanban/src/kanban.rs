@@ -16,7 +16,7 @@ pub mod types;
 
 // Re-export the public API from types
 pub use types::{
-    Board, ColumnDef, Comment, GasEntry, KanbanPhase, Priority, SpawnSpec, Task, TaskFilter,
+    Board, ColumnDef, Comment, KanbanPhase, Priority, SpawnSpec, SpendEntry, Task, TaskFilter,
     TaskSpec, TaskStatus, Verification, VerificationCriterion,
 };
 

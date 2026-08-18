@@ -25,7 +25,7 @@
 //!
 //! - `kanban_board_create` — a replay creates a second board
 //! - `kanban_task_create` — a replay creates a second task
-//! - `kanban_task_spawn` — a replay burns gas and starts a second subagent
+//! - `kanban_task_spawn` — a replay burns rJoules and starts a second subagent
 //!
 //! # Design
 //!
