@@ -565,13 +565,8 @@ impl EmbedService {
             let settings = hkask_services_core::HkaskSettings::load();
             let max_words = crate::helpers::tokens_to_words(settings.chunk_max_tokens());
             let min_words = (max_words / 4).max(1);
-            let chunks = crate::text::chunk_text(
-                &cleaned,
-                &entity_ref_prefix,
-                min_words,
-                max_words,
-                ".!? ",
-            );
+            let chunks =
+                crate::text::chunk_text(&cleaned, &entity_ref_prefix, min_words, max_words, ".!? ");
 
             // Tag each chunk
             let total_chunks = chunks.len();

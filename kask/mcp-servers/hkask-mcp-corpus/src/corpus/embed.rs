@@ -23,7 +23,6 @@ pub use html::strip_html_tags;
 pub use ocr::ocr_pdf_bytes;
 pub use service::EmbedService;
 pub use types::{
-    CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult,
-    EmbeddingConfig, Entity, EntityConfig, FoundationalRule, ProgressFn, TagSet, ValidationConfig,
-    Work,
+    CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult, EmbeddingConfig,
+    Entity, EntityConfig, FoundationalRule, ProgressFn, TagSet, ValidationConfig, Work,
 };
