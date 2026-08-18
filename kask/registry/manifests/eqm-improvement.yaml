@@ -197,7 +197,7 @@ steps:
       the Brier score tracks whether the agent's confidence is calibrated.
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-predict
-    gas_cap: 3072
+    gas_cap: 6144
     timeout_seconds: 120
     input_mapping:
       target_condition: "{{ step_3_result.target_condition | default(step_3_result) }}"

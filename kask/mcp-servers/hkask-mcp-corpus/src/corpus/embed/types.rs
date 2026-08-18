@@ -274,11 +274,10 @@ pub struct FoundationalRule {
 
 /// Chunking parameters for passage splitting.
 ///
-/// Optional — when absent, defaults to values consistent with
-/// `HkaskSettings::DEFAULT_CHUNK_MAX_TOKENS` (256 tokens ≈ 192 words).
+/// Optional — when absent, defaults to zeros (no chunking constraints).
 /// The corpus pipeline's `chunk_directory` does not read this field;
 /// it uses `max_tokens`/`overlap_tokens` from the pipeline manifest,
-/// which fall through to `HkaskSettings::chunk_max_tokens()`.
+/// which fall through to `HkaskSettings::chunk_max_tokens()` (256 tokens).
 /// This field exists for the persona replica build path (`corpus_build_persona`)
 /// and is kept for backward compatibility with existing persona configs.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

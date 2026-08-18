@@ -131,7 +131,7 @@ steps:
       criteria rather than jumping straight to taxonomy selection.
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-charter
-    gas_cap: 4096
+    gas_cap: 8192
     timeout_seconds: 150
     input_mapping:
       target: "{{ task | default(target) }}"
