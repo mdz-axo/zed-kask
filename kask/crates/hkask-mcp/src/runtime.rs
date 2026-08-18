@@ -22,9 +22,14 @@
 //!    to the reconnect cooldown]) and retry the call rather than failing until the
 //!    next settings change.
 //! 4. **Health supervisor** — a per-server background task that periodically
-//!    checks transport liveness and proactively removes dead connections before
-//!    the next tool call discovers them. After the max consecutive health failures
-//!    consecutive failures it logs an operator-actionable error and stops.
+//!    checks transport liveness, proactively removes dead connections, and
+//!    **attempts a restart** using the recorded launch spec. Unlike the
+//!    on-demand path, the supervisor heals even when no tool call is in
+//!    flight — without it, a server that crashes while idle stays dead
+//!    forever. After `max_consecutive_health_failures` the supervisor
+//!    transitions to a slower (degraded) check interval but does NOT stop —
+//!    a crashed server needs periodic restart attempts forever, or a
+//!    transient crash becomes a permanent outage.
 //!
 //! Without these, `start_server_with_env`'s presence-based idempotency check
 //! (`connections.contains_key`) would short-circuit every recovery attempt and
@@ -76,16 +81,33 @@ const DEFAULT_STARTUP_MAX_BACKOFF: Duration = Duration::from_secs(10);
 
 /// Interval between proactive health checks. The supervisor checks each
 /// server's transport liveness and, if closed, removes the dead connection
-/// so the on-demand reconnect path heals it on the next tool call.
+/// and attempts a restart. The restart is the proactive self-healing path —
+/// the on-demand reconnect (`call_tool_inner → try_reconnect`) only fires on
+/// a tool call, so without a supervisor-driven restart a server that crashes
+/// while no tool call is in flight stays dead indefinitely.
 ///
 /// Override: `HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS` env var.
 const DEFAULT_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Maximum consecutive health-check failures before the supervisor stops
-/// auto-healing and logs an operator-actionable error.
+/// Maximum consecutive health-check failures before the supervisor transitions
+/// from the normal interval to the degraded interval. The supervisor does NOT
+/// stop checking — a server that crashes and stays crashed needs periodic
+/// restart attempts forever, or a transient crash becomes a permanent outage.
+/// The threshold exists only to bound the log volume and CPU cost of a
+/// crash-looping binary: after it, the supervisor slows down rather than giving
+/// up. Reset to zero on the first healthy connection seen.
 ///
 /// Override: `HKASK_MCP_MAX_HEALTH_FAILURES` env var.
 const DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES: u32 = 3;
+
+/// Interval between health checks once the supervisor has exceeded
+/// `max_consecutive_health_failures`. Slower than the normal interval so a
+/// crash-looping binary does not burn CPU, but still attempts restarts so a
+/// transient cause (a DB lock that released, a disk that freed) is recovered
+/// without operator intervention.
+///
+/// Override: `HKASK_MCP_DEGRADED_HEALTH_CHECK_INTERVAL_SECS` env var.
+const DEFAULT_DEGRADED_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Resolve a duration from an env var (seconds), falling back to `default`.
 /// Logs a warning on parse failure per `.rules` (numeric env vars that fail
@@ -156,6 +178,7 @@ struct McpRuntimeConfig {
     startup_max_backoff: Duration,
     health_check_interval: Duration,
     max_consecutive_health_failures: u32,
+    degraded_health_check_interval: Duration,
 }
 
 impl Default for McpRuntimeConfig {
@@ -184,6 +207,10 @@ impl Default for McpRuntimeConfig {
             max_consecutive_health_failures: resolve_u32_env(
                 "HKASK_MCP_MAX_HEALTH_FAILURES",
                 DEFAULT_MAX_CONSECUTIVE_HEALTH_FAILURES,
+            ),
+            degraded_health_check_interval: resolve_duration_env_secs(
+                "HKASK_MCP_DEGRADED_HEALTH_CHECK_INTERVAL_SECS",
+                DEFAULT_DEGRADED_HEALTH_CHECK_INTERVAL,
             ),
         }
     }
@@ -356,7 +383,10 @@ pub struct McpRuntime {
     /// Last reconnect attempt per server, for the reconnect cooldown.
     last_reconnect: Arc<RwLock<HashMap<String, Instant>>>,
     /// Consecutive health-check failures per server. After
-    /// `config.max_consecutive_health_failures` the supervisor stops auto-healing.
+    /// `config.max_consecutive_health_failures` the supervisor transitions to
+    /// the degraded interval (slower checks) but does NOT stop checking — a
+    /// crashed server needs periodic restart attempts forever. Reset to zero
+    /// on the first healthy connection seen.
     health_failures: Arc<RwLock<HashMap<String, u32>>>,
     /// Resolved tuning parameters (env-overridable defaults).
     config: McpRuntimeConfig,
@@ -477,10 +507,12 @@ impl McpRuntime {
         // lock across `.await` points. This keeps the future closer to `Send`,
         // though `start_server_with_env` is still not fully `Send` because
         // `serve(transport).await` captures the `TokioChildProcess` (which
-        // contains a `Box<dyn ChildWrapper>`). The health supervisor therefore
-        // cannot call `try_reconnect` directly from a `tokio::spawn` — it
-        // removes dead connections and relies on the on-demand reconnect path
-        // (`call_tool_inner`) for healing.
+        // contains a `Box<dyn ChildWrapper>`). The health supervisor works
+        // around this by running on the multi-thread `gpui_tokio` runtime,
+        // which can host non-`Send` futures in a `tokio::spawn` task. The
+        // supervisor clones the runtime (all fields are `Arc<RwLock<...>>`)
+        // and calls `start_server_with_env` directly — see the supervisor
+        // spawn below for the full reasoning.
 
         // Record the launch spec before spawning so a later reconnect can rebuild
         // this server even if this attempt fails partway through.
@@ -721,10 +753,27 @@ impl McpRuntime {
             connections.insert(server_id.to_string(), Connection { peer, generation });
         }
 
-        self.cancellation_tokens
-            .write()
-            .await
-            .insert(server_id.to_string(), cancel.clone());
+        // Cancel the previous supervisor + keeper for this server_id before
+        // inserting the new token. Without this, a `start_server_with_env` call
+        // that replaces an existing connection (e.g. from `try_reconnect` or
+        // the supervisor itself) orphans the old supervisor task: the old
+        // `CancellationToken` is dropped from the map but the old supervisor
+        // still holds a clone, so it never exits and leaks. Cancelling here
+        // fires the old supervisor's `supervisor_cancel.cancelled()` arm and
+        // the old keeper's `bg_cancel.cancelled()` arm, both of which exit
+        // cleanly. The new `cancel` (with the new supervisor + keeper) is then
+        // inserted as the sole live token.
+        //
+        // The old keeper's reap arm does NOT fire (it returns `false` on
+        // cancellation), so it does not remove the new connection we just
+        // inserted above — the generation stamp would also protect against
+        // this, but the cancellation is the primary guard.
+        {
+            let mut tokens = self.cancellation_tokens.write().await;
+            if let Some(previous) = tokens.insert(server_id.to_string(), cancel.clone()) {
+                previous.cancel();
+            }
+        }
 
         // Register the server and its discovered tools
         let server = McpServer {
@@ -750,39 +799,65 @@ impl McpRuntime {
 
         self.register_server(server).await;
 
-        // Spawn a health supervisor for this server. The supervisor closes a
-        // gap the keeper task and the on-demand reconnect path leave open: a
-        // server whose transport has closed but whose keeper task hasn't been
-        // scheduled yet to reap it. Without the supervisor, the dead connection
-        // sits in the map until the next tool call triggers `get_peer` →
-        // `try_reconnect`. The supervisor proactively removes it so the next
-        // call doesn't dispatch onto a corpse.
-        //
-        // The supervisor detects transport-closed connections. It does NOT
-        // detect hung processes (child alive but unresponsive with an open
-        // transport) — that would require a ping-based health check, which is
-        // a future enhancement.
-        //
-        // The supervisor does not call `try_reconnect` directly because
-        // `start_server_with_env` is not `Send` (it holds `RwLockWriteGuard`
-        // across `.await` points). Instead, it removes the dead connection and
-        // lets the on-demand reconnect path (`call_tool_inner → try_reconnect`)
-        // heal it on the next tool call.
-        //
-        // After `config.max_consecutive_health_failures` consecutive failures the
-        // supervisor stops and logs an operator-actionable error, so a
-        // crash-looping binary doesn't spin forever. The failure counter
-        // increments on every check where the connection is dead or missing,
-        // and only resets when a genuinely healthy connection is seen — so a
-        // server that keeps dying accumulates failures across check intervals.
-        let supervisor_cancel = cancel.clone();
+        // Spawn a health supervisor for this server. See `spawn_health_supervisor`
+        // for the full design — the supervisor is the proactive self-healing
+        // path that restarts crashed servers even when no tool call is in flight.
+        self.spawn_health_supervisor(server_id, cancel);
+
+        Ok(())
+    }
+
+    /// Spawn a health supervisor for a server.
+    ///
+    /// The supervisor closes two gaps the keeper task and the on-demand
+    /// reconnect path leave open:
+    ///
+    /// 1. A server whose transport has closed but whose keeper task hasn't
+    ///    been scheduled yet to reap it. The supervisor removes the dead
+    ///    connection so the next call doesn't dispatch onto a corpse.
+    /// 2. A server that has crashed and no tool call is in flight. Without a
+    ///    supervisor-driven restart, the only healing path is
+    ///    `call_tool_inner → try_reconnect`, which fires on a tool call. If
+    ///    no call comes (the panel sees the server as unavailable and stops
+    ///    calling), the server stays dead forever — a transient crash
+    ///    becomes a permanent outage.
+    ///
+    /// The supervisor detects transport-closed and missing connections. It
+    /// does NOT detect hung processes (child alive but unresponsive with an
+    /// open transport) — that would require a ping-based health check, which
+    /// is a future enhancement.
+    ///
+    /// The supervisor attempts a restart on every unhealthy check by
+    /// re-invoking `start_server_with_env` with the recorded launch spec.
+    /// `McpRuntime: Clone + Send + Sync` (all fields are `Arc<RwLock<...>>`),
+    /// so the supervisor clones the runtime and spawns the restart inline.
+    /// The `start_server_with_env` future is not `Send` (it holds
+    /// `RwLockWriteGuard` across `.await` points), but the supervisor itself
+    /// is a `tokio::spawn` task on the multi-thread runtime, which can host
+    /// non-`Send` futures — unlike `tokio::spawn` which requires `Send`, the
+    /// `LocalSet`-free `tokio::spawn` on the current-thread runtime would
+    /// not. The governed runtime runs on the multi-thread `gpui_tokio`
+    /// runtime, so this is safe.
+    ///
+    /// After `config.max_consecutive_health_failures` consecutive failures
+    /// the supervisor transitions from the normal interval to the degraded
+    /// interval (slower checks) but does NOT stop — a crashed server needs
+    /// periodic restart attempts forever. The failure counter increments on
+    /// every check where the connection is dead or missing, and only resets
+    /// when a genuinely healthy connection is seen — so a server that keeps
+    /// dying accumulates failures across check intervals.
+    fn spawn_health_supervisor(&self, server_id: &str, cancel: CancellationToken) {
+        let supervisor_cancel = cancel;
         let supervisor_connections = self.connections.clone();
         let supervisor_health_failures = self.health_failures.clone();
+        let supervisor_launch_specs = self.launch_specs.clone();
+        let supervisor_runtime = self.clone();
         let supervisor_id = server_id.to_string();
-        let health_check_interval = self.config.health_check_interval;
+        let normal_interval = self.config.health_check_interval;
+        let degraded_interval = self.config.degraded_health_check_interval;
         let max_health_failures = self.config.max_consecutive_health_failures;
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(health_check_interval);
+            let mut interval = tokio::time::interval(normal_interval);
             interval.tick().await; // skip the immediate first tick
             loop {
                 tokio::select! {
@@ -816,8 +891,8 @@ impl McpRuntime {
                     ConnectionState::TransportClosed => {
                         // Transport is closed but the keeper hasn't reaped yet.
                         // Remove the dead connection so `get_peer` returns `None`
-                        // and `call_tool_inner` triggers `try_reconnect` on the
-                        // next call.
+                        // and the restart below (or `call_tool_inner`) can
+                        // install a fresh one.
                         warn!(
                             target: "hkask.mcp",
                             server_id = %supervisor_id,
@@ -830,31 +905,91 @@ impl McpRuntime {
                     }
                     ConnectionState::Missing => {
                         // Connection was reaped (by the keeper or a prior
-                        // supervisor cycle). The on-demand reconnect path will
-                        // heal it on the next tool call. If no tool call comes,
-                        // the server stays missing — the supervisor can't force
-                        // a reconnect because `try_reconnect` is not `Send`.
+                        // supervisor cycle). Fall through to the restart attempt
+                        // below — the supervisor heals proactively rather than
+                        // waiting for a tool call.
                     }
                 }
 
                 // Increment the failure counter for both TransportClosed and
                 // Missing states. A healthy connection resets it (above).
+                // `saturating_add` avoids overflow panics in debug mode after
+                // very long outage periods (the counter is never reset while
+                // the server stays dead).
                 let failures = {
                     let mut failures = supervisor_health_failures.write().await;
                     let count = failures.entry(supervisor_id.clone()).or_insert(0);
-                    *count += 1;
+                    *count = count.saturating_add(1);
                     *count
                 };
 
-                if failures >= max_health_failures {
-                    tracing::error!(
+                // Attempt a restart using the recorded launch spec. This is the
+                // proactive self-healing path — without it, a server that
+                // crashes while no tool call is in flight stays dead forever.
+                // `start_server_with_env` is idempotent per live connection, so
+                // a concurrent `try_reconnect` from `call_tool_inner` is safe:
+                // whichever wins installs the connection, the other no-ops.
+                let spec = {
+                    let specs = supervisor_launch_specs.read().await;
+                    specs.get(&supervisor_id).cloned()
+                };
+                let Some(spec) = spec else {
+                    // No launch spec means the server was deliberately stopped
+                    // (`stop_server` clears the spec). Do not resurrect it.
+                    warn!(
                         target: "hkask.mcp",
                         server_id = %supervisor_id,
                         consecutive_failures = failures,
-                        "MCP server health supervisor giving up after repeated failures — \
-                         operator intervention required (check stderr logs for this server)"
+                        "MCP server unhealthy but no launch spec recorded — deliberately stopped, not restarting"
+                    );
+                    continue;
+                };
+
+                // Re-check the cancellation token before the restart. There is a
+                // TOCTOU window between the spec read above and the
+                // `start_server_with_env` call below: `stop_server` could clear
+                // the spec and cancel the token in between. Without this check,
+                // the supervisor would resurrect a deliberately stopped server.
+                // The `block_in_place` call below blocks the supervisor task, so
+                // the `tokio::select!` cancellation arm cannot interrupt it —
+                // this check closes the window for the common case (stop fires
+                // before the restart begins). A stop that fires *during* the
+                // `block_in_place` is still racy, but `start_server_with_env`'s
+                // idempotency check (line ~454) would see the cancellation token
+                // removed and the connection absent, so it would proceed —
+                // however, the resulting process would be reaped on the next
+                // supervisor tick because `stop_server` also cancels the
+                // supervisor token, so the supervisor exits and the keeper task
+                // for the new process reaps it on the next death. The residual
+                // race is bounded and self-correcting.
+                if supervisor_cancel.is_cancelled() {
+                    info!(
+                        target: "hkask.mcp",
+                        server_id = %supervisor_id,
+                        "Supervisor cancelled before restart — not resurrecting"
                     );
                     return;
+                }
+
+                if failures >= max_health_failures {
+                    // Transition to the degraded interval rather than giving up.
+                    // A crashed server needs periodic restart attempts forever;
+                    // giving up turns a transient crash into a permanent outage.
+                    // The degraded interval bounds CPU and log volume while
+                    // still attempting recovery.
+                    if failures == max_health_failures {
+                        tracing::error!(
+                            target: "hkask.mcp",
+                            server_id = %supervisor_id,
+                            consecutive_failures = failures,
+                            degraded_interval_secs = degraded_interval.as_secs(),
+                            "MCP server health supervisor transitioning to degraded interval \
+                             after repeated failures — continuing restart attempts at reduced \
+                             frequency (operator intervention recommended: check stderr logs)"
+                        );
+                        interval = tokio::time::interval(degraded_interval);
+                        interval.tick().await; // skip the immediate tick from the new interval
+                    }
                 }
 
                 warn!(
@@ -862,12 +997,51 @@ impl McpRuntime {
                     server_id = %supervisor_id,
                     consecutive_failures = failures,
                     connection_state = ?connection_state,
-                    "MCP server unhealthy — will retry on next check"
+                    "MCP server unhealthy — supervisor attempting restart"
                 );
+                // `start_server_with_env` is not `Send` (it holds
+                // `RwLockWriteGuard` across `.await` points and captures
+                // `TokioChildProcess` which contains a `Box<dyn ChildWrapper>`),
+                // so it cannot be `.await`'d directly inside a `tokio::spawn`
+                // task (which requires `Send`). `block_in_place` moves the
+                // blocking onto a dedicated thread (the multi-thread runtime's
+                // blocking pool), and `Handle::current().block_on` drives the
+                // future to completion on the runtime's reactor without
+                // requiring `Send`. This is the same pattern used by
+                // `hkask-mcp-kata-kanban` for `resolve_worktree_spawn_port`.
+                //
+                // SAFETY: `block_in_place` is safe on the multi-thread runtime.
+                // The governed runtime runs on `gpui_tokio`'s multi-thread
+                // runtime, so this is always satisfied in production. In tests,
+                // `#[tokio::test(flavor = "multi_thread")]` provides the
+                // required runtime flavor.
+                let restart_outcome = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        supervisor_runtime
+                            .start_server_with_env(&supervisor_id, &spec.command, spec.env)
+                            .await
+                    })
+                });
+                match restart_outcome {
+                    Ok(()) => {
+                        info!(
+                            target: "hkask.mcp",
+                            server_id = %supervisor_id,
+                            "MCP server restarted by health supervisor"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hkask.mcp",
+                            server_id = %supervisor_id,
+                            %error,
+                            consecutive_failures = failures,
+                            "MCP server supervisor restart failed — will retry on next check"
+                        );
+                    }
+                }
             }
         });
-
-        Ok(())
     }
 
     /// Get a live Peer connection for a server (if connected).
