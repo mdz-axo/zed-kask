@@ -3732,6 +3732,41 @@ mod tests {
         );
     }
 
+    // fermi v0.16.x `display_alias` (forwarded by `swarm_list_agents`'s
+    // `map_catalogue_agent`) must deserialize into `AgentInfo.display_alias`
+    // so the cloud fetch path can populate `AgentCard.display_name` from it
+    // (fetch.rs) instead of the prior hardcoded `String::new()`. Without this,
+    // cloud agents always rendered their `agent_id` slug ("xaman_ek") even when
+    // ABW carried a human name ("Xaman Ek") — the local path already showed
+    // `display_name`, so this unifies cloud and local. The card renderer falls
+    // back to `id` when `display_name` is empty (card.rs), so an ABW agent with
+    // no `display_alias` is unaffected.
+    #[test]
+    fn cloud_agent_display_alias_deserializes_into_agent_info() {
+        let out = r#"{"content":{"count":1,"authenticated":true,"agents":[{"agent_id":"xaman_ek","display_alias":"Xaman Ek"}]}}"#;
+        let parsed = parse_tool_response(out).expect("envelope");
+        let response: AgentListResponse =
+            serde_json::from_value(parsed).expect("inner content deserializes");
+        let agent = response.agents.first().expect("one agent");
+        assert_eq!(agent.agent_id.as_deref(), Some("xaman_ek"));
+        assert_eq!(
+            agent.display_alias.as_deref(),
+            Some("Xaman Ek"),
+            "display_alias must deserialize so the cloud fetch path can surface \
+             the human name instead of the slug"
+        );
+        // The fetch.rs wiring resolves to `display_alias.unwrap_or_default()`;
+        // an absent/empty alias yields an empty `display_name`, and the card
+        // renderer falls back to `agent_id`. Pin both branches:
+        let resolved = agent.display_alias.clone().unwrap_or_default();
+        assert_eq!(resolved, "Xaman Ek");
+        let none_agent: crate::parse::AgentInfo =
+            serde_json::from_value(serde_json::json!({"agent_id": "no_alias"}))
+                .expect("display_alias is #[serde(default)]-optional");
+        assert_eq!(none_agent.display_alias, None);
+        assert_eq!(none_agent.display_alias.clone().unwrap_or_default(), "");
+    }
+
     // Pin the empty-state message contract: when the API key IS configured
     // (`cloud_authenticated == Some(true)`), the empty-state message must NOT
     // suggest setting `HKASK_ABW_API_KEY` — the operator genuinely has no

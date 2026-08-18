@@ -11,7 +11,6 @@ pub struct KataState {
     pub step_outputs: HashMap<String, serde_json::Value>,
     pub learner_bot: String,
     pub context: HashMap<String, String>,
-    pub gas_consumed: u64,
     pub current_step: usize,
     #[serde(default)]
     pub manifest_id: String,

@@ -2202,4 +2202,151 @@ mod tests {
         let out2 = map_catalogue_agent(&agent);
         assert!(out2.get("display_alias").unwrap().is_null());
     }
+
+    // ── Proptests ───────────────────────────────────────────────────────
+    //
+    // The example tests above pin the specific fermi v0.18 contract (which
+    // fields, which shapes). Proptests pin the UNIVERSAL invariants of
+    // `map_catalogue_agent` that hold across all JSON inputs — the boundary
+    // and totality properties a fixed fixture cannot exercise. Both coexist:
+    // examples document the contract; proptests verify the homomorphism,
+    // schema stability, and totality that make the contract load-bearing.
+
+    use proptest::prelude::*;
+
+    fn arb_json_string(max_len: usize) -> impl Strategy<Value = String> {
+        prop::collection::vec(any::<char>(), 0..max_len).prop_map(|cs| cs.into_iter().collect())
+    }
+
+    /// Bounded arbitrary JSON: null/bool/i64/string leaves, recursing into
+    /// arrays and objects up to depth 3. Exercises every `serde_json::Value`
+    /// variant `map_catalogue_agent` might encounter (including `Null`, bare
+    /// strings, and arrays where an object is expected).
+    fn arb_json() -> impl Strategy<Value = serde_json::Value> {
+        let leaf = prop_oneof![
+            Just(serde_json::Value::Null),
+            any::<bool>().prop_map(serde_json::Value::Bool),
+            any::<i64>().prop_map(serde_json::Value::from),
+            arb_json_string(24).prop_map(serde_json::Value::String),
+        ];
+        leaf.prop_recursive(3, 24, 8, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..6).prop_map(serde_json::Value::Array),
+                prop::collection::vec((arb_json_string(12), inner), 0..6)
+                    .prop_map(|pairs| serde_json::Value::Object(pairs.into_iter().collect())),
+            ]
+        })
+    }
+
+    /// The exact, stable forwarded key set. Any change to `map_catalogue_agent`
+    /// that adds or drops a key fails `prop_schema_is_stable` — the panel and
+    /// the curator depend on this set being what the catalogue emits.
+    const EXPECTED_KEYS: &[&str] = &[
+        "agent_id",
+        "uuid",
+        "agent_type",
+        "tier",
+        "status",
+        "description",
+        "display_alias",
+        "author",
+        "tags",
+        "model",
+        "llm_provider",
+        "min_tier",
+        "accepts",
+        "produces",
+        "valence",
+        "requires_secrets",
+        "fermi_contract",
+        "output_contract",
+        "execution_stats",
+        "dreaming",
+        "workspace_count",
+        "dependencies",
+        "model_ladder",
+        "capability_gates",
+        "updated_at",
+    ];
+
+    proptest! {
+        // Totality: the mapping must never panic and always return a JSON
+        // object, for ANY input shape — Null, a bare string, an array, a
+        // number, a deeply nested object. fermi's `/agents` array could carry
+        // a non-object entry; the panel and curator must not crash on it.
+        #[test]
+        fn prop_never_panics_and_returns_object(a in arb_json()) {
+            let out = map_catalogue_agent(&a);
+            prop_assert!(
+                out.is_object(),
+                "output must always be a JSON object, got {out:?}"
+            );
+        }
+
+        // Schema stability: the output object carries EXACTLY the forwarded
+        // key set — no more, no less — regardless of input. A fermi field that
+        // disappears, or a new fermi field, cannot silently widen or narrow
+        // the envelope downstream code depends on. This is the property the
+        // `updated_at`-stays-null comment promises.
+        #[test]
+        fn prop_schema_is_stable(a in arb_json()) {
+            let out = map_catalogue_agent(&a);
+            let obj = out.as_object().expect("output is an object (prop_never_panics)");
+            let keys: std::collections::HashSet<&str> =
+                obj.keys().map(|s| s.as_str()).collect();
+            let expected: std::collections::HashSet<&str> =
+                EXPECTED_KEYS.iter().copied().collect();
+            prop_assert_eq!(
+                keys, expected,
+                "forwarded key set must be exact and stable across all inputs"
+            );
+        }
+
+        // Forwarding homomorphism: every direct-get field passes through
+        // UNCHANGED — present values verbatim, absent values as `Null` (which
+        // is what `a.get(field)` returns for a missing key, so the equality
+        // holds in both directions). `model` is the one derived field (from
+        // `capabilities.model`); `description` is the one transformed field
+        // (sanitized) and is verified by `prop_description_is_plain`.
+        #[test]
+        fn prop_forwards_direct_fields_unchanged(a in arb_json()) {
+            let out = map_catalogue_agent(&a);
+            let direct = [
+                "agent_id", "uuid", "agent_type", "tier", "status", "display_alias",
+                "author", "tags", "llm_provider", "min_tier", "accepts", "produces",
+                "valence", "requires_secrets", "fermi_contract", "output_contract",
+                "execution_stats", "dreaming", "workspace_count", "dependencies",
+                "model_ladder", "capability_gates", "updated_at",
+            ];
+            for f in direct {
+                prop_assert_eq!(
+                    out.get(f), a.get(f),
+                    "field {} must forward unchanged (absent -> null)",
+                    f
+                );
+            }
+            // `model` is derived from `capabilities.model`, not forwarded directly.
+            prop_assert_eq!(
+                out.get("model"),
+                a.get("capabilities").and_then(|c| c.get("model")),
+                "model must come from capabilities.model"
+            );
+        }
+
+        // KA-01 sanitizer invariant: the forwarded `description` is ALWAYS a
+        // plain string or null — never an object/array/number — because the
+        // panel deserializes `description` as `Option<String>`. An ABW/LLM
+        // `{content, source, trust}` container would otherwise fail to
+        // deserialize and blank the whole list. This holds for every input
+        // shape, including a description that is itself an object or array.
+        #[test]
+        fn prop_description_is_plain_string_or_null(a in arb_json()) {
+            let out = map_catalogue_agent(&a);
+            let desc = out.get("description").expect("description key present (prop_schema_is_stable)");
+            prop_assert!(
+                desc.is_null() || desc.is_string(),
+                "description must be plain string or null (KA-01), got {desc:?}"
+            );
+        }
+    }
 }

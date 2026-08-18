@@ -10,8 +10,6 @@ pub enum KataError {
     UnknownType(String),
     #[error("Manifest '{0}' has no steps/questions/practices")]
     NoSteps(String),
-    #[error("Gas exceeded: consumed {consumed}, cap {cap}")]
-    GasExceeded { consumed: u64, cap: u64 },
     #[error("Inference failed: {0}")]
     InferenceFailed(String),
     #[error("Template not found: {0}")]
