@@ -112,8 +112,8 @@ steps:
     description: Refine and bound focal question.
     renderer: minijinja
     template_ref: scenario-builder/focal-question
-    gas_cap: 6000
-    timeout_seconds: 180
+    gas_cap: 3000
+    timeout_seconds: 120
     input_mapping:
       focal_question: "{{ task | default(focal_question) }}"
       planning_horizon: "{{ planning_horizon | default('5 years') }}"

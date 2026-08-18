@@ -131,8 +131,8 @@ steps:
     description: Triage forecasting question difficulty and tractability.
     renderer: minijinja
     template_ref: superforecasting/stage_0_triage
-    gas_cap: 5000
-    timeout_seconds: 180
+    gas_cap: 2500
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ task | default(forecasting_question) }}"
       domain: "{{ domain | default(null) }}"
@@ -143,8 +143,8 @@ steps:
     description: Fermi-decompose forecasting question into sub-questions.
     renderer: minijinja
     template_ref: superforecasting/stage_1_fermi_decompose
-    gas_cap: 8000
-    timeout_seconds: 180
+    gas_cap: 4000
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       triage_output: "{{ step_1_result }}"
@@ -197,8 +197,8 @@ steps:
     description: Build outside-view base-rate anchor.
     renderer: minijinja
     template_ref: superforecasting/stage_2_outside_view
-    gas_cap: 8000
-    timeout_seconds: 180
+    gas_cap: 4000
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       sub_questions: "{{ step_2_result.sub_questions | default([]) }}"
@@ -309,8 +309,8 @@ steps:
     description: Apply Bayesian updates from incoming evidence.
     renderer: minijinja
     template_ref: superforecasting/stage_4_evidence_update
-    gas_cap: 8000
-    timeout_seconds: 180
+    gas_cap: 4000
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       prior_probability: "{{ step_10_result.tree_combined_probability | default(step_9_result.hypothesis_probabilities.combined_probability | default(step_6_result.calibrated | default(0.5))) }}"
@@ -341,8 +341,8 @@ steps:
     description: Synthesize multi-model dragonfly-eye view.
     renderer: minijinja
     template_ref: superforecasting/stage_5_synthesis
-    gas_cap: 9000
-    timeout_seconds: 200
+    gas_cap: 4500
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       updated_probability: "{{ step_12_result.posterior | default(0.5) }}"
@@ -354,8 +354,8 @@ steps:
     description: Calibrate final probability and confidence level.
     renderer: minijinja
     template_ref: superforecasting/stage_6_calibration
-    gas_cap: 7000
-    timeout_seconds: 180
+    gas_cap: 3500
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       synthesized_probability: "{{ step_13_result.synthesized_probability | default(step_12_result.posterior | default(0.5)) }}"
@@ -367,8 +367,8 @@ steps:
     description: Record structured forecast for later scoring/post-mortem.
     renderer: minijinja
     template_ref: superforecasting/stage_7_record
-    gas_cap: 6000
-    timeout_seconds: 180
+    gas_cap: 3000
+    timeout_seconds: 120
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
       final_probability: "{{ step_14_result.final_probability | default(step_13_result.synthesized_probability | default(0.5)) }}"

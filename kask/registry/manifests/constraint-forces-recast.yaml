@@ -117,8 +117,8 @@ steps:
       projection.
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-represent
-    gas_cap: 8192
-    timeout_seconds: 180
+    gas_cap: 4096
+    timeout_seconds: 120
     input_mapping:
       seed_concepts: "{{ task | default(seed_concepts) }}"
       # Use the loop-carried seed_index to advance through the seed set.
@@ -138,8 +138,8 @@ steps:
       case). Report honestly; do not fabricate a mutation.
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-violate
-    gas_cap: 8192
-    timeout_seconds: 180
+    gas_cap: 4096
+    timeout_seconds: 120
     input_mapping:
       axiom_graph: "{{ step_1_result.axiom_graph | default({}) }}"
       target_ontology: "{{ seed_concepts[seed_index | default(0)].target_ontology | default(seed_concepts[0].target_ontology) | default({}) }}"
@@ -153,8 +153,8 @@ steps:
       is the forcing operator: minimal-satisfiability projection.
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-project
-    gas_cap: 12288
-    timeout_seconds: 250
+    gas_cap: 6144
+    timeout_seconds: 150
     input_mapping:
       axiom_graph: "{{ step_1_result.axiom_graph | default({}) }}"
       violations: "{{ step_2_result.violations | default([]) }}"
@@ -169,8 +169,8 @@ steps:
       the do(not recast) counterfactual.
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-control
-    gas_cap: 8192
-    timeout_seconds: 180
+    gas_cap: 4096
+    timeout_seconds: 120
     input_mapping:
       axiom_graph: "{{ step_1_result.axiom_graph | default({}) }}"
       target_ontology: "{{ seed_concepts[seed_index | default(0)].target_ontology | default(seed_concepts[0].target_ontology) | default({}) }}"
@@ -184,8 +184,8 @@ steps:
       under B's axioms. This is the falsifier.
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-three-criterion
-    gas_cap: 8192
-    timeout_seconds: 180
+    gas_cap: 4096
+    timeout_seconds: 120
     input_mapping:
       mutant: "{{ step_3_result.mutant | default({}) }}"
       source_ontology: "{{ seed_concepts[seed_index | default(0)].source_ontology | default(seed_concepts[0].source_ontology) | default({}) }}"
@@ -203,8 +203,8 @@ steps:
       (random perturbation).
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-compare
-    gas_cap: 8192
-    timeout_seconds: 180
+    gas_cap: 3072
+    timeout_seconds: 120
     input_mapping:
       mutant: "{{ step_3_result.mutant | default({}) }}"
       structural_delta: "{{ step_3_result.structural_delta | default(0) }}"
@@ -223,10 +223,10 @@ steps:
       size limit.
     renderer: minijinja
     template_ref: constraint-forces-recast/cfr-frontier
-    gas_cap: 8192
-    timeout_seconds: 180
+    gas_cap: 3072
+    timeout_seconds: 120
     input_mapping:
-      current_frontier: "{{ _convergence.frontier_history | default([]) | last | default([]) }}"
+      current_frontier: "{{ prev_frontier | default([]) }}"
       new_variants:
         - mutant: "{{ step_3_result.mutant | default({}) }}"
           structural_delta: "{{ step_3_result.structural_delta | default(0) }}"
@@ -292,6 +292,10 @@ steps:
       # variable; the Represent step (ordinal 1) uses it to select
       # seed_concepts[seed_index].
       seed_index: "{{ seed_index | default(0) + 1 }}"
+      # Carry the frontier forward across iterations so the Pareto frontier
+      # accumulates. The executor binds loop mappings as top-level keys, so
+      # step 7 references this as `prev_frontier`.
+      prev_frontier: "{{ step_7_result.frontier | default([]) }}"
 
 error_handling:
   on_gas_exceeded: abort

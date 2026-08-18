@@ -62,6 +62,11 @@ pub(crate) struct AgentCard {
     /// `agents.updated_at`). `None` for local cards (no ABW freshness signal).
     #[allow(dead_code)] // retained for future detail-view enrichment
     pub(crate) updated_at: Option<String>,
+    /// Human-readable label for UI display. When empty, the panel falls back
+    /// to `id`. Cloned cards carry a display name like "Xaman Ek (Clone)" so
+    /// the operator can distinguish the local clone from the cloud original.
+    #[serde(default)]
+    pub(crate) display_name: String,
     /// Where this agent card lives: cloud (ABW only), local (local registry
     /// only), or synced (both, linked by `cloud_swarm_id`).
     pub(crate) source: AgentSource,
@@ -130,6 +135,10 @@ pub(crate) struct LocalAgentInfo {
     pub(crate) agent_type: String,
     #[serde(default)]
     pub(crate) description: String,
+    /// Human-readable label for UI display. When empty, the panel falls back
+    /// to `agent_id`. Cloned cards carry a display name like "Xaman Ek (Clone)".
+    #[serde(default)]
+    pub(crate) display_name: String,
     /// The ABW agent id this local card is synced with. `None` = local-only.
     #[serde(default, rename = "cloud_id")]
     pub(crate) cloud_swarm_id: Option<String>,

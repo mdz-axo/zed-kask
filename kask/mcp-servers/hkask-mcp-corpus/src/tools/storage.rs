@@ -307,16 +307,16 @@ impl CorpusServer {
                     }
                 }
             } else {
-                // New schema: query by attribute "training_qa_pair" and filter by entity prefix
+                // New schema: query ALL h_mems by entity prefix (assertions,
+                // training_qa_pairs, and any other attributes) so stale data
+                // from a previous pipeline run doesn't pollute the new run.
                 let h_mems = store
-                    .query_by_attribute("training_qa_pair")
-                    .map_err(|e| map_memory_store_error(e, "Query h_mems failed"))?;
+                    .h_mems_by_entity_prefix(&req.prefix)
+                    .map_err(|e| map_memory_store_error(e, "Query h_mems by prefix failed"))?;
                 for h_mem in &h_mems {
-                    if h_mem.entity.starts_with(&req.prefix) {
-                        match store.delete_h_mem(&h_mem.id) {
-                            Ok(()) => purged_h_mems += 1,
-                            Err(_) => h_mem_errors += 1,
-                        }
+                    match store.delete_h_mem(&h_mem.id) {
+                        Ok(()) => purged_h_mems += 1,
+                        Err(_) => h_mem_errors += 1,
                     }
                 }
             }

@@ -86,7 +86,7 @@ steps:
     renderer: minijinja
     template_ref: listening/apply-template
     gas_cap: 100000
-    timeout_seconds: 60
+    timeout_seconds: 120
     input_mapping:
       transcript_chunks: "{{ step_1_result.transcript_chunks | default([]) }}"
       prior_transcript_chunks: "{{ step_1_result.prior_transcript_chunks | default([]) }}"

@@ -197,7 +197,7 @@ steps:
       the Brier score tracks whether the agent's confidence is calibrated.
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-predict
-    gas_cap: 6144
+    gas_cap: 3072
     timeout_seconds: 120
     input_mapping:
       target_condition: "{{ step_3_result.target_condition | default(step_3_result) }}"
@@ -307,7 +307,7 @@ steps:
                                                         (c-n (if (numberp c-score) c-score 0.0)))
                                                     (let ((delta (- t-n c-n)))
                                                       (compute-gap cs (cdr ts) (+ acc (* delta delta)) (+ count 1))))))))))))
-                          (compute-gap curr-scores targets 0.0 0)))))))
+                          (compute-gap curr-scores targets 0.0 0))))))))
       env:
         step_6_result: "{{ step_6_result }}"
         step_3_result: "{{ step_3_result }}"
@@ -348,7 +348,7 @@ steps:
                       (let ((as-n (if (numberp align-score) align-score 0.0)))
                         (if (< as-n 1)
                             1.0
-                            0.0))))))
+                            0.0)))))))
       env:
         step_6_result: "{{ step_6_result }}"
       max_steps: 5000
@@ -406,7 +406,7 @@ steps:
                                               (conf-n (if (numberp confidence) confidence 0.5)))
                                           (let ((outcome (if (>= as-n pt-n) 1 0)))
                                             (let ((brier (* (- conf-n outcome) (- conf-n outcome))))
-                                              brier)))))))))))
+                                              brier))))))))))))
       env:
         step_4_result: "{{ step_4_result }}"
         step_6_result: "{{ step_6_result }}"

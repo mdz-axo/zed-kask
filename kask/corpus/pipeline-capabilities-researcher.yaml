@@ -243,7 +243,7 @@ steps:
   input_mapping:
     chunks_jsonl: corpus/chunks/chunks.jsonl
     output: corpus/chunks/tagged_ontology.jsonl
-    concurrency: 128
+    concurrency: 16
 - ordinal: 7
   description: Verify every chunk has a structurally valid ontology tag record with exact entity_ref equality, valid dimensions,
     ontology_tags, and salience. Present tag coverage, dimension distribution, and quality stats to the user before proceeding
@@ -377,7 +377,7 @@ steps:
     db_path: corpus/memory/john-brooks.db
     owner: john-brooks
     max_assertions: 15
-    concurrency: 64
+    concurrency: 16
 - ordinal: 11
   description: 'Verify the DB contains a non-trivial, distributed knowledge graph with assertion coverage across at least
     80% of chunks. Verify the ontology column is populated and well-formed for every assertion h_mem: dc_type must be dcterms:Assertion,
@@ -646,7 +646,7 @@ steps:
   input_mapping:
     prompts_jsonl: corpus/qa_pairs/prompts.jsonl
     output: corpus/qa_pairs/generated.jsonl
-    concurrency: 196
+    concurrency: 32
     model: '{{ qa_model }}'
 - ordinal: 19
   description: Verify every prompt key has a valid QA with non-empty instruction and output, no error records, no orphan keys,
