@@ -1226,7 +1226,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // template. The input_mapping mirrors ordinal 6 of skill-bundler.yaml
         // so the evolve template receives the same bindings the full cascade
         // would produce.
-        let refine_manifest_yaml = "\
+        let refine_manifest_yaml = r#"
 manifest:
   id: refine-bundle
   name: Refine Bundle
@@ -1245,7 +1245,7 @@ steps:
       goal_context: "{{ goal_context }}"
       goal_delta: "{{ goal_delta }}"
       convergence_failure_reason: "{{ convergence_failure_reason }}"
-";
+"#;
 
         let refine_manifest = load_manifest_from_yaml(refine_manifest_yaml)
             .map_err(|e| format!("Failed to load refine manifest: {e}"))?;
@@ -1848,7 +1848,7 @@ mod tests {
                 "description": "test step",
                 "renderer": "minijinja",
                 "template_ref": "some/template.j2",
-                
+
                 "timeout_seconds": 30
             }],
             "skills": [{
@@ -1887,7 +1887,7 @@ mod tests {
     /// before the refine path fails at runtime.
     #[test]
     fn refine_manifest_yaml_parses_and_targets_bundler_evolve() {
-        let refine_manifest_yaml = "\
+        let refine_manifest_yaml = r#"
 manifest:
   id: refine-bundle
   name: Refine Bundle
@@ -1906,7 +1906,7 @@ steps:
       goal_context: "{{ goal_context }}"
       goal_delta: "{{ goal_delta }}"
       convergence_failure_reason: "{{ convergence_failure_reason }}"
-";
+"#;
 
         let manifest =
             load_manifest_from_yaml(refine_manifest_yaml).expect("refine manifest YAML must parse");

@@ -1189,7 +1189,7 @@ proptest! {
 
         // Read the baseline back through finalize_report's `baseline_quality` field.
         let mut final_ctx = HashMap::new();
-        tracker.finalize_report(&mut final_ctx, ConvergenceStatus::Converged, "t", 1, 0, 0, 0.0, 0.0);
+        tracker.finalize_report(&mut final_ctx, ConvergenceStatus::Converged, "t", 1, 0.0, 0.0);
         let baseline = final_ctx
             .get("_convergence")
             .and_then(|c| c.get("baseline_quality"))

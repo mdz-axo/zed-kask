@@ -1172,6 +1172,17 @@ pub fn enforce_grounding(
 ///
 /// This is a post-processing step after `enforce_grounding`. It mutates
 /// the `GroundingResult` in place.
+///
+/// **Not yet wired.** As of this writing `enforce_monotone_provenance` is
+/// `pub` but is NOT called from the production enforcement path
+/// (`VerificationStore::enforce_and_stamp` in `ledger.rs`) and is not
+/// re-exported at the crate root. Its behavior is unit-tested below (and
+/// the `downgrade_to` weakest-link cap is proptested), so the invariant is
+/// correct and falsifiable, but the "conclusions-never-become-facts" rule is
+/// not yet enforced on live delegations. Wiring it in is a separate change
+/// that must decide where `upstream_blocks` come from in the composition
+/// envelope (paper §6). (Per the .rules: an advertised invariant without an
+/// enforcement point must say so rather than imply it is live.)
 pub fn enforce_monotone_provenance(
     result: &mut GroundingResult,
     upstream_blocks: &[serde_json::Value],
@@ -1209,6 +1220,15 @@ pub fn enforce_monotone_provenance(
 /// Downgrade a provenance tag to the target strength level.
 /// Preserves the tag's structure where possible (e.g. Unsourced keeps
 /// its removed_preview and tool_failed).
+///
+/// Implements the weakest-link rule (paper §6 / .rules): the result's
+/// strength is `min(current, target)`. For targets 0–3 the original tag's
+/// specifics are dropped (the target type carries none). For target 4 the
+/// only tag that can land here is `Sourced` (strength 5 — `enforce_monotone_
+/// provenance` only calls this when `target < current`, and 5 is the max), so
+/// the sourcing tool is preserved as the `Derived.from` and `how` records that
+/// this was a weakest-link cap, not a real derivation. Target 5 is unreachable
+/// (nothing is stronger than Sourced).
 fn downgrade_to(tag: &ProvenanceTag, target_strength: u8) -> ProvenanceTag {
     match (tag, target_strength) {
         (_, 0) => ProvenanceTag::Unsourced {
@@ -1218,7 +1238,17 @@ fn downgrade_to(tag: &ProvenanceTag, target_strength: u8) -> ProvenanceTag {
         (_, 1) => ProvenanceTag::Narrative,
         (_, 2) => ProvenanceTag::UncommissionedInference,
         (_, 3) => ProvenanceTag::Inferred,
-        // 4 and 5 are not downgrades from Sourced — they're stronger.
+        // Weakest-link cap to Derived (4): a Sourced field whose upstream
+        // same-named field is only platform_derived cannot be stronger than
+        // its source. Preserve the sourcing tool as `from` so the chain stays
+        // auditable; `how` marks this as a cap, not a real derivation.
+        (ProvenanceTag::Sourced { tool }, 4) => ProvenanceTag::Derived {
+            from: tool.clone(),
+            how: "weakest_link_cap".to_string(),
+        },
+        // Target 5 is unreachable (Sourced is the max). A tag already at or
+        // below the target — including a non-Sourced tag at target 4, which
+        // cannot occur via `enforce_monotone_provenance` — is a no-op.
         _ => tag.clone(),
     }
 }
@@ -3430,6 +3460,86 @@ mod tests {
                 "second pass must not re-null fields (document idempotency), got {:?}",
                 second.nulled_fields
             );
+        }
+    }
+
+    // ── Weakest-link (monotone provenance) ──────────────────────────────
+    //
+    // The .rules (L130): "The actual strength is min(4, source_strength),
+    // computed by the weakest-link rule." After enforce_monotone_provenance,
+    // no field's strength may exceed its upstream's. This is the falsifiable
+    // form — it must hold for every field with an upstream entry, across
+    // arbitrary tag/upstream combinations. The (Sourced, platform_derived)
+    // case is the one `downgrade_to` previously left un-capped (it returned
+    // Sourced unchanged at target 4); this proptest would have caught that red.
+    // It now passes because `downgrade_to` caps Sourced to Derived at 4.
+    fn arb_provenance_tag() -> impl Strategy<Value = ProvenanceTag> {
+        prop_oneof![
+            arb_short_string(16).prop_map(|tool| ProvenanceTag::Sourced { tool }),
+            Just(ProvenanceTag::Inferred),
+            (arb_short_string(16), arb_short_string(16))
+                .prop_map(|(from, how)| ProvenanceTag::Derived { from, how }),
+            Just(ProvenanceTag::UncommissionedInference),
+            Just(ProvenanceTag::Narrative),
+            (arb_short_string(40), any::<bool>()).prop_map(|(removed_preview, tool_failed)| {
+                ProvenanceTag::Unsourced {
+                    removed_preview,
+                    tool_failed,
+                }
+            }),
+        ]
+    }
+
+    fn arb_upstream_block() -> impl Strategy<Value = serde_json::Value> {
+        let prov = prop::sample::select(vec![
+            "tool_verified".to_string(),
+            "platform_derived".to_string(),
+            "model_inference".to_string(),
+            "uncommissioned_inference".to_string(),
+            "narrative".to_string(),
+            "tool_no_match".to_string(),
+            "unavailable_no_tool_source".to_string(),
+        ]);
+        (arb_short_string(12), prov)
+            .prop_map(|(field, p)| json!({ "field": field, "provenance": p }))
+    }
+
+    proptest! {
+        #[test]
+        fn prop_monotone_provenance_never_exceeds_upstream(
+            fields in prop::collection::vec((arb_short_string(12), arb_provenance_tag()), 0..8),
+            upstream in prop::collection::vec(arb_upstream_block(), 0..8),
+        ) {
+            let mut result = GroundingResult::default();
+            result.provenance = fields.into_iter().collect();
+            enforce_monotone_provenance(&mut result, &upstream);
+            let upstream_strength: std::collections::HashMap<&str, u8> = upstream
+                .iter()
+                .filter_map(|b| {
+                    let field = b.get("field")?.as_str()?;
+                    let prov = b.get("provenance")?.as_str()?;
+                    let s = match prov {
+                        "tool_verified" => 5,
+                        "platform_derived" => 4,
+                        "model_inference" => 3,
+                        "uncommissioned_inference" => 2,
+                        "narrative" => 1,
+                        "tool_no_match" | "unavailable_no_tool_source" => 0,
+                        _ => return None,
+                    };
+                    Some((field, s))
+                })
+                .collect();
+            for (field, tag) in &result.provenance {
+                let now = provenance_strength(tag);
+                if let Some(&up_s) = upstream_strength.get(field.as_str()) {
+                    prop_assert!(
+                        now <= up_s,
+                        "field `{}` strength {} exceeds upstream {} — weakest-link violated (min not enforced)",
+                        field, now, up_s
+                    );
+                }
+            }
         }
     }
 }

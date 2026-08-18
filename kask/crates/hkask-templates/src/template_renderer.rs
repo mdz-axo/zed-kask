@@ -342,7 +342,6 @@ pub fn parse_and_strip_inference_block(body: &str) -> (String, InferenceBlock) {
                 "temperature" => {
                     config.temperature = unquoted.parse().ok();
                 }
-                }
                 "thinking_budget" => {
                     config.thinking_budget = Some(unquoted.to_string());
                 }
@@ -619,6 +618,7 @@ mod tests {
 
     #[test]
     fn parse_inference_block_extracts_temperature() {
+        let body = "[inference]\ntemperature = 0.2\nthinking_budget = \"full\"\n\nYou are a code reviewer.";
         let (stripped, config) = parse_and_strip_inference_block(body);
         assert_eq!(config.temperature, Some(0.2));
         assert_eq!(config.thinking_budget.as_deref(), Some("full"));
@@ -638,6 +638,7 @@ mod tests {
 
     #[test]
     fn parse_inference_block_handles_partial_config() {
+        let body = "[inference]\nthinking_budget = \"off\"\n\nYou are a decomposer.";
         let (stripped, config) = parse_and_strip_inference_block(body);
         assert_eq!(config.temperature, None);
         assert_eq!(config.thinking_budget, None);

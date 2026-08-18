@@ -52,6 +52,7 @@ pub struct ChatRequest {
     pub frequency_penalty: f32,
     #[serde(default, skip_serializing_if = "is_zero_f32")]
     pub presence_penalty: f32,
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
     pub max_tokens: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
@@ -104,7 +105,6 @@ pub fn build_chat_request_messages(
         typical_p: params.typical_p,
         frequency_penalty: params.frequency_penalty,
         presence_penalty: params.presence_penalty,
-        max_tokens: params.max_tokens as i32,
         seed: params.seed,
         n_probs,
         stream,
