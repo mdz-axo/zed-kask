@@ -228,6 +228,70 @@ impl RegulationArchive {
             .map_err(|e| InfrastructureError::database(e.to_string()))
     }
 
+    /// Delete regulation records older than the given cutoff timestamp.
+    ///
+    /// Bounds the growth of the `reg_records` table in long-running sessions.
+    /// Called by the maintenance tick (wired in the composition root) on a
+    /// configurable cadence (default: daily, retaining 30 days of history).
+    ///
+    /// Returns the number of rows deleted.
+    ///
+    /// expect: "The system provides durable storage for event data"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation — retention prevents unbounded growth
+    /// pre:  `before` is a valid timestamp
+    /// post: records older than `before` are deleted; returns count of deleted rows
+    pub fn delete_older_than(
+        &self,
+        before: chrono::DateTime<chrono::Utc>,
+    ) -> Result<usize, InfrastructureError> {
+        let before_str = before.to_rfc3339();
+        let count = self.driver.execute(
+            "DELETE FROM reg_records WHERE timestamp < ?1",
+            &[DbValue::Text(before_str)],
+        )?;
+        if count > 0 {
+            tracing::info!(
+                target: "hkask.storage",
+                deleted = count,
+                cutoff = %before.to_rfc3339(),
+                "RegulationArchive retention: deleted old reg_records"
+            );
+        }
+        Ok(count)
+    }
+
+    /// Run a passive WAL checkpoint, reclaim free pages, and analyze indices.
+    ///
+    /// Wraps the same PRAGMA sequence as `Database::checkpoint()` but runs it
+    /// through the driver's connection pool (the `Database` struct is dropped
+    /// after pool extraction in `open_regulation_archive`, so the archive
+    /// holds only the driver). Called by the maintenance tick on a slow
+    /// cadence (default: every 5 minutes) to prevent WAL checkpoint
+    /// starvation under long-lived readers and vec0 shadow-table bloat from
+    /// re-embedding churn.
+    ///
+    /// `incremental_vacuum` reclaims pages freed by vec0 DELETE operations
+    /// (shadow tables are not reclaimed by ordinary VACUUM). `PRAGMA optimize`
+    /// refreshes index statistics.
+    ///
+    /// expect: "The system provides durable storage for event data"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation — checkpoint prevents storage bloat
+    /// post: WAL checkpointed, free pages reclaimed, index stats refreshed
+    pub fn checkpoint(&self) -> Result<(), InfrastructureError> {
+        self.driver
+            .execute_batch(
+                "PRAGMA wal_checkpoint(PASSIVE);
+                 PRAGMA incremental_vacuum;
+                 PRAGMA optimize;",
+            )
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        tracing::debug!(
+            target: "hkask.storage",
+            "RegulationArchive checkpoint completed (WAL + incremental_vacuum + optimize)"
+        );
+        Ok(())
+    }
+
     /// Persist a loop cursor value for crash recovery.
     ///
     /// Loop cursors (e.g., `curation_last_review_ms`) track the last-processed

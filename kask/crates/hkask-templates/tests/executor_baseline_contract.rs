@@ -366,8 +366,6 @@ convergence:
   threshold: 0.5
   convergence_field: convergence_signal
   on_not_reached: abort
-gas:
-  cap: 10000
 rjoule:
   cap: 10000
 steps:
@@ -389,8 +387,6 @@ convergence:
   threshold: 0.5
   convergence_field: convergence_signal
   on_not_reached: abort
-gas:
-  cap: 10000
 rjoule:
   cap: 10000
 steps:
@@ -412,8 +408,6 @@ convergence:
   threshold: 0.5
   convergence_field: convergence_signal
   on_not_reached: abort
-gas:
-  cap: 10000
 rjoule:
   cap: 10000
 steps:
@@ -490,8 +484,6 @@ convergence:
   threshold: 0.5
   convergence_field: convergence_signal
   on_not_reached: abort
-gas:
-  cap: 10000
 rjoule:
   cap: 10000
 steps:
@@ -513,8 +505,6 @@ convergence:
   threshold: 0.5
   convergence_field: convergence_signal
   on_not_reached: abort
-gas:
-  cap: 10000
 rjoule:
   cap: 10000
 steps:
@@ -536,8 +526,6 @@ convergence:
   threshold: 0.5
   convergence_field: convergence_signal
   on_not_reached: abort
-gas:
-  cap: 10000
 rjoule:
   cap: 10000
 steps:
@@ -562,8 +550,6 @@ convergence:
   threshold: 0.5
   convergence_field: convergence_signal
   on_not_reached: abort
-gas:
-  cap: 10000
 rjoule:
   cap: 10000
 steps:
@@ -702,8 +688,6 @@ convergence:
   threshold: 0.5
   convergence_field: convergence_signal
   on_not_reached: abort
-gas:
-  cap: 10000
 rjoule:
   cap: 10000
 steps:

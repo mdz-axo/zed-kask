@@ -25,12 +25,6 @@ pub(crate) const DEFAULT_EXPECTED_VARIETY: u64 = 10;
 /// log before oldest entries are evicted. Bounds memory growth in long-running
 /// sessions — the log is a diagnostic ring buffer, not an audit archive
 /// (escalated alerts are persisted to the `EscalationQueue` for durable review).
-/// When the log reaches this cap, the cybernetics loop emits an
-/// `AlgedonicLogApproachingCap` signal so the operator (or the
-/// `algedonic-review` skill) can review and clear reviewed entries before
-/// they are evicted unread.
-pub(crate) const DEFAULT_MAX_ALERTS: usize = 200;
-
 /// Fraction of `max_alerts` at which the approaching-cap signal fires.
 /// 0.8 → 160 of 200. Gives the operator a window to review before eviction.
 pub(crate) const ALERT_CAP_APPROACHING_FRACTION: f64 = 0.8;
@@ -216,8 +210,13 @@ pub(crate) struct AlgedonicManager {
 }
 
 impl AlgedonicManager {
+    #[allow(dead_code)]
     pub(crate) fn new(threshold: u64, default_expected_variety: u64) -> Self {
-        Self::with_max_alerts(threshold, default_expected_variety, DEFAULT_MAX_ALERTS)
+        Self::with_max_alerts(
+            threshold,
+            default_expected_variety,
+            crate::set_points::DEFAULT_MAX_ALERTS,
+        )
     }
 
     /// Construct with a custom alert-log cap. Used by `with_set_points` to
@@ -435,29 +434,6 @@ impl AlgedonicManager {
         let threshold = (self.max_alerts as f64 * ALERT_CAP_APPROACHING_FRACTION) as usize;
         self.alerts.len() >= threshold
     }
-
-    /// Clear reviewed alerts from the log. Called by the `algedonic-review`
-    /// skill (via `RegulationLedger::clear_reviewed_alerts`) after the
-    /// operator has reviewed the log and the escalated alerts have been
-    /// persisted to the `EscalationQueue`. Retains unresolved Critical
-    /// alerts that have not yet been persisted to the escalation queue —
-    /// clearing those would lose the live signal.
-    ///
-    /// `retain_unresolved` controls what survives: when `true` (the default
-    /// from `RegulationLedger`), only Info and Warning alerts and already-
-    /// escalated Critical alerts are cleared. When `false`, the entire log
-    /// is cleared (used by `session_reset`).
-    pub(crate) fn clear_reviewed(&mut self, retain_unresolved: bool) {
-        if retain_unresolved {
-            // Retain Critical alerts that have not been escalated yet —
-            // these are the live signals the operator needs to act on.
-            // Everything else (Info, Warning, escalated Critical) has been
-            // reviewed or persisted and can be cleared.
-            self.alerts.retain(|a| a.is_critical() && !a.escalated);
-        } else {
-            self.alerts.clear();
-        }
-    }
 }
 
 /// Construct LedgerHealth from the algedonic manager's current state.
@@ -510,7 +486,7 @@ mod tests {
     // independently, so a deficit in one domain does not suppress alerts in another.
     #[test]
     fn algedonic_manager_accumulates_alerts_across_domains() {
-        let mut mgr = AlgedonicManager::new(100, 10);
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
 
         // Domain A: low variety (5 distinct states, expected 10 → deficit 5)
         let mut tracker_a = VarietyTracker::new();
@@ -540,7 +516,7 @@ mod tests {
     // < 0.50 → Warning, ≥ 0.50 → healthy (no alert).
     #[test]
     fn check_outcome_classifies_success_rate_correctly() {
-        let mut mgr = AlgedonicManager::new(100, 10);
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
 
         // Critical: 20% success rate (80% failure)
         let alert = mgr.check_outcome("test_domain", 0.20, 10);
@@ -563,7 +539,7 @@ mod tests {
 
     #[test]
     fn check_outcome_alert_message_includes_domain_and_rate() {
-        let mut mgr = AlgedonicManager::new(100, 10);
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
         let alert = mgr.check_outcome("hkask-mcp-research", 0.15, 20).unwrap();
         assert!(alert.message.contains("hkask-mcp-research"));
         assert!(alert.message.contains("15.0%"));
@@ -573,7 +549,7 @@ mod tests {
 
     #[test]
     fn check_outcome_domain_prefixed_with_outcome() {
-        let mut mgr = AlgedonicManager::new(100, 10);
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
         let alert = mgr.check_outcome("tool", 0.10, 10).unwrap();
         assert!(alert.domain.starts_with("outcome:"));
         assert!(alert.domain.contains("tool"));
@@ -581,7 +557,7 @@ mod tests {
 
     #[test]
     fn set_outcome_thresholds_overrides_defaults() {
-        let mut mgr = AlgedonicManager::new(100, 10);
+        let mut mgr = AlgedonicManager::with_max_alerts(100, 10, 200);
         // Set custom thresholds: warning at 0.80, critical at 0.60
         mgr.set_outcome_thresholds(0.80, 0.60);
 

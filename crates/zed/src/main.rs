@@ -1384,18 +1384,60 @@ fn main() {
                         // both sinks are `NoopEventSink` (spans dropped).
                         match kask_bridge::open_curator_regulation_archive(&passphrase) {
                             Some(archive) => {
-                                let sink: std::sync::Arc<dyn hkask_types::RegulationSink> = archive;
+                                let sink: std::sync::Arc<dyn hkask_types::RegulationSink> = archive.clone();
                                 mcp_runtime_for_deferred.set_event_sink(sink.clone());
                                 {
                                     let mut loop_guard = cybernetics_loop_for_panel_deferred.write().await;
                                     loop_guard.set_event_sink(sink);
                                 }
-                                log::info!("hKask regulation archive wired — regulation spans now persist to curator curator.db");
+                                // zed-kask: maintenance tick — run WAL checkpoint +
+                                // incremental_vacuum + reg_records retention on a slow
+                                // cadence. Prevents WAL checkpoint starvation under
+                                // long-lived readers and unbounded `reg_records`
+                                // growth (the table has no TTL; without this tick the
+                                // SQLite file bloats over days/weeks of continuous
+                                // running, slowing every regulation query).
+                                let archive_for_maintenance = archive.clone();
+                                gpui_tokio::Tokio::spawn(cx, async move {
+                                    // 5-minute checkpoint cadence; 24-hour retention cadence.
+                                    let mut checkpoint_interval =
+                                        tokio::time::interval(std::time::Duration::from_secs(300));
+                                    let mut retention_interval =
+                                        tokio::time::interval(std::time::Duration::from_secs(86400));
+                                    checkpoint_interval.tick().await; // skip immediate first tick
+                                    retention_interval.tick().await;
+                                    loop {
+                                        tokio::select! {
+                                            _ = checkpoint_interval.tick() => {
+                                                if let Err(e) = archive_for_maintenance.checkpoint() {
+                                                    tracing::warn!(
+                                                        target: "reg.storage",
+                                                        error = %e,
+                                                        "RegulationArchive maintenance checkpoint failed"
+                                                    );
+                                                }
+                                            }
+                                            _ = retention_interval.tick() => {
+                                                // Retain 30 days of regulation records.
+                                                let cutoff = chrono::Utc::now()
+                                                    - chrono::Duration::days(30);
+                                                if let Err(e) = archive_for_maintenance.delete_older_than(cutoff) {
+                                                    tracing::warn!(
+                                                        target: "reg.storage",
+                                                        error = %e,
+                                                        "RegulationArchive retention delete failed"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                })
+                                .detach();
+                                log::info!("hKask regulation archive wired — regulation spans now persist to curator curator.db (maintenance tick: 5m checkpoint, 24h retention)");
                             }
                             None => {
                                 log::warn!(
-                                    "hKask regulation archive unavailable — regulation spans will be dropped. \
-                                     Remediation: ensure the curator curator.db can be opened (HKASK_CURATOR_DB, DB passphrase)."
+                                    "hKask regulation archive unavailable — regulation spans will be dropped. \n                                     Remediation: ensure the curator curator.db can be opened (HKASK_CURATOR_DB, DB passphrase)."
                                 );
                             }
                         }
