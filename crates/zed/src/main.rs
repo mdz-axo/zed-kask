@@ -940,7 +940,7 @@ fn main() {
         // and query the log cap status. The sink wraps the RegulationLedger.
         let algedonic_log_sink: std::sync::Arc<dyn agent::AlgedonicLogSink> =
             std::sync::Arc::new(kask_bridge::BridgeAlgedonicLogSink::new(
-                regulation_ledger.clone(),
+                regulation_ledger,
             ));
         agent::set_algedonic_log_sink(Some(algedonic_log_sink));
         log::info!("Algedonic log sink wired to CuratorClearAlgedonicLogTool");

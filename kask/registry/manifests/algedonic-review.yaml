@@ -137,14 +137,15 @@ steps:
     action: select
     description: >
       Synthesize the three signal channels (escalations, algedonic, status)
-      into a structured triage briefing. The briefing has four sections:
-      (1) alert log cap status (count/cap, approaching flag), (2) escalation
-      backlog triage table with per-alert severity, domain, created_at,
-      recommended action (resolve, dismiss, investigate, escalate_to_human),
-      and a one-line description, (3) algedonic event digest (recent events
-      grouped by domain), (4) summary counts (total pending, critical,
-      warning, info). The briefing explicitly notes when the alert log is
-      approaching its cap — the operator should act before eviction.
+      into a structured triage briefing. The briefing has three sections:
+      (1) escalation backlog triage table with per-alert severity, domain,
+      created_at, recommended action (resolve, dismiss, investigate,
+      escalate_to_human), and a one-line description, (2) algedonic event
+      digest (recent events grouped by domain), (3) summary counts (total
+      pending, critical, warning, info). The briefing explicitly notes when
+      the alert log is approaching its cap (the skill was invoked because the
+      `AlgedonicLogApproachingCap` signal fired) — the operator should act
+      before eviction.
     renderer: minijinja
     template_ref: algedonic-review/triage-briefing
     timeout_seconds: 120
@@ -152,7 +153,6 @@ steps:
       task: "{{ task | default('review pending alerts') }}"
       escalations_result: "{{ step_1_result.escalations | default({}) }}"
       algedonic_result: "{{ step_1_result.algedonic | default({}) }}"
-      status_result: "{{ step_1_result.status | default({}) }}"
 
   # ── PRESENT: Render the conversational triage report ────────────────
   # Present the triage briefing as a readable summary with markdown tables.
@@ -198,35 +198,31 @@ steps:
       resolution_note: "{{ resolution_note | default('reviewed via algedonic-review skill') }}"
       briefing: "{{ step_2_result }}"
 
-  # ── VERIFY: Confirm backlog reduced and clear in-memory log ─────────
-  # Re-query curator_escalations to confirm the backlog is reduced, then
-  # call curator_clear_algedonic_log to free the in-memory log.
+  # ── VERIFY: Confirm backlog reduced ───────────────────────────────
+  # Re-query curator_escalations to confirm the backlog is reduced after
+  # the operator's decisions. The in-memory log clear is done by the agent
+  # via the `curator_clear_algedonic_log` agent tool after the cascade — the
+  # skill cannot call agent tools from `mcp_batch`. The verify-cleared
+  # template produces a recommendation for the agent to execute the clear.
   - ordinal: 5
     action: execute
     description: >
       Re-query curator_escalations to confirm the backlog is reduced after
-      the operator's decisions, then call curator_clear_algedonic_log to
-      clear reviewed alerts from the in-memory log (frees the log before it
-      evicts entries unread). Skipped on the first pass (no decisions
+      the operator's decisions. Skipped on the first pass (no decisions
       executed). The result is used by the verify-cleared template to
       summarize what was resolved, what was dismissed, and what remains.
-    mcp_batch:
-      - mcp: curator_escalations
-        key: post_escalations
-        input_mapping: {}
-      - mcp: curator_clear_algedonic_log
-        key: clear_result
-        input_mapping:
-          clear_all: false
+      The template also produces a recommendation for the agent to execute
+      `curator_clear_algedonic_log` (agent tool) to clear the in-memory log.
+    mcp: curator_escalations
+    input_mapping: {}
     timeout_seconds: 30
     on_failure:
       action: report
       resume: >
-        The post-decision curator_escalations or curator_clear_algedonic_log
-        query failed. The resolve/dismiss calls may have succeeded (check the
-        execute-decisions step output for per-ID results). The verification
-        step is skipped — the operator can manually check curator_escalations
-        to confirm the backlog state.
+        The post-decision curator_escalations query failed. The resolve/dismiss
+        calls may have succeeded (check the execute-decisions step output for
+        per-ID results). The verification step is skipped — the operator can
+        manually check curator_escalations to confirm the backlog state.
     condition: "resolve_ids != '' OR dismiss_ids != ''"
 
   # ── VERIFY-REPORT: Summarize what was resolved/dismissed ────────────
@@ -237,7 +233,9 @@ steps:
       what remains pending, and the new backlog count. If no decisions were
       executed (first pass), this step produces a "review complete, no actions
       taken" summary — the operator reviews the briefing and re-invokes with
-      IDs set if they want to act.
+      IDs set if they want to act. The summary includes a recommendation for
+      the agent to execute `curator_clear_algedonic_log` (agent tool) to clear
+      the in-memory log — the skill cannot call agent tools from `mcp_batch`.
     renderer: minijinja
     template_ref: algedonic-review/verify-cleared
     timeout_seconds: 60
@@ -245,8 +243,7 @@ steps:
       task: "{{ task }}"
       briefing: "{{ step_2_result }}"
       decisions: "{{ step_4_result }}"
-      post_escalations: "{{ step_5_result.post_escalations | default({}) }}"
-      clear_result: "{{ step_5_result.clear_result | default({}) }}"
+      post_escalations: "{{ step_5_result | default({}) }}"
       resolve_ids: "{{ resolve_ids | default('') }}"
       dismiss_ids: "{{ dismiss_ids | default('') }}"
 

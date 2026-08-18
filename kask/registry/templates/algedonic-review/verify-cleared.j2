@@ -9,10 +9,10 @@ input.task = "The operator's review request"
 input.briefing = "The structured triage briefing JSON from step 2"
 input.decisions = "The decisions executed JSON from step 4"
 input.post_escalations = "Post-decision curator_escalations result (JSON: {count, escalations: [...]})"
-input.clear_result = "Result from curator_clear_algedonic_log (JSON: {cleared, remaining, message})"
 input.resolve_ids = "Comma-separated IDs that were resolved"
 input.dismiss_ids = "Comma-separated IDs that were dismissed"
 output.report = "string — the verification summary as markdown"
+output.clear_recommendation = "string — recommendation for the agent to execute curator_clear_algedonic_log"
 [/contract]
 
 You are the algedonic review verification reporter. Your job is to summarize what was resolved, what was dismissed, and what remains pending.
@@ -32,11 +32,6 @@ You are the algedonic review verification reporter. Your job is to summarize wha
 ### Post-decision escalations (if queried)
 ```json
 {{ post_escalations | tojson }}
-```
-
-### Algedonic log clear result (if queried)
-```json
-{{ clear_result | tojson }}
 ```
 
 ### Resolve IDs
@@ -60,7 +55,9 @@ You are the algedonic review verification reporter. Your job is to summarize wha
 
 4. Format as markdown with headers and bullet lists.
 
-5. Close with a note: "The in-memory algedonic log has been cleared of reviewed entries (X cleared, Y remaining). The durable escalation backlog has been updated by this review. Run `gemba-walk` for a broader system health review."
+5. Close with a note: "The durable escalation backlog has been updated by this review. To clear the in-memory algedonic log (free it before eviction), execute the `curator_clear_algedonic_log` agent tool with `clear_all: false`. Run `gemba-walk` for a broader system health review."
+
+6. Set `clear_recommendation` to the recommendation text for the agent to execute `curator_clear_algedonic_log`.
 
 ## Output
 
