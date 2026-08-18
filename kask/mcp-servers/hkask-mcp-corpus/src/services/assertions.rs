@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use hkask_mcp_server::server::McpToolError;
-use hkask_memory::MemoryStore;
 use hkask_types::HMemOntology;
 use hkask_types::InferencePort;
 use hkask_types::Visibility;
@@ -19,7 +18,7 @@ use crate::helpers::read_jsonl;
 use crate::tools::semantic::{
     assertion_confidence, predicate_to_dimension, read_ontology_namespaces, read_ontology_tags,
 };
-use crate::{embedding_dim, extract_json_from_response, owner_webid, render_docproc_template};
+use crate::{extract_json_from_response, owner_webid, render_docproc_template};
 
 /// Input for [`AssertionsService::extract`].
 pub struct AssertionsRequest {

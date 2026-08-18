@@ -11,17 +11,15 @@
 //!   multi-chunk cluster into a single comprehensive passage, re-embeds
 //!   the consolidated text, and stores the new embedding in the DB.
 
-use crate::helpers::{
-    map_corpus_io_error, map_database_error, map_memory_store_error, read_text_capped,
-};
+use crate::helpers::{map_memory_store_error, read_text_capped};
 use crate::services::consolidation::{ChunkConsolidationRequest, ConsolidationService};
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
 };
 use crate::tools::semantic::default_corpus_passphrase;
 use crate::{
-    Arc, CorpusServer, McpToolError, MemoryStore, Parameters, default_owner, embedding_dim,
-    execute_tool_semantic, json, normalize_in_place, owner_webid, tool, tool_router,
+    Arc, CorpusServer, McpToolError, Parameters, default_owner, execute_tool_semantic, json,
+    normalize_in_place, owner_webid, tool, tool_router,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;

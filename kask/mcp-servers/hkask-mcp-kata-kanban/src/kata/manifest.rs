@@ -37,7 +37,6 @@ pub struct ManifestMeta {
     pub visibility: String,
 }
 
-
 /// A single step in an Improvement Kata cycle.
 #[derive(Debug, Clone, Deserialize)]
 pub struct KataStep {
@@ -139,7 +138,6 @@ pub struct KataAuditConfig {
     pub include_input: bool,
     #[serde(default = "default_true")]
     pub include_output: bool,
-    #[serde(default = "default_true")]
     #[serde(default = "default_true")]
     pub include_reg_events: bool,
 }

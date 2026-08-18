@@ -7,16 +7,15 @@
 use std::sync::Arc;
 
 use hkask_mcp_server::server::McpToolError;
-use hkask_memory::MemoryStore;
 use hkask_types::InferencePort;
 use hkask_types::corpus::{ChunkOntology, ExpertiseLevel, TaggedChunk};
 use hkask_types::template::LLMParameters;
 use serde_json::json;
 
-use crate::helpers::{map_corpus_io_error, map_memory_store_error};
+use crate::helpers::map_memory_store_error;
 use crate::tools::corpus::{cluster_within_source, read_tagged_chunks};
 use crate::tools::semantic::configured_qa_model;
-use crate::{embedding_dim, normalize_concept, normalize_in_place, render_docproc_template};
+use crate::{normalize_concept, normalize_in_place, render_docproc_template};
 
 /// Input for [`ConsolidationService::consolidate`].
 ///

@@ -5,15 +5,13 @@
 //! and h_mem knowledge graph sections.
 
 use hkask_mcp_server::server::McpToolError;
-use hkask_memory::MemoryStore;
 use hkask_types::corpus::TaggedChunk;
 use serde_json::json;
 
-use crate::helpers::map_corpus_io_error;
 use crate::tools::corpus::{
     QaType, parse_type_distribution, qa_type_instruction, qa_type_str, read_tagged_chunks,
 };
-use crate::{embedding_dim, normalize_in_place, render_docproc_template};
+use crate::{normalize_in_place, render_docproc_template};
 
 /// Input for [`PromptBuilderService::build_prompts`].
 pub struct BuildPromptsRequest {

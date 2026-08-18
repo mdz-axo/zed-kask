@@ -10,8 +10,6 @@
 //!   kanban:task  → {task_id}  → JSON Task
 //!   kanban:board_tasks:{board_id} → {task_id} → task_id (index)
 
-use std::sync::Arc;
-
 use hkask_storage::{HMem, HMemStore};
 use hkask_types::Dimension;
 use hkask_types::HMemOntology;
@@ -23,7 +21,7 @@ use serde_json::Value;
 use super::types::KanbanError;
 
 use crate::kanban::{
-    Board, ColumnDef, Priority, Task, TaskFilter, TaskSpec, TaskStatus, Verification,
+    Board, ColumnDef, GasEntry, Priority, Task, TaskFilter, TaskSpec, TaskStatus, Verification,
     VerificationCriterion,
 };
 
@@ -63,7 +61,6 @@ impl KanbanService {
     /// pre:  task_id refers to an existing task with an rJoule budget set
     /// post: returns a callback that deducts from the task's rJoule budget
     #[must_use]
-
     pub(super) fn require_task_actor(task: &Task, actor: WebID) -> Result<(), KanbanError> {
         if task.owner == actor || task.assignee == Some(actor) {
             Ok(())
@@ -884,13 +881,10 @@ impl KanbanService {
         Ok(task)
     }
 
-    /// Add gas (rJoules) to a task's remaining budget.
-    ///
-    /// Called by the delegating agent to refill a subagent's gas budget
-    /// so it can continue work after exhausting its initial budget.
-    #[must_use = "result must be used"]
-
     /// Add rJoules to a task's inference/API budget.
+    ///
+    /// Called by the delegating agent to refill a subagent's rJoule budget
+    /// so it can continue work after exhausting its initial budget.
     #[must_use = "result must be used"]
     pub fn task_add_rjoules(
         &self,
