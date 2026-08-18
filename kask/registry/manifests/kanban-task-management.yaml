@@ -23,8 +23,8 @@
 #   - Step 6: kanban_board_create (decompose phase — create the board)
 #   - Step 8: kanban_task_spawn (delegate phase — spawn the subagent)
 #   - Step 10: kanban_task_comment (delegate phase — post status comment)
-#   - Step 11: kanban_board_list (operate phase — fetch board state)
-#   - Step 12: kanban_task_list (operate phase — fetch task list)
+#   - Step 11: mcp_batch { kanban_board_list, kanban_task_list } (operate
+#             phase — fetch board state and task list concurrently)
 # Multi-task creation (kanban_task_create) and LLM-judgment tool calls
 # (kanban_task_move, kanban_task_verify) remain agent-mediated — they
 # require iteration or task selection that the flowdef cannot express.
@@ -343,23 +343,23 @@ steps:
         MCP server may be down or the board_id may not exist. Restart the
         server via sync_kask_mcp_servers and re-invoke.
 
-  - ordinal: 13
+  - ordinal: 12
     action: select
     description: >
       OPERATE-1 — Monitor board state, identify blockers, flag overdue
-      tasks. Reads persisted state from the kanban_task_list execute step
-      (12), not from the agent's context window. Skips if triage phase is
-      not "operate".
+      tasks. Reads persisted state from the mcp_batch at step 11
+      (kanban_task_list), not from the agent's context window. Skips if
+      triage phase is not "operate".
     renderer: minijinja
     template_ref: kanban-task-management/monitor-board
     gas_cap: 4000
     timeout_seconds: 120
     input_mapping:
       board_name: "{{ board_name | default('') }}"
-      tasks: "{{ step_12_result.tasks | default(tasks | default([])) }}"
+      tasks: "{{ step_11_result.tasks | default(tasks | default([])) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 14
+  - ordinal: 13
     action: select
     description: >
       OPERATE-2 — Coordinate with agents through comment threads. Includes
@@ -372,10 +372,10 @@ steps:
     timeout_seconds: 150
     input_mapping:
       board_name: "{{ board_name | default('') }}"
-      active_tasks: "{{ step_12_result.tasks | default(tasks | default([])) }}"
+      active_tasks: "{{ step_11_result.tasks | default(tasks | default([])) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 15
+  - ordinal: 14
     action: select
     description: >
       OPERATE-3 — Track deliverables for relevance and review readiness.
@@ -387,11 +387,11 @@ steps:
     gas_cap: 4000
     timeout_seconds: 150
     input_mapping:
-      task: "{{ step_12_result.tasks | first | default(tasks | first | default({})) }}"
-      deliverables: "{{ step_12_result.tasks | first | default({}) | get('deliverables', []) }}"
+      task: "{{ step_11_result.tasks | first | default(tasks | first | default({})) }}"
+      deliverables: "{{ step_11_result.tasks | first | default({}) | get('deliverables', []) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 16
+  - ordinal: 15
     action: select
     description: >
       OPERATE-4 — Move tasks through columns with WIP enforcement.
@@ -403,11 +403,11 @@ steps:
     gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
-      tasks: "{{ step_12_result.tasks | default(tasks | default([])) }}"
-      columns: "{{ step_13_result.board_summary | default({}) | get('columns', []) }}"
+      tasks: "{{ step_11_result.tasks | default(tasks | default([])) }}"
+      columns: "{{ step_12_result.board_summary | default({}) | get('columns', []) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 17
+  - ordinal: 16
     action: select
     description: >
       OPERATE-5 — Verify task completion against acceptance criteria.
@@ -419,13 +419,13 @@ steps:
     gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
-      task_title: "{{ step_12_result.tasks | first | default({}) | get('title', '') }}"
-      criteria: "{{ step_12_result.tasks | first | default({}) | get('criteria', []) }}"
-      deliverables: "{{ step_12_result.tasks | first | default({}) | get('deliverables', []) }}"
-      evidence: "{{ step_15_result | default({}) | tojson }}"
+      task_title: "{{ step_11_result.tasks | first | default({}) | get('title', '') }}"
+      criteria: "{{ step_11_result.tasks | first | default({}) | get('criteria', []) }}"
+      deliverables: "{{ step_11_result.tasks | first | default({}) | get('deliverables', []) }}"
+      evidence: "{{ step_14_result | default({}) | tojson }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  - ordinal: 18
+  - ordinal: 17
     action: select
     description: >
       OPERATE-6 — Escalate unresolved issues to human operator. Includes
@@ -437,18 +437,18 @@ steps:
     timeout_seconds: 150
     input_mapping:
       board_name: "{{ board_name | default('') }}"
-      escalation_candidates: "{{ step_14_result.escalation_candidates | default([]) }}"
+      escalation_candidates: "{{ step_13_result.escalation_candidates | default([]) }}"
       triage_phase: "{{ step_1_result.phase | default('') }}"
 
-  # ── Step 19: Convergence ──────────────────────────────────────────────
-  - ordinal: 19
+  # ── Step 18: Convergence ──────────────────────────────────────────────
+  - ordinal: 18
     action: compute
     compute_ref: lisp.eval
     description: >
       Deterministic convergence signal: the length of the last completed
       phase's result. Kanban has multiple phases (triage → decompose →
       populate → ... → verify), and only the last-completed phase's result
-      is meaningful for convergence. This lisp.eval step tries step_18_result,
+      is meaningful for convergence. This lisp.eval step tries step_17_result,
       then step_9_result, then step_5_result, and returns the length of the
       first non-null result. Lower signal variance across iterations =
       convergence (Cauchy). Using lisp.eval instead of a Jinja expression
@@ -466,19 +466,19 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (if (not (is_null step_18_result))
-            (length step_18_result)
+        (if (not (is_null step_17_result))
+            (length step_17_result)
             (if (not (is_null step_9_result))
                 (length step_9_result)
                 (if (not (is_null step_5_result))
                     (length step_5_result)
                     0)))
       env:
-        step_18_result: "{{ step_18_result | default(null) }}"
+        step_17_result: "{{ step_17_result | default(null) }}"
         step_9_result: "{{ step_9_result | default(null) }}"
         step_5_result: "{{ step_5_result | default(null) }}"
 
-  - ordinal: 20
+  - ordinal: 19
     action: loop
     description: >
       Convergence check. The active phase is complete when its final step
@@ -487,9 +487,9 @@ steps:
     input_mapping:
       loop_target: "{{ 1 }}"
       # Convergence signal from the deterministic lisp.eval compute step
-      # (step 19). No default(1.0): a Lisp failure must surface.
-      convergence_signal: "{{ step_19_result }}"
-      prior_artifacts: "{{ step_18_result | default({}) }}"
+      # (step 18). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_18_result }}"
+      prior_artifacts: "{{ step_17_result | default({}) }}"
 
 ledger:
   emit_spans: true

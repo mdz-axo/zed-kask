@@ -109,17 +109,18 @@ fn company_research_flash_has_expected_step_count() {
     let manifest = load_named_manifest("company-research-flash");
     // 0 (forecast_list) + 1 (SCOUT) + 2 (INTEL mcp_batch: research_search + web_search) +
     // 3 (intel-mosaic) + 4 (semantic-classify) + 5 (company_transcript) +
-    // 6 (listening flowdef) + 7 (listening apply) + 8 (scenario_build) +
+    // 6 (listening flowdef) + 7 (forensic-pre-screen) + 8 (scenario_build) +
     // 9 (CRITICAL FACTOR) + 10 (company_transcript) + 11 (FORENSIC full) +
     // 12 (VALUATION mcp_batch: dcf + comparables + expectations + scenario_impact) +
-    // 13 (valuation-8step) + 14 (COMM) + 15 (market_check_resolutions) +
-    // 16 (market_calibration) + 17 (kata-direction) + 18 (kata-calibration-measure) +
-    // 19 (market_match) + 20 (evaluate_evidence) + 21 (LENS) + 22 (convergence) +
-    // 23 (loop) + 24 (forecast_persist) = 25 steps.
+    // 13 (valuation-8step) + 14 (COMM) +
+    // 15 (KATA mcp_batch: market_check_resolutions + market_calibration) +
+    // 16 (kata-direction) + 17 (kata-calibration-measure) +
+    // 18 (LENS mcp_batch: market_match + evaluate_evidence) +
+    // 19 (LENS) + 20 (convergence) + 21 (loop) + 22 (forecast_persist) = 23 steps.
     assert_eq!(
         manifest.steps.len(),
-        25,
-        "company-research-flash must have 25 steps (consolidated mcp_batch steps reduce count from original 29), got {}",
+        23,
+        "company-research-flash must have 23 steps (consolidated mcp_batch steps reduce count from original 29), got {}",
         manifest.steps.len()
     );
 }
@@ -135,12 +136,13 @@ fn company_research_flash_execute_steps_have_mcp_fields() {
     // 0 (forecast_list) + 2 (mcp_batch: research_search + web_search) +
     // 5 (company_transcript) + 8 (scenario_build) + 10 (company_transcript) +
     // 12 (mcp_batch: dcf + comparables + expectations + scenario_impact) +
-    // 15 (market_check_resolutions) + 16 (market_calibration) +
-    // 19 (market_match) + 20 (evaluate_evidence) + 24 (forecast_persist) = 11 execute steps.
+    // 15 (mcp_batch: market_check_resolutions + market_calibration) +
+    // 18 (mcp_batch: market_match + evaluate_evidence) +
+    // 22 (forecast_persist) = 9 execute steps.
     assert_eq!(
         execute_steps.len(),
-        11,
-        "expected 11 execute steps (consolidated mcp_batch steps reduce count from original 15), got {}",
+        9,
+        "expected 9 execute steps (consolidated mcp_batch steps reduce count from original 15), got {}",
         execute_steps.len()
     );
     for step in &execute_steps {
@@ -293,15 +295,16 @@ fn company_research_deep_manifest_parses() {
 #[test]
 fn company_research_deep_has_expected_step_count() {
     let manifest = load_named_manifest("company-research-deep");
-    // 1/2/3/4/5/6 (COMPANY) + 7 (FALSTAFFIAN) + 8 (GORILLA) +
-    // 9 (gorilla-capability-reason) + 10 (GORILLA lisp.eval) +
-    // 11 (scenario_build) + 12 (ECONOMIC TRAJECTORY) + 13 (IMAGINE) +
-    // 14 (THESIS) + 15 (thesis-essentialist) + 16 (goal-analysis gate) +
-    // 17 (convergence) + 18 (loop) = 18 steps.
+    // 1 (COMPANY mcp_batch: company_transcript + dcf_valuation + comparable_analysis + web_search) +
+    // 2 (web_extract) + 3 (company-8part) + 4 (falstaffian) + 5 (gorilla-4dim) +
+    // 6 (gorilla-capability-reason) + 7 (GORILLA lisp.eval) +
+    // 8 (scenario_build) + 9 (economic-trajectory) + 10 (imagine) +
+    // 11 (thesis) + 12 (thesis-essentialist) + 13 (goal-analysis gate) +
+    // 14 (convergence lisp.eval) + 15 (loop) = 15 steps.
     assert_eq!(
         manifest.steps.len(),
-        18,
-        "company-research-deep must have 18 steps (16 original + 2 cross-skill adapters: gorilla-capability-reason step 9 + thesis-essentialist step 15), got {}",
+        15,
+        "company-research-deep must have 15 steps (COMPANY batch merge reduced count from 18), got {}",
         manifest.steps.len()
     );
 }
@@ -314,18 +317,18 @@ fn company_research_deep_execute_steps_have_mcp_fields() {
         .iter()
         .filter(|s| s.action == "execute")
         .collect();
-    // 1 (company_transcript) + 2 (dcf_valuation) + 3 (comparable_analysis) +
-    // 4 (web_search) + 5 (fetch) + 9 (scenario_build) = 6 execute steps.
+    // 1 (mcp_batch: company_transcript + dcf_valuation + comparable_analysis + web_search) +
+    // 2 (web_extract) + 8 (scenario_build) = 3 execute steps.
     assert_eq!(
         execute_steps.len(),
-        6,
-        "expected 6 execute steps, got {}",
+        3,
+        "expected 3 execute steps (COMPANY batch merge reduced count from 6), got {}",
         execute_steps.len()
     );
     for step in &execute_steps {
         assert!(
-            step.mcp.is_some(),
-            "execute step {} must have an mcp reference",
+            step.mcp.is_some() || step.mcp_batch.is_some(),
+            "execute step {} must have an mcp or mcp_batch reference",
             step.ordinal
         );
     }
@@ -372,7 +375,7 @@ fn company_research_deep_has_convergence_and_loop() {
         .filter(|s| s.action == "compute")
         .collect();
     // The deep pipeline has 2 compute steps: GORILLA weighted scoring
-    // (step 8) and the THESIS convergence check (step 13).
+    // (step 7) and the THESIS convergence check (step 14).
     assert_eq!(
         compute_steps.len(),
         2,
@@ -461,7 +464,7 @@ fn company_research_flash_reuses_listening_and_kata_templates() {
         .filter_map(|s| s.template_ref.clone())
         .collect();
     // The flash flowdef reuses listening as a sub-flowdef (step 6) and
-    // kata-improvement as a select template_ref (step 20).
+    // kata-improvement as a select template_ref (step 16).
     let has_listening_flowdef = manifest
         .steps
         .iter()
@@ -487,7 +490,7 @@ fn company_research_deep_reuses_goal_analysis_template() {
         .filter(|s| s.action == "select")
         .filter_map(|s| s.template_ref.clone())
         .collect();
-    // Cross-skill composition: goal-analysis/judge (step 12 — THESIS quality
+    // Cross-skill composition: goal-analysis/judge (step 13 — THESIS quality
     // gate). Avoids the LLM-improves-against-LLM-scored-target trap per .rules.
     assert!(
         template_refs.iter().any(|r| r == "goal-analysis/judge"),

@@ -33,6 +33,29 @@ pub const WARN_THRESHOLD: u32 = 3;
 /// Hard cap — after this many failures, the tool refuses to run.
 pub const HARD_CAP: u32 = 5;
 
+/// Per-tool hard-cap overrides. Tools listed here use the override value
+/// instead of `HARD_CAP`. The `skill` tool runs a multi-step PDCA cascade
+/// (manifest executor) that can legitimately fail several times in a row
+/// while the cascade iterates toward convergence — the default cap of 5
+/// is too tight for a single skill invocation that may retry internally.
+/// Raising the cap for `skill` only (not all tools) preserves the
+/// death-spiral guard for read_file/grep/terminal/etc. while allowing
+/// the skill cascade room to converge.
+///
+/// zed-kask: per-tool override for the `skill` tool. Test:
+/// `skill_tool_uses_override_hard_cap`.
+pub const SKILL_TOOL_HARD_CAP: u32 = 12;
+
+/// Resolve the effective hard cap for a tool. Tools with an override use it;
+/// all others use `HARD_CAP`.
+pub fn hard_cap_for(tool_name: &str) -> u32 {
+    if tool_name == "skill" {
+        SKILL_TOOL_HARD_CAP
+    } else {
+        HARD_CAP
+    }
+}
+
 /// A tool call attempt's verdict from the tracker.
 #[derive(Debug)]
 pub enum RetryVerdict {
@@ -90,14 +113,16 @@ impl ToolRetryTracker {
             per_tool.get(tool_name).copied().unwrap_or(0)
         };
 
-        // Hard cap: either tracker hitting HARD_CAP refuses the call.
-        if per_input_count >= HARD_CAP {
+        let effective_cap = hard_cap_for(tool_name);
+
+        // Hard cap: either tracker hitting the effective cap refuses the call.
+        if per_input_count >= effective_cap {
             return RetryVerdict::Refuse {
                 attempt: per_input_count,
                 reason: RefuseReason::IdenticalInput,
             };
         }
-        if consecutive_count >= HARD_CAP {
+        if consecutive_count >= effective_cap {
             return RetryVerdict::Refuse {
                 attempt: consecutive_count,
                 reason: RefuseReason::ConsecutiveFailures,
@@ -164,7 +189,15 @@ fn input_hash(input: &serde_json::Value) -> u64 {
 
 /// Format the warning message injected into the tool result at `WARN_THRESHOLD`.
 /// Includes the Bayesian probability of success and a directive to switch tools.
-pub fn format_warning(tool_name: &str, attempt: u32, consecutive: u32, probability: f64) -> String {
+/// `effective_cap` is the per-tool hard cap (from `hard_cap_for`) so the message
+/// reports the correct refusal threshold for overridden tools.
+pub fn format_warning(
+    tool_name: &str,
+    attempt: u32,
+    consecutive: u32,
+    probability: f64,
+    effective_cap: u32,
+) -> String {
     let pct = (probability * 100.0).round() as u32;
     let tracker_label = if attempt >= WARN_THRESHOLD {
         format!("same input {attempt} times")
@@ -175,7 +208,7 @@ pub fn format_warning(tool_name: &str, attempt: u32, consecutive: u32, probabili
         "WARNING: Tool '{tool_name}' has failed {tracker_label}. \
          Estimated probability of success on the next attempt: {pct}%. \
          Consider switching to a different tool (grep, terminal, find_path, spawn_agent) \
-         or reframing the approach. After {HARD_CAP} failures, this tool will be hard-refused."
+         or reframing the approach. After {effective_cap} failures, this tool will be hard-refused."
     )
 }
 
@@ -325,6 +358,80 @@ mod tests {
     }
 
     #[test]
+    fn skill_tool_uses_override_hard_cap() {
+        // zed-kask: the `skill` tool gets a higher hard cap because its cascade
+        // can legitimately fail several times while iterating to convergence.
+        // The default HARD_CAP (5) would refuse a skill mid-cascade. This test
+        // pins the override so a future refactor cannot silently drop it.
+        let tracker = ToolRetryTracker::default();
+        let input = serde_json::json!({"name": "company-research-deep"});
+
+        // After HARD_CAP failures, a default tool would be refused — but `skill`
+        // is allowed because its effective cap is SKILL_TOOL_HARD_CAP.
+        for _ in 0..HARD_CAP {
+            assert!(
+                matches!(
+                    tracker.check("skill", &input),
+                    RetryVerdict::Allow | RetryVerdict::AllowWithWarning { .. }
+                ),
+                "skill should still be allowed at the default HARD_CAP boundary"
+            );
+            tracker.record_failure("skill", &input);
+        }
+
+        // Keep failing up to (but not reaching) SKILL_TOOL_HARD_CAP — still allowed.
+        for _ in HARD_CAP..SKILL_TOOL_HARD_CAP {
+            assert!(
+                matches!(
+                    tracker.check("skill", &input),
+                    RetryVerdict::AllowWithWarning { .. }
+                ),
+                "skill should warn but remain allowed below its override cap"
+            );
+            tracker.record_failure("skill", &input);
+        }
+
+        // At SKILL_TOOL_HARD_CAP, the skill tool is finally refused.
+        match tracker.check("skill", &input) {
+            RetryVerdict::Refuse { reason, .. } => {
+                assert_eq!(reason, RefuseReason::IdenticalInput);
+            }
+            other => panic!("expected Refuse at SKILL_TOOL_HARD_CAP, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn skill_override_does_not_leak_to_other_tools() {
+        // The override is per-tool: exhausting the skill cap must not raise the
+        // cap for read_file or any other tool.
+        let tracker = ToolRetryTracker::default();
+        let skill_input = serde_json::json!({"name": "company-research-deep"});
+        for _ in 0..HARD_CAP {
+            tracker.record_failure("skill", &skill_input);
+        }
+        // read_file still uses the default HARD_CAP.
+        let read_input = serde_json::json!({"path": "foo.rs"});
+        for _ in 0..HARD_CAP {
+            tracker.record_failure("read_file", &read_input);
+        }
+        assert!(
+            matches!(
+                tracker.check("read_file", &read_input),
+                RetryVerdict::Refuse { .. }
+            ),
+            "read_file must still refuse at HARD_CAP despite the skill override"
+        );
+    }
+
+    #[test]
+    fn hard_cap_for_resolves_skill_override() {
+        assert_eq!(hard_cap_for("skill"), SKILL_TOOL_HARD_CAP);
+        assert_eq!(hard_cap_for("read_file"), HARD_CAP);
+        assert_eq!(hard_cap_for("grep"), HARD_CAP);
+        assert_eq!(hard_cap_for(""), HARD_CAP);
+    }
+
+    #[test]
     fn bayesian_probability_decreases_with_failures() {
         // After N failures, P(success) = 1/(N+2).
         // N=3: 0.2, N=4: ~0.167
@@ -356,7 +463,7 @@ mod tests {
 
     #[test]
     fn format_warning_includes_probability() {
-        let msg = format_warning("read_file", 3, 3, 0.2);
+        let msg = format_warning("read_file", 3, 3, 0.2, HARD_CAP);
         assert!(
             msg.contains("20%"),
             "warning should include probability percentage: {msg}"
