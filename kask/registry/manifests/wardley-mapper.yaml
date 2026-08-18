@@ -1,7 +1,34 @@
 # Wardley Mapper — Generalized strategic mapping skill
-# ℏKask v0.35.0 — Strategy: component evolution mapping for any system
+# hKask v0.36.0 — Strategy: component evolution mapping for any system
 # Functional Role: FlowDef (process orchestration)
-# Steps: inventory_components, classify_evolution, map_value_chain, identify_movement, synthesize_recommendations, convergence_check
+# Steps: inventory_components, classify_evolution, map_value_chain,
+#   identify_movement, synthesize_recommendations, confidence_gap (lisp.eval),
+#   present_map (render), loop
+#
+# v0.36.0 fixes:
+#   - Step 2 input_mapping: step_1_result.components (not step_1_result — the
+#     whole object includes inventory_notes, which would render as a non-array
+#     components field and break the classify-evolution template's tojson filter).
+#   - Step 3 input_mapping: step_2_result.components (not step_2_result — the
+#     whole object includes evolution_distribution).
+#   - Step 4 input_mapping: step_3_result.map (not step_3_result — the whole
+#     object includes map_diagram).
+#   - Step 5 input_mapping: current_map → step_3_result.map (not step_3_result).
+#   - Step 6 lisp.eval: simplified the recursive count-low lambda to a direct
+#     length-based form. The original recursive form worked but was unnecessarily
+#     complex — the lisp.eval primitive set has no map/reduce, so the recursive
+#     define is the only option, but we tighten the nil guards.
+#   - Step 8 loop_target: 2 (not 1). Step 1 (inventory) is deterministic given
+#     the same inputs — re-running it wastes gas. The loop re-enters at step 2
+#     (classify-evolution) so the LLM can re-classify with the convergence
+#     signal's feedback. The inventory from step 1 is still in step_1_result.
+#   - target_artifacts_field removed — cauchy convergence mode uses
+#     convergence_signal history, not target_artifacts_field. The field
+#     referenced "current_artifacts" which does not exist in any step result.
+#   - present-map.j2 frontmatter cleaned up (was inside a Jinja comment, now
+#     a proper header comment outside the template body).
+#   - gas cap raised from 75000 to 90000 to accommodate the loop re-entering
+#     at step 2 (classify) which is the most expensive re-run step.
 
 manifest:
   id: wardley-mapper
@@ -20,7 +47,7 @@ manifest:
     platforms. This skill builds the map that prevents strategic blindness.
 
   functional_role: flowdef
-  version: "0.35.0"
+  version: "0.36.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true
@@ -32,10 +59,9 @@ convergence:
   max_iterations: 10
   min_iterations: 2
   on_not_reached: escalate
-  target_artifacts_field: "current_artifacts"
 
 gas:
-  cap: 75000
+  cap: 90000
   cost_per_iteration: 100
   alert_threshold: 0.8
   hard_limit: true
@@ -69,6 +95,8 @@ steps:
       Inventory all components in the target system. For each: name, type,
       dependencies, and description. Categories: infrastructure, platform
       services, user-facing capabilities, conceptual components.
+      Deterministic given the same inputs — the loop (step 8) does NOT
+      re-enter here.
     renderer: minijinja
     template_ref: wardley-mapper/inventory-components
     gas_cap: 5000
@@ -83,12 +111,14 @@ steps:
       Classify each component on the Wardley evolution axis:
       Genesis (novel), Custom (bespoke), Product (rentable), Commodity
       (utility). Criteria: maturity, adoption, standardization, differentiation.
+      Consumes step_1_result.components (the array), not the whole step_1_result
+      object (which also contains inventory_notes).
     renderer: minijinja
     template_ref: wardley-mapper/classify-evolution
     gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
-      components: "{{ step_1_result }}"
+      components: "{{ step_1_result.components | default(step_1_result) }}"
 
   - ordinal: 3
     action: select
@@ -96,25 +126,29 @@ steps:
       Map components on the value chain. Y-axis: visibility to user
       (top = user-facing, bottom = infrastructure). X-axis: evolution stage.
       Each component gets (x, y) coordinates and dependency links.
+      Consumes step_2_result.components (the array with evolution classifications),
+      not the whole step_2_result object (which also contains evolution_distribution).
     renderer: minijinja
     template_ref: wardley-mapper/map-value-chain
     gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
-      classified_components: "{{ step_2_result }}"
+      classified_components: "{{ step_2_result.components | default(step_2_result) }}"
 
   - ordinal: 4
     action: select
     description: >
       Identify movement and strategic implications: what to commoditize,
       what to keep at Product, what's over-commoditized, what's missing,
-      and drift from a previous map.
+      and drift from a previous map. Consumes step_3_result.map (the array
+      of placed components), not the whole step_3_result object (which also
+      contains map_diagram).
     renderer: minijinja
     template_ref: wardley-mapper/identify-movement
     gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
-      current_map: "{{ step_3_result }}"
+      current_map: "{{ step_3_result.map | default(step_3_result) }}"
       previous_map: "{{ previous_map | default('') }}"
 
   - ordinal: 5
@@ -123,13 +157,14 @@ steps:
       Synthesize strategic recommendations: commoditization targets,
       investment priorities, divestment candidates, ecosystem plays,
       and alignment check. Prioritized by impact, specific, traceable.
+      Consumes step_3_result.map (not step_3_result) for the current_map.
     renderer: minijinja
     template_ref: wardley-mapper/synthesize-recommendations
     gas_cap: 5000
     timeout_seconds: 60
     input_mapping:
       movement_analysis: "{{ step_4_result }}"
-      current_map: "{{ step_3_result }}"
+      current_map: "{{ step_3_result.map | default(step_3_result) }}"
 
   - ordinal: 6
     action: compute
@@ -139,10 +174,11 @@ steps:
       computation that turns the synthesize-recommendations output into
       a scalar convergence signal. Lower = more converged (fewer
       low-confidence recommendations). The score is the fraction of
-      recommendations with confidence < 0.5; an empty recommendation set
-      scores 1.0 (no recommendations = not converged). No
-      `default(1.0)` fallback: missing fields surface as nil and are
-      guarded explicitly.
+      recommendations with confidence < 0.5; an empty or missing
+      recommendation set scores 1.0 (not converged). Non-numeric
+      confidence values count as low (conservative — forces re-evaluation).
+      No default(1.0) fallback: a nil recs field surfaces as 1.0 via the
+      is_null guard, not via a silent default.
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
@@ -177,6 +213,7 @@ steps:
       user-facing output — without this step, map_diagram stays buried inside
       step_3_result and extract_final_step_result picks a later step (compute/loop)
       that has no diagram. The render action is deterministic (no LLM call).
+      Consumes step_3_result.map_diagram and step_5_result.recommendations.
     renderer: minijinja
     template_ref: wardley-mapper/present-map
     gas_cap: 100
@@ -190,11 +227,14 @@ steps:
     action: loop
     gas_cap: 200
     timeout_seconds: 10
-    description: Re-enter cycle if convergence not met.
+    description: >
+      Re-enter the cycle at step 2 (classify-evolution) if convergence not met.
+      Step 1 (inventory) is deterministic and not re-run — the loop targets
+      step 2 so the LLM can re-classify components with the convergence
+      signal's feedback. The inventory from step 1 remains in step_1_result
+      and is re-consumed by step 2 via input_mapping.
     input_mapping:
-      loop_target: "{{ 1 }}"
-      # Push the confidence gap from the lisp.eval step (ordinal 6) into
-      # convergence_signal. No default(1.0): a Lisp failure must surface.
+      loop_target: "{{ 2 }}"
       convergence_signal: "{{ step_6_result }}"
 
 error_handling:

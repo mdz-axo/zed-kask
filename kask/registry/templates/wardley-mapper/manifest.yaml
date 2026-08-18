@@ -1,9 +1,9 @@
 # Template crate manifest for wardley-mapper skill
-# hKask v0.35.0 — Generalized Wardley mapping for any system
+# hKask v0.36.0 — Generalized Wardley mapping for any system
 
 crate:
   name: wardley-mapper
-  version: "0.35.0"
+  version: "0.36.0"
   description: >
     Generic Wardley mapping methodology. Given a set of components and their
     relationships, inventories them, classifies each on the evolution axis

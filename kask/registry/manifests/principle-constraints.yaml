@@ -29,11 +29,11 @@ manifest:
 convergence:
   convergence_mode: "cauchy"
   cauchy_epsilon: 0.03
-  cauchy_window: 2
-  max_iterations: 3
+  cauchy_window: 1
+  max_iterations: 1
   min_iterations: 1
   target_artifacts_field: "constraint_set"
-  on_not_reached: escalate
+  on_not_reached: abort
 
 gas:
   cap: 80000
@@ -67,17 +67,26 @@ ledger:
   span_namespace: reg.skill.principle-constraints
 
 steps:
+  # ── DERIVE: Compile the principle into a constraint set ──
+  # Single-pass LLM inference. The LLM reasons about the enforcement hints
+  # and its knowledge of the codebase to produce the proposed constraint
+  # set. The LLM does NOT have tool access — it cannot grep or read files.
+  # For exact line numbers and test names, the LLM uses UNKNOWN and MISSING:
+  # prefixes. The human reviewer verifies the citations.
   - ordinal: 1
     action: select
     description: >
-      Derive (or verify) the constraint set. Routes to principle-derive in
-      derive mode, principle-verify in verify mode. The template does the
-      enforcement-location work (grep, codegraph, read_file) and emits the
-      proposed constraint set with per-constraint status and gaps.
+      Derive (or verify) the constraint set. The template receives the
+      principle, its source, and enforcement hints, and emits the proposed
+      constraint set with per-constraint status and gaps. The LLM reasons
+      about the enforcement hints and its knowledge of the codebase. For
+      exact file:line locations and test names, the LLM uses UNKNOWN and
+      MISSING: prefixes when it cannot verify them. This is the skill's
+      own discipline: no fabricated citations.
     renderer: minijinja
     template_ref: principle-constraints/principle-derive
     gas_cap: 12000
-    timeout_seconds: 240
+    timeout_seconds: 300
     input_mapping:
       principle: "{{ principle }}"
       principle_source: "{{ principle_source }}"
@@ -89,36 +98,19 @@ steps:
     action: compute
     compute_ref: lisp.eval
     description: >
-      Deterministic convergence signal: the count of constraints with
-      status "enforced" plus the count of gaps. A stable reading across
-      iterations means the agent has finished locating enforcement and
-      flagging gaps — no new constraints or gaps are appearing. Using
-      lisp.eval makes the computation deterministic, budgeted (gas_cap:
-      100), and observable via a reg.skill.principle-constraints span.
-      Guards against missing fields by returning 0 when absent — a stable
-      reading that lets Cauchy fire after min_iterations.
+      Deterministic convergence signal: returns 1 (stable) to let Cauchy
+      fire after min_iterations. The derivation is a single-pass operation.
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
-      form: >
-        (if (listp step_1_result)
-            (let ((summary (assoc "summary" step_1_result)))
-              (if (is_null summary)
-                  0
-                  (let ((enforced (assoc "enforced" summary))
-                        (gaps (assoc "gaps" summary)))
-                    (+ (if (is_null enforced) 0 enforced)
-                       (if (is_null gaps) 0 gaps)))))
-            0)
-      env:
-        step_1_result: "{{ step_1_result | default({}) }}"
+      form: "1"
+      env: {}
 
   - ordinal: 3
     action: loop
     description: >
-      Re-enter derivation if convergence is not met — the agent may have
-      located additional enforcement paths or gaps on a second pass. Capped
-      at max_iterations: 3 to prevent unbounded search.
+      Re-enter derivation if convergence is not met. Capped at
+      max_iterations: 1 — single-pass.
     input_mapping:
       loop_target: "{{ 1 }}"
       convergence_signal: "{{ step_2_result }}"
