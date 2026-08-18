@@ -107,7 +107,7 @@ steps:
       targets.
     renderer: minijinja
     template_ref: idiomatic-lisp/idiomatic-lisp-challenge
-    gas_cap: 8192
+    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       design_problem: "{{ design_problem }}"

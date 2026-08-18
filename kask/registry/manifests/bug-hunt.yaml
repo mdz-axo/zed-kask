@@ -131,7 +131,7 @@ steps:
       criteria rather than jumping straight to taxonomy selection.
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-charter
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target: "{{ task | default(target) }}"
@@ -163,7 +163,7 @@ steps:
       instructions and the flow should be re-invoked with populated findings.
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-probe
-    gas_cap: 2048
+    gas_cap: 2000
     timeout_seconds: 300
     input_mapping:
       charter: "{{ step_1_result }}"
@@ -186,7 +186,7 @@ steps:
       without a file:line citation are rejected (no-fiction enforcement).
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-oracle
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       charter: "{{ step_1_result }}"
@@ -201,7 +201,7 @@ steps:
       signatures for detecting similar bugs elsewhere.
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-taxonomize
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       evaluated_findings: "{{ step_3_result.evaluated_findings | default([]) }}"
@@ -218,7 +218,7 @@ steps:
       to close the feedback loop.
     renderer: minijinja
     template_ref: bug-hunt/bug-hunt-report
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       charter: "{{ step_1_result }}"

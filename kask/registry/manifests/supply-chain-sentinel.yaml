@@ -51,7 +51,7 @@ steps:
       Select dependency manifest surfaces to audit (Cargo.toml, deny.toml, lockfiles).
     renderer: minijinja
     template_ref: supply-chain-sentinel/select-surface
-    gas_cap: 2048
+    gas_cap: 2000
     timeout_seconds: 120
   - ordinal: 2
     action: select
@@ -60,7 +60,7 @@ steps:
       unmaintained indicators, and transitive dependency visibility.
     renderer: minijinja
     template_ref: supply-chain-sentinel/probe
-    gas_cap: 2048
+    gas_cap: 2000
     timeout_seconds: 120
   - ordinal: 3
     action: select
@@ -68,7 +68,7 @@ steps:
       Report supply-chain findings with CWE-mapped evidence and proposed regressions.
     renderer: minijinja
     template_ref: supply-chain-sentinel/report
-    gas_cap: 2048
+    gas_cap: 2000
     timeout_seconds: 120
   - ordinal: 4
     action: compute

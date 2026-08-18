@@ -104,7 +104,7 @@ steps:
       steering_mode: steering). The Curator/human calls swarm_execute_plan_local.
     renderer: minijinja
     template_ref: swarm-steering/swarm-steering-direct
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       emitted_calls: "{{ emitted_calls }}"

@@ -161,7 +161,7 @@ steps:
       primary emphasis for this pass.
     renderer: minijinja
     template_ref: code-review/code-review-scope
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       change_spec: "{{ task | default(change_spec) }}"
@@ -183,7 +183,7 @@ steps:
       path.
     renderer: minijinja
     template_ref: code-review/code-review-perspectives
-    gas_cap: 8192
+    gas_cap: 8000
     timeout_seconds: 300
     input_mapping:
       change_model: "{{ step_1_result.change_model | default({}) }}"
@@ -249,7 +249,7 @@ steps:
       Detection/collection separation (Sauer) — does NOT re-scan the code.
     renderer: minijinja
     template_ref: code-review/code-review-adjudicate
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       raw_findings: "{{ step_2_result.raw_findings | default([]) }}"
@@ -297,7 +297,7 @@ steps:
       loop closure.
     renderer: minijinja
     template_ref: code-review/code-review-report
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       adjudicated_findings: "{{ step_4_result.adjudicated_findings | default([]) }}"
@@ -325,7 +325,7 @@ steps:
       Never fabricates old_text — skips findings it cannot ground.
     renderer: minijinja
     template_ref: code-review/code-review-implement
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 180
     condition: "fix_mode == 'blockers' OR fix_mode == 'should_fix' OR fix_mode == 'all'"
     input_mapping:

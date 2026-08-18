@@ -85,7 +85,7 @@ steps:
       coverage_assessment: full / partial / none.
     renderer: minijinja
     template_ref: skill-router/skill-router-match
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task_description: "{{ task | default(task_description) }}"

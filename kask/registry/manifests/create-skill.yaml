@@ -103,7 +103,7 @@ steps:
       prior_validation_failures when present (feedback loop closure).
     renderer: minijinja
     template_ref: create-skill/create-skill-research
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       user_description: "{{ task | default(user_description) }}"
@@ -119,7 +119,7 @@ steps:
       Identify delegates, span namespace, and ontology annotations.
     renderer: minijinja
     template_ref: create-skill/create-skill-describe
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       user_description: "{{ user_description }}"
@@ -137,7 +137,7 @@ steps:
       capabilities; (4) SKILL.md companion with ontology references.
     renderer: minijinja
     template_ref: create-skill/create-skill-scaffold
-    gas_cap: 8192
+    gas_cap: 8000
     timeout_seconds: 180
     input_mapping:
       skill_spec: "{{ step_2_result }}"
@@ -151,7 +151,7 @@ steps:
       compliance). Produces fix suggestions for any failures.
     renderer: minijinja
     template_ref: create-skill/create-skill-validate
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       scaffolded_crate: "{{ step_3_result }}"

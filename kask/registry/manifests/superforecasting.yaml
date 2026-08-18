@@ -233,7 +233,7 @@ steps:
       the former inside-view step.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-hypothesize
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       admitted_target: "{{ forecasting_question }}"
@@ -249,7 +249,7 @@ steps:
       required-conditions half of the former inside-view step.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-counterfactual
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       hypotheses: "{{ step_7_result.hypotheses | default([]) }}"

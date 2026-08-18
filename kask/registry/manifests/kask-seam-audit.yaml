@@ -134,7 +134,7 @@ steps:
       tracks). Read-only — no code edits.
     renderer: minijinja
     template_ref: kask-seam-audit/seam-map
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
@@ -197,7 +197,7 @@ steps:
       finds a defect the LLM cannot reliably self-detect, the LLM repairs it.
     renderer: minijinja
     template_ref: kask-seam-audit/refine-seam-map
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
@@ -220,7 +220,7 @@ steps:
       Every finding cites file:line or is marked deferred with a reason.
     renderer: minijinja
     template_ref: kask-seam-audit/audit-security
-    gas_cap: 8192
+    gas_cap: 8000
     timeout_seconds: 300
     input_mapping:
       task: "{{ task | default('') }}"
@@ -241,7 +241,7 @@ steps:
       dead_surface_summary (total lines, top deletion candidates).
     renderer: minijinja
     template_ref: kask-seam-audit/audit-architecture
-    gas_cap: 8192
+    gas_cap: 8000
     timeout_seconds: 300
     input_mapping:
       task: "{{ task | default('') }}"
@@ -260,7 +260,7 @@ steps:
       deferred) and pattern_gap_summary (top Zed primitives to adopt).
     renderer: minijinja
     template_ref: kask-seam-audit/audit-ui
-    gas_cap: 8192
+    gas_cap: 8000
     timeout_seconds: 300
     input_mapping:
       task: "{{ task | default('') }}"
@@ -341,7 +341,7 @@ steps:
       or marks the finding deferred with a reason — never fabricates evidence.
     renderer: minijinja
     template_ref: kask-seam-audit/refine-findings
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
@@ -362,7 +362,7 @@ steps:
       finding plus constraint_force + deletion_test + feedback_verdict).
     renderer: minijinja
     template_ref: kask-seam-audit/adjudicate
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 180
     input_mapping:
       task: "{{ task | default('') }}"
@@ -382,7 +382,7 @@ steps:
       {stable_under_perturbation: bool}. Each score traces to a finding.
     renderer: minijinja
     template_ref: kask-seam-audit/mcda
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"
@@ -403,7 +403,7 @@ steps:
       {triggered, reason, proposed_d_seam}.
     renderer: minijinja
     template_ref: kask-seam-audit/remediate
-    gas_cap: 8192
+    gas_cap: 8000
     timeout_seconds: 300
     input_mapping:
       task: "{{ task | default('') }}"
@@ -492,7 +492,7 @@ steps:
       NOT edit any upstream non-D-seam file. Produces a hard_stop_decision.
     renderer: minijinja
     template_ref: kask-seam-audit/remediation-repair
-    gas_cap: 2048
+    gas_cap: 2000
     timeout_seconds: 120
     input_mapping:
       task: "{{ task | default('') }}"
@@ -565,7 +565,7 @@ steps:
       did Lisp catch that the LLM missed?
     renderer: minijinja
     template_ref: kask-seam-audit/final-report
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       task: "{{ task | default('') }}"

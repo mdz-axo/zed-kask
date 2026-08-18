@@ -113,7 +113,7 @@ steps:
       Lisp step (ordinal 2) catches those deterministically.
     renderer: minijinja
     template_ref: lisp-scaffold-reasoning/propose-hypotheses
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target: "{{ target }}"
@@ -242,7 +242,7 @@ steps:
       Lisp step re-checks.
     renderer: minijinja
     template_ref: lisp-scaffold-reasoning/refine-hypotheses
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       target: "{{ target }}"
@@ -322,7 +322,7 @@ steps:
       scaffolding auditable — which defects did Lisp catch that the LLM missed?
     renderer: minijinja
     template_ref: lisp-scaffold-reasoning/report
-    gas_cap: 2048
+    gas_cap: 2000
     timeout_seconds: 60
     input_mapping:
       target: "{{ target }}"

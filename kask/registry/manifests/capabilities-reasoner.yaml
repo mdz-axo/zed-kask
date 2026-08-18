@@ -180,7 +180,7 @@ steps:
       Consumes prior_evaluations from step 0 (persistence-grounded learning).
     renderer: minijinja
     template_ref: capabilities-reasoner/capability-register
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       target_system: "{{ task | default(target_system) }}"
@@ -211,7 +211,7 @@ steps:
       manually between register and evaluate.
     renderer: minijinja
     template_ref: capabilities-reasoner/capability-elicit
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 300
     input_mapping:
       target_system: "{{ target_system }}"
@@ -296,7 +296,7 @@ steps:
       capabilities from step 2 (LLM-mediated elicitation).
     renderer: minijinja
     template_ref: capabilities-reasoner/capability-evaluate
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       registry: "{{ step_1_result }}"
@@ -319,7 +319,7 @@ steps:
       model: append-only, signed, scope narrows on delegation).
     renderer: minijinja
     template_ref: capabilities-reasoner/capability-reason
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       evaluations: "{{ step_4_result.evaluations | default([]) }}"
@@ -337,7 +337,7 @@ steps:
       iteration's registry (feedback loop closure).
     renderer: minijinja
     template_ref: capabilities-reasoner/capability-report
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 150
     input_mapping:
       evaluations: "{{ step_4_result.evaluations | default([]) }}"

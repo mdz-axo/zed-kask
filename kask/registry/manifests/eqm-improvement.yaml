@@ -131,7 +131,7 @@ steps:
       delegation.
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-direction
-    gas_cap: 2048
+    gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
       rationale: "{{ task | default(rationale) }}"
@@ -152,7 +152,7 @@ steps:
       current condition.
     mcp: hkask-mcp-prediction-markets
     tool: market_score_rationale
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 30
     input_mapping:
       rationale: "{{ rationale }}"
@@ -177,7 +177,7 @@ steps:
       persists.
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-target
-    gas_cap: 3072
+    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       current_composite: "{{ step_2_result.composite_score | default(0) }}"
@@ -197,7 +197,7 @@ steps:
       the Brier score tracks whether the agent's confidence is calibrated.
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-predict
-    gas_cap: 3072
+    gas_cap: 3000
     timeout_seconds: 120
     input_mapping:
       target_condition: "{{ step_3_result.target_condition | default(step_3_result) }}"
@@ -221,7 +221,7 @@ steps:
       for genuine opposing hypotheses (not strawmen).
     renderer: minijinja
     template_ref: eqm-improvement/eqm-imp-experiment
-    gas_cap: 6144
+    gas_cap: 6000
     timeout_seconds: 150
     input_mapping:
       rationale: "{{ rationale }}"
@@ -243,7 +243,7 @@ steps:
       that makes the prediction testable.
     mcp: hkask-mcp-prediction-markets
     tool: market_score_rationale
-    gas_cap: 4096
+    gas_cap: 5000
     timeout_seconds: 30
     input_mapping:
       rationale: "{{ step_5_result.improved_rationale }}"
