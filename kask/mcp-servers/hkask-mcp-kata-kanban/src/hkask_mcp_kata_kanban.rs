@@ -435,7 +435,6 @@ impl KanbanServer {
                             cs.into_iter().map(VerificationCriterion::new).collect(),
                         );
                     }
-                    }
                     if let Some(rj) = rjoule_budget {
                         spec.rjoule_budget = Some(rj);
                     }

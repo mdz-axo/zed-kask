@@ -124,6 +124,7 @@ impl Default for ClassifierDef {
             cost_input_nj_per_token: 0,
             cost_output_nj_per_token: 0,
             cost_cache_read_nj_per_token: 0,
+            max_tokens: default_max_tokens(),
             disable_thinking: true,
         }
     }
@@ -246,7 +247,6 @@ async fn classify_one(
 ) -> Result<ClassifyResult, ServiceError> {
     let parameters = LLMParameters {
         temperature: config.temperature as f32,
-        max_tokens: config.max_tokens,
         top_p: 1.0,
         top_k: 0,
         system_prompt: Some(config.system_prompt.clone()),
@@ -521,7 +521,6 @@ async fn extract_passage_one(
 ) -> Result<PassageExtraction, ServiceError> {
     let parameters = LLMParameters {
         temperature: config.temperature as f32,
-        max_tokens: config.max_tokens,
         top_p: 1.0,
         top_k: 0,
         system_prompt: Some(config.system_prompt.clone()),

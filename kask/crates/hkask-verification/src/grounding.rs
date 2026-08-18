@@ -869,7 +869,7 @@ fn scan_narrative_for_leak(
 /// triggers the downgrade (`weakest < 4`). The reproducibility
 /// distinction is captured by the tag variant itself, not by this
 /// number alone.
-fn provenance_strength(tag: &ProvenanceTag) -> u8 {
+pub(crate) fn provenance_strength(tag: &ProvenanceTag) -> u8 {
     match tag {
         ProvenanceTag::Sourced { .. } => 5,
         ProvenanceTag::Derived { .. } => 4,

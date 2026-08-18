@@ -1204,6 +1204,156 @@ mod tests {
         assert_eq!(by_source.total_delegations, 1);
         assert_eq!(by_source.delegations_with_nulled, 1);
     }
+
+    // ── Monotone provenance (weakest-link) wiring tests ─────────────────
+    //
+    // These tests pin the "conclusions-never-become-facts" rule (paper §6 /
+    // .rules) on the production enforcement path. `enforce_for_agent` calls
+    // `enforce_monotone_provenance` when the caller passes a non-empty
+    // `upstream_blocks`. The laundering case: a child agent receives a field
+    // as `Inferred` from the upstream delegation, then re-emits the same
+    // field as `Sourced` in its own output (claiming a tool sourced it). The
+    // rule caps the downstream provenance to the upstream's level — the
+    // field is downgraded to `Inferred` so the consumer cannot mistake a
+    // conclusion for a fact.
+    //
+    // Per .rules: "a grounding check that has never been falsified is
+    // inert." The test below MUST FAIL if the `enforce_monotone_provenance`
+    // call in `enforce_for_agent` is removed.
+
+    /// The laundering case, end-to-end through `enforce_for_agent`. The
+    /// child calls `zed/write_file` and emits `deliverable_path` — without
+    /// the cap, `enforce_grounding` tags it `Sourced` (strength 5). The
+    /// upstream blocks carry `deliverable_path` as `model_inference`
+    /// (`Inferred`, strength 3). The wired `enforce_for_agent` must downgrade
+    /// the child's tag to `Inferred` so the provenance is not laundered.
+    #[test]
+    fn monotone_provenance_wired_via_enforce_for_agent() {
+        let store = test_store();
+        // The child's output: a JSON object with `deliverable_path` sourced
+        // from a write_file tool call. Without the cap, this is `Sourced`.
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "I wrote the file."
+        });
+        let tool_calls = vec![
+            json!({ "tool": "zed/write_file", "ok": true, "result": {"path": "/src/main.rs"} }),
+        ];
+        // Upstream blocks: the parent delegation's envelope carried
+        // `deliverable_path` as `model_inference` (Inferred, strength 3).
+        // The child cannot claim stronger provenance for the same field.
+        let upstream_blocks =
+            vec![json!({ "field": "deliverable_path", "provenance": "model_inference" })];
+        let (result, _cleaned) = store.enforce_for_agent(
+            "swarm_pipeline_local",
+            "child_agent",
+            "task",
+            &output,
+            &tool_calls,
+            "I wrote the file.",
+            &upstream_blocks,
+        );
+        let result = result.expect("contract exists for task → grounding ran");
+        match result.provenance.get("deliverable_path") {
+            Some(crate::grounding::ProvenanceTag::Inferred) => {
+                // The cap downgraded Sourced → Inferred (strength 3 = upstream).
+            }
+            Some(other) => panic!(
+                "deliverable_path must be downgraded to Inferred (upstream was \
+                 model_inference, strength 3); got {other:?} — the monotone-provenance \
+                 cap is not wired (laundering case not caught)"
+            ),
+            None => panic!(
+                "deliverable_path must have a provenance tag; got None — grounding \
+                 did not stamp the field"
+            ),
+        }
+    }
+
+    /// The cap is a no-op when `upstream_blocks` is empty (backward-
+    /// compatible). A top-level delegation that passes `&[]` gets today's
+    /// behavior: `deliverable_path` sourced from a write_file tool call is
+    /// `Sourced` (strength 5), not downgraded.
+    #[test]
+    fn monotone_provenance_noop_when_upstream_blocks_empty() {
+        let store = test_store();
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "I wrote the file."
+        });
+        let tool_calls = vec![
+            json!({ "tool": "zed/write_file", "ok": true, "result": {"path": "/src/main.rs"} }),
+        ];
+        let (result, _cleaned) = store.enforce_for_agent(
+            "swarm_delegate_local",
+            "top_level_agent",
+            "task",
+            &output,
+            &tool_calls,
+            "I wrote the file.",
+            &[], // no upstream — top-level delegation
+        );
+        let result = result.expect("contract exists for task → grounding ran");
+        match result.provenance.get("deliverable_path") {
+            Some(crate::grounding::ProvenanceTag::Sourced { tool }) => {
+                assert_eq!(
+                    tool, "zed/write_file",
+                    "deliverable_path must be Sourced from the write_file tool \
+                     when no upstream cap applies"
+                );
+            }
+            other => panic!("deliverable_path must be Sourced (no upstream cap); got {other:?}"),
+        }
+    }
+
+    /// The cap preserves the sourcing tool when downgrading Sourced → Derived
+    /// (strength 4). When the upstream field is `platform_derived` (strength
+    /// 4), a child's `Sourced` field is capped to `Derived` with `from` = the
+    /// sourcing tool and `how` = `weakest_link_cap` — auditable, not a real
+    /// derivation. This is the `downgrade_to` Sourced→Derived cap (commit
+    /// b28d1aa9cd), exercised end-to-end through `enforce_for_agent`.
+    #[test]
+    fn monotone_provenance_caps_sourced_to_derived_at_strength_4() {
+        let store = test_store();
+        let output = json!({
+            "deliverable_path": "/src/main.rs",
+            "summary": "I wrote the file."
+        });
+        let tool_calls = vec![
+            json!({ "tool": "zed/write_file", "ok": true, "result": {"path": "/src/main.rs"} }),
+        ];
+        // Upstream: deliverable_path was platform_derived (strength 4).
+        let upstream_blocks =
+            vec![json!({ "field": "deliverable_path", "provenance": "platform_derived" })];
+        let (result, _cleaned) = store.enforce_for_agent(
+            "swarm_pipeline_local",
+            "child_agent",
+            "task",
+            &output,
+            &tool_calls,
+            "I wrote the file.",
+            &upstream_blocks,
+        );
+        let result = result.expect("contract exists for task → grounding ran");
+        match result.provenance.get("deliverable_path") {
+            Some(crate::grounding::ProvenanceTag::Derived { from, how }) => {
+                assert_eq!(
+                    from, "zed/write_file",
+                    "the cap preserves the sourcing tool as `from` for auditability"
+                );
+                assert_eq!(
+                    how, "weakest_link_cap",
+                    "`how` marks this as a weakest-link cap, not a real derivation"
+                );
+            }
+            other => panic!(
+                "deliverable_path must be capped to Derived {{ from, how: \
+                 weakest_link_cap }} (upstream was platform_derived, strength 4); \
+                 got {:?}",
+                other
+            ),
+        }
+    }
 }
 
 /// Property-based tests for the central grounding ledger.
@@ -1648,6 +1798,92 @@ mod proptests {
                 trend.total_delegations,
                 "every delegation is either: a violation, clean, unenforceable, or a coverage gap"
             );
+        }
+
+        /// **Property 7: Monotone provenance via `enforce_for_agent`.**
+        ///
+        /// The wired path: `enforce_for_agent` calls
+        /// `enforce_monotone_provenance` when `upstream_blocks` is non-empty.
+        /// After the call, no field's provenance strength may exceed the
+        /// same-named upstream field's strength (the weakest-link rule,
+        /// paper §6 / .rules). This exercises the wired path end-to-end —
+        /// not just the function in isolation (which is covered by
+        /// `prop_monotone_provenance_never_exceeds_upstream` in
+        /// grounding.rs). If the `enforce_monotone_provenance` call in
+        /// `enforce_for_agent` is removed, this property fails.
+        #[test]
+        fn prop_monotone_provenance_never_exceeds_upstream_via_store(
+            output in arb_output_for_grounding(),
+            tool_calls in prop::collection::vec(
+                ("[a-z][a-z0-9_/]{0,20}", any::<bool>())
+                    .prop_map(|(tool, ok)| json!({ "tool": tool, "ok": ok, "result": {"path": "/x"} })),
+                0..6,
+            ),
+            upstream in prop::collection::vec(
+                (proptest::sample::select(vec![
+                     "deliverable_path".to_string(),
+                     "test_verdict".to_string(),
+                     "summary".to_string(),
+                     "approach".to_string(),
+                     "extra_field".to_string(),
+                 ]),
+                 prop::sample::select(vec![
+                     "tool_verified".to_string(),
+                     "platform_derived".to_string(),
+                     "model_inference".to_string(),
+                     "uncommissioned_inference".to_string(),
+                     "narrative".to_string(),
+                     "tool_no_match".to_string(),
+                     "unavailable_no_tool_source".to_string(),
+                 ]))
+                    .prop_map(|(field, prov)| json!({ "field": field, "provenance": prov })),
+                0..8,
+            ),
+        ) {
+            let store = VerificationStore::in_memory();
+            let (result, _cleaned) = store.enforce_for_agent(
+                "swarm_pipeline_local",
+                "child_agent",
+                "task", // contract exists for "task"
+                &output,
+                &tool_calls,
+                "",
+                &upstream,
+            );
+            // Only check when grounding ran (output was a JSON object with
+            // a contract). Non-object output → no grounding result.
+            if let Some(result) = result {
+                // Build the upstream strength map.
+                let upstream_strength: std::collections::HashMap<&str, u8> = upstream
+                    .iter()
+                    .filter_map(|b| {
+                        let field = b.get("field")?.as_str()?;
+                        let prov = b.get("provenance")?.as_str()?;
+                        let s = match prov {
+                            "tool_verified" => 5,
+                            "platform_derived" => 4,
+                            "model_inference" => 3,
+                            "uncommissioned_inference" => 2,
+                            "narrative" => 1,
+                            "tool_no_match" | "unavailable_no_tool_source" => 0,
+                            _ => return None,
+                        };
+                        Some((field, s))
+                    })
+                    .collect();
+                for (field, tag) in &result.provenance {
+                    if let Some(&up_s) = upstream_strength.get(field.as_str()) {
+                        let now = crate::grounding::provenance_strength(tag);
+                        prop_assert!(
+                            now <= up_s,
+                            "field `{}` strength {} exceeds upstream {} — \
+                             weakest-link violated via enforce_for_agent (the wired \
+                             path did not cap the provenance)",
+                            field, now, up_s
+                        );
+                    }
+                }
+            }
         }
     }
 }
