@@ -73,8 +73,6 @@ impl CodeGraphServer {
 
     fn ensure_indexed(&self) -> Result<(), McpToolError> {
         // Fast path: if we've already indexed, skip the walk entirely.
-        // The BLAKE3 hash check inside index_directory still catches changed
-        // files on the next explicit codegraph_reindex call.
         if self.indexed_once.load(std::sync::atomic::Ordering::Acquire) {
             return Ok(());
         }
@@ -82,20 +80,43 @@ impl CodeGraphServer {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut pipeline = self.pipeline_guard()?;
 
-        // File-access scoping (#5): future integration point.
-        // When per-agent path scoping is wired, filter paths here before
-        // passing to index_directory.
-        // For now: index entire workspace (standalone mode).
+        // If the database already has symbols, skip the full re-index walk.
+        // The database was populated by a prior server run; the hash-check walk
+        // (index_directory) takes minutes on large workspaces and blocks every
+        // MCP call behind ensure_indexed, causing 60s context server timeouts.
+        // The data is already valid — codegraph_reindex is the explicit way to
+        // refresh after code changes.
+        let existing_symbols = pipeline.store().symbol_count().unwrap_or(0);
+        if existing_symbols > 0 {
+            tracing::info!(
+                target: "hkask.mcp.codegraph",
+                symbols = existing_symbols,
+                "Database already has symbols — skipping index walk"
+            );
+            self.indexed_once
+                .store(true, std::sync::atomic::Ordering::Release);
+            return Ok(());
+        }
+
+        // First-ever run: index the workspace.
         let results = pipeline
             .index_directory(&cwd)
             .map_err(map_codegraph_error)?;
 
         let total: usize = results.iter().map(|r| r.symbols).sum();
-        tracing::info!(target: "hkask.mcp.codegraph", symbols = total, "Auto-indexed");
+        let all_skipped = !results.is_empty() && results.iter().all(|r| r.skipped);
+        tracing::info!(target: "hkask.mcp.codegraph", symbols = total, all_skipped, "Auto-indexed");
 
-        // Compute PageRank and emit health Regulation events (G7, G8)
-        if let Err(e) = pipeline.finalize() {
-            tracing::warn!(target: "hkask.mcp.codegraph", error = %e, "Finalize failed");
+        // Skip PageRank recomputation when no files changed — the existing
+        // pagerank values from the previous index are still valid. PageRank
+        // over 670K symbols + 1M edges takes minutes and blocks every MCP
+        // call behind ensure_indexed, causing 60s context server timeouts.
+        if !all_skipped {
+            if let Err(e) = pipeline.finalize() {
+                tracing::warn!(target: "hkask.mcp.codegraph", error = %e, "Finalize failed");
+            }
+        } else {
+            tracing::info!(target: "hkask.mcp.codegraph", "All files skipped — skipping PageRank recomputation");
         }
 
         // Mark as indexed so subsequent read tool calls skip the walk.

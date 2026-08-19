@@ -84,7 +84,6 @@ pub struct TaskBody {
     /// is running a task at a glance. `None` on tasks not scoped to a swarm.
     #[serde(default)]
     pub swarm_id: Option<String>,
-    #[serde(default)]
     /// The latest recorded activity on this task (R3) — a one-line status strip
     /// rendered on the card. Emitted by the server (derived from the most recent
     /// comment). `None` on tasks with no recorded activity.

@@ -490,18 +490,6 @@ impl KanbanWidget {
                         ),
                 )
             })
-            .when_some(task.gas_remaining, |this, gas| {
-                this.child(
-                    div()
-                        .id(format!("kanban-gas-{}", task.task_id))
-                        .tooltip(Tooltip::text("Gas remaining (software budget)"))
-                        .child(
-                            Label::new(format!("⛽ {gas}"))
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                        ),
-                )
-            })
             .when_some(task.ontology.clone(), |this, ontology| {
                 this.child(
                     div()
@@ -865,17 +853,17 @@ impl KanbanWidget {
             );
         }
 
-        // Gas spend log.
-        if !task.gas_spend.is_empty() {
+        // Spend log.
+        if !task.spend_log.is_empty() {
             panel = panel.child(
                 v_flex()
                     .gap_1()
                     .child(
-                        Label::new(format!("Spend log ({})", task.gas_spend.len()))
+                        Label::new(format!("Spend log ({})", task.spend_log.len()))
                             .size(LabelSize::XSmall)
                             .color(Color::Muted),
                     )
-                    .children(task.gas_spend.iter().map(|entry| {
+                    .children(task.spend_log.iter().map(|entry| {
                         Label::new(format!(
                             "{} {} — {}",
                             entry.amount, entry.kind, entry.reason
@@ -1194,7 +1182,7 @@ mod tests {
             description: None,
             assignee: None,
             swarm_id: None,
-            gas_remaining: None,
+            
             activity: None,
             ontology: None,
             priority: None,
@@ -1202,7 +1190,7 @@ mod tests {
             criteria: Vec::new(),
             comments: Vec::new(),
             verification: None,
-            gas_spend: Vec::new(),
+            spend_log: Vec::new(),
         }
     }
 
@@ -2101,7 +2089,7 @@ mod tests {
 
     #[gpui::test]
     async fn detail_popover_empty_when_no_extras(cx: &mut gpui::TestAppContext) {
-        // B3: a task with no criteria/comments/verification/gas_spend still
+        // B3: a task with no criteria/comments/verification/spend_log still
         // opens the detail panel (it shows the title + description only).
         let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
         let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(body, cx)));
@@ -2118,7 +2106,7 @@ mod tests {
             "detail panel opens even with no extras"
         );
 
-        let (criteria, comments, verification, gas_spend) = widget.read_with(cx, |this, _| {
+        let (criteria, comments, verification, spend_log) = widget.read_with(cx, |this, _| {
             let task = this
                 .columns
                 .iter()
@@ -2128,11 +2116,11 @@ mod tests {
                 task.criteria.is_empty(),
                 task.comments.is_empty(),
                 task.verification.is_none(),
-                task.gas_spend.is_empty(),
+                task.spend_log.is_empty(),
             )
         });
         assert!(
-            criteria && comments && verification && gas_spend,
+            criteria && comments && verification && spend_log,
             "all extras empty"
         );
     }

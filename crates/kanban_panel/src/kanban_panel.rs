@@ -438,7 +438,6 @@ struct TaskInfo {
     #[serde(default)]
     assignee: Option<String>,
     #[serde(default)]
-    #[serde(default)]
     swarm_id: Option<String>,
     #[serde(default)]
     activity: Option<TaskActivityInfo>,
