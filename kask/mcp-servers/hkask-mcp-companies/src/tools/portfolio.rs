@@ -520,6 +520,7 @@ mod tests {
         let pm = PortfolioManager::with_dir(dir.path().to_path_buf());
         CompaniesServer::new(
             WebID::default(),
+            std::sync::Arc::new(hkask_verification::VerificationStore::in_memory()),
             reqwest::Client::new(),
             String::new(),
             String::new(),
@@ -624,6 +625,7 @@ mod tests {
         pm.add_transaction("test", &deposit_tx("d1", "2024-01-02", 20000.0))?;
         let server = CompaniesServer::new(
             WebID::default(),
+            std::sync::Arc::new(hkask_verification::VerificationStore::in_memory()),
             reqwest::Client::new(),
             String::new(),
             String::new(),

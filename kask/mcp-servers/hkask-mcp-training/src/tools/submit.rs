@@ -460,6 +460,7 @@ mod tests {
         let adapter_store = AdapterStore::from_driver(driver).expect("adapter store init");
         TrainingServer::new(
             WebID::new(),
+            std::sync::Arc::new(hkask_verification::VerificationStore::in_memory()),
             None, // store: Option<MemoryStore> — unused by training_submit
             Box::new(UnreachedHost),
             TrainingHostId::DeepInfra,

@@ -359,6 +359,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
             Ok(SwarmServer::new(
                 ctx.webid,
+                std::sync::Arc::new(hkask_verification::VerificationStore::open()),
                 std::sync::Arc::new(SwarmClient::new(
                     reqwest::Client::builder()
                         .connect_timeout(std::time::Duration::from_secs(10))
@@ -372,7 +373,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 local_runtime,
                 local_swarms,
                 local_memory,
-                std::sync::Arc::new(hkask_verification::VerificationStore::open()),
             ))
         },
         vec![CredentialRequirement::optional(

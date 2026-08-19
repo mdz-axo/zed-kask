@@ -1075,12 +1075,9 @@ impl StepMachine {
 
         let sub_outcome = Box::pin(sub_machine.run(infra.clone())).await?;
 
-        // Extract the sub-cascade's final result.
-        let result_value = sub_outcome
-            .last_result_step
-            .and_then(|step_id| sub_outcome.context.result(step_id))
-            .map(|r| crate::executor::normalize_model_output(&r.value).into_owned())
-            .unwrap_or(Value::Null);
+        // Extract the sub-cascade's final result via the canonical selector
+        // (same as `execute_parallel`): `last_result_step` → normalize.
+        let result_value = crate::executor::extract_final_step_result(&sub_outcome);
 
         // Merge the sub-cascade's updates back into the parent — keep only the
         // parent's original keys (step ids, protocol keys, named keys); drop

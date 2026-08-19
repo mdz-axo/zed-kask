@@ -1704,6 +1704,7 @@ mod grounding_wiring_tests {
         let config = SwarmConfig::default();
         let server = SwarmServer::new(
             WebID::for_agent_name("test-operator"),
+            verification_store.clone(),
             std::sync::Arc::new(crate::abw_client::SwarmClient::new(
                 reqwest::Client::new(),
                 config,
@@ -1719,7 +1720,6 @@ mod grounding_wiring_tests {
                 "short".to_string(),
                 1024,
             )),
-            verification_store.clone(),
         );
         (server, verification_store)
     }
@@ -1807,6 +1807,7 @@ mod grounding_wiring_tests {
         let config = SwarmConfig::default();
         let server = SwarmServer::new(
             WebID::for_agent_name("test-operator"),
+            verification_store.clone(),
             std::sync::Arc::new(crate::abw_client::SwarmClient::new(
                 reqwest::Client::new(),
                 config,
@@ -1822,7 +1823,6 @@ mod grounding_wiring_tests {
                 "short".to_string(),
                 1024,
             )),
-            verification_store.clone(),
         );
         (server, verification_store)
     }

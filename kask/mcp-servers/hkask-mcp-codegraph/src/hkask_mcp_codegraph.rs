@@ -824,6 +824,7 @@ mod tests {
         // never walks the real cwd — the store is pre-populated above.
         let server = CodeGraphServer::new(
             webid,
+            Arc::new(hkask_verification::VerificationStore::in_memory()),
             CapabilityTier::detect(&webid, &std::collections::HashMap::new()),
             Arc::new(Mutex::new(pipeline)),
             Arc::new(AtomicBool::new(true)),
@@ -974,6 +975,7 @@ mod tests {
         let webid = WebID::new();
         let server = CodeGraphServer::new(
             webid,
+            Arc::new(hkask_verification::VerificationStore::in_memory()),
             CapabilityTier::detect(&webid, &std::collections::HashMap::new()),
             Arc::new(Mutex::new(pipeline)),
             Arc::new(AtomicBool::new(true)),

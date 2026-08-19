@@ -34,6 +34,7 @@ fn forecast_store_starts_empty() {
 fn test_server() -> ScenariosServer {
     ScenariosServer::new(
         WebID::new(),
+        std::sync::Arc::new(hkask_verification::VerificationStore::in_memory()),
         Arc::new(Mutex::new(ForecastStore::new(None))),
         Mutex::new(None),
         Mutex::new(HashSet::new()),
