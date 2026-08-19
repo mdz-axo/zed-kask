@@ -13,6 +13,12 @@ use hkask_forecast as forecast;
 
 // ── Re-exports from hkask-forecast (pure pass-throughs eliminated) ───────
 pub use forecast::{bayesian_update, brier_interpretation, brier_score, outside_view_adjustment};
+// R3: shared CMP-index provenance bridge contract — re-exported so the
+// `scenario_from_cmp_indices` emitter and the companies `EventTreeProjection`
+// deserializer share one type-level source of truth. The pin test
+// `scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree` enforces
+// that this emitter populates the full 7-field shape.
+pub use forecast::CmpIndexProvenance;
 // ── Forecast math (pure deterministic functions) ───────────────────────────
 // Extracted to `superforecast/math.rs` (deep-module split: the pure math — Fermi
 // decomposition, event-tree propagation, Brier scoring, sensitivity ranking — is

@@ -228,14 +228,17 @@ Full per-property evidence and the VSM/Ashby analysis are in the audit.
 ## Registry
 
 Registry is authoritative — when this SKILL.md disagrees with registry
-templates, the registry wins.
+templates, the registry wins. rJoule cap: 3 per invocation; maximum 10 iterations.
 
 - Template manifest: `kask/registry/templates/swarm-intelligence/manifest.yaml`
-- Templates: `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check}.j2`
-- Reference: `kask/registry/templates/swarm-intelligence/swarm-patterns.yaml`
-- Process manifest: `kask/registry/manifests/swarm-intelligence.yaml` (10 steps:
-  SENSE, ORIENT, DECIDE, FILTER, ACT, CHECK, convergence_check,
-  converge_accumulate, second_order_monitor, LOOP)
+- Templates: `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check,compose-guide}.j2`
+- Reference: `kask/registry/templates/swarm-intelligence/swarm-patterns.yaml` (RenderAct — PSO/ACO/Reynolds/Onto4MAT tuning palette; not sent to the LLM)
+- Process manifest: `kask/registry/manifests/swarm-intelligence.yaml` (15 steps:
+  swarm_get_swarm + swarm_get_local_swarm (execute) → SENSE → ORIENT → DECIDE →
+  FILTER (swarm.filter_proposed_moves) → ACT → re-measure (execute ×2) → CHECK →
+  converge_accumulate → second_order_monitor → lisp.eval convergence signal → LOOP)
+- `swarm-compose-guide.j2` is also invoked standalone by the `swarm-compose-guide`
+  skill (its own process manifest renders the same template).
 - Deterministic compute primitives: `swarm.converge_accumulate`,
   `swarm.second_order_monitor`, `swarm.filter_proposed_moves` (in
   `hkask-templates/src/compute.rs`)

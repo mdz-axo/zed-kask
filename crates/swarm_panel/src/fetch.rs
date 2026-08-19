@@ -450,28 +450,16 @@ impl SwarmPanel {
                 })
                 .ok();
 
-                // 4. Local ledger balance (independent of the agent lists, but
-                // kept in the same task for simplicity). A failure leaves the
-                // balance unknown (None), never a fabricated zero.
-                let balance_result = invoker
-                    .invoke_tool(SWARM_SERVER, "swarm_balance_local", json!({}))
-                    .await;
-                this.update(cx, |this, cx| {
-                    this.in_flight = this.in_flight.saturating_sub(1);
-                    match balance_result {
-                        Ok(output) => {
-                            let parsed = parse_tool_response(&output);
-                            if let Some(content) = parsed {
-                                this.spend.local_balance =
-                                    content.get("balance").and_then(|b| b.as_i64());
-                            }
-                        }
-                        Err(err) => {
-                            log::debug!(
-                                "swarm-panel: local balance fetch failed (non-fatal): {err}"
-                            );
-                        }
-                    }
+                // 4. End of the combined task — decrement `in_flight` here.
+                // The local ledger balance is NOT fetched: the local ledger is
+                // accounting-only (it records accumulated local spend and may
+                // legitimately be negative — see `steer_system_prompt`), not a
+                // spendable wallet. Surfacing it in the header would present
+                // it as a budget the operator must track, which is not how
+                // local swarms work. `swarm_balance_local` remains available
+                // to the curator in Steer for reconciliation.
+                this.update(cx, |_this, cx| {
+                    _this.in_flight = _this.in_flight.saturating_sub(1);
                     cx.notify();
                 })
                 .ok();

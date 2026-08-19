@@ -442,6 +442,27 @@ fn target_on_surface_entry(
     }
 }
 
+/// Whether a form status line should render as a warning. Statuses are
+/// plain strings set from ~25 call sites; rather than threading a severity
+/// enum through all of them, the render sites classify via this one
+/// documented convention. A false positive only recolors a line (cosmetic);
+/// the convention is pinned by tests so drift is caught.
+///
+/// Errors/warnings contain: "failed", "cannot", "required", "not wired",
+/// "not created", "unavailable", or the strip-warning for local names.
+pub(crate) fn status_is_warning(status: &str) -> bool {
+    const WARNING_MARKERS: [&str; 7] = [
+        "failed",
+        "cannot",
+        "required",
+        "not wired",
+        "not created",
+        "unavailable",
+        "will be stripped",
+    ];
+    WARNING_MARKERS.iter().any(|marker| status.contains(marker))
+}
+
 /// The three surfaces of the panel: browsing existing agents/swarms, authoring
 /// a new agent, and composing agents into a swarm. Sharing (extensions) is
 /// represented by the browse surface's discovery role.
@@ -475,8 +496,11 @@ enum SwarmEntry {
 struct SpendState {
     in_flight: Option<String>,
     pending_hire: Option<PendingHire>,
+    /// The operator's ABW credit wallet — the only spendable balance. Hires
+    /// on cloud swarms draw from it, so it is tracked and always visible
+    /// when known. Local swarms have no credit concept (the local ledger is
+    /// accounting-only and is not surfaced here).
     wallet_balance: Option<i64>,
-    local_balance: Option<i64>,
     hire_error: Option<SharedString>,
 }
 
@@ -839,7 +863,6 @@ impl SwarmPanel {
                     in_flight: None,
                     pending_hire: None,
                     wallet_balance: None,
-                    local_balance: None,
                     hire_error: None,
                 },
                 detail: DetailState {
@@ -2253,7 +2276,6 @@ impl SwarmPanel {
     fn render_consent_banner(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let pending = self.spend.pending_hire.clone()?;
         let border = cx.theme().colors().border;
-        let warning = cx.theme().status().warning;
 
         let cost_line = if pending.optional_cost > 0 {
             format!(
@@ -2335,16 +2357,13 @@ impl SwarmPanel {
                                     this.cancel_hire(cx);
                                 })),
                         ),
-                )
-                .when(!pending.within_budget, |this| {
-                    this.child(div().w_full().h(px(2.)).bg(warning))
-                }),
+                ),
         )
     }
 
-    // ── AI Assist render helpers ───────────────────────────────────────────
+    // ── AI Assist render helpers ───────────────────────────────────────
     //
-    // `render_ai_assist_row` is the two-button row (✨ AI Assist / ✓ Validate)
+    // `render_ai_assist_row` is the two-button row (AI Assist / Validate)
     // shown on both the Author and Compose surfaces. `render_ai_suggestions_banner`
     // and `render_validation_banner` mirror `render_publish_banner`: a bordered
     // box with Apply/Dismiss (suggestions) or a success/issues list (validation).
@@ -2371,7 +2390,7 @@ impl SwarmPanel {
             .gap_2()
             .items_center()
             .child(
-                Button::new(format!("ai-assist-{surface}"), "✨ AI Assist")
+                Button::new(format!("ai-assist-{surface}"), "AI Assist")
                     .style(ButtonStyle::Subtle)
                     .label_size(LabelSize::XSmall)
                     .disabled(disabled)
@@ -2384,7 +2403,7 @@ impl SwarmPanel {
                     })),
             )
             .child(
-                Button::new(format!("ai-validate-{surface}"), "✓ Validate")
+                Button::new(format!("ai-validate-{surface}"), "Validate")
                     .style(ButtonStyle::Subtle)
                     .label_size(LabelSize::XSmall)
                     .disabled(disabled)
@@ -2444,7 +2463,7 @@ impl SwarmPanel {
                         h_flex()
                             .gap_2()
                             .items_center()
-                            .child(Label::new("✨ AI Assist").color(Color::Accent))
+                            .child(Label::new("AI Assist").color(Color::Accent))
                             .child(
                                 Label::new("No suggestions — the fields look complete.")
                                     .size(LabelSize::Small)
@@ -2475,7 +2494,7 @@ impl SwarmPanel {
                     h_flex()
                         .gap_2()
                         .items_center()
-                        .child(Label::new("✨ AI Assist").color(Color::Accent))
+                        .child(Label::new("AI Assist").color(Color::Accent))
                         .child(
                             Label::new("Suggested completions:")
                                 .size(LabelSize::Small)
@@ -2537,11 +2556,10 @@ impl SwarmPanel {
             return None;
         }
         let border = cx.theme().colors().border;
-        let warning = cx.theme().status().warning;
         let header = if v.valid {
-            "✓ Validation passed"
+            "Validation passed"
         } else {
-            "✗ Validation found issues"
+            "Validation found issues"
         };
         Some(
             v_flex()
@@ -2584,10 +2602,7 @@ impl SwarmPanel {
                                 this.dismiss_validation(cx);
                             })),
                     ),
-                )
-                .when(!v.valid, |this| {
-                    this.child(div().w_full().h(px(2.)).bg(warning))
-                }),
+                ),
         )
     }
 
@@ -2597,7 +2612,6 @@ impl SwarmPanel {
     fn render_publish_banner(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let pending = self.publish.pending.clone()?;
         let border = cx.theme().colors().border;
-        let warning = cx.theme().status().warning;
         let busy = self.spend.in_flight.is_some();
 
         let header = if pending.can_publish {
@@ -2678,10 +2692,7 @@ impl SwarmPanel {
                                     this.cancel_publish(cx);
                                 })),
                         ),
-                )
-                .when(!pending.can_publish, |this| {
-                    this.child(div().w_full().h(px(2.)).bg(warning))
-                }),
+                ),
         )
     }
 }
@@ -2742,24 +2753,12 @@ impl Render for SwarmPanel {
                             // balance is always visible when known, so a spend
                             // never happens out of sight. Hidden when unknown
                             // (unauthenticated) — never a fabricated zero.
+                            // Scoped "ABW" because credits are a cloud concept
+                            // only: local swarms have no credit budget, so no
+                            // local balance is shown here.
                             .when_some(self.spend.wallet_balance, |this, balance| {
                                 this.child(
-                                    Label::new(format!("⛽ {balance} credits"))
-                                        .size(LabelSize::Small)
-                                        .color(if balance <= 0 {
-                                            Color::Warning
-                                        } else {
-                                            Color::Muted
-                                        }),
-                                )
-                            })
-                            // The local ledger balance (operator-funded) is an
-                            // independent algedonic channel — shown whenever
-                            // known, alongside the ABW balance. Both backends
-                            // are always live, so neither is gated on the other.
-                            .when_some(self.spend.local_balance, |this, balance| {
-                                this.child(
-                                    Label::new(format!("■ {balance} local credits"))
+                                    Label::new(format!("{balance} ABW credits"))
                                         .size(LabelSize::Small)
                                         .color(if balance <= 0 {
                                             Color::Warning
@@ -3296,6 +3295,44 @@ mod tests {
             target_on_surface_entry(PanelMode::Steer, false, CreateTarget::Local),
             None
         );
+    }
+
+    // ── Status severity convention ────────────────────────────────────────
+    //
+    // The form status line renders every message in Muted, so a failed
+    // create reads the same as a success (the "reassuring" finding). The
+    // render sites classify via `status_is_warning`; these tests pin the
+    // marker list against the actual message strings the panel produces.
+
+    #[test]
+    fn status_severity_flags_the_real_error_messages() {
+        // Validation gates (create_swarm / create_agent).
+        assert!(status_is_warning("Swarm name is required."));
+        assert!(status_is_warning(
+            "Mission is required to launch a swarm. Describe what the swarm should do."
+        ));
+        assert!(status_is_warning("Name and system prompt are required."));
+        // Failure paths.
+        assert!(status_is_warning("Create failed: connection reset"));
+        assert!(status_is_warning(
+            "Consent failed for atlas — swarm not created."
+        ));
+        assert!(status_is_warning("Tool invoker not wired."));
+        assert!(status_is_warning("AI Assist unavailable: timeout"));
+        assert!(status_is_warning(
+            "ABW agents cannot be updated from this panel. Clone to Local to edit."
+        ));
+        assert!(status_is_warning(
+            "Name contains characters that will be stripped on the local substrate."
+        ));
+    }
+
+    #[test]
+    fn status_severity_leaves_progress_and_success_muted() {
+        assert!(!status_is_warning("Loading agent details…"));
+        assert!(!status_is_warning("Deleting agent…"));
+        assert!(!status_is_warning("Local swarm 'atlas' created."));
+        assert!(!status_is_warning("Agent 'researcher' created."));
     }
 
     /// Only transport-level failures drive a retry. A tool that ran and failed,

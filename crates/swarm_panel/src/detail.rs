@@ -39,9 +39,11 @@ impl SwarmPanel {
                     .gap_2()
                     .items_center()
                     .child(
-                        Button::new("back-to-swarms", "← Back")
-                            .style(ButtonStyle::Subtle)
-                            .label_size(LabelSize::XSmall)
+                        // Icon back button — the same ArrowLeft pattern the ui
+                        // crate's modal header uses, instead of a text arrow
+                        // glyph that appears nowhere else in the visual language.
+                        IconButton::new("back-to-swarms", IconName::ArrowLeft)
+                            .icon_size(IconSize::Small)
                             .tooltip(Tooltip::text("Back to the swarm list."))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.close_swarm_detail(cx);

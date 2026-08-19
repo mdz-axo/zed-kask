@@ -1,12 +1,12 @@
 ---
 name: company-research-flash
 visibility: public
-description: "Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequential 29-step flowdef: SCOUT alpha score → INTEL business context + earnings listening + pragmatic-semantics certainty classification → FORENSIC pre-screen → CRITICAL FACTOR Bull/Base/Bear → FORENSIC full audit → VALUATION 8-step (4 native MCP tool calls + LLM synthesis) → COMMUNICATION ENTER gate + CASCADE note → KATA PDCA (2 native MCP tool calls + cross-skill reuse) + metacognition calibration gap measurement → LENS five-framework audit (2 native MCP tool calls + LLM synthesis) → convergence check → loop on PARTIAL. MCP tool calls are native action: execute steps; templates do LLM synthesis over their outputs. Early-exit gates (DROP / HALT / BLOCK) are condition: on downstream steps. Converges on LENS verdict consistency."
+description: "Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequential 23-step flowdef: SCOUT alpha score → INTEL business context + earnings listening + pragmatic-semantics certainty classification → FORENSIC pre-screen → CRITICAL FACTOR Bull/Base/Bear → FORENSIC full audit → VALUATION 8-step (native mcp_batch of 4 MCP tool calls + LLM synthesis) → COMMUNICATION ENTER gate + CASCADE note → KATA PDCA (2 native MCP tool calls + cross-skill reuse) + metacognition calibration gap measurement → LENS five-framework audit (2 native MCP tool calls + LLM synthesis) → convergence check → loop on PARTIAL → forecast persist. MCP tool calls are native action: execute steps; templates do LLM synthesis over their outputs. Early-exit gates (DROP / HALT / BLOCK) are condition: on downstream steps. Converges on LENS verdict consistency."
 ---
 
 # Company Research — Flash Pipeline
 
-Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequential 14-step flowdef producing a flash note / initiation report. MCP tool calls (dcf_valuation, comparable_analysis, expectations_gap, scenario_impact_valuation, market_check_resolutions, market_calibration, market_match, evaluate_evidence, company_transcript, scenario_build, research_search, web_search) are native `action: execute` flowdef steps; templates do LLM synthesis over their outputs.
+Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequential 23-step flowdef producing a flash note / initiation report. MCP tool calls (forecast_list, research_search, web_search, company_transcript, scenario_build, dcf_valuation, comparable_analysis, expectations_gap, scenario_impact_valuation, market_check_resolutions, market_calibration, market_match, evaluate_evidence, forecast_persist) are native `action: execute` flowdef steps; templates do LLM synthesis over their outputs.
 
 ## When to Use
 
@@ -75,13 +75,13 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Sequ
 ### lens-five-frameworks
 
 1. Apply the five intellectual frameworks: The Loop (economic potential, variant expectations, valuation anchor), Superforecasting (granular probabilities, outside view via market_match, certainty-level drift via semantic_tags), Dunning-Kruger (process_confidence vs final_confidence gap, calibration_gap from kata-calibration-measure), Hidden Champions (Simon 8 characteristics), Kauffman (ergodic vs nonergodic, adjacent possible).
-2. Reason over market_match (step 10) and evaluate_evidence (step 11) outputs plus all prior pipeline outputs.
+2. Reason over market_match and evaluate_evidence outputs (step 18 mcp_batch) plus all prior pipeline outputs.
 3. Emit overall_verdict (CONSISTENT / PARTIAL / INCONSISTENT — the convergence signal), key_tensions, pm_memo (200 words). Never blocks publication.
 
 ### kata-calibration-measure
 
-1. Close the open kata loop — step 22 (kata-improvement-step1-direction) sets the direction but never measures the gap.
-2. Measure the analyst's calibration gap using the market_calibration Brier score (step 20) and resolved_outcomes (step 19).
+1. Close the open kata loop — step 16 (kata-improvement-step1-direction) sets the direction but never measures the gap.
+2. Measure the analyst's calibration gap using the market_calibration Brier score and resolved_outcomes (step 15 mcp_batch).
 3. Emit calibration_gap (0.0 calibrated → 1.0 maximum gap). No prediction recorded = 1.0 (broken feedback loop, not neutral).
 4. LENS consumes calibration_gap as a 6th axis alongside the existing five frameworks.
 
@@ -91,10 +91,29 @@ The flash pipeline converges on LENS verdict consistency: CONSISTENT = 0.0 (full
 
 ## Cross-Skill Composition
 
-- Step 3b reuses `listening/apply-template` (MAIA v3 earnings-call listening, no-fabrication invariant).
-- Step 5 reuses `pragmatic-semantics/semantics-classify-statement` (via `company-research/intel-semantic-classify` adapter) — classifies intel items by IS/OUGHT, declarative/probabilistic/subjunctive before downstream steps consume them.
-- Step 9c reuses `kata-improvement/improvement-step1-direction` (Toyota Improvement Kata step 1).
-- Step 21 reuses `metacognition/meta-experiment` (via `company-research/kata-calibration-measure` adapter) — closes the open kata loop by measuring the calibration gap using the market_calibration Brier score.
+- Step 6 reuses the full `listening` skill as a sub-flowdef (MAIA v3 earnings-call listening, no-fabrication invariant).
+- Step 4 reuses `pragmatic-semantics/semantics-classify-statement` (via `company-research/intel-semantic-classify` adapter) — classifies intel items by IS/OUGHT, declarative/probabilistic/subjunctive before downstream steps consume them.
+- Step 16 reuses `kata-improvement/improvement-step1-direction` (Toyota Improvement Kata step 1).
+- Step 17 reuses `metacognition/meta-experiment` (via `company-research/kata-calibration-measure` adapter) — closes the open kata loop by measuring the calibration gap using the market_calibration Brier score.
+
+## Registry Templates
+
+All templates live in the shared `kask/registry/templates/company-research/` crate (used by both the flash and deep pipelines):
+
+| Template | Type | Purpose |
+|----------|------|---------|
+| `scout-alpha-score.j2` | WordAct | SCOUT — coverage universe optimizer: alpha score + 11-criterion excellence universe; emits MUST_COVER / REVIEW_ZONE / DROP. |
+| `intel-mosaic.j2` | WordAct | INTEL — business context 8-step + information mosaic; emits mosaic_clear (MNPI HALT gate), hypotheses, data_gaps. |
+| `intel-semantic-classify.j2` | KnowAct | INTEL — pragmatic-semantics certainty classification of news items and hypotheses; prevents certainty-level drift. |
+| `forensic-pre-screen.j2` | WordAct | FORENSIC — quick risk pre-screen (SEV-1..5); emits CLEAR+adj / CONDITIONAL / BLOCK. |
+| `critical-factor.j2` | WordAct | CRITICAL FACTOR — Bull/Base/Bear thesis engine with granular probabilities and EPS impact. |
+| `forensic-full.j2` | WordAct | FORENSIC — full audit: accruals quality, governance, management profile from transcript quotes. |
+| `valuation-8step.j2` | WordAct | VALUATION — 8-step price target synthesis over four MCP tool outputs; emits pt_12m, rr_ratio, rating, FaVeS. |
+| `communication-enter.j2` | WordAct | COMMUNICATION — ENTER gate (Edge/New/Timely/Examples/Revealing) + CASCADE-format research note. |
+| `lens-five-frameworks.j2` | KnowAct | LENS — five-framework consistency audit (The Loop, Superforecasting, Dunning-Kruger, Hidden Champions, Kauffman); emits CONSISTENT / PARTIAL / INCONSISTENT. |
+| `kata-calibration-measure.j2` | KnowAct | KATA — metacognition adapter measuring the analyst calibration gap from the market_calibration Brier score. |
+
+The deep-only templates (`company-8part.j2`, `falstaffian-competitive-rotation.j2`, `wardley-anchor.j2`, `gorilla-4dim.j2`, `gorilla-capability-reason.j2`, `economic-trajectory.j2`, `imagine-longrange.j2`, `thesis-three-pillars.j2`, `thesis-essentialist.j2`) are documented in the `company-research-deep` SKILL.md.
 
 ## MCP Tool Integration
 

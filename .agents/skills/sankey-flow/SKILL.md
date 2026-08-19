@@ -1,11 +1,11 @@
 ---
 name: sankey-flow
-description: "Dynamic Sankey flow diagramming. Takes a natural-language prompt, classifies the flow domain, gathers quantities, and renders a Mermaid sankey-beta diagram in Zed. Runs an interrogation loop when the prompt under-specifies nodes, links, or weights."
+description: "Dynamic Sankey flow diagramming. Takes a natural-language prompt, matches it against a library of canonical Sankey examples (income statement, budget, data pipeline, funnel, balance sheet, process flow), adapts the matched example's structure to the user's data, and renders a Mermaid sankey-beta diagram in Zed. Per-domain conservation modes. Never fabricates weights."
 ---
 
 # Sankey Flow
 
-Dynamic, template-driven Sankey diagramming. Given a prompt, determine the flow domain that is most relevant, gather the weighted edges needed to draw it, and render a Mermaid `sankey-beta` diagram. When the prompt under-specifies the graph (missing nodes, links, or weights), run a minimum-question interrogation loop before drafting — do not invent quantities. When the prompt references external sources (URLs, financial statements, codebases), delegate extraction to analytical skills rather than asking the user to transcribe data.
+Dynamic, example-anchored Sankey diagramming. Given a prompt, match it against a library of canonical Sankey examples, adapt the matched example's structure to the user's actual data, and render a Mermaid `sankey-beta` diagram. Missing data is marked as placeholder (value=1) — do not invent quantities, and do not interrogate the user. When the prompt references external sources (URLs, financial statements, codebases), delegate extraction to analytical skills rather than asking the user to transcribe data. Single pass — no multi-iteration PDCA loop; the adapt step self-corrects against the matched example's structure.
 
 ## Ontological Grounding
 
@@ -113,7 +113,9 @@ If the prompt does not match any domain, default to **process** with conservatio
 
 ## Instructions
 
-1. **Classify the flow.** Read the prompt and select the single best-fit domain from the catalog above. Produce a classification verdict with: (a) chosen domain, (b) one-sentence rationale referencing a trigger phrase or weight semantics from the prompt, (c) the canonical weight unit, (d) the conservation mode (mandatory/asserted/none), (e) the ontology anchor (PKO, FIBO, etc.), (f) the candidate node set extracted from the prompt (may be partial), (g) the candidate edge set extracted from the prompt (may be partial). If the prompt references an external source (URL, file, database), note it for the gather step. If the prompt spans two domains, classify both and plan two diagrams.
+The cascade is example-anchored match → adapt → render (single pass, 2 LLM calls + 1 deterministic render). The old 7-step PDCA loop (classify → gather → draft → evaluate → converge → loop → write) was overengineered — it made up to 21 LLM calls and never converged because the evaluate step kept flagging intentional design choices (e.g., non-conserving loss-making income statements) as quality gaps.
+
+1. **MATCH.** Read the prompt and select the single best-fit domain from the catalog above, match it against the canonical example library by trigger phrases and structural similarity, and extract the user's actual nodes, edges, and weights in a single pass. Does NOT interrogate — missing data is marked as placeholder (value=1). For income statements with losses, negative profits flow into Total Revenue as sources (Revenue + |Loss| = Total Expenses). If the prompt references an external source (URL, file, database), note it for research delegation. If the prompt spans two domains, classify both and plan two diagrams.
 
 2. **Gather — interrogation or delegation.** Compare the candidate node and edge sets against the minimum-viable Sankey spec:
    - **Nodes**: at least 2 source-side and 1 sink-side node, OR a recognizable chain of ≥3 nodes.

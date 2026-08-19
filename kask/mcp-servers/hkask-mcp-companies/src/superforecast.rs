@@ -219,28 +219,26 @@ pub struct EventTreeProjection {
     /// R3: CMP provenance — present when the tree was built from CMP indices
     /// (via `compose_cmp_tree`). Each entry is a CMP index identity
     /// (`cmp:{family}:{tenor}:{orientation}`). Absent for raw-contract trees.
+    /// The element type is the shared `hkask_forecast::CmpIndexProvenance` —
+    /// re-exported below — so the scenarios emitter and this deserializer
+    /// share one type-level source of truth. The `#[serde(default)]` on the
+    /// outer field tolerates the no-`cmp_provenance` case (raw-contract trees);
+    /// the per-field `#[serde(default)]` on the shared struct tolerates partial
+    /// entries without failing the whole tree. The pin test
+    /// `cmp_provenance_round_trips_real_scenarios_emitter` enforces that the
+    /// real scenarios emitter populates all 7 fields.
     #[serde(default)]
-    pub cmp_provenance: Vec<CmpIndexProvenance>,
+    pub cmp_provenance: Vec<hkask_forecast::CmpIndexProvenance>,
 }
 
-/// R3: CMP index provenance entry — one per CMP index in the tree.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct CmpIndexProvenance {
-    /// The CMP index identity: `cmp:{family}:{tenor}:{orientation}`.
-    pub id: String,
-    /// The base-event family label (e.g. "policy_interest_rate").
-    pub family: String,
-    /// The CMP tenor label ("1m", "3m", "6m").
-    pub tenor: String,
-    /// The orientation ("increase", "decline", "stable").
-    pub orientation: String,
-    /// The venue ("kalshi", "polymarket").
-    pub venue: String,
-    /// The construction method ("interpolated" or "bucketed_sparse").
-    pub method: String,
-    /// The maturity-matching error in days.
-    pub maturity_error_days: f64,
-}
+/// R3: CMP index provenance — the bridge contract between
+/// `hkask-mcp-scenarios`'s `scenario_from_cmp_indices` emitter and this crate's
+/// `EventTreeProjection` deserializer. Re-exported from `hkask_forecast` so the
+/// two sides cannot drift apart at the type level; the per-field
+/// `#[serde(default)]` tolerates partial entries without failing the whole
+/// tree, and the pin test in each crate enforces that the real emitters
+/// populate the full 7-field shape.
+pub use hkask_forecast::CmpIndexProvenance;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EventTreeNodeProjection {

@@ -123,6 +123,18 @@ list updates independently of this skill.
 
 The full process, with the `main.rs` functional inventory (28 units), DAG, and constraint-force classification, is in `kask/docs/upstream-rebase-process.md`.
 
+## Registry Templates
+
+| Template | Type | Purpose |
+|----------|------|---------|
+| `assess.j2` | KnowAct | Assess a D-seam file against the strategy decision rule (extract line-level kask wiring, count `// zed-kask:` markers and call sites). |
+| `map.j2` | KnowAct | Extract the functional inventory (F1, F2, ...), classify each unit by constraint force, build the dependency DAG. |
+| `decide.j2` | KnowAct | Apply the essentialist deletion test: full re-application vs. surgical marking + pinning. |
+| `execute.j2` | KnowAct | Execute the chosen strategy: add markers + pinning tests (surgical), or re-apply units in topological order (full). |
+| `document.j2` | KnowAct | Update DIVERGENCE.md and produce the final report (strategy, units, markers, tests, verification results). |
+
+The cascade also runs deterministic compute steps between the LLM steps: a `lisp.eval` verification gate (cargo check/test, isolation script, marker density) after execute, a `shell.exec` collision-surface cleanup after document, and a `lisp.eval` convergence signal before the loop.
+
 ## Constraints
 
 - Do NOT modify any upstream file outside the D-seam surface. Consult `DIVERGENCE.md`'s divergence-surface table for the current D-seam rows — the table is authoritative; do not rely on a hardcoded range label (the count drifts as seams are added). If an upstream edit seems necessary, propose a new D-seam entry in `DIVERGENCE.md`.
@@ -130,6 +142,7 @@ The full process, with the `main.rs` functional inventory (28 units), DAG, and c
 - Every `// zed-kask:` deviation preserved or introduced must have a corresponding test.
 - The re-application order must be a topological sort of the dependency DAG (no use-before-def).
 - Prefer surgical marking + pinning over full re-application when the fork's file already compiles and is correctly ordered (essentialist G1: identical end state, lower risk).
+- rJoule cap: 5 per invocation. Maximum 10 iterations.
 
 ## Merge & rebase protocol
 
