@@ -1,9 +1,10 @@
 //! Valuation and forecasting tools.
 use super::portfolio::run_portfolio;
 use crate::{
-    CompaniesServer, Provider, StoredForecast, current_price_from_multiple, fibo, financial_model,
-    parse_symbol_from_query, portfolio::PersistedForecast, projected_terminal_multiple, scenarios,
-    superforecast, types, validate_symbol,
+    CompaniesServer, CompanyProfile, KeyMetrics, Provider, StoredForecast,
+    current_price_from_multiple, fibo, financial_model, parse_symbol_from_query,
+    portfolio::PersistedForecast, projected_terminal_multiple, scenarios, superforecast, types,
+    validate_symbol,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use hkask_types::time::now_rfc3339;
@@ -80,25 +81,13 @@ impl CompaniesServer {
         execute_tool_semantic(self, "comparable_analysis", Self::ontology_anchor("comparable_analysis"), async {
             validate_symbol(&req.symbol)?;
 
-            // 1. Fetch target company profile and key_metrics
-            let profile_result = self
-                .fetch("company_profile", &req.symbol, &[])
-                .await;
-            let metrics_result = self
-                .fetch("key_metrics", &req.symbol, &[("limit", "1")])
-                .await;
+            // 1. Fetch target company profile and key_metrics as typed views.
+            //    A missing field is `None`, not a silent zero — the field-name
+            //    knowledge lives in the `CompanyProfile`/`KeyMetrics` accessors.
+            let profile = self.fetch_profile(&req.symbol).await?;
+            let metrics = self.fetch_key_metrics(&req.symbol, 1).await?;
 
-            let (profile, metrics) = match (profile_result, metrics_result) {
-                (Ok(p), Ok(m)) => (p, m),
-                (Err(e), _) | (_, Err(e)) => return Err(e),
-            };
-
-            let profile_arr = profile.as_array();
-            let metrics_arr = metrics.as_array();
-            let profile_obj = profile_arr.and_then(|a| a.first());
-            let metrics_obj = metrics_arr.and_then(|a| a.first());
-
-            let Some(profile_data) = profile_obj else {
+            let Some(profile_data) = profile.raw().as_array().and_then(|a| a.first()) else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "company profile not found"}));
             };
 
@@ -114,102 +103,65 @@ impl CompaniesServer {
                 })
                 .unwrap_or_default();
 
-            // 3. Fetch peer profiles and metrics in parallel
-            let mut peer_data: Vec<(String, serde_json::Value, Option<serde_json::Value>)> =
-                Vec::new();
+            // 3. Fetch peer profiles and metrics as typed views. A failed peer
+            //    fetch yields an empty `CompanyProfile` (raw `Null`), so its
+            //    accessors return `None` and the peer row carries no multiples.
+            let mut peer_data: Vec<(String, CompanyProfile, KeyMetrics)> = Vec::new();
             for peer_sym in &peers {
-                let pp_result = self.fetch("company_profile", peer_sym, &[]).await;
-                let pm_result = self
-                    .fetch("key_metrics", peer_sym, &[("limit", "1")])
-                    .await;
-                let pp = pp_result.unwrap_or(serde_json::Value::Null);
-                let pm =
-                    pm_result
-                        .ok()
-                        .and_then(|v| v.as_array().and_then(|a| a.first().cloned()));
+                let pp = self.fetch_profile(peer_sym).await.unwrap_or_else(|_| {
+                    CompanyProfile::from_raw(serde_json::Value::Null)
+                });
+                let pm = self.fetch_key_metrics(peer_sym, 1).await.unwrap_or_else(|_| {
+                    KeyMetrics::from_raw(serde_json::Value::Array(vec![]))
+                });
                 peer_data.push((peer_sym.clone(), pp, pm));
             }
 
-            // 4. Build comparison table
-            fn build_row(
-                sym: &str,
-                profile: &serde_json::Value,
-                metrics: Option<&serde_json::Value>,
-            ) -> serde_json::Value {
-                let name = profile
-                    .get("companyName")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let price = profile.get("price").and_then(|v| v.as_f64());
-                let mkt_cap = profile.get("mktCap").and_then(|v| v.as_f64());
-                let pe = metrics.and_then(|m| m.get("peRatio").and_then(|v| v.as_f64()));
-                let pb = metrics.and_then(|m| {
-                    m.get("priceToBookRatio").and_then(|v| v.as_f64())
-                });
-                let ps = metrics.and_then(|m| {
-                    m.get("priceToSalesRatio").and_then(|v| v.as_f64())
-                });
-                let ev_ebitda = metrics.and_then(|m| {
-                    m.get("evToEbitda")
-                        .or_else(|| m.get("enterpriseValueMultiple"))
-                        .and_then(|v| v.as_f64())
-                });
-                let div_yield =
-                    metrics.and_then(|m| m.get("dividendYield").and_then(|v| v.as_f64()));
-                let rev_growth =
-                    metrics.and_then(|m| m.get("revenueGrowth").and_then(|v| v.as_f64()));
-
+            // 4. Build comparison table. Field-name knowledge lives in the
+            //    `CompanyProfile`/`KeyMetrics` accessors, not inline here.
+            let build_row = |sym: &str, profile: &CompanyProfile, metrics: &KeyMetrics| -> serde_json::Value {
                 let mut row = serde_json::json!({
                     "symbol": sym,
-                    "name": name,
+                    "name": profile.company_name().unwrap_or(""),
                 });
-                if let Some(v) = price {
+                if let Some(v) = profile.price() {
                     row["price"] = serde_json::json!(v);
                 }
-                if let Some(v) = mkt_cap {
+                if let Some(v) = profile.market_cap() {
                     row["market_cap"] = serde_json::json!(v);
                 }
-                if let Some(v) = pe {
+                if let Some(v) = metrics.pe_ratio() {
                     row["pe_ratio"] = serde_json::json!(v);
                 }
-                if let Some(v) = pb {
+                if let Some(v) = metrics.price_to_book() {
                     row["price_to_book"] = serde_json::json!(v);
                 }
-                if let Some(v) = ps {
+                if let Some(v) = metrics.price_to_sales() {
                     row["price_to_sales"] = serde_json::json!(v);
                 }
-                if let Some(v) = ev_ebitda {
+                if let Some(v) = metrics.ev_to_ebitda() {
                     row["ev_to_ebitda"] = serde_json::json!(v);
                 }
-                if let Some(v) = div_yield {
+                if let Some(v) = metrics.dividend_yield() {
                     row["dividend_yield"] = serde_json::json!(v);
                 }
-                if let Some(v) = rev_growth {
+                if let Some(v) = metrics.revenue_growth() {
                     row["revenue_growth"] = serde_json::json!(v);
                 }
                 row
-            }
+            };
 
-            let mut comparison = vec![build_row(&req.symbol, profile_data, metrics_obj)];
+            let mut comparison = vec![build_row(&req.symbol, &profile, &metrics)];
             for (sym, pp, pm) in &peer_data {
-                comparison.push(build_row(sym, pp, pm.as_ref()));
+                comparison.push(build_row(sym, pp, pm));
             }
 
             // 5. DCF overlay on target
             let dcf_overlay = self.build_dcf_overlay(&req, profile_data).await?;
 
-            let company_name = profile_data
-                .get("companyName")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let sector = profile_data
-                .get("sector")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let industry = profile_data
-                .get("industry")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let company_name = profile.company_name().unwrap_or("");
+            let sector = profile.sector().unwrap_or("");
+            let industry = profile.industry().unwrap_or("");
 
             let output = serde_json::json!({
                 "symbol": req.symbol,
@@ -314,7 +266,7 @@ impl CompaniesServer {
             let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
             let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
             let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
 
             let (income, balance, cf, metrics, profile) =
                 match (income_result, balance_result, cf_result, metrics_result, profile_result) {
@@ -329,7 +281,7 @@ impl CompaniesServer {
                 };
 
             let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
+                extract_historical_arrays(&income, &balance, &cf, &metrics, profile.raw())
             else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data for sensitivity analysis"}));
             };
@@ -351,7 +303,7 @@ impl CompaniesServer {
             financial_model::validate_sensitivity_range(req.range_pct)
                 .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
-            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = profile.price().unwrap_or(0.0);
 
             let base_model = financial_model::project_model(&hist, &assumptions, current_price);
             let base_intrinsic = base_model.intrinsic_per_share;
@@ -413,7 +365,7 @@ impl CompaniesServer {
             let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
             let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
             let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
 
             let (income, balance, cf, metrics, profile) =
                 match (income_result, balance_result, cf_result, metrics_result, profile_result) {
@@ -428,7 +380,7 @@ impl CompaniesServer {
                 };
 
             let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
+                extract_historical_arrays(&income, &balance, &cf, &metrics, profile.raw())
             else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
             };
@@ -446,10 +398,7 @@ impl CompaniesServer {
                 types::ProjectionAssumptionOverrides::from(&req),
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
-            let current_price = profile_data
-                .get("price")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
+            let current_price = profile.price().unwrap_or(0.0);
             let model = financial_model::project_model(&hist, &assumptions, current_price);
 
             let stage1_years = req.stage1_years.unwrap_or(3);
@@ -496,7 +445,7 @@ impl CompaniesServer {
             let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
             let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
             let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
 
             let (income, balance, cf, metrics, profile) =
                 match (income_result, balance_result, cf_result, metrics_result, profile_result) {
@@ -511,7 +460,7 @@ impl CompaniesServer {
                 };
 
             let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
+                extract_historical_arrays(&income, &balance, &cf, &metrics, profile.raw())
             else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
             };
@@ -524,7 +473,7 @@ impl CompaniesServer {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
             }
 
-            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = profile.price().unwrap_or(0.0);
 
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
@@ -595,7 +544,7 @@ impl CompaniesServer {
             let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
             let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
             let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
 
             let (income, balance, cf, metrics, profile) =
                 match (income_result, balance_result, cf_result, metrics_result, profile_result) {
@@ -610,7 +559,7 @@ impl CompaniesServer {
                 };
 
             let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
+                extract_historical_arrays(&income, &balance, &cf, &metrics, profile.raw())
             else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
             };
@@ -623,7 +572,7 @@ impl CompaniesServer {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
             }
 
-            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = profile.price().unwrap_or(0.0);
 
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
@@ -762,7 +711,7 @@ impl CompaniesServer {
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
             let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
             let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
             let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
 
             let (income, balance, metrics, profile, cf) =
@@ -776,7 +725,7 @@ impl CompaniesServer {
                 };
 
             let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
+                extract_historical_arrays(&income, &balance, &cf, &metrics, profile.raw())
             else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
             };
@@ -789,7 +738,7 @@ impl CompaniesServer {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
             }
 
-            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = profile.price().unwrap_or(0.0);
             let hist_revenue_growth = hist.revenue_cagr();
 
             let mut assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
@@ -1123,13 +1072,13 @@ impl CompaniesServer {
                     let actual_balance = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
                     let actual_cf = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
                     let actual_metrics = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-                    let actual_profile = self.fetch("company_profile", &req.symbol, &[]).await;
+                    let actual_profile = self.fetch_profile(&req.symbol).await;
 
                     if let (Ok(inc), Ok(bal), Ok(cf), Ok(metrics), Ok(prof)) =
                         (&actual_income, &actual_balance, &actual_cf, &actual_metrics, &actual_profile)
                     {
                         if let Some((inc_data, bal_data, cf_data, met_data, prof_data)) =
-                            extract_historical_arrays(inc, bal, cf, metrics, prof)
+                            extract_historical_arrays(inc, bal, cf, metrics, prof.raw())
                         {
                             let actual_hist = financial_model::HistoricalSnapshot::from_api_json(
                                 inc_data,

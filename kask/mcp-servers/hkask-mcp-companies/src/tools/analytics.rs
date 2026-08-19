@@ -79,31 +79,17 @@ impl CompaniesServer {
             let mut errors = Vec::new();
 
             for sym in positions_start.keys() {
-                // Fetch historical prices around each date
+                // Fetch historical prices around each date (typed view — the
+                // `close`/`adjClose` field-name knowledge lives in
+                // `HistoricalPriceView::latest_close`).
                 for (date, prices_map) in
                     [(&req.from, &mut prices_start), (&req.to, &mut prices_end)]
                 {
-                    match self.fetch(
-                            "historical_price",
-                            sym,
-                            &[("from", date), ("to", date)],
-                    )
-                    .await
-                    {
-                        Ok(value) => {
-                            let historical =
-                                value.get("historical").and_then(|h| h.as_array());
-                            if let Some(days) = historical
-                                && let Some(day) = days.first()
-                            {
-                                let close = day
-                                    .get("close")
-                                    .or_else(|| day.get("adjClose"))
-                                    .and_then(|v| v.as_f64());
-                                if let Some(c) = close {
-                                    prices_map
-                                        .insert(sym.clone(), serde_json::Value::from(c));
-                                }
+                    match self.fetch_historical_price(sym, date, date).await {
+                        Ok(view) => {
+                            if let Some(c) = view.latest_close() {
+                                prices_map
+                                    .insert(sym.clone(), serde_json::Value::from(c));
                             }
                         }
                         Err(e) => {
@@ -429,12 +415,15 @@ impl CompaniesServer {
                 .await?;
             }
 
-            // Fetch all required financial statements
+            // Fetch all required financial statements. The profile fetch
+            // returns a typed `CompanyProfile` view; the statement fetches
+            // stay `Value` because `HistoricalSnapshot::from_api_json`
+            // consumes them directly.
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
             let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
             let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
             let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
 
             let (income, balance, cf, metrics, profile) =
                 match (income_result, balance_result, cf_result, metrics_result, profile_result) {
@@ -452,7 +441,7 @@ impl CompaniesServer {
             let balance_arr = balance.as_array();
             let cf_arr = cf.as_array();
             let metrics_arr = metrics.as_array();
-            let profile_obj = profile.as_array().and_then(|a| a.first());
+            let profile_obj = profile.raw().as_array().and_then(|a| a.first());
 
             if income_arr.is_none_or(|a| a.is_empty())
                 || balance_arr.is_none_or(|a| a.is_empty())
@@ -483,7 +472,7 @@ impl CompaniesServer {
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
-            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = profile.price().unwrap_or(0.0);
             let shares = hist.shares_outstanding;
 
             // Run the projection engine
@@ -612,7 +601,7 @@ impl CompaniesServer {
             let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
             let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
             let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
 
             let (income, balance, cf, metrics, profile) =
                 match (income_result, balance_result, cf_result, metrics_result, profile_result) {
@@ -630,7 +619,7 @@ impl CompaniesServer {
             let balance_arr = balance.as_array();
             let cf_arr = cf.as_array();
             let metrics_arr = metrics.as_array();
-            let profile_obj = profile.as_array().and_then(|a| a.first());
+            let profile_obj = profile.raw().as_array().and_then(|a| a.first());
 
             if income_arr.is_none_or(|a| a.is_empty())
                 || balance_arr.is_none_or(|a| a.is_empty())
@@ -665,7 +654,7 @@ impl CompaniesServer {
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
-            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = profile.price().unwrap_or(0.0);
 
             if current_price <= 0.0 {
                 return Err(McpToolError::invalid_argument(
@@ -757,7 +746,7 @@ impl CompaniesServer {
             let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
             let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
             let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
 
             let (income, balance, cf, metrics, profile) =
                 match (income_result, balance_result, cf_result, metrics_result, profile_result) {
@@ -775,7 +764,7 @@ impl CompaniesServer {
             let balance_arr = balance.as_array();
             let cf_arr = cf.as_array();
             let metrics_arr = metrics.as_array();
-            let profile_obj = profile.as_array().and_then(|a| a.first());
+            let profile_obj = profile.raw().as_array().and_then(|a| a.first());
 
             if income_arr.is_none_or(|a| a.is_empty())
                 || balance_arr.is_none_or(|a| a.is_empty())
@@ -805,7 +794,7 @@ impl CompaniesServer {
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
-            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = profile.price().unwrap_or(0.0);
 
             let matrix = scenarios::ScenarioMatrix::growth_x_margin(assumptions.revenue_growth, assumptions.gross_margin);
             let results = scenarios::run_scenario_analysis(&hist, &assumptions, &matrix);

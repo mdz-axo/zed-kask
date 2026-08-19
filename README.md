@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="kask/assets/zk-icon.svg" alt="Zed-Kask" width="128" height="128" />
+</p>
+
 # Zed-Kask
 
 [![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)

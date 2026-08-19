@@ -38,10 +38,8 @@ impl CompaniesServer {
                 let req_cf = self
                     .fetch("cash_flow_statement", &req.symbol, &[("limit", "5")])
                     .await;
-                let req_metrics = self
-                    .fetch("key_metrics", &req.symbol, &[("limit", "5")])
-                    .await;
-                let req_profile = self.fetch("company_profile", &req.symbol, &[]).await;
+                let req_metrics = self.fetch_key_metrics(&req.symbol, 5).await;
+                let req_profile = self.fetch_profile(&req.symbol).await;
 
                 // ── 2. Compute market-implied growth via reverse DCF ──────────
 
@@ -53,7 +51,8 @@ impl CompaniesServer {
                     &req_profile,
                 ) {
                     (Ok(inc), Ok(bal), Ok(cf), Ok(met), Ok(prof)) => {
-                        compute_implied_growth(inc, bal, cf, met, prof).unwrap_or(f64::NAN)
+                        compute_implied_growth(inc, bal, cf, met.raw(), prof.raw())
+                            .unwrap_or(f64::NAN)
                     }
                     _ => f64::NAN,
                 };
@@ -61,12 +60,7 @@ impl CompaniesServer {
                 // ── 3. Fetch research claims for management guidance ──────────
 
                 let company_name = match &req_profile {
-                    Ok(prof) => prof
-                        .as_array()
-                        .and_then(|a| a.first())
-                        .and_then(|p| p.get("companyName").and_then(|v| v.as_str()))
-                        .unwrap_or(&req.symbol)
-                        .to_string(),
+                    Ok(prof) => prof.company_name().unwrap_or(&req.symbol).to_string(),
                     _ => req.symbol.clone(),
                 };
 

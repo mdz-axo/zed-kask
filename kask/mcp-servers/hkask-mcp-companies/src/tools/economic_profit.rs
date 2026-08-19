@@ -24,10 +24,8 @@ impl CompaniesServer {
             let balance_result = self
                 .fetch("balance_sheet", &req.symbol, &[("limit", "5")])
                 .await;
-            let metrics_result = self
-                .fetch("key_metrics", &req.symbol, &[("limit", "5")])
-                .await;
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+            let metrics_result = self.fetch_key_metrics(&req.symbol, 5).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
 
             let (income, balance, metrics, profile) = match (
                 income_result,
@@ -46,8 +44,7 @@ impl CompaniesServer {
 
             let income_arr = income.as_array();
             let balance_arr = balance.as_array();
-            let metrics_arr = metrics.as_array();
-            let profile_obj = profile.as_array().and_then(|a| a.first());
+            let profile_obj = profile.raw().as_array().and_then(|a| a.first());
 
             if income_arr.is_none_or(|a| a.is_empty())
                 || balance_arr.is_none_or(|a| a.is_empty())
@@ -66,7 +63,7 @@ impl CompaniesServer {
             let Some(inputs) = extract_ep_inputs(
                 income_data,
                 balance_data,
-                metrics_arr.map(|v| v.as_slice()),
+                Some(metrics.years()),
                 profile_data,
                 &req,
             )? else {

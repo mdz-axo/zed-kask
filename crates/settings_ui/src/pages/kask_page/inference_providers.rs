@@ -1,11 +1,18 @@
-//! Inference Providers sub-page — API key entry + enable toggles for
-//! OpenAI-compatible providers (DeepInfra, OpenRouter, AtlasCloud). Toggling
-//! DeepInfra or AtlasCloud writes an `openai_compatible.<provider_id>` entry
-//! to settings.json so the provider appears in the LLM provider picker.
-//! OpenRouter has a built-in zed provider, so its toggle only mirrors the
-//! API key to MCP servers. Keys are stored in the keychain under the
-//! provider's `api_url` and mirrored to `kask://credentials/<key>` for MCP
-//! server env injection.
+//! Inference Providers page — API keys for OpenAI-compatible providers
+//! (DeepInfra, OpenRouter, AtlasCloud). Toggling DeepInfra or AtlasCloud
+//! writes an `openai_compatible.<provider_id>` entry to settings.json so the
+//! provider appears in the LLM provider picker. OpenRouter has a built-in zed
+//! provider, so its toggle only mirrors the API key to MCP servers. Keys are
+//! stored in the keychain under the provider's `api_url` and mirrored to
+//! `kask://credentials/<key>` for MCP server env injection.
+//!
+//! RunPod is deliberately NOT listed here: it is a dedicated
+//! (non-OpenAI-compatible) endpoint provider (D29), so there is never an
+//! `openai_compatible.*` entry to register. Its training/MCP key is the Data
+//! Service toggle on the Data Services page, and its OCR endpoint key lives
+//! under Settings → AI → LLM Providers. The rest of kask code already skips
+//! RunPod (ensure_openai_compatible_entries, credential_urls_for_mcp); this
+//! page must agree or RunPod renders a dead toggle that can never turn on.
 
 use super::*;
 
@@ -37,7 +44,16 @@ pub(crate) fn render_inference_providers_page(
         .unwrap_or_else(kask_bridge::KaskInferenceProvidersSettings::from_env);
 
     let mut rows: Vec<AnyElement> = Vec::new();
-    for desc in kask_bridge::INFERENCE_PROVIDERS {
+    for desc in kask_bridge::INFERENCE_PROVIDERS
+        .iter()
+        // RunPod is a dedicated `LanguageModelProvider` (D29), not an
+        // OpenAI-compatible provider, so there is no kask inference-page
+        // toggle for it — the row would render permanently off and its write
+        // arm would be a no-op ("can't turn on"). Its training/MCP config
+        // lives on the Data Services page (`runpod_enabled`); its OCR endpoint
+        // key lives under Settings → AI → LLM Providers.
+        .filter(|desc| desc.credential_key != "runpod")
+    {
         // Match on `credential_key` (lowercase canonical key: "deepinfra",
         // "openrouter", "atlascloud"), not `desc.id`
         // (which is the display-form "DeepInfra", "OpenRouter", …).

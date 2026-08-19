@@ -52,13 +52,14 @@ pub mod fibo;
 mod financial_model;
 pub mod portfolio;
 mod providers;
-pub use providers::Provider;
+pub use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
 pub mod learning;
 pub mod research;
 mod scenarios;
 mod screener;
 pub mod superforecast;
 mod transcript;
+mod valuation_service;
 pub mod types;
 
 use portfolio::{PersistedForecast, PortfolioManager};
@@ -176,6 +177,71 @@ impl CompaniesServer {
             &self.fmp_api_key,
             &self.eodhd_api_key,
             extra,
+            Some(&l),
+        )
+        .await
+    }
+
+    /// Fetch a company profile as a typed `CompanyProfile` view. Concentrates
+    /// field-name knowledge so tool handlers read `profile.market_cap()`
+    /// instead of `v.get("mktCap").and_then(|v| v.as_f64())`.
+    async fn fetch_profile(&self, symbol: &str) -> Result<CompanyProfile, McpToolError> {
+        let l = self
+            .learning
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        providers::fetch_company_profile(
+            &self.client,
+            symbol,
+            &self.fmp_api_key,
+            &self.eodhd_api_key,
+            Some(&l),
+        )
+        .await
+    }
+
+    /// Fetch key metrics as a typed `KeyMetrics` view.
+    async fn fetch_key_metrics(
+        &self,
+        symbol: &str,
+        limit: usize,
+    ) -> Result<KeyMetrics, McpToolError> {
+        let l = self
+            .learning
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        providers::fetch_key_metrics(
+            &self.client,
+            symbol,
+            limit,
+            &self.fmp_api_key,
+            &self.eodhd_api_key,
+            Some(&l),
+        )
+        .await
+    }
+
+    /// Fetch historical prices as a typed `HistoricalPriceView` view.
+    async fn fetch_historical_price(
+        &self,
+        symbol: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<HistoricalPriceView, McpToolError> {
+        let l = self
+            .learning
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        providers::fetch_historical_price(
+            &self.client,
+            symbol,
+            from,
+            to,
+            &self.fmp_api_key,
+            &self.eodhd_api_key,
             Some(&l),
         )
         .await

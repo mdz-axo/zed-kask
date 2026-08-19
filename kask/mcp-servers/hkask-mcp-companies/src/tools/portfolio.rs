@@ -283,15 +283,8 @@ impl CompaniesServer {
                             continue;
                         }
                         // Fall back to the provider API, then seed the cache.
-                        if let Ok(value) = self
-                            .fetch("historical_price", sym, &[("from", date), ("to", date)])
-                            .await
-                            && let Some(days) = value.get("historical").and_then(|h| h.as_array())
-                            && let Some(day) = days.first()
-                            && let Some(close) = day
-                                .get("close")
-                                .or_else(|| day.get("adjClose"))
-                                .and_then(|v| v.as_f64())
+                        if let Ok(view) = self.fetch_historical_price(sym, date, date).await
+                            && let Some(close) = view.latest_close()
                         {
                             let seed_portfolio = portfolio.clone();
                             let seed_symbol = sym.clone();
