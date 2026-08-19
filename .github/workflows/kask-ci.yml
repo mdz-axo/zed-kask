@@ -356,7 +356,7 @@ jobs:
           # local agree on what counts as a typo. taiki-e/install-action@v2
           # fetches the latest release tag by default; bump this explicitly
           # when upgrading, same discipline as cargo-machete@0.9.2 above.
-          tool: typos@v1.49.0
+          tool: typos@1.49.0
       - name: Check for spelling errors
         run: typos --config typos.toml
 
@@ -416,7 +416,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: taiki-e/install-action@v2
         with:
-          tool: typos@v1.49.0
+          tool: typos@1.49.0
       - name: "Run typos WITHOUT the allowlist (warning-only — review the delta)"
         # Run typos with --isolated (ignore implicit config files like typos.toml)
         # and --config typos-audit.toml (the policy-only config that has

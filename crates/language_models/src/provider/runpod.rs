@@ -189,16 +189,27 @@ impl RunpodLanguageModelProvider {
         cx: &mut App,
     ) -> Self {
         let state = cx.new(|cx| {
-            cx.observe_global::<settings::SettingsStore>(|this: &mut State, cx| {
-                let credentials_provider = this.credentials_provider.clone();
-                let api_url = Self::api_url(cx);
-                this.api_key_state.handle_url_change(
-                    api_url,
-                    |this| &mut this.api_key_state,
-                    credentials_provider,
-                    cx,
-                );
-                cx.notify();
+            cx.observe_global::<settings::SettingsStore>({
+                let mut last_settings = RunpodLanguageModelProvider::settings(cx).clone();
+                move |this: &mut State, cx| {
+                    let current_settings = RunpodLanguageModelProvider::settings(cx);
+                    let settings_changed = current_settings != &last_settings;
+                    if settings_changed {
+                        let url_changed = last_settings.api_url != current_settings.api_url;
+                        last_settings = current_settings.clone();
+                        if url_changed {
+                            let credentials_provider = this.credentials_provider.clone();
+                            let api_url = Self::api_url(cx);
+                            this.api_key_state.handle_url_change(
+                                api_url,
+                                |this| &mut this.api_key_state,
+                                credentials_provider,
+                                cx,
+                            );
+                        }
+                        cx.notify();
+                    }
+                }
             })
             .detach();
             State {

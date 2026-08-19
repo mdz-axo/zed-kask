@@ -567,7 +567,33 @@ impl SettingsStore {
                 async move {
                     let res = async move {
                         let old_text = Self::load_settings(&fs).await?;
-                        let new_text = update(old_text, cx.clone())?;
+                        let new_text = update(old_text.clone(), cx.clone())?;
+
+                        // zed-kask: D32 — skip no-op settings writes.
+                        // `update_settings_file` callers (notably
+                        // `ensure_openai_compatible_entries`, wired to a
+                        // `SettingsStore` observer) can produce a `new_text`
+                        // that is byte-for-byte identical to `old_text`. The
+                        // prior code unconditionally called
+                        // `fs.atomic_write` (triggering the file watcher) and
+                        // `cx.update_global::<SettingsStore>` (whose
+                        // `end_global_lease` pushes `NotifyGlobalObservers`
+                        // even when `set_user_settings` returns `Unchanged`),
+                        // which re-fired the observer → re-ran
+                        // `ensure_openai_compatible_entries` → re-wrote the
+                        // same file → a self-sustaining feedback loop. The
+                        // RunPod "no API key" warning fired on every iteration
+                        // because the RunPod `State` observer called
+                        // `cx.notify()` unconditionally. Skipping both the
+                        // write and the in-memory update when the text is
+                        // unchanged breaks the loop for all callers, not just
+                        // the kask one. `set_user_settings` already early-
+                        // returns `Unchanged` on identical content, so
+                        // skipping the `update_global` entirely is consistent
+                        // with the in-memory store's own idempotency.
+                        if new_text == old_text {
+                            return Ok(());
+                        }
 
                         let settings_path = paths::settings_file().as_path();
                         if fs.is_file(settings_path).await {
@@ -1807,6 +1833,135 @@ mod tests {
                 }
             ]
         );
+    }
+
+    // zed-kask: D32 — a no-op `update_settings_file` call (one whose update
+    // closure produces text identical to the current file) must NOT touch the
+    // filesystem or fire the file-watcher parse callback. Before the D32 fix,
+    // `update_settings_file_inner` unconditionally called `fs.atomic_write`
+    // (triggering the file watcher) and `cx.update_global::<SettingsStore>`
+    // (whose `end_global_lease` pushes `NotifyGlobalObservers` even when
+    // `set_user_settings` returns `Unchanged`), which created a self-
+    // sustaining feedback loop when a `SettingsStore` observer (notably
+    // `ensure_openai_compatible_entries`) re-wrote the same content on every
+    // notification. This test pins the no-op skip: if the skip is removed, the
+    // file watcher fires and `parse_results` gains an `Unchanged` entry.
+    #[gpui::test]
+    async fn test_update_settings_file_skips_noop_write(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            paths::settings_file(),
+            r#"{ "tabs": { "close_position": "left" } }"#.as_bytes().to_vec(),
+        )
+        .await;
+        fs.pause_events();
+        cx.run_until_parked();
+
+        let parse_results = Rc::new(RefCell::new(Vec::new()));
+
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &default_settings());
+            store.register_setting::<ItemSettings>();
+            store.watch_settings_files(fs.clone(), cx, {
+                let parse_results = parse_results.clone();
+                move |_, result, _| {
+                    parse_results.borrow_mut().push(result);
+                }
+            });
+            cx.set_global(store);
+        });
+
+        let initial_parse_count = parse_results.borrow().len();
+
+        // A no-op update: the closure doesn't change anything, so `new_text`
+        // equals `old_text`. The D32 fix must skip the write entirely.
+        let rx = cx.update(|cx| {
+            cx.global::<SettingsStore>()
+                .update_settings_file_with_completion(fs.clone(), move |_, _| {
+                    // Intentionally empty — no change.
+                })
+        });
+        assert!(rx.await.unwrap().is_ok());
+
+        // Flush any FS events that *would* have fired from a write.
+        fs.flush_events(100);
+        cx.run_until_parked();
+
+        // No new parse results — the file watcher did not fire because the
+        // write was skipped.
+        assert_eq!(
+            parse_results.borrow().len(),
+            initial_parse_count,
+            "a no-op update_settings_file call must not fire the file watcher"
+        );
+    }
+
+    // zed-kask: D32 — when the update closure actually changes the content,
+    // the write must still happen (the no-op skip must not regress real
+    // writes). This is the falsifier for the D32 skip: if the skip is too
+    // aggressive (e.g. compares the wrong text), this test fails.
+    #[gpui::test]
+    async fn test_update_settings_file_writes_when_content_differs(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            paths::settings_file(),
+            r#"{ "tabs": { "close_position": "right" } }"#.as_bytes().to_vec(),
+        )
+        .await;
+        fs.pause_events();
+        cx.run_until_parked();
+
+        let parse_results = Rc::new(RefCell::new(Vec::new()));
+
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &default_settings());
+            store.register_setting::<ItemSettings>();
+            store.watch_settings_files(fs.clone(), cx, {
+                let parse_results = parse_results.clone();
+                move |_, result, _| {
+                    parse_results.borrow_mut().push(result);
+                }
+            });
+            cx.set_global(store);
+        });
+
+        let initial_parse_count = parse_results.borrow().len();
+
+        // A real change: close_position right → left.
+        let rx = cx.update(|cx| {
+            cx.global::<SettingsStore>()
+                .update_settings_file_with_completion(fs.clone(), move |settings, _| {
+                    settings.tabs.get_or_insert_default().close_position =
+                        Some(ClosePosition::Left);
+                })
+        });
+        assert!(rx.await.unwrap().is_ok());
+
+        fs.flush_events(100);
+        cx.run_until_parked();
+
+        // The file watcher fired (the write happened), producing an Unchanged
+        // parse result (the in-memory store already has the new value from
+        // `set_user_settings` inside `update_settings_file_inner`).
+        assert!(
+            parse_results.borrow().len() > initial_parse_count,
+            "a real content change must still write the file and fire the watcher"
+        );
+
+        cx.update(|cx| {
+            assert_eq!(
+                cx.global::<SettingsStore>()
+                    .get::<ItemSettings>(None)
+                    .close_position,
+                ClosePosition::Left
+            );
+        });
     }
 
     #[gpui::test]
