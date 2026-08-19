@@ -2187,7 +2187,8 @@ convergence:
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
 
         let result = executor
-            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .clone()
+            .execute_manifest_into(manifest.clone(), std::collections::HashMap::new())
             .await;
 
         let err = result.expect_err(
@@ -2505,8 +2506,8 @@ convergence:
         let e1 = make_executor();
         let e2 = make_executor();
         let (r1, r2) = tokio::join! {
-            e1.execute_manifest(&manifest, std::collections::HashMap::new()),
-            e2.execute_manifest(&manifest, std::collections::HashMap::new()),
+            e1.execute_manifest_into(manifest.clone(), std::collections::HashMap::new()),
+            e2.execute_manifest_into(manifest.clone(), std::collections::HashMap::new()),
         };
         r1.expect("cascade 1 succeeds");
         r2.expect("cascade 2 succeeds");
@@ -2558,8 +2559,8 @@ convergence:
         let e1 = make_executor();
         let e2 = make_executor();
         let (r1, r2) = tokio::join! {
-            e1.execute_manifest(&manifest, std::collections::HashMap::new()),
-            e2.execute_manifest(&manifest, std::collections::HashMap::new()),
+            e1.execute_manifest_into(manifest.clone(), std::collections::HashMap::new()),
+            e2.execute_manifest_into(manifest.clone(), std::collections::HashMap::new()),
         };
         r1.expect("cascade 1 succeeds");
         r2.expect("cascade 2 succeeds");
@@ -2606,7 +2607,8 @@ convergence:
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
 
         let result = executor
-            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .clone()
+            .execute_manifest_into(manifest.clone(), std::collections::HashMap::new())
             .await;
 
         let err = result
@@ -2657,7 +2659,8 @@ convergence:
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
 
         let result = executor
-            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .clone()
+            .execute_manifest_into(manifest.clone(), std::collections::HashMap::new())
             .await;
 
         let err = result
@@ -2779,7 +2782,8 @@ error_handling:
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
 
         let result = executor
-            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .clone()
+            .execute_manifest_into(manifest.clone(), std::collections::HashMap::new())
             .await;
 
         let err =
@@ -2911,7 +2915,8 @@ error_handling:
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
 
         let result = executor
-            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .clone()
+            .execute_manifest_into(manifest.clone(), std::collections::HashMap::new())
             .await;
 
         let outcome = result.expect(
@@ -2984,7 +2989,8 @@ error_handling:
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
 
         let result = executor
-            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .clone()
+            .execute_manifest_into(manifest.clone(), std::collections::HashMap::new())
             .await;
 
         let outcome = result.expect(
@@ -3063,7 +3069,8 @@ convergence:
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
 
         let outcome = executor
-            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .clone()
+            .execute_manifest_into(manifest.clone(), std::collections::HashMap::new())
             .await
             .expect("cascade succeeds");
 
@@ -3119,7 +3126,8 @@ convergence:
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
 
         let outcome = executor
-            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .clone()
+            .execute_manifest_into(manifest.clone(), std::collections::HashMap::new())
             .await
             .expect("cascade exits Escalated via on_failure");
 
@@ -3223,7 +3231,8 @@ convergence:
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
 
         let outcome = executor
-            .execute_manifest(&manifest, std::collections::HashMap::new())
+            .clone()
+            .execute_manifest_into(manifest.clone(), std::collections::HashMap::new())
             .await
             .expect("allSettled batch succeeds with partial results");
 
@@ -3284,7 +3293,8 @@ convergence:
         context.insert("tool_name".to_string(), serde_json::json!("my_tool"));
 
         let outcome = executor
-            .execute_manifest(&manifest, context)
+            .clone()
+            .execute_manifest_into(manifest.clone(), context)
             .await
             .expect("cascade succeeds");
 
@@ -3356,8 +3366,8 @@ convergence:
             );
 
             let rt = tokio::runtime::Runtime::new().expect("create runtime");
-            let outcome = rt.block_on(executor.execute_manifest(
-                &manifest,
+            let outcome = rt.block_on(executor.execute_manifest_into(
+                manifest,
                 std::collections::HashMap::new(),
             )).expect("allSettled batch with at least one success must produce Ok");
 

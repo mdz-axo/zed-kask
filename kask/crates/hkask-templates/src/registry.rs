@@ -33,16 +33,6 @@ include!(concat!(env!("OUT_DIR"), "/known_mcp_tools.rs"));
 /// [`process_manifest_seed`] materialises them to disk; the runtime reads
 /// exclusively from disk (via `BridgeManifestExecutor::manifest_yaml`). This
 /// accessor remains available for tests and the seeding path.
-///
-/// Returns the raw YAML content for the skill, or `None` if no manifest
-/// exists for that name.
-pub fn process_manifest_yaml(skill_name: &str) -> Option<&'static str> {
-    PROCESS_MANIFEST_YAMLS
-        .iter()
-        .find(|(name, _)| *name == skill_name)
-        .map(|(_, yaml)| *yaml)
-}
-
 /// The full compiled-in process-manifest seed payload as `(skill_name, yaml)`
 /// pairs. Seed-only: used by the registry seeding path to write the shipped
 /// manifests to disk. Not read at runtime — the runtime resolves manifests
@@ -608,8 +598,17 @@ impl BundleRegistryIndex for Registry {
 
 #[cfg(test)]
 mod tests {
-    use super::process_manifest_yaml;
     use crate::manifest_loader::load_manifest_from_yaml;
+
+    /// Look up a compiled-in process manifest by skill name via the seed
+    /// payload (the per-name accessor was removed — the seed is the single
+    /// compiled-in surface).
+    fn process_manifest_yaml(skill_name: &str) -> Option<&'static str> {
+        super::process_manifest_seed()
+            .iter()
+            .find(|(name, _)| *name == skill_name)
+            .map(|(_, yaml)| *yaml)
+    }
 
     // Cybernetic Swarm Plan C0: the `swarm-intelligence` manifest must declare
     // the optional deterministic `task_success` input and thread it to the

@@ -319,14 +319,6 @@ pub struct KaskCuratorEmailSettings {
     /// Comma-separated list of senders authorized to reply with curator
     /// commands (P12 allowlist). Empty means inbound replies are rejected.
     pub authorized_emails: Vec<String>,
-
-    /// Inbox poll interval in seconds (0 = disabled). Reserved for a future
-    /// inbound IMAP path; currently unused by the outbound-only sink.
-    pub inbox_poll_interval_secs: u64,
-
-    /// Digest interval in seconds (0 = disabled). Reserved for a future
-    /// periodic digest sender; currently unused by the outbound-only sink.
-    pub digest_interval_secs: u64,
 }
 
 /// Memory consolidation and recall configuration.
@@ -706,7 +698,9 @@ pub struct KaskModelsSettings {
     pub classifier_model: String,
 
     /// OCR vision model for scanned document OCR (provider-prefixed).
-    /// When empty, falls back to the kask default.
+    /// When empty, the corpus server falls back to the kask default
+    /// (env `HKASK_OCR_MODEL` → `HkaskSettings::ocr_model` →
+    /// `DEFAULT_OCR_MODEL` — resolved in hkask-mcp-corpus, not here).
     pub ocr_model: String,
 }
 
@@ -728,22 +722,6 @@ impl KaskModelsSettings {
             Self::DEFAULT_INFERENCE_MODEL
         } else {
             &self.default_model
-        }
-    }
-
-    /// The kask default OCR model.
-    ///
-    /// Single source of truth: `hkask_inference::model_constants::DEFAULT_OCR_MODEL`.
-    pub const DEFAULT_OCR_MODEL: &'static str = hkask_inference::model_constants::DEFAULT_OCR_MODEL;
-
-    /// Resolve the effective OCR model, falling back to the kask default
-    /// when the setting is empty.
-    #[must_use]
-    pub fn effective_ocr_model(&self) -> &str {
-        if self.ocr_model.trim().is_empty() {
-            Self::DEFAULT_OCR_MODEL
-        } else {
-            &self.ocr_model
         }
     }
 }
@@ -1168,18 +1146,6 @@ impl KaskSettings {
                 self.curator.email.authorized_emails.join(","),
             );
         }
-        if self.curator.email.inbox_poll_interval_secs > 0 {
-            env.insert(
-                "HKASK_INBOX_POLL_INTERVAL_SECS".to_string(),
-                self.curator.email.inbox_poll_interval_secs.to_string(),
-            );
-        }
-        if self.curator.email.digest_interval_secs > 0 {
-            env.insert(
-                "HKASK_DIGEST_INTERVAL_SECS".to_string(),
-                self.curator.email.digest_interval_secs.to_string(),
-            );
-        }
 
         env
     }
@@ -1246,12 +1212,6 @@ impl From<KaskCuratorEmailSettingsContent> for KaskCuratorEmailSettings {
             curator_email: c.curator_email.unwrap_or(default.curator_email),
             alert_email: c.alert_email.unwrap_or(default.alert_email),
             authorized_emails: c.authorized_emails.unwrap_or(default.authorized_emails),
-            inbox_poll_interval_secs: c
-                .inbox_poll_interval_secs
-                .unwrap_or(default.inbox_poll_interval_secs),
-            digest_interval_secs: c
-                .digest_interval_secs
-                .unwrap_or(default.digest_interval_secs),
         }
     }
 }

@@ -122,7 +122,7 @@ pub(crate) fn render_curator_page(
 /// Render the Curator Email sub-page.
 ///
 /// Non-secret email fields (MXroute server, SMTP username, From address,
-/// alert recipient, authorized senders, poll/digest intervals) live in
+/// alert recipient, authorized senders) live in
 /// settings.json under `kask.curator.email`. The SMTP password is stored in
 /// the OS keychain under `kask://credentials/hkask_smtp_password` and
 /// injected into MCP server child processes as `HKASK_SMTP_PASSWORD`.
@@ -146,8 +146,6 @@ pub(crate) fn render_curator_email_page(
     let curator_email = email.curator_email;
     let alert_email = email.alert_email;
     let authorized_emails = email.authorized_emails.join(", ");
-    let inbox_poll_interval = email.inbox_poll_interval_secs.to_string();
-    let digest_interval = email.digest_interval_secs.to_string();
 
     // SMTP password — keychain-backed, mirrors the data-service API key pattern.
     let smtp_password_url = format!("{KASK_CREDENTIAL_NAMESPACE}/hkask_smtp_password");
@@ -235,17 +233,6 @@ pub(crate) fn render_curator_email_page(
                         } else {
                             None
                         };
-                    let inbox_poll: Option<u64> = if id == "kask-curator-email-inbox-poll-interval"
-                    {
-                        text.parse::<u64>().ok()
-                    } else {
-                        None
-                    };
-                    let digest: Option<u64> = if id == "kask-curator-email-digest-interval" {
-                        text.parse::<u64>().ok()
-                    } else {
-                        None
-                    };
                     SettingsStore::global(cx).update_settings_file(
                         <dyn fs::Fs>::global(cx),
                         move |settings, _| {
@@ -272,12 +259,6 @@ pub(crate) fn render_curator_email_page(
                                 }
                                 "kask-curator-email-authorized-emails" => {
                                     email.authorized_emails = authorized_emails;
-                                }
-                                "kask-curator-email-inbox-poll-interval" => {
-                                    email.inbox_poll_interval_secs = inbox_poll;
-                                }
-                                "kask-curator-email-digest-interval" => {
-                                    email.digest_interval_secs = digest;
                                 }
                                 _ => {}
                             }
@@ -336,20 +317,6 @@ pub(crate) fn render_curator_email_page(
         authorized_emails,
         "ops@example.com, alice@example.com",
     );
-    let inbox_poll_input = make_text_input(
-        "kask-curator-email-inbox-poll-interval",
-        "Inbox Poll Interval (secs)",
-        "IMAP inbox poll interval for inbound command replies. 0 = disabled. Default 0 (unset — reserved for a future inbound IMAP path). Or set HKASK_INBOX_POLL_INTERVAL_SECS.",
-        inbox_poll_interval,
-        "0",
-    );
-    let digest_input = make_text_input(
-        "kask-curator-email-digest-interval",
-        "Digest Interval (secs)",
-        "Periodic escalation digest email interval. 0 = disabled. Default 0 (unset — reserved for a future inbound IMAP path). Or set HKASK_DIGEST_INTERVAL_SECS.",
-        digest_interval,
-        "0",
-    );
 
     // Test Email button — sends a test email to the alert recipient to verify
     // MXroute credentials. Uses the alert recipient (or SMTP username) as the
@@ -399,10 +366,6 @@ pub(crate) fn render_curator_email_page(
         .child(alert_email_input)
         .child(Divider::horizontal())
         .child(authorized_input)
-        .child(Divider::horizontal())
-        .child(inbox_poll_input)
-        .child(Divider::horizontal())
-        .child(digest_input)
         .child(Divider::horizontal())
         .child(
             v_flex()
