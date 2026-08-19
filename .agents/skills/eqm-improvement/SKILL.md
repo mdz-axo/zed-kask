@@ -85,10 +85,9 @@ marker-keywords the scorer rewards. Three mitigations, all required:
 3. Identify available evidence sources for delegation (research,
    superforecasting, falsifiability).
 
-### eqm-imp-current (Kata Step 2: Grasp Current Condition)
+### eqm-imp-current (Kata Step 2: Grasp Current Condition — MCP tool step)
 
-1. Call `market_score_rationale` (via the eqm skill or directly) to score the
-   current rationale.
+1. The manifest's step 2 scores the current rationale via `market_score_rationale` (hkask-mcp-prediction-markets) using the `mcp:` + `tool:` binding — no separate .j2 template.
 2. Receive failing_markers, red_flag_screen, green_flag_endorsement,
    composite_score.
 3. Measure, don't assume — the EQM scores are the current condition.
@@ -141,16 +140,16 @@ marker-keywords the scorer rewards. Three mitigations, all required:
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `eqm-imp-direction.j2` | KnowAct | Kata Step 1: establish improvement direction. |
-| `eqm-imp-current.j2` | KnowAct | Kata Step 2: grasp current EQM scores (calls market_score_rationale). |
-| `eqm-imp-target.j2` | KnowAct | Kata Step 3: set marker-level targets from EQM descriptions. |
-| `eqm-imp-predict.j2` | KnowAct | Kata Step 4: predict which intervention raises which marker, with confidence. |
-| `eqm-imp-experiment.j2` | KnowAct | Kata Step 5: rewrite rationale per failing marker (delegates for evidence). |
+| `eqm-imp-direction.j2` | KnowAct | Kata Step 1 (Direction): establish the improvement direction — improve EQM passage rate, prioritizing red-flag elimination over green-flag polish. Confirm forecast probability preservation (alignment invariant). |
+| `eqm-imp-current.j2` | KnowAct | Kata Step 2 (Grasp Current Condition): the process manifest invokes market_score_rationale via the `mcp:` + `tool:` binding (this template is not referenced by a template_ref step). Receive failing_markers, red_flag_screen, composite_score. Measure, don't assume. |
+| `eqm-imp-target.j2` | KnowAct | Kata Step 3 (Establish Target Condition): set marker-level targets derived from EQM descriptions (what a 2 looks like). Prioritize red flags over green flags per the asymmetric signal. |
+| `eqm-imp-predict.j2` | KnowAct | Kata Step 4 (Make a Prediction): predict which intervention will close the gap and by how much. Specific: "intervention X will raise marker Y from A to B." Carry confidence in [0,1] for Brier scoring. |
+| `eqm-imp-experiment.j2` | KnowAct | Kata Step 5 (Experiment / Do): rewrite the rationale to address each failing marker, guided by the EQM description. Preserves forecast probability. Never fabricates evidence — delegates to superforecasting/research/falsifiability for real data. |
 
 ## Constraints
 
 - All flow templates are KnowAct type with Public visibility.
-- rJoule cap: 5 per invocation. Maximum 8 iterations (improvement is costlier per iteration).
+- rJoule cap: 5 per invocation. Maximum 8 iterations.
 - The convergence decision is deterministic (lisp.eval compute steps) — no LLM convergence-check template.
 - The forecast probability is preserved across all iterations (alignment invariant).
 - Never fabricate evidence — delegate to research/superforecasting/falsifiability for real data.

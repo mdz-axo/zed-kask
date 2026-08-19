@@ -14,9 +14,8 @@ const CANONICAL_ACTIONS: &[&str] = &[
 ///
 /// Only `skill` is permitted. The 41 non-`skill` manifests (`pipeline`,
 /// `qa-script`, `runtime-config`, `daemon-process`) were deleted after an audit
-/// found no runtime consumer for any of them: `resolve_manifest` rejects
-/// non-`skill` categories with `NotASkill` (`manifest_loader.rs`), and the
-/// execution boundary rejects again (`kask_bridge::skill_executor`), so they
+/// found no runtime consumer for any of them: the execution boundary rejects
+/// non-`skill` categories (`kask_bridge::skill_executor`), so they
 /// were embedded by `build.rs`, seeded to disk, and never read.
 ///
 /// The `category` field itself is retained: it is the security gate for
@@ -70,9 +69,12 @@ fn all_manifests_are_executor_compliant() {
             checked += 1;
             let fname = path.file_name().unwrap().to_string_lossy();
 
-            // 1. Category validity
+            // 1. Category validity — the loader now rejects unknown
+            // categories at parse time (typed `ManifestCategory`), so a
+            // manifest that parsed but carries a non-`skill` category is a
+            // compliance violation here.
             if let Some(ref cat) = manifest.category
-                && !valid_categories.contains(cat.as_str())
+                && !valid_categories.contains(cat.to_string().as_str())
             {
                 errors.push(format!(
                     "{fname}: manifest.category='{cat}' is not valid (must be one of {VALID_CATEGORIES:?})"

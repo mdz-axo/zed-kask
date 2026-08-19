@@ -595,9 +595,10 @@ pub struct BundleExecutionResult {
 impl SkillTool {
     /// Construct a SkillTool without a manifest executor (tests only).
     ///
-    /// In production, use `with_manifest_executor`. With no executor wired,
-    /// `run` returns the no-op envelope ("Skill manifest executor not
-    /// configured...") — body injection is disabled in zed-kask.
+    /// In production, use `with_manifest_executor_resolver` (see
+    /// `register_session`). With no executor wired, `run` returns the no-op
+    /// envelope ("Skill manifest executor not configured...") — body
+    /// injection is disabled in zed-kask.
     pub fn new<F>(skills: F) -> Self
     where
         F: Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static,
@@ -611,6 +612,11 @@ impl SkillTool {
     }
 
     /// Construct with an hKask ManifestExecutor for cascade-based skill execution.
+    ///
+    /// Tests only: production wires the executor via
+    /// `with_manifest_executor_resolver` (invocation-time resolution — the
+    /// session-creation race fix). This constructor pins the executor for the
+    /// tool's lifetime, which is fine for a test stub.
     ///
     /// When a manifest executor is present, skill activation runs the hKask
     /// cascade (KnowAct/FlowDef/RenderAct + PDCA + gas/rjoule + OCAP) instead
@@ -2074,7 +2080,6 @@ mod tests {
             disable_model_invocation: false,
             visibility: agent_skills::SkillVisibility::Private,
             dependencies: Vec::new(),
-            embedded_body: None,
             core: false,
         };
         let rendered = render_skill_envelope(&skill, "body content");

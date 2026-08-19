@@ -226,9 +226,9 @@ CONSTRAINT — Evidence integrity (P8):
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `select-signal.j2` | KnowAct | Discover runtime signal sources; read regression library; emit `reg.runtime.select` span. |
-| `classify-threat.j2` | KnowAct | Observe runtime signals; classify threats; apply pragmatic-cybernetics; emit `reg.runtime.classify` spans. |
-| `emit-regulation.j2` | KnowAct | Synthesize threats with CWE/OWASP/ATLAS taxonomy; emit `reg.outcome`; propose `RR-NNNN.yaml` entries (`surface: runtime`); emit `reg.runtime.regulate` span. |
+| `select-signal.j2` | KnowAct | Discover runtime signal sources within the deployed userpod host: reg.* canonical spans (tool invocations, inference calls, communication events), reg.outcome events (action blocks, substitutions, plateaus). Reads regression library for existing surface: runtime checks. Signal parameter: regulation | tool | inference | all. |
+| `classify-threat.j2` | KnowAct | Read observed runtime signals. Classify into threat patterns: endpoint abuse (repeated tool calls exceeding baseline), bot traffic (automated request patterns), LLM usage spike (inference rate anomaly), dependency behavior anomaly (unexpected tool invocation chain). Apply pragmatic-cybernetics: IS/OUGHT (observed vs expected baseline), feedback loop polarity, variety, Good Regulator. Emit reg.runtime.classify spans per classified threat. |
+| `emit-regulation.j2` | KnowAct | Synthesize classified threats with MITRE CWE / OWASP LLM / ATLAS taxonomy. For each threat: emit reg.outcome event. Propose RR-NNNN.yaml entries with surface: runtime for enforced CI gates. Produce verdict (Pass / Conditional / Fail) based on threat severity and defense-layer firing coverage. |
 
 ## Defense-Layer Catalog (Runtime Specific)
 
@@ -282,6 +282,7 @@ CONSTRAINT — Evidence integrity (P8):
 
 ## Constraints (Concrete — Not Aspirational)
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `select-signal.j2`: `visibility: public`.
 - `classify-threat.j2`: `visibility: public`.
 - `emit-regulation.j2`: `visibility: public`.

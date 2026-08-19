@@ -95,8 +95,8 @@ fn template_ref_resolves(template_ref: &str) -> bool {
 fn company_research_flash_manifest_parses() {
     let manifest = load_named_manifest("company-research-flash");
     assert_eq!(
-        manifest.category.as_deref(),
-        Some("skill"),
+        manifest.category,
+        Some(hkask_templates::ManifestCategory::Skill),
         "company-research-flash must declare category: skill"
     );
     assert!(manifest.is_skill(), "must be classified as a skill");
@@ -283,8 +283,8 @@ fn company_research_flash_uses_canonical_actions_only() {
 fn company_research_deep_manifest_parses() {
     let manifest = load_named_manifest("company-research-deep");
     assert_eq!(
-        manifest.category.as_deref(),
-        Some("skill"),
+        manifest.category,
+        Some(hkask_templates::ManifestCategory::Skill),
         "company-research-deep must declare category: skill"
     );
     assert!(manifest.is_skill(), "must be classified as a skill");

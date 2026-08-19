@@ -4653,7 +4653,6 @@ mod internal_tests {
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
-            embedded_body: None,
             core: false,
         }
     }
@@ -4990,7 +4989,6 @@ mod internal_tests {
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
-            embedded_body: None,
             core: false,
         }
     }
@@ -5220,8 +5218,7 @@ mod internal_tests {
                 disable_model_invocation: false,
                 visibility: SkillVisibility::Private,
                 dependencies: Vec::new(),
-                embedded_body: None,
-                core: false,
+                    core: false,
             });
         }
 
@@ -5261,7 +5258,6 @@ mod internal_tests {
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
-            embedded_body: None,
             core: false,
         };
         let second = Skill {
@@ -5274,7 +5270,6 @@ mod internal_tests {
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
-            embedded_body: None,
             core: false,
         };
         let third = Skill {
@@ -5287,7 +5282,6 @@ mod internal_tests {
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
-            embedded_body: None,
             core: false,
         };
 
@@ -5329,7 +5323,6 @@ mod internal_tests {
             disable_model_invocation: true,
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
-            embedded_body: None,
             core: false,
         };
         let visible = Skill {
@@ -5342,7 +5335,6 @@ mod internal_tests {
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
-            embedded_body: None,
             core: false,
         };
 

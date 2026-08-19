@@ -52,15 +52,15 @@ The shape is idiosyncratic to GSR's domain — the Inventory phase (enumerate on
 
 ## Registry Templates
 
-| Template              | Type    | Purpose                                                                     |
-| --------------------- | ------- | --------------------------------------------------------------------------- |
-| `gsr-inventory.j2`    | KnowAct | Enumerate ontology namespaces, fetch external ontologies with license check |
-| `gsr-prior.j2`        | KnowAct | Build complete-graph prior K_n                                              |
-| `gsr-map.j2`          | KnowAct | Map actual recombination field                                              |
-| `gsr-detect.j2`       | KnowAct | Detect gradients, classify by 8-shape taxonomy, fractal recurrence check    |
-| `gsr-hypothesize.j2`  | KnowAct | Generate reason hypotheses via 7-class taxonomy                             |
-| `gsr-prioritize.j2`   | KnowAct | Prioritize sites by reason class > fractal recurrence > magnitude           |
-| `gsr-select-seeds.j2` | KnowAct | Select most-central concept per high-priority site                          |
+| Template | Type | Purpose |
+|----------|------|---------|
+| `gsr-inventory.j2` | KnowAct | Enumerate the ontology namespaces in the registry. Each entry carries the namespace id, its axioms, its term signature, and its key concepts. When external sources are configured (OBO Foundry, OntoBee, BioPortal), fetch and parse the registry YAML / OWL, checking per-ontology license before caching. The project's default registry is the 6 domain-supplement namespaces (FIBO, ESO, GOLEM, ML-Schema, OMC, SUMO) + 2 universal axes (PKO, DC+BIBO) + 5W1H core. |
+| `gsr-prior.j2` | KnowAct | Build the expected-field model: the complete graph K_n on the n ontologies, where every ontology should have a populated recombination surface with every other. The prior is the gradient-hunter convention prior: "every pair should have a populated recombination surface." Delegates to pragmatic-cybernetics for variety engineering when no convention prior is available. |
+| `gsr-map.j2` | KnowAct | Map the actual recombination field in the registry with the same granularity as the prior. For each ordered pair (A, B), check whether a recombination surface exists — i.e., whether any concept in A has been recast into B's constraint context. Delegates to graph-audit (code mode) for topology extraction when hunting topology gradients. |
+| `gsr-detect.j2` | KnowAct | Compare prior to actual. Classify each gradient by its shape using the eight ontological anchors (sharp cliff, roof edge, wombling boundary, regression discontinuity, topological hole, oracle gap, frustrated landscape, allosteric population shift). Record location, shape, scale, domain, fractal recurrence, populated side, desert side, magnitude. The fractal recurrence check is mandatory. |
+| `gsr-hypothesize.j2` | KnowAct | For each detected gradient, generate multiple hypotheses for why it exists using the seven-class reason taxonomy: intentional boundary (MCAR), explainable gap (MAR), forgotten wire (MNAR), stale refactor (MNAR drift), scope creep (MNAR missing abstraction), metastable trap (spin glass non-ergodic), broken allosteric coupling. Delegates to falsifiability for counterfactual discrimination and to metacognition for prior perspective rotation. |
+| `gsr-prioritize.j2` | KnowAct | Compile detected gradients and their reason hypotheses into a structured, prioritized ranking. Prioritizes by reason class (broken allosteric coupling > metastable trap > MNAR > MAR > MCAR), then fractal recurrence, then magnitude, then populated-side criticality. Emits lessons_learned and pattern_signatures for the next iteration's prior. |
+| `gsr-select-seeds.j2` | KnowAct | For each high-priority recombination site, select the seed concept as the most central concept in the source ontology — the concept with the highest degree in the ontology's concept graph (most sub- and super-class relations). Central concepts have the richest structure to mutate; peripheral concepts produce trivial mutants. |
 
 ## Constraints
 

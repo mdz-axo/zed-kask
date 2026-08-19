@@ -40,11 +40,12 @@ it. The verification is mechanical (substring match), not model-mediated.
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `listening/apply-template.j2` | KnowAct | Apply the v3 listening template to a single transcript (chunked); retrieve-cite-verify process. |
-| `listening/apply-template-rag.j2` | KnowAct | Apply the v3 listening template over RAG-retrieved corpus passages + KG triples; cross-source citations. |
+| `apply-template.j2` | KnowAct | Apply the MAIA v3 listening template (stance block + 7 sections + horizon model) to an earnings-call transcript. Emits per-section verdicts with verbatim evidence quotes, the checkpoint map, and ignored_short_term entries. The no-fabrication invariant is enforced: every evidence field is a verbatim substring of the source transcript. |
+| `apply-template-rag.j2` | KnowAct | Apply the MAIA v3 listening template over a company knowledge graph. Takes RAG-retrieved passages from multiple documents (earnings calls, 10-Ks, investor days) plus KG triples linking them. Emits per-section verdicts with cross-source citations — a verdict can cite evidence from document A and document B. The no-fabrication invariant extends to the full corpus: every evidence field is a verbatim substring of one of the source passages. |
 
 ## Constraints
 
+- rJoule cap: 2 per invocation. Maximum 1 iterations.
 - Single-pass (sense→act, not iterative).
 - No-fabrication invariant is process-embedded: the model retrieves from
   numbered chunks and cites what it found; the process verifies each citation

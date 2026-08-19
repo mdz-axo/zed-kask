@@ -52,18 +52,18 @@ Brier. Convergence is detected deterministically.
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `sequential-inquiry-grasp.j2` | KnowAct | Kata Step 1: measure the current understanding. |
-| `sequential-inquiry-target.j2` | KnowAct | Kata Step 2: declare the target understanding. |
-| `sequential-inquiry-predict.j2` | KnowAct | Kata Step 3: predict which delegation will close the gap. |
-| `sequential-inquiry-engine.j2` | KnowAct | Kata Step 4: run the inquiry engine with delegation. |
-| `sequential-inquiry-delegate-hypothesis-framer.j2` | KnowAct | Delegation: FINER+PICO hypothesis framing. |
-| `sequential-inquiry-delegate-mcda.j2` | KnowAct | Delegation: multi-criteria decision analysis. |
-| `sequential-inquiry-delegate-diagnose.j2` | KnowAct | Delegation: disciplined diagnosis loop. |
-| `sequential-inquiry-delegate-falsifiability.j2` | KnowAct | Delegation: eliminative inference (Popper/Platt/Chamberlin/Pearl). |
+| `sequential-inquiry-grasp.j2` | KnowAct | Measure the agent's current understanding of the problem. Produces current_artifacts and current_procedure for gap computation. |
+| `sequential-inquiry-target.j2` | KnowAct | Declare the target understanding — what sufficient understanding looks like for this problem. Produces target_artifacts and target_procedure. |
+| `sequential-inquiry-predict.j2` | KnowAct | Predict which deep-dive delegation will close the gap and by how much. Carry a confidence for Brier scoring. |
+| `sequential-inquiry-engine.j2` | KnowAct | Core reasoning engine — advances the chain-of-thought with the predicted delegation. Generates, branches, revises, hypothesizes, and verifies. Re-measures the current condition after the experiment. |
+| `sequential-inquiry-delegate-hypothesis-framer.j2` | KnowAct | Delegation target — frames a research question / testable hypothesis via FINER + PICO when the engine detects a question-framing subproblem. |
+| `sequential-inquiry-delegate-mcda.j2` | KnowAct | Delegation target — multi-criteria decision analysis when the engine detects a choice among alternatives requiring structured tradeoff. |
+| `sequential-inquiry-delegate-diagnose.j2` | KnowAct | Delegation target — disciplined diagnosis loop when the engine detects a bug or regression requiring reproduce → anchor → hypothesize → fix. |
+| `sequential-inquiry-delegate-falsifiability.j2` | KnowAct | Delegation target — eliminative inference engine when the engine branches on a counterfactual scenario or needs to rule out the untestable. |
 
 ## Constraints
 
 - All flow templates are KnowAct type with Public visibility.
-- rJoule cap: 4 per invocation. Maximum 10 iterations (safety valve).
+- rJoule cap: 4 per invocation. Maximum 10 iterations.
 - The convergence decision is deterministic (compute steps) — no LLM convergence-check template.
 - Registry is authoritative.

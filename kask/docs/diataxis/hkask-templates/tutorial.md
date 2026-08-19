@@ -50,8 +50,6 @@ status: VERIFIED
 | `CascadePhase` enum | `kask/crates/hkask-templates/src/bundle/cascade.rs:8` |
 | `ManifestExecutor::execute_manifest` | `kask/crates/hkask-templates/src/executor.rs:141` |
 | `extract_final_step_result` | `kask/crates/hkask-templates/src/executor.rs:210` |
-| `load_manifest_from_file` | `kask/crates/hkask-templates/src/manifest_loader.rs:127` |
-| `resolve_manifest` | `kask/crates/hkask-templates/src/manifest_loader.rs:207` |
 | `StepMachine::run` | `kask/crates/hkask-templates/src/step_machine.rs:97` |
 | `StepGraph::new` | `kask/crates/hkask-templates/src/step_graph.rs:120` |
 
@@ -182,18 +180,18 @@ run at least one full experiment cycle (`convergence.rs:121`). The default
 
 ## Step 5: Execute the cascade
 
-Load the manifest with `load_manifest_from_file` (`manifest_loader.rs:127`)
-or resolve it by ID with `resolve_manifest` (`manifest_loader.rs:207`). Then
-execute it with `ManifestExecutor::execute_manifest` (`executor.rs:141`),
+Load the manifest with `load_manifest_from_yaml` (`manifest_loader.rs`).
+Then execute it with `ManifestExecutor::execute_manifest` (`executor.rs`),
 which builds a `StepGraph` (`step_graph.rs:120`), a `StepContext`, a
 `BudgetTracker`, and a `ConvergenceTracker`, then drives them through a
 `StepMachine::run` (`step_machine.rs:97`).
 
 ```rust
 use hkask_templates::{ManifestExecutor, extract_final_step_result};
-use hkask_templates::manifest_loader::load_manifest_from_file;
+use hkask_templates::load_manifest_from_yaml;
 
-let manifest = load_manifest_from_file(path)?;
+let yaml = std::fs::read_to_string(path)?;
+let manifest = load_manifest_from_yaml(&yaml)?;
 let executor = ManifestExecutor::new(inference, tools, default_params);
 let outcome = executor.execute_manifest(&manifest, initial_context).await?;
 let final_result = extract_final_step_result(&outcome);

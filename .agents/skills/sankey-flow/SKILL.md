@@ -117,64 +117,26 @@ The cascade is example-anchored match → adapt → render (single pass, 2 LLM c
 
 1. **MATCH.** Read the prompt and select the single best-fit domain from the catalog above, match it against the canonical example library by trigger phrases and structural similarity, and extract the user's actual nodes, edges, and weights in a single pass. Does NOT interrogate — missing data is marked as placeholder (value=1). For income statements with losses, negative profits flow into Total Revenue as sources (Revenue + |Loss| = Total Expenses). If the prompt references an external source (URL, file, database), note it for research delegation. If the prompt spans two domains, classify both and plan two diagrams.
 
-2. **Gather — interrogation or delegation.** Compare the candidate node and edge sets against the minimum-viable Sankey spec:
-   - **Nodes**: at least 2 source-side and 1 sink-side node, OR a recognizable chain of ≥3 nodes.
-   - **Edges**: every adjacent node pair in the implied flow must have an edge.
-   - **Weights**: every edge must have a weight. Weights may be relative (unitless ratios) if the user does not have absolute numbers — but they must be **stated by the user or read from a source**, never invented.
-   - **Conservation**: where the domain's conservation mode is `mandatory`, inflow to a node should equal outflow. Where `asserted`, check if the user stated conservation. Where `none`, skip.
+2. **ADAPT.** Fill the user's extracted data into the matched canonical example's structure. Verify structure against the example (node count, edge pattern, conservation mode), render the Mermaid sankey-beta CSV with front-matter config, and wrap in a markdown document with description, conservation check, data sources with PROV-O provenance, and references. Single pass — self-correct against the example structure if the draft deviates.
+   - Node labels: title case, ≤ 30 characters. If a label is longer, abbreviate and document the abbreviation in the description paragraph.
+   - Node IDs: identical to labels (Mermaid Sankey uses labels as IDs).
+   - Order edges so that sources appear before targets in the CSV — this improves Mermaid's layout heuristics.
+   - Use the front-matter `config` block for `width`, `height`, `showValues`, `linkColor` (`source` | `target` | `gradient`). Default `linkColor: source`.
+   - For **mandatory-conservation** domains, verify inflow = outflow at every internal node. If not, flag in the description rather than silently balancing.
+   - For **none-conservation** domains (user-journey, conversion, value-stream), do not add loss branches to "balance" the flow — the asymmetry is the point.
+   - **Hard rule**: never fabricate weights. If the user declines to provide a weight, mark the edge as `value=1` (unitless) and note in the diagram description that weights are unweighted placeholders.
 
-   **Two gathering paths**:
-
-   **Path A — Direct interrogation** (default, when no external source is referenced): Run the interrogation loop (protocol below) to ask the user for missing nodes, edges, and weights.
-
-   **Path B — Research delegation** (when the prompt references a URL, file, financial statement, codebase, or database): Delegate extraction to an analytical skill rather than asking the user to transcribe data. Delegation targets:
+   **Research delegation** (when the prompt references a URL, file, financial statement, codebase, or database): Delegate extraction to an analytical skill rather than asking the user to transcribe data. Delegation targets:
    - **`structured-extraction`**: when the source is a document (PDF, HTML, financial statement) and you need to extract entities (line items, stages, services) and relations (flows) into a structured schema. Provide a schema matching the Sankey spec: `{nodes: [{id, label, ontology_concept}], edges: [{source, target, weight, weight_unit, weight_source}]}`.
    - **`sequential-inquiry`**: when the source is ambiguous or multi-step (e.g., "research how our competitors handle onboarding and map the flow") and you need to reason through what the flow actually is before extracting weights. Template: `sequential-inquiry/sequential-inquiry-engine`.
    - **`graph-audit` (code mode)**: when the source is a codebase and you need to trace data flow through services/modules via the code graph. Template: `graph-audit/code-discover`.
    - **`firecrawl_scrape` / `firecrawl_extract`**: when the source is a URL and you need to pull structured data (e.g., a financial statement from a 10-K filing).
 
-   After delegation, validate the extracted spec: are all weights sourced? Are all nodes present? If gaps remain, fall back to Path A for the specific gaps — do not re-delegate the whole task.
+   After delegation, validate the extracted spec: are all weights sourced? Are all nodes present? If gaps remain, mark them as placeholders — do not re-delegate the whole task.
 
-   **Interrogation protocol** (Path A):
-   1. Compute the spec gap: list exactly which of {nodes, edges, weights, conservation} are missing or partial.
-   2. Prioritize by blocking power: nodes → edges → weights → conservation. A missing node blocks more than a missing weight.
-   3. Batch into a single round when possible. Prefer constrained-answer questions (multiple choice, numeric, "pick from this list").
-   4. State your default assumption and ask for confirmation (e.g., "I'm assuming throughput is conserved unless you say otherwise — correct?").
-   5. Stop asking when the spec is viable: ≥3 nodes, ≥2 edges, every edge weighted (even if unitless).
-   6. Never ask more than 5 questions in a single round. If you need more, ask the user to restate their intent at a higher level, then re-classify.
-   7. Track which specific items the user answered vs. deferred — do not re-ask answered items in subsequent rounds.
+3. **Conservation check (deterministic).** A `lisp.eval` compute step sums source-side and sink-side edge weights for mandatory conservation mode and compares for equality (within epsilon 0.01). Returns conservation_verified, source_total, sink_total, delta. Non-mandatory modes return verified: true (skipped). No LLM call.
 
-   **Hard rule**: never fabricate weights. If the user declines to provide a weight, mark the edge as `value=1` (unitless) and note in the diagram description that weights are unweighted placeholders.
-
-3. **Draft the Sankey.** Convert the gathered nodes and weighted edges into `sankey-beta` CSV: one row per edge as `source,target,value`. Apply these conventions:
-   - Node labels: title case, ≤ 30 characters. If a label is longer, abbreviate and document the abbreviation in the description paragraph.
-   - Node IDs: identical to labels (Mermaid Sankey uses labels as IDs).
-   - Order edges so that sources appear before targets in the CSV — this improves Mermaid's layout heuristics.
-   - Use the front-matter `config` block for `width`, `height`, `showValues`, `linkColor` (`source` | `target` | `gradient`). Default `linkColor: source`.
-   - Add a `%% source,target,value` comment as the first data line for readability.
-   - Insert blank CSV lines to group related flow stages visually (Mermaid Sankey permits this).
-   - For **mandatory-conservation** domains, verify inflow = outflow at every internal node before drafting. If not, flag in the description rather than silently balancing.
-   - For **none-conservation** domains (user-journey, conversion, value-stream), do not add loss branches to "balance" the flow — the asymmetry is the point.
-
-4. **Evaluate against quality criteria.** Score the draft on four weighted dimensions, each 0 (perfect) to 1 (severely deficient):
-   - **node completeness (0.30)** — are all flow-relevant nodes present? Missing sinks, missing loss branches (where mandatory), missing intermediate stages score > 0.
-   - **edge fidelity (0.25)** — does every adjacency the user described (or the source contained) appear as an edge? Spurious or missing edges score > 0.
-   - **data integrity (0.35)** — are all weights user-stated or source-read with provenance? Any fabricated weight scores 1.0 (hard failure). Silent conservation "balancing" in mandatory domains scores > 0. Missing provenance for a weight scores 0.5.
-   - **readability (0.10)** — labels ≤ 30 chars, no duplicate node IDs, layout-friendly edge ordering, conservation mode stated in description. Violations score > 0.
-
-   Produce specific, actionable refinement directives for any criterion scored above 0.00 — each directive must name the criterion, state what is wrong, and describe the expected fix.
-
-5. **Check convergence.** Compute the weighted total. Threshold is 0.15 — ≤ 0.15 means CONVERGED. 0.16–0.25 is NEAR (one more iteration). 0.26–0.50 is DRIFTING. > 0.50 is DIVERGED (re-classify the domain). **Data integrity = 1.0 forces DIVERGED** — fabrication is not refinable, it requires re-gathering. Maximum 3 iterations.
-
-6. **Write the final diagram.** Wrap the `sankey-beta` source in a markdown file with:
-   - A title (`# {Domain}: {Subject}`).
-   - A plain-English description paragraph stating: the chosen domain, the weight unit, the conservation mode (mandatory/asserted/none), any abbreviations, any unweighted-placeholder edges, any conservation discrepancies the user should resolve, and the PKO anchoring (e.g., "This diagram visualizes a PKO Procedure with N Steps; weights represent StepExecution quantities").
-   - The Mermaid code block.
-   - A "Data sources" section naming where each weight came from (user statement, source file + extraction method, or `unweighted placeholder`), formatted as PROV-O provenance: `weight X on edge A→B: prov:wasDerivedFrom <source>`.
-   - A "References" section citing canonical Sankey resources when relevant (Schmidt 2008 for energy/material, FIBO for financial, etc.).
-   - Output to `docs/diagrams/sankey-{domain}-{subject_slug}.md` where the subject slug is lowercased with hyphens, ≤ 40 characters.
-
-7. **Surface the diagram.** The write step produces `{output_path, markdown}` as JSON. A final `render` step (`present-sankey.j2`, RenderAct — deterministic, no LLM call) flattens the `markdown` field into a raw string, which becomes the cascade's final output. This ensures the fenced ```mermaid block reaches the chat stream — without it, the diagram stays buried inside a JSON object field that the model must discover and extract.
+4. **Surface the diagram.** A final `render` step (`present-sankey.j2`, RenderAct — deterministic, no LLM call) wraps the adapt step's mermaid source in a titled, annotated markdown document with a title, description, the mermaid diagram, the conservation check, a data table annotating each flow with its weight and provenance, and references. This becomes the cascade's final output — the fenced ```mermaid block reaches the chat stream directly, not buried inside a JSON object field.
 
 ## Research Delegation — Detailed Protocol
 
@@ -194,7 +156,7 @@ When the gather step takes Path B (research delegation), follow this protocol:
 
 4. **Validate the result**: Check that (a) all nodes have labels, (b) all edges have weights, (c) weights have sources, (d) the graph is connected (no orphan nodes), (e) conservation holds where mandatory.
 
-5. **Fall back to interrogation for gaps**: If delegation returns a partial spec (e.g., nodes but no weights), use Path A interrogation to ask the user only for the missing pieces. Do not re-delegate the whole task.
+5. **Mark gaps as placeholders**: If delegation returns a partial spec (e.g., nodes but no weights), mark the missing weights as `value=1` placeholders and note them in the description. Do not re-delegate the whole task.
 
 6. **Cite the source in provenance**: Every weight extracted via delegation must carry `prov:wasDerivedFrom <source URL or file path>` in the Data sources section.
 
@@ -214,14 +176,21 @@ When the gather step takes Path B (research delegation), follow this protocol:
 - **Zed rendering constraints**: no `%%{init}%%`, no `classDef`, no inline color styles. Use the front-matter `config` block.
 - **Node labels ≤ 30 characters.** Abbreviate longer labels and document the abbreviation.
 - **No duplicate node IDs.** Mermaid Sankey uses labels as IDs; duplicates silently break rendering.
-- **Maximum 3 iterations** before forced convergence exit.
-- **Convergence threshold**: 0.15 weighted total across four criteria.
-- **Data integrity = 1.0 forces DIVERGED** — fabrication is not refinable.
-- **Maximum 5 questions per interrogation round.** If more are needed, ask the user to restate intent.
+- Single pass — no iteration loop. `max_iterations: 1`; the adapt step self-corrects against the matched example's structure.
+- rJoule cap: 1 per invocation. Maximum 1 iterations.
 - **Delegate, don't transcribe.** When the prompt references an external source, delegate extraction to a specialized skill. Do not ask the user to transcribe data that exists in a source.
 - **Cite canonical references** in the output when relevant (Schmidt 2008, FIBO, PROV-O, PKO).
-- **Registry is authoritative** — when this SKILL.md disagrees with registry templates (if any are added), the registry wins.
-- **Visual artifact surfacing** — the `present-sankey.j2` render step (RenderAct) must be the cascade's final output step. It surfaces the fenced ```mermaid block as a raw markdown string so acp_thread's mermaid renderer picks it up. Removing it causes the diagram to stay buried in the write step's JSON `{output_path, markdown}` object — the model must then discover and extract the `markdown` field, which is fragile.
+- **Registry is authoritative** — when this SKILL.md disagrees with registry templates, the registry wins.
+- **Visual artifact surfacing** — the `present-sankey.j2` render step (RenderAct) must be the cascade's final output step. It surfaces the fenced ```mermaid block as a raw markdown string so acp_thread's mermaid renderer picks it up. Removing it causes the diagram to stay buried in the adapt step's JSON output — the model must then discover and extract the `markdown` field, which is fragile.
+
+## Registry Templates
+
+| Template | Type | Purpose |
+|----------|------|---------|
+| `sankey-examples.j2` | Include | Library of canonical Sankey structural templates (income statement, budget, data pipeline, funnel, balance sheet, process flow) with match triggers, node patterns, edge patterns, conservation modes, and filled instances. Included by the match and adapt templates as few-shot context. |
+| `sankey-match.j2` | KnowAct | Classify the prompt's domain, match it against the canonical example library by trigger phrases and structural similarity, and extract the user's actual nodes, edges, and weights in a single pass. Does NOT interrogate — missing data is marked as placeholder (value=1). For income statements with losses, negative profits flow into Total Revenue as sources (Revenue + |Loss| = Total Expenses). |
+| `sankey-adapt.j2` | KnowAct | Fill the user's extracted data into the matched canonical example's structure. Verify structure (node count, edge pattern, conservation mode), render Mermaid sankey-beta CSV with front-matter config, and wrap in a markdown document with description, conservation check, data sources with PROV-O provenance, and references. Single pass — no iteration loop. Self-corrects against the example structure if the draft deviates. |
+| `present-sankey.j2` | RenderAct | RenderAct — surfaces the finalized Sankey markdown (containing the fenced ```mermaid block) as the cascade's final output string. Flattens the adapt step's JSON object to a raw markdown string. Deterministic (no LLM call). |
 
 ## Examples
 
@@ -343,7 +312,7 @@ Demos,Churned at Close,40
    }
    ```
 3. Validate: all weights sourced? Conservation holds (Revenue = COGS + OpEx + NetIncome)?
-4. If gaps (e.g., extraction missed a line item), fall back to Path A: "Extraction found Revenue, COGS, NetIncome but not R&D or SG&A. Can you confirm those line items from the 10-K, or should I mark them as unweighted?"
+4. If gaps (e.g., extraction missed a line item), mark them as placeholders: "Extraction found Revenue, COGS, NetIncome but not R&D or SG&A — those edges are marked value=1 (unweighted placeholders)."
 
 **Draft**: (structure mirrors Example 2, with FIBO-anchored node labels)
 

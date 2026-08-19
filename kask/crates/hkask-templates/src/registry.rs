@@ -13,7 +13,6 @@ use crate::bundle::BundleRegistryIndex;
 use crate::ports::{Result, TemplateError};
 use hkask_capability::SYSTEM_MAX_RECURSION;
 use hkask_types::NotFound;
-use hkask_types::Visibility;
 use hkask_types::template_type::TemplateType;
 use hkask_types::{RegistryEntry, RegistryIndex, Skill, SkillRegistryIndex};
 use serde::Deserialize;
@@ -345,20 +344,6 @@ impl Registry {
         self.skills.values().cloned().collect()
     }
 
-    /// List skills filtered by visibility.
-    ///
-    /// expect: "The system manages a template registry for skill rendering"
-    /// \[P3\] Motivating: Generative Space — visibility-filtered skill listing
-    /// pre:  visibility is a valid Visibility variant
-    /// post: returns `Vec<Skill>` filtered by visibility
-    pub fn list_skills_by_visibility(&self, visibility: Visibility) -> Vec<Skill> {
-        self.skills
-            .values()
-            .filter(|s| s.visibility == visibility)
-            .cloned()
-            .collect()
-    }
-
     /// Remove a skill by ID.
     ///
     /// expect: "The system manages a template registry for skill rendering"
@@ -582,10 +567,6 @@ impl SkillRegistryIndex for Registry {
 
     fn list_skills(&self) -> Vec<Skill> {
         Registry::list_skills(self)
-    }
-
-    fn list_skills_by_visibility(&self, visibility: hkask_types::Visibility) -> Vec<Skill> {
-        Registry::list_skills_by_visibility(self, visibility)
     }
 
     fn skills_by_domain(&self, domain: TemplateType) -> Vec<Skill> {

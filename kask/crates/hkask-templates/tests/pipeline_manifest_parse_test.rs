@@ -22,8 +22,8 @@ fn pipeline_manifest_parses_with_general_executor() {
 
     // The manifest declares category: pipeline.
     assert_eq!(
-        manifest.category.as_deref(),
-        Some("pipeline"),
+        manifest.category,
+        Some(hkask_templates::ManifestCategory::Pipeline),
         "pipeline manifest must declare category: pipeline"
     );
 

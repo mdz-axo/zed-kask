@@ -70,16 +70,17 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 ## Registry Templates
 
 | Template | Type | Purpose |
-|----------|------|--------|
-| `improv-select.j2` | `KnowAct` | Pure mode selection. Evaluate conversation context and intent cues to select the best-fit improv mode. Does NOT apply the mode — routing to individual WordActs is handled by the manifest flow. |
-| `improv-plussing.j2` | `WordAct` | Plussing (Catmull) — Extract agreeable components from a contribution, silently discard the remainder, and build constructively on selected seeds. Never explicitly negate. |
-| `improv-yes-and.j2` | `WordAct` | Yes And — Accept the whole contribution and extend it with a novel, additive layer. Extension must be additive, not substitutive. |
-| `improv-yes-but.j2` | `WordAct` | Yes But — Accept the whole contribution and append a constraint or redirect that narrows scope without contradicting. |
-| `improv-freestyling.j2` | `WordAct` | Freestyling — Rapid collaborative short-response cycling among participants. Time-bounded, no single owner, round-robin turns. |
-| `improv-riffing.j2` | `WordAct` | Riffing — Solo divergent exploration from a seed contribution. May return to group with synthesis or spawn a new thread. |
+|----------|------|---------|
+| `improv-select.j2` | KnowAct | Pure mode selection. Evaluate conversation context and intent cues to select the best-fit improv mode. Does NOT apply the mode — routing to individual WordActs is handled by the manifest flow. |
+| `improv-plussing.j2` | WordAct | Plussing (Catmull) — Extract agreeable components from a contribution, silently discard the remainder, and build constructively on selected seeds. Never explicitly negate. |
+| `improv-yes-and.j2` | WordAct | Yes And — Accept the whole contribution and extend it with a novel, additive layer. Extension must be additive, not substitutive. |
+| `improv-yes-but.j2` | WordAct | Yes But — Accept the whole contribution and append a constraint or redirect that narrows scope without contradicting. |
+| `improv-freestyling.j2` | WordAct | Freestyling — Rapid collaborative short-response cycling among participants. Time-bounded, no single owner, round-robin turns. |
+| `improv-riffing.j2` | WordAct | Riffing — Solo divergent exploration from a seed contribution. May return to group with synthesis or spawn a new thread. |
 
 ## Constraints
 
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - **Visibility:** All templates are `Public`.
 - **Never explicitly negate** (Plussing, and governing principle in selector). Criticism is deletion-by-omission.
 - **Yes And extension must be additive, not substitutive** — the accepted base remains intact and visible.

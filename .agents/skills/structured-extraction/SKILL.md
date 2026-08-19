@@ -51,12 +51,13 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `extract-relations.j2` | KnowAct | Extract semantic relations between identified entities. Links entities via subject-predicate-object triples within context.  |
-| `identify-entities.j2` | KnowAct | Identify entities in unstructured text against a target schema with extraction hints. Tracks unmapped text and entity count.  |
-| `map-to-schema.j2` | KnowAct | Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports field-level coverage and unresolved fields.  |
+| `extract-relations.j2` | KnowAct | Extract semantic relations between identified entities. Links entities via subject-predicate-object triples within context. |
+| `identify-entities.j2` | KnowAct | Identify entities in unstructured text against a target schema with extraction hints. Tracks unmapped text and entity count. |
+| `map-to-schema.j2` | KnowAct | Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports field-level coverage and unresolved fields. |
 
 ## Constraints
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `extract-relations.j2`: Public.
 - `identify-entities.j2`: Public.
 - `map-to-schema.j2`: Public.

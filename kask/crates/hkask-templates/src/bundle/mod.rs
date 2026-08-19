@@ -13,7 +13,7 @@ pub use composition::*;
 pub use config::*;
 pub use manifest::{
     BundleManifest, BundleManifestStep, BundleSkill, CascadePhase, GoldenOutputFixture,
-    MAX_CONCURRENCY, OnFailureConfig,
+    MAX_CONCURRENCY, ManifestCategory, OnFailureConfig,
 };
 
 /// CRUD for bundle manifests. Read methods return owned values for HashMap/SQLite compat.

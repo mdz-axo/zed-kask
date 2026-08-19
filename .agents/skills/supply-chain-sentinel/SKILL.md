@@ -202,10 +202,10 @@ CONSTRAINT — Evidence integrity (P8):
 ## Registry Templates
 
 | Template | Type | Purpose |
-|----------|------|----------|
-| `select-surface.j2` | KnowAct | Discover manifest surfaces; read regression library; emit `reg.supply_chain.select` span. |
-| `probe.j2` | KnowAct | Read manifest evidence; verify dependency specs; apply pragmatic-cybernetics; emit `reg.supply_chain.probe` spans. |
-| `report.j2` | KnowAct | Synthesize findings with CWE/OWASP/OSC&R taxonomy; propose `RR-NNNN.yaml` entries (`surface: supply-chain`); emit `reg.supply_chain.report` span. |
+|----------|------|---------|
+| `select-surface.j2` | KnowAct | Discover dependency surfaces (Cargo.toml, package-lock.json, go.sum, requirements.txt, deny.toml) and map the dependency graph scope. Reads regression library for existing supply-chain checks. Surface parameter: cargo | npm | python | deny | all. |
+| `probe.j2` | KnowAct | Read manifest files. Build dependency tree. Check for pinned versions, registry trust, unmaintained packages, license incompatibilities, and known vulnerability references. Apply pragmatic-cybernetics feedback analysis: dependency update polarity, variety of alternatives, Good Regulator (version pinning). Emit reg.supply_chain.probe spans per dependency. |
+| `report.j2` | KnowAct | Synthesize findings with concrete file evidence, source citations, severity (critical/high/medium/low), CWE reference, and OWASP Supply Chain / OSC&R taxonomy mapping. Propose RR-NNNN.yaml entries with surface: supply-chain for enforced CI gates. |
 
 ## Defense-Layer Catalog (Supply Chain Specific)
 
@@ -261,6 +261,7 @@ not speculatively.
 
 ## Constraints (Concrete — Not Aspirational)
 
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - `select-surface.j2`: `visibility: public`.
 - `probe.j2`: `visibility: public`.
 - `report.j2`: `visibility: public`.

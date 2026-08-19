@@ -54,11 +54,12 @@ top-level template variables.
 ## Registry Templates
 
 | Template | Type | Purpose |
-|----------|------|--------|
-| `swarm-intelligence/swarm-compose-guide.j2` | `KnowAct` | Agent/swarm composition authoring + validation guidance. Renders field definitions, ABW/Local considerations, and composition principles; returns JSON suggestions (action=suggest) or a validation verdict (action=validate). |
+|----------|------|---------|
+| `../swarm-intelligence/swarm-compose-guide.j2` | KnowAct | Renders guidance for agent/swarm composition forms. Returns suggested completions (action=suggest) or a validation verdict (action=validate) over the supplied fields. Used by the swarm panel's AI Assist / Validate buttons via the swarm_ai_assist MCP tool. |
 
 ## Constraints
 
+- rJoule cap: 2 per invocation. Maximum 1 iterations.
 - Read-only authoring aid — no ledger debit, no consent, no ABW calls.
 - The template uses the local `InferencePort` (one-shot LLM generate) in both
   modes; the `mode` field only tailors the guidance text.

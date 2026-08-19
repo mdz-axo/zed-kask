@@ -126,6 +126,7 @@ These constraints are non-obvious and were verified by the
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `propose-hypotheses.j2` | KnowAct | The LLM generates 3-7 candidate hypotheses, each with a prediction, falsifier, and likelihood estimate. |
-| `refine-hypotheses.j2` | KnowAct | The LLM refines the hypothesis set in response to the deterministic Lisp invariant check (gated by `condition:` on the Lisp verdict). |
-| `report.j2` | KnowAct | Final report: the surviving hypothesis set with the Lisp invariant verdict and convergence score — which defects did Lisp catch that the LLM missed? |
+| `propose-hypotheses.j2` | KnowAct | Probabilistic step: the LLM generates 3-7 candidate hypotheses for the target question. Each hypothesis carries a prediction, a falsifier, and a likelihood estimate. This is the connectionist compute the Lisp steps scaffold — the LLM is good at generation, bad at counting its own outputs and checking structural completeness. |
+| `refine-hypotheses.j2` | KnowAct | Probabilistic step: the LLM refines the hypothesis set in response to the deterministic Lisp invariant check. Gated by `condition:` on the Lisp verdict — only runs if the Lisp step found structural defects the LLM must repair (missing falsifier, duplicate hypothesis, insufficient diversity). This is the feedback loop: Lisp finds a structural defect, LLM repairs it, Lisp re-checks. |
+| `report.j2` | KnowAct | Final report: the surviving hypothesis set with the Lisp invariant verdict and convergence score. Surfaces which structural defects were found and repaired across iterations, making the symbolic scaffolding auditable. |
+

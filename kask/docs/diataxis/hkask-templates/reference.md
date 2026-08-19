@@ -83,12 +83,7 @@ registry with a `template_type` discriminator per architecture v0.22.0
 | `SqliteRegistry` struct | `kask/crates/hkask-templates/src/registry_sqlite.rs:51` |
 | `SqliteRegistry::new` | `kask/crates/hkask-templates/src/registry_sqlite.rs:55` |
 | `BundleRegistryIndex` trait | `kask/crates/hkask-templates/src/bundle/mod.rs:22` |
-| `SkillLoader` struct | `kask/crates/hkask-templates/src/skill_loader.rs:64` |
-| `SkillFrontMatter` struct | `kask/crates/hkask-templates/src/skill_loader.rs:28` |
-| `SkillLoadResult` struct | `kask/crates/hkask-templates/src/skill_loader.rs:57` |
-| `load_manifest_from_file` | `kask/crates/hkask-templates/src/manifest_loader.rs:127` |
 | `load_manifest_from_yaml` | `kask/crates/hkask-templates/src/manifest_loader.rs:142` |
-| `resolve_manifest` | `kask/crates/hkask-templates/src/manifest_loader.rs:207` |
 | `ManifestFile` wrapper | `kask/crates/hkask-templates/src/manifest_loader.rs:42` |
 | `ManifestLoadError` enum | `kask/crates/hkask-templates/src/manifest_loader.rs:329` |
 | `PromptStrategy` enum | `kask/crates/hkask-templates/src/prompt_strategy.rs:14` |
@@ -207,13 +202,10 @@ status: VERIFIED
 
 Three functions in `manifest_loader.rs` handle manifest loading:
 
-- `load_manifest_from_file` (`manifest_loader.rs:127`) reads from a file path.
-- `load_manifest_from_yaml` (`manifest_loader.rs:142`) parses a YAML string.
-- `resolve_manifest` (`manifest_loader.rs:207`) resolves a manifest
-  reference against a `BundleRegistryIndex`, trying registry ID first, then
-  file path, then relative path. Returns `ManifestResolveError::NotASkill`
-  if the manifest loads but is not `category: skill` — only skill manifests
-  may bind as agent `process_manifest`s.
+- `load_manifest_from_yaml` (`manifest_loader.rs`) parses a YAML string.
+  (The registry-ID/file-path resolver `resolve_manifest` and the file-path
+  loader `load_manifest_from_file` were removed — they had no runtime
+  consumers; the bridge loads manifests from disk directly.)
 
 The `ManifestFile` wrapper (`manifest_loader.rs:42`) flattens the
 `manifest:` header with top-level config peers into a single
@@ -523,11 +515,6 @@ exhaustion span. `snapshot` (`budget.rs:265`) returns a `BudgetSnapshot`
 (`budget.rs:33`) for context injection.
 
 ## Skill loading
-
-`SkillLoader` (`skill_loader.rs:64`) loads skill definitions from the
-registry. It parses `SkillFrontMatter` (`skill_loader.rs:28`) — name,
-visibility, namespace, description — and returns a `SkillLoadResult`
-(`skill_loader.rs:57`) with loaded skills and warnings.
 
 ## Input validation
 

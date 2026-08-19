@@ -60,13 +60,14 @@ skill's decision rule encodes this asymmetry:
    question, forecaster_id?} objects.
 3. Prepare the scoring batch and cost estimate (~$0.007 per rationale).
 
-### eqm-score
+### eqm-score (MCP tool step)
 
-1. Call `market_score_rationale` (hkask-mcp-prediction-markets) per rationale.
+1. The manifest's step 2 invokes `market_score_rationale` (hkask-mcp-prediction-markets) per rationale via the `mcp:` + `tool:` binding — no separate .j2 template; the executor iterates over the scoring batch from step 1.
 2. Collect per-rationale EqmResult: composite_score, scores, red_flags,
    green_flags, interpretation, model, caveat.
 3. The MCP tool is the single source of truth for the 12-EQM LLM scoring;
-   this skill does not re-implement it.
+   this skill does not re-implement it. The rJoule cap bounds the batch cost
+   (~$0.007 × N rationales).
 
 ### eqm-aggregate
 
@@ -98,11 +99,11 @@ target composite), computed deterministically via lisp.eval.
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `eqm-select.j2` | KnowAct | Choose EQM subset + gather rationale corpus. |
-| `eqm-score.j2` | KnowAct | Per-rationale scoring via market_score_rationale MCP tool. |
-| `eqm-aggregate.j2` | KnowAct | Forecast-level + forecaster-level composite + asymmetric decision rule. |
-| `eqm-validate.j2` | KnowAct | Outcome correlation + gaming detection. |
-| `eqm-catalog.yaml` | RenderAct | Reference: full 60-EQM catalog from the paper. |
+| `eqm-select.j2` | KnowAct | Choose the EQM subset (predictive_12 default, full_60, or domain_tuned) and gather the rationale corpus. Prepares the scoring batch and cost estimate. |
+| `eqm-score.j2` | KnowAct | Score rationales via the market_score_rationale MCP tool (hkask-mcp-prediction-markets), invoked by the manifest's `mcp:` + `tool:` binding rather than a template_ref. Collect per-rationale EqmResult: composite_score, scores, red_flags, green_flags. The MCP tool is the single source of truth for 12-EQM LLM scoring. |
+| `eqm-aggregate.j2` | KnowAct | Aggregate per-rationale scores to forecast-level and forecaster-level composites. Apply the asymmetric decision rule: red_flag_screen (high confidence) vs green_flag_endorsement (weak). Compute overconfidence_bias. |
+| `eqm-validate.j2` | KnowAct | If realized_outcomes present: correlate EQM composite with accuracy (Brier), check directional-hypothesis match. If scores rose but accuracy didn't improve → gaming_suspected verdict. If outcomes absent → Undetermined (not Ready-with-empty). |
+| `eqm-catalog.yaml` | RenderAct | Reference document: the full 60 EQM definitions from Karvetski et al. (2026), organized by category (good_habits / warning_signs). The 12 most predictive are marked predictive: true. Single source of truth for EQM definitions; the MCP tool's KEY_EQMS const carries the predictive 12. |
 
 ## Constraints
 

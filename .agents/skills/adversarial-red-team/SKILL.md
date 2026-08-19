@@ -39,13 +39,14 @@ Adversarial robustness testing. Select targets, generate adversarial inputs acro
 ## Registry Templates
 
 | Template | Type | Purpose |
-|----------|------|--------|
-| `generate-adversarial.j2` | `KnowAct` | Generate adversarial inputs targeting a specific output across multiple vulnerability categories and injection vectors. Supports three persistence levels: single (one batch), iterative (multi-turn escalating scripts building on prior findings), and persistent (ongoing adaptive attack scripts with response-driven adaptation rules). |
-| `select-target.j2` | `KnowAct` | Select the best adversarial target and map its vulnerability surface. Evaluates target domain against adversarial categories and calibrates intensity level. |
-| `test-against-target.j2` | `KnowAct` | Interpret generated adversarial inputs against the target's defense posture. Does NOT simulate target responses (no live delivery mechanism). Reports the delivery gap honestly. |
+|----------|------|---------|
+| `generate-adversarial.j2` | KnowAct | Generate adversarial inputs targeting a specific output across multiple vulnerability categories and injection vectors. Supports three persistence levels: single (one batch), iterative (multi-turn escalating scripts building on prior findings), and persistent (ongoing adaptive attack scripts with response-driven adaptation rules). |
+| `select-target.j2` | KnowAct | Select the best adversarial target and map its vulnerability surface against hKask's deployed defense layers. Evaluates target domain against adversarial categories, calibrates intensity level, and identifies which defense layers each attack must bypass. |
+| `test-against-target.j2` | KnowAct | Test a target output against generated adversarial inputs. Evaluate resistance rate, identify critical failures, and report which defense layers were bypassed by each attack. Includes capability token forgery detection. |
 
 ## Constraints
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - All templates use `Public` visibility
 - Each adversarial input must be specific to the target output — no generic attacks
 - Severity must match the intensity level: light ≤ moderate ≤ severe

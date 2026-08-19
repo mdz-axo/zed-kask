@@ -40,7 +40,6 @@ convergence tracking, and gas/rJoule budgets. The `BridgeManifestExecutor`
 | `ConvergenceConfig` struct | `kask/crates/hkask-templates/src/bundle/config.rs:52` |
 | `StepMachine::run` | `kask/crates/hkask-templates/src/step_machine.rs:97` |
 | `StepMachine::run_pass` | `kask/crates/hkask-templates/src/step_machine.rs:239` |
-| `resolve_manifest` | `kask/crates/hkask-templates/src/manifest_loader.rs:207` |
 | `BridgeManifestExecutor` struct | `kask/crates/kask_bridge/src/skill_executor.rs:88` |
 | `BridgeManifestExecutor::execute_skill` | `kask/crates/kask_bridge/src/skill_executor.rs:534` |
 | `seed_registry_to_disk` | `kask/crates/kask_bridge/src/skill_executor.rs:457` |
@@ -68,7 +67,7 @@ sequenceDiagram
     participant Infer as InferencePort
 
     Agent->>Bridge: execute_skill(name, context)
-    Bridge->>Bridge: resolve_manifest / load
+    Bridge->>Bridge: load_manifest_from_yaml
     Bridge->>Exec: execute_manifest(manifest, ctx)
     Exec->>Exec: execute_manifest_into (clone)
     Exec->>Machine: StepMachine::new + run(infra)

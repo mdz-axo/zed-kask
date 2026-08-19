@@ -8,7 +8,7 @@ use crate::bundle::BundleRegistryIndex;
 use crate::ports::{Result, TemplateError};
 use hkask_types::SkillPolarity;
 use hkask_types::template_type::TemplateType;
-use hkask_types::{InfrastructureError, NotFound, Visibility};
+use hkask_types::{InfrastructureError, NotFound};
 use hkask_types::{
     RegistryEntry, RegistryError, RegistryIndex, Skill, SkillRegistryIndex, SkillZone,
 };
@@ -23,7 +23,6 @@ type SkillRow = (
     Option<String>,
     Option<String>,
     Option<String>,
-    String,
     String,
     Option<String>,
 );
@@ -109,12 +108,10 @@ impl SqliteRegistry {
             "CREATE TABLE IF NOT EXISTS provenance(id INTEGER PRIMARY KEY AUTOINCREMENT, template_id TEXT NOT NULL, git_sha TEXT NOT NULL, modified_by TEXT NOT NULL, modified_at DATETIME DEFAULT CURRENT_TIMESTAMP, branch TEXT, commit_message TEXT, FOREIGN KEY(template_id) REFERENCES templates(id));",
             "CREATE INDEX IF NOT EXISTS idx_templates_type ON templates(template_type);",
             "CREATE INDEX IF NOT EXISTS idx_provenance_template ON provenance(template_id);",
-            "CREATE TABLE IF NOT EXISTS skills(id TEXT PRIMARY KEY, domain TEXT NOT NULL, word_act TEXT, flow_def TEXT, know_act TEXT, polarity TEXT, content_hash TEXT, visibility TEXT NOT NULL DEFAULT 'private', zone TEXT NOT NULL DEFAULT 'private', namespace TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);",
+            "CREATE TABLE IF NOT EXISTS skills(id TEXT PRIMARY KEY, domain TEXT NOT NULL, word_act TEXT, flow_def TEXT, know_act TEXT, polarity TEXT, content_hash TEXT, zone TEXT NOT NULL DEFAULT 'private', namespace TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);",
             "CREATE INDEX IF NOT EXISTS idx_skills_domain ON skills(domain);",
-            "CREATE INDEX IF NOT EXISTS idx_skills_visibility ON skills(visibility);",
-            "CREATE TABLE IF NOT EXISTS bundles(id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, version TEXT NOT NULL, editor TEXT NOT NULL DEFAULT 'curator-or-human-admin', visibility TEXT NOT NULL DEFAULT 'Private', manifest_json TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);",
+            "CREATE TABLE IF NOT EXISTS bundles(id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, version TEXT NOT NULL, editor TEXT NOT NULL DEFAULT 'curator-or-human-admin', manifest_json TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);",
             "CREATE TABLE IF NOT EXISTS bundle_skills(bundle_id TEXT NOT NULL, skill_id TEXT NOT NULL, polarity TEXT, manifest_ref TEXT, content_hash TEXT, position INTEGER NOT NULL, PRIMARY KEY(bundle_id, skill_id), FOREIGN KEY(bundle_id) REFERENCES bundles(id));",
-            "CREATE INDEX IF NOT EXISTS idx_bundles_visibility ON bundles(visibility);",
             "CREATE INDEX IF NOT EXISTS idx_bundle_skills_bundle ON bundle_skills(bundle_id);",
             "CREATE INDEX IF NOT EXISTS idx_bundle_skills_skill ON bundle_skills(skill_id);",
         )).map_err(|e| TemplateError::Manifest(format!("Schema init: {}", e)))?;
@@ -336,11 +333,11 @@ impl SkillRegistryIndex for SqliteRegistry {
             .get()
             .map_err(|e| RegistryError::Other(format!("pool connection failed: {e}")))?;
         conn.execute(
-            "INSERT OR REPLACE INTO skills (id, domain, word_act, flow_def, know_act, polarity, content_hash, visibility, zone, namespace) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT OR REPLACE INTO skills (id, domain, word_act, flow_def, know_act, polarity, content_hash, zone, namespace) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![skill.id, skill.domain.as_str(), skill.word_act, skill.flow_def, skill.know_act,
                 skill.polarity.as_ref().map(|p| p.as_str()), skill.content_hash,
-                skill.visibility.as_str(), skill.zone.as_str(), skill.namespace],
+                skill.zone.as_str(), skill.namespace],
         ).map_err(|e| {
             tracing::error!(target: "hkask.templates", error = %e, skill_id = %skill.id, "register_skill: INSERT failed");
             RegistryError::Other(format!("register_skill INSERT failed: {e}"))
@@ -353,12 +350,6 @@ impl SkillRegistryIndex for SqliteRegistry {
     }
     fn list_skills(&self) -> Vec<Skill> {
         self.list_skills_owned()
-    }
-    fn list_skills_by_visibility(&self, v: Visibility) -> Vec<Skill> {
-        self.list_skills_owned()
-            .into_iter()
-            .filter(|s| s.visibility == v)
-            .collect()
     }
     fn skills_by_domain(&self, domain: TemplateType) -> Vec<Skill> {
         self.skills_by_domain_owned(domain)
@@ -397,7 +388,7 @@ impl BundleRegistryIndex for SqliteRegistry {
                 "pool connection failed: {e}"
             )))
         })?;
-        conn.execute("INSERT OR REPLACE INTO bundles (id, name, description, version, editor, visibility, manifest_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)", params![bundle.id, bundle.name, bundle.description, bundle.version, bundle.editor, bundle.visibility.as_str(), manifest_json]).map_err(|e| {
+        conn.execute("INSERT OR REPLACE INTO bundles (id, name, description, version, editor, manifest_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP)", params![bundle.id, bundle.name, bundle.description, bundle.version, bundle.editor, manifest_json]).map_err(|e| {
             tracing::error!(target: "hkask.templates", error = %e, bundle_id = %bundle.id, "register_bundle: INSERT failed");
             crate::ports::TemplateError::Manifest(format!("register_bundle INSERT failed for '{bundle_id}': {e}", bundle_id = bundle.id))
         })?;
@@ -536,7 +527,6 @@ impl SqliteRegistry {
         know_act: Option<String>,
         polarity_str: Option<String>,
         content_hash: Option<String>,
-        visibility_str: String,
         zone_str: String,
         namespace: Option<String>,
     ) -> Option<Skill> {
@@ -557,18 +547,6 @@ impl SqliteRegistry {
         if let Some(ch) = content_hash {
             skill = skill.with_content_hash(ch);
         }
-        let visibility = Visibility::parse_str(&visibility_str).unwrap_or_else(|| {
-            tracing::warn!(
-                target: "hkask.templates",
-                skill_id = %id,
-                visibility_str = %visibility_str,
-                "row_to_skill: unknown visibility string — defaulting to Private. \
-                 A corrupted visibility column reads as Private; the operator cannot \
-                 distinguish 'intentionally Private' from 'corrupted' without this warn."
-            );
-            Visibility::Private
-        });
-        skill = skill.with_visibility(visibility);
         let zone = SkillZone::parse_str(&zone_str).unwrap_or_else(|| {
             tracing::warn!(
                 target: "hkask.templates",
@@ -611,10 +589,10 @@ impl SqliteRegistry {
             }
         };
         match conn.query_row(
-            "SELECT id, domain, word_act, flow_def, know_act, polarity, content_hash, visibility, zone, namespace FROM skills WHERE id = ?1", params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
+            "SELECT id, domain, word_act, flow_def, know_act, polarity, content_hash, zone, namespace FROM skills WHERE id = ?1", params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?)),
         ) {
-            Ok((id, ds, wa, fd, ka, ps, ch, vs, zs, ns)) => Self::row_to_skill(id, ds, wa, fd, ka, ps, ch, vs, zs, ns),
+            Ok((id, ds, wa, fd, ka, ps, ch, zs, ns)) => Self::row_to_skill(id, ds, wa, fd, ka, ps, ch, zs, ns),
             Err(rusqlite::Error::QueryReturnedNoRows) => None,
             Err(e) => {
                 tracing::warn!(
@@ -664,7 +642,6 @@ impl SqliteRegistry {
                     row.get(6)?,
                     row.get(7)?,
                     row.get(8)?,
-                    row.get(9)?,
                 ))
             },
         ) {
@@ -679,15 +656,15 @@ impl SqliteRegistry {
             }
         };
         let mut skills = Vec::with_capacity(rows.len());
-        for (id, ds, wa, fd, ka, ps, ch, vs, zs, ns) in rows {
-            if let Some(s) = Self::row_to_skill(id, ds, wa, fd, ka, ps, ch, vs, zs, ns) {
+        for (id, ds, wa, fd, ka, ps, ch, zs, ns) in rows {
+            if let Some(s) = Self::row_to_skill(id, ds, wa, fd, ka, ps, ch, zs, ns) {
                 skills.push(s);
             }
         }
         skills
     }
 
-    const _SKILLS_SELECT: &str = "SELECT id, domain, word_act, flow_def, know_act, polarity, content_hash, visibility, zone, namespace FROM skills";
+    const _SKILLS_SELECT: &str = "SELECT id, domain, word_act, flow_def, know_act, polarity, content_hash, zone, namespace FROM skills";
 
     /// List all skills (owned query, no OCAP check).
     ///

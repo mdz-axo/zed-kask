@@ -59,13 +59,14 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 ## Registry Templates
 
 | Template | Type | Purpose |
-|----------|------|--------|
-| `deep-module-assess.j2` | `KnowAct` | Assess module depth: enumerate public interface items, evaluate behavior complexity, compute depth score, classify as Deep/Adequate/Shallow/Very Shallow. Identify interface cost drivers and behavior gaps. |
-| `deep-module-delete.j2` | `KnowAct` | Execute the deletion test in both directions: caller's perspective (complexity reappears?) and module's perspective (complexity vanishes?). Produce a definitive keep/extract/don't create recommendation. |
-| `deep-module-design.j2` | `KnowAct` | Design a deep module interface from deletion test results. Minimize public surface, hide information, design for caller mental model, unify config and errors. Produce a module specification with ≤7 public functions. |
+|----------|------|---------|
+| `deep-module-assess.j2` | KnowAct | Assess module depth: enumerate public interface items, evaluate behavior complexity, compute depth score, classify as Deep/Adequate/Shallow/ Very Shallow. Identify interface cost drivers and behavior gaps. |
+| `deep-module-delete.j2` | KnowAct | Execute the deletion test in both directions: caller's perspective (complexity reappears?) and module's perspective (complexity vanishes?). Produce a definitive keep/extract/don't create recommendation. |
+| `deep-module-design.j2` | KnowAct | Design a deep module interface from deletion test results. Minimize public surface, hide information, design for caller mental model, unify config and errors. Produce a module specification with ≤7 public functions. |
 
 ## Constraints
 
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - All templates are `KnowAct` type with `Public` visibility.
 - Templates use KnowAct with Public visibility.
 - Count public items mechanically — do not guess. Estimate behavior conservatively, erring toward undercounting.

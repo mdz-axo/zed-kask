@@ -48,14 +48,14 @@ elements (≤5 primary per Hick's Law), **protect text** (≥20em residual),
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `sense.j2` | KnowAct | Measure container width, child min-widths, and text-column residual (Fitts's Law, flexbox overflow invariant). |
-| `orient.j2` | KnowAct | Count actions vs budget (≤5 primary, Hick's Law), grep sibling card patterns, compute congestion score and action-to-content ratio. |
-| `decide.j2` | KnowAct | Gate on hard layout constraints (Fagan checklist): no overflow, primary action visible, text column ≥ min width, on-grid spacing, action count ≤ budget. |
-| `act.j2` | KnowAct | Apply progressive disclosure remedies: PopoverMenu with Ellipsis trigger, truncate(), flex_shrink_0, min_w_0, hide-secondary. |
-| `review.j2` | KnowAct | Adversarial probes: 40-char label, localized German string, 320px container, 7 actions. |
+| `sense.j2` | KnowAct | Measure the rendering container's available width and each child element's minimum width. Compute whether sum(min_widths) + gaps exceeds the container. If a text column (flex_1) is present, compute its residual width after fixed-width children claim their space. Grounded in Fitts's Law (minimum target width) and the CSS flexbox overflow invariant. |
+| `orient.j2` | KnowAct | Count the interactive elements in the container. Compare to the action budget (≤5 primary, per Hick's Law). Grep the crate for sibling card/panel components and compare action-count/spacing conventions (Nielsen consistency). Compute the feature congestion score (Rosenholtz) and the action-to-content ratio (Tufte data-ink). |
+| `decide.j2` | KnowAct | Apply the Fagan-style inspection checklist as hard gates: (1) no overflow, (2) primary action visible, (3) text column ≥ min width, (4) on-grid spacing, (5) action count ≤ budget. Each gate is a yes/no verdict, not a vibe check. Produce a layout_health vector and a pass/fail decision. |
+| `act.j2` | KnowAct | For each failing gate, prescribe the canonical GPUI remedy: secondary actions behind a PopoverMenu with IconName::Ellipsis trigger (Nielsen progressive disclosure), truncate() on text labels, flex_shrink_0 on fixed elements, min_w_0 on flexible text columns, or explicit hide-secondary. Reference the agent_panel.rs render_panel_options_menu pattern. |
+| `review.j2` | KnowAct | Run adversarial probes against the proposed layout: a 40-character button label, a localized German string (~30% longer), a 320px container, 7 actions. If any probe breaks a gate, the layout is rejected and the remedy phase re-enters. Grounded in Klein's premortem and the squint test for visual hierarchy. |
 
 ## Constraints
 
 - All templates are `KnowAct` with `Public` visibility; they emit `reg.ui_layout.*` spans.
-- rJoule cap: 1 per invocation. Maximum 5 iterations (Sense → Orient → Decide → Act → Review loop; convergence = all gates pass under adversarial probes).
+- rJoule cap: 1 per invocation. Maximum 5 iterations.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

@@ -65,7 +65,7 @@ registry/templates/                 (registry layer — canonical source per P5.
 
 ### Skill Domain Types
 
-Skills fall into three domains, inferred from their registry manifest by `SkillLoader::infer_domain_from_registry()`:
+Skills fall into three domains, inferred from their registry manifest:
 
 | Domain | Template Type | Behavior |
 |--------|--------------|----------|
@@ -902,7 +902,7 @@ In-process test (production path): launch zed-kask and verify the server appears
 
 **Symptom:** `/skill my-skill` says "Skill 'my-skill' not found."
 
-**Fix:** Ensure zed-kask was launched from the project root containing `.agents/skills/`. Skills are loaded at editor startup via `SkillLoader::load_into()` — they are not hot-reloaded.
+**Fix:** Ensure zed-kask was launched from the project root containing `.agents/skills/`. Skills are seeded to disk at startup and loaded from the registry — they are not hot-reloaded.
 
 ### Published Skill Has Stale Content
 

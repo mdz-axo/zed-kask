@@ -63,6 +63,7 @@ description: "5-question Coaching Kata templates for teaching scientific thinkin
 
 ## Constraints
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `coaching-q1-target.j2`: Public.
 - `coaching-q2-actual.j2`: Public.
 - `coaching-q3-obstacles.j2`: Public.

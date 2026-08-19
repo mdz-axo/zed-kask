@@ -846,7 +846,7 @@ fn shell_exec_only_in_skill_category_manifests() {
             if !manifest.is_skill() {
                 errors.push(format!(
                     "{fname}: uses shell.exec but category='{}' (must be 'skill' — shell.exec runs arbitrary commands and requires human review)",
-                    manifest.category.as_deref().unwrap_or("(none)")
+                    manifest.category.map_or_else(|| "(none)".to_string(), |c| c.to_string())
                 ));
             }
         }

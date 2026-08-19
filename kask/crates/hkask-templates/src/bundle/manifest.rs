@@ -14,7 +14,6 @@ use super::config::{
     BundleAuditConfig, BundleLedgerConfig, ConvergenceConfig, ErrorHandlingConfig, RjouleConfig,
 };
 use hkask_types::SkillPolarity;
-use hkask_types::Visibility;
 
 /// Cascade phase — where a step sits in the Pre/Core/Post pipeline.
 ///
@@ -27,6 +26,66 @@ pub enum CascadePhase {
     #[default]
     Core,
     Post,
+}
+
+/// Manifest category — the closed taxonomy distinguishing agent skills from
+/// infrastructure that shares the FlowDef `.yaml` form. Parsing is strict:
+/// an unknown value is a load error naming the value (see
+/// `deserialize_manifest_category`), so a typo cannot silently reclassify a
+/// skill as infrastructure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+pub enum ManifestCategory {
+    /// Agent PDCA loop, bindable as an agent `process_manifest`.
+    Skill,
+    /// QA script run by `kask qa` (no live consumer — retained for the
+    /// documented taxonomy).
+    QaScript,
+    /// System bootstrap config (no live consumer — retained for the
+    /// documented taxonomy).
+    RuntimeConfig,
+    /// Regulation/Curator daemon, run directly — not agent-bound (no live
+    /// consumer — retained for the documented taxonomy).
+    DaemonProcess,
+    /// MCP-server/pipeline process, executed via `execute_pipeline`.
+    Pipeline,
+    /// Company-source manifest (`registry/company-sources/*.yaml`) — the
+    /// operator's source policy, not a public skill.
+    CompanySourceManifest,
+}
+
+impl<'de> Deserialize<'de> for ManifestCategory {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "skill" => Ok(ManifestCategory::Skill),
+            "qa-script" => Ok(ManifestCategory::QaScript),
+            "runtime-config" => Ok(ManifestCategory::RuntimeConfig),
+            "daemon-process" => Ok(ManifestCategory::DaemonProcess),
+            "pipeline" => Ok(ManifestCategory::Pipeline),
+            "company-source-manifest" => Ok(ManifestCategory::CompanySourceManifest),
+            other => Err(serde::de::Error::custom(format!(
+                "unknown manifest category '{other}' — must be one of: skill, qa-script, \
+                 runtime-config, daemon-process, pipeline, company-source-manifest"
+            ))),
+        }
+    }
+}
+
+impl std::fmt::Display for ManifestCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            ManifestCategory::Skill => "skill",
+            ManifestCategory::QaScript => "qa-script",
+            ManifestCategory::RuntimeConfig => "runtime-config",
+            ManifestCategory::DaemonProcess => "daemon-process",
+            ManifestCategory::Pipeline => "pipeline",
+            ManifestCategory::CompanySourceManifest => "company-source-manifest",
+        };
+        write!(f, "{s}")
+    }
 }
 
 // as_str pre:  self is a valid CascadePhase variant
@@ -233,7 +292,6 @@ pub struct BundleManifest {
     pub description: String,
     pub version: String,
     pub editor: String,
-    pub visibility: Visibility,
     pub skills: Vec<BundleSkill>,
     pub conflicts: Vec<BundleConflict>,
     pub complementarities: Vec<BundleComplementarity>,
@@ -245,11 +303,13 @@ pub struct BundleManifest {
     pub audit: BundleAuditConfig,
     #[serde(default)]
     pub functional_role: Option<String>,
-    /// Manifest category: `skill` | `qa-script` | `runtime-config` | `daemon-process` | `pipeline`.
-    /// Skills are agent PDCA loops; the rest are infrastructure sharing the FlowDef form.
-    /// `None` is treated as `skill` for back-compat.
+    /// Manifest category: agent skill vs infrastructure sharing the FlowDef
+    /// form. Parsed as [`ManifestCategory`] — an unknown value in YAML is a
+    /// load error naming the value, not a silent "not a skill" (a typo'd
+    /// `catgory: skill` previously classified the manifest as infrastructure
+    /// with no signal). `None` is treated as `skill` for back-compat.
     #[serde(default)]
-    pub category: Option<String>,
+    pub category: Option<ManifestCategory>,
     #[serde(default)]
     pub inputs: Option<serde_json::Value>,
     /// Opt-in to runtime validation of caller-supplied context against the
@@ -297,15 +357,16 @@ pub struct BundleManifest {
 impl BundleManifest {
     /// Returns true if this manifest is an agent-facing skill (a PDCA loop
     /// used by agents via `process_manifest`). Infrastructure manifests
-    /// (`qa-script`, `runtime-config`, `daemon-process`, `pipeline`) share the
-    /// FlowDef form but are not agent skills and must not bind as process
-    /// manifests. `None` category is treated as `skill` for back-compat.
+    /// (`qa-script`, `runtime-config`, `daemon-process`, `pipeline`,
+    /// `company-source-manifest`) share the FlowDef form but are not agent
+    /// skills and must not bind as process manifests. `None` category is
+    /// treated as `skill` for back-compat.
     ///
     /// expect: "The system resolves and executes template manifest cascades"
     /// pre:  self is a loaded BundleManifest
     /// post: returns true iff `category` is `skill` or unset
     pub fn is_skill(&self) -> bool {
-        matches!(self.category.as_deref(), None | Some("skill"))
+        matches!(self.category, None | Some(ManifestCategory::Skill))
     }
 
     /// expect: "System types preserve semantic identity and are provenance-aware"
@@ -519,7 +580,6 @@ manifest:
   functional_role: flowdef
   version: 1.0.0
   editor: test
-  visibility: Public
 steps:
   - ordinal: 0
     action: execute
@@ -562,7 +622,6 @@ manifest:
   functional_role: flowdef
   version: 1.0.0
   editor: test
-  visibility: Public
 steps:
   - ordinal: 1
     action: select

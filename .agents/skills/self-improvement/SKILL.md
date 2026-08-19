@@ -201,24 +201,24 @@ The skill implements the paper's safety recommendations (Section 9.1):
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `si-kata-direction.j2` | WordAct | Outer Kata Step 1 — Understand the direction. Articulate the capability challenge, excellent performance, measurement plan, knowledge threshold. |
-| `si-kata-current.j2` | WordAct | Outer Kata Step 2 — Grasp the current condition. Collect baseline data, detect patterns, establish metric_before. |
-| `si-kata-target.j2` | WordAct | Outer Kata Step 3 — Establish next target condition. Declare measurable target, detect obstacles, pick ONE focus obstacle. |
-| `si-select-pathway.j2` | KnowAct | PDCA Plan — Select the improvement pathway (θ or Σ), scaffold component (if Σ), signal type (𝒟_t, e_t, τ_t, or array for multi-signal), and generate a concrete improvement plan with budget, acceptance criteria, and variety engineering. |
-| `si-execute-improvement.j2` | WordAct | PDCA Do — Router that delegates to the appropriate sub-pathway template based on pathway/signal selection. |
-| `si-exec-fm-demos.j2` | WordAct | PDCA Do (§5.1) — FM Improvement via Intrinsic Generative Demos. Generate, filter, fine-tune, safeguard against collapse. |
-| `si-exec-fm-feedback.j2` | WordAct | PDCA Do (§5.2) — FM Improvement via Intrinsic Evaluative Feedback. Sample, judge, convert, optimize. |
-| `si-exec-fm-experience.j2` | WordAct | PDCA Do (§5.3) — FM Improvement via Extrinsic Exploratory Experience. Collect trajectories, update via RL/DPO. |
-| `si-exec-scaffold-prompt.j2` | WordAct | PDCA Do (§6.1) — Scaffolding via Prompt Optimization. Four paradigms. Delegates to `gpa-evolution` for Pareto evolution. |
-| `si-exec-scaffold-memory.j2` | WordAct | PDCA Do (§6.2) — Scaffolding via Memory Evolution. Signal-driven CRUD operations. |
-| `si-exec-scaffold-tool.j2` | WordAct | PDCA Do (§6.3) — Scaffolding via Tool Governance. Routing, refinement, creation. |
-| `si-exec-scaffold-full.j2` | WordAct | PDCA Do (§6.4) — Scaffolding via Full Scaffolding. Self-referential code rewrite. Delegates to `diagnose` for debugging. |
-| `si-evaluate-improvement.j2` | KnowAct | PDCA Check — Evaluate the updated agent on held-out tasks with fallback. Report trajectory, transfer, regression, cost, and safety. |
-| `si-commit-or-rollback.j2` | KnowAct | PDCA Act — Apply acceptance criteria, commit or rollback the update, determine next step with strict enum constraints. |
-
+| `si-kata-direction.j2` | WordAct | Improvement Kata Step 1 — understand the strategic direction from the level above and articulate the challenge. |
+| `si-kata-current.j2` | WordAct | Improvement Kata Step 2 — gather facts and data to establish the baseline state of the agent's current capabilities. |
+| `si-kata-target.j2` | WordAct | Improvement Kata Step 3 — set a measurable, time-bounded target beyond the current knowledge threshold. |
+| `si-select-pathway.j2` | KnowAct | Select between Foundation Model Improvement and Scaffolding Improvement pathways based on the current Kata state and available resources. |
+| `si-execute-improvement.j2` | WordAct | Execute the improvement action selected by si-select-pathway — either an FM improvement step or a Scaffolding improvement step. |
+| `si-evaluate-improvement.j2` | KnowAct | Evaluate the outcome of the executed improvement against the target condition and produce a Brier-scored assessment. |
+| `si-commit-or-rollback.j2` | KnowAct | Decide whether to commit the improvement (persist the change) or rollback (revert to the prior state) based on the evaluation. |
+| `si-exec-fm-demos.j2` | WordAct | Foundation Model Improvement pathway — generate intrinsic demonstrations by sampling execution trajectories and reflecting on them. |
+| `si-exec-fm-experience.j2` | WordAct | Foundation Model Improvement pathway — acquire extrinsic exploratory experience by running the agent in novel environments. |
+| `si-exec-fm-feedback.j2` | WordAct | Foundation Model Improvement pathway — process intrinsic evaluative feedback from the improvement cycle. |
+| `si-exec-scaffold-full.j2` | WordAct | Scaffolding Improvement pathway — update the full scaffold (prompt, memory, tool configuration) based on the improvement evaluation. |
+| `si-exec-scaffold-memory.j2` | WordAct | Scaffolding Improvement pathway — update the agent's memory configuration based on the improvement evaluation. |
+| `si-exec-scaffold-prompt.j2` | WordAct | Scaffolding Improvement pathway — update the agent's system prompt based on the improvement evaluation. |
+| `si-exec-scaffold-tool.j2` | WordAct | Scaffolding Improvement pathway — update the agent's tool configuration based on the improvement evaluation. |
 
 ## Constraints
 
+- rJoule cap: 5 per invocation. Maximum 10 iterations.
 - `si-kata-direction.j2`: Public.
 - `si-kata-current.j2`: Public.
 - `si-kata-target.j2`: Public.

@@ -9,13 +9,11 @@
 use crate::bundle::manifest::default_concurrency;
 use crate::bundle::{
     BundleAuditConfig, BundleComplementarity, BundleConflict, BundleLedgerConfig, BundleManifest,
-    BundleManifestStep, BundleSkill, ConvergenceConfig, ErrorHandlingConfig, RjouleConfig,
+    BundleManifestStep, BundleSkill, ConvergenceConfig, ErrorHandlingConfig, ManifestCategory,
+    RjouleConfig,
 };
-use hkask_types::Visibility;
 use serde::Deserialize;
 use tracing::info;
-
-use crate::ports::ManifestResolveError;
 
 /// Wrapper struct for deserializing YAML manifest files.
 ///
@@ -75,16 +73,14 @@ struct ManifestHeader {
     version: String,
     #[serde(default)]
     editor: String,
-    #[serde(default, deserialize_with = "deserialize_visibility_case_insensitive")]
-    visibility: Option<Visibility>,
     #[serde(default)]
     functional_role: Option<String>,
     /// Manifest category — distinguishes agent skills from infrastructure
-    /// that shares the FlowDef `.yaml` form. Values: `skill` (agent PDCA
-    /// loop), `qa-script`, `runtime-config`, `daemon-process`, `pipeline`.
-    /// Defaults to `skill` for back-compat with pre-category manifests.
+    /// that shares the FlowDef `.yaml` form. Parsed as `ManifestCategory`;
+    /// an unknown value is a load error naming the value. Defaults to
+    /// `skill` (unset) for back-compat with pre-category manifests.
     #[serde(default)]
-    category: Option<String>,
+    category: Option<ManifestCategory>,
     /// Opt-in to runtime validation of caller-supplied context against the
     /// manifest's declared `inputs` (see `crate::inputs::validate_inputs`).
     /// Defaults to `None` (no validation) for back-compat.
@@ -92,42 +88,6 @@ struct ManifestHeader {
     enforce_inputs: Option<bool>,
     #[serde(default = "default_concurrency")]
     concurrency: u32,
-}
-
-/// Deserialize visibility in a case-insensitive manner.
-///
-/// YAML manifest files may use PascalCase (`Shared`) while the
-/// `Visibility` enum serializes as lowercase (`shared`).
-fn deserialize_visibility_case_insensitive<'de, D>(
-    deserializer: D,
-) -> Result<Option<Visibility>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de;
-
-    let opt: Option<String> = Option::deserialize(deserializer)?;
-    match opt {
-        Some(s) => Visibility::parse_str(&s)
-            .map(Some)
-            .ok_or_else(|| de::Error::custom(format!("unknown visibility variant: {s}"))),
-        None => Ok(None),
-    }
-}
-
-/// Load a BundleManifest from a YAML file at the given path.
-///
-/// Reads the file, parses it using the `ManifestFile` wrapper, and
-/// flattens the structure into a canonical `BundleManifest`.
-pub fn load_manifest_from_file(
-    path: &std::path::Path,
-) -> Result<BundleManifest, ManifestLoadError> {
-    let content = std::fs::read_to_string(path).map_err(|e| ManifestLoadError::Io {
-        path: path.display().to_string(),
-        source: e,
-    })?;
-
-    load_manifest_from_yaml(&content)
 }
 
 /// Load a BundleManifest from a YAML string.
@@ -144,7 +104,6 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
         description: file.manifest.description,
         version: file.manifest.version,
         editor: file.manifest.editor,
-        visibility: file.manifest.visibility.unwrap_or(Visibility::Public),
         skills: file.skills,
         conflicts: file.conflicts,
         complementarities: file.complementarities,
@@ -259,102 +218,6 @@ impl std::fmt::Display for McpReferenceWarning {
             self.manifest_id, self.step_ordinal, self.mcp_ref
         )
     }
-}
-
-/// Resolve a process_manifest reference to a BundleManifest.
-///
-/// The `process_manifest` field on an agent definition can be:
-/// - A file path (contains '/' or '.'): loaded from disk
-/// - A manifest ID: looked up from the registry
-///
-/// # Errors
-///
-/// Returns `ManifestResolveError::NotFound` if the reference matches no
-/// registry entry and no file path. Returns `ManifestResolveError::LoadFailed`
-/// if a file path matches but the manifest fails to load. Returns
-/// `ManifestResolveError::NotASkill` if the manifest loads but is not a
-/// `skill` category.
-///
-/// expect: "The system resolves and executes template manifest cascades"
-/// \[P3\] Motivating: Generative Space — resolves template manifest references
-/// pre:  reference is non-empty, registry is initialized
-/// post: returns Ok(BundleManifest) if found via registry or file path
-/// post: returns Err(ManifestResolveError) with typed failure mode
-pub fn resolve_manifest(
-    reference: &str,
-    registry: &dyn crate::BundleRegistryIndex,
-) -> std::result::Result<BundleManifest, ManifestResolveError> {
-    // Try as a registry ID first
-    if let Some(bundle) = registry.get_bundle(reference) {
-        if bundle.is_skill() {
-            return Ok(bundle);
-        }
-        tracing::warn!(
-            target: "hkask.manifest_loader",
-            reference = reference,
-            id = %bundle.id,
-            category = ?bundle.category,
-            "resolve_manifest: '{reference}' is not a skill (category={:?}); \
-             only `skill` manifests may bind as agent process_manifests",
-            bundle.category
-        );
-        return Err(ManifestResolveError::NotASkill {
-            reference: reference.to_owned(),
-            category: format!("{:?}", bundle.category),
-        });
-    }
-
-    // Try as a file path
-    let path = std::path::Path::new(reference);
-    if path.exists() {
-        match load_manifest_from_file(path) {
-            Ok(manifest) => {
-                if !manifest.is_skill() {
-                    tracing::warn!(
-                        target: "hkask.manifest_loader",
-                        path = reference,
-                        id = %manifest.id,
-                        category = ?manifest.category,
-                        "resolve_manifest: '{reference}' is not a skill (category={:?}); \
-                         only `skill` manifests may bind as agent process_manifests",
-                        manifest.category
-                    );
-                    return Err(ManifestResolveError::NotASkill {
-                        reference: reference.to_owned(),
-                        category: format!("{:?}", manifest.category),
-                    });
-                }
-                info!(
-                    target: "hkask.manifest_loader",
-                    id = %manifest.id,
-                    path = reference,
-                    "Loaded manifest from file"
-                );
-                return Ok(manifest);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "hkask.manifest_loader",
-                    path = reference,
-                    error = %e,
-                    "Failed to load manifest from file"
-                );
-                return Err(ManifestResolveError::LoadFailed {
-                    reference: reference.to_owned(),
-                    source: e,
-                });
-            }
-        }
-    }
-
-    tracing::warn!(
-        target: "hkask.manifest_loader",
-        reference = reference,
-        "Manifest not found in registry or filesystem"
-    );
-    Err(ManifestResolveError::NotFound {
-        reference: reference.to_owned(),
-    })
 }
 
 /// Errors that can occur when loading a manifest from YAML.

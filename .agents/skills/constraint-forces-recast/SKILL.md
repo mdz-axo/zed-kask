@@ -51,15 +51,15 @@ The shape is idiosyncratic to CFR's domain — the Project phase (minimal-satisf
 
 ## Registry Templates
 
-| Template                 | Type    | Purpose                                                          |
-| ------------------------ | ------- | ---------------------------------------------------------------- |
-| `cfr-represent.j2`       | KnowAct | Represent seed concept as axiom graph                            |
-| `cfr-violate.j2`         | KnowAct | Identify B's axiom violations                                    |
-| `cfr-project.j2`         | KnowAct | Minimal-satisfiability projection (the forcing operator)         |
-| `cfr-control.j2`         | KnowAct | Generate relabel control (vocabulary swap, no axioms)            |
-| `cfr-three-criterion.j2` | KnowAct | Three-criterion test (the falsifier)                             |
-| `cfr-compare.j2`         | KnowAct | Compare mutant vs relabel structural delta (discriminating test) |
-| `cfr-frontier.j2`        | KnowAct | Update Pareto frontier on (novelty, validity, cost-inverted)     |
+| Template | Type | Purpose |
+|----------|------|---------|
+| `cfr-represent.j2` | KnowAct | Represent the seed concept c as an axiom graph: nodes are c's structural elements (classes, properties, relations); edges are the axioms connecting them. This is the input to the minimal-satisfiability projection. |
+| `cfr-violate.j2` | KnowAct | Identify B's axioms that c violates. For each of B's axioms, check whether c's structure satisfies it. Record the violations. If no violations, c already satisfies B — the minimal-satisfiability projection is the identity (no mutant; the degenerate recast-into-self case). |
+| `cfr-project.j2` | KnowAct | Find the minimal structural modification of c that resolves all violations — the mutant m = argmin_{m ∈ Models(B)} Δ(c, m), where Δ is graph-edit distance. The minimality is what forces mutation: if c already satisfies B, no modification (degenerate); if c violates B, the smallest fix is the mutant. This is the forcing operator. |
+| `cfr-control.j2` | KnowAct | Generate the relabel control: swap c's vocabulary to B's terms without applying B's axioms (c → B's root class with c's terms relabeled). This is the M2 (random perturbation) control and the do(not recast) counterfactual. |
+| `cfr-three-criterion.j2` | KnowAct | Check the three criteria: (i) expressible in A's signature (novel compounds permitted iff compositional), (ii) absent from A (not subsumed by any existing A concept), (iii) consistent under B's axioms. This is the falsifier — a mutant that fails any criterion is not a three-criterion mutant. |
+| `cfr-compare.j2` | KnowAct | Compare the mutant's structural delta to the relabel control's structural delta. The mutant must have a larger structural delta than the relabel. If mutant Δ ≤ relabel Δ, the recast did not mutate — it only relabeled. Report falsification of M1 for this cell. |
+| `cfr-frontier.j2` | KnowAct | Update the Pareto frontier on (novelty, validity, cost-inverted). Novelty = 1 - (max subsumption by A); validity = fraction of B's axioms satisfied; cost-inverted = 1 - (rater/reasoner effort, normalized). Merge current frontier with newly tested variants, keep non-dominated members, prune by crowding distance if frontier exceeds size limit. |
 
 ## Constraints
 

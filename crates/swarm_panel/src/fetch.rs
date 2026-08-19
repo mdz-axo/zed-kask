@@ -217,11 +217,10 @@ impl SwarmPanel {
                     .await;
                 this.update(cx, |this, cx| {
                     // Note: `in_flight` is NOT decremented here — the combined
-                    // task decrements it once at the end (after the local
-                    // balance fetch). The cloud swarms fetch is sequenced inside
-                    // the combined task specifically to ensure
-                    // `cloud_authenticated` is set before
-                    // `handle_swarm_fetch_failure` runs.
+                    // task decrements it once at the end (step 4). The cloud
+                    // swarms fetch is sequenced inside the combined task
+                    // specifically to ensure `cloud_authenticated` is set
+                    // before `handle_swarm_fetch_failure` runs.
                     match swarm_result {
                         Ok(output) => {
                             if let Some(b) = extract_wallet_balance(&output) {
@@ -458,8 +457,8 @@ impl SwarmPanel {
                 // it as a budget the operator must track, which is not how
                 // local swarms work. `swarm_balance_local` remains available
                 // to the curator in Steer for reconciliation.
-                this.update(cx, |_this, cx| {
-                    _this.in_flight = _this.in_flight.saturating_sub(1);
+                this.update(cx, |this, cx| {
+                    this.in_flight = this.in_flight.saturating_sub(1);
                     cx.notify();
                 })
                 .ok();

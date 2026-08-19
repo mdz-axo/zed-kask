@@ -122,3 +122,105 @@ fn all_mcp_references_point_to_known_tools() {
             .join("\n")
     );
 }
+
+/// The manifest `category` field parses as a closed taxonomy
+/// (`ManifestCategory`). An unknown value must be a load error naming the
+/// value — previously it was a free-form `Option<String>`, so a typo like
+/// `catgory: skill` (or any unrecognized string) silently classified the
+/// manifest as infrastructure ("not a skill") with no signal. This test pins
+/// the strict parse: the error message must name the offending value.
+#[test]
+fn unknown_manifest_category_is_a_load_error_naming_the_value() {
+    let yaml = r#"
+manifest:
+  id: typo-category-test
+  name: Typo Category Test
+  description: A manifest whose category value is misspelled
+  version: "1.0.0"
+  category: catgory
+steps:
+  - id: step-1
+    ordinal: 1
+    action: render
+    description: Render something
+    template_ref: some/template
+"#;
+    let err = load_manifest_from_yaml(yaml)
+        .expect_err("unknown category value must fail to load, not silently parse");
+    let message = format!("{err}");
+    assert!(
+        message.contains("catgory"),
+        "error must name the offending value; got: {message}"
+    );
+    assert!(
+        message.contains("skill"),
+        "error must list the valid categories; got: {message}"
+    );
+}
+
+/// Every documented category value parses to the right variant, and the
+/// round trip preserves `is_skill()` semantics: only `skill` (and unset)
+/// classify as skills.
+#[test]
+fn manifest_category_values_parse_to_typed_variants() {
+    for (value, expected) in [
+        ("skill", hkask_templates::ManifestCategory::Skill),
+        ("qa-script", hkask_templates::ManifestCategory::QaScript),
+        (
+            "runtime-config",
+            hkask_templates::ManifestCategory::RuntimeConfig,
+        ),
+        (
+            "daemon-process",
+            hkask_templates::ManifestCategory::DaemonProcess,
+        ),
+        ("pipeline", hkask_templates::ManifestCategory::Pipeline),
+        (
+            "company-source-manifest",
+            hkask_templates::ManifestCategory::CompanySourceManifest,
+        ),
+    ] {
+        let yaml = format!(
+            r#"
+manifest:
+  id: category-roundtrip-{value}
+  name: Category Roundtrip
+  description: Parses category {value}
+  version: "1.0.0"
+  category: {value}
+steps:
+  - id: step-1
+    ordinal: 1
+    action: render
+    description: Render something
+    template_ref: some/template
+"#
+        );
+        let manifest =
+            load_manifest_from_yaml(&yaml).unwrap_or_else(|e| panic!("'{value}' must parse: {e}"));
+        assert_eq!(manifest.category, Some(expected), "for value '{value}'");
+        assert_eq!(
+            manifest.is_skill(),
+            expected == hkask_templates::ManifestCategory::Skill,
+            "is_skill must be true only for 'skill' (value '{value}')"
+        );
+    }
+
+    // Unset category is back-compat skill.
+    let yaml = r#"
+manifest:
+  id: no-category-test
+  name: No Category
+  description: A manifest with no category
+  version: "1.0.0"
+steps:
+  - id: step-1
+    ordinal: 1
+    action: render
+    description: Render something
+    template_ref: some/template
+"#;
+    let manifest = load_manifest_from_yaml(yaml).expect("unset category must parse");
+    assert_eq!(manifest.category, None);
+    assert!(manifest.is_skill(), "unset category is back-compat skill");
+}
