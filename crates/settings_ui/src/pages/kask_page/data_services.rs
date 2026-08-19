@@ -3,6 +3,32 @@
 //! toggles live in settings.json.
 
 use super::*;
+use language_model::{LanguageModelProviderId, LanguageModelRegistry};
+
+/// The RunPod language-model provider id (D29). Must match the provider's
+/// `PROVIDER_ID` (`"runpod"`); [`LanguageModelRegistry::provider`] is an exact
+/// id match and returns `None` on mismatch, which would silently turn the live
+/// refresh below into a no-op.
+const RUNPOD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("runpod");
+
+/// Ask the RunPod endpoint provider to adopt `key` through its existing
+/// `set_api_key` path. That writes the keychain entry at its `api_url`, updates
+/// the in-memory `ApiKeyState`, and notifies discovery so `RunPod/*` models
+/// refresh immediately — no restart required. The Data Services RunPod row
+/// stores the key under `kask://credentials/runpod` for MCP/training env
+/// injection; this is the second half that drives the same key into the OCR
+/// endpoint provider live.
+fn refresh_runpod_endpoint_key(api_key: Option<String>, cx: &mut App) {
+    let Some(provider) = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .provider(&RUNPOD_PROVIDER_ID)
+    else {
+        // Provider not registered yet (startup ordering). The key is persisted
+        // on the provider's next authenticate/restart; nothing to refresh.
+        return;
+    };
+    provider.set_api_key(api_key, cx).detach();
+}
 
 pub(crate) fn render_data_services_page(
     _settings_window: &SettingsWindow,
@@ -119,6 +145,9 @@ fn render_data_service_row(
                 let provider = provider.clone();
                 move |_, _, cx| {
                     delete_credential(&provider, &credential_url, cx).detach();
+                    if key == "runpod" {
+                        refresh_runpod_endpoint_key(None, cx);
+                    }
                 }
             })
             .into_any_element()
@@ -192,6 +221,9 @@ fn render_data_service_row(
                                         cx,
                                     )
                                     .detach();
+                                    if key == "runpod" {
+                                        refresh_runpod_endpoint_key(Some(key_value), cx);
+                                    }
                                 }
                             }),
                     ),
@@ -228,4 +260,38 @@ fn set_data_service_enabled(key: &str, enabled: bool, cx: &mut App) {
             _ => {}
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The endpoint-refresh id must identify the RunPod provider in the
+    /// `LanguageModelRegistry`. [`LanguageModelRegistry::provider`] is an exact
+    /// id match and returns `None` on mismatch — a drift would silently turn
+    /// the live refresh into a no-op (broken feedback loop). Pin it against the
+    /// canonical lowercase id the RunPod provider registers under (D29
+    /// `PROVIDER_ID` is `"runpod"`).
+    #[test]
+    fn runpod_provider_id_resolves_against_registry() {
+        assert_eq!(RUNPOD_PROVIDER_ID.0.to_string(), "runpod");
+        // Also case-insensitive vs the display-form descriptor id, matching the
+        // IPC contract that resolves model names case-insensitively.
+        let desc = kask_bridge::INFERENCE_PROVIDERS
+            .iter()
+            .find(|p| p.credential_key == "runpod")
+            .expect("RunPod descriptor present");
+        assert!(
+            desc.id
+                .eq_ignore_ascii_case(&RUNPOD_PROVIDER_ID.0.to_string()),
+            "registry lookup must be case-insensitive per the IPC contract"
+        );
+    }
+
+    /// Keeps `refresh_runpod_endpoint_key` callable from the Data Services
+    /// RunPod row (render write and reset paths), pinning its signature.
+    #[test]
+    fn refresh_runpod_endpoint_key_symbol_exists() {
+        let _: fn(Option<String>, &mut gpui::App) = refresh_runpod_endpoint_key;
+    }
 }

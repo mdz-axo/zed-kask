@@ -9,7 +9,7 @@
 //! The tool handler retains only: fetch, validate, persist, and the
 //! `execute_tool_semantic` span. The assembly lives here.
 
-use crate::data_quality::SignalQuality;
+use crate::data_quality::ModelInputQuality;
 use crate::financial_model::{HistoricalSnapshot, ProjectedModel, ProjectionAssumptions};
 
 /// Build the `dcf_valuation` response body from the projected model and
@@ -26,7 +26,7 @@ pub fn build_dcf_response(
     model: &ProjectedModel,
     assumptions: &ProjectionAssumptions,
     hist: &HistoricalSnapshot,
-    signal_quality: &SignalQuality,
+    signal_quality: &ModelInputQuality,
     current_price: f64,
     shares: f64,
 ) -> serde_json::Value {
@@ -82,7 +82,7 @@ pub fn build_dcf_response(
             "da_to_revenue": hist.da_to_revenue(),
             "capex_to_revenue": hist.capex_to_revenue(),
             "nwc_to_revenue": hist.nwc_to_revenue(),
-            "tax_rate": hist.tax_rate(),
+            "tax_rate": hist.tax_rate,
             "latest_revenue": hist.latest_revenue(),
             "shares_outstanding": shares,
             "net_debt": hist.net_debt(),
@@ -115,17 +115,14 @@ pub fn build_dcf_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data_quality::SignalQuality;
     use crate::financial_model::{ProjectedLineItems, ProjectedModel};
 
-    /// The response builder is pure — it can be tested with a fixture model
-    /// and snapshot, no HTTP, no API keys, no `CompaniesServer`. This is the
-    /// testability unlock Candidate B targets.
-    #[test]
-    fn build_dcf_response_shapes_period_summary_and_valuation() {
-        let model = ProjectedModel {
+    fn test_model() -> ProjectedModel {
+        ProjectedModel {
             periods: vec![ProjectedLineItems {
                 period: 1,
-                year: 2025,
+                year: 2025.0,
                 revenue: 100.0,
                 cogs: 60.0,
                 gross_profit: 40.0,
@@ -145,8 +142,11 @@ mod tests {
             net_debt: 10.0,
             equity_value: 104.4,
             intrinsic_per_share: 10.0,
-        };
-        let assumptions = ProjectionAssumptions {
+        }
+    }
+
+    fn test_assumptions() -> ProjectionAssumptions {
+        ProjectionAssumptions {
             stage1_years: 3,
             total_years: 10,
             discount_rate: 0.10,
@@ -157,8 +157,11 @@ mod tests {
             capex_to_revenue: 0.10,
             nwc_to_revenue: 0.02,
             tax_rate: 0.21,
-        };
-        let hist = HistoricalSnapshot {
+        }
+    }
+
+    fn test_hist() -> HistoricalSnapshot {
+        HistoricalSnapshot {
             revenue: vec![("2024".to_string(), 100.0)],
             cogs: vec![("2024".to_string(), 60.0)],
             da: vec![("2024".to_string(), 5.0)],
@@ -169,16 +172,31 @@ mod tests {
             long_term_debt: vec![],
             shares_outstanding: 10.0,
             tax_rate: 0.21,
-        };
-        let signal_quality = SignalQuality {
+        }
+    }
+
+    fn test_signal_quality() -> ModelInputQuality {
+        ModelInputQuality {
+            revenue_growth: SignalQuality::empty(),
+            gross_margin: SignalQuality::empty(),
+            da_to_revenue: SignalQuality::empty(),
+            capex_to_revenue: SignalQuality::empty(),
+            nwc_to_revenue: SignalQuality::empty(),
+            tax_rate: SignalQuality::empty(),
             overall_confidence: 0.8,
-            revenue_growth: 0.9,
-            gross_margin: 0.9,
-            da_to_revenue: 0.8,
-            capex_to_revenue: 0.8,
-            nwc_to_revenue: 0.8,
-            tax_rate: 0.8,
-        };
+            quality_warning: None,
+        }
+    }
+
+    /// The response builder is pure — it can be tested with a fixture model
+    /// and snapshot, no HTTP, no API keys, no `CompaniesServer`. This is the
+    /// testability unlock Candidate B targets.
+    #[test]
+    fn build_dcf_response_shapes_period_summary_and_valuation() {
+        let model = test_model();
+        let assumptions = test_assumptions();
+        let hist = test_hist();
+        let signal_quality = test_signal_quality();
 
         let response = build_dcf_response(
             "TEST",
@@ -214,18 +232,7 @@ mod tests {
             equity_value: 0.0,
             intrinsic_per_share: 10.0,
         };
-        let assumptions = ProjectionAssumptions {
-            stage1_years: 3,
-            total_years: 10,
-            discount_rate: 0.10,
-            terminal_growth: 0.02,
-            revenue_growth: 0.05,
-            gross_margin: 0.40,
-            da_to_revenue: 0.05,
-            capex_to_revenue: 0.10,
-            nwc_to_revenue: 0.02,
-            tax_rate: 0.21,
-        };
+        let assumptions = test_assumptions();
         let hist = HistoricalSnapshot {
             revenue: vec![],
             cogs: vec![],
@@ -238,15 +245,7 @@ mod tests {
             shares_outstanding: 0.0,
             tax_rate: 0.21,
         };
-        let signal_quality = SignalQuality {
-            overall_confidence: 0.5,
-            revenue_growth: 0.5,
-            gross_margin: 0.5,
-            da_to_revenue: 0.5,
-            capex_to_revenue: 0.5,
-            nwc_to_revenue: 0.5,
-            tax_rate: 0.5,
-        };
+        let signal_quality = test_signal_quality();
 
         let response = build_dcf_response(
             "TEST",
