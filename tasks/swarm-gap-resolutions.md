@@ -4,13 +4,40 @@ Tracked from the gap analysis (2026-08-18). Each item cites the evidence and
 the minimal resolution path. Items 1-6 are implemented; item 7 is a follow-up
 UX examination.
 
-## Status: IMPLEMENTED (2026-08-18)
+## Status: ALL 7 ITEMS IMPLEMENTED (2026-08-18)
 
-All 6 gaps resolved. Tests pass (`cargo test -p hkask-mcp-swarm --all-features`,
-`cargo test -p swarm_panel`, `cargo test -p hkask-templates`). Clippy clean
-(`./script/clippy -p hkask-mcp-swarm -p swarm_panel -p hkask-templates`).
+## Item 7: Compose → Launch → Steer UX — IMPLEMENTED
 
-## Item 7 (TODO — examine, do not implement yet): Compose → Launch → Steer UX
+**Decision:** Auto-inject the composition prompt after `create_swarm` succeeds,
+with a launch gate that requires a non-blank mission and at least 3 agents in
+the roster.
+
+**Implementation:**
+- `swarm_panel.rs`: added `MIN_AGENTS_TO_LAUNCH = 3` constant and a launch gate
+  in `create_swarm` that refuses to create when the mission is blank or fewer
+  than 3 agents are listed. The operator sees a status message explaining the
+  requirement.
+- `swarm_panel.rs`: added `inject_composition_prompt` method that builds the
+  `/swarm-intelligence mode=<mode> swarm_id=<id> compose my swarm. Mission:
+  <mission>. Seeded agents: <agents>.` prompt and injects it into the Steer
+  conversation via the D21 `ConversationInjector`.
+- `swarm_panel.rs`: added `PendingCompositionPrompt` struct and
+  `pending_composition_prompt` field to `SwarmPanel`, using the same
+  deferred-mutation pattern as `pending_author_load` — `create_swarm`'s spawn
+  closure sets it, `render` consumes it after `ensure_steer_conversation`
+  constructs the Steer conversation.
+- Both the local and ABW create paths queue the prompt after the Steer
+  transition.
+
+**Prompt shape:**
+```
+/swarm-intelligence mode=local swarm_id=<id> compose my swarm. Mission: <mission>. Seeded agents: <agents>.
+```
+The `mode` and `swarm_id` are leading `key=value` pairs (parsed by the
+`SkillTool` into the cascade context). The mission and agents are the task
+text so SENSE can derive `required_transforms` and assess the initial roster.
+The operator reviews and sends — the turn-loop's checkpoints/telemetry are
+preserved.
 
 **Question:** Should the swarm panel have a "Launch Swarm" button on the
 Steer page, beneath the compose interface, that takes the user to the Steer
