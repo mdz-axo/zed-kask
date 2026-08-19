@@ -448,40 +448,6 @@ impl BridgeManifestExecutor {
             .map_err(|e| format!("Manifest execution task failed: {e}"))?
     }
 
-    /// Execute an already-loaded `BundleManifest` directly (no name lookup).
-    /// Used by `compose_and_execute_bundle` to run the composed manifest
-    /// produced by the skill-bundler cascade.
-    async fn execute_manifest_direct(
-        &self,
-        manifest: &hkask_templates::BundleManifest,
-        mut context: HashMap<String, Value>,
-        progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
-        title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
-    ) -> Result<String, String> {
-        self.inject_model_defaults(&mut context);
-
-        // Composed bundle path — no thread context (the bundle is composed
-        // from the skill-bundler cascade, not from the invoking thread).
-        let executor = self.build_executor(progress, title, Vec::new(), Vec::new());
-
-        let join_handle = self.tokio_handle.spawn({
-            let manifest = manifest.clone();
-            async move {
-                executor
-                    .execute_manifest_into(manifest, context)
-                    .await
-                    .map_err(|e| format!("Composed manifest execution failed: {e}"))
-            }
-        });
-
-        let result = join_handle
-            .await
-            .map_err(|e| format!("Composed manifest execution task failed: {e}"))?
-            .map_err(|e| format!("Composed manifest execution failed: {e}"))?;
-
-        Ok(extract_final_step_result(&result))
-    }
-
     /// Inject config-driven model defaults into the template context.
     /// Factored out of `execute_skill` so both paths share the same injection.
     fn inject_model_defaults(&self, context: &mut HashMap<String, Value>) {
@@ -731,7 +697,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
     async fn execute_skill(
         &self,
         skill_name: &str,
-        mut context: HashMap<String, Value>,
+        context: HashMap<String, Value>,
         prior_messages: Vec<agent::CascadeChatMessage>,
         memory_snippets: Vec<agent::MemorySnippetRecord>,
         progress: Option<agent::CascadeProgress>,
