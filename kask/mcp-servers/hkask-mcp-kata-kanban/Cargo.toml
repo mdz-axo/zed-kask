@@ -11,9 +11,6 @@ hkask-types.workspace = true
 hkask-storage.workspace = true
 hkask-verification.workspace = true
 # Folded from hkask-services-kata-kanban
-hkask-services-core.workspace = true
-hkask-regulation.workspace = true
-hkask-templates.workspace = true
 hkask-inference.workspace = true
 # Local swarm delegation — kanban_task_spawn delegates to local agents via the
 # shared local-swarm runtime (ledger + inference + guard + agent executor).

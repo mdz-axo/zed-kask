@@ -172,13 +172,11 @@ struct SkillTemplateEntry {
 
 /// Unified template + skill registry
 ///
-/// Thin in-memory wrapper (read-through cache) around `SqliteRegistry`.
-/// Not a separate API surface — both `Registry` and `SqliteRegistry` implement
-/// the same three index traits (`RegistryIndex`, `SkillRegistryIndex`,
+/// Implements the three index traits (`RegistryIndex`, `SkillRegistryIndex`,
 /// `BundleRegistryIndex`). `Registry` loads from the filesystem on startup
-/// and caches entries in HashMaps; `SqliteRegistry` provides the persistent
-/// backing store. The two are always used in tandem: `Registry` for fast
-/// lookups, `SqliteRegistry` for durability.
+/// and caches entries in HashMaps. (The SQLite-backed `SqliteRegistry` adapter
+/// was removed — its only consumer, the never-constructed `KataEngine`, was
+/// deleted; the production registry is disk + compiled-in seeds.)
 ///
 /// Templates are stored as `RegistryEntry` (the canonical type from `hkask_types::ports`).
 /// Skills compose templates into coherent agent capabilities.

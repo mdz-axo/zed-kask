@@ -55,8 +55,8 @@ impl KanbanService {
     /// Create a task-scoped rJoule accountant bound to a specific kanban task.
     ///
     /// The accountant decrements `task.rjoule_remaining` via `task_consume_rjoules`
-    /// after each inference call. Attach it to a `KataEngine` via
-    /// `with_task_rjoule_accountant` to close the per-task rJoule feedback loop.
+    /// after each inference call. Attach it to the skill cascade's executor
+    /// to close the per-task rJoule feedback loop.
     ///
     /// pre:  task_id refers to an existing task with an rJoule budget set
     /// post: returns a callback that deducts from the task's rJoule budget
