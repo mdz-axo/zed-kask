@@ -26,7 +26,7 @@ GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. The skill s
 
 3. **Propose mutations.** Generate 3–7 artifact variants from reflected lessons via two operators: **mutation** (targeted edit to the artifact based on a single reflected lesson — each variant tests one hypothesis) and **crossover** (recombine complementary strengths from non-dominated frontier members). Tag each variant with its parent (original or frontier member ID), operator type, hypothesis, and the rule addressed. Include the full mutated artifact content, not just the diff.
 
-4. **Test variants.** Execute each mutated artifact against the full eval set and collect per-objective scores (mean, min, max) plus cost (rollouts, gas, latency). For each variant: use its content as the prompt, execute against every eval input, score the output against each objective, aggregate scores, and record whether the hypothesis was confirmed. This is the most gas-intensive step.
+4. **Test variants.** Execute each mutated artifact against the full eval set and collect per-objective scores (mean, min, max) plus cost (rollouts, rJoule, latency). For each variant: use its content as the prompt, execute against every eval input, score the output against each objective, aggregate scores, and record whether the hypothesis was confirmed. This is the most rJoule-intensive step.
 
 5. **Update Pareto frontier.** Merge the current frontier with newly tested variants into a single pool. Perform non-dominated sort: variant A dominates variant B if A is at least as good as B on ALL objectives and strictly better on at least ONE. Keep only non-dominated members as the new frontier. If the frontier exceeds `frontier_size`, prune by crowding distance (remove variants in the most crowded region of objective space to maintain diversity). Record which variants were dominated and by whom for audit.
 
@@ -39,17 +39,16 @@ GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. The skill s
 | `gpa-sample-trajectories.j2` | `KnowAct` | Step 1 — Execute the target artifact against its eval set and capture trajectories (input, output, reasoning, tool calls, outcome scores). On iteration 1, samples from target_artifact. On iteration 2+, samples from the current Pareto frontier. |
 | `gpa-reflect.j2` | `KnowAct` | Step 2 — Reflect in natural language on trajectories. Diagnose failures, surface high-level rules, identify success and failure patterns. This reflection IS the gradient signal — it replaces sparse scalar rewards. |
 | `gpa-propose-mutations.j2` | `KnowAct` | Step 3 — Generate artifact variants from reflected lessons via mutation (targeted edit) and crossover (recombine complementary lessons from non-dominated frontier members). Each variant tests one hypothesis. |
-| `gpa-test-variants.j2` | `KnowAct` | Step 4 — Execute each mutated artifact against the eval set and collect per-objective scores (mean, min, max) plus cost (rollouts, gas, latency). |
+| `gpa-test-variants.j2` | `KnowAct` | Step 4 — Execute each mutated artifact against the eval set and collect per-objective scores (mean, min, max) plus cost (rollouts, rJoule, latency). |
 | `gpa-frontier-update.j2` | `KnowAct` | Step 5 — Update Pareto frontier. Merge current frontier with newly tested variants, keep non-dominated members, prune by crowding distance if frontier exceeds size limit. |
 
 ## Constraints
 
 - All templates have `visibility: Public`
-- Energy caps: sample-trajectories (4096), reflect (5120), propose-mutations (5120), test-variants (8192), frontier-update (3072)
 - Only `artifact_type: "prompt"` is implemented in v1 — `"manifest"` and `"template"` paths return empty results with explanatory notes
 - Minimum 2 iterations before convergence is allowed (iteration 1 always returns metric = 1.0)
 - Convergence threshold defaults to 0.10 (configurable via `_convergence.threshold`)
-- Generate 3–7 variants per iteration — too few gives insufficient exploration, too many wastes gas
+- Generate 3–7 variants per iteration — too few gives insufficient exploration, too many wastes rJoule
 - Each variant must test exactly one hypothesis with a clear "if I change X, then Y will improve because Z" statement
 - Pareto dominance requires strict improvement on at least one objective while being at least as good on all others
 - Frontier pruning uses crowding distance to maintain diversity when frontier exceeds `frontier_size`

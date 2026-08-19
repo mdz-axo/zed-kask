@@ -64,7 +64,6 @@ Brier. Convergence is detected deterministically.
 ## Constraints
 
 - All flow templates are KnowAct type with Public visibility.
-- Energy caps: grasp (6144), target (4096), predict (4096), engine (9000).
-- Gas cap: 120,000 per invocation. Maximum 10 iterations (safety valve).
+- rJoule cap: 4 per invocation. Maximum 10 iterations (safety valve).
 - The convergence decision is deterministic (compute steps) — no LLM convergence-check template.
 - Registry is authoritative.

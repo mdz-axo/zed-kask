@@ -47,8 +47,7 @@ Property-based testing skill. Identifies testable properties from a target funct
 
 ## Constraints
 
-- All templates are KnowAct (inference + JSON parse). rJoule cap: 3.
-- Gas cap: 80,000. Convergence: Cauchy, epsilon 0.03, window 3, max 10 iterations, min 2.
+- rJoule cap: 3 per invocation. Convergence: Cauchy, epsilon 0.03, window 3, max 10 iterations, min 2.
 - `ledger.span_namespace: reg.skill.proptest` (CI-enforced, no `spans:` list).
 - The skill does not implement code — it tests existing code's properties. For new code, use TDD first.
 - For `panic_freedom` oracle: no `prop_assume!` filtering (accept all inputs). For other oracles: `prop_assume!` is allowed for relational constraints.

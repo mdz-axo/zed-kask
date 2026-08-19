@@ -150,8 +150,7 @@ marker-keywords the scorer rewards. Three mitigations, all required:
 ## Constraints
 
 - All flow templates are KnowAct type with Public visibility.
-- Energy caps: direction (2048), current (4096), target (3072), predict (3072), experiment (6144).
-- Gas cap: 80,000 per invocation. Maximum 8 iterations (improvement is costlier per iteration).
+- rJoule cap: 5 per invocation. Maximum 8 iterations (improvement is costlier per iteration).
 - The convergence decision is deterministic (lisp.eval compute steps) — no LLM convergence-check template.
 - The forecast probability is preserved across all iterations (alignment invariant).
 - Never fabricate evidence — delegate to research/superforecasting/falsifiability for real data.

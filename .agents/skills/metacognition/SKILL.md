@@ -71,8 +71,7 @@ prediction calibration.
 ## Constraints
 
 - All flow templates are KnowAct type with Public visibility. Reference documents are RenderAct.
-- Energy caps: grasp-current (6144), establish-target (4096), predict (4096), experiment (6144).
-- Gas cap: 150,000 per invocation. Maximum 10 iterations (safety valve — the real stop conditions are gap, Cauchy, and Brier).
+- rJoule cap: 4 per invocation. Maximum 10 iterations (safety valve — the real stop conditions are gap, Cauchy, and Brier).
 - The convergence decision is deterministic (compute steps) — no LLM convergence-check template.
 - The LLM's job is the four Kata steps (grasp, target, predict, experiment); the executor computes the gap and Brier score.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

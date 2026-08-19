@@ -48,7 +48,6 @@ Generate Mermaid diagrams from code using Diataxis methodology. The skill runs a
 ## Constraints
 
 - All templates are `visibility: Public` — no restricted spans generated
-- Energy caps: classify=4096, extract=6144, generate=8192, evaluate=6144, convergence=2048, write=4096
 - Zed rendering constraints: no `%%{init}%%`, no `classDef`, no inline color styles; prefer `TD` over `LR` for narrow sidebar rendering
 - Labels must be ≤ 40 characters; state names ≤ 30 characters
 - Entity IDs must be alphanumeric with underscores — no spaces, dashes, or special characters

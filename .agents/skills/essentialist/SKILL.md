@@ -55,7 +55,6 @@ General-purpose recursive eliminative interrogation. Enforces "always take away,
 ## Constraints
 
 - Visibility: Public — this skill's templates are shared across agents.
-- Energy cap: 8192 tokens per template invocation.
 - The default mode is **advisory** (agent recommends, human decides). Autonomous mode only activates on explicit user intent ("simplify", "strip", "run the essentialist").
 - The G1→G2→G3 order is FIXED. G1 (Exist) must come first.
 - Every finding MUST carry a `constraint_force` label. Only Prohibition and Guardrail cause gate failure in autonomous mode.

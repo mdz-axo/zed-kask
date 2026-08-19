@@ -39,7 +39,6 @@ Behavioral guardrails for LLM coding based on Karpathy's four principles: Think 
 ## Constraints
 
 - Visibility is Public across all KnowAct templates; the anti-patterns fragment has no standalone contract
-- Energy caps: 5120 for guidelines-assess and guidelines-verify; 4096 for guidelines-apply
 - Safety mode, when enabled, enforces no file system access, no network calls, no environment variable access, and strict Jinja2 sandbox enforcement
 - Do not execute arbitrary Python code in Jinja2 expressions — sandboxed execution only
 - Preserve original prompt structure and formatting; handle missing variables gracefully

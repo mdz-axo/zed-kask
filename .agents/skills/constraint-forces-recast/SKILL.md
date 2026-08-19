@@ -64,8 +64,7 @@ The shape is idiosyncratic to CFR's domain — the Project phase (minimal-satisf
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.
-- Energy caps: represent (4096), violate (4096), project (6144), control (4096), three-criterion (4096), compare (3072), frontier (3072).
-- Gas cap: 150,000 per invocation. Maximum 5 iterations.
+- rJoule cap: 4 per invocation. Maximum 5 iterations.
 - The forcing operator is minimal-satisfiability projection — not entailment, not bare satisfiability. Changing the operator is a breaking change, not a refactor.
 - The weakened thesis T1' must not drift back to T1 ("the mechanism"). CFR is _a_ mechanism, not the only one.
 - Corroborated is not confirmed. Use "survived", "withstood", "corroborated" — never "proven" or "verified true."

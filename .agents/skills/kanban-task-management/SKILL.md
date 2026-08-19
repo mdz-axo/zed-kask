@@ -2,7 +2,7 @@
 name: kanban-task-management
 core: true
 visibility: public
-description: "Unified kanban task management across the full task lifecycle. Decompose projects into INVEST-compliant tasks, delegate to subagents with spawn config and gas budgeting, monitor boards, coordinate agents, verify completion, and escalate."
+description: "Unified kanban task management across the full task lifecycle. Decompose projects into INVEST-compliant tasks, delegate to subagents with spawn config and rJoule budgeting, monitor boards, coordinate agents, verify completion, and escalate."
 ---
 
 # Kanban Task Management
@@ -92,6 +92,6 @@ All tools are on the `hkask-mcp-kata-kanban` server.
 
 ## Constraints
 
-- Gas cap: 60,000 per invocation. Maximum 10 iterations.
+- rJoule cap: 5 per invocation. Maximum 10 iterations.
 - Process manifest: `kask/registry/manifests/kanban-task-management.yaml`
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

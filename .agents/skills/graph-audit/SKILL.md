@@ -93,7 +93,7 @@ The skill delegates to the `hkask-mcp-codegraph` MCP server:
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility.
-- Gas cap: 100,000 per invocation. Maximum 10 iterations (min 2 before convergence check).
+- rJoule cap: 3 per invocation. Maximum 10 iterations (min 2 before convergence check).
 - Traversal depth: `immediate-neighbors` (default), `transitive` (2-hop), `full` (recursive CTE).
 - Only report findings relevant to the goal - don't list every symbol in the graph.
 - Impact analysis should identify the riskiest change points.

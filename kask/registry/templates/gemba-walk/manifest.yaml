@@ -1,0 +1,53 @@
+# Template crate manifest for gemba-walk skill
+# hKask v0.35.0
+# Implements the Prepare and Present phases of the gemba loop
+# (docs/reports/gemba-loop-specification.md).
+
+crate:
+  name: gemba-walk
+  version: "0.35.0"
+  description: >
+    Human-in-the-loop guided review of the cybernetic regulation system.
+    Queries five curator signal channels concurrently (algedonic log,
+    pending escalations, curator memory, grounding trend, grounding
+    coverage), synthesizes a structured briefing with per-skill digest,
+    presents it conversationally, and proposes refinement actions for
+    operator approval. Single-pass briefing generator — the operator asks
+    follow-up questions in the regular conversation after the skill
+    completes.
+
+templates:
+  - id: gemba-walk/synthesize-briefing
+    name: "Structure the five signal channels into a coherent briefing"
+    path: synthesize-briefing.j2
+    type: KnowAct
+    description: >
+      Structure the five signal channels (algedonic, escalations, memory,
+      grounding trend, grounding coverage) into a coherent briefing with
+      per-skill health classification (healthy / watch / intervene) and a
+      grounding health digest (clean_rate, coverage_rate, trend direction,
+      top coverage gaps).
+
+  - id: gemba-walk/present-briefing
+    name: "Render the structured briefing as a conversational summary"
+    path: present-briefing.j2
+    type: WordAct
+    description: >
+      Render the structured briefing as a conversational summary with
+      markdown tables: system health overview, algedonic alert table,
+      escalation backlog table, per-skill performance table, grounding
+      health table. Closes with a prompt for the operator to ask
+      follow-up questions in the regular conversation.
+
+  - id: gemba-walk/recommend-actions
+    name: "Propose refinement actions for operator approval"
+    path: recommend-actions.j2
+    type: KnowAct
+    description: >
+      Propose refinement actions for operator approval. For each skill
+      with a "watch" or "intervene" classification, propose one of:
+      curator_directive, skill-maintenance, validate_golden_outputs,
+      direct_edit, or no_action. Additionally proposes grounding-specific
+      actions: register a contract for agent types with delegations but
+      no contract, review recent violations, or investigate narrative
+      leaks. Recommendations, not autonomous actions.

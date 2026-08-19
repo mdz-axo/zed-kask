@@ -75,16 +75,16 @@ Goal specification and verification. Extracts structured goals from user intent,
 | Template | Type | Purpose |
 |----------|------|--------|
 | `create.j2` | `WordAct` | Extract a structured goal from raw user intent. Produces goal text, completion criteria, visibility setting, and priority level. |
+| `goal-activate.j2` | `KnowAct` | Activate a goal for tracking. Registers the goal with the goal management system, emits the `reg.goal.create` span, and returns an activation confirmation. |
 | `judge.j2` | `KnowAct` | Verify goal completion via semantic evaluation of outcome summary and produced artifacts against the original goal criteria. |
 | `judge_command.j2` | `KnowAct` | Verify goal completion via executed command results against acceptance criteria. Produces a done/continue/blocked verdict with reasoning. |
 | `judge_simple.j2` | `KnowAct` | Fallback goal verification with minimal evaluation. Produces a continue verdict and default confidence for lightweight judgment. |
-
-> **Note:** Two additional template files exist in the crate but are not listed in the manifest's `templates` array: `goal-activate.j2` (KnowAct — emit Regulation span for goal activation) and `goal-resolve.j2` (KnowAct — route goal verdict to resolution action). Their instructions are included above but they lack manifest-level registration. See warnings.
+| `goal-resolve.j2` | `KnowAct` | Resolve a goal as completed or blocked. Routes the judge verdict to a resolution action (complete, continue, escalate) and emits the corresponding `reg.goal.*` spans. |
 
 ## Constraints
 
 - All templates declare `visibility: Public` at the template level; goal-level visibility defaults to `private` to preserve user sovereignty.
-- Energy caps: `create.j2`, `judge.j2`, and `judge_command.j2` at 4096; `goal-activate.j2`, `goal-resolve.j2`, and `judge_simple.j2` at 2048.
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - Criteria are designed for LLM-judged semantic verification, not deterministic checks — this avoids Goodhart's law.
 - Low confidence (< 0.7) escalates to human regardless of verdict.
 - Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. `max_iterations: 10`, `min_iterations: 2`. No LLM convergence-check template is used.

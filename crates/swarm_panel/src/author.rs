@@ -163,7 +163,9 @@ impl SwarmPanel {
         v_flex()
             .w_full()
             .gap_3()
-            .p_4()
+            // pb only — the content column already carries the panel's px_4
+            // inset, so p_4 here doubled the horizontal padding vs Browse.
+            .pb_4()
             .child(
                 Headline::new(if self.author.editing_id.is_some() {
                     "Edit Agent"
@@ -308,8 +310,11 @@ impl SwarmPanel {
                                     ],
                                 )
                                 .style(ToggleButtonGroupStyle::Outlined)
-                                .size(ToggleButtonGroupSize::Custom(rems_from_px(28.)))
-                                .label_size(LabelSize::Small)
+                                // Same 24px/XSmall scale as the Target toggle
+                                // above — form controls share one visual size;
+                                // the 30px scale is reserved for header nav.
+                                .size(ToggleButtonGroupSize::Custom(rems_from_px(24.0_f32)))
+                                .label_size(LabelSize::XSmall)
                                 .auto_width()
                                 .selected_index(match self.author.agent_type.as_str() {
                                     "creative" => 1,
@@ -430,7 +435,7 @@ impl SwarmPanel {
                                     ],
                                 )
                                 .style(ToggleButtonGroupStyle::Outlined)
-                                .size(ToggleButtonGroupSize::Custom(rems_from_px(28.)))
+                                .size(ToggleButtonGroupSize::Custom(rems_from_px(28.0_f32)))
                                 .label_size(LabelSize::Small)
                                 .auto_width()
                                 .selected_index(match self.author.visibility.as_str() {

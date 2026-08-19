@@ -47,7 +47,6 @@ Adversarial robustness testing. Select targets, generate adversarial inputs acro
 ## Constraints
 
 - All templates use `Public` visibility
-- Energy caps: `generate-adversarial.j2` = 8192, `select-target.j2` = 2048, `test-against-target.j2` = 8192
 - Each adversarial input must be specific to the target output — no generic attacks
 - Severity must match the intensity level: light ≤ moderate ≤ severe
 - Multi-turn scripts must be realistic — a human attacker could plausibly type these messages

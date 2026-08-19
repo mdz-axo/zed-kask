@@ -107,8 +107,7 @@ target composite), computed deterministically via lisp.eval.
 ## Constraints
 
 - All flow templates are KnowAct type with Public visibility. Reference documents are RenderAct.
-- Energy caps: select (2048), score (8192), aggregate (3072), validate (4096).
-- Gas cap: 50,000 per invocation. Maximum 10 iterations.
+- rJoule cap: 5 per invocation. Maximum 10 iterations.
 - The convergence decision is deterministic (lisp.eval compute step) — no LLM convergence-check template.
 - The MCP tool `market_score_rationale` is the single source of truth for 12-EQM scoring; this skill adds the measurement procedure around it.
 - Never fabricate EQM scores — if the MCP tool call fails, propagate the error (do not default to 0).
