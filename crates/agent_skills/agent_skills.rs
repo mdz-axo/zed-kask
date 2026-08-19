@@ -462,6 +462,24 @@ fn parse_skill_file_content_for_loading(
     let load_warnings =
         validate_description_for_loading(&metadata.description).map_err(anyhow::Error::msg)?;
 
+    // zed-kask: enforce that `core: true` frontmatter is honored only for
+    // skills whose name is in `CORE_SKILL_NAMES`. A marketplace-installed or
+    // hand-edited skill declaring `core: true` with a non-reserved name would
+    // otherwise be treated as core (sovereign, not overwritten on seed, hidden
+    // edit/delete/visibility controls) — a backdoor around the core-skill
+    // contract. `is_reserved_skill_name` already refuses a non-core skill from
+    // bearing a core *name*; this closes the symmetric case where a non-core
+    // name claims core *status*. Pinned by
+    // `test_parse_refuses_core_true_on_non_reserved_name`.
+    if metadata.core && !is_core_skill(&metadata.name) {
+        anyhow::bail!(
+            "skill '{}' declares `core: true` but is not a registered core skill \
+             (not in CORE_SKILL_NAMES). The `core` frontmatter field is reserved \
+             for shipped system-critical skills; remove it or rename the skill.",
+            metadata.name
+        );
+    }
+
     Ok((metadata, body, load_warnings))
 }
 

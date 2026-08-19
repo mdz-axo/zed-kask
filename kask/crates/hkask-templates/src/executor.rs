@@ -174,27 +174,14 @@ impl ManifestExecutor {
     /// the initial context, and a `StepMachine` to drive the cascade. The
     /// machine's dispatch loop runs each step's action via `step_actions.rs`,
     /// checks convergence in one place (the `Reenter` arm), and checks budget
-    /// in one place. Returns the final context map with convergence metadata
-    /// under `_convergence`.
-    /// Execute the full manifest cascade (borrowed interface — delegates to
-    /// `execute_manifest_into` via clone). For callers that hold a borrowed
-    /// executor/manifest and await directly (tests). Callers that need a
-    /// `'static + Send` future for `tokio::spawn` must use `execute_manifest_into`
-    /// (owned `self` + `manifest`) so the future owns both and has no borrows.
-    pub async fn execute_manifest(
-        &self,
-        manifest: &crate::bundle::BundleManifest,
-        initial_context: HashMap<String, Value>,
-    ) -> Result<CascadeOutcome> {
-        self.clone()
-            .execute_manifest_into(manifest.clone(), initial_context)
-            .await
-    }
-
-    /// Owned-args variant — consumes `self` and `manifest` so the returned
-    /// future owns both (no borrows) and is `Send + 'static`, making it safe to
-    /// `tokio::spawn`. The bridge (`skill_executor.rs`) uses this for the
-    /// GPUI→tokio handoff; the borrowed `execute_manifest` above delegates here.
+    /// in one place. Returns the typed `CascadeOutcome`; callers extract the
+    /// final result via `extract_final_step_result`.
+    ///
+    /// Consumes `self` and `manifest` so the returned future owns both (no
+    /// borrows) and is `Send + 'static`, making it safe to `tokio::spawn`.
+    /// The bridge (`skill_executor.rs`) relies on this for the GPUI→tokio
+    /// handoff. (The borrowed `execute_manifest` wrapper was removed — it
+    /// had no production callers; tests clone the executor + manifest.)
     pub async fn execute_manifest_into(
         self,
         manifest: crate::bundle::BundleManifest,
@@ -412,7 +399,10 @@ steps:
         let executor = make_executor(vec![]).with_terminal_check(Arc::new(|| true));
         let manifest = crate::manifest_loader::load_manifest_from_yaml(GATE_MANIFEST)
             .expect("parse gate manifest");
-        let result = executor.execute_manifest(&manifest, HashMap::new()).await;
+        let result = executor
+            .clone()
+            .execute_manifest_into(manifest.clone(), HashMap::new())
+            .await;
         assert!(
             result.is_err(),
             "profile gate must fire when terminal is enabled"
@@ -424,7 +414,10 @@ steps:
         let executor = make_executor(vec![]).with_terminal_check(Arc::new(|| false));
         let manifest = crate::manifest_loader::load_manifest_from_yaml(GATE_MANIFEST)
             .expect("parse gate manifest");
-        let result = executor.execute_manifest(&manifest, HashMap::new()).await;
+        let result = executor
+            .clone()
+            .execute_manifest_into(manifest.clone(), HashMap::new())
+            .await;
         assert!(
             result.is_ok(),
             "profile gate must pass when terminal is disabled"
@@ -436,7 +429,10 @@ steps:
         let executor = make_executor(vec!["terminal".to_string()]);
         let manifest = crate::manifest_loader::load_manifest_from_yaml(GATE_MANIFEST)
             .expect("parse gate manifest");
-        let result = executor.execute_manifest(&manifest, HashMap::new()).await;
+        let result = executor
+            .clone()
+            .execute_manifest_into(manifest.clone(), HashMap::new())
+            .await;
         assert!(
             result.is_err(),
             "profile gate must fire when discover_tools returns terminal"

@@ -169,7 +169,7 @@ async fn golden_output_is_stable() {
     let manifest = load(BENCH_MANIFEST_YAML_PARALLEL);
     let executor = build_executor();
     let result = executor
-        .execute_manifest(&manifest, HashMap::new())
+        .execute_manifest_into(manifest.clone(), HashMap::new())
         .await
         .expect("bench manifest must execute");
 
@@ -201,11 +201,12 @@ async fn concurrency_field_has_no_effect_today() {
     let executor = build_executor();
 
     let result_p = executor
-        .execute_manifest(&manifest_p, HashMap::new())
+        .clone()
+        .execute_manifest_into(manifest_p.clone(), HashMap::new())
         .await
         .expect("parallel-concurrency manifest must execute");
     let result_s = executor
-        .execute_manifest(&manifest_s, HashMap::new())
+        .execute_manifest_into(manifest_s.clone(), HashMap::new())
         .await
         .expect("serial-concurrency manifest must execute");
 
@@ -239,7 +240,7 @@ async fn compute_steps_do_not_invoke_inference() {
         LLMParameters::default(),
     );
     let result = executor
-        .execute_manifest(&manifest, HashMap::new())
+        .execute_manifest_into(manifest.clone(), HashMap::new())
         .await
         .expect("compute-only manifest must not call inference");
 
@@ -453,7 +454,7 @@ async fn parallel_step_joins_branch_results_in_order() {
     .with_template_base_path(tmp.clone());
 
     let result = executor
-        .execute_manifest(&manifest, HashMap::new())
+        .execute_manifest_into(manifest.clone(), HashMap::new())
         .await
         .expect("parallel manifest must execute");
 
@@ -603,7 +604,7 @@ async fn parallel_allsettled_preserves_successful_branches_when_one_errors() {
     .with_template_base_path(tmp.clone());
 
     let result = executor
-        .execute_manifest(&manifest, HashMap::new())
+        .execute_manifest_into(manifest.clone(), HashMap::new())
         .await
         .expect("allSettled manifest must execute despite one branch error");
 
@@ -708,7 +709,10 @@ steps:
     )
     .with_template_base_path(tmp.clone());
 
-    let result = executor.execute_manifest(&manifest, HashMap::new()).await;
+    let result = executor
+        .clone()
+        .execute_manifest_into(manifest.clone(), HashMap::new())
+        .await;
 
     // list mode: first Err aborts → the manifest execution returns Err.
     assert!(
@@ -739,7 +743,8 @@ async fn baseline_tail_latency() {
 
     // Warm up (first run pays parse/setup costs we don't want in the sample).
     let _ = executor
-        .execute_manifest(&manifest, HashMap::new())
+        .clone()
+        .execute_manifest_into(manifest.clone(), HashMap::new())
         .await
         .expect("warmup");
 
@@ -747,7 +752,8 @@ async fn baseline_tail_latency() {
     for _ in 0..SAMPLES {
         let start = Instant::now();
         let result = executor
-            .execute_manifest(&manifest, HashMap::new())
+            .clone()
+            .execute_manifest_into(manifest.clone(), HashMap::new())
             .await
             .expect("execution");
         let elapsed = start.elapsed();

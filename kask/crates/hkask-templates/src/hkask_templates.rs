@@ -46,9 +46,8 @@ pub use ports::{Result, TemplateError};
 pub use prompt_strategy::PromptStrategy;
 
 pub use registry::{
-    KNOWN_MCP_TOOLS, Registry, company_source_seed, process_manifest_seed, process_manifest_yaml,
-    template_file, template_file_seed, template_manifest_seed, template_yaml_file,
-    template_yaml_file_seed,
+    KNOWN_MCP_TOOLS, Registry, company_source_seed, process_manifest_seed, template_file,
+    template_file_seed, template_manifest_seed, template_yaml_file, template_yaml_file_seed,
 };
 
 #[cfg(any(test, feature = "test-utils"))]

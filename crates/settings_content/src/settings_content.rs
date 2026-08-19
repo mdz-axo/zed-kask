@@ -1738,12 +1738,6 @@ pub struct KaskCuratorEmailSettingsContent {
     /// Comma-separated list of senders authorized to reply with curator
     /// commands (P12 allowlist). Empty means inbound replies are rejected.
     pub authorized_emails: Option<Vec<String>>,
-    /// Inbox poll interval in seconds (0 = disabled). Reserved for a future
-    /// inbound IMAP path; currently unused by the outbound-only sink.
-    pub inbox_poll_interval_secs: Option<u64>,
-    /// Digest interval in seconds (0 = disabled). Reserved for a future
-    /// periodic digest sender; currently unused by the outbound-only sink.
-    pub digest_interval_secs: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

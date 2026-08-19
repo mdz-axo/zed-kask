@@ -188,8 +188,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_CURATOR_EMAIL",
             "HKASK_ALERT_EMAIL",
             "HKASK_AUTHORIZED_EMAILS",
-            "HKASK_INBOX_POLL_INTERVAL_SECS",
-            "HKASK_DIGEST_INTERVAL_SECS",
             // Curator DB path — injected by the deferred task after
             // provisioning, so the curator MCP server reads from the same
             // `agents/curator/curator.db` the agent writes curator copies to.
