@@ -529,6 +529,147 @@ fn adversarial_red_team_manifest_loads_with_correct_structure() {
     );
 }
 
+/// Verify the runtime-posture-monitor manifest loads correctly after the
+/// telemetry-source migration. Step 1 is now an `execute` step calling
+/// `reg_query` (curator MCP tool) to fetch real runtime telemetry from the
+/// RegulationArchive. The previous pass-through inputs (telemetry_stream,
+/// discovered_signals, threats, defense_layers_firing/silent, signal_sources,
+/// signal, convergence_metric) were deleted — step 1 discovers them from
+/// recorded tool output, not from caller-supplied arrays. A DB outage
+/// surfaces as a recorded ok:false (on_failure: report), not silently empty
+/// telemetry.
+#[test]
+fn runtime_posture_monitor_manifest_loads_with_execute_step() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = crate_dir.join("../..");
+    let manifest_path = workspace_root.join("registry/manifests/runtime-posture-monitor.yaml");
+    if !manifest_path.exists() {
+        eprintln!("runtime-posture-monitor.yaml not found — skipping");
+        return;
+    }
+    let yaml = std::fs::read_to_string(&manifest_path).unwrap();
+    let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
+        .unwrap_or_else(|e| panic!("Failed to load runtime-posture-monitor manifest: {e}"));
+
+    // 1 execute (reg_query) + 3 select (select-signal, classify-threat,
+    // emit-regulation) + 1 lisp.eval compute (signal) + 1 loop = 6 total.
+    assert_eq!(
+        manifest.steps.len(),
+        6,
+        "expected 6 steps: execute (reg_query) → select-signal → classify-threat → emit-regulation → lisp.eval (signal) → loop"
+    );
+
+    // Verify step ordinals are sequential starting at 1.
+    for (i, step) in manifest.steps.iter().enumerate() {
+        assert_eq!(
+            step.ordinal,
+            (i + 1) as u32,
+            "step ordinals must be sequential starting at 1"
+        );
+    }
+
+    // Verify step 1 is the execute reg_query step.
+    assert_eq!(manifest.steps[0].action, "execute");
+    assert_eq!(
+        manifest.steps[0].mcp.as_deref(),
+        Some("reg_query"),
+        "step 1 must call reg_query (curator MCP tool) to fetch real telemetry"
+    );
+    assert!(
+        manifest.steps[0].on_failure.is_some(),
+        "step 1 (execute reg_query) must declare on_failure — a DB outage must surface, not silently empty telemetry"
+    );
+
+    // Verify step 2 is select-signal (consumes step_1_result.events).
+    assert_eq!(manifest.steps[1].action, "select");
+    assert_eq!(
+        manifest.steps[1].template_ref.as_deref(),
+        Some("runtime-posture-monitor/select-signal")
+    );
+    let step2_mapping = manifest.steps[1].input_mapping.as_ref().unwrap();
+    let step2_str = step2_mapping.to_string();
+    assert!(
+        step2_str.contains("step_1_result.events"),
+        "select-signal must consume step_1_result.events (reg_query output), not pre-supplied signal arrays"
+    );
+
+    // Verify step 3 is classify-threat (consumes step_1_result.events).
+    assert_eq!(manifest.steps[2].action, "select");
+    assert_eq!(
+        manifest.steps[2].template_ref.as_deref(),
+        Some("runtime-posture-monitor/classify-threat")
+    );
+    let step3_mapping = manifest.steps[2].input_mapping.as_ref().unwrap();
+    let step3_str = step3_mapping.to_string();
+    assert!(
+        step3_str.contains("step_1_result.events"),
+        "classify-threat must consume step_1_result.events (reg_query output), not pre-supplied signal arrays"
+    );
+
+    // Verify step 4 is emit-regulation.
+    assert_eq!(manifest.steps[3].action, "select");
+    assert_eq!(
+        manifest.steps[3].template_ref.as_deref(),
+        Some("runtime-posture-monitor/emit-regulation")
+    );
+
+    // Verify step 5 is the lisp.eval signal-compute step.
+    assert_eq!(manifest.steps[4].action, "compute");
+    assert_eq!(manifest.steps[4].compute_ref.as_deref(), Some("lisp.eval"));
+
+    // Verify step 6 is loop.
+    assert_eq!(manifest.steps[5].action, "loop");
+
+    // Verify the deleted pass-through inputs are absent from the manifest's
+    // declared inputs. The manifest stores inputs as a serde_json::Value.
+    if let Some(inputs) = manifest.inputs.as_ref().and_then(|v| v.as_array()) {
+        let input_names: Vec<String> = inputs
+            .iter()
+            .filter_map(|i| {
+                i.as_object()
+                    .and_then(|o| o.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(String::from)
+            })
+            .collect();
+        for deleted in [
+            "telemetry_stream",
+            "discovered_signals",
+            "threats",
+            "defense_layers_firing",
+            "defense_layers_silent",
+            "signal_sources",
+            "signal",
+            "convergence_metric",
+        ] {
+            assert!(
+                !input_names.iter().any(|n| n == deleted),
+                "pass-through input '{}' must be deleted — step 1 (reg_query) discovers it from recorded tool output",
+                deleted
+            );
+        }
+        // Kept inputs must still be present.
+        for kept in [
+            "target_signal",
+            "workspace_context",
+            "existing_regressions",
+            "userpod_host",
+        ] {
+            assert!(
+                input_names.iter().any(|n| n == kept),
+                "kept input '{}' must still be present",
+                kept
+            );
+        }
+    }
+
+    // Verify the convergence block uses the Cauchy-only model.
+    assert_eq!(
+        manifest.convergence.convergence_mode, "cauchy",
+        "runtime-posture-monitor should use the Cauchy-only convergence mode"
+    );
+}
+
 /// Verify the scenario-builder manifest loads correctly after Co-evolution
 /// Phase 1 + Phase 2 migration. Three native MCP `execute` steps:
 ///   - Step 1: scenario_calibration (Phase 2 — read prior calibration curve)

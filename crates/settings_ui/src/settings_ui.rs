@@ -4207,6 +4207,13 @@ impl SettingsWindow {
         cx: &mut Context<SettingsWindow>,
     ) {
         self.sandbox_host_validation_error = None;
+        // zed-kask: clear the publish-failure banner when (re-)entering the
+        // skills sub-page so a stale failure from a prior visit doesn't persist
+        // across navigations. A successful drain already sets it to `None`;
+        // this covers the failure → navigate-away → come-back case.
+        if sub_page_link.json_path == Some(AGENT_SKILLS_SETTINGS_PATH) {
+            self.last_publish_status = None;
+        }
         self.sub_page_stack
             .push(SubPage::new(sub_page_link, section_header));
         self.content_focus_handle.focus_handle(cx).focus(window, cx);

@@ -1,7 +1,7 @@
 ---
 name: runtime-posture-monitor
 visibility: public
-description: "Runtime security posture monitoring for hKask. Observes runtime telemetry (reg.* spans, reg.outcome events) to detect runtime threats: API endpoint abuse, bot traffic, LLM usage anomalies, and runtime dependency behavior anomalies."
+description: "Runtime security posture monitoring for hKask. Observes runtime telemetry (reg.* spans, reg.outcome events) via the reg_query MCP tool to detect runtime threats: API endpoint abuse, bot traffic, LLM usage anomalies, and runtime dependency behavior anomalies."
 ---
 
 # Runtime Posture Monitor
@@ -84,58 +84,51 @@ longer available as runtime signal sources. The remaining signal sources are
 
 ## Instructions
 
-> **Telemetry source:** this skill observes Regulation telemetry emitted
-> by `hkask-regulation` (`reg.outcome.*` and `reg.cybernetics.*` spans)
-> and `hkask-templates` (`reg.tool.*` and `reg.inference` spans). Span
-> history is persisted by `hkask-ledger` in its SQLCipher database. (The
-> former `hkask-guard` emitter of `reg.guard.*` spans was removed
-> 2026-08-10 — those spans no longer fire.) **No MCP server currently
-> exposes a span-query tool** (the former `hkask-mcp-regulation` server
-> was deleted — see `DIVERGENCE.md` hKask workspace members list). To
-> query spans, either (a) read `hkask-ledger` database tables directly,
-> (b) parse tracing log output filtered by `target="reg.*"`, or
-> (c) provide telemetry data as input to the skill cascade. When no
-> telemetry is available, return empty `signal_sources` and recommend
-> deploying a regulation-aware component — do NOT fabricate signals.
+> **Telemetry source:** step 1 of the cascade is an `execute` step that
+> calls the `reg_query` MCP tool (curator server) to fetch real runtime
+> telemetry from the RegulationArchive SQLCipher database. The return shape
+> is `{namespace, window_seconds, replayed_count, filtered_count, events:
+> [{timestamp, namespace, path, phase, weight, observation}]}`.
+> `replay_weighted` applies the SQL limit BEFORE the namespace filter, so
+> `replayed_count` may exceed `filtered_count` — `filtered_count` is the
+> real signal volume for the `reg.` namespace within the window. A DB
+> outage surfaces as a recorded `ok:false` tool call (via `on_failure:
+> report`), not as silently empty telemetry. The former `hkask-guard`
+> emitter of `reg.guard.*` spans was removed 2026-08-10 — those spans no
+> longer fire and are not observed by this skill.
 
-### runtime-posture-monitor/select-signal
+### runtime-posture-monitor/select-signal (step 2)
 
-1. Discover runtime signal sources in the deployed userpod host:
-   `reg.*` canonical spans, `reg.outcome` events
-   (`reg.outcome.action_blocked`, `reg.outcome.action_substituted`,
-   `reg.outcome.plateau_detected`), `reg.tool.*` invocations,
-   `reg.inference` calls. (The former `reg.guard.*` violation spans
-   — `reg.guard.input`, `reg.guard.output`, `reg.guard.canary`,
-   `reg.guard.runtime_policy` — no longer fire after the 2026-08-10
-   removal of `hkask-guard`.)
-2. If zero signal sources found, return empty `signal_sources` (do NOT
-   invent signals) and recommend `signal: regulation` based on deployed
+1. Select signal sources from the recorded reg_query telemetry (step 1).
+   The reg_query return shape is {namespace, window_seconds,
+   replayed_count, filtered_count, events: [{timestamp, namespace, path,
+   phase, weight, observation}]}. filtered_count is the real signal volume
+   (replay_weighted applies the SQL limit BEFORE the namespace filter, so
+   replayed_count may exceed filtered_count).
+2. If filtered_count is 0, return empty `signal_sources` (do NOT invent
+   signals) and recommend `signal: regulation` based on deployed
    components.
 3. Read `security/regressions/` for entries with `surface: runtime`.
    List `existing_regressions` (skipping `enforced` duplicates when
    proposing new entries).
 4. Verify defense layers to check (runtime firing, not static presence):
-   `regulation_loop` (`reg.outcome` events observed),
+   `regulation_loop` (`reg.outcome` events observed in telemetry),
    `action_distribution_monitoring` (`reg.outcome.loop_quality`
    observed), `tool_dispatch` (`reg.tool.*` firing),
-   `inference_usage` (`reg.inference` firing). (The former guard layers
-   — `input_filtering`, `output_filtering`, `canary_detection`,
-   `runtime_policy` via `reg.guard.*` — are no longer available; the
-   `hkask-guard` crate was removed 2026-08-10.)
+   `inference_usage` (`reg.inference` firing).
 5. Return JSON: `{signal, signal_sources: [...], signal_types: [...],
    defense_layers: [...], existing_regressions: [...], userpod_host}`.
 6. Emit `reg.runtime.select` Regulation span (P9) with discovered signal sources,
    signal selection, regression count, defense layers, host identity,
    latency metric.
 
-### runtime-posture-monitor/classify-threat
+### runtime-posture-monitor/classify-threat (step 3)
 
-1. Observe each signal source in `signal_sources` within the observation
-   window. Record span target, timestamp, signal value, baseline reference.
+1. Observe each signal source in `signal_sources` within the telemetry_events
+   array (from reg_query, step 1). Record span target, timestamp, signal
+   value, baseline reference.
 2. For `reg.outcome.*` signals: count regulation actions. Note whether
    actions are increasing (system struggling) or decreasing (stable).
-   (The former `reg.guard.*` violation-counting step is no longer
-   applicable — `hkask-guard` was removed 2026-08-10.)
 3. For `reg.tool.*` signals: count tool invocations per tool type. Note
    invocation rate, error rate, unusual tool call chains.
 4. For `reg.inference` signals: count LLM inference calls. Note inference
@@ -144,16 +137,16 @@ longer available as runtime signal sources. The remaining signal sources are
    `oracle` phase):
    - IS vs OUGHT: describe observed signal pattern (`IS`) vs expected
      baseline (`OUGHT` — stable, regulated, firing defenses).
-   - Epistemic mode: `Declarative` (span observed), `Probabilistic`
-     (threat inference from pattern), `Subjunctive` (potential runtime
-     risk — labeled clearly, not presented as fact).
-   - Provenance: `Direct measurement` (read span), `Inference` (pattern
-     analysis), `Assessment` (security taxonomy mapping) — label each
-     finding explicitly.
+   - Epistemic mode: `Declarative` (span observed in telemetry_events),
+     `Probabilistic` (threat inference from pattern), `Subjunctive`
+     (potential runtime risk — labeled clearly, not presented as fact).
+   - Provenance: `Direct measurement` (read span from telemetry_events),
+     `Inference` (pattern analysis), `Assessment` (security taxonomy
+     mapping) — label each finding explicitly.
 6. Apply grill-me self-challenge: Could this signal pattern be intentional?
    Is the usage spike a deliberate load test? Would a reviewer dismiss?
    If yes, downgrade or omit. Only propose concrete findings with quoted
-   span evidence.
+   span evidence (from telemetry_events).
 7. Apply pragmatic-cybernetics analysis (feedback loops): trace signal
    polarity (increasing/decreasing risk?), check variety (alternative
    signal sources for same threat?), Good Regulator (is defense layer
@@ -163,9 +156,9 @@ longer available as runtime signal sources. The remaining signal sources are
    `baseline_value`, `deviation_pct`, `severity` (critical/high/medium/low
    — justified by evidence), `provenance`, `epistemic_mode`,
    `defense_layers_firing`, `defense_layers_silent`, `evidence_snippet`
-   (quoted span target + timestamp + value), `source_citation` (MITRE
-   CWE reference URL, OWASP LLM reference, ATLAS reference,
-   hkask-regulation docs).
+   (quoted span target + timestamp + value, from telemetry_events),
+   `source_citation` (MITRE CWE reference URL, OWASP LLM reference,
+   ATLAS reference, hkask-regulation docs).
 9. Emit `reg.runtime.classify` Regulation span per classified threat
     (`target: "reg.runtime.classify"`, message: `"Regulation"`, operation:
     `"classify_threat"`, threat_type, signal_target, severity,
@@ -173,8 +166,8 @@ longer available as runtime signal sources. The remaining signal sources are
 
 CONSTRAINT — Evidence integrity (P8):
 - No synthetic span observations. Every `evidence_snippet` must be
-  verifiable by querying the Regulation span history for the cited target and
-  timestamp.
+  verifiable by querying the Regulation span history (telemetry_events from
+  reg_query) for the cited target and timestamp.
 - No synthetic CVE numbers. Only reference MITRE CWE taxonomy categories:
   CWE-1357 (Reliance on Component Not Updateable — runtime dependency
   behavior), CWE-829 (Inclusion from Untrusted Control Sphere — runtime

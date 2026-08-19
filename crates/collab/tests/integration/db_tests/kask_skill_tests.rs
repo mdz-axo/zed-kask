@@ -42,6 +42,15 @@ test_both_dbs!(
     test_kask_skill_expiry_sweep_sqlite
 );
 
+// zed-kask: D30 — the expiry sweep must also delete the locally-stored
+// tarball rows for purged versions, or the local fallback store leaks
+// orphaned rows (the `kask_skill_tarballs` table has no FK cascade).
+test_both_dbs!(
+    test_kask_skill_expiry_sweep_deletes_local_tarballs,
+    test_kask_skill_expiry_sweep_deletes_local_tarballs_postgres,
+    test_kask_skill_expiry_sweep_deletes_local_tarballs_sqlite
+);
+
 // zed-kask: D30 — pin the local fallback blob store (no-S3 publish path).
 // `put`/`get` round-trips the tarball bytes; re-`put` of the same triple
 // upserts (replaces); `delete_kask_skill_tarballs` clears a namespace.
@@ -420,4 +429,60 @@ async fn test_kask_skill_tarball_delete_by_namespace(db: &Arc<Database>) {
         .await
         .unwrap();
     assert_eq!(deleted, 0);
+}
+
+// zed-kask: D30 — the expiry sweep must also delete the locally-stored tarball
+// rows for purged versions. Without this, the local fallback store leaks
+// orphaned rows (the `kask_skill_tarballs` table has no FK cascade to
+// `kask_skill_versions`). Pins the S2 fix.
+async fn test_kask_skill_expiry_sweep_deletes_local_tarballs(db: &Arc<Database>) {
+    // Insert an expired skill version + its local tarball.
+    db.insert_kask_skill_versions(&[make_version_with_expiry(
+        "alice",
+        "stale",
+        "1.0.0",
+        "Stale skill",
+        "2020-01-01T00:00:00Z",
+    )
+    .await])
+        .await
+        .unwrap();
+    db.put_kask_skill_tarball("alice", "stale", "1.0.0", b"stale-tarball".to_vec())
+        .await
+        .unwrap();
+    // And a fresh (unexpired) skill + tarball that must survive the sweep.
+    db.insert_kask_skill_versions(&[make_version_with_expiry(
+        "bob",
+        "fresh",
+        "1.0.0",
+        "Fresh skill",
+        "2999-01-01T00:00:00Z",
+    )
+    .await])
+        .await
+        .unwrap();
+    db.put_kask_skill_tarball("bob", "fresh", "1.0.0", b"fresh-tarball".to_vec())
+        .await
+        .unwrap();
+
+    let purged = db.purge_expired_kask_skill_versions().await.unwrap();
+    assert_eq!(purged, 1, "exactly the expired version is purged");
+
+    // The expired skill's tarball must be gone (no orphaned row).
+    assert!(
+        db.get_kask_skill_tarball("alice", "stale", "1.0.0")
+            .await
+            .unwrap()
+            .is_none(),
+        "expired skill's local tarball must be purged with its version"
+    );
+    // The fresh skill's tarball must survive.
+    assert_eq!(
+        db.get_kask_skill_tarball("bob", "fresh", "1.0.0")
+            .await
+            .unwrap()
+            .unwrap(),
+        b"fresh-tarball",
+        "unexpired skill's local tarball must survive the sweep"
+    );
 }

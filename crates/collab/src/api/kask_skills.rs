@@ -159,17 +159,29 @@ pub fn router(app_state: &Arc<AppState>) -> Router {
             }
         }
     }));
-    Router::new()
+    // zed-kask: D30 — the auth layer covers ONLY the mutating routes
+    // (upload/vote/delete). The read-only catalog routes
+    // (`GET /api/kask-skills`, `GET /api/kask-skills/:id`,
+    // `GET /api/kask-skills/:id/download`) stay unauthenticated, matching
+    // the pre-D30 behavior: the client's `fetch_kask_skills` and
+    // `install_skill` download send no `Authorization` header, so a blanket
+    // auth layer would 401 the browse + install path in production (where
+    // `validate_header` requires the header). The mutating routes need a
+    // `Principal` inserted (root cause #2); the read-only routes' handlers
+    // don't extract `Principal`.
+    let unauthenticated = Router::new()
         .route("/api/kask-skills", get(get_kask_skills))
         .route("/api/kask-skills/:id", get(get_kask_skill))
-        .route("/api/kask-skills/:id/download", get(download_kask_skill))
+        .route("/api/kask-skills/:id/download", get(download_kask_skill));
+    let authenticated = Router::new()
         .route("/api/kask-skills/:id/vote", post(vote_kask_skill))
         .route("/api/kask-skills/upload", post(upload_kask_skill))
         .route(
             "/api/kask-skills/:id",
             axum::routing::delete(delete_kask_skill),
         )
-        .layer(auth_layer)
+        .layer(auth_layer);
+    unauthenticated.merge(authenticated)
 }
 
 async fn get_kask_skills(
@@ -234,8 +246,7 @@ async fn download_kask_skill(
             .get_kask_skill_tarball(source_user, skill_name, &skill.manifest.version)
             .await?
             .context("kask skill tarball not found in local store")?;
-        let body = axum::body::Body::from(tarball);
-        let mut response = axum::response::Response::new(body);
+        let mut response = axum::response::Response::new(axum::body::Body::from(tarball));
         *response.status_mut() = StatusCode::OK;
         response.headers_mut().insert(
             axum::http::header::CONTENT_TYPE,

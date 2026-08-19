@@ -173,15 +173,56 @@ steps:
     compute_ref: lisp.eval
     description: >
       Compute structural-validity score from step 4's actual report output.
-      The convergence signal is the count of open critical + high findings:
-      length(report.findings_by_severity.critical) +
-      length(report.findings_by_severity.high). Lower = more converged
-      (zero critical/high findings = converged clean). If report or any
-      severity array is absent, the form errors (no silent default),
-      surfacing a broken report step rather than masking it with a flat 1.0.
+      The convergence signal is the count of open critical + high findings
+      PLUS the count of structural defects in proposed_regressions (bad
+      severity, bad detection.kind, or empty pattern). Lower = more
+      converged (zero = clean findings AND valid RR proposals). A
+      hallucinated RR proposal (e.g., severity 'blocker', detection.kind
+      'runtime') is now a cascade defect instead of prose a human must
+      hand-check. If report or any severity array is absent, the form
+      errors (no silent default), surfacing a broken report step rather
+      than masking it with a flat 1.0.
     timeout_seconds: 10
     input_mapping:
-      form: "(+ (length (assoc \"critical\" (assoc \"findings_by_severity\" (assoc \"report\" step_4_result)))) (length (assoc \"high\" (assoc \"findings_by_severity\" (assoc \"report\" step_4_result)))))"
+      form: >
+        (let ((report (assoc "report" step_4_result))
+              (proposed (assoc "proposed_regressions" step_4_result)))
+          (begin
+            (define valid-sev
+              (lambda (s)
+                (if (string= s "critical") true
+                (if (string= s "high") true
+                (if (string= s "medium") true
+                (if (string= s "low") true false))))))
+            (define valid-kind
+              (lambda (k)
+                (if (string= k "grep") true
+                (if (string= k "cargo-test") true
+                (if (string= k "skill-probe") true
+                (if (string= k "reg-span") true false))))))
+            (define check-rr
+              (lambda (rs acc)
+                (if (is_null rs)
+                    acc
+                    (let ((r (car rs))
+                          (sev (assoc "severity" r))
+                          (det (assoc "detection" r))
+                          (kind (if (is_null det) (list) (assoc "kind" det)))
+                          (pat (if (is_null det) (list) (assoc "pattern" det))))
+                      (let ((sev-ok (valid-sev sev))
+                            (kind-ok (valid-kind kind))
+                            (pat-ok (not (is_null pat))))
+                        (check-rr
+                          (cdr rs)
+                          (+ acc
+                             (if (not sev-ok) 1 0)
+                             (if (not kind-ok) 1 0)
+                             (if (not pat-ok) 1 0))))))))
+            (define rr-defects
+              (if (is_null proposed) 0 (check-rr proposed 0)))
+            (define crit (length (assoc "critical" (assoc "findings_by_severity" report))))
+            (define high (length (assoc "high" (assoc "findings_by_severity" report))))
+            (+ crit high rr-defects)))
       env:
         step_4_result: "{{ step_4_result }}"
 

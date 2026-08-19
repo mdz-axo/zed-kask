@@ -37,11 +37,30 @@ status: pending | enforced           # pending = known bug, not yet fixed; enfor
    is in progress.
 2. **enforced** — bug fixed. The CI gate now fails if the pattern re-appears.
    Flip the status after the fix lands.
+3. **deferred** — the regression is acknowledged but not mechanically enforced
+   because the required infrastructure is absent. The note field must name the
+   missing infrastructure (e.g., 'reg-span kind requires runtime REG span
+   history infrastructure not yet implemented'). A deferred regression is a
+   documented gap, not a silent pass.
+4. **obsolete** — the machinery the regression checked was deleted. The note
+   field records what was deleted and when (e.g., 'hkask-guard crate deleted
+   2026-08-10'). The entry is retained as historical record.
+5. **retired** — the regression was de-advertised rather than deployed: the
+   defense layer it checked for was never present in this repo, and the
+   catalog references were removed. The note field records the decision.
 
 ## CI integration
 
 `scripts/check-kali-regressions.sh` runs all `grep`-kind regressions with
 `status: enforced`. Ratcheted: `pending` regressions are warnings, not failures.
+
+`detection.kind: reg-span` regressions (surface: runtime) are acknowledged but
+NOT mechanically enforced — they require runtime REG span history infrastructure
+that `scripts/check-kali-regressions.sh` does not provide (its header says so).
+A reg-span regression with `status: enforced` claims CI enforcement the script
+does not deliver; flip such entries to `status: deferred` with a note naming the
+missing infrastructure. Do not leave a reg-span entry as `enforced` — that is a
+false claim of CI coverage.
 
 ## Relationship to security skills
 

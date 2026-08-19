@@ -298,6 +298,12 @@ pub fn spawn_drain(queue: &mut SkillVisibilityQueue, cx: &mut Context<SettingsWi
     // "Cross-thread GPUI communication uses channels, not `AsyncApp` handles",
     // this uses `cx.spawn`'s foreground `cx` + `settings_window` handle, not a
     // captured `AsyncApp`.
+    //
+    // The returned `Task` IS the drain work (the caller `.detach()`es it).
+    // Do NOT detach internally + return `Task::ready(())` — that would break
+    // the task-lifecycle contract (the caller could no longer await/track the
+    // drain, and the internal detach would hide the task from the caller's
+    // lifecycle).
     cx.spawn(async move |settings_window, cx| {
         let failures = background.await;
         settings_window
@@ -320,9 +326,6 @@ pub fn spawn_drain(queue: &mut SkillVisibilityQueue, cx: &mut Context<SettingsWi
             })
             .ok();
     })
-    .detach();
-
-    Task::ready(())
 }
 
 /// Handle a visibility toggle click for a `SkillSource::Global` skill.
