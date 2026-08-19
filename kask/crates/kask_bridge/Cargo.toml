@@ -69,7 +69,6 @@ hkask-test-harness.workspace = true
 hkask-mcp-swarm = { workspace = true, features = ["test-utils"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-tracing-subscriber.workspace = true
 
 [[test]]
 name = "bridge_gap_properties"

@@ -110,26 +110,6 @@ enum ExtensionFilter {
     NotInstalled,
 }
 
-// zed-kask: the source of a skill that ships with the install. Shown in the
-// panel when the "Bundled skills" toggle is on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BundledSource {
-    Shipped,
-}
-
-// zed-kask: a skill that ships with the install. `modified` is true when an
-// on-disk override at `global_skills_dir()/<name>/SKILL.md` hashes differently
-// from the shipped SKILL.md. v1 compares over the SKILL.md file (the file a
-// user override contains); the full-package hash (manifest.yaml + j2) is the
-// next slice, pending a public accessor for the embedded manifest/templates.
-#[derive(Clone, Debug)]
-struct BundledSkillEntry {
-    name: SharedString,
-    description: SharedString,
-    source: BundledSource,
-    modified: bool,
-}
-
 pub struct KaskExtensionsPage {
     list: UniformListScrollHandle,
     is_fetching_skills: bool,
@@ -152,15 +132,6 @@ pub struct KaskExtensionsPage {
     fs: Option<Arc<dyn fs::Fs>>,
     // zed-kask: track the client for credentials (auth headers)
     client: Option<Arc<client::Client>>,
-    // zed-kask: bundled-skills toggle + inventory. "Bundled skills" are the
-    // skills that ship with the install (embedded global + built-in). When
-    // `show_bundled` is on they're listed alongside the marketplace catalog;
-    // each is badged "Modified" when an on-disk override hashes differently
-    // from the shipped SKILL.md.
-    show_bundled: bool,
-    bundled_entries: Vec<BundledSkillEntry>,
-    filtered_bundled_indices: Vec<usize>,
-    bundled_fetch_task: Option<Task<()>>,
     // zed-kask: discreet-piggyback status feedback for share / install-from-ref
     // actions (clipboard-based in v1; the page holds no workspace handle for
     // toasts, so feedback is rendered inline).
@@ -232,10 +203,6 @@ impl KaskExtensionsPage {
                 http_client: Some(http_client),
                 fs: Some(fs),
                 client: Some(app_state.client.clone()),
-                show_bundled: false,
-                bundled_entries: Vec::new(),
-                filtered_bundled_indices: Vec::new(),
-                bundled_fetch_task: None,
                 status_message: None,
                 shared_in_channels: Vec::new(),
                 query_editor,
@@ -267,30 +234,7 @@ impl KaskExtensionsPage {
             .map(|(ix, _)| ix)
             .collect();
         self.filtered_remote_skill_indices = indices;
-        self.filter_bundled_entries(cx);
         cx.notify();
-    }
-
-    /// zed-kask: compute the filtered bundled-skill indices. Bundled skills
-    /// are filtered by the search query only; the install-status filter does
-    /// not apply (they ship with the app and are always present). Hidden
-    /// entirely when the toggle is off.
-    fn filter_bundled_entries(&mut self, cx: &mut Context<Self>) {
-        let query = self.search_query(cx).map(|q| q.to_lowercase());
-        self.filtered_bundled_indices = if self.show_bundled {
-            (0..self.bundled_entries.len())
-                .filter(|&i| match &query {
-                    None => true,
-                    Some(query) => {
-                        let entry = &self.bundled_entries[i];
-                        entry.name.to_lowercase().contains(query)
-                            || entry.description.to_lowercase().contains(query)
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
     }
 
     fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
@@ -368,119 +312,6 @@ impl KaskExtensionsPage {
             .ok();
         })
         .detach();
-    }
-
-    /// zed-kask: Load the skills that ship with the install (shipped + built-in)
-    /// and detect on-disk modifications. Shipped skills are seeded to disk at
-    /// startup from the compiled seed payload. A bundled skill is "Modified"
-    /// when its on-disk package hash differs from the shipped package hash.
-    /// The package is the full triple `(SKILL.md, manifest.yaml, *.j2
-    /// templates)` plus the process manifest and template YAML sub-manifests —
-    /// "a change is a change in any of those" — so editing any package file
-    /// surfaces the badge, not just SKILL.md.
-    fn fetch_bundled_skills(&mut self, cx: &mut Context<Self>) {
-        let Some(fs) = self.fs.clone() else {
-            log::warn!("kask-extensions: no filesystem available; cannot load bundled skills.");
-            return;
-        };
-        let task = cx.spawn(async move |this, cx| {
-            let result = async {
-                use std::collections::HashMap;
-
-                let seed = agent_skills::shipped_skill_seed();
-                let mut entries: Vec<BundledSkillEntry> = Vec::with_capacity(seed.len() + 4);
-                // zed-kask: full shipped package per skill (SKILL.md +
-                // manifest.yaml + *.j2 + process manifest). "Modified" =
-                // this hash differs from the on-disk package hash.
-                let mut shipped_packages = HashMap::new();
-                for (name, content) in seed {
-                    let description = match agent_skills::parse_skill_metadata(content) {
-                        Ok(meta) => meta.description,
-                        Err(error) => {
-                            log::warn!(
-                                "kask-extensions: shipped skill '{name}' failed to parse: {error}"
-                            );
-                            continue;
-                        }
-                    };
-                    entries.push(BundledSkillEntry {
-                        name: (*name).into(),
-                        description: description.into(),
-                        source: BundledSource::Shipped,
-                        modified: false,
-                    });
-                    shipped_packages.insert(
-                        (*name).to_string(),
-                        crate::publish::gather_shipped_skill_package(name, Some(content)),
-                    );
-                }
-                entries.sort_by(|a, b| a.name.cmp(&b.name));
-                entries.dedup_by(|a, b| a.name == b.name);
-
-                // zed-kask: resolve the on-disk registry root. Dev (source
-                // tree present): `kask/registry/`. Prod (seeded):
-                // `{kask_data_dir}/skills/registry/` (a child of the skills
-                // dir, D28). Mirrors `main.rs`; the decision is pure in
-                // [`crate::publish::resolve_registry_root`] so the dev/prod
-                // branch is tested.
-                let globals_dir = agent_skills::global_skills_dir();
-                let dev_manifests_exist = fs
-                    .is_dir(std::path::Path::new("kask/registry/manifests"))
-                    .await;
-                let registry_root =
-                    crate::publish::resolve_registry_root(dev_manifests_exist, &globals_dir);
-
-                for entry in entries.iter_mut() {
-                    let Some(seed_pkg) = shipped_packages.get(&*entry.name) else {
-                        // No shipped reference: a user-added skill, not a
-                        // modification of a bundled one. Don't badge it.
-                        continue;
-                    };
-                    if seed_pkg.is_empty() {
-                        continue;
-                    }
-                    let disk_pkg = crate::publish::gather_disk_skill_package(
-                        fs.as_ref(),
-                        &entry.name,
-                        &registry_root,
-                    )
-                    .await;
-                    if disk_pkg.is_empty() {
-                        // Nothing on disk to compare (not yet seeded, or the
-                        // user removed it). Don't badge.
-                        continue;
-                    }
-                    let seed_files = seed_pkg
-                        .iter()
-                        .map(|(n, b)| (n.as_str(), b.as_slice()))
-                        .collect::<Vec<_>>();
-                    let disk_files = disk_pkg
-                        .iter()
-                        .map(|(n, b)| (n.as_str(), b.as_slice()))
-                        .collect::<Vec<_>>();
-                    let seed_hash = crate::publish::kask_skill_package_hash(&seed_files);
-                    let disk_hash = crate::publish::kask_skill_package_hash(&disk_files);
-                    entry.modified = seed_hash != disk_hash;
-                }
-                Ok::<_, anyhow::Error>(entries)
-            }
-            .await;
-
-            this.update(cx, |this, cx| {
-                match result {
-                    Ok(entries) => {
-                        this.bundled_entries = entries;
-                        this.filter_extension_entries(cx);
-                    }
-                    Err(error) => {
-                        log::warn!("kask-extensions: failed to load bundled skills: {error:#}")
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        });
-        self.bundled_fetch_task = Some(task);
     }
 
     /// zed-kask: Install a kask skill from a `kask-skill://` reference on the
@@ -661,21 +492,16 @@ impl KaskExtensionsPage {
         cx: &mut Context<Self>,
     ) -> Vec<MarketplaceCard> {
         let mut cards = Vec::new();
-        // zed-kask: three sections, in order: skill refs discovered in the
-        // user's open channels (discreet piggyback), bundled skills, then the
-        // marketplace catalog. The combined count sizes `uniform_list`.
+        // zed-kask: two sections, in order: skill refs discovered in the
+        // user's open channels (discreet piggyback), then the marketplace
+        // catalog. The combined count sizes `uniform_list`.
         let shared_count = self.shared_in_channels.len();
-        let bundled_count = self.filtered_bundled_indices.len();
         for ix in range {
             if ix < shared_count {
                 cards
                     .push(self.render_shared_channel_card(self.shared_in_channels[ix].clone(), cx));
-            } else if ix < shared_count + bundled_count {
-                let bi = self.filtered_bundled_indices[ix - shared_count];
-                let entry = self.bundled_entries[bi].clone();
-                cards.push(self.render_bundled_card(entry));
             } else {
-                let market_ix = ix - shared_count - bundled_count;
+                let market_ix = ix - shared_count;
                 if market_ix >= self.filtered_remote_skill_indices.len() {
                     break;
                 }
@@ -894,38 +720,6 @@ impl KaskExtensionsPage {
                             )),
                         ),
                 ),
-        )
-    }
-
-    /// zed-kask: Render a bundled-skill card (shipped with the install).
-    /// Simpler than a marketplace card: no install/vote buttons, since the
-    /// skill ships with the app. A "Modified" badge marks on-disk overrides
-    /// whose package hash differs from the shipped original.
-    fn render_bundled_card(&self, entry: BundledSkillEntry) -> MarketplaceCard {
-        let source_label: &'static str = match entry.source {
-            BundledSource::Shipped => "Bundled",
-        };
-        let mut header = h_flex()
-            .gap_2()
-            .min_w_0()
-            .child(Label::new(entry.name).color(Color::Default).truncate())
-            .child(Label::new(source_label).color(Color::Muted).flex_shrink_0());
-        if entry.modified {
-            header = header.child(
-                Label::new("Modified")
-                    .color(Color::Modified)
-                    .flex_shrink_0(),
-            );
-        }
-        MarketplaceCard::new().child(
-            h_flex().w_full().gap_2().child(
-                v_flex().min_w_0().flex_1().gap_1().child(header).child(
-                    Label::new(entry.description)
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall)
-                        .truncate(),
-                ),
-            ),
         )
     }
 
@@ -1293,35 +1087,6 @@ impl Render for KaskExtensionsPage {
                             .flex_wrap()
                             .gap_2()
                             .child(self.render_search(cx))
-                            // zed-kask: toggle to include the skills that ship with the install
-                            // (embedded global + built-in) in the list. When on, on-disk
-                            // overrides that hash differently from the shipped package are
-                            // badged "Modified".
-                            .child(
-                                Button::new(
-                                    "bundled-skills-toggle",
-                                    if self.show_bundled {
-                                        "Bundled skills: On"
-                                    } else {
-                                        "Bundled skills: Off"
-                                    },
-                                )
-                                .style(if self.show_bundled {
-                                    ButtonStyle::Filled
-                                } else {
-                                    ButtonStyle::Subtle
-                                })
-                                .on_click(cx.listener(
-                                    move |this, _event, _window, cx| {
-                                        this.show_bundled = !this.show_bundled;
-                                        if this.show_bundled && this.bundled_entries.is_empty() {
-                                            this.fetch_bundled_skills(cx);
-                                        }
-                                        this.filter_extension_entries(cx);
-                                        this.scroll_to_top(cx);
-                                    },
-                                )),
-                            )
                             // zed-kask: discreet-piggyback consumer — install a skill
                             // from a `kask-skill://` reference on the clipboard
                             // (copied from a channel message or a Share button).
@@ -1391,10 +1156,9 @@ impl Render for KaskExtensionsPage {
             // provides concept (v1 is skills-only per plan §0). Extension
             // upsell banners are also irrelevant to kask skills and removed.
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
-                // zed-kask: count is shared-in-channels + filtered bundled + marketplace.
-                let count = self.shared_in_channels.len()
-                    + self.filtered_bundled_indices.len()
-                    + self.filtered_remote_skill_indices.len();
+                // zed-kask: count is shared-in-channels + marketplace.
+                let count =
+                    self.shared_in_channels.len() + self.filtered_remote_skill_indices.len();
 
                 if count == 0 {
                     this.child(self.render_empty_state(cx)).into_any_element()

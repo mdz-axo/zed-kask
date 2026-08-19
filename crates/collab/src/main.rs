@@ -93,7 +93,10 @@ async fn main() -> Result<()> {
                     app = app
                         .merge(collab::api::events::router())
                         .merge(collab::api::extensions::router())
-                        .merge(collab::api::kask_skills::router())
+                        // zed-kask: D30 — pass `AppState` so the kask-skills
+                        // router can select the dev-bypass vs. real auth
+                        // middleware based on `Config::is_development()`.
+                        .merge(collab::api::kask_skills::router(&state))
                 }
 
                 app = app.layer(Extension(state.clone()));

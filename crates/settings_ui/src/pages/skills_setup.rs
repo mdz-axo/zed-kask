@@ -55,6 +55,21 @@ pub(crate) fn render_skills_setup_page(
         .size_full()
         .pt_2()
         .pb_16()
+        // zed-kask: surface publish/unpublish failures from the visibility-
+        // toggle drain so the icon flip is not the only signal (the warn-only
+        // path left the user thinking the skill was published when it had
+        // failed). Rendered above the list so it's visible without scrolling.
+        .when_some(
+            settings_window.last_publish_status.clone(),
+            |this, status| {
+                this.child(
+                    div()
+                        .px_8()
+                        .py_2()
+                        .child(Label::new(status).color(Color::Warning)),
+                )
+            },
+        )
         .map(|this| {
             if skills.is_empty() {
                 let message = match &settings_window.current_file {

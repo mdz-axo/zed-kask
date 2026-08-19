@@ -11,6 +11,8 @@ pub mod extension;
 pub mod extension_version;
 pub mod follower;
 pub mod kask_skill;
+// zed-kask: D30 — local fallback blob store for the no-S3 publish path.
+pub mod kask_skill_tarball;
 pub mod kask_skill_version;
 pub mod kask_skill_vote;
 pub mod language_server;

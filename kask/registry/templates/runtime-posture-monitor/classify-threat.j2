@@ -16,7 +16,7 @@ template_type: KnowAct
 contract:
   input:
     signal_sources: array
-    signal: object
+    telemetry_events: array
     existing_regressions: array
     userpod_host: string
   output:
@@ -33,13 +33,13 @@ visibility: Public
 [inference]
 
 INPUT: signal_sources = {{ signal_sources }}
-INPUT: signal = {{ signal }}
+INPUT: telemetry_events = {{ telemetry_events }} (from reg_query, step 1)
 INPUT: existing_regressions = {{ existing_regressions | default([]) }}
 INPUT: userpod_host = {{ userpod_host }} (P12 — mandatory; if undefined, raise error: userpod_host is required for all runtime scanning)
 
-CLASSIFY ACTIONS (concrete — must use Regulation observer/subscriber, span history, or runtime telemetry reader):
+CLASSIFY ACTIONS (concrete — must use the reg_query telemetry_events recorded in step 1):
 1. For each signal source listed in `signal_sources`, observe the span emission
-   pattern within the observation window.
+   pattern within the telemetry_events array.
 2. For `reg.outcome.*` signals: count regulation actions (blocked,
    substituted, plateau). Note whether actions are increasing (system
    struggling to regulate) or decreasing (system stable).
@@ -48,7 +48,7 @@ CLASSIFY ACTIONS (concrete — must use Regulation observer/subscriber, span his
    rapid sequential calls to high-risk tools).
 4. For `reg.inference` signals: count LLM inference calls. Note inference
    rate, token consumption, and any usage spikes exceeding baseline.
-5. Apply cybersecurity taxonomy mapping (evidence-backed only):
+5. Apply cybersecurity taxonomy mapping (evidence-backed only, from telemetry_events):
    - Endpoint abuse: evidence = repeated `reg.tool.invoked` for same tool
      exceeding baseline frequency within observation window.
    - Bot traffic: evidence = automated request pattern (regular intervals,
@@ -64,26 +64,26 @@ CLASSIFY ACTIONS (concrete — must use Regulation observer/subscriber, span his
 6. Apply pragmatic-cybernetics (embedded reasoning, like `bug-hunt` oracle phase):
    - IS vs OUGHT: describe what the runtime DOES (observed signal pattern)
      vs what it SHOULD do (stable baseline, regulated threats).
-   - Epistemic mode: `Declarative` (span observed), `Probabilistic` (threat
-     inference from signal pattern), `Subjunctive` (potential runtime risk —
-     must be labeled clearly, not presented as fact).
-   - Provenance: `Direct measurement` (read span), `Inference` (pattern
-     analysis from span sequence), `Assessment` (security taxonomy mapping)
-     — must label each finding's provenance.
+   - Epistemic mode: `Declarative` (span observed in telemetry_events),
+     `Probabilistic` (threat inference from signal pattern), `Subjunctive`
+     (potential runtime risk — must be labeled clearly, not presented as fact).
+   - Provenance: `Direct measurement` (read span from telemetry_events),
+     `Inference` (pattern analysis from span sequence), `Assessment`
+     (security taxonomy mapping) — must label each finding's provenance.
 7. Apply grill-me self-challenge (like `bug-hunt`): Could this signal pattern
    be intentional? Is the usage spike a deliberate load test? Would a reviewer
    dismiss this finding? If yes, downgrade to `OBSERVATION` or omit. Only
-   propose `BUG` / `POTENTIAL_BUG` when evidence is concrete.
+   propose `BUG` / `POTENTIAL_BUG` when evidence is concrete (from telemetry_events).
 8. Check defense-layer firing (runtime-specific, distinct from kali-audit's
    static presence check):
-   - Regulation loop active (`reg.outcome` events observed)
+   - Regulation loop active (`reg.outcome` events observed in telemetry_events)
    - Action distribution monitoring (`reg.outcome.loop_quality` observed)
 9. For each classified threat, emit structured finding:
    `threat_type`, `signal_target`, `timestamp`, `signal_value`, `baseline_value`,
    `deviation_pct`, `severity` (critical/high/medium/low — justified by evidence),
    `provenance` (Direct/Inference/Assessment), `epistemic_mode`,
    `defense_layers_firing` (list), `defense_layers_silent` (list),
-   `evidence_snippet` (quoted span target + timestamp + value),
+   `evidence_snippet` (quoted span target + timestamp + value, from telemetry_events),
    `source_citation` (MITRE CWE reference, OWASP LLM reference, ATLAS reference,
    hkask-regulation docs).
 
@@ -96,7 +96,8 @@ Regulation SPAN EMISSION (P9 — every classified runtime threat):
 
 CONSTRAINT — Evidence integrity (P8 — semantic grounding):
 - No synthetic span observations. Every `evidence_snippet` must be verifiable
-  by querying the Regulation span history for the cited target and timestamp.
+  by querying the Regulation span history (telemetry_events from reg_query)
+  for the cited target and timestamp.
 - No synthetic CVE references. Only reference MITRE CWE taxonomy categories
   (CWE-1357, CWE-829, CWE-200), OWASP LLM 2025 (LLM06, LLM07), MITRE ATLAS
   (AML.TA0010). These are taxonomy mappings, not vulnerability claims.
@@ -108,7 +109,7 @@ RELATIONSHIP TO OTHER SKILLS (explicit — no overlap ambiguity):
 - `supply-chain-sentinel`: covers static dependency manifest audit (P4 manifest
   boundary). `runtime-posture-monitor` covers runtime behavior (P4 runtime
   boundary). Zero overlap — distinct P4 boundaries.
-- `kali-audit`: covers static defense-layer presence (7 layers).
+- `kali-audit`: covers static defense-layer presence (4 live layers).
   `runtime-posture-monitor` covers whether those layers actually fire at
   runtime. Complementary — static presence vs runtime firing.
 - `adversarial-red-team`: covers synthetic LLM I/O attacks.
@@ -134,6 +135,6 @@ MINIMALISM CHECK (P5 — 5W1H gate for this skill's existence):
 OUTPUT FORMAT:
 JSON object with fields:
 `signal_sources` (list with observation counts), `threats_found` (structured
-array — only evidence-backed), `defense_layers_firing` (list),
-`defense_layers_silent` (list), `baseline_references` (list with source),
+array — only evidence-backed, from telemetry_events), `defense_layers_firing`
+(list), `defense_layers_silent` (list), `baseline_references` (list with source),
 `userpod_host`, `source_citations`.

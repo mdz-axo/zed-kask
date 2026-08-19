@@ -42,6 +42,21 @@ test_both_dbs!(
     test_kask_skill_expiry_sweep_sqlite
 );
 
+// zed-kask: D30 — pin the local fallback blob store (no-S3 publish path).
+// `put`/`get` round-trips the tarball bytes; re-`put` of the same triple
+// upserts (replaces); `delete_kask_skill_tarballs` clears a namespace.
+test_both_dbs!(
+    test_kask_skill_tarball_round_trips_through_db,
+    test_kask_skill_tarball_round_trips_through_db_postgres,
+    test_kask_skill_tarball_round_trips_through_db_sqlite
+);
+
+test_both_dbs!(
+    test_kask_skill_tarball_delete_by_namespace,
+    test_kask_skill_tarball_delete_by_namespace_postgres,
+    test_kask_skill_tarball_delete_by_namespace_sqlite
+);
+
 async fn make_version(
     source_user: &str,
     skill_name: &str,
@@ -287,4 +302,122 @@ async fn test_kask_skill_expiry_sweep(db: &Arc<Database>) {
         !ids.contains(&"alice/stale".to_string()),
         "expired skill must be purged with its version: {ids:?}"
     );
+}
+
+// zed-kask: D30 — local fallback blob store for the no-S3 publish path.
+// These pin the DB methods that back the local upload/download/delete
+// branches in `api/kask_skills.rs`. The signed-manifest gate is unchanged
+// (the catalog row still carries `public_key`/`signature`/`expires_at`); these
+// tests cover only the raw tarball-byte store.
+async fn test_kask_skill_tarball_round_trips_through_db(db: &Arc<Database>) {
+    // Nothing stored initially.
+    assert!(
+        db.get_kask_skill_tarball("alice", "bug-hunt", "1.0.0")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // Put + get round-trips the bytes verbatim.
+    let tarball = b"tarball-bytes-v1".to_vec();
+    db.put_kask_skill_tarball("alice", "bug-hunt", "1.0.0", tarball.clone())
+        .await
+        .unwrap();
+    let fetched = db
+        .get_kask_skill_tarball("alice", "bug-hunt", "1.0.0")
+        .await
+        .unwrap()
+        .expect("tarball must be present after put");
+    assert_eq!(fetched, b"tarball-bytes-v1");
+
+    // Re-put of the same triple upserts (replaces the bytes).
+    let tarball_v2 = b"tarball-bytes-v2".to_vec();
+    db.put_kask_skill_tarball("alice", "bug-hunt", "1.0.0", tarball_v2.clone())
+        .await
+        .unwrap();
+    let fetched = db
+        .get_kask_skill_tarball("alice", "bug-hunt", "1.0.0")
+        .await
+        .unwrap()
+        .expect("tarball must be present after re-put");
+    assert_eq!(
+        fetched, b"tarball-bytes-v2",
+        "re-put of the same triple must replace, not duplicate"
+    );
+
+    // A different version is a distinct row (not overwritten by the upsert).
+    db.put_kask_skill_tarball("alice", "bug-hunt", "2.0.0", b"v2-bytes".to_vec())
+        .await
+        .unwrap();
+    let v1 = db
+        .get_kask_skill_tarball("alice", "bug-hunt", "1.0.0")
+        .await
+        .unwrap()
+        .expect("v1 must still be present after v2 put");
+    assert_eq!(v1, b"tarball-bytes-v2");
+    let v2 = db
+        .get_kask_skill_tarball("alice", "bug-hunt", "2.0.0")
+        .await
+        .unwrap()
+        .expect("v2 must be present");
+    assert_eq!(v2, b"v2-bytes");
+}
+
+async fn test_kask_skill_tarball_delete_by_namespace(db: &Arc<Database>) {
+    db.put_kask_skill_tarball("alice", "bug-hunt", "1.0.0", b"a".to_vec())
+        .await
+        .unwrap();
+    db.put_kask_skill_tarball("alice", "bug-hunt", "2.0.0", b"b".to_vec())
+        .await
+        .unwrap();
+    db.put_kask_skill_tarball("alice", "essentialist", "1.0.0", b"c".to_vec())
+        .await
+        .unwrap();
+    db.put_kask_skill_tarball("bob", "bug-hunt", "1.0.0", b"d".to_vec())
+        .await
+        .unwrap();
+
+    // Delete by (source_user, skill_name) clears all versions of that skill
+    // for that publisher, leaving other namespaces untouched.
+    let deleted = db
+        .delete_kask_skill_tarballs("alice", "bug-hunt")
+        .await
+        .unwrap();
+    assert_eq!(deleted, 2, "both versions of alice/bug-hunt are deleted");
+
+    assert!(
+        db.get_kask_skill_tarball("alice", "bug-hunt", "1.0.0")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db.get_kask_skill_tarball("alice", "bug-hunt", "2.0.0")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // Other namespaces survive.
+    assert_eq!(
+        db.get_kask_skill_tarball("alice", "essentialist", "1.0.0")
+            .await
+            .unwrap()
+            .unwrap(),
+        b"c"
+    );
+    assert_eq!(
+        db.get_kask_skill_tarball("bob", "bug-hunt", "1.0.0")
+            .await
+            .unwrap()
+            .unwrap(),
+        b"d"
+    );
+
+    // Deleting an empty namespace is a no-op (0 rows affected), not an error.
+    let deleted = db
+        .delete_kask_skill_tarballs("carol", "missing")
+        .await
+        .unwrap();
+    assert_eq!(deleted, 0);
 }

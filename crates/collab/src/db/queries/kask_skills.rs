@@ -185,6 +185,43 @@ impl Database {
                         .on_delete(sea_orm::sea_query::ForeignKeyAction::Cascade),
                 )
                 .to_owned(),
+            // zed-kask: D30 — local fallback blob store for kask skill tarballs.
+            // Used when `AppState.blob_store_client` is `None` (local dev /
+            // self-hosted without S3). Production with S3 never touches this
+            // table — the upload/download/delete handlers take the S3 branch
+            // and the periodic poll reconciles from S3. Composite primary key
+            // on the publish triple matches the S3 key layout
+            // `kask-skills/{source_user}/{skill_name}/{version}/archive.tar.gz`.
+            Table::create()
+                .table(kask_skill_tarball::Entity)
+                .if_not_exists()
+                .col(
+                    sea_orm::sea_query::ColumnDef::new(kask_skill_tarball::Column::SourceUser)
+                        .text()
+                        .not_null(),
+                )
+                .col(
+                    sea_orm::sea_query::ColumnDef::new(kask_skill_tarball::Column::SkillName)
+                        .text()
+                        .not_null(),
+                )
+                .col(
+                    sea_orm::sea_query::ColumnDef::new(kask_skill_tarball::Column::Version)
+                        .text()
+                        .not_null(),
+                )
+                .col(
+                    sea_orm::sea_query::ColumnDef::new(kask_skill_tarball::Column::Tarball)
+                        .binary()
+                        .not_null(),
+                )
+                .primary_key(
+                    Index::create()
+                        .col(kask_skill_tarball::Column::SourceUser)
+                        .col(kask_skill_tarball::Column::SkillName)
+                        .col(kask_skill_tarball::Column::Version),
+                )
+                .to_owned(),
         ];
 
         let indexes = vec![
@@ -606,6 +643,103 @@ impl Database {
                 .exec(&*tx)
                 .await?;
             Ok(result.rows_affected > 0)
+        })
+        .await
+    }
+
+    // zed-kask: D30 — local fallback blob store for kask skill tarballs. See
+    // `tables/kask_skill_tarball.rs` for the rationale (no-S3 publish path).
+    // These three methods are the DB side of the local upload/download/delete
+    // branches in `api/kask_skills.rs`; they are only reached when
+    // `AppState.blob_store_client` is `None`.
+
+    /// Store a kask skill tarball in the local fallback blob store. Upsert on
+    /// the `(source_user, skill_name, version)` primary key so a re-upload of
+    /// the same version replaces the bytes.
+    pub async fn put_kask_skill_tarball(
+        &self,
+        source_user: &str,
+        skill_name: &str,
+        version: &str,
+        tarball: Vec<u8>,
+    ) -> Result<()> {
+        use kask_skill_tarball::{ActiveModel, Column};
+        let source_user = source_user.to_string();
+        let skill_name = skill_name.to_string();
+        let version = version.to_string();
+        self.transaction(|tx| {
+            let source_user = source_user.clone();
+            let skill_name = skill_name.clone();
+            let version = version.clone();
+            let tarball = tarball.clone();
+            async move {
+                let active = ActiveModel {
+                    source_user: sea_orm::ActiveValue::Set(source_user),
+                    skill_name: sea_orm::ActiveValue::Set(skill_name),
+                    version: sea_orm::ActiveValue::Set(version),
+                    tarball: sea_orm::ActiveValue::Set(tarball),
+                };
+                kask_skill_tarball::Entity::insert(active)
+                    .on_conflict(
+                        sea_orm::sea_query::OnConflict::columns([
+                            Column::SourceUser,
+                            Column::SkillName,
+                            Column::Version,
+                        ])
+                        .update_column(kask_skill_tarball::Column::Tarball)
+                        .to_owned(),
+                    )
+                    .exec_without_returning(&*tx)
+                    .await?;
+                Ok::<_, Error>(())
+            }
+        })
+        .await
+    }
+
+    /// Fetch a kask skill tarball from the local fallback blob store.
+    /// Returns `None` when no tarball is stored for the triple (the upload
+    /// never happened, or was deleted).
+    pub async fn get_kask_skill_tarball(
+        &self,
+        source_user: &str,
+        skill_name: &str,
+        version: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        use kask_skill_tarball::Column;
+        self.transaction(|tx| async move {
+            let row = kask_skill_tarball::Entity::find()
+                .filter(
+                    Column::SourceUser
+                        .eq(source_user)
+                        .and(Column::SkillName.eq(skill_name))
+                        .and(Column::Version.eq(version)),
+                )
+                .one(&*tx)
+                .await?;
+            Ok::<_, Error>(row.map(|model| model.tarball))
+        })
+        .await
+    }
+
+    /// Delete all locally-stored tarballs for a `(source_user, skill_name)`
+    /// publish namespace. Returns the number of deleted rows.
+    pub async fn delete_kask_skill_tarballs(
+        &self,
+        source_user: &str,
+        skill_name: &str,
+    ) -> Result<u64> {
+        use kask_skill_tarball::Column;
+        self.transaction(|tx| async move {
+            let result = kask_skill_tarball::Entity::delete_many()
+                .filter(
+                    Column::SourceUser
+                        .eq(source_user)
+                        .and(Column::SkillName.eq(skill_name)),
+                )
+                .exec(&*tx)
+                .await?;
+            Ok::<_, Error>(result.rows_affected)
         })
         .await
     }

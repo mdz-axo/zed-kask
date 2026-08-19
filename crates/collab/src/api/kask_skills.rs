@@ -6,7 +6,7 @@ use axum::{
     Extension, Json, Router,
     extract::{Path, Query},
     http::StatusCode,
-    response::Redirect,
+    response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use cloud_api_types::{
@@ -126,7 +126,39 @@ pub fn verify_manifest_signature(
     Ok(())
 }
 
-pub fn router() -> Router {
+/// zed-kask: D30 — Build the kask-skills API router.
+///
+/// `app_state` selects the auth middleware: in development the dev bypass
+/// (`auth::dev_validate_header`) inserts a `Principal` without a Zed Cloud
+/// round-trip (local collab is often run without `cd ../cloud; cargo make
+/// dev`, so `validate_header` cannot reach `/client/users/me`); in
+/// production the real `auth::validate_header` validates the token against Zed
+/// Cloud. The `AppState` extension is layered on by the caller in `main.rs`.
+///
+/// The dispatch is a single `from_fn` closure (not an `if/else` over two
+/// `from_fn` instantiations) so both branches share one `ServiceBuilder`
+/// type — `from_fn` is monomorphized per fn item, so an `if/else` over two
+/// fn items yields incompatible types.
+pub fn router(app_state: &Arc<AppState>) -> Router {
+    use axum::middleware;
+    use tower::ServiceBuilder;
+    let is_dev = app_state.config.is_development();
+    let auth_layer = ServiceBuilder::new().layer(middleware::from_fn(move |req, next| {
+        // `into_response()` each branch so both futures resolve to the same
+        // concrete `Response<UnsyncBoxBody>` type — the validators return
+        // distinct `impl IntoResponse` opaque types.
+        async move {
+            if is_dev {
+                crate::auth::dev_validate_header(req, next)
+                    .await
+                    .into_response()
+            } else {
+                crate::auth::validate_header(req, next)
+                    .await
+                    .into_response()
+            }
+        }
+    }));
     Router::new()
         .route("/api/kask-skills", get(get_kask_skills))
         .route("/api/kask-skills/:id", get(get_kask_skill))
@@ -137,6 +169,7 @@ pub fn router() -> Router {
             "/api/kask-skills/:id",
             axum::routing::delete(delete_kask_skill),
         )
+        .layer(auth_layer)
 }
 
 async fn get_kask_skills(
@@ -162,19 +195,7 @@ async fn get_kask_skill(
 async fn download_kask_skill(
     Extension(app): Extension<Arc<AppState>>,
     Path(params): Path<GetKaskSkillParams>,
-) -> Result<Redirect> {
-    let Some((blob_store_client, bucket)) = app
-        .blob_store_client
-        .clone()
-        .zip(app.config.blob_store_bucket.clone())
-    else {
-        Err(Error::Http(
-            StatusCode::NOT_IMPLEMENTED,
-            KASK_MARKETPLACE_NOT_CONFIGURED.into(),
-            Default::default(),
-        ))?
-    };
-
+) -> Result<Response> {
     let (source_user, skill_name) = params
         .id
         .split_once('/')
@@ -199,6 +220,34 @@ async fn download_kask_skill(
         ))?;
     }
 
+    // zed-kask: D30 — local (no-blob-store) path. Serve the tarball bytes
+    // stored in the `kask_skill_tarballs` fallback table directly. Used by
+    // local dev / self-hosted deployments without S3 (`cargo run -p collab
+    // serve all` with only `DATABASE_URL`/`HTTP_PORT`/`ZED_ENVIRONMENT`). The
+    // client's install path (`install_skill`) reads the raw `archive.tar.gz`
+    // bytes from the response body, so returning the bytes inline matches
+    // what it expects; the signed-manifest gate is unchanged (the catalog
+    // row still carries `public_key`/`signature`/`expires_at`).
+    if app.blob_store_client.is_none() {
+        let tarball = app
+            .db
+            .get_kask_skill_tarball(source_user, skill_name, &skill.manifest.version)
+            .await?
+            .context("kask skill tarball not found in local store")?;
+        let body = axum::body::Body::from(tarball);
+        let mut response = axum::response::Response::new(body);
+        *response.status_mut() = StatusCode::OK;
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/gzip"),
+        );
+        return Ok(response.into_response());
+    }
+
+    let (blob_store_client, bucket) = (
+        app.blob_store_client.clone().unwrap(),
+        app.config.blob_store_bucket.clone().unwrap(),
+    );
     let url = blob_store_client
         .get_object()
         .bucket(bucket)
@@ -210,7 +259,7 @@ async fn download_kask_skill(
         .await
         .context("creating presigned kask skill download url")?;
 
-    Ok(Redirect::temporary(url.uri()))
+    Ok(Redirect::temporary(url.uri()).into_response())
 }
 
 async fn vote_kask_skill(
@@ -267,8 +316,14 @@ async fn upload_kask_skill(
     // user's github_login. This prevents user bob from publishing under
     // alice's namespace.
     // Expected key format: kask-skills/{source_user}/{skill_name}/{version}/...
+    //
+    // zed-kask: D30 — the namespace check is relaxed in development. The
+    // dev bypass principal (`auth::dev_validate_header`) synthesizes a
+    // `User` whose `username` is `local-dev`, which will not match the
+    // publisher's S3 key, and the local collab has no Zed Cloud to resolve
+    // the real username. Production keeps the strict check.
     let key_source_user = params.key.split('/').nth(1).unwrap_or("");
-    if key_source_user != user.username {
+    if !app.config.is_development() && key_source_user != user.username {
         Err(Error::Http(
             StatusCode::FORBIDDEN,
             format!(
@@ -279,25 +334,13 @@ async fn upload_kask_skill(
         ))?
     }
 
-    let Some((blob_store_client, bucket)) = app
-        .blob_store_client
-        .clone()
-        .zip(app.config.blob_store_bucket.clone())
-    else {
-        Err(Error::Http(
-            StatusCode::NOT_IMPLEMENTED,
-            KASK_MARKETPLACE_NOT_CONFIGURED.into(),
-            Default::default(),
-        ))?
-    };
-
     // zed-kask: Only clone the body for the (small) manifest upload, which
     // the immediate-index path re-parses below. Tarball bodies are passed
     // through without a copy.
     let is_manifest_upload = params.key.ends_with("/manifest.json");
 
     // zed-kask: verify a manifest upload's signature and expiry **before** it
-    // reaches S3 (fail closed, plan D2/D5). An unsigned, tampered, or
+    // reaches storage (fail closed, plan D2/D5). An unsigned, tampered, or
     // expired manifest must not enter the catalog or the blob store — the
     // poll would otherwise reconcile it into Postgres.
     let verified_manifest = if is_manifest_upload {
@@ -319,6 +362,80 @@ async fn upload_kask_skill(
     } else {
         None
     };
+
+    // zed-kask: D30 — local (no-blob-store) path. Store the uploaded bytes in
+    // the `kask_skill_tarballs` fallback table. The tarball upload stores the
+    // `archive.tar.gz` bytes keyed by the publish triple; the manifest upload
+    // triggers the immediate catalog index (verifying the tarball row exists in
+    // lieu of the S3 `head_object` check). Production with S3 takes the branch
+    // below. The signed-manifest gate above is unchanged.
+    if app.blob_store_client.is_none() {
+        let parts: Vec<&str> = params.key.split('/').collect();
+        if let ["kask-skills", source_user, skill_name, version, filename] = parts.as_slice() {
+            if *filename == "archive.tar.gz" {
+                app.db
+                    .put_kask_skill_tarball(source_user, skill_name, version, body.to_vec())
+                    .await
+                    .map_err(|e| {
+                        Error::Internal(anyhow::anyhow!(
+                            "uploading kask skill tarball to local store: {e}"
+                        ))
+                    })?;
+            } else if let Some(manifest) = verified_manifest {
+                // Verify the tarball for this version was uploaded before
+                // indexing — mirrors the S3 `head_object` check so a
+                // manifest-only upload doesn't create a catalog entry whose
+                // download 404s.
+                let tarball_present = app
+                    .db
+                    .get_kask_skill_tarball(source_user, skill_name, version)
+                    .await
+                    .map_err(|e| {
+                        Error::Internal(anyhow::anyhow!(
+                            "checking local tarball for manifest upload: {e}"
+                        ))
+                    })?;
+                if tarball_present.is_none() {
+                    Err(Error::Http(
+                        StatusCode::BAD_REQUEST,
+                        "tarball for this version has not been uploaded".into(),
+                        Default::default(),
+                    ))?;
+                }
+                let now = time::OffsetDateTime::now_utc();
+                if let Err(err) = app
+                    .db
+                    .insert_kask_skill_versions(&[
+                        crate::db::queries::kask_skills::NewKaskSkillVersion {
+                            source_user: source_user.to_string(),
+                            skill_name: skill_name.to_string(),
+                            version: version.to_string(),
+                            description: manifest.description,
+                            dependencies: manifest.dependencies,
+                            tarball_sha256: manifest.tarball_sha256,
+                            public_key: manifest.public_key,
+                            signature: manifest.signature,
+                            expires_at: manifest.expires_at,
+                            published_at: time::PrimitiveDateTime::new(now.date(), now.time()),
+                        },
+                    ])
+                    .await
+                {
+                    log::warn!(
+                        "failed to index kask skill '{}' version '{}' immediately (local store): {err:#}",
+                        params.key,
+                        version
+                    );
+                }
+            }
+        }
+        return Ok(StatusCode::CREATED);
+    }
+
+    let (blob_store_client, bucket) = (
+        app.blob_store_client.clone().unwrap(),
+        app.config.blob_store_bucket.clone().unwrap(),
+    );
 
     blob_store_client
         .put_object()
@@ -413,7 +530,9 @@ async fn delete_kask_skill(
     // zed-kask: Only the publisher can unpublish their own skill.
     // The user's username must match the source_user in the id.
     // (The client uses user.username as the source_user namespace.)
-    if user.username != source_user {
+    // zed-kask: D30 — relaxed in development for the same reason as
+    // `upload_kask_skill` (the dev bypass principal's username is `local-dev`).
+    if !app.config.is_development() && user.username != source_user {
         Err(Error::Http(
             StatusCode::FORBIDDEN,
             "only the publisher can unpublish their skill".into(),
@@ -446,6 +565,17 @@ async fn delete_kask_skill(
                     .map_err(|e| Error::Internal(e.into()))?;
             }
         }
+    } else {
+        // zed-kask: D30 — local (no-blob-store) path. Delete the locally-stored
+        // tarballs for this publish namespace. The catalog rows are removed by
+        // `delete_kask_skill` below (cascades to versions/votes).
+        if let Err(err) = app
+            .db
+            .delete_kask_skill_tarballs(source_user, skill_name)
+            .await
+        {
+            log::warn!("failed to delete local tarballs for '{source_user}/{skill_name}': {err:#}",);
+        }
     }
 
     // Delete from Postgres (cascades to versions and votes).
@@ -463,13 +593,6 @@ async fn delete_kask_skill(
 
 const KASK_SKILL_DOWNLOAD_URL_LIFETIME: Duration = Duration::from_secs(3 * 60);
 const KASK_SKILL_FETCH_INTERVAL: Duration = Duration::from_secs(5 * 60);
-
-/// zed-kask: 501 body for blob-store-unconfigured responses. Actionable for
-/// both audiences that see it: the server operator (production env vars) and
-/// the local dev who hits it from the client panel (bootstrap + foreman).
-const KASK_MARKETPLACE_NOT_CONFIGURED: &str = "kask marketplace not configured on this server: \
-     BLOB_STORE_* unset (local dev: script/bootstrap && foreman start; \
-     production: set BLOB_STORE_URL/REGION/ACCESS_KEY/SECRET_KEY/BUCKET)";
 
 pub fn fetch_kask_skills_from_blob_store_periodically(app_state: Arc<AppState>) {
     let Some(blob_store_client) = app_state.blob_store_client.clone() else {
