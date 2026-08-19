@@ -43,7 +43,6 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 ## Constraints
 
 - All templates are `KnowAct` type with `Public` visibility
-- Energy caps: `finer-evaluate.j2` (6144), `pico-structure.j2` (6144), `hypothesis-operationalize.j2` (8192)
 - The research question must be a question, not a declarative statement; the research hypothesis must be a declarative statement, not a question
 - The null hypothesis must postulate no difference or no relationship
 - Non-inferiority and equivalence hypotheses require a defined δ margin — without it, the hypothesis is not testable

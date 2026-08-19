@@ -11,8 +11,8 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 ## When to Use
 
 - When you need to validate skills against the registry-first model, checking manifest structure, .j2 frontmatter, and cross-artifact consistency.
-- When you need to validate process manifests (registry/manifests/*.yaml) for executor compliance: canonical actions, gas/rjoule budgets, convergence blocks, and template ref resolvability.
-- When you need to scaffold a new registry crate from a natural language user description, including a compliant process manifest with gas/rjoule/convergence blocks.
+- When you need to validate process manifests (registry/manifests/*.yaml) for executor compliance: canonical actions, rjoule budgets, convergence blocks, and template ref resolvability.
+- When you need to scaffold a new registry crate from a natural language user description, including a compliant process manifest with rjoule/convergence blocks.
 - When you need to translate a classified source skill into a hKask registry crate (manifest.yaml + .j2 templates) with canonical actions and proper budgets.
 - When you need to reverse-translate a registry crate into a SKILL.md companion for the Zed coding agent.
 - When you need to synthesize the "When to Use" and "Instructions" prose sections of a SKILL.md from a registry crate.
@@ -25,7 +25,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 
 1. Validate the specified skill or all skills in the registry directory against R1-R12 registry checks, Z1-Z8 companion checks, X1-X4 cross-artifact checks, and E1-E11 executor compliance checks.
 2. Evaluate every check for every targeted skill without omissions, including invariant X4: every `.agents/skills/<name>/` must have a matching `registry/manifests/<name>.yaml`, and vice versa. Report exact mismatches by name.
-3. For executor compliance (E1-E11), verify that every process manifest uses only canonical actions, has gas/rjoule blocks with adequate caps, has a convergence block (for skill category), has valid category, has resolvable template_refs, and has a `ledger.span_namespace` equal to `reg.skill.<manifest.id>` with no abolished `spans:` list (E11).
+3. For executor compliance (E1-E11), verify that every process manifest uses only canonical actions, has an rjoule block with an adequate cap, has a convergence block (for skill category), has valid category, has resolvable template_refs, and has a `ledger.span_namespace` equal to `reg.skill.<manifest.id>` with no abolished `spans:` list (E11).
 4. **Visual artifact surfacing check (E12):** For any skill whose template contracts or SKILL.md description mention a visual artifact (Mermaid diagram, chart, map, sankey, quadrant chart, or any renderable output), verify the process manifest has a `render` step (action: render) whose ordinal is the highest among steps that produce a `step_N_result` (the `loop` action does not produce one). The render step must surface the artifact as a fenced ```mermaid block in its output. Flag skills where the artifact is generated in an intermediate `select` step but not surfaced by a final `render` step — the diagram will be buried in an intermediate `step_N_result` and never reach the chat stream. See the "Visual artifact surfacing" section in create-skill for the full pattern.
 5. Include specific evidence for any fail results.
 6. Provide actionable fix suggestions for any failures, including mapping non-canonical actions to their canonical equivalents.
@@ -36,17 +36,17 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 1. Generate a complete registry crate (manifest.yaml and .j2 templates) from the user's natural language description.
 2. Ensure the skill name is lowercase, hyphenated, 2-40 characters, verb-noun or noun-noun, and lacks reserved prefixes.
 3. Create at least one .j2 template with valid [inference] frontmatter and a Jinja2 body containing a system prompt and JSON output schema.
-4. Generate a process manifest (registry/manifests/<name>.yaml) with: `category: skill`, `convergence:` block (convergence_mode, cauchy_epsilon, cauchy_window, max_iterations, min_iterations, on_not_reached), `gas:` block (cap proportional to step count), `rjoule:` block (cap > 0 if inference is used), `steps:` array using only canonical actions, and a `ledger:` block with `span_namespace: reg.skill.<name>` (CI-enforced; no `spans:` list).
+4. Generate a process manifest (registry/manifests/<name>.yaml) with: `category: skill`, `convergence:` block (convergence_mode, cauchy_epsilon, cauchy_window, max_iterations, min_iterations, on_not_reached), `rjoule:` block (cap > 0 if inference is used), `steps:` array using only canonical actions (each step with `timeout_seconds`), and a `ledger:` block with `span_namespace: reg.skill.<name>` (CI-enforced; no `spans:` list).
 5. **Visual artifact surfacing:** if any template produces a Mermaid diagram, chart, or visual artifact (detectable from the template's contract output fields or the skill description mentioning "diagram", "chart", "visual", or "renders natively in Zed"), add a final `render` step (action: render, renderer: minijinja) with a pure Jinja2 template (no frontmatter) that wraps the artifact in a fenced ```mermaid block. The render step's ordinal must be the highest among steps that produce a `step_N_result` (place it before the `loop` step). See the "Visual artifact surfacing" section in create-skill for the full pattern.
 6. Derive a SKILL.md companion from the completed registry crate.
-7. Respond with a JSON object containing the manifest, process manifest, template bodies, SKILL.md outline, and validation status (including actions_canonical, gas_block_present, rjoule_block_present, convergence_block_present).
+7. Respond with a JSON object containing the manifest, process manifest, template bodies, SKILL.md outline, and validation status (including actions_canonical, rjoule_block_present, convergence_block_present).
 
 ### skill-maintenance-translate
 
 1. Convert the classified source skill into a hKask registry crate (manifest.yaml + .j2 templates) plus a process manifest (registry/manifests/<name>.yaml).
 2. Produce one .j2 file per classified step, mapping cognitive steps to KnowAct, workflow steps to WordAct or FlowDef, reference content to RenderActand guardrails to visibility and constraints.
 3. Map source actions to canonical hKask actions using the action mapping table (e.g., `call` → `execute`, `classify` → `select`, `run_command` → `execute`, `check` → `validate`).
-4. Generate gas/rjoule budgets based on the translated step count and inference usage (simple: gas 5K-10K/rjoule 1-2; multi-step: gas 50K-150K/rjoule 3-5; media: gas 100K+/rjoule 5+).
+4. Generate rjoule budgets based on the translated step count and inference usage (simple: rjoule 1-3; multi-step: rjoule 3-5; media: rjoule 5+).
 5. Generate a convergence block with `convergence_mode: "cauchy"`, `cauchy_epsilon: 0.03`, `cauchy_window: 3`, `max_iterations: 10`, `min_iterations: 2`.
 6. Map source state to .j2 contract input/output, user-confirmation gates to visibility, and domain references using the domain substitution table.
 7. Mark any references with no hKask equivalent as `[unresolved: no hKask equivalent for <source_ref>]`.
@@ -102,8 +102,8 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 ## Constraints
 
 - `skill-maintenance-validate.j2`: Public. R1-R12 mandatory; Z1-Z8 secondary; X1-X4 cross-artifact; E1-E16 executor compliance mandatory. R1-R5 failures are critical; E1/E2/E4/E5/E6/E7/E9/E11/E12/E16 failures are critical; E15 (on_failure config) failures are medium; E12 failures are critical; E13/E14 failures are high; E12 visual artifact surfacing failures are high (diagram silently dropped — user never sees visualization); Z5/Z6/Z7 failures are high; missing SKILL.md (Z1) is info, not failure.
-- `skill-maintenance-build.j2`: Public. Name must be lowercase, hyphenated, 2-40 chars, verb-noun or noun-noun, no reserved prefixes. Process manifest must have gas/rjoule/convergence blocks, canonical actions, and a `ledger:` block with `span_namespace: reg.skill.<manifest.id>` (no abolished `spans:` list).
-- `skill-maintenance-translate.j2`: Public. template_type must be KnowAct/WordAct/FlowDef/RenderAct; visibility must be Private/Public/Shared Source actions must be mapped to canonical actions. Process manifest must have gas/rjoule/convergence blocks.
+- `skill-maintenance-build.j2`: Public. Name must be lowercase, hyphenated, 2-40 chars, verb-noun or noun-noun, no reserved prefixes. Process manifest must have rjoule/convergence blocks, canonical actions, and a `ledger:` block with `span_namespace: reg.skill.<manifest.id>` (no abolished `spans:` list).
+- `skill-maintenance-translate.j2`: Public. template_type must be KnowAct/WordAct/FlowDef/RenderAct; visibility must be Private/Public/Shared Source actions must be mapped to canonical actions. Process manifest must have rjoule/convergence blocks.
 - `skill-maintenance-reverse.j2`: Public. Every instruction must trace to a manifest field or .j2 body — do not invent content.
 - `skill-maintenance-prose.j2`: Public. Output raw markdown only — no JSON, code fences, frontmatter, or structural sections.
 - `skill-maintenance-audit.j2`: Public. Every finding must cite a FlowDef manifest field, .j2 contract/metadata, or grep-verifiable Rust code path. Recommendations based solely on SKILL.md must be marked confidence: Hypothesis (Speculative) at maximum.
@@ -127,7 +127,7 @@ must use one of these:
 | `validate` | MCP Tool | Validate a contract or condition via MCP tool |
 | `retrieve` | MCP Tool | Retrieve data via MCP tool (e.g., semantic search) |
 | `render` | RenderAct | Render `.j2` or `.yaml` without inference (reference content, macros) |
-| `flowdef` | FlowDef | Recursively execute a `.yaml` sub-manifest as a nested cascade with gas/rjoule budget inheritance |
+| `flowdef` | FlowDef | Recursively execute a `.yaml` sub-manifest as a nested cascade with rjoule budget inheritance |
 | `loop` | Control Flow | Re-enter cascade from a target ordinal |
 | `choice` | Control Flow | Evaluate condition and branch to a target ordinal |
 | `abort` | Control Flow | Exit with success (converged) |
@@ -136,25 +136,27 @@ must use one of these:
 The `evaluate` action has been removed. Manifests using `evaluate` must use
 `select` (KnowAct) or `flowdef` (FlowDef recursion) instead.
 
-## Gas/rJoule Budget Requirements
+## rJoule Budget and Timeout Requirements
 
-Every process manifest must declare energy budgets:
+Every process manifest must declare an inference-energy budget. The gas system
+and max-tokens caps are deprecated and no longer parsed by the executor — do not
+add `gas:` blocks to new manifests.
 
-- **`gas:` block** (compute cycles) — required with `cap > 0`, `cost_per_iteration`, `alert_threshold`, `hard_limit`. Gas is cheap compute; 250,000 gas cycles ≈ 1 rJoule.
-- **`rjoule:` block** (inference energy) — required. `cap > 0` if any step uses `action: select` (inference). `cap: 0` is acceptable only for manifests with no inference steps.
+- **`rjoule:` block** (inference energy, a USD budget: 1 rJoule = $1) — required. `cap > 0` if any step uses `action: select` (inference). `cap: 0` is acceptable only for manifests with no inference steps. Each inference call's observed USD cost is charged to this budget; exceeding the cap with `hard_limit: true` trips a `BudgetExhaustion` exit.
+- **`timeout_seconds`** — the runaway cutoff. Every step should declare one; the executor aborts a step that exceeds it (with `error_handling.on_timeout: retry` governing retries). Convergence `max_iterations` bounds loop re-entry.
 
 Budget guidelines:
 
-| Skill complexity | Step count | gas.cap | rjoule.cap |
-|-----------------|-----------|---------|------------|
-| Simple KnowAct | 1-3 | 5,000-10,000 | 1-2 |
-| Multi-step FlowDef | 4-7 | 50,000-150,000 | 3-5 |
-| Media generation | 5+ | 100,000+ | 5+ |
-| Infrastructure (no inference) | any | 10,000-50,000 | 0 |
+| Skill complexity | Step count | rjoule.cap |
+|-----------------|-----------|------------|
+| Simple KnowAct | 1-3 | 1-3 |
+| Multi-step FlowDef | 4-7 | 3-5 |
+| Media generation | 5+ | 5+ |
+| Infrastructure (no inference) | any | 0 |
 
 Sub-manifests referenced by `action: flowdef` steps inherit the parent's
-remaining gas/rjoule budget (capped to the sub-manifest's declared budget if
-smaller). Sub-manifests should declare their own `gas` and `rjoule` blocks.
+remaining rJoule budget (capped to the sub-manifest's declared budget if
+smaller). Sub-manifests should declare their own `rjoule` block.
 
 ## Convergence Block Requirements
 
@@ -171,5 +173,5 @@ The four Pattern A template types map to actions as follows:
 |---------------|--------|------------|
 | KnowAct | `select` | `.j2` (rendered + inference + JSON parse) |
 | WordAct | `populate` | `.j2` (rendered without inference) |
-| FlowDef | `flowdef` | `.yaml` (sub-manifest with own steps/gas/convergence) |
+| FlowDef | `flowdef` | `.yaml` (sub-manifest with own steps/rjoule/convergence) |
 | RenderAct | `render` | `.j2` or `.yaml` (rendered without inference — reference content, macros) |

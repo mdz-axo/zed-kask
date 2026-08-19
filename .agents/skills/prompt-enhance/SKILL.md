@@ -69,10 +69,11 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 4. Verdict: `pass`, `rewrite_needed`, or `fail`. No PDCA re-entry — the verdict is surfaced in the output change log.
 5. Gated by `condition: step_1_result.effort_tier != 'low'`.
 
-### Step 4 — Output (enhance-output.j2)
+### Step 4 — Output (enhance-output-render.j2, deterministic render)
 
 1. Format per `output_format`: `inline` (fenced code block, default), `file` (write to path), or `both`.
 2. Always include a change log: summary, audit findings table by constraint force, grill verdict + ratings, mutations applied, deferred findings, residual risks.
+3. This step is a `render` action (no LLM call) — the change log is templated from structured data. The former LLM-call version was the single largest source of cascade failures (empty output → JSON parse error after 4 successful LLM calls).
 
 ## Registry Templates
 
@@ -81,7 +82,9 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 | `enhance-classify.j2` | KnowAct | Classify prompt type, select effort tier, resolve output format |
 | `enhance-rewrite.j2`  | KnowAct | Inline audit + typed rewrite (unified)                          |
 | `enhance-verify.j2`   | KnowAct | Decoupled critic via grill-me self-challenge (medium/high)      |
-| `enhance-output.j2`   | KnowAct | Format and deliver the enhanced prompt                          |
+| `enhance-output-render.j2` | RenderAct | Deterministic format and deliver the enhanced prompt (no LLM call) |
+| `enhance-output.j2`   | KnowAct | Legacy LLM-call output step — superseded by `enhance-output-render.j2`; retained in the crate but not referenced by the process manifest |
+| `enhance-audit.j2`    | KnowAct | Legacy standalone audit — folded into `enhance-rewrite.j2`; retained in the crate but not referenced by the process manifest |
 
 ## Constraints
 

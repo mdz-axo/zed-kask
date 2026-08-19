@@ -421,6 +421,27 @@ struct PendingCompositionPrompt {
     is_local: bool,
 }
 
+/// The backend a creation form's target should carry when the operator
+/// enters a surface. The panel's backend context (`active_backend` — the
+/// operator's last explicit cloud/local choice anywhere in the panel) is the
+/// default; `None` means the form keeps its current target.
+///
+/// Compose always syncs (its target has no other source of truth). Author
+/// syncs only when not editing — `load_agent_into_author` derives the target
+/// from the agent's source and that choice must survive the `set_mode` call
+/// it makes right after.
+fn target_on_surface_entry(
+    mode: PanelMode,
+    author_is_editing: bool,
+    active_backend: CreateTarget,
+) -> Option<CreateTarget> {
+    match mode {
+        PanelMode::Compose => Some(active_backend),
+        PanelMode::Author if !author_is_editing => Some(active_backend),
+        _ => None,
+    }
+}
+
 /// The three surfaces of the panel: browsing existing agents/swarms, authoring
 /// a new agent, and composing agents into a swarm. Sharing (extensions) is
 /// represented by the browse surface's discovery role.
@@ -989,18 +1010,15 @@ impl SwarmPanel {
     fn set_mode(&mut self, mode: PanelMode, window: &mut Window, cx: &mut Context<Self>) {
         self.mode = mode;
         // Entering a creation surface syncs its form target to the panel's
-        // backend context (the operator's last explicit cloud/local choice
-        // anywhere in the panel) so the toggle carries over instead of
-        // resetting to a hardcoded default. Toggling a form's target updates
-        // `active_backend`, so the latest choice always wins. Skipped when
-        // editing an existing agent — the target is derived from the
-        // agent's source (`load_agent_into_author`) and must not be clobbered.
-        match mode {
-            PanelMode::Author if self.author.editing_id.is_none() => {
-                self.author.create_target = self.active_backend;
+        // backend context (see `target_on_surface_entry`).
+        if let Some(target) =
+            target_on_surface_entry(mode, self.author.editing_id.is_some(), self.active_backend)
+        {
+            match mode {
+                PanelMode::Author => self.author.create_target = target,
+                PanelMode::Compose => self.compose.create_target = target,
+                PanelMode::Browse | PanelMode::Steer => {}
             }
-            PanelMode::Compose => self.compose.create_target = self.active_backend,
-            _ => {}
         }
         // Move focus to the target mode's first field — otherwise focus stays
         // on the now-hidden search editor and keyboard input goes nowhere (the
@@ -3008,7 +3026,8 @@ impl Render for SwarmPanel {
                             let launch_button = h_flex()
                                 .w_full()
                                 .gap_2()
-                                .px_4()
+                                // py only — the content column already carries
+                                // the panel's px_4 inset, so px_4 here doubled it.
                                 .py_1()
                                 .child(
                                     Button::new("swarm-launch-plan", "Launch Plan")
@@ -3223,6 +3242,60 @@ mod tests {
                 "attempt {attempt} exceeds the budget of {MAX_FETCH_RETRIES}"
             );
         }
+    }
+
+    // ── Backend context carry ────────────────────────────────────────────────
+    //
+    // The cloud/local choice used to be four disconnected states: the Compose
+    // form's target (hardcoded Cloud default), the Author form's target
+    // (hardcoded Cloud default), the Browse source filter, and the
+    // `kask.swarm.mode` setting. Switching surfaces lost the choice — the
+    // "doesn't carry over" finding. `active_backend` is now the single
+    // context; these tests pin the sync rule.
+
+    /// Entering Compose always syncs to the panel's backend context — the
+    /// form's target must never silently reset to a hardcoded default.
+    #[test]
+    fn compose_entry_syncs_to_panel_backend() {
+        assert_eq!(
+            target_on_surface_entry(PanelMode::Compose, false, CreateTarget::Local),
+            Some(CreateTarget::Local)
+        );
+        assert_eq!(
+            target_on_surface_entry(PanelMode::Compose, true, CreateTarget::Cloud),
+            Some(CreateTarget::Cloud),
+            "compose has no editing state that could own the target instead"
+        );
+    }
+
+    /// Entering Author syncs only when not editing. When an agent is loaded
+    /// for edit, `load_agent_into_author` derives the target from the agent's
+    /// source — the entry sync must not clobber it.
+    #[test]
+    fn author_entry_preserves_editing_source_target() {
+        assert_eq!(
+            target_on_surface_entry(PanelMode::Author, false, CreateTarget::Local),
+            Some(CreateTarget::Local)
+        );
+        assert_eq!(
+            target_on_surface_entry(PanelMode::Author, true, CreateTarget::Cloud),
+            None,
+            "editing derives the target from the agent's source — the entry \
+             sync must leave it alone"
+        );
+    }
+
+    /// Browse and Steer own no form target — entering them never syncs.
+    #[test]
+    fn browse_and_steer_entry_never_syncs() {
+        assert_eq!(
+            target_on_surface_entry(PanelMode::Browse, false, CreateTarget::Local),
+            None
+        );
+        assert_eq!(
+            target_on_surface_entry(PanelMode::Steer, false, CreateTarget::Local),
+            None
+        );
     }
 
     /// Only transport-level failures drive a retry. A tool that ran and failed,

@@ -108,8 +108,7 @@ Key non-obvious rules the taxonomy encodes:
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.
-- Energy caps: prior (4096), map (4096), detect (6144), hypothesize (6144), report (4096).
-- Gas cap: 100,000 per invocation. Maximum 3 iterations.
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - The prior must be explicit before gradient detection.
 - The fractal recurrence check is mandatory.
 - Do not collapse the eight ontologies into one — each shape implies a different intervention.

@@ -179,7 +179,7 @@ Delegate to `skill-maintenance-build` to generate the full registry crate:
 1. **Template manifest** with ontology-annotated template entries
 2. **.j2 templates** with contracts whose types come from the ontology
 3. **Process manifest** with the idiosyncratic PDCA shape (not a generic
-   template), gas/rjoule/convergence blocks, OCAP capabilities
+   template), rjoule/convergence blocks, OCAP capabilities
 4. **SKILL.md companion** with ontology references in the description
    and constraints
 
@@ -199,7 +199,7 @@ The pattern:
    `sankey-beta ...`).
 2. A final `render` step (RenderAct, `action: render`) takes the artifact source
    via `input_mapping` and wraps it in a fenced ```mermaid block as a markdown
-   string. This step is deterministic (no LLM call, `gas_cap: 100`).
+   string. This step is deterministic (no LLM call, `timeout_seconds: 10`).
 3. The `loop` step comes **after** the render step. The render step's ordinal
    must be the highest among steps that produce a `step_N_result` (the `loop`
    action does not produce one), so `extract_final_step_result` picks it.
@@ -328,14 +328,13 @@ were insufficient or the PDCA shape didn't emerge correctly from them.
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.
-- Energy caps: research (6144), describe (4096), scaffold (8192), validate (4096).
-- Gas cap: 150,000 per invocation. Maximum 3 iterations.
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - **The skill's PDCA shape must emerge from its ontological anchors, not from a generic template.** The research phase is mandatory — no skill is scaffolded without ontological grounding.
 - **Each skill is idiosyncratic.** Do not generalize the shape across skills. A gradient-hunter is not a bug-hunt is not a self-improvement cycle.
 - The skill name must be lowercase, hyphenated, 2-40 characters, verb-noun or noun-noun, no reserved prefixes.
 - The process manifest must use only canonical actions.
 - The convergence block is mandatory for `category: skill` manifests. Use `convergence_mode: "cauchy"` with `cauchy_epsilon: 0.03`, `cauchy_window: 3`, `max_iterations: 10`, `min_iterations: 2`.
-- The gas and rjoule blocks are mandatory. rjoule.cap must be > 0 if any step uses `action: select`.
+- The rjoule block is mandatory. rjoule.cap must be > 0 if any step uses `action: select`. The gas system is deprecated — do not add `gas:` blocks. Every step declares `timeout_seconds` as the runaway cutoff.
 - The SKILL.md description must be ≤1024 bytes.
 - **`lisp.eval` is available for custom deterministic compute steps.** When a skill needs a convergence formula, scoring function, or data transformation that doesn't fit the built-in `compute_ref`s (`kata.convergence_check`, `kata.object_gap`, etc.), use `compute_ref: lisp.eval` with an inline Lisp form. No Rust change needed — the manifest is the unit of authorship. See the manifest's comment block for an example. Security: gated to `category: skill` manifests only. The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple scoring expressions (e.g., `score_a * 0.6 + score_b * 0.4`), prefix for complex nested logic with `let`, `if`, and `assoc`.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

@@ -86,8 +86,7 @@ The trace filesystem schema is defined at `kask/docs/architecture/test-harness-t
 
 ## Constraints
 
-- All templates are KnowAct (inference + JSON parse). rJoule cap: 2.
-- Gas cap: 120,000. Convergence: single-pass (no loop — convergence is at the
+- rJoule cap: 2 per invocation. Convergence: single-pass (no loop — convergence is at the
   `harness-evolve-cycle` level).
 - `ledger.span_namespace: reg.skill.harness-optimize` (CI-enforced, no `spans:` list).
 - The skill does NOT run tests. It proposes test code for CI to evaluate.

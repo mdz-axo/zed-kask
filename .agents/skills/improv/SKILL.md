@@ -81,7 +81,6 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 ## Constraints
 
 - **Visibility:** All templates are `Public`.
-- **Energy caps:** `improv-select` 4096; `improv-plussing` 4096; `improv-yes-and` 4096; `improv-yes-but` 4096; `improv-freestyling` 4096; `improv-riffing` 4096.
 - **Never explicitly negate** (Plussing, and governing principle in selector). Criticism is deletion-by-omission.
 - **Yes And extension must be additive, not substitutive** — the accepted base remains intact and visible.
 - **Yes But constraint narrows, does not contradict** — do not use "no," "wrong," "can't," or "impossible."

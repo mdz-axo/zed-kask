@@ -222,8 +222,7 @@ given query, because they can disagree:
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.
-- Energy caps: register (6144), elicit (6144), evaluate (6144), reason (4096), report (4096).
-- Gas cap: 120,000 per invocation. Maximum 3 iterations.
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - The capability definition must be declared before elicitation — different definitions produce different verdicts.
 - The attenuation rule is inviolable: authority may only narrow without re-authorization. Widening requires explicit re-authorization with a recorded warrant.
 - The metric-stability check is mandatory — a verdict that flips under a different metric is a mirage [mirage-2023], not a capability finding.

@@ -92,7 +92,9 @@ impl SwarmPanel {
         v_flex()
             .w_full()
             .gap_3()
-            .p_4()
+            // pb only — the content column already carries the panel's px_4
+            // inset, so p_4 here doubled the horizontal padding vs Browse.
+            .pb_4()
             .child(Headline::new("Compose a Swarm").size(HeadlineSize::Small))
             // Cloud/Local target toggle — a per-form choice, not a global
             // setting. Both backends are always available.

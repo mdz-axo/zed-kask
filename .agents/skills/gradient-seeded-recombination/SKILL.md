@@ -65,8 +65,7 @@ The shape is idiosyncratic to GSR's domain — the Inventory phase (enumerate on
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.
-- Energy caps: inventory (4096), prior (4096), map (4096), detect (6144), hypothesize (6144), prioritize (4096), select-seeds (4096).
-- Gas cap: 80,000 per invocation. Maximum 3 iterations.
+- rJoule cap: 2 per invocation. Maximum 3 iterations.
 - The prior must be explicit before gradient detection.
 - The fractal recurrence check is mandatory.
 - Per-ontology license check is a Guardrail — do not assume blanket CC-BY (OBO Foundry licenses span CC-BY 4.0, CC-BY 3.0, CC0, Apache 2.0, GPL-3.0, Artistic-2.0).
