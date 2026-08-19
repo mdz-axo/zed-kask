@@ -426,9 +426,21 @@ impl From<RecordSkillFeedbackOutput> for LanguageModelToolResultContent {
 
 /// Resolves the set of currently-available skills for the project this
 /// tool is registered against. Called at tool-invocation time (not at
-/// thread-build time), so the model can invoke skills that were added to
-/// the project after the thread was created.
+/// thread-build time), so the model can invoke skills that were added to the
+/// project after the thread was created.
 pub type SkillsResolver = Arc<dyn Fn(&App) -> Arc<Vec<Skill>> + Send + Sync>;
+
+// Cascade-memory settings fallbacks. These MUST stay in sync with
+// `KaskMemorySettings::default()` in `kask/crates/kask_bridge/src/settings.rs`.
+// The agent crate cannot depend on kask_bridge (dependency direction is
+// kask_bridge → agent), so the defaults are mirrored as named constants — the
+// same seam pattern as `SwarmConfig::default()` (settings.rs L640-650). The
+// `cascade_settings_fallbacks_match_agent_skill_tool_constants` test in
+// kask_bridge pins the sync by importing these constants.
+pub const DEFAULT_CASCADE_SHORT_TERM_TURNS: u32 = 6;
+pub const DEFAULT_CASCADE_TURN_TOKEN_CAP: u32 = 512;
+pub const DEFAULT_CASCADE_MEMORY_SALIENCY_FLOOR: f64 = 0.3;
+pub const DEFAULT_CASCADE_MEMORY_MAX_CHUNKS: u32 = 5;
 
 pub struct SkillTool {
     skills: SkillsResolver,
@@ -910,18 +922,6 @@ pub(crate) async fn gather_cascade_context_from_thread(
     Vec<crate::MemorySnippetRecord>,
 ) {
     use language_model::{MessageContent, Role};
-
-    // These fallbacks MUST stay in sync with `KaskMemorySettings::default()`
-    // in `kask/crates/kask_bridge/src/settings.rs`. The agent crate cannot
-    // depend on kask_bridge (dependency direction is kask_bridge → agent),
-    // so the defaults are mirrored as named constants — the same seam
-    // pattern as `SwarmConfig::default()` (settings.rs L640-650). The
-    // `cascade_settings_fallbacks_match_agent_skill_tool_constants` test in
-    // kask_bridge pins the sync by importing these constants.
-    pub const DEFAULT_CASCADE_SHORT_TERM_TURNS: u32 = 6;
-    pub const DEFAULT_CASCADE_TURN_TOKEN_CAP: u32 = 512;
-    pub const DEFAULT_CASCADE_MEMORY_SALIENCY_FLOOR: f64 = 0.3;
-    pub const DEFAULT_CASCADE_MEMORY_MAX_CHUNKS: u32 = 5;
 
     // Snapshot the thread's recent turns.
     let (thread_messages, agent_id, thread_id) = {

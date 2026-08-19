@@ -544,6 +544,16 @@ pub struct SwarmPanel {
     selected_workspace: Option<String>,
     /// Which surface is active: browse, author, compose, or steer.
     mode: PanelMode,
+    /// The panel's last-used backend target — the context the Author and
+    /// Compose forms initialize to. Carries the cloud/local choice across
+    /// surfaces so the operator never re-answers a question they already
+    /// answered (the "doesn't carry over" finding): Browse → Compose with
+    /// the Local filter selected lands on a Local create target, and the
+    /// Author form's reset keeps the target the operator last used. Both
+    /// forms can still override per-form — this is only the default they
+    /// start from. Seeded from the `kask.swarm.mode` setting so the panel
+    /// opens consistent with the configured backend.
+    active_backend: CreateTarget,
     /// Authoring form state.
     author: AuthorForm,
     /// A loaded agent detail waiting to be applied to the author form on the
@@ -735,19 +745,38 @@ impl SwarmPanel {
             let settings_sub = cx.observe_global::<SettingsStore>(|this, cx| {
                 let mode = Self::current_swarm_mode(cx);
                 if this.last_swarm_mode.as_ref() != Some(&mode) {
+                    // The settings change is an explicit backend declaration —
+                    // carry it into the panel's creation context too.
+                    this.active_backend = match &mode {
+                        kask_bridge::SwarmModeConfig::Local => CreateTarget::Local,
+                        kask_bridge::SwarmModeConfig::Abw => CreateTarget::Cloud,
+                    };
                     this.last_swarm_mode = Some(mode);
-                    this.steer_conversation = None;
                 }
                 this.filter_entries(cx);
             });
             let subscriptions = [query_sub, settings_sub];
 
+            // Seed the panel's backend context from `kask.swarm.mode` so the
+            // Author and Compose forms open consistent with the configured
+            // backend rather than always defaulting to Cloud.
+            let active_backend = match Self::current_swarm_mode(cx) {
+                kask_bridge::SwarmModeConfig::Local => CreateTarget::Local,
+                kask_bridge::SwarmModeConfig::Abw => CreateTarget::Cloud,
+            };
+
             let scroll_handle = UniformListScrollHandle::new();
             let author_scroll = ScrollHandle::new();
             let compose_scroll = ScrollHandle::new();
 
-            let author = AuthorForm::new(window, cx);
-            let compose = ComposeForm::new(window, cx);
+            let mut author = AuthorForm::new(window, cx);
+            let mut compose = ComposeForm::new(window, cx);
+            // Both forms start on the panel's backend context (seeded from
+            // `kask.swarm.mode` above), not a hardcoded Cloud default —
+            // otherwise a `kask.swarm.mode: local` operator lands on a Cloud
+            // create target on first visit and the context is lost again.
+            author.create_target = active_backend;
+            compose.create_target = active_backend;
             let swarm_add_agent_editor = cx.new(|cx| {
                 let mut e = Editor::single_line(window, cx);
                 e.set_placeholder_text("Agent id to add to this swarm", window, cx);
@@ -776,6 +805,7 @@ impl SwarmPanel {
                 search_task: None,
                 selected_workspace: None,
                 mode: PanelMode::Browse,
+                active_backend,
                 author,
                 pending_author_load: None,
                 pending_author_reset: false,
@@ -958,6 +988,20 @@ impl SwarmPanel {
 
     fn set_mode(&mut self, mode: PanelMode, window: &mut Window, cx: &mut Context<Self>) {
         self.mode = mode;
+        // Entering a creation surface syncs its form target to the panel's
+        // backend context (the operator's last explicit cloud/local choice
+        // anywhere in the panel) so the toggle carries over instead of
+        // resetting to a hardcoded default. Toggling a form's target updates
+        // `active_backend`, so the latest choice always wins. Skipped when
+        // editing an existing agent — the target is derived from the
+        // agent's source (`load_agent_into_author`) and must not be clobbered.
+        match mode {
+            PanelMode::Author if self.author.editing_id.is_none() => {
+                self.author.create_target = self.active_backend;
+            }
+            PanelMode::Compose => self.compose.create_target = self.active_backend,
+            _ => {}
+        }
         // Move focus to the target mode's first field — otherwise focus stays
         // on the now-hidden search editor and keyboard input goes nowhere (the
         // M5 finding). Steer focuses its conversation's editor.
@@ -983,7 +1027,10 @@ impl SwarmPanel {
     fn reset_author_form_for_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.author.editing_id = None;
         self.author.editing_source = None;
-        self.author.create_target = CreateTarget::Cloud;
+        // Keep the panel's backend context rather than resetting to Cloud —
+        // the operator's last cloud/local choice carries into the next
+        // authoring session (the "doesn't carry over" finding).
+        self.author.create_target = self.active_backend;
         self.author.status = None;
         self.author.name.update(cx, |e, _| e.set_read_only(false));
         // Clear the text fields so the operator starts fresh.
@@ -1749,10 +1796,16 @@ impl SwarmPanel {
             cx.notify();
             return;
         };
-        let mode = if self.author.create_target == CreateTarget::Local {
-            "local"
-        } else {
-            "abw"
+        // The backend mode sent to `swarm_ai_assist` must match the surface's
+        // own target toggle — reading the author form's target for the swarm
+        // surface sent ABW guidance to a Local compose (and vice versa).
+        let mode = match (
+            surface,
+            self.compose.create_target,
+            self.author.create_target,
+        ) {
+            ("swarm", CreateTarget::Local, _) | (_, _, CreateTarget::Local) => "local",
+            _ => "abw",
         };
 
         let (name, agent_type, description, system_prompt, mission, agents) = if surface == "agent"
@@ -2843,6 +2896,11 @@ impl Render for SwarmPanel {
                                 // and cloud swarms; `Local` shows local + synced
                                 // agents and local swarms. Synced cards appear in
                                 // both because they exist on both backends.
+                                //
+                                // Choosing Cloud/Local here also updates the
+                                // panel's backend context so the choice carries
+                                // into the Author/Compose forms (Browse →
+                                // Compose lands on the same backend).
                                 .child(
                                     div().child(
                                         ToggleButtonGroup::single_row(
@@ -2860,6 +2918,7 @@ impl Render for SwarmPanel {
                                                     "Cloud",
                                                     cx.listener(|this, _event, _, cx| {
                                                         this.source_filter = SourceFilter::Cloud;
+                                                        this.active_backend = CreateTarget::Cloud;
                                                         this.filter_entries(cx);
                                                         this.scroll_to_top(cx);
                                                     }),
@@ -2868,6 +2927,7 @@ impl Render for SwarmPanel {
                                                     "Local",
                                                     cx.listener(|this, _event, _, cx| {
                                                         this.source_filter = SourceFilter::Local;
+                                                        this.active_backend = CreateTarget::Local;
                                                         this.filter_entries(cx);
                                                         this.scroll_to_top(cx);
                                                     }),
@@ -2896,43 +2956,48 @@ impl Render for SwarmPanel {
                     .min_h_0()
                     .overflow_y_hidden()
                     .map(|this| match self.mode {
+                        // Canonical Zed scroll pattern (see settings_ui
+                        // `render_nav` / skill_creator `render`): the scrollbar
+                        // host is a plain `div` and the scrolling element is a
+                        // column-flex child that fills it. Do NOT wrap the
+                        // scroll host in `h_flex()` — `h_flex` applies
+                        // `items_center()`, which collapses the scroll host to
+                        // its content height and centers it, floating the form
+                        // mid-panel with blank space above it.
                         PanelMode::Author => this
                             .child(
-                                h_flex()
+                                div()
                                     .flex_1()
                                     .min_h_0()
+                                    .w_full()
+                                    .vertical_scrollbar_for(&self.author_scroll, window, cx)
                                     .child(
-                                        div()
+                                        v_flex()
                                             .id("author-scroll")
-                                            .flex_1()
-                                            .min_h_0()
+                                            .size_full()
                                             .overflow_y_scroll()
                                             .track_scroll(&self.author_scroll)
                                             .child(self.render_author(cx)),
-                                    )
-                                    .vertical_scrollbar_for(&self.author_scroll, window, cx)
-                                    .into_any_element(),
+                                    ),
                             )
                             .into_any_element(),
-                        PanelMode::Compose => {
-                            this.child(
-                                h_flex()
+                        PanelMode::Compose => this
+                            .child(
+                                div()
                                     .flex_1()
                                     .min_h_0()
+                                    .w_full()
+                                    .vertical_scrollbar_for(&self.compose_scroll, window, cx)
                                     .child(
-                                        div()
+                                        v_flex()
                                             .id("compose-scroll")
-                                            .flex_1()
-                                            .min_h_0()
+                                            .size_full()
                                             .overflow_y_scroll()
                                             .track_scroll(&self.compose_scroll)
                                             .child(self.render_compose(cx)),
-                                    )
-                                    .vertical_scrollbar_for(&self.compose_scroll, window, cx)
-                                    .into_any_element(),
+                                    ),
                             )
-                            .into_any_element()
-                        }
+                            .into_any_element(),
                         PanelMode::Steer => {
                             // The `ConversationView` is lazily constructed
                             // in the Steer toggle handler; render it here. If

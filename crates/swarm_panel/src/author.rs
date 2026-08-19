@@ -199,6 +199,8 @@ impl SwarmPanel {
                                                 cx.listener(|this, _, _, cx| {
                                                     this.author.create_target =
                                                         super::CreateTarget::Cloud;
+                                                    this.active_backend =
+                                                        super::CreateTarget::Cloud;
                                                     cx.notify();
                                                 }),
                                             ),
@@ -206,6 +208,8 @@ impl SwarmPanel {
                                                 "Local",
                                                 cx.listener(|this, _, _, cx| {
                                                     this.author.create_target =
+                                                        super::CreateTarget::Local;
+                                                    this.active_backend =
                                                         super::CreateTarget::Local;
                                                     cx.notify();
                                                 }),

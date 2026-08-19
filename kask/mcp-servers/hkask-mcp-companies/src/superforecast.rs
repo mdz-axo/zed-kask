@@ -380,6 +380,54 @@ mod tests {
         assert!((m - 0.40).abs() < 1e-9);
     }
 
+    /// Pin the real `scenario_from_cmp_indices` emitter shape (the
+    /// `tree` object with `cmp_provenance` *inside* it, each entry carrying
+    /// the full 7-field index identity). This is the bridge contract between
+    /// the scenarios server's CMP-tree emitter and this struct; if either
+    /// side drifts, this test goes red. The shape mirrors
+    /// `ScenariosServer::scenario_from_cmp_indices`'s `tree` object exactly —
+    /// `root_ids`, `nodes` (id + marginal_probability), `cmp_provenance` with
+    /// {id, family, tenor, orientation, venue, method, maturity_error_days}.
+    /// The previous shape (`cmp_provenance` as a sibling of `tree` with
+    /// {id, basis, reference_class}) was a green-test-over-broken-contract bug:
+    /// `cmp_provenance_deserializes_from_json` above tested a hand-crafted
+    /// 7-field JSON that no emitter ever produced, while the real emitter
+    /// produced a 3-field shape that would have failed deserialization.
+    #[test]
+    fn cmp_provenance_round_trips_real_scenarios_emitter() {
+        let json = r#"{
+            "subject": "policy_interest_rate",
+            "root_ids": ["cmp:policy_interest_rate:3m:increase", "cmp:crude_oil_price:1m:increase"],
+            "topo_order": ["cmp:policy_interest_rate:3m:increase", "cmp:crude_oil_price:1m:increase"],
+            "joint_probability": 0.26,
+            "nodes": [
+                {"id": "cmp:policy_interest_rate:3m:increase", "question": "...", "marginal_probability": 0.65, "depends_on": [], "base_rate": 0.65, "basis": "cmp_index:interpolated", "variance_contribution": 0.0},
+                {"id": "cmp:crude_oil_price:1m:increase", "question": "...", "marginal_probability": 0.40, "depends_on": [], "base_rate": 0.40, "basis": "cmp_index:bucketed_sparse", "variance_contribution": 0.0}
+            ],
+            "cmp_provenance": [
+                {"id": "cmp:policy_interest_rate:3m:increase", "family": "policy_interest_rate", "tenor": "3m", "orientation": "increase", "venue": "kalshi", "method": "interpolated", "maturity_error_days": 0.0},
+                {"id": "cmp:crude_oil_price:1m:increase", "family": "crude_oil_price", "tenor": "1m", "orientation": "increase", "venue": "kalshi", "method": "bucketed_sparse", "maturity_error_days": 5.0}
+            ]
+        }"#;
+        let tree: EventTreeProjection =
+            serde_json::from_str(json).expect("real scenarios emitter shape deserializes");
+        assert_eq!(tree.root_ids.len(), 2);
+        assert_eq!(tree.cmp_provenance.len(), 2);
+        assert_eq!(tree.cmp_provenance[0].family, "policy_interest_rate");
+        assert_eq!(tree.cmp_provenance[0].tenor, "3m");
+        assert_eq!(tree.cmp_provenance[0].orientation, "increase");
+        assert_eq!(tree.cmp_provenance[0].venue, "kalshi");
+        assert_eq!(tree.cmp_provenance[0].method, "interpolated");
+        assert_eq!(tree.cmp_provenance[0].maturity_error_days, 0.0);
+        assert_eq!(tree.cmp_provenance[1].family, "crude_oil_price");
+        assert_eq!(tree.cmp_provenance[1].tenor, "1m");
+        assert_eq!(tree.cmp_provenance[1].method, "bucketed_sparse");
+        assert_eq!(tree.cmp_provenance[1].maturity_error_days, 5.0);
+        let (g, m) = tree_root_probabilities(&tree).expect("two roots with valid marginals");
+        assert!((g - 0.65).abs() < 1e-9);
+        assert!((m - 0.40).abs() < 1e-9);
+    }
+
     #[test]
     fn cmp_provenance_defaults_to_empty_for_raw_contract_trees() {
         // A raw-contract tree JSON without cmp_provenance — backward compatible.

@@ -282,8 +282,7 @@ mod tests {
             .find(|p| p.credential_key == "runpod")
             .expect("RunPod descriptor present");
         assert!(
-            desc.id
-                .eq_ignore_ascii_case(&RUNPOD_PROVIDER_ID.0.to_string()),
+            desc.id.eq_ignore_ascii_case(RUNPOD_PROVIDER_ID.0.as_ref()),
             "registry lookup must be case-insensitive per the IPC contract"
         );
     }
