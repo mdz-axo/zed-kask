@@ -115,7 +115,11 @@ steps:
 
   - ordinal: 3
     action: select
-    description: Evaluate target resistance against generated attacks.
+    description: >
+      Interpret the generated adversarial inputs against the target's defense
+      posture. Does NOT simulate target responses — no MCP tool receives
+      adversarial inputs for live delivery, so resistance_rate is NOT computed.
+      The template reports attacks generated and the delivery gap honestly.
     renderer: minijinja
     template_ref: adversarial-red-team/test-against-target
     timeout_seconds: 180
@@ -130,15 +134,20 @@ steps:
     action: compute
     compute_ref: lisp.eval
     description: >
-      Compute structural-validity score from step 3's actual output. The
-      convergence signal is the gap between observed resistance_rate and full
-      resistance (1.0): score = 1.0 - resistance_rate. Lower = more converged.
-      If resistance_rate is absent, the form errors (no silent default).
+      Convergence signal: the count of generated adversarial inputs that lack
+      a recorded test result. Since no MCP tool delivers adversarial inputs to
+      a live target, every generated input is untested — the signal equals
+      length(adversarial_inputs). Lower = more converged (0 = no outstanding
+      attacks). A stable non-zero signal satisfies Cauchy but is NOT clean —
+      on_not_reached: escalate routes the delivery gap to the Curator after
+      max_iterations. This is the honest cybernetic stop: the skill cannot
+      close the loop without a delivery mechanism, and it says so rather than
+      fabricating a resistance_rate.
     timeout_seconds: 10
     input_mapping:
-      form: "(let ((rr (assoc \"resistance_rate\" step_3_result))) (if (is_null rr) 1.0 (let ((rr-n (if (numberp rr) rr 1.0))) (- 1.0 rr-n))))"
+      form: "(let ((inputs (assoc \"adversarial_inputs\" step_2_result))) (if (is_null inputs) 0 (length inputs)))"
       env:
-        step_3_result: "{{ step_3_result }}"
+        step_2_result: "{{ step_2_result }}"
       max_steps: 10000
       max_depth: 32
 

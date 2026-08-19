@@ -2,17 +2,17 @@
 name: kali-audit
 core: true
 visibility: public
-description: "Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML manifests, supply chain, MCP surfaces, and LLM I/O boundaries for vulnerabilities. Forward-adaptable: consumes the security regression library at runtime."
+description: "Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML manifests, supply chain, MCP surfaces, and LLM I/O boundaries for vulnerabilities. Forward-adaptable: consumes the security regression library at runtime. Runs a declared probe wave of MCP tool calls before the audit step."
 ---
 
 # Kali Audit
 
-Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML manifests, supply chain, MCP surfaces, and LLM I/O boundaries. Anchored to OWASP LLM Top 10 (2025), MITRE ATLAS v5.1, NIST SSDF SP 800-218A. Forward-adaptable: consumes the security regression library at runtime, checks defense-layer coverage (8 layers), and discovers surfaces dynamically.
+Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML manifests, supply chain, MCP surfaces, and LLM I/O boundaries. Anchored to OWASP LLM Top 10 (2025), MITRE ATLAS v5.1, NIST SSDF SP 800-218A. Forward-adaptable: consumes the security regression library at runtime, runs a declared probe wave of concurrent MCP tool calls (`codegraph_query`, `codegraph_analysis`, `codegraph_stats`) recorded in the grounding ledger before the audit step interprets them, and discovers surfaces dynamically.
 
 ## When to Use
 
 - When you need to audit a crate, template directory, MCP server, or the supply chain for security vulnerabilities.
-- When you need to verify defense-in-depth layer coverage (8 layers: input filtering, data/instruction separation, instruction hierarchy, capability gating, IFC, runtime monitoring, output filtering, deception detection).
+- When you need to verify defense-in-depth layer coverage (4 live layers: capability separation, runtime monitoring, provider-side safety, deception detection). The former input-filtering, output-filtering, IFC, and per-call token-gate layers were de-advertised after their machinery was deleted as inert (RR-0001/0030/0053/0056).
 - When you need to propose regression entries for confirmed findings so CI catches re-introductions.
 - When you need to consume the existing regression library to avoid re-finding known issues.
 - When you need to compute a security coverage metric (defense layers present, CWE classes checked, OWASP risks covered).
@@ -26,10 +26,16 @@ Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML manife
 3. Read the regression library (`security/regressions/RR-*.yaml`) to identify already-enforced checks — skip them.
 4. Return the selected surface, checks to run, known regressions, and defense layers to verify.
 
-### kali-audit/audit
+### kali-audit/probe-wave (step 2, execute)
 
-1. For each check and defense layer, use available MCP tools (`file:read`, `code:search`, `terminal`) to probe the target.
-2. Check for evidence-backed patterns: `#![forbid(unsafe_code)]`, `subtle::ConstantTimeEq`, `secrecy::Secret<T>`, `deny_unknown_fields`, path containment, spotlighting, canary tokens, etc.
+1. Runs three concurrent MCP tool calls: `codegraph_query` (symbol search), `codegraph_analysis` (dead-code), `codegraph_stats` (index stats).
+2. Partial failures preserved via `allSettled` — a failed probe is a recorded `ok:false`, not silence.
+3. If the entire wave fails, `on_failure: report` halts the cascade: an audit with no recorded tool calls is narration, not evidence.
+
+### kali-audit/audit (step 3)
+
+1. Interpret the recorded probe wave (step 2 results). Findings MUST cite a specific probe result or be marked `deferred` with a reason.
+2. Check for evidence-backed patterns: `#![forbid(unsafe_code)]`, `subtle::ConstantTimeEq`, `secrecy::Secret<T>`, `deny_unknown_fields`, path containment, etc.
 3. Classify each finding by CWE, OWASP LLM (2025), ATLAS tactic, NIST SSDF practice, severity, confidence, constraint force, and missing defense layer.
 4. For each finding with severity >= medium, propose a regression entry with a concrete, testable detection pattern and source citation.
 5. Track coverage: defense layers present/missing, CWE classes covered, OWASP risks covered.
@@ -55,14 +61,17 @@ Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML manife
 
 | Layer | Name | Source |
 |-------|------|--------|
-| 1 | Input filtering | OWASP LLM01:2025 |
-| 2 | Data/instruction separation (spotlighting) | Microsoft Research arXiv:2403.14720 |
-| 3 | Instruction hierarchy | OpenAI arXiv:2404.13208 |
-| 4 | Capability gating (OCAP) | OWASP LLM06:2025, OCAP literature |
-| 5 | Information flow control (taint labels) | Microsoft Research arXiv:2505.23643 (FIDES) |
-| 6 | Runtime monitoring (Regulation, action distribution) | AgentGuard arXiv:2509.23864, NIST AI RMF |
-| 7 | Output filtering (secrets, canaries) | OWASP LLM02:2025, Thinkst canarytokens |
-| 8 | Deception detection (decoy tools, canary tokens) | MITRE Engage, Cobalt Honey-AI |
+| 1 | Capability separation (allowlists) | OWASP LLM06:2025, OCAP literature |
+| 2 | Runtime monitoring (Regulation, action distribution) | AgentGuard arXiv:2509.23864, NIST AI RMF |
+| 3 | Provider-side safety (model refusal, safety training) | OWASP LLM01:2025 |
+| 4 | Deception detection (decoy tools) | MITRE Engage, Cobalt Honey-AI |
+
+**De-advertised layers** (do NOT report as present or missing — the machinery
+was deleted as inert):
+
+- *Information flow control (FIDES taint labels)* — deleted 2026-08-12 (RR-0053); both gate inputs were constants.
+- *Per-call capability gating via `DelegationToken`* — deleted 2026-08-12 (RR-0056); compared a caller-supplied value against itself.
+- *Input/output content scanning, spotlighting, canary tokens* — `hkask-guard` deleted 2026-08-10 (RR-0001/RR-0030).
 
 New layers can be added as research advances — the skill structure does not change.
 

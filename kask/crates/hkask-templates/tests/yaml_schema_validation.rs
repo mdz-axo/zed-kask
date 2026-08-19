@@ -343,16 +343,16 @@ fn kali_audit_manifest_loads_with_correct_structure() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load kali-audit manifest: {e}"));
 
-    // 4 select steps + 1 lisp.eval compute step (signal computation) +
-    // 1 loop step = 6 total. The former kata.convergence_check compute step
-    // was removed — the ConvergenceTracker is the single convergence gate.
-    // The lisp.eval step remains: it computes the convergence signal (count
-    // of open critical/high findings) that the loop step pushes via
-    // `convergence_signal:`.
+    // 1 select (select-surface) + 1 execute (probe wave) + 3 select
+    // (audit, report, taxonomy-map) + 1 lisp.eval compute step (signal
+    // computation) + 1 loop step = 7 total. The execute step runs the
+    // declared probe wave (codegraph_query/analysis/stats) as concurrent
+    // MCP calls recorded in the grounding ledger; the audit step
+    // interprets the recorded results rather than narrating from imagination.
     assert_eq!(
         manifest.steps.len(),
-        6,
-        "expected 6 steps: select-surface → audit → report → taxonomy-map → lisp.eval (signal) → loop"
+        7,
+        "expected 7 steps: select-surface → execute (probe wave) → audit → report → taxonomy-map → lisp.eval (signal) → loop"
     );
 
     // Verify step ordinals are sequential starting at 1.
@@ -371,36 +371,46 @@ fn kali_audit_manifest_loads_with_correct_structure() {
         Some("kali-audit/select-surface")
     );
 
-    // Verify step 2 is audit.
-    assert_eq!(manifest.steps[1].action, "select");
-    assert_eq!(
-        manifest.steps[1].template_ref.as_deref(),
-        Some("kali-audit/audit")
+    // Verify step 2 is the execute probe wave (mcp_batch with allSettled).
+    assert_eq!(manifest.steps[1].action, "execute");
+    assert!(
+        manifest.steps[1].mcp_batch.is_some(),
+        "step 2 must declare an mcp_batch (the probe wave)"
+    );
+    assert!(
+        manifest.steps[1].on_failure.is_some(),
+        "step 2 (execute) must declare on_failure — a failed probe wave must halt, not silently proceed"
     );
 
-    // Verify step 3 is report.
+    // Verify step 3 is audit (interprets the probe wave results).
     assert_eq!(manifest.steps[2].action, "select");
     assert_eq!(
         manifest.steps[2].template_ref.as_deref(),
-        Some("kali-audit/report")
+        Some("kali-audit/audit")
     );
 
-    // Verify step 4 is taxonomy-map (folded from attack-taxonomy-mapper).
+    // Verify step 4 is report.
     assert_eq!(manifest.steps[3].action, "select");
     assert_eq!(
         manifest.steps[3].template_ref.as_deref(),
+        Some("kali-audit/report")
+    );
+
+    // Verify step 5 is taxonomy-map (folded from attack-taxonomy-mapper).
+    assert_eq!(manifest.steps[4].action, "select");
+    assert_eq!(
+        manifest.steps[4].template_ref.as_deref(),
         Some("kali-audit/taxonomy-map")
     );
 
-    // Verify step 5 is the lisp.eval signal-compute step (computes the
+    // Verify step 6 is the lisp.eval signal-compute step (computes the
     // convergence signal — count of open critical/high findings — that the
-    // loop step pushes via convergence_signal:). The former
-    // kata.convergence_check compute step was removed.
-    assert_eq!(manifest.steps[4].action, "compute");
-    assert_eq!(manifest.steps[4].compute_ref.as_deref(), Some("lisp.eval"));
+    // loop step pushes via convergence_signal:).
+    assert_eq!(manifest.steps[5].action, "compute");
+    assert_eq!(manifest.steps[5].compute_ref.as_deref(), Some("lisp.eval"));
 
-    // Verify step 6 is loop.
-    assert_eq!(manifest.steps[5].action, "loop");
+    // Verify step 7 is loop.
+    assert_eq!(manifest.steps[6].action, "loop");
 
     // Verify the convergence block uses the Cauchy-only model.
     assert_eq!(
@@ -423,6 +433,100 @@ fn kali_audit_manifest_loads_with_correct_structure() {
     );
 
     // Verify steps are present.
+}
+
+/// Verify the adversarial-red-team manifest loads correctly after the
+/// simulation-removal migration. The previous `resistance_rate` was LLM
+/// fiction (the template simulated target responses). The lisp.eval step
+/// now computes the signal from the generated-attack count (the delivery
+/// backlog), not from a fabricated resistance_rate. No execute step — no
+/// MCP tool receives adversarial inputs for live delivery; the delivery gap
+/// is reported honestly and routed to the Curator via on_not_reached.
+#[test]
+fn adversarial_red_team_manifest_loads_with_correct_structure() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = crate_dir.join("../..");
+    let manifest_path = workspace_root.join("registry/manifests/adversarial-red-team.yaml");
+    if !manifest_path.exists() {
+        eprintln!("adversarial-red-team.yaml not found — skipping");
+        return;
+    }
+    let yaml = std::fs::read_to_string(&manifest_path).unwrap();
+    let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
+        .unwrap_or_else(|e| panic!("Failed to load adversarial-red-team manifest: {e}"));
+
+    // 2 select steps (select-target, generate-adversarial) +
+    // 1 select step (test-against-target, now interpretation-only) +
+    // 1 lisp.eval compute step (signal from attack count, NOT resistance_rate) +
+    // 1 loop step = 5 total.
+    assert_eq!(
+        manifest.steps.len(),
+        5,
+        "expected 5 steps: select-target → generate-adversarial → test-against-target → lisp.eval (signal) → loop"
+    );
+
+    // Verify step ordinals are sequential starting at 1.
+    for (i, step) in manifest.steps.iter().enumerate() {
+        assert_eq!(
+            step.ordinal,
+            (i + 1) as u32,
+            "step ordinals must be sequential starting at 1"
+        );
+    }
+
+    // Verify step 1 is select-target.
+    assert_eq!(manifest.steps[0].action, "select");
+    assert_eq!(
+        manifest.steps[0].template_ref.as_deref(),
+        Some("adversarial-red-team/select-target")
+    );
+
+    // Verify step 2 is generate-adversarial.
+    assert_eq!(manifest.steps[1].action, "select");
+    assert_eq!(
+        manifest.steps[1].template_ref.as_deref(),
+        Some("adversarial-red-team/generate-adversarial")
+    );
+
+    // Verify step 3 is test-against-target (interpretation-only, no simulation).
+    assert_eq!(manifest.steps[2].action, "select");
+    assert_eq!(
+        manifest.steps[2].template_ref.as_deref(),
+        Some("adversarial-red-team/test-against-target")
+    );
+
+    // Verify step 4 is the lisp.eval signal-compute step. The form must
+    // reference step_2_result (the generation step), NOT step_3_result —
+    // the signal is the count of generated attacks lacking a recorded test
+    // result, computed from the generation step's adversarial_inputs array.
+    // The previous form read `resistance_rate` from step_3_result (LLM fiction).
+    assert_eq!(manifest.steps[3].action, "compute");
+    assert_eq!(manifest.steps[3].compute_ref.as_deref(), Some("lisp.eval"));
+    let step4_mapping = manifest.steps[3].input_mapping.as_ref().unwrap();
+    let step4_obj = step4_mapping.as_object().unwrap();
+    let env_str = step4_obj.get("env").unwrap().to_string();
+    assert!(
+        env_str.contains("step_2_result"),
+        "lisp.eval signal must reference step_2_result (generation step), not step_3_result (the previous resistance_rate was LLM fiction)"
+    );
+    assert!(
+        !env_str.contains("step_3_result"),
+        "lisp.eval signal must NOT reference step_3_result — resistance_rate was deleted"
+    );
+    let form_str = step4_obj.get("form").unwrap().as_str().unwrap();
+    assert!(
+        !form_str.contains("resistance_rate"),
+        "lisp.eval form must NOT reference resistance_rate — it was LLM fiction (no live target delivery)"
+    );
+
+    // Verify step 5 is loop.
+    assert_eq!(manifest.steps[4].action, "loop");
+
+    // Verify the convergence block uses the Cauchy-only model.
+    assert_eq!(
+        manifest.convergence.convergence_mode, "cauchy",
+        "adversarial-red-team should use the Cauchy-only convergence mode"
+    );
 }
 
 /// Verify the scenario-builder manifest loads correctly after Co-evolution

@@ -1,4 +1,4 @@
-{# goal: Run security checks for the selected surface, consuming the regression library at runtime and checking defense-layer coverage. #}
+{# goal: Interpret the recorded probe wave (step 2 mcp_batch results) against the selected surface's check catalog. Findings cite probe_results evidence or are marked deferred with a reason. #}
 [inference]
 template_type: KnowAct
 contract:
@@ -8,6 +8,7 @@ contract:
     checks_to_run: array
     known_regressions: array
     defense_layers: array
+    probe_results: object
   output:
     findings: array
     coverage: object
@@ -43,8 +44,29 @@ You are a security auditor running checks against **{{ selected_surface }}** at 
 
 ## Defense-in-Depth Layer Coverage Check
 
-For each defense layer, verify presence on the target surface. The layers are
-evidence-backed (sources cited inline). When a layer is absent, it is a finding.
+For each defense layer, verify presence on the target surface from the probe
+results. The layers are evidence-backed (sources cited inline). When a layer
+is absent, it is a finding.
+
+**De-advertised layers — do NOT report these as present or missing.** The
+mechanisms they checked for were deleted as inert. Probing for them produces
+false findings in both directions:
+
+- *Information flow control (FIDES taint labels)* — the `ToolTaint` /
+  `DefaultPolicy` machinery was deleted 2026-08-12 (RR-0053). Both inputs to
+  the gate were constants, so it could never deny. Do not grep for `ToolTaint`,
+  `check_untrusted_input`, `StepResult.taint`, or `propagate_taint_for_binding`.
+- *Per-call capability gating via a token* — the `DelegationToken` check was
+  deleted 2026-08-12 (RR-0056) because every mint site derived the token's
+  `resource_id` from the tool name it then invoked, comparing a value against
+  itself. Do not grep for `DelegationToken` or `is_valid_for`.
+- *Input/output content scanning, spotlighting, canary tokens* — the
+  `hkask-guard` crate was deleted 2026-08-10 (RR-0001/RR-0030). The former
+  input-filtering, output-filtering, and canary layers are absent by decision.
+
+A finding against machinery removed by decision is not a finding — it is
+evidence about the consequence of an architectural choice. Say so plainly
+rather than filing it as a missing defense layer.
 
 {% for layer in defense_layers %}
 ### Layer {{ layer.ordinal }}: {{ layer.name }}
@@ -53,11 +75,22 @@ evidence-backed (sources cited inline). When a layer is absent, it is a finding.
 - **Present if:** {{ layer.present_if }}
 {% endfor %}
 
+## Probe Results (recorded tool calls from step 2)
+
+The probe wave already ran. These are the recorded results — `results` (ok)
+and `errors` (failed probes, preserved via allSettled). Interpret them; do
+NOT simulate additional probes.
+
+```
+{{ probe_results | tojson(true) }}
+```
+
 ## Audit Instructions
 
-For each check and defense layer, use the available MCP tools (`file:read`,
-`code:search`, `terminal`) to probe the target. Collect concrete evidence —
-file paths, line numbers, code snippets.
+For each check and defense layer, interpret the probe_results evidence
+above. A finding MUST cite a specific probe result (tool name + the field
+that matched) OR be marked `deferred` with a reason naming the missing
+probe. Do NOT invent evidence the probe wave did not record.
 
 ### Finding Classification
 
