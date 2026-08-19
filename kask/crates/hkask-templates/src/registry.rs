@@ -658,12 +658,12 @@ mod tests {
             "swarm-intelligence inputs must include `task_success` (C0)"
         );
 
-        // CHECK (ordinal 10) threads `task_success` into its input_mapping.
+        // CHECK (ordinal 11) threads `task_success` into its input_mapping.
         let check = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 10)
-            .expect("swarm-intelligence has a CHECK step (ordinal 10)");
+            .find(|s| s.ordinal == 11)
+            .expect("swarm-intelligence has a CHECK step (ordinal 11)");
         let mapping = check
             .input_mapping
             .as_ref()
@@ -701,26 +701,26 @@ mod tests {
             "step 6 compute_ref must be swarm.filter_proposed_moves (C3/C7 enforcement)"
         );
 
-        // Step 11 is the converge_accumulate compute primitive.
+        // Step 12 is the converge_accumulate compute primitive.
         let accumulate = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 11)
-            .expect("swarm-intelligence has a converge_accumulate step (ordinal 11)");
+            .find(|s| s.ordinal == 12)
+            .expect("swarm-intelligence has a converge_accumulate step (ordinal 12)");
         assert_eq!(
             accumulate.action, "compute",
-            "step 11 must be a compute step"
+            "step 12 must be a compute step"
         );
         assert_eq!(
             accumulate.compute_ref.as_deref(),
             Some("swarm.converge_accumulate"),
-            "step 11 compute_ref must be swarm.converge_accumulate (C1/C3/C7)"
+            "step 12 compute_ref must be swarm.converge_accumulate (C1/C3/C7)"
         );
         let acc_mapping = accumulate
             .input_mapping
             .as_ref()
             .and_then(|v| v.as_object())
-            .expect("step 7 has an input_mapping");
+            .expect("step 12 has an input_mapping");
         for key in [
             "iteration_log",
             "failed_edits",
@@ -736,31 +736,31 @@ mod tests {
             );
         }
 
-        // Step 12 is the second_order_monitor compute primitive.
+        // Step 13 is the second_order_monitor compute primitive.
         let monitor = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 12)
-            .expect("swarm-intelligence has a second_order_monitor step (ordinal 12)");
+            .find(|s| s.ordinal == 13)
+            .expect("swarm-intelligence has a second_order_monitor step (ordinal 13)");
         assert_eq!(
             monitor.compute_ref.as_deref(),
             Some("swarm.second_order_monitor"),
-            "step 12 compute_ref must be swarm.second_order_monitor (C1)"
+            "step 13 compute_ref must be swarm.second_order_monitor (C1)"
         );
 
-        // The loop step (ordinal 14) threads the accumulators + blame_count
+        // The loop step (ordinal 15) threads the accumulators + blame_count
         // back into context so the next iteration's DECIDE/ORIENT/CHECK/FILTER can
         // read them. A dropped binding silently disables a guard — this pins
         // the threading (the advertised-invariants trap).
         //
-        // Ordinal shifted from 13 to 14 when a lisp.eval convergence-signal
-        // compute step was inserted at ordinal 13 (deterministic signal
-        // extraction from step_10_result.convergence_metric).
+        // Ordinal shifted from 14 to 15 when a post-Act execute step was
+        // inserted at ordinal 8 (Gap 4 fix: structural steering-mode loop
+        // closure via swarm_execute_plan_local).
         let loop_step = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 14)
-            .expect("swarm-intelligence has a loop step (ordinal 14)");
+            .find(|s| s.ordinal == 15)
+            .expect("swarm-intelligence has a loop step (ordinal 15)");
         let loop_mapping = loop_step
             .input_mapping
             .as_ref()
@@ -779,15 +779,15 @@ mod tests {
             );
         }
         // fault_count is now aggregated by the deterministic compute step
-        // (swarm.converge_accumulate, ordinal 11), not the CHECK LLM template —
-        // pin that the loop threads it from step_11_result, not step_10_result.
+        // (swarm.converge_accumulate, ordinal 12), not the CHECK LLM template —
+        // pin that the loop threads it from step_12_result, not step_11_result.
         let fc_binding = loop_mapping
             .get("fault_count")
             .and_then(|v| v.as_str())
             .expect("loop step binds fault_count");
         assert!(
-            fc_binding.contains("step_11_result.fault_count"),
-            "fault_count must thread from the compute step (step_11_result), not CHECK — got {fc_binding}"
+            fc_binding.contains("step_12_result.fault_count"),
+            "fault_count must thread from the compute step (step_12_result), not CHECK — got {fc_binding}"
         );
 
         // DECIDE (ordinal 5) binds the guards it consumes.
@@ -831,39 +831,39 @@ mod tests {
         );
 
         // The loop step must bind convergence_signal from a real field the
-        // CHECK step (ordinal 10) actually produces — not a phantom
+        // CHECK step (ordinal 11) actually produces — not a phantom
         // `hypotenuse` field on the converge_accumulate compute step (which
         // returns iteration_log/failed_edits/influence_scores/fault_count, not
         // hypotenuse). A stale binding leaves the convergence tracker's
         // signal_history at a constant default and causes premature Cauchy
         // convergence.
         //
-        // The signal is now extracted by a lisp.eval compute step (ordinal 13)
-        // that reads step_10_result.convergence_metric deterministically. The
-        // loop step (ordinal 14) binds convergence_signal to step_13_result.
+        // The signal is now extracted by a lisp.eval compute step (ordinal 14)
+        // that reads step_11_result.convergence_metric deterministically. The
+        // loop step (ordinal 15) binds convergence_signal to step_14_result.
         // Pin both sides: (1) the loop reads from the compute step, and (2)
-        // the compute step's env binds step_10_result.
+        // the compute step's env binds step_11_result.
         let conv_signal = loop_mapping
             .get("convergence_signal")
             .and_then(|v| v.as_str())
             .expect("loop step binds convergence_signal");
         assert!(
-            conv_signal.contains("step_13_result"),
-            "convergence_signal must read from the lisp.eval compute step (step_13_result) — got {conv_signal}"
+            conv_signal.contains("step_14_result"),
+            "convergence_signal must read from the lisp.eval compute step (step_14_result) — got {conv_signal}"
         );
         let conv_compute = manifest
             .steps
             .iter()
-            .find(|s| s.ordinal == 13)
-            .expect("swarm-intelligence has a convergence-signal compute step (ordinal 13)");
+            .find(|s| s.ordinal == 14)
+            .expect("swarm-intelligence has a convergence-signal compute step (ordinal 14)");
         assert_eq!(
             conv_compute.action, "compute",
-            "step 13 must be a compute step"
+            "step 14 must be a compute step"
         );
         assert_eq!(
             conv_compute.compute_ref.as_deref(),
             Some("lisp.eval"),
-            "step 13 compute_ref must be lisp.eval"
+            "step 14 compute_ref must be lisp.eval"
         );
         let conv_env = conv_compute
             .input_mapping
@@ -871,10 +871,10 @@ mod tests {
             .and_then(|v| v.as_object())
             .and_then(|m| m.get("env"))
             .and_then(|v| v.as_object())
-            .expect("step 13 has an env block");
+            .expect("step 14 has an env block");
         assert!(
-            conv_env.contains_key("step_10_result"),
-            "step 13 env must bind step_10_result (the CHECK step)"
+            conv_env.contains_key("step_11_result"),
+            "step 14 env must bind step_11_result (the CHECK step)"
         );
     }
 

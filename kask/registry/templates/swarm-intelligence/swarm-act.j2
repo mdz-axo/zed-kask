@@ -202,7 +202,7 @@ set to that array — closing the feedback loop in one tool call. For cloud
 swarms, delegate to Xaman Ek via `swarm_xaman` with the plan as the message;
 Xaman Ek has steering **built in** (cloud-side) and executes the plan.
 {% else %}
-In advisory mode (the default), the plan IS the final output. Set
+In advisory mode, the plan IS the final output. Set
 steering_directive = null — the operator executes the emitted_calls manually
 and feeds `delegate_results` back on the next invocation (Option A).
 {% endif %}

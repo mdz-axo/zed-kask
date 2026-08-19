@@ -6,9 +6,14 @@ use crate::SwarmServer;
 use crate::a2a;
 use crate::error::map_local_swarm_error;
 use crate::request_types::*;
-use a2a::new_context_id;
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
+
+// `new_context_id` is imported privately in `crate::a2a` from the external
+// `a2a` crate. Re-import it here via the external crate path so
+// `swarm_a2a_broadcast` can generate a shared context ID across all member
+// dispatches. `::a2a` bypasses the local `mod a2a` shadowing.
+use ::a2a::new_context_id;
 
 #[tool_router(router = a2a_router, vis = "pub")]
 impl SwarmServer {

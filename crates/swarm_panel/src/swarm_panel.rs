@@ -97,6 +97,13 @@ actions!(
 /// The MCP server id (matches `BUILT_IN_MCP_SERVERS`).
 const SWARM_SERVER: &str = "swarm";
 
+/// Minimum roster size and mission requirement for launching a swarm into
+/// Steer mode. A swarm with fewer than this many agents, or a blank mission,
+/// is not ready for the `swarm-intelligence` PDCA loop — SENSE would converge
+/// trivially on an empty/trivial swarm-state. The operator must add agents and
+/// a mission in the compose form before the "Create" button is enabled.
+const MIN_AGENTS_TO_LAUNCH: usize = 3;
+
 /// First automatic-retry delay after a retryable fetch failure. Doubles per
 /// attempt (1s, 2s, 4s, 8s, 16s).
 const FETCH_RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
@@ -235,8 +242,8 @@ fn steer_system_prompt(
          `delegate_results` array into the next LOOP iteration so C5 (fault
          attribution) and C6 (reconfigure) close the loop structurally — no
          prompt instruction needed. In ABW mode, delegate to Xaman Ek via
-         `swarm_xaman` with the plan as the message. The operator can use the
-         "Launch Plan" button to inject this instruction if you did not execute
+         `swarm_xaman` with the plan as the message. The operator can use the \
+         \"Launch Plan\" button to inject this instruction if you did not execute
          automatically.
 
          The consent gate (ABW mode only) is enforced by `swarm_request_consent` \
@@ -403,6 +410,17 @@ enum CreateTarget {
     Local,
 }
 
+/// A composition prompt waiting to be injected into the Steer conversation
+/// after `create_swarm` succeeds and the Steer conversation is constructed.
+/// Deferred to `render` because the injector needs `&mut Window`, which the
+/// `create_swarm` spawn closure does not have.
+struct PendingCompositionPrompt {
+    swarm_id: String,
+    mission: String,
+    agents: Vec<String>,
+    is_local: bool,
+}
+
 /// The three surfaces of the panel: browsing existing agents/swarms, authoring
 /// a new agent, and composing agents into a swarm. Sharing (extensions) is
 /// represented by the browse surface's discovery role.
@@ -538,6 +556,12 @@ pub struct SwarmPanel {
     /// back to Browse. Mirrors the `pending_author_load` deferred-mutation
     /// pattern — the spawn closure cannot hold a `&mut Window` reference.
     pending_author_reset: bool,
+    /// A composition prompt waiting to be injected into the Steer conversation
+    /// on the next `render` (after `ensure_steer_conversation` constructs it).
+    /// Set by `create_swarm`'s spawn on a successful create; consumed by
+    /// `render`. Carries the `swarm_id`, `mission`, `agents`, and `is_local`
+    /// flag so the prompt can be built with the correct `mode` context.
+    pending_composition_prompt: Option<PendingCompositionPrompt>,
     /// Composition form state.
     compose: ComposeForm,
     /// Lazily-constructed `ConversationView` for Steer mode, scoped to the
@@ -755,6 +779,7 @@ impl SwarmPanel {
                 author,
                 pending_author_load: None,
                 pending_author_reset: false,
+                pending_composition_prompt: None,
                 compose,
                 steer_conversation: None,
                 steer_connection_store: None,
@@ -1081,6 +1106,48 @@ impl SwarmPanel {
         }
     }
 
+    /// Inject the composition prompt into the Steer conversation after a
+    /// successful `create_swarm`. The prompt carries the `mode` and `swarm_id`
+    /// as leading `key=value` pairs (parsed by the `SkillTool` into the
+    /// cascade context) and the mission + seeded agents as the task text so
+    /// SENSE can derive `required_transforms` and assess the initial roster.
+    /// The operator reviews and sends — the turn-loop's checkpoints/telemetry
+    /// are preserved (same D21 injector mechanism as `launch_plan_in_steer`).
+    fn inject_composition_prompt(
+        &mut self,
+        swarm_id: &str,
+        mission: &str,
+        agents: &[String],
+        is_local: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mode = if is_local { "local" } else { "abw" };
+        let agent_label = if is_local {
+            "Seeded agents"
+        } else {
+            "Hired agents"
+        };
+        let agents_str = agents.join(", ");
+        let message = format!(
+            "/swarm-intelligence mode={mode} swarm_id={swarm_id} compose my swarm. \
+             Mission: {mission}. {agent_label}: {agents_str}."
+        );
+        if let Some(injector) = hkask_conversation_injector::shared_injector(cx) {
+            let task = injector.inject(message, window, cx);
+            cx.spawn(async move |_this, _cx| {
+                if let Err(error) = task.await {
+                    log::warn!("swarm-panel: composition-prompt inject failed: {error}");
+                }
+            })
+            .detach();
+        } else {
+            log::warn!(
+                "swarm-panel: no active conversation injector — composition prompt not injected"
+            );
+        }
+    }
+
     /// Create a new agent from the authoring form. Mode-aware: in Local mode
     /// the agent is created on the local substrate via `swarm_create_local_agent`
     /// (field `agent_id`, no cost, no consent); in ABW mode it is created in the
@@ -1276,6 +1343,29 @@ impl SwarmPanel {
             .collect();
         let is_local = self.compose.create_target == CreateTarget::Local;
 
+        // Launch gate: a swarm is not ready for the swarm-intelligence PDCA
+        // loop unless it has a mission (the task context SENSE derives
+        // required_transforms from) and at least MIN_AGENTS_TO_LAUNCH agents
+        // (below that, variety_coverage and diversity are trivially 0/1 and
+        // the loop converges without doing composition work). The operator
+        // must complete the compose form before creating.
+        if mission.trim().is_empty() {
+            self.compose.status = Some(
+                "Mission is required to launch a swarm. Describe what the swarm should do.".into(),
+            );
+            cx.notify();
+            return;
+        }
+        if agents.len() < MIN_AGENTS_TO_LAUNCH {
+            self.compose.status = Some(format!(
+                "At least {} agents are required to launch a swarm. Add agents to the roster ({} provided).",
+                MIN_AGENTS_TO_LAUNCH,
+                agents.len()
+            ).into());
+            cx.notify();
+            return;
+        }
+
         self.compose.busy = true;
         self.compose.status = None;
         cx.notify();
@@ -1309,11 +1399,25 @@ impl SwarmPanel {
                             this.fetch_all(cx);
                             // Navigate to Steer with the new swarm selected.
                             if let Some(id) = swarm_id {
-                                this.selected_workspace = Some(id);
+                                this.selected_workspace = Some(id.clone());
                                 // Drop any existing Steer conversation so the
                                 // next construction bakes in the new swarm.
                                 this.steer_conversation = None;
                                 this.set_mode(PanelMode::Steer, window, cx);
+                                // Queue the composition prompt for injection
+                                // after `render` constructs the Steer
+                                // conversation. The prompt carries the mode,
+                                // swarm_id, mission, and seeded agents so
+                                // swarm-intelligence SENSE can derive
+                                // required_transforms and assess the initial
+                                // roster.
+                                this.pending_composition_prompt =
+                                    Some(PendingCompositionPrompt {
+                                        swarm_id: id,
+                                        mission: mission.trim().to_string(),
+                                        agents: agents.clone(),
+                                        is_local: true,
+                                    });
                             }
                         }
                         Err(err) => {
@@ -1463,9 +1567,18 @@ impl SwarmPanel {
                         this.fetch_all(cx);
                         // Navigate to Steer with the new swarm selected.
                         if let Some(id) = workspace_id {
-                            this.selected_workspace = Some(id);
+                            this.selected_workspace = Some(id.clone());
                             this.steer_conversation = None;
                             this.set_mode(PanelMode::Steer, window, cx);
+                            // Queue the composition prompt for injection
+                            // (same as the local path).
+                            this.pending_composition_prompt =
+                                Some(PendingCompositionPrompt {
+                                    swarm_id: id,
+                                    mission: mission.trim().to_string(),
+                                    agents: agents.clone(),
+                                    is_local: false,
+                                });
                         }
                     }
                     Err(err) => {
@@ -2523,6 +2636,21 @@ impl Render for SwarmPanel {
         // conversation exists before rendering.
         if matches!(self.mode, PanelMode::Steer) {
             self.ensure_steer_conversation(window, cx);
+        }
+        // Consume a pending composition prompt (set by `create_swarm`'s spawn
+        // on a successful create). Deferred to `render` because the D21
+        // injector needs `&mut Window`, and the Steer conversation must exist
+        // before injection. The prompt is injected into the conversation's
+        // editor; the operator reviews and sends.
+        if let Some(prompt) = self.pending_composition_prompt.take() {
+            self.inject_composition_prompt(
+                &prompt.swarm_id,
+                &prompt.mission,
+                &prompt.agents,
+                prompt.is_local,
+                window,
+                cx,
+            );
         }
         v_flex()
             .size_full()

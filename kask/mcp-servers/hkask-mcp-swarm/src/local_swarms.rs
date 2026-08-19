@@ -186,7 +186,6 @@ impl LocalSwarmRegistry {
             swarm_id,
             name: name.to_string(),
             mission: mission.to_string(),
-            members,
             member_sources: members
                 .iter()
                 .map(|id| MemberSource {
@@ -195,6 +194,7 @@ impl LocalSwarmRegistry {
                     added_at: chrono::Utc::now().to_rfc3339(),
                 })
                 .collect(),
+            members,
             created_at: chrono::Utc::now().to_rfc3339(),
         };
         self.write_swarm(&swarm)?;

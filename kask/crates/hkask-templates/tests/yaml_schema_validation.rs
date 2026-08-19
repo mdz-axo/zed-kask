@@ -892,14 +892,15 @@ fn kanban_task_management_manifest_loads_with_execute_steps() {
 }
 
 /// Verify the swarm-intelligence manifest loads correctly after Co-evolution
-/// Phase 1 migration. Four native MCP `execute` steps replace the
-/// agent-mediated state fetch in SENSE and CHECK:
+/// Phase 1 migration + Gap 4 fix (steering-mode post-Act execute step).
+/// Five native MCP `execute` steps:
 ///   - Step 1: swarm_get_swarm (ABW mode — fetch workspace roster)
 ///   - Step 2: swarm_get_local_swarm (local mode — fetch local swarm roster)
-///   - Step 8: swarm_get_swarm (ABW mode — re-fetch post-Act)
-///   - Step 9: swarm_get_local_swarm (local mode — re-fetch post-Act)
+///   - Step 8: swarm_execute_plan_local (local steering mode — execute the plan)
+///   - Step 9: swarm_get_swarm (ABW mode — re-fetch post-Act)
+///   - Step 10: swarm_get_local_swarm (local mode — re-fetch post-Act)
 /// The ACT phase remains agent-mediated (consent-gated).
-/// The manifest grew from 9 to 13 steps.
+/// The manifest grew from 9 to 15 steps.
 #[test]
 fn swarm_intelligence_manifest_loads_with_execute_steps() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -913,16 +914,18 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load swarm-intelligence manifest: {e}"));
 
-    // 5 select steps + 3 compute steps + 4 execute steps + 1 loop step + 1 choice = 14 total.
+    // 5 select steps + 3 compute steps + 5 execute steps + 1 loop step + 1 choice = 15 total.
     // The third compute step (lisp.eval) extracts the convergence signal
     // deterministically from the CHECK step's convergence_metric field.
+    // The fifth execute step (step 8, swarm_execute_plan_local) was added in
+    // the Gap 4 fix for structural steering-mode loop closure.
     assert_eq!(
         manifest.steps.len(),
-        14,
-        "expected 14 steps after Co-evolution Phase 1 (4 execute steps + 1 lisp.eval convergence-signal step)"
+        15,
+        "expected 15 steps after Co-evolution Phase 1 + Gap 4 fix (5 execute steps + 1 lisp.eval convergence-signal step)"
     );
 
-    // Four execute steps, each condition-gated on mode.
+    // Five execute steps, each condition-gated on mode.
     let execute_steps: Vec<_> = manifest
         .steps
         .iter()
@@ -930,10 +933,10 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
         .collect();
     assert_eq!(
         execute_steps.len(),
-        4,
-        "manifest must have 4 execute steps (Co-evolution Phase 1)"
+        5,
+        "manifest must have 5 execute steps (Co-evolution Phase 1 + Gap 4 fix)"
     );
-    // Steps 1 and 8: swarm_get_swarm (ABW mode)
+    // Steps 1 and 9: swarm_get_swarm (ABW mode)
     assert_eq!(
         execute_steps[0].ordinal, 1,
         "swarm_get_swarm execute at ordinal 1"
@@ -943,7 +946,7 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
         Some("swarm_get_swarm"),
         "step 1 must call swarm_get_swarm"
     );
-    // Steps 2 and 9: swarm_get_local_swarm (local mode)
+    // Steps 2 and 10: swarm_get_local_swarm (local mode)
     assert_eq!(
         execute_steps[1].ordinal, 2,
         "swarm_get_local_swarm execute at ordinal 2"
@@ -953,23 +956,33 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
         Some("swarm_get_local_swarm"),
         "step 2 must call swarm_get_local_swarm"
     );
+    // Step 8: swarm_execute_plan_local (local steering mode — Gap 4 fix)
     assert_eq!(
         execute_steps[2].ordinal, 8,
-        "swarm_get_swarm re-fetch at ordinal 8"
+        "swarm_execute_plan_local execute at ordinal 8"
     );
     assert_eq!(
         execute_steps[2].mcp.as_deref(),
-        Some("swarm_get_swarm"),
-        "step 8 must call swarm_get_swarm"
+        Some("swarm_execute_plan_local"),
+        "step 8 must call swarm_execute_plan_local (Gap 4 fix)"
     );
     assert_eq!(
         execute_steps[3].ordinal, 9,
-        "swarm_get_local_swarm re-fetch at ordinal 9"
+        "swarm_get_swarm re-fetch at ordinal 9"
     );
     assert_eq!(
         execute_steps[3].mcp.as_deref(),
+        Some("swarm_get_swarm"),
+        "step 9 must call swarm_get_swarm"
+    );
+    assert_eq!(
+        execute_steps[4].ordinal, 10,
+        "swarm_get_local_swarm re-fetch at ordinal 10"
+    );
+    assert_eq!(
+        execute_steps[4].mcp.as_deref(),
         Some("swarm_get_local_swarm"),
-        "step 9 must call swarm_get_local_swarm"
+        "step 10 must call swarm_get_local_swarm"
     );
     // Every execute step must have on_failure and a condition gate.
     for step in &execute_steps {
@@ -985,17 +998,17 @@ fn swarm_intelligence_manifest_loads_with_execute_steps() {
         );
     }
 
-    // The loop step (ordinal 14) must reference the convergence-signal
-    // compute step (step 13, which reads step_10_result) and re-enter at
+    // The loop step (ordinal 15) must reference the convergence-signal
+    // compute step (step 14, which reads step_11_result) and re-enter at
     // step 1 (state-fetch) so execute steps re-run each iteration.
-    // Ordinal shifted from 13 to 14 when a lisp.eval convergence-signal
-    // compute step was inserted at ordinal 13.
+    // Ordinal shifted from 14 to 15 when the post-Act execute step was
+    // inserted at ordinal 8 (Gap 4 fix).
     let loop_step = manifest
         .steps
         .iter()
         .find(|s| s.action == "loop")
         .expect("manifest must have a loop step");
-    assert_eq!(loop_step.ordinal, 14, "loop step should be ordinal 14");
+    assert_eq!(loop_step.ordinal, 15, "loop step should be ordinal 15");
     let loop_mapping = loop_step
         .input_mapping
         .as_ref()
