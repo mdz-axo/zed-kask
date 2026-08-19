@@ -351,13 +351,10 @@ impl CompaniesServer {
         Parameters(req): Parameters<types::ResearchSearchRequest>,
     ) -> String {
         execute_tool_semantic(self, "research_search", Self::ontology_anchor("research_search"), async {
-            // 1. Fetch company profile for name
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
-            let profile = profile_result?;
-            let profile_obj = profile.as_array().and_then(|a| a.first());
-            let company_name = profile_obj
-                .and_then(|p| p.get("companyName").and_then(|v| v.as_str()))
-                .unwrap_or(&req.symbol);
+            // 1. Fetch company profile for name (typed view — `companyName`
+            //    knowledge lives in the `CompanyProfile` accessor).
+            let profile = self.fetch_profile(&req.symbol).await?;
+            let company_name = profile.company_name().unwrap_or(&req.symbol);
 
             // 2. Run multi-provider search
             let research = research::search_fundamental(

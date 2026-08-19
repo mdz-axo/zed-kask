@@ -7,6 +7,228 @@
 use hkask_mcp_server::server::{McpToolError, classify_http_error};
 use serde_json::Value;
 
+// ── Typed projection views ───────────────────────────────────────
+//
+// `companies_get` returns these typed views over the retained raw `Value` so
+// that field-name knowledge concentrates in one place (the accessor bodies)
+// rather than leaking into every tool handler as `v.get("companyName")`.
+// Each view holds the normalized raw payload and exposes typed accessors.
+// The `raw()` escape hatch preserves Ashby requisite variety — a field the
+// struct doesn't carry is still reachable via `raw()`, so new provider fields
+// are not silently dropped (the broken-fidelity trap that `unwrap_or(0.0)`
+// creates on the untyped path).
+
+/// Typed view over a company profile (FMP `/profile` or EODHD `/fundamentals`).
+///
+/// The profile is a one-element array after EODHD normalization. Accessors
+/// read the first element; a missing field returns `None` (not a silent zero),
+// so a missing `mktCap` is distinguishable from a zero market cap.
+pub struct CompanyProfile {
+    raw: Value,
+}
+
+impl CompanyProfile {
+    /// Wrap a normalized profile payload. The value is expected to be the
+    /// FMP-shaped array (`[{"companyName": ...}]`); an empty array means the
+    /// provider returned no profile.
+    pub fn from_raw(raw: Value) -> Self {
+        Self { raw }
+    }
+
+    /// The first profile object in the array, or `None` if the array is empty
+    /// or missing (the "no profile" signal — distinct from a present-but-zero
+    /// field).
+    fn first(&self) -> Option<&Value> {
+        self.raw.as_array().and_then(|a| a.first())
+    }
+
+    /// Escape hatch — the retained raw payload, preserving fields the typed
+    /// accessors don't yet cover (Ashby requisite variety).
+    pub fn raw(&self) -> &Value {
+        &self.raw
+    }
+
+    /// `companyName` (FMP) — the legal entity name.
+    pub fn company_name(&self) -> Option<&str> {
+        self.first()?.get("companyName").and_then(|v| v.as_str())
+    }
+
+    /// `symbol` (FMP) — the ticker.
+    pub fn symbol(&self) -> Option<&str> {
+        self.first()?.get("symbol").and_then(|v| v.as_str())
+    }
+
+    /// `sector` (FMP) — the GICS sector.
+    pub fn sector(&self) -> Option<&str> {
+        self.first()?.get("sector").and_then(|v| v.as_str())
+    }
+
+    /// `industry` (FMP) — the GICS industry classification.
+    pub fn industry(&self) -> Option<&str> {
+        self.first()?.get("industry").and_then(|v| v.as_str())
+    }
+
+    /// `price` (FMP) — the latest trade price.
+    pub fn price(&self) -> Option<f64> {
+        self.first()?.get("price").and_then(|v| v.as_f64())
+    }
+
+    /// `mktCap` (FMP) — the market capitalization.
+    pub fn market_cap(&self) -> Option<f64> {
+        self.first()?.get("mktCap").and_then(|v| v.as_f64())
+    }
+
+    /// `sharesOutstanding` (FMP profile) — the shares outstanding from the
+    /// profile endpoint (the key-metrics `weightedAverageShsOut*` fields are
+    /// preferred when available; see `KeyMetrics::shares_outstanding`).
+    pub fn shares_outstanding(&self) -> Option<f64> {
+        self.first()?
+            .get("sharesOutstanding")
+            .and_then(|v| v.as_f64())
+    }
+
+    /// `taxRate` (FMP profile) — the effective tax rate. Used as a fallback
+    /// for ROIC computation when the income statement doesn't supply one.
+    pub fn tax_rate(&self) -> Option<f64> {
+        self.first()?.get("taxRate").and_then(|v| v.as_f64())
+    }
+}
+
+/// Typed view over key metrics (FMP `/key-metrics` or EODHD-derived).
+///
+/// The raw payload is the FMP-shaped array of yearly metric objects. Per-year
+/// accessors (`gross_profit_margin`, `roic`, `days_of_payables_outstanding` …)
+/// read from each array element; the latest-year accessor reads `first()`
+/// (FMP returns newest-first, and the EODHD normalizer sorts to match).
+pub struct KeyMetrics {
+    raw: Value,
+}
+
+impl KeyMetrics {
+    /// Wrap a normalized key-metrics payload (the FMP-shaped array).
+    pub fn from_raw(raw: Value) -> Self {
+        Self { raw }
+    }
+
+    /// The array of yearly metric objects (newest-first), or an empty slice if
+    /// the payload isn't an array.
+    pub fn years(&self) -> &[Value] {
+        self.raw.as_array().map_or(&[], |v| v)
+    }
+
+    /// Escape hatch — the retained raw payload.
+    pub fn raw(&self) -> &Value {
+        &self.raw
+    }
+
+    /// The latest yearly metric object (FMP returns newest-first), or `None`.
+    pub fn latest(&self) -> Option<&Value> {
+        self.years().first()
+    }
+
+    /// `weightedAverageShsOutDil` (preferred) or `weightedAverageShsOut` from
+    /// the latest year — the diluted (preferred) or basic shares outstanding.
+    pub fn shares_outstanding(&self) -> Option<f64> {
+        let latest = self.latest()?;
+        latest
+            .get("weightedAverageShsOutDil")
+            .or_else(|| latest.get("weightedAverageShsOut"))
+            .and_then(|v| v.as_f64())
+    }
+
+    /// `roic` from the latest year's key metrics.
+    pub fn roic(&self) -> Option<f64> {
+        self.latest()?.get("roic").and_then(|v| v.as_f64())
+    }
+
+    /// `investedCapital` (preferred) or `totalAssets` from the latest year.
+    pub fn invested_capital(&self) -> Option<f64> {
+        let latest = self.latest()?;
+        latest
+            .get("investedCapital")
+            .or_else(|| latest.get("totalAssets"))
+            .and_then(|v| v.as_f64())
+    }
+
+    /// `peRatio` from the latest year — the price-to-earnings multiple.
+    pub fn pe_ratio(&self) -> Option<f64> {
+        self.latest()?.get("peRatio").and_then(|v| v.as_f64())
+    }
+
+    /// `priceToBookRatio` from the latest year.
+    pub fn price_to_book(&self) -> Option<f64> {
+        self.latest()?
+            .get("priceToBookRatio")
+            .and_then(|v| v.as_f64())
+    }
+
+    /// `priceToSalesRatio` from the latest year.
+    pub fn price_to_sales(&self) -> Option<f64> {
+        self.latest()?
+            .get("priceToSalesRatio")
+            .and_then(|v| v.as_f64())
+    }
+
+    /// `evToEbitda` (preferred) or `enterpriseValueMultiple` from the latest
+    /// year — the EV/EBITDA multiple (FMP renamed this field across API
+    /// versions; both spellings appear in the wild).
+    pub fn ev_to_ebitda(&self) -> Option<f64> {
+        let latest = self.latest()?;
+        latest
+            .get("evToEbitda")
+            .or_else(|| latest.get("enterpriseValueMultiple"))
+            .and_then(|v| v.as_f64())
+    }
+
+    /// `dividendYield` from the latest year.
+    pub fn dividend_yield(&self) -> Option<f64> {
+        self.latest()?.get("dividendYield").and_then(|v| v.as_f64())
+    }
+
+    /// `revenueGrowth` from the latest year.
+    pub fn revenue_growth(&self) -> Option<f64> {
+        self.latest()?.get("revenueGrowth").and_then(|v| v.as_f64())
+    }
+}
+
+/// Typed view over historical prices (FMP `/historical-price-full` or EODHD
+/// `/eod`). The raw payload is the FMP-shaped `{"symbol": ..., "historical":
+/// [...]}` envelope; per-day accessors read from the `historical` array.
+pub struct HistoricalPriceView {
+    raw: Value,
+}
+
+impl HistoricalPriceView {
+    /// Wrap a normalized historical-price payload.
+    pub fn from_raw(raw: Value) -> Self {
+        Self { raw }
+    }
+
+    /// Escape hatch — the retained raw payload.
+    pub fn raw(&self) -> &Value {
+        &self.raw
+    }
+
+    /// The `historical` array of daily OHLCV bars (newest-first per FMP), or an
+    /// empty slice if the envelope is missing the array.
+    pub fn historical(&self) -> &[Value] {
+        self.raw
+            .get("historical")
+            .and_then(|v| v.as_array())
+            .map_or(&[], |v| v)
+    }
+
+    /// The latest day's close price, preferring `close` and falling back to
+    /// `adjClose` (the adjusted close — used when the raw close isn't
+    /// available, e.g. for split-adjusted EODHD bars).
+    pub fn latest_close(&self) -> Option<f64> {
+        let day = self.historical().first()?;
+        day.get("close")
+            .or_else(|| day.get("adjClose"))
+            .and_then(|v| v.as_f64())
+    }
+}
+
 // ── Provider enum ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -195,6 +417,79 @@ pub async fn companies_get(
             }
         }
     }
+}
+
+/// Fetch a company profile as a typed `CompanyProfile` view over the
+/// retained raw payload. The view concentrates field-name knowledge
+/// (`companyName`, `mktCap`, `price` …) so tool handlers read typed accessors
+/// instead of `v.get("companyName").and_then(|v| v.as_str())`. A missing
+/// field is `None`, not a silent zero — the algedonic `tracing::warn!`
+/// pattern from `parse_financial_field` extends to the accessors.
+pub async fn fetch_company_profile(
+    client: &reqwest::Client,
+    symbol: &str,
+    fmp_api_key: &str,
+    eodhd_api_key: &str,
+    learning: Option<&super::LearningState>,
+) -> Result<CompanyProfile, McpToolError> {
+    let raw = companies_get(
+        client,
+        "company_profile",
+        symbol,
+        fmp_api_key,
+        eodhd_api_key,
+        &[],
+        learning,
+    )
+    .await?;
+    Ok(CompanyProfile::from_raw(raw))
+}
+
+/// Fetch key metrics as a typed `KeyMetrics` view over the retained raw array.
+pub async fn fetch_key_metrics(
+    client: &reqwest::Client,
+    symbol: &str,
+    limit: usize,
+    fmp_api_key: &str,
+    eodhd_api_key: &str,
+    learning: Option<&super::LearningState>,
+) -> Result<KeyMetrics, McpToolError> {
+    let limit_str = limit.to_string();
+    let raw = companies_get(
+        client,
+        "key_metrics",
+        symbol,
+        fmp_api_key,
+        eodhd_api_key,
+        &[("limit", &limit_str)],
+        learning,
+    )
+    .await?;
+    Ok(KeyMetrics::from_raw(raw))
+}
+
+/// Fetch historical prices as a typed `HistoricalPriceView` over the
+/// `{"symbol": ..., "historical": [...]}` envelope.
+pub async fn fetch_historical_price(
+    client: &reqwest::Client,
+    symbol: &str,
+    from: &str,
+    to: &str,
+    fmp_api_key: &str,
+    eodhd_api_key: &str,
+    learning: Option<&super::LearningState>,
+) -> Result<HistoricalPriceView, McpToolError> {
+    let raw = companies_get(
+        client,
+        "historical_price",
+        symbol,
+        fmp_api_key,
+        eodhd_api_key,
+        &[("from", from), ("to", to)],
+        learning,
+    )
+    .await?;
+    Ok(HistoricalPriceView::from_raw(raw))
 }
 
 /// Approximated field count for EODHD key_metrics normalization (FinGPT §3.2).
@@ -849,5 +1144,136 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    // ── Typed projection view tests ───────────────────────────────
+    //
+    // The typed views (`CompanyProfile`, `KeyMetrics`, `HistoricalPriceView`)
+    // exist to concentrate field-name knowledge and to upgrade fidelity: a
+    // missing field is `None`, not a silent zero (the broken-fidelity trap
+    // that `unwrap_or(0.0)` creates on the untyped path). These tests pin
+    // both the happy path and the missing-field-is-`None` contract.
+
+    #[test]
+    fn company_profile_reads_typed_fields() {
+        let raw = serde_json::json!([{
+            "symbol": "AAPL",
+            "companyName": "Apple Inc.",
+            "sector": "Technology",
+            "industry": "Consumer Electronics",
+            "price": 190.5,
+            "mktCap": 3000000000000.0,
+            "sharesOutstanding": 15000.0,
+        }]);
+        let profile = CompanyProfile::from_raw(raw);
+        assert_eq!(profile.symbol(), Some("AAPL"));
+        assert_eq!(profile.company_name(), Some("Apple Inc."));
+        assert_eq!(profile.sector(), Some("Technology"));
+        assert_eq!(profile.industry(), Some("Consumer Electronics"));
+        assert_eq!(profile.price(), Some(190.5));
+        assert_eq!(profile.market_cap(), Some(3000000000000.0));
+        assert_eq!(profile.shares_outstanding(), Some(15000.0));
+    }
+
+    #[test]
+    fn company_profile_missing_field_is_none_not_zero() {
+        // The fidelity fix: a profile with `price` but no `mktCap` returns
+        // `None` for `market_cap()`, not `0.0`. This is the algedonic signal —
+        // the operator can distinguish "no market cap" from "zero market cap."
+        let raw = serde_json::json!([{"symbol": "FOO", "price": 1.0}]);
+        let profile = CompanyProfile::from_raw(raw);
+        assert_eq!(profile.price(), Some(1.0));
+        assert_eq!(profile.market_cap(), None);
+        assert_eq!(profile.company_name(), None);
+        assert_eq!(profile.shares_outstanding(), None);
+    }
+
+    #[test]
+    fn company_profile_empty_array_yields_none_for_all_fields() {
+        let profile = CompanyProfile::from_raw(serde_json::json!([]));
+        assert_eq!(profile.company_name(), None);
+        assert_eq!(profile.price(), None);
+        assert_eq!(profile.market_cap(), None);
+    }
+
+    #[test]
+    fn company_profile_raw_escape_hatch_preserves_uncovered_fields() {
+        // Ashby requisite variety: a field the struct doesn't carry (here,
+        // `beta`) is still reachable via `raw()` — the projection doesn't
+        // silently drop it.
+        let raw = serde_json::json!([{"symbol": "AAPL", "beta": 1.2}]);
+        let profile = CompanyProfile::from_raw(raw);
+        assert_eq!(profile.symbol(), Some("AAPL"));
+        assert_eq!(profile.raw()[0]["beta"], serde_json::json!(1.2));
+    }
+
+    #[test]
+    fn key_metrics_reads_typed_fields() {
+        let raw = serde_json::json!([
+            {"calendarYear": "2024", "peRatio": 30.0, "priceToBookRatio": 15.0,
+             "weightedAverageShsOutDil": 15500.0, "roic": 0.35},
+        ]);
+        let metrics = KeyMetrics::from_raw(raw);
+        assert_eq!(metrics.pe_ratio(), Some(30.0));
+        assert_eq!(metrics.price_to_book(), Some(15.0));
+        assert_eq!(metrics.shares_outstanding(), Some(15500.0));
+        assert_eq!(metrics.roic(), Some(0.35));
+        assert_eq!(metrics.years().len(), 1);
+    }
+
+    #[test]
+    fn key_metrics_enterprise_value_multiple_fallback() {
+        // FMP renamed `evToEbitda` → `enterpriseValueMultiple` across API
+        // versions; the accessor tries both spellings.
+        let raw_old = serde_json::json!([{"evToEbitda": 12.5}]);
+        let raw_new = serde_json::json!([{"enterpriseValueMultiple": 12.5}]);
+        assert_eq!(KeyMetrics::from_raw(raw_old).ev_to_ebitda(), Some(12.5));
+        assert_eq!(KeyMetrics::from_raw(raw_new).ev_to_ebitda(), Some(12.5));
+    }
+
+    #[test]
+    fn key_metrics_shares_outstanding_prefers_diluted() {
+        let raw = serde_json::json!([
+            {"weightedAverageShsOutDil": 15500.0, "weightedAverageShsOut": 15000.0},
+        ]);
+        let metrics = KeyMetrics::from_raw(raw);
+        assert_eq!(metrics.shares_outstanding(), Some(15500.0));
+    }
+
+    #[test]
+    fn key_metrics_empty_array_yields_none_for_latest() {
+        let metrics = KeyMetrics::from_raw(serde_json::json!([]));
+        assert_eq!(metrics.pe_ratio(), None);
+        assert_eq!(metrics.roic(), None);
+        assert_eq!(metrics.shares_outstanding(), None);
+        assert!(metrics.years().is_empty());
+    }
+
+    #[test]
+    fn historical_price_view_reads_latest_close() {
+        let raw = serde_json::json!({
+            "symbol": "AAPL",
+            "historical": [{"date": "2024-06-13", "close": 190.0}],
+        });
+        let view = HistoricalPriceView::from_raw(raw);
+        assert_eq!(view.latest_close(), Some(190.0));
+        assert_eq!(view.historical().len(), 1);
+    }
+
+    #[test]
+    fn historical_price_view_falls_back_to_adj_close() {
+        let raw = serde_json::json!({
+            "symbol": "AAPL",
+            "historical": [{"date": "2024-06-13", "adjClose": 188.0}],
+        });
+        let view = HistoricalPriceView::from_raw(raw);
+        assert_eq!(view.latest_close(), Some(188.0));
+    }
+
+    #[test]
+    fn historical_price_view_missing_historical_yields_none() {
+        let view = HistoricalPriceView::from_raw(serde_json::json!({"symbol": "AAPL"}));
+        assert_eq!(view.latest_close(), None);
+        assert!(view.historical().is_empty());
     }
 }

@@ -42,7 +42,6 @@
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{McpToolError, map_join_error, validate_identifier};
-use serde::{Deserialize, Serialize};
 
 pub mod aggregation;
 mod analysis;
@@ -52,64 +51,24 @@ pub mod fibo;
 mod financial_model;
 pub mod portfolio;
 mod providers;
-pub use providers::Provider;
+pub use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
+mod forecast;
 pub mod learning;
 pub mod research;
 mod scenarios;
 mod screener;
 pub mod superforecast;
 mod transcript;
+mod valuation_service;
+pub(crate) use forecast::{
+    StoredForecast, current_price_from_multiple, projected_terminal_multiple,
+};
 pub mod types;
 
 use portfolio::{PersistedForecast, PortfolioManager};
 
 pub mod tools;
 pub use transcript::{MissingReason, TranscriptCoverage, TranscriptRecord, TranscriptResult};
-
-// ── Forecast store ───────────────────────────────────────────────────
-
-/// A stored forecast model for later decomposition during `forecast_record`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredForecast {
-    model: financial_model::ProjectedModel,
-    assumptions: financial_model::ProjectionAssumptions,
-    current_price: f64,
-    intrinsic_per_share: f64,
-}
-
-impl StoredForecast {
-    fn snapshot(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
-    }
-
-    fn from_snapshot(snapshot: &serde_json::Value) -> Result<Self, serde_json::Error> {
-        serde_json::from_value(snapshot.clone())
-    }
-}
-
-/// Extract the terminal multiple implied by the projected model.
-fn projected_terminal_multiple(model: &financial_model::ProjectedModel) -> f64 {
-    if let Some(last) = model.periods.last() {
-        if last.free_cash_flow > 0.0 {
-            model.terminal_value / last.free_cash_flow
-        } else {
-            0.0
-        }
-    } else {
-        0.0
-    }
-}
-
-/// Approximate a current price from a valuation multiple and historical data.
-fn current_price_from_multiple(multiple: f64, hist: &financial_model::HistoricalSnapshot) -> f64 {
-    let latest_fcf =
-        hist.latest_revenue() * hist.gross_margin() - hist.latest_da() - hist.latest_capex();
-    if hist.shares_outstanding > 0.0 {
-        (latest_fcf * multiple) / hist.shares_outstanding
-    } else {
-        0.0
-    }
-}
 
 // ── Validation ──────────────────────────────────────────────────────
 
@@ -176,6 +135,71 @@ impl CompaniesServer {
             &self.fmp_api_key,
             &self.eodhd_api_key,
             extra,
+            Some(&l),
+        )
+        .await
+    }
+
+    /// Fetch a company profile as a typed `CompanyProfile` view. Concentrates
+    /// field-name knowledge so tool handlers read `profile.market_cap()`
+    /// instead of `v.get("mktCap").and_then(|v| v.as_f64())`.
+    async fn fetch_profile(&self, symbol: &str) -> Result<CompanyProfile, McpToolError> {
+        let l = self
+            .learning
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        providers::fetch_company_profile(
+            &self.client,
+            symbol,
+            &self.fmp_api_key,
+            &self.eodhd_api_key,
+            Some(&l),
+        )
+        .await
+    }
+
+    /// Fetch key metrics as a typed `KeyMetrics` view.
+    async fn fetch_key_metrics(
+        &self,
+        symbol: &str,
+        limit: usize,
+    ) -> Result<KeyMetrics, McpToolError> {
+        let l = self
+            .learning
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        providers::fetch_key_metrics(
+            &self.client,
+            symbol,
+            limit,
+            &self.fmp_api_key,
+            &self.eodhd_api_key,
+            Some(&l),
+        )
+        .await
+    }
+
+    /// Fetch historical prices as a typed `HistoricalPriceView` view.
+    async fn fetch_historical_price(
+        &self,
+        symbol: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<HistoricalPriceView, McpToolError> {
+        let l = self
+            .learning
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        providers::fetch_historical_price(
+            &self.client,
+            symbol,
+            from,
+            to,
+            &self.fmp_api_key,
+            &self.eodhd_api_key,
             Some(&l),
         )
         .await
@@ -432,53 +456,6 @@ mod dead_surface_pins {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── durable forecast snapshots ─────────────────────────────────
-
-    #[test]
-    fn stored_forecast_snapshot_reconstructs_decomposition_model() {
-        let stored = StoredForecast {
-            model: financial_model::ProjectedModel {
-                periods: vec![financial_model::ProjectedLineItems {
-                    period: 1,
-                    year: 2026.0,
-                    revenue: 120.0,
-                    cogs: 72.0,
-                    gross_profit: 48.0,
-                    da: 4.0,
-                    ebit: 44.0,
-                    tax: 9.0,
-                    nopat: 35.0,
-                    capex: 6.0,
-                    change_in_nwc: 2.0,
-                    free_cash_flow: 27.0,
-                    discount_factor: 0.9,
-                    present_value: 24.3,
-                }],
-                terminal_value: 300.0,
-                terminal_pv: 270.0,
-                enterprise_value: 294.3,
-                net_debt: 20.0,
-                equity_value: 274.3,
-                intrinsic_per_share: 27.43,
-            },
-            assumptions: financial_model::ProjectionAssumptions::default(),
-            current_price: 20.0,
-            intrinsic_per_share: 27.43,
-        };
-
-        let reconstructed = StoredForecast::from_snapshot(&stored.snapshot()).unwrap();
-        assert_eq!(reconstructed.model.periods.len(), 1);
-        assert_eq!(reconstructed.model.periods[0].free_cash_flow, 27.0);
-        assert_eq!(
-            reconstructed.assumptions.discount_rate,
-            stored.assumptions.discount_rate
-        );
-        assert_eq!(
-            reconstructed.intrinsic_per_share,
-            stored.intrinsic_per_share
-        );
-    }
 
     // ── expectations_gap: Gordon Growth Model formula ──────────────
 

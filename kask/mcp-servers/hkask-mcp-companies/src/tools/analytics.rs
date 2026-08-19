@@ -79,31 +79,17 @@ impl CompaniesServer {
             let mut errors = Vec::new();
 
             for sym in positions_start.keys() {
-                // Fetch historical prices around each date
+                // Fetch historical prices around each date (typed view — the
+                // `close`/`adjClose` field-name knowledge lives in
+                // `HistoricalPriceView::latest_close`).
                 for (date, prices_map) in
                     [(&req.from, &mut prices_start), (&req.to, &mut prices_end)]
                 {
-                    match self.fetch(
-                            "historical_price",
-                            sym,
-                            &[("from", date), ("to", date)],
-                    )
-                    .await
-                    {
-                        Ok(value) => {
-                            let historical =
-                                value.get("historical").and_then(|h| h.as_array());
-                            if let Some(days) = historical
-                                && let Some(day) = days.first()
-                            {
-                                let close = day
-                                    .get("close")
-                                    .or_else(|| day.get("adjClose"))
-                                    .and_then(|v| v.as_f64());
-                                if let Some(c) = close {
-                                    prices_map
-                                        .insert(sym.clone(), serde_json::Value::from(c));
-                                }
+                    match self.fetch_historical_price(sym, date, date).await {
+                        Ok(view) => {
+                            if let Some(c) = view.latest_close() {
+                                prices_map
+                                    .insert(sym.clone(), serde_json::Value::from(c));
                             }
                         }
                         Err(e) => {
@@ -429,12 +415,15 @@ impl CompaniesServer {
                 .await?;
             }
 
-            // Fetch all required financial statements
+            // Fetch all required financial statements. The profile fetch
+            // returns a typed `CompanyProfile` view; the statement fetches
+            // stay `Value` because `HistoricalSnapshot::from_api_json`
+            // consumes them directly.
             let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
             let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
             let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
             let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
 
             let (income, balance, cf, metrics, profile) =
                 match (income_result, balance_result, cf_result, metrics_result, profile_result) {
@@ -452,7 +441,7 @@ impl CompaniesServer {
             let balance_arr = balance.as_array();
             let cf_arr = cf.as_array();
             let metrics_arr = metrics.as_array();
-            let profile_obj = profile.as_array().and_then(|a| a.first());
+            let profile_obj = profile.raw().as_array().and_then(|a| a.first());
 
             if income_arr.is_none_or(|a| a.is_empty())
                 || balance_arr.is_none_or(|a| a.is_empty())
@@ -483,7 +472,7 @@ impl CompaniesServer {
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
-            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = profile.price().unwrap_or(0.0);
             let shares = hist.shares_outstanding;
 
             // Run the projection engine
@@ -515,84 +504,20 @@ impl CompaniesServer {
             })
             .await?;
 
-            // Margin of safety
-            let margin_of_safety = if current_price > 0.0 {
-                (model.intrinsic_per_share - current_price) / current_price
-            } else {
-                0.0
-            };
-
-            // Build period summary for JSON output (all 13 line items)
-            let period_summary: Vec<serde_json::Value> = model.periods.iter().map(|p| {
-                serde_json::json!({
-                    "period": p.period,
-                    "year": p.year,
-                    "revenue": p.revenue,
-                    "cogs": p.cogs,
-                    "gross_profit": p.gross_profit,
-                    "da": p.da,
-                    "ebit": p.ebit,
-                    "tax": p.tax,
-                    "nopat": p.nopat,
-                    "capex": p.capex,
-                    "change_in_nwc": p.change_in_nwc,
-                    "free_cash_flow": p.free_cash_flow,
-                    "discount_factor": p.discount_factor,
-                    "present_value": p.present_value,
-                })
-            }).collect();
-
-            let output = serde_json::json!({
-                "symbol": req.symbol,
-                "forecast_id": forecast_id,
-                "revision_of": req.revision_of,
-                "config": {
-                    "stage1_years": assumptions.stage1_years,
-                    "stage2_years": assumptions.total_years - assumptions.stage1_years,
-                    "total_years": assumptions.total_years,
-                    "discount_rate": assumptions.discount_rate,
-                    "terminal_growth": assumptions.terminal_growth,
-                    "revenue_growth": assumptions.revenue_growth,
-                    "gross_margin": assumptions.gross_margin,
-                    "da_to_revenue": assumptions.da_to_revenue,
-                    "capex_to_revenue": assumptions.capex_to_revenue,
-                    "nwc_to_revenue": assumptions.nwc_to_revenue,
-                    "tax_rate": assumptions.tax_rate,
-                },
-                "history": {
-                    "revenue_cagr": hist.revenue_cagr(),
-                    "gross_margin": hist.gross_margin(),
-                    "da_to_revenue": hist.da_to_revenue(),
-                    "capex_to_revenue": hist.capex_to_revenue(),
-                    "nwc_to_revenue": hist.nwc_to_revenue(),
-                    "tax_rate": hist.tax_rate,
-                    "latest_revenue": hist.latest_revenue(),
-                    "shares_outstanding": shares,
-                    "net_debt": hist.net_debt(),
-                },
-                "projections": period_summary,
-                "valuation": {
-                    "pv_cash_flows": model.periods.iter().map(|p| p.present_value).sum::<f64>(),
-                    "terminal_value": model.terminal_value,
-                    "terminal_pv": model.terminal_pv,
-                    "enterprise_value": model.enterprise_value,
-                    "net_debt": model.net_debt,
-                    "equity_value": model.equity_value,
-                    "intrinsic_per_share": model.intrinsic_per_share,
-                    "current_price": current_price,
-                    "margin_of_safety": margin_of_safety,
-                },
-                "data_quality": {
-                    "overall_confidence": signal_quality.overall_confidence,
-                    "revenue_growth": serde_json::json!(signal_quality.revenue_growth),
-                    "gross_margin": serde_json::json!(signal_quality.gross_margin),
-                    "da_to_revenue": serde_json::json!(signal_quality.da_to_revenue),
-                    "capex_to_revenue": serde_json::json!(signal_quality.capex_to_revenue),
-                    "nwc_to_revenue": serde_json::json!(signal_quality.nwc_to_revenue),
-                    "tax_rate": serde_json::json!(signal_quality.tax_rate),
-                },
-                "framework": "Two-stage 11-line-item DCF: History-calibrated projections through income statement (revenue, COGS, D&A) and balance sheet (NWC, capex) to FCF. Terminal value via Gordon Growth perpetuity (capped at r - 0.5%). Enterprise value to equity bridge via net debt. Damodaran (2012) Investment Valuation. Use forecast_record with the forecast_id to decompose actual outcomes against these projections.",
-            });
+            // The response assembly is pure — delegate to `valuation_service`
+            // so it is testable without HTTP/API keys. The tool handler retains
+            // only fetch, validate, persist, and the span.
+            let output = crate::valuation_service::build_dcf_response(
+                &req.symbol,
+                &forecast_id,
+                &req.revision_of,
+                &model,
+                &assumptions,
+                &hist,
+                &signal_quality,
+                current_price,
+                shares,
+            );
 
             Ok(fibo::enrich_with_ontology(output, "dcf_valuation"))
         }).await
@@ -612,7 +537,7 @@ impl CompaniesServer {
             let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
             let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
             let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
 
             let (income, balance, cf, metrics, profile) =
                 match (income_result, balance_result, cf_result, metrics_result, profile_result) {
@@ -630,7 +555,7 @@ impl CompaniesServer {
             let balance_arr = balance.as_array();
             let cf_arr = cf.as_array();
             let metrics_arr = metrics.as_array();
-            let profile_obj = profile.as_array().and_then(|a| a.first());
+            let profile_obj = profile.raw().as_array().and_then(|a| a.first());
 
             if income_arr.is_none_or(|a| a.is_empty())
                 || balance_arr.is_none_or(|a| a.is_empty())
@@ -665,7 +590,7 @@ impl CompaniesServer {
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
-            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = profile.price().unwrap_or(0.0);
 
             if current_price <= 0.0 {
                 return Err(McpToolError::invalid_argument(
@@ -757,7 +682,7 @@ impl CompaniesServer {
             let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
             let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
             let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+            let profile_result = self.fetch_profile(&req.symbol).await;
 
             let (income, balance, cf, metrics, profile) =
                 match (income_result, balance_result, cf_result, metrics_result, profile_result) {
@@ -775,7 +700,7 @@ impl CompaniesServer {
             let balance_arr = balance.as_array();
             let cf_arr = cf.as_array();
             let metrics_arr = metrics.as_array();
-            let profile_obj = profile.as_array().and_then(|a| a.first());
+            let profile_obj = profile.raw().as_array().and_then(|a| a.first());
 
             if income_arr.is_none_or(|a| a.is_empty())
                 || balance_arr.is_none_or(|a| a.is_empty())
@@ -805,7 +730,7 @@ impl CompaniesServer {
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
-            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let current_price = profile.price().unwrap_or(0.0);
 
             let matrix = scenarios::ScenarioMatrix::growth_x_margin(assumptions.revenue_growth, assumptions.gross_margin);
             let results = scenarios::run_scenario_analysis(&hist, &assumptions, &matrix);
