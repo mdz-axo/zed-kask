@@ -49,12 +49,12 @@ fn make_server_with_shared_driver() -> (
             .expect("idempotency schema");
     let server = KanbanServer::new(
         WebID::new(),
+        Arc::new(hkask_verification::VerificationStore::in_memory()),
         service,
         Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, None)),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(hkask_inference::UnavailableWorktreeSpawn),
         Arc::new(idempotency),
-        Arc::new(hkask_verification::VerificationStore::in_memory()),
     );
     (server, driver)
 }
@@ -322,6 +322,7 @@ async fn replay_is_absorbed_across_processes() {
     let store = HMemStore::from_driver(shared_driver.clone()).expect("hmem store");
     let process_b = KanbanServer::new(
         WebID::new(),
+        Arc::new(hkask_verification::VerificationStore::in_memory()),
         KanbanService::new(store),
         Arc::new(LazyLocalSwarmRuntime::lazy(
             std::env::temp_dir()
@@ -336,7 +337,6 @@ async fn replay_is_absorbed_across_processes() {
             hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(shared_driver)
                 .expect("idempotency schema"),
         ),
-        Arc::new(hkask_verification::VerificationStore::in_memory()),
     );
 
     let replay = create_task(&process_b, &board_id, "Cross-process", Some("shared")).await;
@@ -367,12 +367,12 @@ async fn non_durable_protection_is_labelled_in_the_response() {
     // The in-memory (non-durable) replay-protection backend.
     let server = KanbanServer::new(
         WebID::new(),
+        Arc::new(hkask_verification::VerificationStore::in_memory()),
         KanbanService::new(store),
         Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, None)),
         Arc::new(LocalAgentRegistry::new("/nonexistent")),
         Arc::new(hkask_inference::UnavailableWorktreeSpawn),
         Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
-        Arc::new(hkask_verification::VerificationStore::in_memory()),
     );
 
     let board = create_board(&server, "Board", Some("labelled")).await;

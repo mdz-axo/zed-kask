@@ -6,7 +6,7 @@
 //! loaded-empty via the `loaded` flag (the `.rules` trap on lazy-load caches).
 
 use crate::error::LocalSwarmError;
-use crate::port_registry::PortRegistry;
+use crate::port_registry::{PortRegistry, PortTypeEntry};
 
 /// Rung 1 (Presence): reject cards missing required structural fields.
 /// Each clause is falsifiable — see `test_presence_rejects_*`.
@@ -52,7 +52,7 @@ pub fn validate_typing(
             return Err(LocalSwarmError::InvalidInput(format!(
                 "agent '{}': port label '{}' does not resolve to a registered type. \
                  Valid built-in labels are {:?}. Update the card's accepts/produces to use \
-                 one of these (file-backed registry extension is not yet wired).",
+                 one of these, or clone the card from ABW to import its labels.",
                 card.agent_id,
                 label,
                 crate::port_registry::BUILTIN_PORT_TYPES
@@ -159,6 +159,11 @@ pub struct LocalAgentCapabilities {
     pub output_contract: Option<serde_json::Value>,
 }
 
+/// Name of the persisted port-type extension file inside the agents dir.
+/// Cloned cards import their (ABW-catalogue) port labels here so the typing
+/// gate resolves them on this and every subsequent load.
+pub(crate) const PORT_TYPES_FILE: &str = "port_types.json";
+
 /// Reads agent cards from a local directory. Catalogue only — no execution.
 ///
 /// The directory layout mirrors fermi's `agents/curated/`:
@@ -178,6 +183,9 @@ pub struct LocalAgentRegistry {
     dir: String,
     cards: std::sync::Mutex<Option<Vec<LocalAgentCard>>>,
     port_registry: PortRegistry,
+    /// File-backed port-type extensions imported from cloned cards, persisted
+    /// as `port_types.json` next to the agent cards.
+    port_extensions: std::sync::Mutex<std::collections::HashMap<String, PortTypeEntry>>,
 }
 
 impl LocalAgentRegistry {
@@ -188,12 +196,109 @@ impl LocalAgentRegistry {
             dir: dir.into(),
             cards: std::sync::Mutex::new(None),
             port_registry: PortRegistry::builtin(),
+            port_extensions: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
-    /// Read-only access to the port registry (for metrics tools).
-    pub fn port_registry(&self) -> &PortRegistry {
-        &self.port_registry
+    /// The effective port registry: built-in seed plus file-backed
+    /// extensions. Built from scratch per call and returned by value so
+    /// import-time labels are visible to every caller (validation, metrics,
+    /// output-schema checks) without shared mutability.
+    pub fn port_registry(&self) -> PortRegistry {
+        let mut merged = self.port_registry.clone();
+        let extensions = self.port_extensions.lock().unwrap();
+        merged.merge_entries(&extensions);
+        merged
+    }
+
+    /// Absolute path of the persistence extension file.
+    fn port_types_path(&self) -> std::path::PathBuf {
+        std::path::Path::new(&self.dir).join(PORT_TYPES_FILE)
+    }
+
+    /// (Re)load the file-backed port-type extensions into the in-memory
+    /// map. A missing file means "no imports yet" — an empty map, no error.
+    /// A corrupt file keeps the previous map and warns (one bad extension
+    /// file must not silently blank imported labels).
+    fn load_port_extensions(&self) {
+        let path = self.port_types_path();
+        match std::fs::read_to_string(&path) {
+            Ok(json) => {
+                match serde_json::from_str::<std::collections::HashMap<String, PortTypeEntry>>(
+                    &json,
+                ) {
+                    Ok(map) => {
+                        *self.port_extensions.lock().unwrap() = map;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            path = %path.display(),
+                            %e,
+                            "failed to parse port_types.json — imported port labels may not resolve"
+                        );
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                *self.port_extensions.lock().unwrap() = std::collections::HashMap::new();
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    path = %path.display(),
+                    %e,
+                    "failed to read port type extensions — imported types may not resolve"
+                );
+            }
+        }
+    }
+
+    /// Admit port labels imported with a third-party (cloned ABW) card:
+    /// labels that do not already resolve are registered as extension types
+    /// and persisted to `<dir>/port_types.json`, so the card passes the
+    /// typing gate now and on every future load. Locally-authored cards do
+    /// NOT use this path — a hand-written label still requires an explicit
+    /// registry entry. First import on a fresh data root creates the agents
+    /// directory. Returns once all labels resolve (idempotent).
+    pub fn promote_imported_port_types(&self, labels: &[String]) -> Result<(), LocalSwarmError> {
+        let fresh: Vec<String> = {
+            let merged = self.port_registry();
+            labels
+                .iter()
+                .filter(|label| !merged.resolves(label))
+                .cloned()
+                .collect()
+        };
+        if fresh.is_empty() {
+            return Ok(());
+        }
+        let dir = std::path::Path::new(&self.dir);
+        // Mirror `write_card`: a fresh data root has no registry dir yet and
+        // the first import must create it.
+        std::fs::create_dir_all(dir).map_err(|e| {
+            LocalSwarmError::Io(format!(
+                "failed to create local agents dir '{}': {e}",
+                dir.display()
+            ))
+        })?;
+        let mut extensions = self.port_extensions.lock().unwrap();
+        for label in &fresh {
+            extensions.insert(label.clone(), PortTypeEntry::default());
+        }
+        let json = serde_json::to_string_pretty(&*extensions).map_err(|e| {
+            LocalSwarmError::InvalidInput(format!("failed to serialize port type extensions: {e}"))
+        })?;
+        let path = dir.join(PORT_TYPES_FILE);
+        // Temp + rename so a crashed write cannot leave a truncated file
+        // that blanks every imported label at the next load.
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json)
+            .map_err(|e| LocalSwarmError::Io(format!("failed to write {}: {e}", tmp.display())))?;
+        std::fs::rename(&tmp, &path).map_err(|e| {
+            LocalSwarmError::Io(format!("failed to persist {}: {e}", path.display()))
+        })?;
+        Ok(())
     }
 
     /// Load (or reload) agent cards from the directory. Returns the number of
@@ -201,10 +306,14 @@ impl LocalAgentRegistry {
     /// the startup warning in `SwarmConfig::from_env` covers this case.
     pub fn load(&self) -> Result<usize, LocalSwarmError> {
         let path = std::path::Path::new(&self.dir);
+        // Refresh file-backed port types first: imported labels must be in
+        // the effective registry before any card's typing check runs.
+        self.load_port_extensions();
         if !path.exists() {
             *self.cards.lock().unwrap() = Some(Vec::new());
             return Ok(0);
         }
+        let registry = self.port_registry();
         let mut cards = Vec::new();
         let entries = std::fs::read_dir(path).map_err(|e| {
             LocalSwarmError::Io(format!(
@@ -242,7 +351,7 @@ impl LocalAgentRegistry {
                 );
                 continue;
             }
-            if let Err(e) = validate_typing(&card, &self.port_registry) {
+            if let Err(e) = validate_typing(&card, &registry) {
                 tracing::warn!(
                     target: "hkask.mcp.swarm",
                     card_path = %card_path.display(),
@@ -373,22 +482,34 @@ impl LocalAgentRegistry {
         // Unlike `load` (which skips bad cards), `write_card` rejects —
         // a programmatic write should fail loudly rather than silently
         // writing a card that will be skipped on the next load.
+        self.load_port_extensions();
+        let registry = self.port_registry();
         validate_presence(card)?;
-        validate_typing(card, &self.port_registry)?;
+        validate_typing(card, &registry)?;
         let safe_id = crate::sanitize::sanitize_agent_id(&card.agent_id).ok_or_else(|| {
             LocalSwarmError::Sanitize(format!(
                 "agent_id '{}' contains no safe characters (alphanumeric, dash, underscore, dot)",
                 card.agent_id
             ))
         })?;
-        let registry_root = std::path::Path::new(&self.dir)
-            .canonicalize()
-            .map_err(|e| {
-                LocalSwarmError::Io(format!(
-                    "failed to resolve local agents dir '{}': {e}",
-                    self.dir
-                ))
-            })?;
+        let registry_root = std::path::Path::new(&self.dir);
+        // A fresh data root has no registry dir yet — `load` reads a missing
+        // root as "empty", but a first write must create it. Without this,
+        // the canonicalize below fails on the first clone/create and the
+        // operator sees a permanently-empty local agents list (broken
+        // feedback loop: the dir only exists once a write succeeds).
+        std::fs::create_dir_all(registry_root).map_err(|e| {
+            LocalSwarmError::Io(format!(
+                "failed to create local agents dir '{}': {e}",
+                registry_root.display()
+            ))
+        })?;
+        let registry_root = registry_root.canonicalize().map_err(|e| {
+            LocalSwarmError::Io(format!(
+                "failed to resolve local agents dir '{}': {e}",
+                self.dir
+            ))
+        })?;
         let card_dir = registry_root.join(&safe_id);
         // Defense-in-depth: refuse to write outside the registry root.
         if !card_dir.starts_with(&registry_root) {
@@ -428,6 +549,38 @@ mod tests {
         assert!(registry.is_loaded());
         assert!(registry.list().is_empty());
         assert!(registry.get("any_agent").is_none());
+    }
+
+    #[test]
+    fn write_card_creates_missing_registry_dir() {
+        // A fresh data root has no `agents/local/curated` yet. `load` reads a
+        // missing root as empty, but `write_card` used to canonicalize the
+        // root first and fail ("failed to resolve local agents dir") — so on
+        // a fresh install, the first clone/create errored while the list
+        // stayed silently empty. This pins the first-write path: the root is
+        // created, the card lands, and `list`/`get` see it.
+        let dir = std::env::temp_dir().join("hkask_swarm_test_write_missing_dir");
+        let _ = std::fs::remove_dir_all(&dir); // clean slate — dir must NOT exist
+        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+        let card = LocalAgentCard {
+            agent_id: "fresh_agent".to_string(),
+            agent_type: "research".to_string(),
+            description: "First card on a fresh root.".to_string(),
+            accepts: vec!["text".to_string()],
+            produces: vec!["json".to_string()],
+            capabilities: LocalAgentCapabilities {
+                system_prompt: Some("You are a fresh agent.".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let path = registry
+            .write_card(&card)
+            .expect("write must create the registry dir");
+        assert!(std::path::Path::new(&path).exists(), "card file written");
+        assert_eq!(registry.list().len(), 1);
+        assert!(registry.get("fresh_agent").is_some());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -749,7 +902,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let err = validate_typing(&card, registry.port_registry()).unwrap_err();
+        let err = validate_typing(&card, &registry.port_registry()).unwrap_err();
         assert!(err.to_string().contains("genome_summary"));
         assert!(err.to_string().contains("test_agent"));
     }
@@ -767,7 +920,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let err = validate_typing(&card, registry.port_registry()).unwrap_err();
+        let err = validate_typing(&card, &registry.port_registry()).unwrap_err();
         assert!(err.to_string().contains("unknown_format"));
     }
 
@@ -785,7 +938,7 @@ mod tests {
             },
             ..Default::default()
         };
-        assert!(validate_typing(&card, registry.port_registry()).is_ok());
+        assert!(validate_typing(&card, &registry.port_registry()).is_ok());
     }
 
     #[test]
@@ -804,7 +957,93 @@ mod tests {
             },
             ..Default::default()
         };
-        assert!(validate_typing(&card, registry.port_registry()).is_ok());
+        assert!(validate_typing(&card, &registry.port_registry()).is_ok());
+    }
+
+    #[test]
+    fn clone_import_registers_and_persists_port_types() {
+        // Cloned ABW cards carry the catalogue's own taxonomy as port
+        // labels (e.g. `anomaly-window`). The import path must register
+        // them as extension types — persisted to port_types.json — so
+        // `write_card`'s typing gate admits the card, AND a fresh registry
+        // instance (new server process) on the same dir still loads the
+        // card instead of skipping it as "unresolved label".
+        let dir = std::env::temp_dir().join("hkask_swarm_test_import_ports");
+        let _ = std::fs::remove_dir_all(&dir); // clean slate — dir must NOT exist
+        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+
+        let labels = vec![
+            "anomaly-window".to_string(),
+            "severity-classification".to_string(),
+        ];
+        registry
+            .promote_imported_port_types(&labels)
+            .expect("import must create the registry dir and persist extensions");
+        assert!(registry.port_registry().resolves("anomaly-window"));
+        assert!(registry.port_registry().resolves("severity-classification"));
+        // Built-ins must still resolve; the gate is additive, not replacing.
+        assert!(registry.port_registry().resolves("text"));
+        assert!(registry.port_registry().resolves("json"));
+
+        let card = LocalAgentCard {
+            agent_id: "anomaly_triager-clone".to_string(),
+            agent_type: "observability".to_string(),
+            description: "Cloned from ABW.".to_string(),
+            accepts: vec!["anomaly-window".to_string()],
+            produces: vec!["severity-classification".to_string()],
+            capabilities: LocalAgentCapabilities {
+                system_prompt: Some("You are an anomaly triager.".to_string()),
+                ..Default::default()
+            },
+            cloud_swarm_id: Some("anomaly_triager".to_string()),
+            ..Default::default()
+        };
+        registry
+            .write_card(&card)
+            .expect("typing gate must resolve imported labels");
+
+        // A fresh instance — restart-proof: the extension file is loaded and
+        // the card is not skipped on reload.
+        let fresh = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+        assert_eq!(
+            fresh.load().expect("load"),
+            1,
+            "imported card survives reload"
+        );
+        let reloaded = fresh.get("anomaly_triager-clone").expect("card present");
+        assert_eq!(reloaded.accepts, vec!["anomaly-window".to_string()]);
+        assert!(fresh.port_registry().resolves("severity-classification"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_is_idempotent_and_strict_gate_unchanged() {
+        // Re-importing the same labels is a no-op, and an operator-authored
+        // card with an unimported label is still rejected by the gate —
+        // the import path is for third-party cards only.
+        let dir = std::env::temp_dir().join("hkask_swarm_test_import_idempotent");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+        let labels = vec!["agent-id".to_string()];
+        registry.promote_imported_port_types(&labels).unwrap();
+        registry.promote_imported_port_types(&labels).unwrap(); // idempotent
+        let card = LocalAgentCard {
+            agent_id: "local_author".to_string(),
+            agent_type: "test".to_string(),
+            produces: vec!["handwritten_label".to_string()],
+            capabilities: LocalAgentCapabilities {
+                system_prompt: Some("test".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(
+            registry.write_card(&card).is_err(),
+            "operator label must still be rejected without an import"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

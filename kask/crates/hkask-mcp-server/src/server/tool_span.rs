@@ -163,6 +163,13 @@ fn emit_tool_span(
 pub trait ToolContext {
     /// The WebID of the caller serving this tool (for Regulation span attribution).
     fn webid(&self) -> &hkask_types::WebID;
+
+    /// The central grounding ledger. Every MCP server carries one —
+    /// core-constructed and macro-injected via `mcp_server!`. This is the
+    /// unscrambling of the per-server opt-in: grounding is a core capability,
+    /// not a leaf-server opt-in. `execute_tool_semantic` calls
+    /// `enforce_for_agent` on every tool output through this store.
+    fn verification_store(&self) -> &std::sync::Arc<hkask_verification::VerificationStore>;
 }
 
 /// Execute a tool with automatic Regulation span emission and error serialization.
@@ -219,5 +226,34 @@ pub async fn execute_tool_semantic<C: ToolContext>(
         );
     }
     let result = fut.await;
-    span.finish(result)
+    // ── Grounding (Rung 3) ──────────────────────────────────────────
+    //
+    // Every tool output in every MCP server is grounded through the
+    // server's `VerificationStore`. This is the core capability — not a
+    // per-server opt-in. The tool name is the contract key; the tool's
+    // output JSON is the document; `tool_calls` is empty (the core doesn't
+    // have tool-call visibility — the floor is contract-keyed grounding
+    // without value-matching; delegating servers keep the richer
+    // `enforce_and_stamp` with real `tool_calls`).
+    //
+    // A tool with no registered contract gets a coverage-gap record
+    // (had_contract: false) — the trend query sees the gap, the operator
+    // knows which tools need contracts. Silence must not read as a verdict.
+    let grounded = match result {
+        Ok(ref value) => {
+            let response_str = value.to_string();
+            let (_grounding_result, cleaned) = ctx.verification_store().enforce_for_agent(
+                tool_name,
+                tool_name,
+                tool_name,
+                value,
+                &[],
+                &response_str,
+                &[],
+            );
+            Ok(cleaned)
+        }
+        Err(_) => result.clone(),
+    };
+    span.finish(grounded)
 }

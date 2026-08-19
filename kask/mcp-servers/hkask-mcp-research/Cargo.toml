@@ -26,6 +26,7 @@ hkask-test-harness.workspace = true
 hkask-mcp-server.workspace = true
 hkask-bridge-ontology.workspace = true
 hkask-types.workspace = true
+hkask-verification.workspace = true
 hkask-inference.workspace = true
 hkask-storage.workspace = true
 

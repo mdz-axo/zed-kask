@@ -50,12 +50,12 @@ fn make_server() -> KanbanServer {
         Arc::new(hkask_inference::UnavailableWorktreeSpawn);
     KanbanServer::new(
         WebID::new(),
+        Arc::new(hkask_verification::VerificationStore::in_memory()),
         service,
         local_runtime,
         local_registry,
         worktree_spawn_port,
         Arc::new(hkask_mcp_kata_kanban::idempotency::IdempotencyStore::default()),
-        Arc::new(hkask_verification::VerificationStore::in_memory()),
     )
 }
 

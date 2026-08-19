@@ -64,11 +64,6 @@ hkask_mcp_server::mcp_server!(
         /// Shares the kanban database, so protection has the same durability as
         /// the writes it guards. See `crate::idempotency`.
         pub idempotency: Arc<idempotency::IdempotencyStore>,
-        /// Central grounding ledger — shared with hkask-mcp-swarm and
-        /// hkask-mcp-curator so grounding records from every delegating tool
-        /// land in one cross-tool, cross-server store. `spawn_via_local_runtime`
-        /// calls `enforce_for_agent()` on each delegation.
-        pub verification_store: Arc<hkask_verification::VerificationStore>,
     }
 );
 
@@ -1969,7 +1964,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     }
                 };
 
-                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry, worktree_spawn_port, Arc::new(idempotency), Arc::new(hkask_verification::VerificationStore::open())))
+                Ok(KanbanServer::new(ctx.webid, Arc::new(hkask_verification::VerificationStore::open()), service, local_runtime, local_registry, worktree_spawn_port, Arc::new(idempotency)))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
                 context: "kanban server init".into(),

@@ -11,6 +11,7 @@ default = []
 [dependencies]
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
+hkask-verification.workspace = true
 hkask-inference.workspace = true
 hkask-bridge-ontology.workspace = true
 

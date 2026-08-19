@@ -690,6 +690,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         |ctx: hkask_mcp_server::ServerContext| {
             Ok(PortfolioServer::new(
                 ctx.webid,
+                Arc::new(hkask_verification::VerificationStore::open()),
                 PortfolioStore::new(ctx.webid)?,
             ))
         },
@@ -711,7 +712,11 @@ mod tests {
         let path = dir.path().to_path_buf();
         std::mem::forget(dir);
         let store = PortfolioStore::with_dir(path);
-        PortfolioServer::new(WebID::from_persona(b"anonymous"), store)
+        PortfolioServer::new(
+            WebID::from_persona(b"anonymous"),
+            std::sync::Arc::new(hkask_verification::VerificationStore::in_memory()),
+            store,
+        )
     }
 
     #[test]

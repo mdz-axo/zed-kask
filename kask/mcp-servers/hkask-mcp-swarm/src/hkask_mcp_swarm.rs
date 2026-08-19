@@ -144,13 +144,6 @@ hkask_mcp_server::mcp_server!(
         pub local_runtime: std::sync::Arc<LazyLocalSwarmRuntime>,
         pub local_swarms: std::sync::Arc<LocalSwarmRegistry>,
         pub local_memory: std::sync::Arc<local_knowledge::LazyLocalMemory>,
-        /// Central grounding ledger — shared with hkask-mcp-kata-kanban and
-        /// hkask-mcp-curator. All local delegation tools
-        /// (`swarm_delegate_local`, `swarm_execute_plan_local`,
-        /// `swarm_fanout_local`, `swarm_pipeline_local`) call
-        /// `enforce_and_stamp()` on each delegation so swarm-side delegations
-        /// are grounded; the cloud paths use `enforce_narrative()`.
-        pub verification_store: std::sync::Arc<hkask_verification::VerificationStore>,
     }
 );
 

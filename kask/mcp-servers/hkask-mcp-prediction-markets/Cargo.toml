@@ -25,6 +25,7 @@ path = "src/bin/fetch_contracts.rs"
 hkask-mcp-server.workspace = true
 hkask-mcp-portfolio.workspace = true
 hkask-types.workspace = true
+hkask-verification.workspace = true
 hkask-forecast.workspace = true
 hkask-inference.workspace = true
 hkask-bridge-ontology.workspace = true

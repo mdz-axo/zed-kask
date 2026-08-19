@@ -377,6 +377,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             let serpapi_key = ctx.credentials.get("HKASK_SERPAPI_API_KEY").cloned();
             Ok(CompaniesServer::new(
                 ctx.webid,
+                Arc::new(hkask_verification::VerificationStore::open()),
                 reqwest::Client::new(),
                 fmp_api_key,
                 eodhd_api_key,

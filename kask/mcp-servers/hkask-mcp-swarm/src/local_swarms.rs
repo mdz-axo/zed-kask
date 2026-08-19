@@ -296,14 +296,23 @@ impl LocalSwarmRegistry {
                 swarm.swarm_id
             ))
         })?;
-        let root = std::path::Path::new(&self.dir)
-            .canonicalize()
-            .map_err(|e| {
-                LocalSwarmError::Io(format!(
-                    "failed to resolve local swarms dir '{}': {e}",
-                    self.dir
-                ))
-            })?;
+        let root = std::path::Path::new(&self.dir);
+        // A fresh data root has no registry dir yet — a first write must
+        // create it, mirroring `LocalAgentRegistry::write_card`. Without
+        // this, the canonicalize below fails on the first create and a
+        // fresh operator never gets a local swarm.
+        std::fs::create_dir_all(root).map_err(|e| {
+            LocalSwarmError::Io(format!(
+                "failed to create local swarms dir '{}': {e}",
+                root.display()
+            ))
+        })?;
+        let root = root.canonicalize().map_err(|e| {
+            LocalSwarmError::Io(format!(
+                "failed to resolve local swarms dir '{}': {e}",
+                self.dir
+            ))
+        })?;
         let swarm_dir = root.join(&safe_id);
         if !swarm_dir.starts_with(&root) {
             return Err(LocalSwarmError::Sanitize(
@@ -350,6 +359,25 @@ mod tests {
         let registry = LocalSwarmRegistry::new("/nonexistent/hkask-swarm-test");
         assert_eq!(registry.load().unwrap(), 0);
         assert!(registry.list().is_empty());
+    }
+
+    #[test]
+    fn first_create_creates_missing_registry_dir() {
+        // A fresh data root has no local swarms dir yet. `load` reads a
+        // missing root as empty, but the first create must not fail on the
+        // missing root (the write path used to canonicalize it first).
+        // Pins the same fix as `write_card_creates_missing_registry_dir`:
+        // the registry root is created on first write.
+        let dir = std::env::temp_dir().join("hkask_swarm_test_first_create_missing_dir");
+        let _ = std::fs::remove_dir_all(&dir); // clean slate — dir must NOT exist
+        let dir = dir.to_string_lossy().to_string();
+        let registry = LocalSwarmRegistry::new(&dir);
+        let swarm = registry
+            .create("Fresh Pool", "first on a fresh root", vec![])
+            .expect("first create must create the registry dir");
+        assert_eq!(registry.list().len(), 1);
+        assert_eq!(registry.list()[0].swarm_id, swarm.swarm_id);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
