@@ -1065,9 +1065,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         let cascade_results = futures::future::join_all(cascade_handles)
             .await
             .into_iter()
-            .map(|join_result| {
-                join_result.map_err(|e| format!("Cascade task panicked: {e}"))
-            })
+            .map(|join_result| join_result.map_err(|e| format!("Cascade task panicked: {e}")))
             .collect::<Result<Vec<_>, String>>()?;
 
         // Collect outputs in the same order as skill_names. Errored
@@ -1107,7 +1105,10 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             ctx.insert(
                 "skill_names".to_string(),
                 Value::Array(
-                    skill_names.iter().map(|s| Value::String(s.clone())).collect(),
+                    skill_names
+                        .iter()
+                        .map(|s| Value::String(s.clone()))
+                        .collect(),
                 ),
             );
             ctx.insert("task".to_string(), Value::String(task_string));
@@ -1116,12 +1117,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         };
 
         let merge_result = self
-            .run_manifest_cascade(
-                "skill-bundler",
-                merge_context,
-                progress,
-                title,
-            )
+            .run_manifest_cascade("skill-bundler", merge_context, progress, title)
             .await?;
 
         let merged_report = extract_final_step_result(&merge_result);
@@ -1262,63 +1258,6 @@ fn extract_final_step_result(outcome: &CascadeOutcome) -> String {
         Value::Null => serde_json::to_string(&outcome.context.materialize()).unwrap_or_default(),
         other => other.to_string(),
     }
-}
-
-/// Reshape a flat composite manifest JSON (as produced by the skill-bundler's
-/// `bundler-synthesize` step under `composite_manifest`) into the
-/// `ManifestFile` structure that `load_manifest_from_yaml` expects on disk.
-/// The on-disk format wraps the header fields (`id`, `name`, `description`,
-/// `version`, `editor`, `visibility`, `functional_role`, `category`,
-/// `enforce_inputs`) under a `manifest:` key, with `steps`, `skills`,
-/// `conflicts`, `complementarities`, `convergence`, `rjoule`,
-/// `error_handling`, `ledger`, `audit`, `inputs`, `principles` as siblings.
-///
-/// This is the inverse of the flattening `load_manifest_from_yaml` performs
-/// when it constructs a `BundleManifest` from a `ManifestFile`. Keeping the
-/// reshape here (in the bridge) avoids exposing the on-disk format to the
-/// `agent` crate and keeps disk as the single source of truth (D1).
-fn reshape_composite_to_manifest_file(composite: &serde_json::Value) -> serde_json::Value {
-    use serde_json::json;
-
-    let header_keys = [
-        "id",
-        "name",
-        "description",
-        "version",
-        "editor",
-        "visibility",
-        "functional_role",
-        "category",
-        "enforce_inputs",
-    ];
-
-    let sibling_keys = [
-        "steps",
-        "skills",
-        "conflicts",
-        "complementarities",
-        "convergence",
-        "rjoule",
-        "error_handling",
-        "ledger",
-        "audit",
-        "inputs",
-        "principles",
-    ];
-
-    let manifest_header: serde_json::Map<String, serde_json::Value> = header_keys
-        .iter()
-        .filter_map(|k| composite.get(*k).map(|v| (k.to_string(), v.clone())))
-        .collect();
-
-    let mut out = serde_json::Map::new();
-    out.insert("manifest".to_string(), json!(manifest_header));
-    for k in sibling_keys {
-        if let Some(v) = composite.get(k) {
-            out.insert(k.to_string(), v.clone());
-        }
-    }
-    json!(out)
 }
 
 #[cfg(test)]

@@ -235,6 +235,7 @@ async fn read_global_skill_file(
     Ok(result_text.into())
 }
 
+use super::deserialize_optional_u32_from_maybe_string;
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
     resolve_global_skill_path, resolve_project_path,
@@ -274,10 +275,16 @@ pub struct ReadFileToolInput {
     /// </example>
     pub path: String,
     /// Optional line number to start reading on (1-based index)
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_u32_from_maybe_string"
+    )]
     pub start_line: Option<u32>,
     /// Optional line number to end reading on (1-based index, inclusive)
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_u32_from_maybe_string"
+    )]
     pub end_line: Option<u32>,
 }
 

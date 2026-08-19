@@ -80,6 +80,7 @@ pub struct LocalAgentCard {
     /// row is distinguishable from the cloud original. Locally-created cards
     /// set this to the operator-supplied name; the panel falls back to
     /// `agent_id` when empty.
+    #[serde(default)]
     pub display_name: String,
     #[serde(default)]
     pub accepts: Vec<String>,
