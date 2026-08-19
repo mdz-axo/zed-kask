@@ -1,10 +1,12 @@
 # Swarm Gap Resolutions
 
-Tracked from the gap analysis (2026-08-18). Each item cites the evidence and
-the minimal resolution path. Items 1-6 are implemented; item 7 is a follow-up
-UX examination.
+Tracked from the gap analysis (2026-08-18). All 7 items implemented.
 
 ## Status: ALL 7 ITEMS IMPLEMENTED (2026-08-18)
+
+All 7 gaps resolved. Tests pass (`cargo test -p hkask-mcp-swarm --all-features`,
+`cargo test -p swarm_panel`, `cargo test -p hkask-templates`). Clippy clean
+(`./script/clippy -p hkask-mcp-swarm -p swarm_panel -p hkask-templates`).
 
 ## Item 7: Compose → Launch → Steer UX — IMPLEMENTED
 
@@ -38,49 +40,6 @@ The `mode` and `swarm_id` are leading `key=value` pairs (parsed by the
 text so SENSE can derive `required_transforms` and assess the initial roster.
 The operator reviews and sends — the turn-loop's checkpoints/telemetry are
 preserved.
-
-**Question:** Should the swarm panel have a "Launch Swarm" button on the
-Steer page, beneath the compose interface, that takes the user to the Steer
-page as part of launching the swarm?
-
-**Current wiring (verified):**
-- `SwarmPanel::create_swarm` (`crates/swarm_panel/src/swarm_panel.rs:1248`)
-  already transitions to `PanelMode::Steer` after a successful create — both
-  the local path (`:1311-1317`) and the ABW path (`:1465-1469`) call
-  `this.set_mode(PanelMode::Steer, window, cx)` and set
-  `this.selected_workspace = Some(id)`.
-- The Steer page already has a "Launch Plan" button
-  (`swarm_panel.rs:2820-2834`) that injects a message telling the Curator to
-  execute the pending `swarm-intelligence` plan via
-  `swarm_execute_plan_local` and feed `delegate_results` back.
-- The compose form (`crates/swarm_panel/src/compose.rs`) has a "Create Local
-  Swarm" / "Create ABW Swarm" button that triggers `create_swarm`.
-
-**What to examine:**
-1. Is the compose→steer transition discoverable enough? The user creates a
-   swarm and lands on the Steer page with an empty conversation — do they
-   know to type a composition intent, or should there be a "Launch Swarm"
-   button that auto-injects a composition prompt?
-2. Should the "Launch Plan" button (currently on the Steer page, for
-   executing a pending plan) be distinct from a "Launch Swarm" button (which
-   would kick off the first `swarm-intelligence` invocation on a freshly
-   created swarm)?
-3. Should the compose form have a "Compose & Steer" button that creates
-   the swarm AND auto-invokes `swarm-intelligence` with a default
-   composition task, rather than requiring the user to type in the Steer
-   conversation?
-
-**Resolution path (when implemented):**
-- Add a "Launch Swarm" button to the Steer page header (next to "Launch
-  Plan") that injects a default composition prompt
-  (`/swarm-intelligence mode=<mode> swarm_id=<id> compose my swarm`)
-  via the D21 `ConversationInjector`.
-- OR: add a "Compose & Steer" checkbox/button to the compose form that,
-  after `create_swarm` succeeds, injects the composition prompt into the
-  Steer conversation automatically.
-
-**Status:** TODO — examine the UX, do not implement until the design is
-decided.
 
 ---
 
