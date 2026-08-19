@@ -214,10 +214,14 @@ registry + code (2026-08-03), with one residual:
 - **C4 latency — REGULATED.** `LocalDelegateResult.latency_ms` now flows through
   ORIENT (`latency_outliers`) into DECIDE, which proposes `reconfigure_agent`
   for outlier agents. The sense-without-act sub-loop is closed.
-- **Loop A closure — OPEN (by design).** The default execution mode is
-  `advisory`, where the operator must feed `delegate_results` back or the
-  planning loop stays open. The `swarm-steering` skill (steering mode) makes
-  closure structural; it is not yet the default.
+- **Loop A closure — STRUCTURAL (steering mode, default).** The default
+  execution mode is now `steering`, where the manifest's post-Act execute
+  step (step 8) calls `swarm_execute_plan_local` deterministically and feeds
+  the `delegate_results` array into the next LOOP iteration via the
+  `delegate_results` input mapping. The Curator no longer needs to follow a
+  prompt instruction to close the loop — the manifest does it structurally.
+  In `advisory` mode (operator-set), the plan is the final output and the
+  operator executes manually.
 
 Full per-property evidence and the VSM/Ashby analysis are in the audit.
 

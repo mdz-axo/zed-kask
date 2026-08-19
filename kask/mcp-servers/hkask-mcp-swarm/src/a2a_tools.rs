@@ -6,6 +6,7 @@ use crate::SwarmServer;
 use crate::a2a;
 use crate::error::map_local_swarm_error;
 use crate::request_types::*;
+use a2a::new_context_id;
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
@@ -109,6 +110,113 @@ impl SwarmServer {
                         }))
                     }
                 }
+            },
+        )
+        .await
+    }
+
+    /// Broadcast an A2A message to all members of a local swarm. Each member
+    /// receives the message via `LocalSwarmRuntime::delegate`, and the
+    /// responses are collected as an array of A2A Tasks. This is the
+    /// shared-channel analog of fermi's workspace-message broadcast — agents
+    /// that declare `swarm/swarm_a2a_broadcast` in their `mcp_tools` can
+    /// address their entire swarm in one call. Sequential dispatch (mirrors
+    /// `swarm_fanout_local` — the local ledger is single-writer; concurrent
+    /// debits would race the balance read). Capped at `MAX_FANOUT` members.
+    #[tool(
+        description = "Broadcast an A2A (Agent2Agent) protocol message to all members of a local swarm. Each member receives the message via in-process dispatch; responses are collected as an array of A2A Tasks. Sequential dispatch (ledger TOCTOU). Capped at MAX_FANOUT (10) members. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in mcp_tools to address their entire swarm."
+    )]
+    pub(crate) async fn swarm_a2a_broadcast(
+        &self,
+        parameters: Parameters<A2aBroadcastRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_a2a_broadcast",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.swarm_id.trim().is_empty() || req.message.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "swarm_id and message must be non-empty".to_string(),
+                    ));
+                }
+                // Look up the swarm roster.
+                let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
+                    McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
+                })?;
+                if swarm.members.is_empty() {
+                    return Ok(serde_json::json!({
+                        "tasks": [],
+                        "broadcast_count": 0,
+                        "note": "swarm has no members",
+                    }));
+                }
+                if swarm.members.len() > crate::local_runtime::MAX_FANOUT {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "broadcast cap is {} members, swarm '{}' has {}",
+                        crate::local_runtime::MAX_FANOUT,
+                        req.swarm_id,
+                        swarm.members.len()
+                    )));
+                }
+                let runtime = self
+                    .local_runtime
+                    .get_or_init()
+                    .await
+                    .map_err(map_local_swarm_error)?;
+                let ceiling = self.client.config().max_credits_per_dispatch;
+                let context_id = req.context_id.clone().unwrap_or_else(new_context_id);
+                let mut tasks = Vec::new();
+                let mut failed = 0usize;
+                for member_id in &swarm.members {
+                    let agent = match self.local_registry.get(member_id) {
+                        Some(card) => card,
+                        None => {
+                            failed += 1;
+                            tasks.push(serde_json::json!({
+                                "agent_id": member_id,
+                                "ok": false,
+                                "error": format!(
+                                    "agent '{}' not found in local registry",
+                                    member_id
+                                ),
+                            }));
+                            continue;
+                        }
+                    };
+                    match runtime
+                        .delegate(&agent, &req.message, req.credits_authorized, ceiling)
+                        .await
+                    {
+                        Ok(result) => {
+                            let task = a2a::task_from_response(
+                                &result.response,
+                                Some(context_id.clone()),
+                                &result.model,
+                                result.tokens_used,
+                                result.cost,
+                            );
+                            tasks.push(serde_json::to_value(&task).unwrap_or_else(
+                                |_| serde_json::json!({ "error": "failed to serialize A2A task" }),
+                            ));
+                        }
+                        Err(e) => {
+                            failed += 1;
+                            tasks.push(serde_json::json!({
+                                "agent_id": member_id,
+                                "ok": false,
+                                "error": e.to_string(),
+                            }));
+                        }
+                    }
+                }
+                Ok(serde_json::json!({
+                    "tasks": tasks,
+                    "broadcast_count": swarm.members.len() - failed,
+                    "failed": failed,
+                    "context_id": context_id,
+                }))
             },
         )
         .await

@@ -24,6 +24,8 @@ contract:
     next_focus_hint: string
     delegate_notes: string
     kanban_tasks: array|null
+    stigmergy: array
+    redundancy_pairs: array
 visibility: Public
 ---
 {# Template: swarm-intelligence/swarm-sense.j2 #}
@@ -138,6 +140,27 @@ should be pre-populated):
 Record the kanban task list as `kanban_tasks` in the output.
 {% endif %}
 
+{% if mode == "local" %}
+## Step 1a — Stigmergic memory query (local mode only)
+
+For each agent in the swarm roster, call `swarm_search_knowledge_local` with
+`agent_name = <agent_id>` and `query = "delegation"` (limit 10). This reads
+the ACO stigmergic pheromone trail — the persisted latency, task_success, and
+response annotations from prior delegations. The results feed Step 5b's
+per-agent fitness computation alongside any `delegate_results` from the prior
+iteration.
+
+If the call fails or returns `memory_unconfigured`, record `stigmergy = []`
+for that agent — do NOT fabricate fitness signals from an empty result (the
+`.rules` absence ≠ 0 trap). An agent with no stigmergy trail is a new or
+never-delegated agent; Step 5b will report `energy = null` and
+`distanceToGoal = null` for it.
+
+Record the stigmergy results as `stigmergy: [{ agent_id, fragments: [...] }, ...]`
+in the output — one entry per roster agent that has a non-empty trail. Agents
+with empty trails are omitted (not fabricated with zeros).
+{% endif %}
+
 ## Step 1 — Swarm State (pre-fetched by execute step)
 
 The swarm state has been pre-fetched by the flowdef execute step (step 1 for
@@ -223,6 +246,29 @@ Map the ABW roster onto Onto4MAT (Kiesel et al. 2022) team properties:
   separation = the swarm is diverse (not a monoculture). This is the
   anti-premature-convergence signal.
 
+### Step 3a — Redundancy pairs (Cybernetic Swarm Plan C7 input)
+
+For each unordered pair of agents (a, b) in the roster, compute the Jaccard
+similarity of their port labels:
+```
+ports(a) = set(a.accepts ∪ a.produces)
+ports(b) = set(b.accepts ∪ b.produces)
+jaccard = |ports(a) ∩ ports(b)| / |ports(a) ∪ ports(b)|
+```
+A pair with `jaccard >= 0.75` is **redundant** — the two agents are
+substitutable (they accept and produce the same port types). This is the
+signal C7 (influence-weighted rejection) needs to act on: DECIDE can prune a
+redundant agent without losing variety coverage.
+
+This is NOT Shapley attribution — it's a cheap deterministic proxy for
+substitutability based on declared port labels. Full Shapley would require
+running each subset on a benchmark task; this is the minimal signal that
+gives C7 something to act on.
+
+Output: `redundancy_pairs: [{ agent_a, agent_b, jaccard }, ...]` — one entry
+per pair with `jaccard >= 0.75`, sorted by descending jaccard. Empty when no
+pair exceeds the threshold (the swarm has no redundancy).
+
 ## Step 4 — Compute variety_coverage
 
 ```
@@ -286,11 +332,18 @@ below target, name the axis with the largest deficit as the hint.
 
 Produce a JSON object with: workspace_roster, wallet_state,
 required_transforms, covered_transforms, variety_coverage, diversity,
-alignment, cohesion, separation, per_agent_metrics, trivial_task, next_focus_hint,
+alignment, cohesion, separation, redundancy_pairs, per_agent_metrics, trivial_task, next_focus_hint,
 delegate_notes.
 
 {% if kanban_board_id and kanban_board_id | length > 0 %}
 When a kanban board was read, also include `kanban_tasks`: the list of tasks
 from `kanban_task_list`, with their statuses and `delegate_result` fields, so
 ORIENT and DECIDE can reason over the durable task state.
+{% endif %}
+
+{% if mode == "local" %}
+Also include `stigmergy`: the array of per-agent stigmergic memory fragments
+from `swarm_search_knowledge_local` (Step 1a), so ORIENT can read per-agent
+fitness from prior delegations alongside any `delegate_results` from the
+prior iteration.
 {% endif %}

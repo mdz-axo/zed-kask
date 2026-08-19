@@ -146,6 +146,7 @@ impl SwarmServer {
                 &req.agent_name,
                 result.latency_ms,
                 result.task_success.as_ref().map(|t| t.pass),
+                &result.response,
             )
             .await;
             Ok(serde_json::to_value(&result).unwrap_or_else(|_| {
@@ -1474,6 +1475,7 @@ impl SwarmServer {
                                 &entry.agent_name,
                                 r.latency_ms,
                                 r.task_success.as_ref().map(|t| t.pass),
+                                &r.response,
                             )
                             .await;
                             results.push(serde_json::to_value(&r).unwrap_or_else(

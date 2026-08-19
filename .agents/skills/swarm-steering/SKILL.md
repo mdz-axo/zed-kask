@@ -99,16 +99,20 @@ fidelity was raised in the 2026-08-03 structural fixes (full analysis in the
   highest-fidelity fault signal, so an agent that returns `ok: true` with the
   wrong output is now attributable. `provenance: llm_judged` is downgraded
   (Gap S3). **Residual:** for open tasks with no oracle, leave `task_success =
-null` — the Go See loop (C2) is the only cover; the cascade cannot detect a
+  null` — the Go See loop (C2) is the only cover; the cascade cannot detect a
   healthy-but-wrong agent without a deterministic evaluator.
 - **Latency is now regulated.** `latency_ms` is still collected on every
   `LocalDelegateResult` (C4), and ORIENT now surfaces `latency_outliers` so
   DECIDE proposes `reconfigure_agent` for slow agents. The directive's
   collection shape is unchanged (it already collected `latency_ms`); the
   regulation is downstream in the planner.
-
-These do not block execution — the directive is sound; the residual open-task
-gap is the irreducible one the Go See loop covers.
+- **Loop A closure — now structural (Gap 4 fix, 2026-08-18).** The
+  `swarm-intelligence` manifest's default `steering_mode` is now `steering`,
+  and a post-Act execute step (step 8) calls `swarm_execute_plan_local`
+  deterministically and feeds `delegate_results` into the next LOOP
+  iteration. This skill's directive is now the human-inspectable representation
+  of what the manifest does structurally — the operator can still use it to
+  understand or override the manifest's execution.
 
 ## Composed with
 

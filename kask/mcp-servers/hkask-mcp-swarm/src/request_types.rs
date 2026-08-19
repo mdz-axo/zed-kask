@@ -792,6 +792,28 @@ pub struct A2aCardRequest {
     pub agent_name: Option<String>,
 }
 
+/// Broadcast an A2A (Agent2Agent) protocol message to all members of a local
+/// swarm. Each member receives the message via `LocalSwarmRuntime::delegate`,
+/// and the responses are collected as an array of A2A Tasks. This is the
+/// shared-channel analog of fermi's workspace-message broadcast — agents that
+/// declare `swarm/swarm_a2a_broadcast` in their `mcp_tools` can address their
+/// entire swarm in one call, rather than calling `swarm_a2a_send` per member.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct A2aBroadcastRequest {
+    /// The local swarm id to broadcast to. All members of this swarm receive
+    /// the message.
+    pub swarm_id: String,
+    /// The message text to broadcast to every member.
+    pub message: String,
+    /// The maximum credits the operator authorizes per-member dispatch.
+    pub credits_authorized: u32,
+    /// Optional A2A context ID for grouping related tasks. If omitted, a new
+    /// context is generated and shared across all member dispatches in this
+    /// broadcast.
+    #[serde(default)]
+    pub context_id: Option<String>,
+}
+
 // ── Local knowledge tools (kask analogs of ABW knowledge/prompt/ontology) ─────
 
 /// Vector-search an agent's prefix-scoped semantic memory (the local analog of
@@ -962,6 +984,7 @@ mod schema_tests {
 
     schema_clean_test!(a2a_card_request_schema, A2aCardRequest);
     schema_clean_test!(a2a_send_request_schema, A2aSendRequest);
+    schema_clean_test!(a2a_broadcast_request_schema, A2aBroadcastRequest);
     schema_clean_test!(
         add_agent_to_local_swarm_request_schema,
         AddAgentToLocalSwarmRequest
