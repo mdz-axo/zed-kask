@@ -123,8 +123,9 @@ The sole bidirectional seam is `kask_bridge` (D8), which lives under
 4. After resolving, run `bash kask/scripts/check-hkask-no-zed-deps.sh` to
    verify the §13.1 invariant still holds.
 5. Run `cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server` to
-   verify the bridge + foundation still compile. (Not yet a CI job — see
-   the CI gap note below.)
+   verify the bridge + foundation still compile. Wired into CI as the
+   `bridge-compile` job in `kask-ci.yml` (fast-failing gate that surfaces
+   D-seam breaks in ~1-2 min, before the heavy `clippy`/`test` jobs).
 6. Run `bash kask/scripts/build/check-zed-isolation.sh` — verifies deleted
    upstream surfaces (icons, `.desktop` templates, bundle scripts, release
    workflows) were not silently restored by the merge. Wired into CI
@@ -142,16 +143,3 @@ The sole bidirectional seam is `kask_bridge` (D8), which lives under
    - `buf lint crates/proto/proto` && `buf format --exit-code crates/proto/proto`
    - `cd kask && bash scripts/check-unused-deps.sh` (nightly)
    - All `kask/scripts/check-*-selftest.sh` scripts
-
-### CI gap: runbook step 5 is not mechanically enforced
-
-Step 5 (`cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server`)
-is a manual runbook step, not a CI job. The `kask-ci.yml` `invariants` job
-runs the isolation and no-zed-deps checks but not this three-crate compile
-check. A merge that breaks the bridge compile would only be caught by the
-`clippy` or `test` jobs (which compile the whole workspace) — both run
-after the `invariants` job, so a bridge break wastes ~10 min of CI before
-surfacing. **Recommendation:** add a `bridge-compile` job to `kask-ci.yml`
-that runs step 5's `cargo check` as a fast-failing gate before the heavy
-`clippy`/`test` jobs. This is low-risk (additive — a new job, no changes to
-existing jobs) and closes the gap between the documented runbook and CI.

@@ -508,7 +508,7 @@ pub fn load_set_points() -> SetPoints {
                 let points = SetPoints::from_config(&config);
                 if let Err(e) = points.validate() {
                     tracing::warn!(
-                        target: "reg.config()",
+                        target: "hkask.config",
                         path = %path,
                         error = %e,
                         "Loaded Regulation set-points failed validation — falling back to defaults"
@@ -516,7 +516,7 @@ pub fn load_set_points() -> SetPoints {
                     return SetPoints::default();
                 }
                 tracing::info!(
-                    target: "reg.config()",
+                    target: "hkask.config",
                     path = %path,
                     "Loaded Regulation set-points from config file"
                 );
@@ -524,7 +524,7 @@ pub fn load_set_points() -> SetPoints {
             }
             Err(e) => {
                 tracing::warn!(
-                    target: "reg.config()",
+                    target: "hkask.config",
                     path = %path,
                     error = %e,
                     "Failed to load Regulation config file, using defaults"
@@ -546,7 +546,7 @@ pub fn load_set_points() -> SetPoints {
             }
             Ok(value) => {
                 tracing::warn!(
-                    target: "reg.config()",
+                    target: "hkask.config",
                     env_var = "HKASK_GROUNDING_CLEAN_RATE_FLOOR",
                     raw_value = %raw,
                     parsed = %value,
@@ -556,7 +556,7 @@ pub fn load_set_points() -> SetPoints {
             }
             Err(error) => {
                 tracing::warn!(
-                    target: "reg.config()",
+                    target: "hkask.config",
                     env_var = "HKASK_GROUNDING_CLEAN_RATE_FLOOR",
                     raw_value = %raw,
                     error = %error,
@@ -573,7 +573,7 @@ pub fn load_set_points() -> SetPoints {
             }
             Ok(value) => {
                 tracing::warn!(
-                    target: "reg.config()",
+                    target: "hkask.config",
                     env_var = "HKASK_GROUNDING_COVERAGE_RATE_FLOOR",
                     raw_value = %raw,
                     parsed = %value,
@@ -583,7 +583,7 @@ pub fn load_set_points() -> SetPoints {
             }
             Err(error) => {
                 tracing::warn!(
-                    target: "reg.config()",
+                    target: "hkask.config",
                     env_var = "HKASK_GROUNDING_COVERAGE_RATE_FLOOR",
                     raw_value = %raw,
                     error = %error,

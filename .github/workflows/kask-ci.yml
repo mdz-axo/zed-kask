@@ -110,6 +110,26 @@ jobs:
       - name: Build all binaries
         run: cargo build --workspace --bins
 
+  bridge-compile:
+    # Fast-failing compile gate for the load-bearing foundation crates.
+    # Catches D-seam breaks in kask_bridge (D8), hkask-types (used by every
+    # hKask crate), and hkask-mcp-server (base for all 13 MCP servers) in
+    # ~1-2 min, before the heavy clippy/test jobs (~10 min) surface them.
+    # Mirrors runbook step 5 in DIVERGENCE.md.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/free-disk-space
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: kask-bridge-compile-ubuntu-24.04
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Linux dependencies
+        run: ./script/linux
+      - name: Check bridge + foundation compile
+        run: cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server
+
   skill-span-namespace:
     runs-on: ubuntu-24.04
     steps:
