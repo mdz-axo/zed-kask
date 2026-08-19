@@ -7,8 +7,10 @@
 //!
 //! The registry is seeded from `BUILTIN_PORT_TYPES` (the labels already in
 //! use by existing cards and by `build_task_agent_card` in the kata-kanban
-//! server). Runtime extension is via `register_type`; file-backed loading
-//! is not wired (no production caller existed).
+//! server). Runtime extension is via `register_type`; file-backed loading is
+//! wired through `LocalAgentRegistry`'s `port_types.json` extension file,
+//! which the clone path uses to admit third-party (ABW catalogue) port
+//! labels without papering over the gate for locally-authored cards.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -63,6 +65,7 @@ pub const BUILTIN_PORT_TYPES: &[&str] = &["text", "json", "task", "task_result"]
 /// string. The registry is seeded from `BUILTIN_PORT_TYPES`; operators extend
 /// it by adding labels to the built-in set (a code change) or by calling
 /// `register_type` at runtime.
+#[derive(Debug, Clone)]
 pub struct PortRegistry {
     types: HashMap<String, PortTypeEntry>,
 }
@@ -95,6 +98,15 @@ impl PortRegistry {
     pub fn register_type(&mut self, label: &str, schema: Option<serde_json::Value>) {
         self.types
             .insert(label.to_string(), PortTypeEntry { schema });
+    }
+
+    /// Merge a map of registered types into this registry (extension load).
+    /// Existing entries with the same label are replaced by the incoming
+    /// entry — the extension file is the newer state.
+    pub fn merge_entries(&mut self, entries: &HashMap<String, PortTypeEntry>) {
+        for (label, entry) in entries {
+            self.types.insert(label.clone(), entry.clone());
+        }
     }
 
     /// Validate an agent's output against the schema for its `produces` type.

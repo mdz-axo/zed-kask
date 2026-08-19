@@ -596,6 +596,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
                 Ok(CondenserServer::new(
                     ctx.webid,
+                    Arc::new(hkask_verification::VerificationStore::open()),
                     Mutex::new(CondenserEngine::new()),
                     store,
                     Arc::clone(&inference_port),

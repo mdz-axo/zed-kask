@@ -9,6 +9,7 @@ description = "Context condensation MCP server — thin wrapper around hkask-con
 hkask-condenser.workspace = true
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
+hkask-verification.workspace = true
 hkask-memory.workspace = true
 hkask-storage.workspace = true
 hkask-inference.workspace = true

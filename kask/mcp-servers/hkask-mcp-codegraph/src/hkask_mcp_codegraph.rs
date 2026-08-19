@@ -764,6 +764,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             let pipeline = IndexPipeline::new(store);
             Ok(CodeGraphServer::new(
                 webid,
+                Arc::new(hkask_verification::VerificationStore::open()),
                 CapabilityTier::detect(&webid, &std::collections::HashMap::new()),
                 Arc::new(Mutex::new(pipeline)),
                 Arc::new(std::sync::atomic::AtomicBool::new(false)),

@@ -532,7 +532,7 @@ impl SwarmServer {
                     .and_then(|d| d.as_str())
                     .unwrap_or("")
                     .to_string();
-                let accepts = abw_card
+                let accepts: Vec<String> = abw_card
                     .get("accepts")
                     .and_then(|a| a.as_array())
                     .map(|arr| {
@@ -541,7 +541,7 @@ impl SwarmServer {
                             .collect()
                     })
                     .unwrap_or_default();
-                let produces = abw_card
+                let produces: Vec<String> = abw_card
                     .get("produces")
                     .and_then(|p| p.as_array())
                     .map(|arr| {
@@ -600,6 +600,8 @@ impl SwarmServer {
                 );
                 let skills =
                     filter_declared_skills(string_list(abw_caps.and_then(|c| c.get("skills"))));
+                let import_labels: Vec<String> =
+                    accepts.iter().chain(produces.iter()).cloned().collect();
                 let local_card = LocalAgentCard {
                     agent_id: clone_agent_id.clone(),
                     agent_type,
@@ -621,6 +623,14 @@ impl SwarmServer {
                     visibility: String::new(),
                     valence: None,
                 };
+                // The ABW catalogue's port labels are the card's own
+                // taxonomy, not locally-authored free strings. Register them
+                // as persisted extension types so `write_card`'s typing gate
+                // (and every future load) resolves them. Labels that already
+                // resolve are no-ops.
+                self.local_registry
+                    .promote_imported_port_types(&import_labels)
+                    .map_err(map_local_swarm_error)?;
                 // write_card runs Rung 1 (Presence) + Rung 2 (Typing) +
                 // sanitize/canonicalize/dir-write/load — same invariant as
                 // `swarm_create_local_agent`.

@@ -292,13 +292,6 @@ hkask_mcp_server::mcp_server!(
         /// four stores are read through `db.get()` on every tool call so a
         /// mid-process heal takes effect without a server restart.
         db: Arc<CuratorDb>,
-        /// Central grounding ledger — shared with hkask-mcp-kata-kanban and
-        /// hkask-mcp-swarm. The curator's grounding tools (`curator_grounding_trend`,
-        /// `curator_grounding_violations`, `curator_grounding_coverage`) query
-        /// this ledger to surface grounding trends to the operator (the
-        /// cybernetic feedback loop: enforcement → ledger → curator → user →
-        /// action → improved contracts → better enforcement).
-        verification_store: Arc<hkask_verification::VerificationStore>,
     }
 );
 

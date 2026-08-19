@@ -1663,6 +1663,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             let fred_api_key = ctx.credentials.get("HKASK_FRED_API_KEY").cloned();
             Ok(PredictionMarketsServer::new(
                 ctx.webid,
+                Arc::new(hkask_verification::VerificationStore::open()),
                 reqwest::Client::new(),
                 cache_ttl_secs,
                 std::sync::Arc::new(std::sync::Mutex::new(store)),

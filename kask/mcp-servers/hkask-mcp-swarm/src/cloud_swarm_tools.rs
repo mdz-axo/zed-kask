@@ -1376,7 +1376,7 @@ impl SwarmServer {
                 // Non-fatal: the app is already created by ABW, but the
                 // operator sees the warning so they can fix the team composition.
                 let unresolved_ports =
-                    validate_app_port_labels(&data, self.local_registry.port_registry());
+                    validate_app_port_labels(&data, &self.local_registry.port_registry());
                 let mut response = sanitize_workspace_payload(data);
                 if !unresolved_ports.is_empty() {
                     tracing::warn!(
