@@ -203,6 +203,7 @@ mod tests {
     #[test]
     fn parses_single_board_shape() {
         let body = r#"{"viz":"kanban","board_id":"b1","board_name":"Sprint 1","tasks":[
+            {"task_id":"t1","title":"Task A","status":"backlog","assignee":"alice"},
             {"task_id":"t2","title":"Task B","status":"done"}
         ]}"#;
         let parsed = parse_kanban_body(body).expect("valid body parses");
