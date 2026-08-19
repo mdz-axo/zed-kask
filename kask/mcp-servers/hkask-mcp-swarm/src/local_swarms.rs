@@ -25,6 +25,12 @@ use crate::error::LocalSwarmError;
 /// not exist in the registry is allowed (the roster is just ids; resolution to
 /// a card happens at delegation time, mirroring how ABW workspaces carry agent
 /// ids that may not yet be hired).
+///
+/// `member_sources` tracks the provenance of each member's addition (Gap 6
+/// fix — the ecology view needs a provenance signal without the full RBAC
+/// machinery). Backward-compatible: existing `swarm.json` files without this
+/// field deserialize with an empty vec; members added via `add_member` get a
+/// `MemberSource` entry with `source = "operator"`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LocalSwarm {
     pub swarm_id: String,
@@ -33,8 +39,30 @@ pub struct LocalSwarm {
     pub mission: String,
     #[serde(default)]
     pub members: Vec<String>,
+    /// Provenance for each member's addition. Aligned with `members` by
+    /// `agent_id` — a member without a `MemberSource` entry has unknown
+    /// provenance (backward compat with pre-Gap-6 `swarm.json` files).
+    #[serde(default)]
+    pub member_sources: Vec<MemberSource>,
     #[serde(default)]
     pub created_at: String,
+}
+
+/// The provenance of a member's addition to a local swarm. Mirrors fermi's
+/// `membership_source` field (`approved` / `curated_seed` / `admin_grant`) but
+/// without the RBAC machinery — local mode has no multi-tenant substrate to
+/// gate. The ecology view can color members by source without a full RBAC
+/// surface.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MemberSource {
+    pub agent_id: String,
+    /// How this member was added: `operator` (manual add), `curated_seed`
+    /// (loaded from a seed file), `swarm_intelligence` (added by the
+    /// Curator's composition decision), `clone` (cloned from ABW). Default
+    /// `operator`.
+    pub source: String,
+    /// RFC 3339 timestamp of when the member was added.
+    pub added_at: String,
 }
 
 /// Reads/writes local swarms from a local directory.
@@ -159,6 +187,14 @@ impl LocalSwarmRegistry {
             name: name.to_string(),
             mission: mission.to_string(),
             members,
+            member_sources: members
+                .iter()
+                .map(|id| MemberSource {
+                    agent_id: id.clone(),
+                    source: "curated_seed".to_string(),
+                    added_at: chrono::Utc::now().to_rfc3339(),
+                })
+                .collect(),
             created_at: chrono::Utc::now().to_rfc3339(),
         };
         self.write_swarm(&swarm)?;
@@ -185,6 +221,11 @@ impl LocalSwarmRegistry {
         }
         if !swarm.members.iter().any(|m| m == agent_id) {
             swarm.members.push(agent_id.to_string());
+            swarm.member_sources.push(MemberSource {
+                agent_id: agent_id.to_string(),
+                source: "operator".to_string(),
+                added_at: chrono::Utc::now().to_rfc3339(),
+            });
             self.write_swarm(&swarm)?;
         }
         Ok(swarm)
@@ -202,6 +243,7 @@ impl LocalSwarmRegistry {
         })?;
         let before = swarm.members.len();
         swarm.members.retain(|m| m != agent_id);
+        swarm.member_sources.retain(|ms| ms.agent_id != agent_id);
         if swarm.members.len() != before {
             self.write_swarm(&swarm)?;
         }
@@ -340,6 +382,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(swarm.members, vec!["agent_a", "agent_b"]);
+        // Seeded members get `curated_seed` provenance (Gap 6).
+        assert_eq!(swarm.member_sources.len(), 2);
+        assert!(
+            swarm
+                .member_sources
+                .iter()
+                .all(|ms| ms.source == "curated_seed")
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -352,20 +402,29 @@ mod tests {
 
         let updated = registry.add_member(&id, "agent_a").unwrap();
         assert_eq!(updated.members, vec!["agent_a"]);
+        // Added members get `operator` provenance (Gap 6).
+        assert_eq!(updated.member_sources.len(), 1);
+        assert_eq!(updated.member_sources[0].source, "operator");
 
-        // Idempotent add.
+        // Idempotent add — member_sources must not duplicate.
         let updated = registry.add_member(&id, "agent_a").unwrap();
         assert_eq!(updated.members, vec!["agent_a"]);
+        assert_eq!(updated.member_sources.len(), 1);
 
         let updated = registry.add_member(&id, "agent_b").unwrap();
         assert_eq!(updated.members, vec!["agent_a", "agent_b"]);
+        assert_eq!(updated.member_sources.len(), 2);
 
         let updated = registry.remove_member(&id, "agent_a").unwrap();
         assert_eq!(updated.members, vec!["agent_b"]);
+        // member_sources must be pruned in sync.
+        assert_eq!(updated.member_sources.len(), 1);
+        assert_eq!(updated.member_sources[0].agent_id, "agent_b");
 
         // Idempotent remove.
         let updated = registry.remove_member(&id, "agent_a").unwrap();
         assert_eq!(updated.members, vec!["agent_b"]);
+        assert_eq!(updated.member_sources.len(), 1);
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -396,6 +455,28 @@ mod tests {
         let dir = temp_swarms_dir("delunknown");
         let registry = LocalSwarmRegistry::new(&dir);
         assert!(registry.delete("nope").is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn legacy_swarm_json_without_member_sources_deserializes() {
+        // Backward compat: a `swarm.json` written before Gap 6 (no
+        // `member_sources` field) must deserialize with an empty vec,
+        // not fail. The `#[serde(default)]` on `member_sources` is what
+        // makes this work.
+        let dir = temp_swarms_dir("legacy");
+        let swarm_dir = std::path::Path::new(&dir).join("legacy_swarm");
+        std::fs::create_dir_all(&swarm_dir).unwrap();
+        let legacy_json = r#"{"swarm_id":"legacy_swarm","name":"Legacy","mission":"old","members":["agent_a"],"created_at":"2026-01-01T00:00:00Z"}"#;
+        std::fs::write(swarm_dir.join("swarm.json"), legacy_json).unwrap();
+        let registry = LocalSwarmRegistry::new(&dir);
+        let swarms = registry.list();
+        assert_eq!(swarms.len(), 1);
+        assert_eq!(swarms[0].members, vec!["agent_a"]);
+        assert!(
+            swarms[0].member_sources.is_empty(),
+            "legacy swarm must deserialize with empty member_sources"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

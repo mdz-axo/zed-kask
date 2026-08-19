@@ -172,10 +172,12 @@ pub(crate) async fn agent_memory_seed(
 
 /// Record a delegation performance annotation to the agent's prefix-scoped
 /// semantic memory — the ACO stigmergic pheromone trail. After each
-/// `swarm_delegate_local`, the latency and task-success verdict are written as
-/// `HMem` triples under `agent:<agent_id>:delegation`. The SENSE phase (or any
-/// caller) can then query these via `swarm_search_knowledge_local` to assess
-/// agent fitness across cascade invocations.
+/// `swarm_delegate_local`, the latency, task-success verdict, and response
+/// text are written as `HMem` triples under `agent:<agent_id>:delegation`. The
+/// SENSE phase (or any caller) can then query these via
+/// `swarm_search_knowledge_local` to assess agent fitness across cascade
+/// invocations, and the condenser's extraction pipeline can be applied to the
+/// persisted responses as a second step.
 ///
 /// Failures are logged with `tracing::warn!`, not swallowed (the `.rules` trap
 /// on silent error discarding — a failed stigmergy write must be visible in
@@ -184,13 +186,15 @@ pub(crate) async fn agent_memory_seed(
 ///
 /// Grounding annotations are no longer written here — they live in the
 /// central verification ledger (`hkask_verification::VerificationStore`),
-/// which is cross-tool and cross-server. The stigmergy trail retains only
-/// the latency and task-success annotations (the ACO pheromone signals).
+/// which is cross-tool and cross-server. The stigmergy trail retains the
+/// latency, task-success, and response annotations (the ACO pheromone signals
+/// + the dreaming substrate for the condenser).
 pub(crate) async fn record_delegation(
     memory: &LazyLocalMemory,
     agent_id: &str,
     latency_ms: u64,
     task_success_pass: Option<bool>,
+    response: &str,
 ) {
     let store = match memory.get_or_init().await {
         Ok(s) => s,
@@ -238,7 +242,7 @@ pub(crate) async fn record_delegation(
             serde_json::json!(pass),
             owner,
         )
-        .with_ontology(ontology);
+        .with_ontology(ontology.clone());
         h_mem.access.visibility = Visibility::Shared;
         if let Err(e) = store.store(h_mem) {
             tracing::warn!(
@@ -247,6 +251,33 @@ pub(crate) async fn record_delegation(
                 "stigmergy task_success write failed (non-fatal)"
             );
         }
+    }
+
+    // Write the delegation response as an experience record. This is the
+    // dreaming substrate — the condenser's extraction pipeline can be applied
+    // to these persisted responses as a second step, and the SENSE phase can
+    // recall them via `swarm_search_knowledge_local`. The response is capped
+    // at 64KB to prevent unbounded memory growth (mirrors the cap in
+    // `AgentExecutor::run`'s tool-result handling).
+    let capped_response: String = if response.len() > 64 * 1024 {
+        response.chars().take(64 * 1024).collect()
+    } else {
+        response.to_string()
+    };
+    let mut h_mem = HMem::new(
+        &entity,
+        "delegation:response",
+        serde_json::Value::String(capped_response),
+        owner,
+    )
+    .with_ontology(ontology);
+    h_mem.access.visibility = Visibility::Shared;
+    if let Err(e) = store.store(h_mem) {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            error = %e,
+            "stigmergy response write failed (non-fatal)"
+        );
     }
 }
 
@@ -301,7 +332,7 @@ mod tests {
             1024,
         );
         // This must not panic.
-        record_delegation(&m, "research_agent", 4200, Some(true)).await;
+        record_delegation(&m, "research_agent", 4200, Some(true), "test response").await;
         // If we reach here, the graceful degradation path works.
     }
 
@@ -326,7 +357,14 @@ mod tests {
         );
 
         // Write a delegation annotation.
-        record_delegation(&m, "research_agent", 4200, Some(true)).await;
+        record_delegation(
+            &m,
+            "research_agent",
+            4200,
+            Some(true),
+            "research findings: market growing",
+        )
+        .await;
 
         // Read it back — the entity prefix is "agent:research_agent:delegation".
         let fragments = search_agent_knowledge(&m, "research_agent", "delegation", 10)
@@ -349,6 +387,16 @@ mod tests {
         assert!(
             has_task_success,
             "stigmergy trail must contain the task_success annotation; got: {fragments:?}"
+        );
+
+        // The response annotation should also be present (Gap 1 fix — the
+        // delegation response is persisted as the dreaming substrate).
+        let has_response = fragments
+            .iter()
+            .any(|f| f.attribute == "delegation:response" && f.value.contains("research findings"));
+        assert!(
+            has_response,
+            "stigmergy trail must contain the response annotation; got: {fragments:?}"
         );
 
         // Cleanup.
@@ -376,7 +424,7 @@ mod tests {
         );
 
         // Write with no task_success (None).
-        record_delegation(&m, "creative_agent", 1500, None).await;
+        record_delegation(&m, "creative_agent", 1500, None, "creative output").await;
 
         let fragments = search_agent_knowledge(&m, "creative_agent", "delegation", 10)
             .await

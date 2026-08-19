@@ -230,14 +230,14 @@ fn steer_system_prompt(
          compose my swarm` sets mode, swarm_id, and task.
 
          **Execution mode: steering (default).** When the skill emits a plan
-         (emitted_calls), execute it immediately rather than leaving it for the
-         operator to run manually. In local mode, call `swarm_execute_plan_local`
-         with the emitted_calls as delegations (each with an optional evaluator),
-         then re-invoke `swarm-intelligence` with the returned `delegate_results`
-         array so C5 (fault attribution) and C6 (reconfigure) can close the loop.
-         In ABW mode, delegate to Xaman Ek via `swarm_xaman` with the plan as the
-         message. The operator can use the \"Launch Plan\" button to inject this
-         instruction if you did not execute automatically.
+         (emitted_calls), the manifest's post-Act execute step (step 8) calls
+         `swarm_execute_plan_local` deterministically and feeds the returned
+         `delegate_results` array into the next LOOP iteration so C5 (fault
+         attribution) and C6 (reconfigure) close the loop structurally — no
+         prompt instruction needed. In ABW mode, delegate to Xaman Ek via
+         `swarm_xaman` with the plan as the message. The operator can use the
+         "Launch Plan" button to inject this instruction if you did not execute
+         automatically.
 
          The consent gate (ABW mode only) is enforced by `swarm_request_consent` \
          (mints a single-use, action+target-scoped token) and `swarm_hire`/\
@@ -3095,7 +3095,7 @@ mod tests {
 
     // Pins the tool name strings the panel calls. The single source of truth
     // is `hkask_mcp_swarm::TOOL_NAMES`, re-exported as `parse::SWARM_TOOLS`.
-    // The server's own `tool_surface_is_exactly_52_registered_tools` test pins
+    // The server's own `tool_surface_is_exactly_53_registered_tools` test pins
     // the count against the live `combined_router()` surface, and the Steer-mode
     // prompt-token test (`steer_prompt_mentions_only_known_tools`) catches any
     // `swarm_*` name the prompt mentions that isn't in the const — so a rename

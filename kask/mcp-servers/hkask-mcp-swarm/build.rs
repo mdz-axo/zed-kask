@@ -2,7 +2,7 @@
 //!
 //! Scans `src/*.rs` for `pub(crate) async fn swarm_<name>` and emits a
 //! `pub const TOOL_NAMES: &[&str]` with the discovered fn names. This is the
-//! canonical tool-name list — the `tool_surface_is_exactly_52_registered_tools`
+//! canonical tool-name list — the `tool_surface_is_exactly_53_registered_tools`
 //! test in `hkask_mcp_swarm.rs` asserts it matches the live
 //! `combined_router().list_all()` surface, so drift is caught at test time.
 //!
@@ -25,7 +25,7 @@ fn main() {
     let out_path = Path::new(&out_dir).join("tool_names.gen.rs");
 
     // Regex: `pub(crate) async fn swarm_<name>(`
-    // All 52 tool fns follow this exact pattern (verified: no `name =` overrides,
+    // All 53 tool fns follow this exact pattern (verified: no `name =` overrides,
     // all start with `swarm_`). The `#[tool]` attribute may span multiple lines,
     // but the fn signature is always on one line.
     let pattern =

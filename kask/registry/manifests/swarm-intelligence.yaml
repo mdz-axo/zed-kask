@@ -6,8 +6,9 @@
 # agent-mediated state fetch in SENSE and CHECK:
 #   - Step 1: swarm_get_swarm (ABW mode — fetch workspace roster)
 #   - Step 2: swarm_get_local_swarm (local mode — fetch local swarm roster)
-#   - Step 8: swarm_get_swarm (ABW mode — re-fetch post-Act)
-#   - Step 9: swarm_get_local_swarm (local mode — re-fetch post-Act)
+#   - Step 8: swarm_execute_plan_local (local steering mode — execute the plan)
+#   - Step 9: swarm_get_swarm (ABW mode — re-fetch post-Act)
+#   - Step 10: swarm_get_local_swarm (local mode — re-fetch post-Act)
 # The ACT phase (swarm_delegate, swarm_delegate_local) remains agent-mediated
 # — consent-gated, requires human approval.
 #
@@ -167,13 +168,15 @@ inputs:
     type: string
     required: false
     description: >
-      How the swarm-intelligence output should be handled: "advisory" (default)
-      — the plan is the final output; the operator executes manually. "steering"
-      — the Kask Curator (local swarms) or Xaman Ek (cloud swarms) executes the
-      plan and feeds delegate_results back, closing the feedback loop
+      How the swarm-intelligence output should be handled: "steering" (default)
+      — the Kask Curator (local swarms) or Xaman Ek (cloud swarms) executes
+      the plan and feeds delegate_results back, closing the feedback loop
       autonomously (Option B). In steering mode, ACT emits a steering_directive
-      the Curator acts on. The skill's planning logic is mode-agnostic; the mode
-      governs the output framing and the execution boundary.
+      the Curator acts on, and a post-Act execute step calls
+      `swarm_execute_plan_local` to run the plan deterministically. "advisory"
+      — the plan is the final output; the operator executes manually. The
+      skill's planning logic is mode-agnostic; the mode governs the output
+      framing and the execution boundary.
   - name: kanban_board_id
     type: string
     required: false
@@ -365,18 +368,54 @@ steps:
       swarm_id: "{{ swarm_id }}"
       task: "{{ task }}"
       mode: "{{ mode | default('abw') }}"
-      steering_mode: "{{ steering_mode | default('advisory') }}"
+      steering_mode: "{{ steering_mode | default('steering') }}"
+
+  # ── POST-ACT EXECUTE (steering mode only) ──
+  # When steering_mode is "steering" and the ACT step emitted delegate calls,
+  # execute the plan deterministically via swarm_execute_plan_local. This
+  # closes the feedback loop structurally — the cascade itself executes the
+  # plan and feeds delegate_results into the next LOOP iteration, rather than
+  # relying on the Curator to follow the prompt instruction (Gap 4 fix).
+  # Condition-gated on local mode + steering mode. In ABW mode, Xaman Ek
+  # handles execution cloud-side; in advisory mode, the operator executes
+  # manually.
+  - ordinal: 8
+    action: execute
+    description: >
+      Execute the swarm-intelligence plan via swarm_execute_plan_local
+      (hkask-mcp-swarm) when in local steering mode. Condition-gated on
+      mode == 'local' AND steering_mode == 'steering'. The ACT step's
+      emitted_calls are mapped to the tool's delegations array. The tool
+      runs each delegation, evaluates results (when evaluators are provided),
+      and returns the collected LocalDelegateResult array with task_success
+      verdicts stamped. Result lands in step_8_result and feeds the LOOP
+      step's delegate_results input so the next iteration's ORIENT can
+      attribute fault (C5) and reconfigure (C6). Skipped in ABW mode (Xaman
+      Ek executes cloud-side) and in advisory mode (the operator executes
+      manually).
+    mcp: swarm_execute_plan_local
+    timeout_seconds: 300
+    condition: "mode == 'local' and steering_mode == 'steering'"
+    input_mapping:
+      delegations: "{{ step_7_result.emitted_calls | default([]) }}"
+    on_failure:
+      action: report
+      resume: >
+        swarm_execute_plan_local failed during steering — the hkask-mcp-swarm
+        server may be down or the agents may not be in the local registry.
+        Restart the server via sync_kask_mcp_servers and re-invoke, or switch
+        to advisory mode by passing steering_mode: 'advisory'.
 
   # ── CHECK state re-fetch (native MCP execute steps) ──
   # Re-fetches the swarm roster deterministically before the CHECK template
   # runs. Same condition-gated pair as the SENSE fetch (steps 1-2).
-  - ordinal: 8
+  - ordinal: 9
     action: execute
     description: >
       Re-fetch the ABW workspace roster via swarm_get_swarm (hkask-mcp-swarm)
       post-Act. Deterministic state re-fetch for the CHECK phase — replaces
       the former agent-mediated re-fetch. Condition-gated on ABW mode.
-      Result lands in step_8_result and feeds the CHECK template's
+      Result lands in step_9_result and feeds the CHECK template's
       post_act_state.
     mcp: swarm_get_swarm
     timeout_seconds: 60
@@ -389,13 +428,13 @@ steps:
         swarm_get_swarm failed during CHECK — the hkask-mcp-swarm server may
         be down. Restart the server via sync_kask_mcp_servers and re-invoke.
 
-  - ordinal: 9
+  - ordinal: 10
     action: execute
     description: >
       Re-fetch the local swarm roster via swarm_get_local_swarm
       (hkask-mcp-swarm) post-Act. Deterministic state re-fetch for the CHECK
       phase — replaces the former agent-mediated re-fetch. Condition-gated on
-      local mode. Result lands in step_9_result and feeds the CHECK
+      local mode. Result lands in step_10_result and feeds the CHECK
       template's post_act_state.
     mcp: swarm_get_local_swarm
     timeout_seconds: 60
@@ -409,11 +448,11 @@ steps:
         server may be down or the swarm_id may not exist. Restart the server
         via sync_kask_mcp_servers and re-invoke.
 
-  - ordinal: 10
+  - ordinal: 11
     action: select
     description: >
       CHECK: Re-measure the swarm state post-Act. Reads the re-fetched roster
-      from step_8_result (ABW) or step_9_result (local) — no longer fetches
+      from step_9_result (ABW) or step_10_result (local) — no longer fetches
       via the LLM's tool-use loop. Compute the convergence metric: composite
       swarm-state distance d = sqrt( (1 - variety_coverage)^2 + max(0,
       diversity_floor - diversity)^2 + (1 - loop_closure)^2 ). d = 0 means
@@ -438,9 +477,9 @@ steps:
       mode: "{{ mode | default('abw') }}"
       target_condition: "{{ target_condition | default({}) }}"
       task_success: "{{ task_success | default(none) }}"
-      fetched_post_act_state: "{{ step_8_result | default(step_9_result | default({})) }}"
+      fetched_post_act_state: "{{ step_9_result | default(step_10_result | default({})) }}"
 
-  - ordinal: 11
+  - ordinal: 12
     action: compute
     compute_ref: swarm.converge_accumulate
     description: >
@@ -461,15 +500,15 @@ steps:
       iteration_log: "{{ iteration_log | default([]) }}"
       failed_edits: "{{ failed_edits | default([]) }}"
       influence_scores: "{{ influence_scores | default({}) }}"
-      d: "{{ step_10_result.convergence_metric }}"
-      task_success: "{{ step_10_result.task_success | default(none) }}"
+      d: "{{ step_11_result.convergence_metric }}"
+      task_success: "{{ step_11_result.task_success | default(none) }}"
       deficit_class: "{{ step_4_result.deficit_class | default('') }}"
       decisions: "{{ step_6_result | default({}) }}"
       swarm_state: "{{ step_3_result | default({}) }}"
       agent_at_fault: "{{ step_4_result.agent_at_fault | default(none) }}"
       fault_count: "{{ fault_count | default({}) }}"
 
-  - ordinal: 12
+  - ordinal: 13
     action: compute
     compute_ref: swarm.second_order_monitor
     description: >
@@ -483,16 +522,16 @@ steps:
       DECIDE can diversify a stuck action and the Go See cadence (C2) can fire
       on the divergence trigger.
     input_mapping:
-      iteration_log: "{{ step_11_result.iteration_log | default([]) }}"
+      iteration_log: "{{ step_12_result.iteration_log | default([]) }}"
       loop_window: 3
       cadence_every: 3
 
-  - ordinal: 13
+  - ordinal: 14
     action: compute
     compute_ref: lisp.eval
     description: >
       Deterministic convergence signal: the convergence_metric from the
-      CHECK step (step 10). Lower signal variance across iterations =
+      CHECK step (step 11). Lower signal variance across iterations =
       convergence (Cauchy). Using lisp.eval instead of a Jinja expression
       makes the computation explicitly deterministic, budgeted
       (timeout_seconds: 10), and observable via a reg.skill.swarm-intelligence
@@ -501,12 +540,12 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((cm (assoc "convergence_metric" step_10_result)))
+        (let ((cm (assoc "convergence_metric" step_11_result)))
           (if (is_null cm) 0 cm))
       env:
-        step_10_result: "{{ step_10_result | default({}) }}"
+        step_11_result: "{{ step_11_result | default({}) }}"
 
-  - ordinal: 14
+  - ordinal: 15
     action: loop
     description: >
       Re-enter the swarm-intelligence cycle if convergence is not met. Routes
@@ -515,22 +554,29 @@ steps:
       and the second-order monitor's recommendation back so the next
       iteration's DECIDE can apply the failed-edit and influence guards and
       diversify a stuck action. Closes the feedback loop. The state-fetch
-      execute steps (1-2, 8-9) re-run on each iteration — the swarm state is
-      fresh on every SENSE and CHECK pass.
+      execute steps (1-2, 9-10) re-run on each iteration — the swarm state is
+      fresh on every SENSE and CHECK pass. In steering mode, the post-Act
+      execute step (8) also re-runs, feeding the executed delegate_results
+      into the next iteration's ORIENT.
     input_mapping:
       loop_target: "{{ 1 }}"
       prior_iteration:
-        lessons_learned: "{{ step_10_result.lessons_learned | default([]) }}"
-        next_focus: "{{ step_10_result.next_focus | default('') }}"
-        second_order: "{{ step_12_result | default({}) }}"
+        lessons_learned: "{{ step_11_result.lessons_learned | default([]) }}"
+        next_focus: "{{ step_11_result.next_focus | default('') }}"
+        second_order: "{{ step_13_result | default({}) }}"
       # Convergence signal from the deterministic lisp.eval compute step
-      # (step 13). No default(1.0): a Lisp failure must surface.
-      convergence_signal: "{{ step_13_result }}"
-      iteration_log: "{{ step_11_result.iteration_log | default([]) }}"
-      failed_edits: "{{ step_11_result.failed_edits | default([]) }}"
-      influence_scores: "{{ step_11_result.influence_scores | default({}) }}"
-      second_order: "{{ step_12_result | default({}) }}"
-      fault_count: "{{ step_11_result.fault_count | default({}) }}"
+      # (step 14). No default(1.0): a Lisp failure must surface.
+      convergence_signal: "{{ step_14_result }}"
+      iteration_log: "{{ step_12_result.iteration_log | default([]) }}"
+      failed_edits: "{{ step_12_result.failed_edits | default([]) }}"
+      influence_scores: "{{ step_12_result.influence_scores | default({}) }}"
+      second_order: "{{ step_13_result | default({}) }}"
+      fault_count: "{{ step_12_result.fault_count | default({}) }}"
+      # Steering mode (Gap 4 fix): feed the post-Act execute step's results
+      # into the next iteration as delegate_results so ORIENT can attribute
+      # fault (C5) and reconfigure (C6). Empty when steering mode is off or
+      # the step was skipped (condition gate).
+      delegate_results: "{{ step_8_result.results | default([]) }}"
 
 error_handling:
   on_timeout: retry
