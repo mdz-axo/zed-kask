@@ -82,13 +82,12 @@ inputs:
   - name: analyst_id
     type: string
     required: false
-    default: "zed-kask-operator"
     description: >
       Analyst identifier for forecast-ledger attribution. Persisted with
       IMAGINE's 3–5 falsifiable predictions (tagged by 5/10/20Y horizon) for
-      later Brier scoring — the IMAGINE kata loop. Defaults to
-      "zed-kask-operator" when not supplied; the invoking agent should resolve
-      `git config user.name` and pass it for proper attribution.
+      later Brier scoring — the IMAGINE kata loop. The invoking agent should
+      resolve `git config user.name` and pass it for proper attribution;
+      templates default to "zed-kask-operator" when absent.
   - name: flash_pipeline_output
     type: object
     required: false
