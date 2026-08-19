@@ -680,7 +680,7 @@ impl SwarmServer {
 
     /// Delegate a task to an agent in a workspace (spends credits). Consent-gated.
     #[tool(
-        description = "Delegate a task to an agent in an Agent Bestiary World workspace via @mention (full tool access, gas-charged). Spends credits — requires a consent_token from swarm_request_consent (action 'delegate', target = workspace_id)."
+        description = "Delegate a task to an agent in an Agent Bestiary World workspace via @mention (full tool access, budget-charged). Spends credits — requires a consent_token from swarm_request_consent (action 'delegate', target = workspace_id)."
     )]
     pub(crate) async fn swarm_delegate(&self, parameters: Parameters<DelegateRequest>) -> String {
         execute_tool_semantic(

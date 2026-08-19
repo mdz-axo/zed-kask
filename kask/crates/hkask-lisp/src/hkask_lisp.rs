@@ -1255,6 +1255,13 @@ pub fn from_json(value: &Value) -> LispValue {
 }
 
 /// Convert a `LispValue` into a `serde_json::Value`.
+///
+/// Association lists (lists of 2-element lists with string keys) are converted
+/// to JSON objects, so `(list (list "key" val) (list "key2" val2))` becomes
+/// `{"key": val, "key2": val2}`. This is the natural round-trip for structured
+/// data produced by lisp.eval compute steps — the alist is Lisp's native
+/// key-value representation, and downstream Jinja2 templates expect JSON
+/// objects for dot-path access.
 pub fn to_json(value: &LispValue) -> Value {
     match value {
         LispValue::Nil => Value::Null,
@@ -1265,10 +1272,49 @@ pub fn to_json(value: &LispValue) -> Value {
             .unwrap_or(Value::Null),
         LispValue::String(s) => Value::String(s.clone()),
         LispValue::Symbol(s) => Value::String(s.clone()),
-        LispValue::List(list) => Value::Array(list.to_vec().iter().map(to_json).collect()),
+        LispValue::List(list) => {
+            if list.is_nil() {
+                return Value::Array(Vec::new());
+            }
+            let items = list.to_vec();
+            if is_alist(&items) {
+                let mut map = serde_json::Map::new();
+                for pair in &items {
+                    if let LispValue::List(pair_list) = pair {
+                        let pair_items = pair_list.to_vec();
+                        if pair_items.len() == 2 {
+                            if let LispValue::String(key) = &pair_items[0] {
+                                map.insert(key.clone(), to_json(&pair_items[1]));
+                            }
+                        }
+                    }
+                }
+                Value::Object(map)
+            } else {
+                Value::Array(items.iter().map(to_json).collect())
+            }
+        }
         LispValue::Lambda { .. } => Value::String("<lambda>".into()),
         LispValue::NativeFunc(_) => Value::String("<native-function>".into()),
     }
+}
+
+/// Check if a list of LispValues is an association list — every element is a
+/// 2-element list whose first element is a string. An empty list is NOT an
+/// alist (it stays as an empty JSON array to avoid ambiguity with an empty
+/// object, which could mask missing data).
+fn is_alist(items: &[LispValue]) -> bool {
+    if items.is_empty() {
+        return false;
+    }
+    items.iter().all(|item| {
+        if let LispValue::List(pair) = item {
+            let pair_items = pair.to_vec();
+            pair_items.len() == 2 && matches!(pair_items[0], LispValue::String(_))
+        } else {
+            false
+        }
+    })
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────

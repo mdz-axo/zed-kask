@@ -2053,20 +2053,12 @@ mod tests {
             }
         });
         let result = dispatch_compute("lisp.eval", &valid_input).unwrap();
-        let pairs = result.as_array().expect("result should be a list of pairs");
-        let passed = pairs
-            .iter()
-            .find(|p| {
-                p.as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|v| v.as_str())
-                    == Some("verification_passed")
-            })
-            .and_then(|p| {
-                p.as_array()
-                    .and_then(|a| a.get(1))
-                    .and_then(|v| v.as_bool())
-            })
+        let obj = result
+            .as_object()
+            .expect("result should be a JSON object (alist round-trip)");
+        let passed = obj
+            .get("verification_passed")
+            .and_then(|v| v.as_bool())
             .unwrap_or(false);
         assert!(passed, "all-true JSON booleans should pass verification");
 
@@ -2086,20 +2078,12 @@ mod tests {
             }
         });
         let result = dispatch_compute("lisp.eval", &string_false_input).unwrap();
-        let pairs = result.as_array().expect("result should be a list of pairs");
-        let passed = pairs
-            .iter()
-            .find(|p| {
-                p.as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|v| v.as_str())
-                    == Some("verification_passed")
-            })
-            .and_then(|p| {
-                p.as_array()
-                    .and_then(|a| a.get(1))
-                    .and_then(|v| v.as_bool())
-            })
+        let obj = result
+            .as_object()
+            .expect("result should be a JSON object (alist round-trip)");
+        let passed = obj
+            .get("verification_passed")
+            .and_then(|v| v.as_bool())
             .unwrap_or(true);
         assert!(
             !passed,
@@ -2145,20 +2129,12 @@ mod tests {
             }
         });
         let result = dispatch_compute("lisp.eval", &boolean_input).unwrap();
-        let pairs = result.as_array().expect("result should be a list of pairs");
-        let passed = pairs
-            .iter()
-            .find(|p| {
-                p.as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|v| v.as_str())
-                    == Some("verification_passed")
-            })
-            .and_then(|p| {
-                p.as_array()
-                    .and_then(|a| a.get(1))
-                    .and_then(|v| v.as_bool())
-            })
+        let obj = result
+            .as_object()
+            .expect("result should be a JSON object (alist round-trip)");
+        let passed = obj
+            .get("verification_passed")
+            .and_then(|v| v.as_bool())
             .unwrap_or(true);
         assert!(
             !passed,
@@ -2360,20 +2336,12 @@ mod tests {
             }
         });
         let result = dispatch_compute("lisp.eval", &balanced).unwrap();
-        let pairs = result.as_array().expect("result should be a list of pairs");
-        let verified = pairs
-            .iter()
-            .find(|p| {
-                p.as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|v| v.as_str())
-                    == Some("conservation_verified")
-            })
-            .and_then(|p| {
-                p.as_array()
-                    .and_then(|a| a.get(1))
-                    .and_then(|v| v.as_bool())
-            })
+        let obj = result
+            .as_object()
+            .expect("result should be a JSON object (alist round-trip)");
+        let verified = obj
+            .get("conservation_verified")
+            .and_then(|v| v.as_bool())
             .unwrap_or(false);
         assert!(verified, "balanced mandatory conservation should verify");
 
@@ -2407,20 +2375,12 @@ mod tests {
             }
         });
         let result = dispatch_compute("lisp.eval", &unbalanced).unwrap();
-        let pairs = result.as_array().expect("result should be a list of pairs");
-        let verified = pairs
-            .iter()
-            .find(|p| {
-                p.as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|v| v.as_str())
-                    == Some("conservation_verified")
-            })
-            .and_then(|p| {
-                p.as_array()
-                    .and_then(|a| a.get(1))
-                    .and_then(|v| v.as_bool())
-            })
+        let obj = result
+            .as_object()
+            .expect("result should be a JSON object (alist round-trip)");
+        let verified = obj
+            .get("conservation_verified")
+            .and_then(|v| v.as_bool())
             .unwrap_or(true);
         assert!(
             !verified,
@@ -2436,17 +2396,10 @@ mod tests {
             }
         });
         let result = dispatch_compute("lisp.eval", &non_mandatory).unwrap();
-        let pairs = result.as_array().expect("result should be a list of pairs");
-        let check_mode = pairs
-            .iter()
-            .find(|p| {
-                p.as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|v| v.as_str())
-                    == Some("check_mode")
-            })
-            .and_then(|p| p.as_array().and_then(|a| a.get(1)).and_then(|v| v.as_str()))
-            .unwrap_or("");
+        let obj = result
+            .as_object()
+            .expect("result should be a JSON object (alist round-trip)");
+        let check_mode = obj.get("check_mode").and_then(|v| v.as_str()).unwrap_or("");
         assert_eq!(
             check_mode, "skipped",
             "non-mandatory mode should be skipped"

@@ -130,7 +130,7 @@ impl KanbanService {
         Ok(fixes)
     }
 
-    /// Shared branch for the gas/rJoule exhaustion auto-complete in `unjam_fix`:
+    /// Shared branch for the rJoule exhaustion auto-complete in `unjam_fix`:
     /// if the task has been at zero budget for > 1 hour (grace period for the
     /// delegator to respond), call `exhaust` and push an `UnjamFix` recording
     /// the outcome. `ok_action` is the success label; `err_prefix` prefixes the

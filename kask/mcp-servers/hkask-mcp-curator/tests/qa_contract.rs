@@ -874,7 +874,7 @@ mod reg_query {
                 .expect("regulation archive init"),
         );
         for i in 0..4 {
-            persist_regulation_event(&regulation_store, &format!("gas_{i}"));
+            persist_regulation_event(&regulation_store, &format!("pod_{i}"));
         }
         for i in 0..2 {
             persist_regulation_event_with_span(

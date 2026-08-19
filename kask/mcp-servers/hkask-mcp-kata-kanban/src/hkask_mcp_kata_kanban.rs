@@ -865,7 +865,7 @@ impl KanbanServer {
     }
 
     #[tool(
-        description = "Reopen a completed task (Done → InProgress) with optional new gas/rJoule budgets"
+        description = "Reopen a completed task (Done → InProgress) with optional new rJoule budgets"
     )]
     pub async fn kanban_task_reopen(
         &self,

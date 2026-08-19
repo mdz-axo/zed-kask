@@ -221,8 +221,6 @@ pub struct ThreadSummaryRequest {
     pub messages: Vec<AnyJsonValue>,
     /// The current user query for relevance-weighted summarization.
     pub current_query: String,
-    /// Maximum tokens for the summary output (default 500).
-    pub max_tokens: Option<u32>,
     /// Override the server's default inference model.
     /// When provided, this model is used instead of the server-configured default.
     /// Supports provider-prefixed names (ollama/, FW/, DeepInfra/) for backend routing.

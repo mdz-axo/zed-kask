@@ -533,17 +533,8 @@ fn extract_lisp_form(manifest: &hkask_templates::BundleManifest, ordinal: u32) -
 fn gorilla_lisp_form_handles_float_step_6_result() {
     // Regression: step_6_result arrives as a float (LLM returned a scalar, not
     // a JSON object). The form must return DATA_MISSING, not crash.
-    // First test with a hardcoded form to verify the lisp interpreter handles it.
-    let hardcoded_form = "(if (not (listp step_6_result)) (list (list \"gorilla_score\" nil) (list \"verdict\" \"DATA_MISSING\")) \"OK\")";
-    let env_simple = json!({"step_6_result": 75.0});
-    let result_simple =
-        eval_sandboxed(hardcoded_form, &env_simple).expect("hardcoded form must not error");
-    eprintln!("DEBUG hardcoded result: {:?}", result_simple);
-
     let manifest = load_named_manifest("company-research-deep");
     let form = extract_lisp_form(&manifest, 8);
-    eprintln!("DEBUG extracted form (first 300 chars): {:.300}", form);
-    eprintln!("DEBUG form length: {}", form.len());
     let env = json!({
         "step_6_result": 75.0,
         "step_7_result": {}

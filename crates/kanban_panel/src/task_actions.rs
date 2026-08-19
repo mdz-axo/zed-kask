@@ -17,7 +17,6 @@ pub(crate) struct CreateTaskForm {
     pub title: Entity<Editor>,
     pub description: Entity<Editor>,
     pub criteria: Entity<Editor>,
-    pub gas_budget: Entity<Editor>,
 }
 
 impl CreateTaskForm {
@@ -42,9 +41,7 @@ impl CreateTaskForm {
                 );
                 editor
             }),
-            gas_budget: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Gas budget (optional)", window, cx);
                 editor
             }),
         }
@@ -55,7 +52,6 @@ impl CreateTaskForm {
         let title = self.title.read(cx).text(cx);
         let description = self.description.read(cx).text(cx);
         let criteria_text = self.criteria.read(cx).text(cx);
-        let gas_text = self.gas_budget.read(cx).text(cx);
 
         let mut args = json!({
             "board_id": board_id,
@@ -76,7 +72,6 @@ impl CreateTaskForm {
             }
         }
         if let Ok(budget) = gas_text.trim().parse::<u64>() {
-            args["gas_budget"] = json!(budget);
         }
         args
     }
@@ -175,7 +170,6 @@ pub(crate) struct SpawnTaskForm {
     pub skills: Entity<Editor>,
     pub delegation_level: Entity<Editor>,
     pub swarm_id: Entity<Editor>,
-    pub gas_budget: Entity<Editor>,
     /// The task id to spawn.
     pub task_id: String,
 }
@@ -211,9 +205,7 @@ impl SpawnTaskForm {
                 editor.set_placeholder_text("Swarm id (optional)", window, cx);
                 editor
             }),
-            gas_budget: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Gas budget (optional)", window, cx);
                 editor
             }),
             task_id: task_id.to_string(),
@@ -225,7 +217,6 @@ impl SpawnTaskForm {
         let skills_text = self.skills.read(cx).text(cx);
         let level = self.delegation_level.read(cx).text(cx);
         let swarm_id = self.swarm_id.read(cx).text(cx);
-        let gas_text = self.gas_budget.read(cx).text(cx);
 
         let mut args = json!({
             "task_id": self.task_id,
@@ -244,7 +235,6 @@ impl SpawnTaskForm {
             args["swarm_id"] = json!(swarm_id);
         }
         if let Ok(budget) = gas_text.trim().parse::<u64>() {
-            args["gas_budget"] = json!(budget);
         }
         args
     }
@@ -277,7 +267,6 @@ pub(crate) fn render_create_task_form(
         .child(
             h_flex()
                 .gap_2()
-                .child(div().w_32().child(form.gas_budget.clone()))
                 .child(
                     div()
                         .id("kanban-create-task-submit")
@@ -413,7 +402,6 @@ pub(crate) fn render_spawn_task_form(
         .child(
             h_flex()
                 .gap_2()
-                .child(div().w_32().child(form.gas_budget.clone()))
                 .child(
                     div()
                         .id("kanban-spawn-task-submit")
