@@ -123,16 +123,56 @@ steps:
     compute_ref: lisp.eval
     description: >
       Deterministic convergence signal: the threat count from the report
-      step. Lower signal variance across iterations = convergence (Cauchy).
-      Using lisp.eval instead of a Jinja expression makes the computation
-      explicitly deterministic, budgeted (timeout_seconds: 10), and observable via
-      a reg.skill.runtime-posture-monitor span. Guards against a missing
-      threats field by returning 0 when absent.
+      step PLUS the count of structural defects in proposed_regressions
+      (bad severity, bad detection.kind, or empty pattern). Lower signal
+      variance across iterations = convergence (Cauchy). Using lisp.eval
+      instead of a Jinja expression makes the computation explicitly
+      deterministic, budgeted (timeout_seconds: 10), and observable via
+      a reg.skill.runtime-posture-monitor span. A hallucinated RR proposal
+      (e.g., severity 'blocker', detection.kind 'runtime') is now a
+      cascade defect instead of prose a human must hand-check. Guards
+      against a missing threats field by returning 0 when absent.
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((threats (assoc "threats" step_4_result)))
-          (if (is_null threats) 0 (length threats)))
+        (let ((threats (assoc "threats" step_4_result))
+              (proposed (assoc "proposed_regressions" step_4_result)))
+          (begin
+            (define valid-sev
+              (lambda (s)
+                (if (string= s "critical") true
+                (if (string= s "high") true
+                (if (string= s "medium") true
+                (if (string= s "low") true false))))))
+            (define valid-kind
+              (lambda (k)
+                (if (string= k "grep") true
+                (if (string= k "cargo-test") true
+                (if (string= k "skill-probe") true
+                (if (string= k "reg-span") true false))))))
+            (define check-rr
+              (lambda (rs acc)
+                (if (is_null rs)
+                    acc
+                    (let ((r (car rs))
+                          (sev (assoc "severity" r))
+                          (det (assoc "detection" r))
+                          (kind (if (is_null det) (list) (assoc "kind" det)))
+                          (pat (if (is_null det) (list) (assoc "pattern" det))))
+                      (let ((sev-ok (valid-sev sev))
+                            (kind-ok (valid-kind kind))
+                            (pat-ok (not (is_null pat))))
+                        (check-rr
+                          (cdr rs)
+                          (+ acc
+                             (if (not sev-ok) 1 0)
+                             (if (not kind-ok) 1 0)
+                             (if (not pat-ok) 1 0))))))))
+            (define rr-defects
+              (if (is_null proposed) 0 (check-rr proposed 0)))
+            (define threats-count
+              (if (is_null threats) 0 (length threats)))
+            (+ threats-count rr-defects)))
       env:
         step_4_result: "{{ step_4_result | default({}) }}"
 
