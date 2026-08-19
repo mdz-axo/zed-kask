@@ -44,7 +44,6 @@ manifest:
   functional_role: flowdef
   version: "0.35.0"
   editor: curator-or-human-admin
-  visibility: Public
   # Layer A opt-in: enforce the declared `inputs` contract at the skill-execution
   # boundary. A code-review invocation that omits a required input
   # (`change_spec`/`diff_base`) or passes a wrong-typed `context` value is

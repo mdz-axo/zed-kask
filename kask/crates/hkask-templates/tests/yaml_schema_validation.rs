@@ -25,8 +25,6 @@ struct ManifestHeader {
     description: String,
     version: String,
     #[serde(default)]
-    visibility: Option<String>,
-    #[serde(default)]
     functional_role: Option<String>,
 }
 
@@ -85,18 +83,12 @@ fn all_skill_manifests_are_well_formed() {
                             "{}: manifest.version is empty",
                             path.display()
                         );
-                        // P11: visibility must be present and canonical (Public or Private only)
-                        let vis = mf.manifest.visibility.as_deref().unwrap_or("");
-                        assert!(
-                            !vis.is_empty(),
-                            "{}: manifest.visibility is missing",
-                            path.display()
-                        );
-                        assert!(
-                            vis == "Public" || vis == "Private",
-                            "{}: manifest.visibility is '{vis}' — must be Public or Private (P11)",
-                            path.display()
-                        );
+                        // (P11 visibility check removed: the manifest `visibility`
+                        // field was deleted with the unwired kask-side
+                        // skill-visibility chain — the zed-side
+                        // `SkillVisibility` marketplace flag is the live
+                        // visibility surface. `deny_unknown_fields` now
+                        // rejects any manifest that still declares it.)
                         // functional_role should be present if the manifest uses it
                         // (Note: some manifests like kata and improv use alternative structural schemas)
                     }

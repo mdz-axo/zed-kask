@@ -76,7 +76,6 @@ manifest:
   functional_role: flowdef
   version: "0.35.0"
   editor: curator-or-human-admin
-  visibility: Public
   # Layer A opt-in: enforce the declared `inputs` contract at the skill-execution
   # boundary. The primary input is `target_condition`, mapped from `{{ task }}`
   # (the user's natural-language request, injected by the skill tool as
