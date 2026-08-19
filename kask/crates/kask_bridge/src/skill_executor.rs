@@ -19,10 +19,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fs::Fs;
-use hkask_templates::{
-    CascadeOutcome, ManifestExecutor, apply_input_defaults, load_manifest_from_yaml,
-    validate_inputs,
-};
+use hkask_templates::{CascadeOutcome, ManifestExecutor, load_manifest_from_yaml, validate_inputs};
 use hkask_types::InferencePort;
 use serde_json::Value;
 use std::path::Path;
@@ -800,17 +797,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             }
         }
 
-        // Layer A: apply declared `default` values for absent inputs, then
-        // enforce the manifest's declared `inputs` contract (required + type).
-        let defaults_applied = apply_input_defaults(manifest.inputs.as_ref(), &mut context);
-        if defaults_applied > 0 {
-            tracing::debug!(
-                target: "hkask.skill_executor",
-                skill = skill_name,
-                defaults_applied,
-                "applied manifest-declared default values for absent inputs",
-            );
-        }
+        // Layer A: enforce the manifest's declared `inputs` contract.
         if let Err(e) = validate_inputs(
             manifest.enforce_inputs,
             manifest.inputs.as_ref(),
@@ -1031,12 +1018,90 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         progress: Option<agent::CascadeProgress>,
         title: Option<agent::CascadeProgress>,
     ) -> Result<agent::BundleExecutionResult, String> {
-        // Phase 1: Run the skill-bundler manifest to compose a BundleManifest.
-        // The bundler cascade is: goal-extract → compose → deterministic coverage
-        // recompute → synthesize → validate → lisp.eval score → evolve → loop.
-        // The composed manifest is at step_4_result.candidates[0].composite_manifest.
-        let bundler_context = {
-            let mut ctx = context;
+        // Phase 1: Run all skills concurrently via tokio. Each skill gets
+        // its own manifest cascade with the shared context + task. We use
+        // allSettled semantics — a skill error is captured as an error
+        // string in the output array, not a hard abort. The merge step
+        // handles errored skills explicitly.
+        let task_string = task.to_string();
+        let mut cascade_handles = Vec::with_capacity(skill_names.len());
+
+        for skill_name in skill_names {
+            let skill_context = {
+                let mut ctx = context.clone();
+                ctx.insert("task".to_string(), Value::String(task_string.clone()));
+                ctx.insert(
+                    "user_intent".to_string(),
+                    Value::String(task_string.clone()),
+                );
+                self.inject_model_defaults(&mut ctx);
+                ctx
+            };
+
+            let skill_name_owned = skill_name.clone();
+            let progress_clone = progress.clone();
+            let title_clone = title.clone();
+
+            // Spawn each skill's cascade on the tokio runtime so they run
+            // truly concurrently. `run_manifest_cascade` already spawns
+            // internally, but we need all N spawns to happen before we
+            // start awaiting any of them — wrapping in join_all ensures
+            // this.
+            let handle = self.tokio_handle.spawn(async move {
+                let result = self
+                    .run_manifest_cascade(
+                        &skill_name_owned,
+                        skill_context,
+                        progress_clone,
+                        title_clone,
+                    )
+                    .await;
+                (skill_name_owned, result)
+            });
+            cascade_handles.push(handle);
+        }
+
+        // Await all cascades concurrently (not sequentially).
+        let cascade_results = futures::future::join_all(cascade_handles)
+            .await
+            .into_iter()
+            .map(|join_result| join_result.map_err(|e| format!("Cascade task panicked: {e}")))
+            .collect::<Result<Vec<_>, String>>()?;
+
+        // Collect outputs in the same order as skill_names. Errored
+        // skills produce a JSON object with an `error` field so the merge
+        // template can distinguish them from successful outputs.
+        let mut skill_outputs = Vec::with_capacity(cascade_results.len());
+        for (skill_name, result) in cascade_results {
+            match result {
+                Ok(outcome) => {
+                    let output_text = extract_final_step_result(&outcome);
+                    skill_outputs.push(serde_json::json!({
+                        "skill": skill_name,
+                        "output": output_text,
+                        "errored": false,
+                    }));
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "reg.skill.bundle_compose",
+                        skill = %skill_name,
+                        error = %error,
+                        "Parallel skill cascade failed — including error in merge input",
+                    );
+                    skill_outputs.push(serde_json::json!({
+                        "skill": skill_name,
+                        "output": error,
+                        "errored": true,
+                    }));
+                }
+            }
+        }
+
+        // Phase 2: Run the skill-bundler merge manifest to synthesize all
+        // outputs into a single unified report.
+        let merge_context = {
+            let mut ctx = HashMap::new();
             ctx.insert(
                 "skill_names".to_string(),
                 Value::Array(
@@ -1046,282 +1111,25 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                         .collect(),
                 ),
             );
-            ctx.insert("user_intent".to_string(), Value::String(task.to_string()));
+            ctx.insert("task".to_string(), Value::String(task_string));
+            ctx.insert("skill_outputs".to_string(), Value::Array(skill_outputs));
             ctx
         };
 
-        // Run the skill-bundler cascade and get the full context back (not
-        // just the final text) so we can extract the composed manifest and
-        // the composition score structurally.
-        let bundler_result = self
-            .run_manifest_cascade(
-                "skill-bundler",
-                bundler_context,
-                progress.clone(),
-                title.clone(),
-            )
+        let merge_result = self
+            .run_manifest_cascade("skill-bundler", merge_context, progress, title)
             .await?;
 
-        // Extract the composed manifest from step_4_result.candidates[0].composite_manifest.
-        // The synthesize step (ordinal 4) produces a `candidates` array; the first
-        // candidate's `composite_manifest` is the governed BundleManifest.
-        let bundle_manifest_json = bundler_result
-            .context
-            .lookup("step_4_result")
-            .and_then(|v| v.get("candidates"))
-            .and_then(|c| c.get(0))
-            .and_then(|c| c.get("composite_manifest"))
-            .cloned()
-            .ok_or_else(|| {
-                "skill-bundler cascade did not produce a composite_manifest at \
-                 step_4_result.candidates[0].composite_manifest — the synthesize \
-                 step may have failed or produced no candidates"
-                    .to_string()
-            })?;
-
-        // Extract the deterministic composition score from step_6_result
-        // (the lisp.eval score step). This is the falsifier anchor — if lisp.eval
-        // were removed, this would be absent and the UI's score display
-        // would degrade to "unavailable".
-        let composition_score = bundler_result
-            .context
-            .lookup("step_6_result")
-            .and_then(|v| v.as_f64());
-
-        // Extract the goal-extract step's output (step_1_result) so the
-        // `Refine` action can pass it to `bundler-evolve` as `goal_context`.
-        // Without it, the evolve step runs blind — it can't reference the
-        // original goal. `Null` if the bundler cascade didn't produce it.
-        let goal_context = bundler_result
-            .context
-            .lookup("step_1_result")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-
-        // Extract the skill names actually placed in the composed manifest
-        // (may differ from the input if the bundler dropped a skill via
-        // dead-letter resolution).
-        let composed_skill_names = bundler_result
-            .context
-            .lookup("step_2_result")
-            .and_then(|v| v.get("bundle_manifest"))
-            .and_then(|bm| bm.get("skills"))
-            .and_then(|s| s.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(String::from))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| skill_names.to_vec());
-
-        // Phase 2: Load the composed manifest and execute its cascade.
-        let manifest_json_string = serde_json::to_string(&bundle_manifest_json)
-            .map_err(|e| format!("Failed to serialize composed manifest: {e}"))?;
-        let manifest = load_manifest_from_yaml(&manifest_json_string)
-            .map_err(|e| format!("Failed to load composed manifest: {e}"))?;
-
-        // Validate the composed manifest before execution. A manifest that
-        // fails validation should still proceed (best-available) but the
-        // operator gets a warning signal — the .rules "advertised invariants
-        // need enforcement points" trap.
-        let validation = manifest.validate();
-        if !validation.errors.is_empty() {
-            tracing::warn!(
-                target: "reg.skill.bundle_compose",
-                errors = ?validation.errors,
-                skill_names = ?composed_skill_names,
-                "bundler-validate failed on the composed manifest — proceeding with \
-                 best-available manifest. The composition may have structural issues.",
-            );
-        }
-
-        let execution_context = HashMap::new();
-        let output = self
-            .execute_manifest_direct(&manifest, execution_context, progress, title)
-            .await?;
+        let merged_report = extract_final_step_result(&merge_result);
 
         Ok(agent::BundleExecutionResult {
-            bundle_manifest: bundle_manifest_json,
-            output,
-            composition_score,
-            composed_skill_names,
-            goal_context,
-        })
-    }
-
-    async fn save_bundle(&self, bundle_manifest: serde_json::Value) -> Result<String, String> {
-        // The composed manifest JSON from the bundler cascade is a flat
-        // structure (id, name, steps, ... at the top level). The on-disk
-        // `ManifestFile` format wraps the header fields under a `manifest:`
-        // key with `steps`, `skills`, etc. as siblings. Reshape into that
-        // form before serializing to YAML so `load_manifest_from_yaml` can
-        // round-trip the saved file.
-        let manifest_file_json = reshape_composite_to_manifest_file(&bundle_manifest);
-        let yaml_string = serde_yaml_neo::to_string(&manifest_file_json)
-            .map_err(|e| format!("Failed to serialize bundle manifest to YAML: {e}"))?;
-
-        let raw_id = bundle_manifest
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(String::from)
-            .ok_or_else(|| {
-                "bundle manifest has no `id` field — cannot save without an id".to_string()
-            })?;
-
-        // Namespace the bundle ID with a `bundle-` prefix to prevent the
-        // model-generated ID from colliding with an existing skill manifest
-        // (e.g. if the model produces `id: "grill-me"`, this becomes
-        // `bundle-grill-me` and won't overwrite `grill-me.yaml`).
-        let namespaced_id = if raw_id.starts_with("bundle-") {
-            raw_id
-        } else {
-            format!("bundle-{raw_id}")
-        };
-
-        let path = self.manifest_path(&namespaced_id);
-
-        // Guard against overwriting an existing manifest at the namespaced
-        // path. A collision here means a prior save used the same ID — the
-        // operator should choose a different name or accept the overwrite
-        // explicitly (future enhancement: prompt for confirmation).
-        if path.is_file() {
-            return Err(format!(
-                "A bundle manifest already exists at {} (id: {}). \
-                 Choose a different bundle ID or remove the existing file first.",
-                path.display(),
-                namespaced_id
-            ));
-        }
-
-        std::fs::write(&path, yaml_string.as_bytes())
-            .map_err(|e| format!("Failed to write bundle manifest to {}: {e}", path.display()))?;
-
-        tracing::info!(
-            target: "reg.skill.bundle_save",
-            bundle_id = %namespaced_id,
-            path = %path.display(),
-            "Saved composed bundle manifest to registry"
-        );
-        Ok(namespaced_id)
-    }
-
-    async fn refine_bundle(
-        &self,
-        bundle_manifest: serde_json::Value,
-        goal_context: serde_json::Value,
-        goal_delta: f64,
-        convergence_failure_reason: String,
-    ) -> Result<agent::BundleExecutionResult, String> {
-        // Run the `skill-bundler/bundler-evolve` template via a minimal
-        // single-step manifest, then execute the evolved manifest's cascade.
-        // The evolve template's contract declares `evolved_manifest` as an
-        // output field; the executor's structured-output extraction stores
-        // the parsed JSON under `step_1_result`.
-        let bundle_name = bundle_manifest
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("composite-skill")
-            .to_string();
-
-        let evolve_context = {
-            let mut ctx = HashMap::new();
-            ctx.insert("bundle_name".to_string(), Value::String(bundle_name));
-            ctx.insert("current_manifest".to_string(), bundle_manifest);
-            ctx.insert("changed_skills".to_string(), Value::Array(vec![]));
-            ctx.insert("goal_context".to_string(), goal_context);
-            ctx.insert("goal_delta".to_string(), serde_json::json!(goal_delta));
-            ctx.insert(
-                "convergence_failure_reason".to_string(),
-                Value::String(convergence_failure_reason),
-            );
-            self.inject_model_defaults(&mut ctx);
-            ctx
-        };
-
-        // Construct a minimal single-step manifest wrapping the evolve
-        // template. The input_mapping mirrors ordinal 6 of skill-bundler.yaml
-        // so the evolve template receives the same bindings the full cascade
-        // would produce.
-        let refine_manifest_yaml = r#"
-manifest:
-  id: refine-bundle
-  name: Refine Bundle
-  description: Single-step goal-delta-driven bundle refinement
-steps:
-  - ordinal: 1
-    action: know
-    description: Refine bundle via goal-delta evolution
-    renderer: minijinja
-    template_ref: skill-bundler/bundler-evolve
-    timeout_seconds: 60
-    input_mapping:
-      bundle_name: "{{ bundle_name }}"
-      current_manifest: "{{ current_manifest }}"
-      changed_skills: "{{ changed_skills }}"
-      goal_context: "{{ goal_context }}"
-      goal_delta: "{{ goal_delta }}"
-      convergence_failure_reason: "{{ convergence_failure_reason }}"
-"#;
-
-        let refine_manifest = load_manifest_from_yaml(refine_manifest_yaml)
-            .map_err(|e| format!("Failed to load refine manifest: {e}"))?;
-
-        let refine_result = self
-            .run_manifest_cascade_with_manifest(
-                &refine_manifest,
-                evolve_context,
-                Vec::new(),
-                Vec::new(),
-                None,
-                None,
-            )
-            .await?;
-
-        // Extract the evolved manifest from step_1_result.evolved_manifest.
-        let evolved_manifest_json = refine_result
-            .context
-            .lookup("step_1_result")
-            .and_then(|v| v.get("evolved_manifest"))
-            .cloned()
-            .ok_or_else(|| {
-                "bundler-evolve did not produce `evolved_manifest` in step_1_result — \
-                 the evolve step may have failed or returned an unexpected shape"
-                    .to_string()
-            })?;
-
-        // Extract the evolved skill names.
-        let composed_skill_names = evolved_manifest_json
-            .get("skills")
-            .and_then(|s| s.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(String::from))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        // Load and execute the evolved manifest.
-        let manifest_json_string = serde_json::to_string(&evolved_manifest_json)
-            .map_err(|e| format!("Failed to serialize evolved manifest: {e}"))?;
-        let manifest = load_manifest_from_yaml(&manifest_json_string)
-            .map_err(|e| format!("Failed to load evolved manifest: {e}"))?;
-
-        let execution_context = HashMap::new();
-        let output = self
-            .execute_manifest_direct(&manifest, execution_context, None, None)
-            .await?;
-
-        Ok(agent::BundleExecutionResult {
-            bundle_manifest: evolved_manifest_json,
-            output,
-            composition_score: None,
-            composed_skill_names,
-            goal_context: serde_json::Value::Null,
+            output: merged_report,
+            composed_skill_names: skill_names.to_vec(),
         })
     }
 
     /// Execute a pipeline manifest by file path. Unlike `execute_skill`,
-    /// this loads the manifest from an explicit path (not a skill name
+    /// this loads the manifest from an explicit file path (not a skill name
     /// lookup), skips the `is_skill()` guard, and runs the cascade.
     /// The manifest must declare `category: pipeline`.
     async fn execute_pipeline(
@@ -1450,63 +1258,6 @@ fn extract_final_step_result(outcome: &CascadeOutcome) -> String {
         Value::Null => serde_json::to_string(&outcome.context.materialize()).unwrap_or_default(),
         other => other.to_string(),
     }
-}
-
-/// Reshape a flat composite manifest JSON (as produced by the skill-bundler's
-/// `bundler-synthesize` step under `composite_manifest`) into the
-/// `ManifestFile` structure that `load_manifest_from_yaml` expects on disk.
-/// The on-disk format wraps the header fields (`id`, `name`, `description`,
-/// `version`, `editor`, `visibility`, `functional_role`, `category`,
-/// `enforce_inputs`) under a `manifest:` key, with `steps`, `skills`,
-/// `conflicts`, `complementarities`, `convergence`, `rjoule`,
-/// `error_handling`, `ledger`, `audit`, `inputs`, `principles` as siblings.
-///
-/// This is the inverse of the flattening `load_manifest_from_yaml` performs
-/// when it constructs a `BundleManifest` from a `ManifestFile`. Keeping the
-/// reshape here (in the bridge) avoids exposing the on-disk format to the
-/// `agent` crate and keeps disk as the single source of truth (D1).
-fn reshape_composite_to_manifest_file(composite: &serde_json::Value) -> serde_json::Value {
-    use serde_json::json;
-
-    let header_keys = [
-        "id",
-        "name",
-        "description",
-        "version",
-        "editor",
-        "visibility",
-        "functional_role",
-        "category",
-        "enforce_inputs",
-    ];
-
-    let sibling_keys = [
-        "steps",
-        "skills",
-        "conflicts",
-        "complementarities",
-        "convergence",
-        "rjoule",
-        "error_handling",
-        "ledger",
-        "audit",
-        "inputs",
-        "principles",
-    ];
-
-    let manifest_header: serde_json::Map<String, serde_json::Value> = header_keys
-        .iter()
-        .filter_map(|k| composite.get(*k).map(|v| (k.to_string(), v.clone())))
-        .collect();
-
-    let mut out = serde_json::Map::new();
-    out.insert("manifest".to_string(), json!(manifest_header));
-    for k in sibling_keys {
-        if let Some(v) = composite.get(k) {
-            out.insert(k.to_string(), v.clone());
-        }
-    }
-    json!(out)
 }
 
 #[cfg(test)]

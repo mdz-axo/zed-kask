@@ -1712,64 +1712,18 @@ mod tests {
             _progress: Option<CascadeProgress>,
             _title: Option<CascadeProgress>,
         ) -> Result<BundleExecutionResult, String> {
-            // The stub doesn't run a real bundler cascade — it returns a
+            // The stub doesn't run real parallel cascades — it returns a
             // minimal result so tests that exercise the skill_bundle tool's
             // wiring (authorization, context injection, output shaping) can
             // proceed without a live skill-bundler manifest.
             Ok(BundleExecutionResult {
-                bundle_manifest: serde_json::json!({
-                    "name": "stub-bundle",
-                    "skills": skill_names.iter().map(|s| serde_json::json!({"name": s})).collect::<Vec<_>>(),
-                }),
                 output: self.output.clone(),
-                composition_score: Some(0.0),
                 composed_skill_names: skill_names.to_vec(),
-                goal_context: serde_json::Value::Null,
             })
         }
 
         fn has_manifest(&self, skill_name: &str) -> bool {
             self.known.contains(skill_name)
-        }
-
-        async fn save_bundle(&self, bundle_manifest: serde_json::Value) -> Result<String, String> {
-            // The stub doesn't write to disk — it echoes back the bundle's id
-            // (or a synthetic one if the manifest lacks an id) so tests can
-            // assert the Save action's return shape.
-            let id = bundle_manifest
-                .get("id")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_else(|| "stub-bundle".to_string());
-            Ok(id)
-        }
-
-        async fn refine_bundle(
-            &self,
-            bundle_manifest: serde_json::Value,
-            _goal_context: serde_json::Value,
-            _goal_delta: f64,
-            _convergence_failure_reason: String,
-        ) -> Result<BundleExecutionResult, String> {
-            // The stub doesn't run a real evolve cascade — it returns the
-            // prior manifest unchanged with the stub output so tests can
-            // exercise the Refine action's wiring without a live bundler.
-            let composed_skill_names = bundle_manifest
-                .get("skills")
-                .and_then(|s| s.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(String::from))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            Ok(BundleExecutionResult {
-                bundle_manifest,
-                output: self.output.clone(),
-                composition_score: Some(0.0),
-                composed_skill_names,
-                goal_context: serde_json::Value::Null,
-            })
         }
 
         async fn execute_pipeline(

@@ -612,7 +612,13 @@ impl StepMachine {
             } => {
                 self.context
                     .store_named(step_id, node.ordinal, &suffix, value);
-                self.last_result_step = Some(step_id);
+                // Named results (e.g. convergence signals from compute steps)
+                // do NOT overwrite last_result_step — they are auxiliary
+                // values, not the skill's primary output. Without this guard,
+                // a compute step's result (a number) replaces the select
+                // step's result (the skill's actual JSON output) as the
+                // final result, and the agent sees "8" instead of the
+                // constraint set.
             }
             crate::step_actions::Effect::ConsumedRJoule(cost) => {
                 self.budget.charge_rjoule(cost);

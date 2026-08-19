@@ -11,53 +11,34 @@ use crate::{
     tools::skill_tool::SkillManifestExecutor,
 };
 
-/// Compose and execute a bundle of multiple peer-level skills in a single
-/// governed cascade. Use this when a task requires three or more skills that
-/// are peers (not in a delegation relationship) — the bundler optimizes
-/// ordering, resolves conflicts, and produces a single composed manifest
-/// before execution. For single-skill activation, use the `skill` tool
-/// instead.
+/// Execute a bundle of multiple peer-level skills concurrently. Each skill
+/// runs in parallel, then their outputs are merged into a single unified
+/// report. Use this when a task requires three or more skills that are peers
+/// (not in a delegation relationship). For single-skill activation, use the
+/// `skill` tool instead.
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SkillBundleToolInput {
-    /// The peer-level skill names to compose into a bundle. Must be ≥3 skills
+    /// The peer-level skill names to run concurrently. Must be ≥3 skills
     /// for the bundler to engage (fewer should use the `skill` tool directly).
     pub skills: Vec<String>,
-    /// The user's task for the bundle to act on. Injected into the
-    /// skill-bundler cascade as `user_intent` and into the composed bundle's
-    /// cascade as `task`.
+    /// The user's task for the bundle to act on. Injected into each skill's
+    /// cascade as `task` and into the merge step as `task`.
     #[serde(default)]
     pub task: String,
-    /// Extra context entries merged into the skill-bundler cascade context.
+    /// Extra context entries merged into each skill's cascade context.
     #[serde(default)]
     pub context: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// The output of a skill bundle execution.
-///
-/// Carries the structured data the post-run UI needs for the
-/// save/refine/discard affordance: the composed manifest (for `Save`),
-/// the composition score (for `Refine`), and the output text (for display).
+/// The output of a skill bundle execution (parallel fan-out + merge).
 #[derive(Debug, Serialize, Deserialize)]
 pub enum SkillBundleToolOutput {
-    /// The bundle was composed and executed successfully.
+    /// The skills were executed in parallel and their outputs merged.
     Executed {
-        /// The final output text from the composed bundle's cascade.
+        /// The merged report text synthesizing all skill outputs.
         rendered: String,
-        /// The composed `BundleManifest` as JSON. The post-run UI's `Save`
-        /// action persists this to the bundle registry.
-        bundle_manifest: serde_json::Value,
-        /// The deterministic composition score from `lisp.eval` (lower = better).
-        /// `None` if the score was unavailable (the named skills lacked
-        /// convergence blocks or the bundler cascade didn't produce one).
-        composition_score: Option<f64>,
-        /// The skill names actually placed in the composed bundle (may differ
-        /// from the input if the bundler dropped a skill via dead-letter
-        /// resolution).
+        /// The skill names that were executed in parallel.
         composed_skill_names: Vec<String>,
-        /// The goal-extract step's output (step_1_result from the bundler
-        /// cascade). Carried so the `Refine` action can pass it to
-        /// `bundler-evolve` as `goal_context`.
-        goal_context: serde_json::Value,
     },
     Error {
         error: String,
@@ -69,36 +50,20 @@ impl From<SkillBundleToolOutput> for LanguageModelToolResultContent {
         match output {
             SkillBundleToolOutput::Executed {
                 rendered,
-                bundle_manifest,
-                composition_score,
                 composed_skill_names,
-                goal_context: _,
             } => {
-                // Wrap the output in a skill_content envelope (same format as
-                // the single-skill tool) so the model receives a consistent
-                // interface. The structured fields (manifest, score, skill names)
-                // are appended as a JSON block the post-run UI can parse.
                 let mut text = String::new();
                 text.push_str("<skill_content name=\"skill-bundle\">\n");
                 text.push_str("<source>bundle</source>\n");
                 let _ = std::fmt::Write::write_fmt(
                     &mut text,
                     format_args!(
-                        "<composed_skills>{}</composed_skills>\n",
+                        "<parallel_skills>{}</parallel_skills>\n",
                         composed_skill_names.join(", ")
                     ),
                 );
-                if let Some(score) = composition_score {
-                    let _ = std::fmt::Write::write_fmt(
-                        &mut text,
-                        format_args!("<composition_score>{:.4}</composition_score>\n", score),
-                    );
-                }
                 text.push_str(&rendered);
-                text.push_str("\n<bundle_manifest>\n");
-                text.push_str(&serde_json::to_string_pretty(&bundle_manifest).unwrap_or_default());
-                text.push_str("\n</bundle_manifest>\n");
-                text.push_str("</skill_content>\n");
+                text.push_str("\n</skill_content>\n");
                 LanguageModelToolResultContent::Text(text.into())
             }
             SkillBundleToolOutput::Error { error } => {
@@ -171,13 +136,12 @@ impl AgentTool for SkillBundleTool {
                 })?;
 
             // Validate: at least 3 skills required for the bundler to engage.
-            // The heuristic gate from the spec (criterion 1): ≥3 peer-level
-            // skills triggers bundler-compose; fewer should use the `skill`
-            // tool directly.
+            // The heuristic gate: ≥3 peer-level skills triggers parallel
+            // fan-out + merge; fewer should use the `skill` tool directly.
             if input.skills.len() < 3 {
                 return Err(SkillBundleToolOutput::Error {
                     error: format!(
-                        "skill_bundle requires at least 3 skills to compose, but {} were \
+                        "skill_bundle requires at least 3 skills to run in parallel, but {} were \
                          provided. For fewer skills, use the `skill` tool to invoke each \
                          skill individually.",
                         input.skills.len()
@@ -186,9 +150,9 @@ impl AgentTool for SkillBundleTool {
             }
 
             // Snapshot the current set of skills to verify all named skills
-            // exist before composing. This fails fast with a clear error
-            // instead of wasting tokens on a bundler cascade that will fail
-            // mid-composition when a skill is missing.
+            // exist before dispatching. This fails fast with a clear error
+            // instead of wasting tokens on parallel cascades that will fail
+            // mid-execution when a skill is missing.
             let snapshot = cx.update(|cx| (self.skills)(cx));
             let installed_names: std::collections::HashSet<&str> =
                 snapshot.iter().map(|s| s.name.as_str()).collect();
@@ -225,7 +189,7 @@ impl AgentTool for SkillBundleTool {
             };
 
             // Check that the skill-bundler manifest itself exists — without
-            // it, composition can't run.
+            // it, the merge step can't run.
             if !executor.has_manifest("skill-bundler") {
                 return Err(SkillBundleToolOutput::Error {
                     error: "The skill-bundler manifest is not registered. The skill_bundle \
@@ -236,19 +200,18 @@ impl AgentTool for SkillBundleTool {
             }
 
             // Create a thinking-trace sender from the event stream so the user
-            // sees the LLM's live reasoning during the bundle cascade. Without
-            // this, the bundle runs silently — the user cannot see which
-            // skills are being composed, what the cascade steps are, or
-            // whether to cancel. User sovereignty requires visibility.
+            // sees the LLM's live reasoning during the parallel cascades and
+            // the merge step. Without this, the bundle runs silently — the
+            // user cannot see which skills are running or whether to cancel.
             let progress = event_stream.thinking_sender();
             let title = event_stream.title_sender();
 
-            // Compose and execute the bundle. The executor handles:
-            // 1. Running the skill-bundler cascade (compose → synthesize →
-            //    validate → lisp.eval score → evolve → loop)
-            // 2. Extracting the composed BundleManifest
-            // 3. Executing the composed manifest's cascade
-            // 4. Returning the structured result (manifest, score, output)
+            // Execute the bundle: run all skills concurrently, then merge.
+            // The executor handles:
+            // 1. Spawning N concurrent manifest cascade tasks (one per skill)
+            // 2. Collecting all outputs (allSettled — partial results OK)
+            // 3. Running the skill-bundler merge manifest
+            // 4. Returning the merged report and skill names
             let result: BundleExecutionResult = executor
                 .compose_and_execute_bundle(
                     &input.skills,
@@ -259,15 +222,12 @@ impl AgentTool for SkillBundleTool {
                 )
                 .await
                 .map_err(|e| SkillBundleToolOutput::Error {
-                    error: format!("Skill bundle composition/execution failed: {e}"),
+                    error: format!("Skill bundle execution failed: {e}"),
                 })?;
 
             Ok(SkillBundleToolOutput::Executed {
                 rendered: result.output,
-                bundle_manifest: result.bundle_manifest,
-                composition_score: result.composition_score,
                 composed_skill_names: result.composed_skill_names,
-                goal_context: result.goal_context,
             })
         })
     }

@@ -39,8 +39,7 @@ pub use step_graph::ExitKind;
 pub use step_machine::CascadeOutcome;
 
 pub use inputs::{
-    InputValidationError, apply_input_defaults, extract_contract_input_keys,
-    render_input_param_spec, validate_inputs,
+    InputValidationError, extract_contract_input_keys, render_input_param_spec, validate_inputs,
 };
 pub use manifest_loader::{
     ManifestLoadError, McpReferenceWarning, load_manifest_from_file, load_manifest_from_yaml,
