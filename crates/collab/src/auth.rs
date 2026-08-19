@@ -154,7 +154,11 @@ pub fn dev_principal(is_dev: bool, headers: &http::HeaderMap) -> Option<Principa
         github_login: "local-dev".to_string(),
         avatar_url: String::new(),
         name: Some("Local Dev".to_string()),
-        admin: true,
+        // zed-kask: `admin: false` — no kask-skills handler checks `admin`, so
+        // `true` would be a latent privilege grant for any future admin-only
+        // path. The dev bypass exists to insert *a* `Principal` so the
+        // `Extension<Principal>` extractor doesn't fail; it does not elevate.
+        admin: false,
         connected_once: true,
     };
     Some(Principal::User(dev_user))
@@ -190,7 +194,7 @@ mod tests {
                 };
                 assert_eq!(user.username, "local-dev", "dev principal username is fixed");
                 assert_eq!(user.github_login, "local-dev");
-                assert!(user.admin, "dev principal is admin (local single-user)");
+                assert!(!user.admin, "dev principal must not be admin (no elevation)");
             } else {
                 assert!(principal.is_none(), "prod must not yield a Principal (fail closed)");
             }

@@ -246,14 +246,12 @@ async fn download_kask_skill(
             .get_kask_skill_tarball(source_user, skill_name, &skill.manifest.version)
             .await?
             .context("kask skill tarball not found in local store")?;
-        let body = axum::body::Body::from(tarball);
-        let mut response = axum::response::Response::new(body);
-        *response.status_mut() = StatusCode::OK;
-        response.headers_mut().insert(
-            axum::http::header::CONTENT_TYPE,
-            axum::http::HeaderValue::from_static("application/gzip"),
-        );
-        return Ok(response.into_response());
+        return Ok((
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/gzip")],
+            axum::body::Body::from(tarball),
+        )
+            .into_response());
     }
 
     let (blob_store_client, bucket) = (
