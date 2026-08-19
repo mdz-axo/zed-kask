@@ -12,7 +12,6 @@ manifest:
   functional_role: flowdef
   version: "0.35.0"  # synced with hKask release; SKILL.md lacks version field — should be added for traceability
   editor: curator-or-human-admin
-  visibility: Public
   enforce_inputs: true
 
 convergence:

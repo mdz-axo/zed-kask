@@ -46,7 +46,7 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 3. Determine the historical frequency, sample size, and data quality for each reference class.
 4. Establish a starting probability anchor based on the base rates before considering case-specific details.
 
-### stage_3_inside_view (delegated split)
+### stage_3_probability_estimate (delegated split)
 
 The former single inside-view step is split into three FlowDef steps. Generation and counterfactual analysis are delegated to the `falsifiability` skill; probability estimation stays in superforecasting.
 

@@ -1129,7 +1129,9 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                 "Dry run: manifest '{}' parsed successfully. {} steps, category: {}.",
                 manifest.id,
                 manifest.steps.len(),
-                manifest.category
+                manifest
+                    .category
+                    .map_or_else(|| "skill (unset)".to_string(), |c| c.to_string())
             ));
         }
 

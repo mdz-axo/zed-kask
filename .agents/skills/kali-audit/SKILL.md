@@ -26,9 +26,9 @@ Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML manife
 3. Read the regression library (`security/regressions/RR-*.yaml`) to identify already-enforced checks — skip them.
 4. Return the selected surface, checks to run, known regressions, and defense layers to verify.
 
-### kali-audit/probe-wave (step 2, execute)
+### Probe wave (step 2, execute — no template)
 
-1. Runs three concurrent MCP tool calls: `codegraph_query` (symbol search), `codegraph_analysis` (dead-code), `codegraph_stats` (index stats).
+1. Step 2 is an `mcp_batch` execute step (no template_ref): runs three concurrent MCP tool calls — `codegraph_query` (symbol search), `codegraph_analysis` (dead-code), `codegraph_stats` (index stats).
 2. Partial failures preserved via `allSettled` — a failed probe is a recorded `ok:false`, not silence.
 3. If the entire wave fails, `on_failure: report` halts the cascade: an audit with no recorded tool calls is narration, not evidence.
 

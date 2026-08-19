@@ -24,7 +24,6 @@ manifest:
   functional_role: flowdef
   version: "0.35.0"
   editor: curator-or-human-admin
-  visibility: Public
   enforce_inputs: true
 
 convergence:
