@@ -1,6 +1,5 @@
 //! Kanban error types and de-jam data structures.
 
-use crate::kata::KataError;
 use hkask_types::NotFound;
 use hkask_types::id::TaskId;
 
@@ -51,25 +50,6 @@ pub enum KanbanError {
         limit: u32,
         current: u32,
     },
-}
-
-impl From<KataError> for KanbanError {
-    fn from(e: KataError) -> Self {
-        match e {
-            KataError::LoadFailed(msg)
-            | KataError::ParseFailed(msg)
-            | KataError::UnknownType(msg)
-            | KataError::TemplateNotFound(msg) => {
-                KanbanError::Internal(format!("kata engine: {msg}"))
-            }
-            KataError::NoSteps(manifest_id) => {
-                KanbanError::InvalidInput(format!("kata manifest '{manifest_id}' has no steps"))
-            }
-            KataError::InferenceFailed(msg) => {
-                KanbanError::Internal(format!("kata inference failed: {msg}"))
-            }
-        }
-    }
 }
 
 impl From<NotFound> for KanbanError {

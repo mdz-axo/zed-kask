@@ -10,7 +10,6 @@
 
 pub mod idempotency;
 pub mod kanban;
-pub mod kata;
 pub mod pko;
 pub mod types;
 
@@ -18,10 +17,6 @@ pub mod types;
 pub use kanban::{
     Board, ColumnDef, KanbanError, KanbanService, Priority, SpawnSpec, Task, TaskFilter, TaskSpec,
     TaskStatus, UnjamFix, UnjamItem, Verification, VerificationCriterion,
-};
-pub use kata::{
-    ImprovementDirection, ImprovementSignal, KataEngine, KataError, KataHistory, KataManifest,
-    KataResult, KataState, KataStep, PracticeEntry, StepExperience, TaskRjouleAccountantFn,
 };
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)

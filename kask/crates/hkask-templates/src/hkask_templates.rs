@@ -7,7 +7,6 @@
 //!
 //! Inference (L1) has been extracted to `hkask-inference`.
 //! Template types: Prompt (WordAct), Process (FlowDef), Cognition (KnowAct).
-//! Registry adapters: `Registry` (in-memory), `SqliteRegistry` (SQLite).
 
 pub mod budget;
 pub mod bundle;
@@ -22,7 +21,6 @@ mod output_schema;
 pub mod ports;
 pub mod prompt_strategy;
 pub mod registry;
-pub mod registry_sqlite;
 pub mod step_actions;
 pub mod step_context;
 pub mod step_graph;
@@ -52,7 +50,6 @@ pub use registry::{
     template_file, template_file_seed, template_manifest_seed, template_yaml_file,
     template_yaml_file_seed,
 };
-pub use registry_sqlite::SqliteRegistry;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils {
