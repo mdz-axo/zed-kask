@@ -40,10 +40,6 @@ chrono.workspace = true
 # manifests with the publisher's Ed25519 keypair stored in the OS keychain.
 hkask-keystore.workspace = true
 hkask-types.workspace = true
-# Embedded registry content (manifest.yaml + *.j2) for full-package hashing
-# of bundled skills (the "Modified" badge compares the on-disk package to
-# the shipped embedded package).
-hkask-templates.workspace = true
 # Multiplayer channel access for discreet-piggyback skill discovery: the
 # panel scans opened channel buffers' text for `kask-skill://` references.
 channel.workspace = true
