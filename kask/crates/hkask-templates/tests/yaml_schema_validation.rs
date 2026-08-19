@@ -343,16 +343,16 @@ fn kali_audit_manifest_loads_with_correct_structure() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load kali-audit manifest: {e}"));
 
-    // 4 select steps + 1 lisp.eval compute step (signal computation) +
-    // 1 loop step = 6 total. The former kata.convergence_check compute step
-    // was removed — the ConvergenceTracker is the single convergence gate.
-    // The lisp.eval step remains: it computes the convergence signal (count
-    // of open critical/high findings) that the loop step pushes via
-    // `convergence_signal:`.
+    // 1 select (select-surface) + 1 execute (probe wave) + 3 select
+    // (audit, report, taxonomy-map) + 1 lisp.eval compute step (signal
+    // computation) + 1 loop step = 7 total. The execute step runs the
+    // declared probe wave (codegraph_query/analysis/stats) as concurrent
+    // MCP calls recorded in the grounding ledger; the audit step
+    // interprets the recorded results rather than narrating from imagination.
     assert_eq!(
         manifest.steps.len(),
-        6,
-        "expected 6 steps: select-surface → audit → report → taxonomy-map → lisp.eval (signal) → loop"
+        7,
+        "expected 7 steps: select-surface → execute (probe wave) → audit → report → taxonomy-map → lisp.eval (signal) → loop"
     );
 
     // Verify step ordinals are sequential starting at 1.
@@ -371,36 +371,46 @@ fn kali_audit_manifest_loads_with_correct_structure() {
         Some("kali-audit/select-surface")
     );
 
-    // Verify step 2 is audit.
-    assert_eq!(manifest.steps[1].action, "select");
-    assert_eq!(
-        manifest.steps[1].template_ref.as_deref(),
-        Some("kali-audit/audit")
+    // Verify step 2 is the execute probe wave (mcp_batch with allSettled).
+    assert_eq!(manifest.steps[1].action, "execute");
+    assert!(
+        manifest.steps[1].mcp_batch.is_some(),
+        "step 2 must declare an mcp_batch (the probe wave)"
+    );
+    assert!(
+        manifest.steps[1].on_failure.is_some(),
+        "step 2 (execute) must declare on_failure — a failed probe wave must halt, not silently proceed"
     );
 
-    // Verify step 3 is report.
+    // Verify step 3 is audit (interprets the probe wave results).
     assert_eq!(manifest.steps[2].action, "select");
     assert_eq!(
         manifest.steps[2].template_ref.as_deref(),
-        Some("kali-audit/report")
+        Some("kali-audit/audit")
     );
 
-    // Verify step 4 is taxonomy-map (folded from attack-taxonomy-mapper).
+    // Verify step 4 is report.
     assert_eq!(manifest.steps[3].action, "select");
     assert_eq!(
         manifest.steps[3].template_ref.as_deref(),
+        Some("kali-audit/report")
+    );
+
+    // Verify step 5 is taxonomy-map (folded from attack-taxonomy-mapper).
+    assert_eq!(manifest.steps[4].action, "select");
+    assert_eq!(
+        manifest.steps[4].template_ref.as_deref(),
         Some("kali-audit/taxonomy-map")
     );
 
-    // Verify step 5 is the lisp.eval signal-compute step (computes the
+    // Verify step 6 is the lisp.eval signal-compute step (computes the
     // convergence signal — count of open critical/high findings — that the
-    // loop step pushes via convergence_signal:). The former
-    // kata.convergence_check compute step was removed.
-    assert_eq!(manifest.steps[4].action, "compute");
-    assert_eq!(manifest.steps[4].compute_ref.as_deref(), Some("lisp.eval"));
+    // loop step pushes via convergence_signal:).
+    assert_eq!(manifest.steps[5].action, "compute");
+    assert_eq!(manifest.steps[5].compute_ref.as_deref(), Some("lisp.eval"));
 
-    // Verify step 6 is loop.
-    assert_eq!(manifest.steps[5].action, "loop");
+    // Verify step 7 is loop.
+    assert_eq!(manifest.steps[6].action, "loop");
 
     // Verify the convergence block uses the Cauchy-only model.
     assert_eq!(

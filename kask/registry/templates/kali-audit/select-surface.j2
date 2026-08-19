@@ -11,6 +11,7 @@ contract:
     checks_to_run: array
     known_regressions: array
     defense_layers: array
+    probe_query: string
 visibility: Public
 ---
 {# Template: kali-audit/select-surface.j2 #}
@@ -102,6 +103,7 @@ Respond with a JSON object:
   "selected_surface": "code|template|supply-chain|mcp|config|llm-io",
   "checks_to_run": ["forbid_unsafe_code", "constant_time_eq", "secret_wrapping", ...],
   "known_regressions": ["RR-0001", "RR-0002", ...],
+  "probe_query": "security sensitive symbols: unwrap, expect, unsafe, Command::new, process::exit, from_env, set_var",
   "defense_layers": [
     {
       "ordinal": 1,
