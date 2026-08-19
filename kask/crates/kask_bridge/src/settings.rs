@@ -1952,7 +1952,7 @@ mod tests {
     // propagated there. Same pattern as the SwarmConfig seam above.
     #[test]
     fn cascade_settings_fallbacks_match_agent_skill_tool_constants() {
-        use agent::tools::skill_tool::{
+        use agent::{
             DEFAULT_CASCADE_MEMORY_MAX_CHUNKS, DEFAULT_CASCADE_MEMORY_SALIENCY_FLOOR,
             DEFAULT_CASCADE_SHORT_TERM_TURNS, DEFAULT_CASCADE_TURN_TOKEN_CAP,
         };

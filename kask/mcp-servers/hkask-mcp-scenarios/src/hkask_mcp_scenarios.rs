@@ -646,22 +646,22 @@ impl ScenariosServer {
                 }))
                 .collect();
 
-            // Extract CMP provenance from the event IDs (cmp:{family}:{tenor}:{orientation}).
-            let cmp_provenance: Vec<serde_json::Value> = tree
-                .nodes
-                .iter()
-                .filter_map(|n| {
-                    let id = &n.event.id;
-                    if !id.starts_with("cmp:") {
-                        return None;
-                    }
-                    Some(serde_json::json!({
-                        "id": id,
-                        "basis": n.event.basis,
-                        "reference_class": n.event.reference_class,
-                    }))
-                })
-                .collect();
+            // CMP provenance — the full 7-field index identity per CMP root.
+            // Emitted from the `ProvenancedCmpIndex` list (the pre-composition
+            // source) because `tree.nodes` has lost the venue / method /
+            // maturity_error_days by the time the index is folded into a
+            // `ScenarioEvent`. The `id` is reconstructed to match
+            // `convert_cmp_index`'s format (`cmp:{family}:{tenor}:{orientation}`),
+            // which is the event id the tree builder uses, so the entries line up
+            // 1:1 with the tree's root nodes.
+            //
+            // The companies `EventTreeProjection`/`CmpIndexProvenance` bridge
+            // contract consumes this shape; the pin test
+            // `cmp_provenance_round_trips_real_scenarios_emitter` in
+            // `hkask_mcp_companies::superforecast::tests` fails if this emitter
+            // and the companies struct drift apart.
+            let cmp_provenance: Vec<serde_json::Value> =
+                emit_cmp_provenance(&indices);
 
             let output = serde_json::json!({
                 "tree": {
@@ -670,8 +670,8 @@ impl ScenariosServer {
                     "topo_order": tree.topo_order,
                     "joint_probability": tree.joint_probability,
                     "nodes": nodes,
+                    "cmp_provenance": cmp_provenance,
                 },
-                "cmp_provenance": cmp_provenance,
                 "provenance": {
                     "tool": "scenario_from_cmp_indices",
                     "server": "hkask-mcp-scenarios",
@@ -1270,6 +1270,7 @@ impl ScenariosServer {
             let output = serde_json::json!({
                 "tree": {
                     "subject": result.tree.subject,
+                    "root_ids": result.tree.root_ids,
                     "topo_order": result.tree.topo_order,
                     "joint_probability": result.tree.joint_probability,
                     "nodes": nodes,
@@ -1924,6 +1925,45 @@ fn parse_scenario_type(s: Option<&str>) -> ScenarioType {
     }
 }
 
+/// Emit the CMP provenance array for `scenario_from_cmp_indices`'s `tree` object —
+/// the full 7-field index identity per CMP root. Extracted from the async tool
+/// body so the shape is testable without a `ScenariosServer` fixture: the
+/// `scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree` pin below
+/// asserts the 7-field shape and the `cmp_provenance`-inside-`tree` location,
+/// and the companies crate's `cmp_provenance_round_trips_real_scenarios_emitter`
+/// asserts the same shape round-trips through `EventTreeProjection`.
+///
+/// `id` matches `superforecast::convert_cmp_index`'s format
+/// (`cmp:{family}:{tenor}:{orientation}`), which is the event id the tree
+/// builder uses, so entries line up 1:1 with the tree's root nodes.
+fn emit_cmp_provenance(
+    indices: &[hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex],
+) -> Vec<serde_json::Value> {
+    use hkask_mcp_prediction_markets::cmp::CmpMethod;
+    indices
+        .iter()
+        .map(|idx| {
+            let family_label = idx.family.label();
+            let tenor = idx.index.bucket.label();
+            let orientation = idx.index.orientation.to_string();
+            let venue = idx.venue.to_string();
+            let method = match idx.index.portfolio.method {
+                CmpMethod::Interpolated => "interpolated",
+                CmpMethod::BucketedSparse => "bucketed_sparse",
+            };
+            serde_json::json!({
+                "id": format!("cmp:{family_label}:{tenor}:{orientation}"),
+                "family": family_label,
+                "tenor": tenor,
+                "orientation": orientation,
+                "venue": venue,
+                "method": method,
+                "maturity_error_days": idx.index.portfolio.maturity_error_days,
+            })
+        })
+        .collect()
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -2120,5 +2160,55 @@ mod tests {
             delta > 0.0,
             "underconfident domain with 6 resolved forecasts must get δ > 0, got {delta}"
         );
+    }
+
+    /// Pin the `scenario_from_cmp_indices` CMP-provenance emitter shape: the
+    /// `tree` object carries `cmp_provenance` *inside* it (not as a sibling),
+    /// and each entry carries the full 7-field index identity
+    /// (`id`, `family`, `tenor`, `orientation`, `venue`, `method`,
+    /// `maturity_error_days`) — the shape the companies crate's
+    /// `EventTreeProjection`/`CmpIndexProvenance` bridge contract consumes.
+    /// If this test goes red, the companies bridge breaks at deserialization;
+    /// if `hkask_mcp_companies::superforecast::tests::cmp_provenance_round_trips_real_scenarios_emitter`
+    /// goes red, this emitter drifted from the companies struct.
+    #[test]
+    fn scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree() {
+        use hkask_mcp_prediction_markets::cmp::CmpMethod;
+        use hkask_mcp_prediction_markets::cmp_index_builder::{ProvenancedCmpIndex, Venue};
+        use hkask_mcp_prediction_markets::cmp_portfolio::{
+            CmpIndex, IndexPortfolio, MaturityBucket, Orientation,
+        };
+        use hkask_mcp_prediction_markets::economic_object::BaseEconomicObject;
+
+        let fixture = ProvenancedCmpIndex {
+            family: BaseEconomicObject::PolicyInterestRate,
+            venue: Venue::Kalshi,
+            index: CmpIndex {
+                bucket: MaturityBucket::ThreeMonth,
+                orientation: Orientation::Increase,
+                portfolio: IndexPortfolio {
+                    constituents: Vec::new(),
+                    weighted_maturity_days: 90.0,
+                    maturity_error_days: 1.5,
+                    index_probability: 0.62,
+                    method: CmpMethod::Interpolated,
+                },
+            },
+        };
+        let provenance = emit_cmp_provenance(&[fixture]);
+        assert_eq!(provenance.len(), 1);
+        let entry = &provenance[0];
+        // The 7 fields the companies `CmpIndexProvenance` struct demands.
+        assert_eq!(entry["id"], "cmp:policy_interest_rate:3m:increase");
+        assert_eq!(entry["family"], "policy_interest_rate");
+        assert_eq!(entry["tenor"], "3m");
+        assert_eq!(entry["orientation"], "increase");
+        assert_eq!(entry["venue"], "kalshi");
+        assert_eq!(entry["method"], "interpolated");
+        assert_eq!(entry["maturity_error_days"], 1.5);
+        // The entry must NOT carry the old `{id, basis, reference_class}` shape —
+        // that was the drifted contract the companies struct never accepted.
+        assert!(entry.get("basis").is_none());
+        assert!(entry.get("reference_class").is_none());
     }
 }
