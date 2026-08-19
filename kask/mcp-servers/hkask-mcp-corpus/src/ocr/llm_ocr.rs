@@ -152,8 +152,6 @@ impl LlmOcrExecutor {
         }
     }
 
-    /// Set maximum output tokens per page.
-
     #[cfg(test)]
     fn force_open_circuit(&self) {
         for _ in 0..self.breaker.threshold {

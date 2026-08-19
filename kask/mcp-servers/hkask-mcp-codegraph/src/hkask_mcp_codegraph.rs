@@ -335,13 +335,17 @@ impl CodeGraphServer {
                 // match may exist outside the first `limit` hits, in which case the
                 // old filter path returned a spurious "symbol not found".
                 if let Some(ref name) = req.name {
-                    let ids = pipeline.store().find_symbols_by_name(name).map_err(db_err)?;
+                    let ids = pipeline
+                        .store()
+                        .find_symbols_by_name(name)
+                        .map_err(db_err)?;
                     if ids.is_empty() {
                         return Ok(serde_json::json!({
                             "error": format!("symbol not found: {name}")
                         }));
                     }
-                    let symbols: Vec<serde_json::Value> = ids.iter()
+                    let symbols: Vec<serde_json::Value> = ids
+                        .iter()
                         .filter_map(|&id| pipeline.store().get_symbol(id).ok().flatten())
                         .map(|s| serde_json::json!(&s))
                         .collect();
@@ -840,7 +844,10 @@ mod tests {
             hkask_types::tool_response::parse_tool_response(&out).expect("valid envelope");
         // The response is an array of symbols; verify the first one matches.
         let symbols = payload.as_array().expect("name lookup returns an array");
-        assert!(!symbols.is_empty(), "exact-name lookup must return at least one symbol: {out}");
+        assert!(
+            !symbols.is_empty(),
+            "exact-name lookup must return at least one symbol: {out}"
+        );
         assert_eq!(
             symbols[0]["name"].as_str(),
             Some(target),

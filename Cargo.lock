@@ -11207,7 +11207,6 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
- "serde_yaml_neo",
  "settings",
  "settings_content",
  "thiserror 2.0.17",
