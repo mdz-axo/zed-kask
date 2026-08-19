@@ -21,14 +21,13 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 
 ### SENSE — Query alert backlog (step 1)
 
-1. Call `curator_escalations` to get the pending escalation backlog.
-2. Call `curator_algedonic_log` with a 24-hour lookback to get recent algedonic events.
-3. Call `curator_status` to get the current system health (alert log count, approaching cap, critical alerts).
-4. All three calls are independent and run concurrently via `mcp_batch`.
+1. Step 1 is an `mcp_batch` execute step (no template): runs two concurrent curator MCP calls — `curator_escalations` (pending backlog) and `curator_algedonic_log` (24h lookback).
+2. `curator_status` is an agent tool, not an MCP tool — the skill cannot call it from `mcp_batch`. The alert-log cap status is carried by the `AlgedonicLogApproachingCap` signal that triggers this skill's invocation, so the skill doesn't re-query it.
+3. Results are keyed by `escalations` and `algedonic` in `step_1_result`.
 
 ### TRIAGE — Synthesize triage briefing (step 2)
 
-1. Render the `algedonic-review/triage-briefing` template to structure the alerts into a triage list.
+1. Render the `algedonic-review/triage-briefing` template to structure the two signal channels (escalations + algedonic) into a triage list.
 2. Each alert is classified by severity (Critical → act now, Warning → act soon, Info → acknowledge).
 3. Each alert gets a recommended action: `resolve` (issue addressed), `dismiss` (not actionable), `investigate` (needs root-cause analysis), or `escalate_to_human` (beyond curator authority).
 4. The briefing includes the alert log cap status (count/cap, approaching flag) so the operator knows whether eviction is imminent.
@@ -49,9 +48,9 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 
 ### VERIFY — Confirm backlog cleared (step 5)
 
-1. Call `curator_escalations` again to confirm the backlog is reduced.
-2. Call `curator_clear_algedonic_log` to clear reviewed alerts from the in-memory log (frees the log before it evicts entries unread).
-3. Render the `algedonic-review/verify-cleared` template to summarize what was resolved, what was dismissed, and what remains pending.
+1. Step 5 is an `execute` step (no template): re-queries `curator_escalations` to confirm the backlog is reduced after the operator's decisions. Skipped on the first pass (no decisions executed).
+2. Step 6 renders the `algedonic-review/verify-cleared` template to summarize what was resolved, what was dismissed, and what remains pending.
+3. The `verify-cleared` template also produces a recommendation for the agent to execute `curator_clear_algedonic_log` (an agent tool the skill cannot call from `mcp_batch`) to clear the in-memory log.
 4. If the backlog is not reduced (operator declined to act), the skill notes this and exits — the alerts remain for the next review cycle.
 
 ## Registry Templates

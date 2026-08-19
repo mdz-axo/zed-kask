@@ -55,12 +55,13 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
 6. Repeat the critique and refine cycles for the specified number of rounds.
 7. Remove the background from the final selected logo to produce a transparent PNG.
 
-### logo-presentation
+### logo-presentation (legacy — registered in crate as `../media/logo-presentation.yaml`, not invoked by the process manifest cascade)
 
 1. Remove the background from the final logo to produce a transparent PNG.
 2. Generate a monochrome variant (pure black on white) for single-color applications, maintaining the exact same design without color or gradients.
 3. Generate a 1:1 square icon-only version by removing all text and keeping only the symbol, ensuring it works at 64x64 pixels.
-4. Generate a phot
+4. Generate a photorealistic context mockup showing the logo in real-world use (signage, business card, app icon).
+5. Return the complete deliverables package: transparent PNG, monochrome variant, icon mark, and context mockup.
 
 ## Registry Templates
 

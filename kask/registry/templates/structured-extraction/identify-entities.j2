@@ -1,4 +1,9 @@
 {# goal: Identify entities in unstructured text against a target schema with extraction hints. Tracks unmapped text and entity count. #}
+{# Reference: Named Entity Recognition (NER), formalized in BBN's 1997 #}
+{#   "Identification of Named Entities" and the MUC-7 / CoNLL-2003 shared tasks. #}
+{#   Entity types follow the BBN / IACE type system (person, organization, #}
+{#   date, quantity, location). Character offsets are ACE2005 standoff #}
+{#   annotation. Confidence scores are standard IE practice. #}
 [inference]
 template_type: KnowAct
 contract:

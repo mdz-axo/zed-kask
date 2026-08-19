@@ -30,6 +30,18 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 6. Ensure every criterion clearly differentiates at least two alternatives.
 7. Flag dependent pairs but do not automatically merge — leave that decision to the weight-and-score stage.
 
+### weight-and-score
+
+1. Assign weights to criteria using the specified weighting method (direct or swing).
+2. For swing weighting: imagine all criteria at their worst level; the criterion whose improvement from worst to best provides the greatest swing in overall value gets the highest weight.
+3. For direct weighting: assign weights directly reflecting the relative importance of each criterion and justify each assignment.
+4. Normalize weights so they sum to exactly 1.0 and verify before output.
+5. For each alternative on each criterion, assign a raw score on a 0–10 scale (benefit: 0 = worst, 10 = best; cost: 0 = most costly, 10 = least costly, already inverted).
+6. Normalize scores to 0–1 range: `normalized = raw / 10`.
+7. Compute composite scores using the weighted sum model: `composite_score(A) = Σ (weight_i × normalized_score(A, i))`.
+8. Rank alternatives by composite score descending (rank 1 = best).
+9. If two alternatives have identical composite scores, assign the same rank and skip the next rank.
+
 ### rank-alternatives
 
 1. Rank alternatives by composite score, consistent with the `composite_scores` input — do not re-rank arbitrarily.
@@ -50,18 +62,6 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 6. Classify robustness as **robust** (no rank reversal at ±10%), **moderate** (reversal only when weight changes exceed ±5%), or **fragile** (reversal with weight changes less than ±5%).
 7. If the criteria independence check from Stage 1 identified dependent pairs (correlation >0.7), warn that OAT perturbation underestimates true sensitivity and suggest a combined perturbation test shifting both correlated weights simultaneously.
 8. Provide a recommendation addressing whether to proceed, gather more data, or restructure criteria.
-
-### weight-and-score
-
-1. Assign weights to criteria using the specified weighting method (direct or swing).
-2. For swing weighting: imagine all criteria at their worst level; the criterion whose improvement from worst to best provides the greatest swing in overall value gets the highest weight.
-3. For direct weighting: assign weights directly reflecting the relative importance of each criterion and justify each assignment.
-4. Normalize weights so they sum to exactly 1.0 and verify before output.
-5. For each alternative on each criterion, assign a raw score on a 0–10 scale (benefit: 0 = worst, 10 = best; cost: 0 = most costly, 10 = least costly, already inverted).
-6. Normalize scores to 0–1 range: `normalized = raw / 10`.
-7. Compute composite scores using the weighted sum model: `composite_score(A) = Σ (weight_i × normalized_score(A, i))`.
-8. Rank alternatives by composite score descending (rank 1 = best).
-9. If two alternatives have identical composite scores, assign the same rank and skip the next rank.
 
 ## Registry Templates
 

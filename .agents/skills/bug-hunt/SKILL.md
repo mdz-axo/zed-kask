@@ -27,6 +27,8 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 
 ### bug-hunt-charter
 
+> **Pre-compute (step 0, execute — no template):** before the charter, the cascade runs `codegraph_analysis` (MCP) for deterministic dead-code + complexity analysis. The `precomputed_analysis` feeds this step's Beizer category selection and probe planning. `on_failure: report` surfaces a broken codegraph channel without blocking the bug hunt.
+
 1. Build a lightweight `crate_model` first (Good Regulator compliance — Conant-Ashby): read `Cargo.toml`, `lib.rs`/`main.rs`, and module structure; describe architecture, data_flow, critical_paths, dependency_surface, and observed_characteristics (async, unsafe, trait_objects, concurrency, ffi, macros, proc_macros).
 2. If `prior_expedition` is present, consume it: distill `lessons_learned` into 1-3 probe-strategy adjustments, extend the probe pattern list with `pattern_signatures`, and (if present) make `next_charter_focus` the primary `target_area` unless already exhausted.
 3. If `mutation_report` is present (from the `harness-optimize` skill's mutation testing output in the trace filesystem), prioritize `target_area` toward functions with surviving mutants — those are the concrete locations where the test suite is blind. Mutation testing finds syntactic blind spots (the suite doesn't notice `+` → `-`); bug-hunt finds semantic blind spots (the suite doesn't test the error path, the race condition). Mutation-guided chartering focuses exploratory probing exactly where the suite is weakest.

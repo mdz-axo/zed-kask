@@ -46,6 +46,8 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 3. Determine the historical frequency, sample size, and data quality for each reference class.
 4. Establish a starting probability anchor based on the base rates before considering case-specific details.
 
+> **MCP tool step (ordinal 4, execute — no template):** before this step, the cascade runs `market_match` (hkask-mcp-prediction-markets) to fetch prediction-market candidates for the forecasting question. The market-implied probabilities feed this step's `market_context` input as a deterministic anchor. An empty result is a valid signal that no relevant market exists, not an error.
+
 ### stage_3_probability_estimate (delegated split)
 
 The former single inside-view step is split into three FlowDef steps. Generation and counterfactual analysis are delegated to the `falsifiability` skill; probability estimation stays in superforecasting.
@@ -88,6 +90,8 @@ The former single inside-view step is split into three FlowDef steps. Generation
 4. Define what would count as resolution and what evidence will determine the outcome.
 5. Set an expiration date for when the forecast should be evaluated.
 
+> **MCP tool step (ordinal 16, execute — no template):** after this step, the cascade runs `scenario_score` (hkask-mcp-scenarios) to persist the forecast for later Brier scoring against actual outcomes.
+
 ### forecast-quality-gate
 
 1. Evaluate the forecast across four independent dimensions: calibration realism, confidence justification, evidence trail, and record completeness.
@@ -95,6 +99,8 @@ The former single inside-view step is split into three FlowDef steps. Generation
 3. Set gate_pass to true only if all four scores are >= 0.60.
 4. If gate_pass is false, each failing dimension must have a specific, actionable fix note.
 5. You are evaluating, not generating — do not rewrite or improve the forecast.
+
+> **MCP tool step (ordinal 18, execute — no template):** after this gate, the cascade runs `scenario_calibration` (hkask-mcp-scenarios) to fetch the calibration curve (Brier score, overconfidence per bin) from resolved forecasts, feeding the `apply_calibration_adjustment` compute step (ordinal 20) that closes the Brier feedback loop.
 
 ## LEAP Integration
 

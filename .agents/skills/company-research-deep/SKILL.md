@@ -48,8 +48,6 @@ Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Seque
 
 ### gorilla-4dim
 
-### gorilla-4dim
-
 1. Assess the 4 dimensions (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against the ROTATED Company Board and the Wardley map.
 2. Score each dimension 0–100 based on evidence.
 3. The lisp.eval compute step in the flowdef applies the fixed weights (25/30/25/20) and computes the verdict (GORILLA ≥75 / SMALL_ANIMAL 50-74 / PEDESTRIAN <50).

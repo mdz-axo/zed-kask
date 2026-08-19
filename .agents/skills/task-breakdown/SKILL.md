@@ -82,7 +82,7 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 7. Do not invent tasks not present in the input `tasks` array.
 8. Produce a JSON object with `plan_md`, `todo_md`, `output_paths`, and `pko_anchors`.
 
-### loop (step 7)
+### loop (step 8)
 
 1. If convergence is not met (metric > 0.15) and refinement directives exist, loop back to DECOMPOSE (step 2) with directives as focused, task-addressable improvement targets.
 2. v0.31.0: refinement_directives are explicitly routed back to decompose (was implicit, depended on the manifest executor preserving cross-iteration step results — now mechanical and documented).

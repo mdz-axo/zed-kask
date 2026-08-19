@@ -178,7 +178,7 @@ Register and Evaluate).
 
 ## Improvement Measure
 
-**Field**: `step_6_result.convergence_metric`. **Threshold**: 0.25. **Max iterations**: 3.
+**Field**: `step_7_result` (lisp.eval compute at ordinal 7 — sums `expand` + `restrict` + `block` counts from `step_6_result.verdict_summary`). **Threshold**: 0.25. **Max iterations**: 3.
 
 Composite of two sub-metrics (weighted 0.5/0.5):
 1. **verdict_stability_metric** (0.0–1.0): fraction of capabilities whose verdict

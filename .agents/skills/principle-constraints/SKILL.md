@@ -36,7 +36,9 @@ Compiles a stated principle into a set of checkable, code-path-anchored constrai
 
 ## Instructions
 
-### Derive mode
+### Derive mode (cascade step 1 — `principle-derive.j2`)
+
+The process manifest invokes only `principle-derive` (ordinal 1) via `template_ref`; both `derive` and `verify` modes route through this single template via the `mode` input. The `principle-verify.j2` template is registered in the crate but NOT referenced by the cascade — see the legacy note under Verify mode below.
 
 1. **Locate enforcement code.** Use `grep`, `codegraph_query`, `codegraph_traverse`, and `read_file` to find the actual code that enforces the principle. Cite file:line. Do not infer enforcement from doc comments alone — read the code that does the enforcement.
 2. **Identify existing falsifiers.** For each enforcement location, search for tests that pin it. A falsifier is a test that constructs the specific scenario and asserts the required behavior — it would go red if the enforcement were weakened.
@@ -44,7 +46,7 @@ Compiles a stated principle into a set of checkable, code-path-anchored constrai
 4. **Flag gaps.** A gap means: the principle is asserted but the code doesn't enforce it, or the code enforces it but no test pins it. Gaps are the skill's highest-value output. For each gap, emit the principle asserted, the enforcement status, and a proposed remediation.
 5. **Emit the summary.** Counts: total, enforced, gaps, unverified. `human_review_required` is true if any gaps or unverified.
 
-### Verify mode
+### Verify mode (legacy — `principle-verify.j2` is registered in the crate but NOT invoked by the process manifest cascade; verify mode runs through `principle-derive.j2` at ordinal 1 via the `mode: verify` input)
 
 1. For each constraint in `existing_constraints`, read the file at `enforced_at` and confirm the enforcement logic is still there.
 2. Grep for the falsifier test name. If it exists and passes, the constraint is still enforced. If deleted or renamed, the constraint is stale.
