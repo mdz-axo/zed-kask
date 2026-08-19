@@ -435,6 +435,100 @@ fn kali_audit_manifest_loads_with_correct_structure() {
     // Verify steps are present.
 }
 
+/// Verify the adversarial-red-team manifest loads correctly after the
+/// simulation-removal migration. The previous `resistance_rate` was LLM
+/// fiction (the template simulated target responses). The lisp.eval step
+/// now computes the signal from the generated-attack count (the delivery
+/// backlog), not from a fabricated resistance_rate. No execute step — no
+/// MCP tool receives adversarial inputs for live delivery; the delivery gap
+/// is reported honestly and routed to the Curator via on_not_reached.
+#[test]
+fn adversarial_red_team_manifest_loads_with_correct_structure() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = crate_dir.join("../..");
+    let manifest_path = workspace_root.join("registry/manifests/adversarial-red-team.yaml");
+    if !manifest_path.exists() {
+        eprintln!("adversarial-red-team.yaml not found — skipping");
+        return;
+    }
+    let yaml = std::fs::read_to_string(&manifest_path).unwrap();
+    let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
+        .unwrap_or_else(|e| panic!("Failed to load adversarial-red-team manifest: {e}"));
+
+    // 2 select steps (select-target, generate-adversarial) +
+    // 1 select step (test-against-target, now interpretation-only) +
+    // 1 lisp.eval compute step (signal from attack count, NOT resistance_rate) +
+    // 1 loop step = 5 total.
+    assert_eq!(
+        manifest.steps.len(),
+        5,
+        "expected 5 steps: select-target → generate-adversarial → test-against-target → lisp.eval (signal) → loop"
+    );
+
+    // Verify step ordinals are sequential starting at 1.
+    for (i, step) in manifest.steps.iter().enumerate() {
+        assert_eq!(
+            step.ordinal,
+            (i + 1) as u32,
+            "step ordinals must be sequential starting at 1"
+        );
+    }
+
+    // Verify step 1 is select-target.
+    assert_eq!(manifest.steps[0].action, "select");
+    assert_eq!(
+        manifest.steps[0].template_ref.as_deref(),
+        Some("adversarial-red-team/select-target")
+    );
+
+    // Verify step 2 is generate-adversarial.
+    assert_eq!(manifest.steps[1].action, "select");
+    assert_eq!(
+        manifest.steps[1].template_ref.as_deref(),
+        Some("adversarial-red-team/generate-adversarial")
+    );
+
+    // Verify step 3 is test-against-target (interpretation-only, no simulation).
+    assert_eq!(manifest.steps[2].action, "select");
+    assert_eq!(
+        manifest.steps[2].template_ref.as_deref(),
+        Some("adversarial-red-team/test-against-target")
+    );
+
+    // Verify step 4 is the lisp.eval signal-compute step. The form must
+    // reference step_2_result (the generation step), NOT step_3_result —
+    // the signal is the count of generated attacks lacking a recorded test
+    // result, computed from the generation step's adversarial_inputs array.
+    // The previous form read `resistance_rate` from step_3_result (LLM fiction).
+    assert_eq!(manifest.steps[3].action, "compute");
+    assert_eq!(manifest.steps[3].compute_ref.as_deref(), Some("lisp.eval"));
+    let step4_mapping = manifest.steps[3].input_mapping.as_ref().unwrap();
+    let step4_obj = step4_mapping.as_object().unwrap();
+    let env_str = step4_obj.get("env").unwrap().to_string();
+    assert!(
+        env_str.contains("step_2_result"),
+        "lisp.eval signal must reference step_2_result (generation step), not step_3_result (the previous resistance_rate was LLM fiction)"
+    );
+    assert!(
+        !env_str.contains("step_3_result"),
+        "lisp.eval signal must NOT reference step_3_result — resistance_rate was deleted"
+    );
+    let form_str = step4_obj.get("form").unwrap().as_str().unwrap();
+    assert!(
+        !form_str.contains("resistance_rate"),
+        "lisp.eval form must NOT reference resistance_rate — it was LLM fiction (no live target delivery)"
+    );
+
+    // Verify step 5 is loop.
+    assert_eq!(manifest.steps[4].action, "loop");
+
+    // Verify the convergence block uses the Cauchy-only model.
+    assert_eq!(
+        manifest.convergence.convergence_mode, "cauchy",
+        "adversarial-red-team should use the Cauchy-only convergence mode"
+    );
+}
+
 /// Verify the scenario-builder manifest loads correctly after Co-evolution
 /// Phase 1 + Phase 2 migration. Three native MCP `execute` steps:
 ///   - Step 1: scenario_calibration (Phase 2 — read prior calibration curve)
