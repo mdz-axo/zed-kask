@@ -5,45 +5,17 @@ crate:
   name: skill-bundler
   version: "0.35.0"
   description: >
-    Orchestrate and compose multiple skills into a cohesive bundle.
-    Activates a set of skills together, resolves conflicts, determines
-    application order, and produces a manifest that governs how the skills
-    compose. Re-composes the manifest when skills evolve.
+    Run peer-level skills concurrently and merge their outputs into a single
+    unified report. The bundler dispatches each skill in parallel, collects
+    results, and synthesizes them — no iterative composition or convergence
+    loop.
 
 templates:
-  - id: skill-bundler/bundler-compose
-    name: "Analyze a set of skills for conflicts, complementarities, and optimal…"
-    path: bundler-compose.j2
+  - id: skill-bundler/bundler-merge
+    name: "Merge parallel skill outputs into a unified report"
+    path: bundler-merge.j2
     type: KnowAct
     description: >
-      Analyze a set of skills for conflicts, complementarities, and optimal
-      ordering. Classify each skill by polarity (generative/evaluative/
-
-  - id: skill-bundler/bundler-synthesize
-    name: "Synthesize a composite manifest from analyzed skills"
-    path: bundler-synthesize.j2
-    type: KnowAct
-    description: >
-      Synthesize a composite BundleManifest from the analyzed skills,
-      producing a governed cascade with ordered steps, shared context,
-      and convergence config.
-      regulative/procedural), assign cascade phase, and produce a structured
-      bundle manifest.
-
-  - id: skill-bundler/bundler-validate
-    name: "Validate a composed bundle manifest: check for contradictory…"
-    path: bundler-validate.j2
-    type: KnowAct
-    description: >
-      Validate a composed bundle manifest: check for contradictory directives
-      in the same cascade phase, cascade depth limits, skill uniqueness,
-      conflict resolution completeness, and convergence criteria.
-
-  - id: skill-bundler/bundler-evolve
-    name: "Re-assess a bundle when one or more skills have changed"
-    path: bundler-evolve.j2
-    type: KnowAct
-    description: >
-      Re-assess a bundle when one or more skills have changed. Re-compose
-      the manifest preserving what hasn't changed and updating what has.
-      Detect drift from the original composition principles.
+      Merge the outputs of N concurrently-executed skills into a single
+      cohesive report with per-skill summaries, cross-skill insights,
+      conflict surfacing, and prioritized recommendations.

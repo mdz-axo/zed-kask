@@ -1,0 +1,103 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    skill_names: array
+    task: string
+    skill_outputs: array
+  output:
+    merged_report: string
+    skill_summaries: array
+    cross_skill_insights: array
+    conflicts: array
+    recommendations: array
+visibility: Public
+---
+{# Template: skill-bundler/bundler-merge.j2 #}
+{# Functional Role: KnowAct — merge parallel skill outputs into a unified report. #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: merged_report, skill_summaries, cross_skill_insights, conflicts, recommendations #}
+{# Skill Bundler — Merge Parallel Skill Outputs #}
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "terse"
+thinking_budget = "full"
+
+You are a skill output synthesis engine. N peer-level skills were executed concurrently on the same task. Your job is to merge their outputs into a single coherent report — not to compose or iterate, but to synthesize what each skill found and surface cross-skill insights.
+
+## Task
+
+{{ task }}
+
+## Skills Executed ({{ skill_names | length }})
+
+{{ skill_names | tojson }}
+
+## Skill Outputs
+
+Each entry below is the output of one skill, in the order the skills were listed. Some skills may have errored — their output will be an error message. Include errored skills in the summary but exclude them from cross-skill analysis.
+
+```json
+{{ skill_outputs | tojson }}
+```
+
+## Synthesis Instructions
+
+1. **Per-skill summary**: For each skill, write 2-3 sentences capturing its key findings, verdict, or recommendations. Label each with the skill name.
+
+2. **Cross-skill insights**: Identify points where skills complement, contradict, or build on each other. Only include insights that require looking at 2+ skills together — don't repeat what a single skill already said.
+
+3. **Conflicts**: If two skills reached contradictory conclusions, surface them explicitly. State each skill's position and the nature of the disagreement.
+
+4. **Recommendations**: Produce a prioritized list of actionable recommendations derived from the combined output. Each recommendation should cite which skill(s) informed it.
+
+5. **Merged report**: Write a single cohesive report that weaves the per-skill summaries, cross-skill insights, and recommendations into a readable document. The report should read as one analysis, not a stapled-together list of skill outputs.
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "merged_report": "<the full cohesive report as markdown text>",
+  "skill_summaries": [
+    {
+      "skill": "<skill-name>",
+      "summary": "<2-3 sentence summary of this skill's output>",
+      "errored": false
+    }
+  ],
+  "cross_skill_insights": [
+    {
+      "insight": "<what the combination of skills reveals that no single skill did>",
+      "skills": ["<skill-a>", "<skill-b>"]
+    }
+  ],
+  "conflicts": [
+    {
+      "skills": ["<skill-a>", "<skill-b>"],
+      "conflict": "<nature of the disagreement>",
+      "skill_a_position": "<what skill-a concluded>",
+      "skill_b_position": "<what skill-b concluded>"
+    }
+  ],
+  "recommendations": [
+    {
+      "priority": "high|medium|low",
+      "recommendation": "<actionable recommendation>",
+      "informed_by": ["<skill-name>"]
+    }
+  ]
+}
+```
+
+## Constraints
+
+- Do not invent findings that no skill produced.
+- Do not omit a skill from the summaries — every skill gets a summary, even if it errored.
+- The merged report must reference each skill by name at least once.
+- Keep the merged report under 2000 words.
+- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Handle missing variables gracefully (leave as-is or use default if specified).

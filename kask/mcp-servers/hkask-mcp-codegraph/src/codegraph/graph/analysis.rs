@@ -25,9 +25,8 @@ pub fn find_dead_code(conn: &Connection) -> Result<Vec<DeadCodeFinding>> {
         "SELECT s.name, s.kind, f.path, s.start_line
          FROM symbols s
          JOIN code_files f ON s.file_id = f.id
-         WHERE s.id NOT IN (
-             SELECT DISTINCT to_id FROM edges
-         )
+         LEFT JOIN edges e ON e.to_id = s.id
+         WHERE e.to_id IS NULL
          AND s.visibility != 'public'
          AND s.kind NOT IN ('module', 'test', 'variant')
          AND f.path NOT LIKE '%/tests/%'

@@ -476,4 +476,40 @@ inputs:
             .is_ok()
         );
     }
+
+    #[test]
+    fn apply_input_defaults_injects_absent_values() {
+        let inputs = serde_json::json!([
+            {"name": "ticker", "type": "string", "required": true},
+            {"name": "analyst_id", "type": "string", "required": false, "default": "zed-kask-operator"}
+        ]);
+        let mut context = HashMap::new();
+        context.insert("ticker".to_string(), Value::String("COF".into()));
+        // analyst_id is absent — should be injected from default.
+        let applied = apply_input_defaults(Some(&inputs), &mut context);
+        assert_eq!(applied, 1);
+        assert_eq!(context.get("analyst_id").and_then(|v| v.as_str()), Some("zed-kask-operator"));
+    }
+
+    #[test]
+    fn apply_input_defaults_skips_present_values() {
+        let inputs = serde_json::json!([
+            {"name": "analyst_id", "type": "string", "required": false, "default": "fallback"}
+        ]);
+        let mut context = HashMap::new();
+        context.insert("analyst_id".to_string(), Value::String("custom-user".into()));
+        let applied = apply_input_defaults(Some(&inputs), &mut context);
+        assert_eq!(applied, 0);
+        assert_eq!(context.get("analyst_id").and_then(|v| v.as_str()), Some("custom-user"));
+    }
+
+    #[test]
+    fn apply_input_defaults_no_defaults_field() {
+        let inputs = serde_json::json!([
+            {"name": "ticker", "type": "string", "required": true}
+        ]);
+        let mut context = HashMap::new();
+        let applied = apply_input_defaults(Some(&inputs), &mut context);
+        assert_eq!(applied, 0);
+    }
 }
