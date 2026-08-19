@@ -140,6 +140,8 @@ extend-ignore-re = [
     "mis-",
     # vim :bd[elete] command syntax (optional spelling).
     "elete",
+    # Upstream test fixture identifier.
+    "GHIzJ",
 ]
 
 [default.extend-words]

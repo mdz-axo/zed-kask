@@ -28,7 +28,7 @@ REGISTRY="${REGISTRY:-crates/hkask-types/src/event.rs}"
 
 # Extract all reg.* tracing targets from Rust source files.
 # Matches: target: "reg.foo.bar" (with optional whitespace)
-# Filters out false positives like reg.config() (method calls, not namespaces).
+# Filters out false positives like method-call targets (e.g. reg.foo()).
 # `|| true` guards the pipeline under `set -euo pipefail` — grep returns 1 when
 # no matches survive the final filter, which must NOT abort the script.
 targets=$( { grep -roh 'target: "reg\.[^"]*"' "${SCAN_DIRS[@]}" \

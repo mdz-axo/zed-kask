@@ -172,38 +172,24 @@ fn steer_system_prompt(
          \n\
          **ABW tools** (`mode: abw`, the default): `swarm_list_agents`, \
          `swarm_get_swarm`, `swarm_hire_cost`, `swarm_request_consent`, \
-         `swarm_authorize_session` (pre-authorized spend for headless \
-         pipelines), `swarm_hire`, `swarm_delegate`, \
-         `swarm_delegate_and_wait` (delegate + poll for response), \
-         `swarm_fanout` (parallel multi-agent fan-out), `swarm_fire` (remove \
-         from roster), `swarm_create_agent`, `swarm_create_swarm`, \
+         `swarm_authorize_session`, `swarm_hire`, `swarm_delegate`, \
+         `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_fire`, \
+         `swarm_create_agent`, `swarm_create_swarm`, \
          `swarm_generate_prompt`, `swarm_generate_ontology`, \
-         `swarm_fork_agent` (derivative fork), `swarm_run_status`, \
-         `swarm_search_knowledge` (knowledge-graph search), \
-         `swarm_publish_checks` + `swarm_publish_agent` (catalogue publish, \
-         with an audited admin force-publish path), `swarm_xaman`. These \
-         route to Agent Bestiary World and require the ABW API key.\n\
+         `swarm_fork_agent`, `swarm_run_status`, \
+         `swarm_search_knowledge`, `swarm_publish_checks`, \
+         `swarm_publish_agent`, `swarm_xaman`. These \
+         route to Agent Bestiary World and require the ABW API key. Per-tool \
+         behavior is in each tool's description.\n\
          \n\
          **Local tools** (`mode: local`): `swarm_list_local_agents`, \
          `swarm_balance_local`, `swarm_local_history`, `swarm_fund_local`, \
          `swarm_delegate_local`, `swarm_fanout_local`, \
-         `swarm_pipeline_local` (sequential pipeline with {{prev_output}} \
-         substitution), `swarm_clone_to_local`, `swarm_remove_local`, \
-         `swarm_create_local_agent`, `swarm_reconfigure_local_agent`,
-         `swarm_push_to_cloud`, `swarm_search_knowledge_local` (search the
-         agent's prefix-scoped `hkask-memory` semantic graph — the local analog
-         of `swarm_search_knowledge`), `swarm_generate_prompt_local` /
-         `swarm_generate_ontology_local` (local LLM authoring aids over the
-         local `InferencePort`, seeded with the agent's memory — the local
-         analogs of `swarm_generate_prompt` / `swarm_generate_ontology`). \
-         `swarm_evaluate_local` (deterministic task-success evaluator — stamps \
-         a `TaskSuccessVerdict` with `provenance: Deterministic` onto a \
-         delegation response via a contains/not_contains/regex check; call it \
-         after `swarm_delegate_local` to close the C5/C6 fault-attribution loop). \
-         `swarm_execute_plan_local` (execute a full plan: run each delegation, \
-         evaluate each result, return the collected results with verdicts \
-         stamped — ready to feed back to swarm-intelligence as delegate_results; \
-         closes the loop in one call). \
+         `swarm_pipeline_local`, `swarm_clone_to_local`, `swarm_remove_local`, \
+         `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, \
+         `swarm_push_to_cloud`, `swarm_search_knowledge_local`, \
+         `swarm_generate_prompt_local`, `swarm_generate_ontology_local`, \
+         `swarm_evaluate_local`, `swarm_execute_plan_local`. \
          These run on the local \
          substrate (`hkask-inference` + `hkask-ledger`) with no \
          ABW round-trips. Local delegation needs NO funding and NO consent — it \
@@ -216,11 +202,8 @@ fn steer_system_prompt(
          (`swarm_hire`, `swarm_delegate`), where credits buy someone else's \
          compute. `swarm_clone_to_local` and `swarm_push_to_cloud` sync \
          cards between the local registry (`agents/local/curated/<id>/agent_card.json`) \
-         and ABW; a cloned card carries `cloud_swarm_id` to track the sync link. \
-         `swarm_remove_local` deletes a local card (the local counterpart of \
-         firing — a synced card's ABW agent is untouched); `swarm_local_history` \
-         reads the local ledger's recent transactions (the run/reconciliation \
-         surface in local mode).\n\
+         and ABW; a cloned card carries `cloud_id` to track the sync link. \
+         Per-tool behavior is in each tool's description.\n\
          \n\
          {workspace_note}\n\
          \n\
@@ -3706,6 +3689,34 @@ mod tests {
             before,
             "duplicate tool names in KANBAN_TOOLS list"
         );
+    }
+
+    // P2 trim pin: the steer prompt must NOT re-grow per-tool behavioral
+    // descriptions — those live in the MCP server's `#[tool]` description
+    // fields and reach the model via the tools array in every completion
+    // request (`build_completion_request`). Prompt-side glosses drift
+    // independently of the server (the `cloud_swarm_id` vs `cloud_id` drift
+    // was live evidence), and the `debug_assert!` drift guard checks tool
+    // NAMES only. This test pins the deletion: a backticked tool name must
+    // not be immediately followed by a parenthesized gloss.
+    #[test]
+    fn steer_prompt_does_not_gloss_tool_names() {
+        for prompt in [
+            steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Abw),
+            steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Local),
+        ] {
+            for seg in prompt
+                .split('`')
+                .enumerate()
+                .filter_map(|(i, s)| (i % 2 == 1).then_some(s))
+            {
+                assert!(
+                    !seg.starts_with('(') && !seg.contains(" — "),
+                    "steer prompt glosses tool `{seg}` — per-tool behavior belongs \
+                     in the server's #[tool] description, not the prompt"
+                );
+            }
+        }
     }
 
     #[test]

@@ -1144,9 +1144,31 @@ impl RealMemoryPort {
             .spawn(async move { embedding_port.embed(&embedding_model, &[query_owned]).await })
             .await;
 
-        if let Ok(Ok(vectors)) = vectors
-            && let Some(query_vector) = vectors.into_iter().next()
-        {
+        // A failed embed degrades recall to keyword-only — surface it so
+        // the operator can distinguish "no semantic memory" from "embedding
+        // endpoint down". Mirrors the ingest_turn failure branches above.
+        let vectors = match vectors {
+            Ok(Ok(vectors)) => vectors,
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    target: "reg.memory",
+                    error = %e,
+                    label = log_label,
+                    "Failed to embed recall query — semantic recall skipped for this turn"
+                );
+                Vec::new()
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.memory",
+                    error = %e,
+                    label = log_label,
+                    "Embedding task panicked — semantic recall skipped for this turn"
+                );
+                Vec::new()
+            }
+        };
+        if let Some(query_vector) = vectors.into_iter().next() {
             match store.search_similar(&query_vector, limit) {
                 Ok(results) => {
                     for result in results {
@@ -1512,6 +1534,43 @@ mod tests {
 
     fn test_webid() -> WebID {
         WebID::new()
+    }
+
+    /// Capture `tracing` output into a process-global buffer for the duration
+    /// of a test. Returns a guard whose drop detaches the writer. Tests using
+    /// this must not run in parallel with each other (they share the buffer) —
+    /// the buffer is cleared on each `tracing_capture()` call, which makes
+    /// concurrent use flaky rather than wrong; the single warn-assertion test
+    /// here is the only current user.
+    fn tracing_capture() -> tracing::subscriber::DefaultGuard {
+        CAPTURED_LOGS.lock().unwrap().clear();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(|| CaptureWriter)
+            .with_max_level(tracing::Level::WARN)
+            .finish();
+        tracing::subscriber::set_default(subscriber)
+    }
+
+    fn captured_logs() -> Vec<String> {
+        let bytes = CAPTURED_LOGS.lock().unwrap().clone();
+        String::from_utf8_lossy(&bytes)
+            .lines()
+            .map(|line| line.to_string())
+            .collect()
+    }
+
+    static CAPTURED_LOGS: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+
+    struct CaptureWriter;
+
+    impl std::io::Write for CaptureWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            CAPTURED_LOGS.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     fn in_memory_port() -> RealMemoryPort {
@@ -1927,6 +1986,33 @@ mod tests {
         assert!(
             has_rust && has_python,
             "recall should match ANY query word, got: {snippets:?}"
+        );
+    }
+
+    /// A failed embedding call must surface a warn — not silently degrade
+    /// recall to keyword-only. Before this pin, `recall_from` swallowed both
+    /// the embed `Err` and the JoinError with `if let Ok(Ok(...))`, so a dead
+    /// embedding endpoint was indistinguishable from "no semantic memory"
+    /// (the broken-feedback-loop trap). Uses the channel-closed `for_tests()`
+    /// port, which fails every embed with a `Connection` error.
+    #[tokio::test(flavor = "current_thread")]
+    async fn recall_warns_when_embedding_fails() {
+        let _guard = tracing_capture();
+        let port = in_memory_port();
+
+        let snippets = port
+            .recall_context("a sufficiently long recall query", 10)
+            .await
+            .expect("recall succeeds despite embed failure");
+        assert!(
+            snippets.is_empty(),
+            "no snippets expected — nothing was ingested"
+        );
+        assert!(
+            captured_logs()
+                .iter()
+                .any(|line| line.contains("Failed to embed recall query")),
+            "embed failure must warn, not silently degrade to keyword-only recall"
         );
     }
 
