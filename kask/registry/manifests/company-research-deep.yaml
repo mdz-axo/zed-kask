@@ -350,40 +350,44 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((op (assoc "obvious_problem" step_6_result))
-              (ig (assoc "invisible_gorilla" step_6_result))
-              (cs (assoc "combinatorial_solution" step_6_result))
-              (cp (assoc "choke_point" step_6_result))
-              (maturity-blocks (assoc "maturity_blocks" step_7_result)))
-          (let ((op-blocked (member "obvious_problem" maturity-blocks))
-                (ig-blocked (member "invisible_gorilla" maturity-blocks))
-                (cs-blocked (member "combinatorial_solution" maturity-blocks))
-                (cp-blocked (member "choke_point" maturity-blocks)))
-            (let ((op-val (if op-blocked nil op))
-                  (ig-val (if ig-blocked nil ig))
-                  (cs-val (if cs-blocked nil cs))
-                  (cp-val (if cp-blocked nil cp)))
-              (let ((op-ok (numberp op-val))
-                    (ig-ok (numberp ig-val))
-                    (cs-ok (numberp cs-val))
-                    (cp-ok (numberp cp-val)))
-                (if (not (and op-ok ig-ok cs-ok cp-ok))
-                    (list (cons "gorilla_score" nil)
-                          (cons "verdict" "DATA_MISSING")
-                          (cons "data_gaps"
-                            (list (if (not op-ok) "obvious_problem" nil)
-                                  (if (not ig-ok) "invisible_gorilla" nil)
-                                  (if (not cs-ok) "combinatorial_solution" nil)
-                                  (if (not cp-ok) "choke_point" nil))))
-                    (let ((score (+ (* op-val 0.25) (* ig-val 0.30) (* cs-val 0.25) (* cp-val 0.20))))
-                      (let ((verdict (if (>= score 75) "GORILLA"
-                                        (if (>= score 50) "SMALL_ANIMAL" "PEDESTRIAN"))))
-                        (list (cons "gorilla_score" score)
-                              (cons "verdict" verdict)
-                              (cons "obvious_problem" op-val)
-                              (cons "invisible_gorilla" ig-val)
-                              (cons "combinatorial_solution" cs-val)
-                              (cons "choke_point" cp-val)))))))))
+        (if (not (listp step_6_result))
+            (list (list "gorilla_score" nil)
+                  (list "verdict" "DATA_MISSING")
+                  (list "data_gaps" (list "step_6_result_not_object")))
+            (let ((op (assoc "obvious_problem" step_6_result))
+                  (ig (assoc "invisible_gorilla" step_6_result))
+                  (cs (assoc "combinatorial_solution" step_6_result))
+                  (cp (assoc "choke_point" step_6_result))
+                  (maturity-blocks (if (listp step_7_result) (assoc "maturity_blocks" step_7_result) nil)))
+              (let ((op-blocked (member "obvious_problem" maturity-blocks))
+                    (ig-blocked (member "invisible_gorilla" maturity-blocks))
+                    (cs-blocked (member "combinatorial_solution" maturity-blocks))
+                    (cp-blocked (member "choke_point" maturity-blocks)))
+                (let ((op-val (if op-blocked nil op))
+                      (ig-val (if ig-blocked nil ig))
+                      (cs-val (if cs-blocked nil cs))
+                      (cp-val (if cp-blocked nil cp)))
+                  (let ((op-ok (numberp op-val))
+                        (ig-ok (numberp ig-val))
+                        (cs-ok (numberp cs-val))
+                        (cp-ok (numberp cp-val)))
+                    (if (not (and op-ok ig-ok cs-ok cp-ok))
+                        (list (list "gorilla_score" nil)
+                              (list "verdict" "DATA_MISSING")
+                              (list "data_gaps"
+                                (list (if (not op-ok) "obvious_problem" nil)
+                                      (if (not ig-ok) "invisible_gorilla" nil)
+                                      (if (not cs-ok) "combinatorial_solution" nil)
+                                      (if (not cp-ok) "choke_point" nil))))
+                        (let ((score (+ (* op-val 0.25) (* ig-val 0.30) (* cs-val 0.25) (* cp-val 0.20))))
+                          (let ((verdict (if (>= score 75) "GORILLA"
+                                            (if (>= score 50) "SMALL_ANIMAL" "PEDESTRIAN"))))
+                            (list (list "gorilla_score" score)
+                                  (list "verdict" verdict)
+                                  (list "obvious_problem" op-val)
+                                  (list "invisible_gorilla" ig-val)
+                                  (list "combinatorial_solution" cs-val)
+                                  (list "choke_point" cp-val))))))))))
       env:
         step_6_result: "{{ step_6_result | default({}) }}"
         step_7_result: "{{ step_7_result | default({}) }}"
@@ -577,12 +581,14 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((v (assoc "verdict" step_14_result)))
-          (cond
-            ((eq v "done") 0.0)
-            ((eq v "continue") 0.5)
-            ((eq v "blocked") 1.0)
-            (t 1.0)))
+        (if (not (listp step_14_result))
+            1.0
+            (let ((v (assoc "verdict" step_14_result)))
+              (cond
+                ((eq v "done") 0.0)
+                ((eq v "continue") 0.5)
+                ((eq v "blocked") 1.0)
+                (t 1.0))))
       env:
         step_14_result: "{{ step_14_result | default({}) }}"
 

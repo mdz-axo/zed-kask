@@ -81,6 +81,5 @@ classifier:
     needs_example, precise, accessible, authoritative, outdated.
 
   temperature: 0.0
-  max_tokens: 300
 
   fallback_category: Statement

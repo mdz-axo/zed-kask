@@ -37,7 +37,7 @@ use crate::path_safety::{contain_for_read, contain_for_write};
 use crate::text::{chunk_text, strip_gutenberg_headers};
 use crate::{
     ExtractOutcome, IndexedPassage, OCR_FALLBACK_WORD_THRESHOLD, chunk_word_bounds,
-    default_embedding_model, default_ocr_max_tokens, extract_text, filter_outcome_to_pages,
+    default_embedding_model, extract_text, filter_outcome_to_pages,
     ocr_concurrency, sanitize_links,
 };
 
@@ -185,7 +185,6 @@ impl<'a> ConvertService<'a> {
         &self,
         file_bytes: &[u8],
         model: &str,
-        max_tokens: u32,
     ) -> Result<String, OcrError> {
         if file_bytes.is_empty() {
             return Err(OcrError::EmptyFile);
@@ -194,7 +193,6 @@ impl<'a> ConvertService<'a> {
             &*self.inference_router,
             file_bytes,
             model,
-            max_tokens,
         )
         .await
     }
@@ -472,7 +470,7 @@ impl<'a> ConvertService<'a> {
             // Final fallback: raw bytes OCR
             match self.resolve_ocr_model(None).await {
                 Ok(model) => match self
-                    .do_ocr(&file_bytes, &model, default_ocr_max_tokens())
+                    .do_ocr(&file_bytes, &model)
                     .await
                 {
                     Ok(text) => {
@@ -714,7 +712,7 @@ impl<'a> ConvertService<'a> {
                 match self.resolve_ocr_model(None).await {
                     Ok(model) => {
                         match self
-                            .do_ocr(&file_bytes, &model, default_ocr_max_tokens())
+                            .do_ocr(&file_bytes, &model)
                             .await
                         {
                             Ok(ocr_text) => {

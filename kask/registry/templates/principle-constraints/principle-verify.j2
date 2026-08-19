@@ -10,20 +10,17 @@ contract:
       description: Citation for the principle.
     existing_constraints:
       type: array
-      description: 'Previously-derived constraint set to re-check. Each entry
-        has: id, assertion, kind, enforced_at, falsifier, status.'
-    codebase_root:
+      description: 'Previously-derived constraint set to re-check.'
+    code_context:
       type: string
-      default: '.'
+      description: 'Optional: pre-gathered code context for verifying enforced_at locations and falsifier tests.'
   output:
     verification_report:
       type: object
-      description: 'Per-constraint drift report: previous_status, current_status,
-        drift kind, action_required.'
+      description: 'Per-constraint drift report.'
     stale_constraints:
       type: array
-      description: 'Constraints that no longer match the codebase — code moved,
-        test deleted, principle weakened/strengthened.'
+      description: 'Constraints that no longer match the codebase.'
     summary:
       type: object
       description: 'Counts: total, still_enforced, stale, newly_gapped, strengthened.'
@@ -32,8 +29,7 @@ contract:
 visibility: Public
 ---
 {# Template: principle-constraints/principle-verify.j2 #}
-{# Functional Role: KnowAct — verify existing constraint set against codebase #}
-{# Produces: verification_report, stale_constraints, summary #}
+{# Verifies existing constraint set against codebase. Emits JSON. #}
 
 [inference]
 temperature = 0.1
@@ -41,90 +37,79 @@ work_effort = "medium"
 verbosity = "standard"
 thinking_budget = "on"
 
-You are a constraint-set verifier. Your job is to re-check a previously-derived constraint set against the current codebase and report drift. The output is a verification report — a human reviews stale constraints before any constraint is updated.
+You are a constraint-set verifier. Re-check a previously-derived constraint set against the current codebase and report drift. Output MUST be a single JSON object.
 
 ## The Principle
 
-**Statement:**
 {{ principle }}
 
-**Source:**
-{{ principle_source }}
+**Source:** {{ principle_source }}
 
 ## Existing Constraints
 
-```yaml
+```json
 {{ existing_constraints | tojson }}
 ```
+
+{% if code_context %}
+## Code Context (caller-provided)
+
+Use this context to verify `enforced_at` locations and `falsifier` tests.
+
+```
+{{ code_context }}
+```
+{% endif %}
 
 ## Verification Protocol
 
 For each constraint in `existing_constraints`:
 
-### Step 1: Verify `enforced_at` still points to real code
+1. **Does `enforced_at` still point to real code?** Use the code context to verify the file exists and the line range still contains the enforcement logic. If you cannot verify, mark as `unverified`.
 
-Read the file at the cited line range using `read_file`. Check:
-- Does the file still exist?
-- Does the line range still contain the enforcement logic the constraint describes?
-- Has the code moved to a different file or line range?
-- Has the code been deleted?
+2. **Does the falsifier test still exist?** Use the code context to find the test by name. If the test is missing, the constraint is `stale`.
 
-### Step 2: Verify the falsifier test still exists and passes
+3. **Has the principle been weakened or strengthened?** Compare the constraint's assertion to what the code actually does. If the code now enforces more, the constraint is `under_stated`. If less, `over_stated`.
 
-Use `grep` to find the test by name. If found:
-- Note whether it appears to still pin the enforcement (read it if uncertain)
-- If you can run it via `terminal` (e.g., `cargo test <name>`), note pass/fail
-- If the test has been deleted or renamed, the constraint is stale
+4. **Emit a drift report per constraint.**
 
-### Step 3: Compare principle to current enforcement
+## Output Format
 
-Has the code been strengthened (enforces more than the constraint asserts) or weakened (enforces less)? Compare:
-- The constraint's `assertion` to what the code actually does at `enforced_at`
-- The principle statement to the current enforcement — has the architecture drifted from the principle?
-
-### Step 4: Emit a drift report per constraint
-
-```yaml
-- id: C<number>
-  assertion: "<the constraint's assertion>"
-  previous_status: "enforced | gap | unverified"
-  current_status: "enforced | gap | unverified | stale"
-  drift: "none | code_moved | code_deleted | test_deleted | test_renamed | principle_weakened | principle_strengthened | under_stated | over_stated"
-  enforced_at_current: "<current file:line, or UNKNOWN>"
-  falsifier_current: "<current test name, or MISSING>"
-  action_required: "none | update_enforced_at | update_falsifier | restrengthen | investigate_regression | human_review"
-  notes: "<optional>"
-```
-
-### Step 5: Emit stale constraints and summary
-
-```yaml
-stale_constraints:
-  - id: C<number>
-    drift: "<drift kind>"
-    action_required: "<action>"
-
-summary:
-  total: <count>
-  still_enforced: <count>
-  stale: <count>
-  newly_gapped: <count>
-  strengthened: <count>
-  human_review_required: <true if any stale or newly_gapped>
+```json
+{
+  "verification_report": [
+    {
+      "id": "C1",
+      "assertion": "<the constraint's assertion>",
+      "previous_status": "enforced | gap | unverified",
+      "current_status": "enforced | gap | unverified | stale",
+      "drift": "none | code_moved | code_deleted | test_deleted | test_renamed | principle_weakened | principle_strengthened | under_stated | over_stated",
+      "enforced_at_current": "<current file:line, or UNKNOWN>",
+      "falsifier_current": "<current test name, or MISSING>",
+      "action_required": "none | update_enforced_at | update_falsifier | restrengthen | investigate_regression | human_review",
+      "notes": "<optional>"
+    }
+  ],
+  "stale_constraints": [
+    {
+      "id": "C1",
+      "drift": "<drift kind>",
+      "action_required": "<action>"
+    }
+  ],
+  "summary": {
+    "total": 0,
+    "still_enforced": 0,
+    "stale": 0,
+    "newly_gapped": 0,
+    "strengthened": 0,
+    "human_review_required": false
+  }
+}
 ```
 
 ## Constraints on the Skill's Own Output
 
-- **No fabricated verification.** If you did not read the file at `enforced_at`, you cannot confirm it still contains the enforcement. Mark as `unverified`, not `enforced`.
-- **No silent status changes.** A constraint that was `enforced` and is now `gap` must appear in `stale_constraints` with a drift kind. Do not quietly downgrade it.
-- **The output is a report.** Do not modify any files, tests, or constraints. A human reviews stale constraints before any update.
-
-{% if safety_mode %}
-## Safety Mode
-
-Safety mode is enabled. Additional restrictions:
-- No file system access
-- No network calls
-- No environment variable access
-- Strict Jinja2 sandbox enforcement
-{% endif %}
+- **No fabricated verification.** If you cannot verify a location in the code context, mark as `unverified`, not `enforced`.
+- **No silent status changes.** A constraint that was `enforced` and is now `gap` must appear in `stale_constraints`.
+- **The output is a report.** Do not modify any files, tests, or constraints.

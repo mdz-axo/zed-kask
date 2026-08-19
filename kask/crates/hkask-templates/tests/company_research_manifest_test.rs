@@ -16,7 +16,9 @@
 //!
 //! # REQ: P8 — every test verifies a stated behavioral property of a public seam.
 
+use hkask_lisp::eval_sandboxed;
 use hkask_templates::load_manifest_from_yaml;
+use serde_json::json;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -498,4 +500,108 @@ fn company_research_deep_reuses_goal_analysis_template() {
         template_refs.iter().any(|r| r == "goal-analysis/judge"),
         "deep flowdef must reuse goal-analysis/judge (cross-skill THESIS quality gate)"
     );
+}
+
+// ── Lisp form robustness: listp guard against non-list step results ─────────
+//
+// The GORILLA scoring step (step 8) and the convergence check (step 15) both
+// call `(assoc key step_N_result)`. If the upstream `select` step's LLM output
+// is parsed as a scalar (float) instead of a JSON object, `assoc` crashes with
+// "type error: expected list, got float". The fix adds a `(listp step_N_result)`
+// guard before `assoc`, following the pattern established in principle-constraints
+// and upstream-rebase. These tests pin the guard so it is not removed.
+
+/// Extract the `form` string from a compute step's input_mapping.
+fn extract_lisp_form(manifest: &hkask_templates::BundleManifest, ordinal: u32) -> String {
+    let step = manifest
+        .steps
+        .iter()
+        .find(|s| s.ordinal == ordinal)
+        .unwrap_or_else(|| panic!("step {} not found", ordinal));
+    let input = step
+        .input_mapping
+        .as_ref()
+        .expect("compute step has input_mapping");
+    let form = input
+        .get("form")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| panic!("step {} input_mapping has no form string", ordinal));
+    form.to_string()
+}
+
+#[test]
+fn gorilla_lisp_form_handles_float_step_6_result() {
+    // Regression: step_6_result arrives as a float (LLM returned a scalar, not
+    // a JSON object). The form must return DATA_MISSING, not crash.
+    // First test with a hardcoded form to verify the lisp interpreter handles it.
+    let hardcoded_form = "(if (not (listp step_6_result)) (list (list \"gorilla_score\" nil) (list \"verdict\" \"DATA_MISSING\")) \"OK\")";
+    let env_simple = json!({"step_6_result": 75.0});
+    let result_simple =
+        eval_sandboxed(hardcoded_form, &env_simple).expect("hardcoded form must not error");
+    eprintln!("DEBUG hardcoded result: {:?}", result_simple);
+
+    let manifest = load_named_manifest("company-research-deep");
+    let form = extract_lisp_form(&manifest, 8);
+    eprintln!("DEBUG extracted form (first 300 chars): {:.300}", form);
+    eprintln!("DEBUG form length: {}", form.len());
+    let env = json!({
+        "step_6_result": 75.0,
+        "step_7_result": {}
+    });
+    let result = eval_sandboxed(&form, &env).expect("form must not error on float step_6_result");
+    let verdict = result
+        .get("verdict")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| panic!("expected verdict field, got: {:?}", result));
+    assert_eq!(verdict, "DATA_MISSING");
+}
+
+#[test]
+fn gorilla_lisp_form_handles_valid_object_step_6_result() {
+    // Happy path: step_6_result is a proper JSON object with all 4 dimensions.
+    let manifest = load_named_manifest("company-research-deep");
+    let form = extract_lisp_form(&manifest, 8);
+    let env = json!({
+        "step_6_result": {
+            "obvious_problem": 80,
+            "invisible_gorilla": 85,
+            "combinatorial_solution": 70,
+            "choke_point": 75
+        },
+        "step_7_result": {
+            "maturity_blocks": []
+        }
+    });
+    let result = eval_sandboxed(&form, &env).expect("form must not error on valid object");
+    let score = result
+        .get("gorilla_score")
+        .and_then(|v| v.as_f64())
+        .unwrap_or_else(|| panic!("expected gorilla_score, got: {:?}", result));
+    // 80*0.25 + 85*0.30 + 70*0.25 + 75*0.20 = 20 + 25.5 + 17.5 + 15 = 78.0
+    assert!(
+        (score - 78.0).abs() < 0.01,
+        "expected score 78.0, got {}",
+        score
+    );
+    let verdict = result
+        .get("verdict")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| panic!("expected verdict, got: {:?}", result));
+    assert_eq!(verdict, "GORILLA");
+}
+
+#[test]
+fn convergence_lisp_form_handles_float_step_14_result() {
+    // Regression: step_14_result arrives as a float. The form must return 1.0
+    // (escalate), not crash.
+    let manifest = load_named_manifest("company-research-deep");
+    let form = extract_lisp_form(&manifest, 15);
+    let env = json!({
+        "step_14_result": 42.0
+    });
+    let result = eval_sandboxed(&form, &env).expect("form must not error on float step_14_result");
+    let signal = result
+        .as_f64()
+        .unwrap_or_else(|| panic!("expected numeric signal, got: {:?}", result));
+    assert_eq!(signal, 1.0);
 }

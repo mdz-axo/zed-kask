@@ -180,7 +180,7 @@ steps:
       gap computation measures against the target.
     renderer: minijinja
     template_ref: metacognition/meta-grasp-current
-    # thinking_budget = "full" + max_tokens 3000 on a cloud thinking-mode model
+    # thinking_budget = "full" on a cloud thinking-mode model
     # (GLM-5.2 via OpenRouter) routinely exceeds 60s. 120s matches the default
     # (DEFAULT_STEP_TIMEOUT_SECONDS) and aligns with task-breakdown (90s) and
     # capabilities-reasoner (90-300s) for comparable inference load.
@@ -265,7 +265,7 @@ steps:
       the new current_artifacts and current_procedure.
     renderer: minijinja
     template_ref: metacognition/meta-experiment
-    # thinking_budget = "full" + max_tokens 3000 — heaviest inference step.
+    # thinking_budget = "full" — heaviest inference step.
     # 150s matches capabilities-reasoner's heavy step (300s would be safer
     # but the Kata cycle runs this 4-step loop up to 10 times; 150s balances
     # per-step margin against total cascade wall time.

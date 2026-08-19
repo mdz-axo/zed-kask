@@ -83,8 +83,6 @@ pub struct ClassifierDef {
     pub system_prompt: String,
     #[serde(default)]
     pub temperature: f64,
-    #[serde(default = "default_max_tokens")]
-    pub max_tokens: u32,
     #[serde(default = "default_fallback")]
     pub fallback_category: String,
     /// API input token cost in nano-rJ per token (e.g., 30,000 for DeepInfra $0.03/M).
@@ -124,7 +122,6 @@ impl Default for ClassifierDef {
             cost_input_nj_per_token: 0,
             cost_output_nj_per_token: 0,
             cost_cache_read_nj_per_token: 0,
-            max_tokens: default_max_tokens(),
             disable_thinking: true,
         }
     }
@@ -132,9 +129,6 @@ impl Default for ClassifierDef {
 
 fn default_timeout() -> u64 {
     30
-}
-fn default_max_tokens() -> u32 {
-    15
 }
 fn default_fallback() -> String {
     "Statement".to_string()
@@ -188,7 +182,6 @@ pub struct ClassifierConfig {
     pub concurrency: usize,
     pub timeout: Duration,
     pub temperature: f64,
-    pub max_tokens: u32,
     pub fallback_category: String,
     pub cost_input_nj_per_token: u64,
     pub cost_output_nj_per_token: u64,
@@ -229,7 +222,6 @@ impl ClassifierConfig {
             concurrency: def.concurrency,
             timeout: Duration::from_secs(def.timeout_secs),
             temperature: def.temperature,
-            max_tokens: def.max_tokens,
             fallback_category: def.fallback_category.clone(),
             cost_input_nj_per_token: input_nj,
             cost_output_nj_per_token: output_nj,

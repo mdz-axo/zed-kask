@@ -4,6 +4,7 @@ contract:
   input:
     ticker: string
     company_board: object
+    wardley_map: object
   output:
     obvious_problem: number
     invisible_gorilla: number
@@ -31,6 +32,14 @@ You are the GORILLA agent for an institutional equity research desk. Your job is
 ```json
 {{ company_board | tojson }}
 ```
+
+## Wardley Map (from WARDLEY agent)
+
+```json
+{{ wardley_map | tojson }}
+```
+
+The Wardley map's `invisible_gorillas` and `choke_points` fields ground the Invisible Gorilla and Choke Point dimensions. Use them as evidence anchors — do not score a dimension high without Wardley map support when it is available.
 
 ## The 4 Dimensions (firm methodology — fixed weights)
 

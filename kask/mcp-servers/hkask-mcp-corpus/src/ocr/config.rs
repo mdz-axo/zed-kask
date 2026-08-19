@@ -1,9 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// Default max output tokens for OCR inference calls.
-pub(crate) fn default_ocr_max_tokens() -> u32 {
-    8192
-}
 
 // ── Complexity Tiers ──────────────────────────────────────────────────────
 

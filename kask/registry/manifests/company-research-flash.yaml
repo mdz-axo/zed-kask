@@ -660,12 +660,14 @@ steps:
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((v (assoc "overall_verdict" step_19_result)))
-          (cond
-            ((eq v "CONSISTENT") 0.0)
-            ((eq v "PARTIAL") 0.5)
-            ((eq v "INCONSISTENT") 1.0)
-            (t 1.0)))
+        (if (not (listp step_19_result))
+            1.0
+            (let ((v (assoc "overall_verdict" step_19_result)))
+              (cond
+                ((eq v "CONSISTENT") 0.0)
+                ((eq v "PARTIAL") 0.5)
+                ((eq v "INCONSISTENT") 1.0)
+                (t 1.0))))
       env:
         step_19_result: "{{ step_19_result | default({}) }}"
 

@@ -1,0 +1,14 @@
+# Principle Constraints — Derived Constraint Sets
+#
+# This file is the persistent record of constraint sets derived by the
+# principle-constraints skill. Each entry is a proposal that was reviewed
+# and approved by a human before being written to disk.
+#
+# Format: one entry per principle, with the constraint set, gaps, and
+# the derivation metadata (date, source, enforcement hints used).
+#
+# CI hook: kask/scripts/check-principle-constraints.sh verifies that
+# enforced constraints haven't drifted (code moved, test deleted).
+# Gap constraints are reported as warnings, not failures.
+
+principles: []
