@@ -11,12 +11,15 @@ crate:
 
 templates:
   - id: structured-extraction/extract-relations
-    name: "Extract semantic relations between identified entities"
+    name: "Extract binary relations between identified entities (OpenIE)"
     path: extract-relations.j2
     type: KnowAct
     description: >
-      Extract semantic relations between identified entities. Links
-      entities via subject-predicate-object triples within context.
+      Open Information Extraction (Banko et al. 2007): extract binary
+      relations between identified entities as (arg1, relation, arg2)
+      tuples with free-text predicates, trigger spans, and coreference
+      resolution. NOT RDF triples — predicates are free-text verb phrases,
+      not typed IRIs from a vocabulary.
 
   - id: structured-extraction/identify-entities
     name: "Identify entities in unstructured text against a target schema with…"

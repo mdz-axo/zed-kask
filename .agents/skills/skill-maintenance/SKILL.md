@@ -21,7 +21,9 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 
 ## Instructions
 
-### skill-maintenance-validate
+The process manifest (`kask/registry/manifests/skill-maintenance.yaml`) invokes only `skill-maintenance-audit` (ordinal 1) and `skill-maintenance-coverage` (ordinal 2) via `template_ref`; ordinals 3 (lisp.eval) and 4 (loop) are non-template steps. The other templates below (`validate`, `build`, `translate`, `reverse`, `prose`) are registered in the crate but NOT referenced by the process manifest cascade — they are standalone utilities available for direct invocation, not part of the PDCA loop.
+
+### skill-maintenance-validate (legacy — registered in crate, not invoked by process manifest cascade)
 
 1. Validate the specified skill or all skills in the registry directory against R1-R12 registry checks, Z1-Z8 companion checks, X1-X4 cross-artifact checks, and E1-E11 executor compliance checks.
 2. Evaluate every check for every targeted skill without omissions, including invariant X4: every `.agents/skills/<name>/` must have a matching `registry/manifests/<name>.yaml`, and vice versa. Report exact mismatches by name.
@@ -31,7 +33,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 6. Provide actionable fix suggestions for any failures, including mapping non-canonical actions to their canonical equivalents.
 7. Respond with a JSON object containing validation results, pass/fail counts (including executor_compliance), and fix suggestions.
 
-### skill-maintenance-build
+### skill-maintenance-build (legacy — registered in crate, not invoked by process manifest cascade)
 
 1. Generate a complete registry crate (manifest.yaml and .j2 templates) from the user's natural language description.
 2. Ensure the skill name is lowercase, hyphenated, 2-40 characters, verb-noun or noun-noun, and lacks reserved prefixes.
@@ -41,7 +43,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 6. Derive a SKILL.md companion from the completed registry crate.
 7. Respond with a JSON object containing the manifest, process manifest, template bodies, SKILL.md outline, and validation status (including actions_canonical, rjoule_block_present, convergence_block_present).
 
-### skill-maintenance-translate
+### skill-maintenance-translate (legacy — registered in crate, not invoked by process manifest cascade)
 
 1. Convert the classified source skill into a hKask registry crate (manifest.yaml + .j2 templates) plus a process manifest (registry/manifests/<name>.yaml).
 2. Produce one .j2 file per classified step, mapping cognitive steps to KnowAct, workflow steps to WordAct or FlowDef, reference content to RenderActand guardrails to visibility and constraints.
@@ -52,7 +54,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 7. Mark any references with no hKask equivalent as `[unresolved: no hKask equivalent for <source_ref>]`.
 8. Respond with a JSON object containing the manifest, process manifest, templates, derived SKILL.md, and a translation summary detailing preserved, adapted, dropped, unresolved elements, and action mappings.
 
-### skill-maintenance-reverse
+### skill-maintenance-reverse (legacy — registered in crate, not invoked by process manifest cascade)
 
 1. Read the provided manifest.yaml and .j2 template files for the target skill.
 2. Generate a SKILL.md companion file with frontmatter, title, description, "When to Use", "Instructions", "Registry Templates" table, and "Constraints".
@@ -61,7 +63,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 5. Emit warnings for empty system prompts, missing .j2 files, invalid template types, or missing vocabulary terms.
 6. Respond with a JSON object containing the complete SKILL.md markdown content and any warnings.
 
-### skill-maintenance-prose
+### skill-maintenance-prose (legacy — registered in crate, not invoked by process manifest cascade)
 
 1. Read the provided manifest.yaml and .j2 template contents for the target skill.
 2. Synthesize the "When to Use" section from template descriptions and .j2 system prompts, providing one bullet per distinct trigger.
@@ -69,7 +71,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 4. Ensure every instruction traces to a manifest field or .j2 body without inventing content.
 5. Output raw markdown only, containing exactly the "When to Use" and "Instructions" sections, without JSON, code fences, or structural sections.
 
-### skill-maintenance-audit
+### skill-maintenance-audit (cascade step 1)
 
 1. Audit registry crates for staleness signals: manifest validity, .j2 contract drift, template_type correctness, FlowDef tool/template validation, and health scoring.
 2. Apply the staleness signal table (Critical/High/Medium/Low severity) and compute health scores from 0.0 to 1.0 using weighted penalties.
@@ -78,7 +80,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 5. **Visual artifact surfacing audit:** for any skill whose templates produce a Mermaid diagram, chart, or visual artifact, check that the process manifest includes a `render` step that surfaces the artifact as the cascade's final output. A skill that generates a diagram in an intermediate `select` step but lacks a surfacing `render` step has a Medium-severity staleness signal: the diagram is silently dropped and the user never sees it. This is the E12 validate check applied as an audit finding.
 6. Respond with a JSON object containing staleness report, health scores, coverage gaps, and deprecation recommendations.
 
-### skill-maintenance-coverage
+### skill-maintenance-coverage (cascade step 2)
 
 1. Map task patterns against the existing skill corpus to determine full, partial, or no coverage.
 2. Classify each task pattern into exactly one category: covered, uncovered, or partial coverage.

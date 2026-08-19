@@ -13,20 +13,10 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 ## When to Use
 
 - When you need to identify entities in unstructured text and map them to a target schema using extraction hints.
-- When you need to extract semantic relations between identified entities as subject-predicate-object triples.
+- When you need to extract binary relations between identified entities as OpenIE `(arg1, relation, arg2)` tuples (Banko et al. 2007) — free-text predicates, not RDF triples. For closed-type RE (ACE2005/TACRED/DocRED inventories), pre-populate the predicate vocabulary in `extraction_hints`.
 - When you need to map extracted entities and relations to a target JSON schema, resolving field mappings and inferring missing fields.
 
 ## Instructions
-
-### extract-relations
-
-1. Extract a relation triple for each pair of entities that have a meaningful relationship in the source text.
-2. Identify the Subject as the entity performing or originating the relationship.
-3. Identify the Predicate as the relationship type (a short verb phrase of 1-3 words).
-4. Identify the Object as the entity receiving or being the target of the relationship.
-5. Assign a confidence score (0.0-1.0) for each relation based on textual clarity.
-6. Mark any entity that has no detected relations as an orphan.
-7. Only extract relations that are explicitly stated or clearly implied in the source text.
 
 ### identify-entities
 
@@ -37,6 +27,17 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 5. Assign a confidence score (0.0-1.0) reflecting genuine extraction certainty.
 6. Record the location of the entity in the source text using character offsets.
 7. Identify any text segments that contain structured information but do not clearly map to a specific schema field as unmapped text.
+
+### extract-relations
+
+1. Open Information Extraction (OpenIE, Banko et al. 2007): extract a binary relation tuple for each pair of entities that have a meaningful relationship in the source text. These are `(arg1, relation, arg2)` tuples with free-text predicates — NOT RDF triples (W3C RDF 1.1), which require typed IRI predicates from a vocabulary.
+2. Identify the Subject (arg1) as the entity performing or originating the relationship (after coreference resolution — CoNLL-2012).
+3. Identify the Predicate (relation) as a short verb phrase (1-3 words) extracted from the source. For closed-type RE, use ACE2005 (6 types/35 subtypes), TACRED (41 types), or DocRED (96 Wikidata relations) — this skill is open by default.
+4. Identify the Object (arg2) as the entity receiving or being the target of the relationship.
+5. Record the `trigger_span` (character offsets of the relation signal word(s), ACE2005-style) for every relation.
+6. Assign a confidence score (0.0-1.0) for each relation based on textual clarity.
+7. Mark any entity that has no detected relations as an isolated entity (graph-theory: isolated vertex; reported in `orphan_entities`).
+8. Only extract relations that are explicitly stated or clearly implied in the source text.
 
 ### map-to-schema
 
@@ -51,7 +52,7 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `extract-relations.j2` | KnowAct | Extract semantic relations between identified entities. Links entities via subject-predicate-object triples within context. |
+| `extract-relations.j2` | KnowAct | Open Information Extraction (Banko et al. 2007): extract binary relations between identified entities as `(arg1, relation, arg2)` tuples with free-text predicates, trigger spans, and coreference resolution. NOT RDF triples — predicates are free-text verb phrases, not typed IRIs. |
 | `identify-entities.j2` | KnowAct | Identify entities in unstructured text against a target schema with extraction hints. Tracks unmapped text and entity count. |
 | `map-to-schema.j2` | KnowAct | Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports field-level coverage and unresolved fields. |
 

@@ -164,9 +164,12 @@ impl SwarmPanel {
         v_flex()
             .w_full()
             .gap_3()
-            // pb only — the content column already carries the panel's px_4
-            // inset, so p_4 here doubled the horizontal padding vs Browse.
-            .pb_4()
+            // py — the top pad is the gap between the mode-toggle row and the
+            // form headline (the content column has no top pad of its own);
+            // the bottom pad gives the scroll end breathing room. Horizontal
+            // inset comes from the column's px_4 — px here would double it vs
+            // Browse.
+            .py_4()
             .child(
                 Headline::new(if self.author.editing_id.is_some() {
                     "Edit Agent"

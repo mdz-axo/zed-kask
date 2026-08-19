@@ -43,12 +43,6 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 4. Define dependency links to other components by name.
 5. Generate a Mermaid quadrant chart visualizing the map.
 
-### present-map
-
-1. RenderAct (step 7, `render` action, `present-map.j2`): surfaces the quadrant chart (from map-value-chain's `map_diagram`) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block.
-2. This is the cascade's final user-facing output — without this step, the diagram stays buried in an intermediate step result and never reaches the chat stream.
-3. Deterministic (no LLM call) — pure Jinja2 rendering via the `render` action.
-
 ### identify-movement
 
 1. Analyze the current map for strategic movement across five dimensions.
@@ -66,6 +60,12 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 4. Prioritize recommendations by impact (highest first).
 5. Be specific in the recommended actions.
 6. Flag uncertainty and lower confidence for recommendations based on sparse data.
+
+### present-map
+
+1. RenderAct (step 7, `render` action, `present-map.j2`): surfaces the quadrant chart (from map-value-chain's `map_diagram`) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block.
+2. This is the cascade's final user-facing output — without this step, the diagram stays buried in an intermediate step result and never reaches the chat stream.
+3. Deterministic (no LLM call) — pure Jinja2 rendering via the `render` action.
 
 ## Registry Templates
 

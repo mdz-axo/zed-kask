@@ -49,6 +49,16 @@ Test-driven development with red-green-refactor loop, codegraph-anchored testing
 9. For fuzz tests, accept all inputs with no `prop_assume!` filtering and verify panic-freedom via `catch_unwind`.
 10. For system tests, exercise the full vertical slice end-to-end using `hkask-test-harness` for fixtures.
 
+### tdd-strengthen
+
+1. Receive the contract + `oracle_type` from the tracer bullet (step 2 is GREEN).
+2. Decide whether to dispatch to `proptest`: only for property-shaped contracts (`reference` or `invariant` oracle — `post:`/`inv:` spans an input space). Skip cleanly for `hardcoded` (fixed-value) contracts.
+3. Dispatch to the `proptest` skill in `standalone` mode (TDD can run tests — it is NOT terminal-disabled like `harness-optimize`). Pass the contract's `post:`/`inv:` as the property and the oracle type.
+4. Collect proptest's verdict: `pass`, `fail` (with shrunk counterexample), `inconclusive`, or `skipped`.
+5. Route: `pass` → proceed to refactor; `fail` with a real bug → `retracer` (fix the impl — the contract is correct); `fail` with a wrong contract → `replan` (revise the contract — contract evolution requiring P2 consent); `inconclusive` → `retracer` (fix the test setup, treat as RED).
+6. The universal test uses `oracle_reference` or `oracle_invariant` from `hkask-test-harness` (not hardcoded `prop_assert_eq!` for property contracts) — the HarnessLLM "prefer programmatic generators" constraint.
+7. Do NOT replace the representative test from step 2 — the universal test complements it.
+
 ### tdd-refactor
 
 1. Confirm all tests pass (GREEN) before refactoring — never refactor while RED.
@@ -94,16 +104,6 @@ Test-driven development with red-green-refactor loop, codegraph-anchored testing
 13. P0 gaps MUST recommend `tracer-bullet`; P1 gaps SHOULD recommend `tracer-bullet` (deferrals require explicit rationale); P2+ gaps MAY defer to `OPEN_QUESTIONS.md`.
 14. If `bug_hunt_findings` is provided, each Tier-1 BUG not covered by a tested behavior is a codegraph blind spot — a new gap whose `requirement` is the finding's `summary`.
 15. If `surviving_mutants` is provided, each mutant on a tested function is a gap — the universal test is missing or weak; recommend a proptest universal test (step 3 strengthen).
-
-### tdd-strengthen
-
-1. Receive the contract + `oracle_type` from the tracer bullet (step 2 is GREEN).
-2. Decide whether to dispatch to `proptest`: only for property-shaped contracts (`reference` or `invariant` oracle — `post:`/`inv:` spans an input space). Skip cleanly for `hardcoded` (fixed-value) contracts.
-3. Dispatch to the `proptest` skill in `standalone` mode (TDD can run tests — it is NOT terminal-disabled like `harness-optimize`). Pass the contract's `post:`/`inv:` as the property and the oracle type.
-4. Collect proptest's verdict: `pass`, `fail` (with shrunk counterexample), `inconclusive`, or `skipped`.
-5. Route: `pass` → proceed to refactor; `fail` with a real bug → `retracer` (fix the impl — the contract is correct); `fail` with a wrong contract → `replan` (revise the contract — contract evolution requiring P2 consent); `inconclusive` → `retracer` (fix the test setup, treat as RED).
-6. The universal test uses `oracle_reference` or `oracle_invariant` from `hkask-test-harness` (not hardcoded `prop_assert_eq!` for property contracts) — the HarnessLLM "prefer programmatic generators" constraint.
-7. Do NOT replace the representative test from step 2 — the universal test complements it.
 
 ### tdd-explore
 

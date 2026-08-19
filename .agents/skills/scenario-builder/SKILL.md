@@ -21,21 +21,9 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 
 ## Instructions
 
-### axes-and-narratives
+### scenario_calibration (step 1, execute — no template)
 
-1. Define the two axes from the provided critical uncertainties.
-2. Write a detailed narrative (300+ words) for each of the 4 quadrants.
-3. Start each narrative from the present, chain events causally, and reach the planning horizon.
-4. Ensure scenarios are plausible, divergent, consistent, and challenging.
-5. Give each scenario a vivid, memorable name that captures its essence.
-
-### driving-forces
-
-1. Map driving forces across the five macro STEEP domains: society, technology, economy, environment, and politics.
-2. Plot each driving force on a 2D importance × uncertainty matrix.
-3. Select the two most critical uncertainties from the high-importance, high-uncertainty quadrant as scenario axes.
-4. Verify that the two selected axes are independent and not causally linked.
-5. Rate each force on importance (1-5) and uncertainty (1-5).
+1. Step 1 is an `execute` step (no template): fetches the prior calibration curve from the scenarios MCP via `scenario_calibration` (hkask-mcp-scenarios). Returns `overall_brier`, `overconfidence_score`, and per-bin calibration data from resolved forecasts. On the first invocation with no resolved forecasts, returns a valid result with guidance noting insufficient data — not a failure.
 
 ### focal-question
 
@@ -45,15 +33,9 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 4. Summarize the current state relevant to the refined question.
 5. Preserve the strategic intent of the original question while making it actionable.
 
-### implications-indicators
+### market_match (step 3, execute — no template)
 
-1. Identify per-scenario implications, opportunities, and risks for the focal question.
-2. Derive robust strategies that perform well across all four scenarios, explaining the mechanism for each.
-3. Classify each robust and contingent strategy's constraint force as a prohibition, guardrail, or guideline.
-4. Define contingent strategies triggered by specific scenarios, ensuring each has a clear, observable trigger indicator.
-5. Identify measurable early indicators (tripwires) and map them to the scenarios they signal.
-6. Include the observation method for each early indicator.
-7. Formulate a brief plan for ongoing monitoring of early indicators.
+1. Step 3 is an `execute` step (no template): fetches prediction-market candidates for the focal question via `market_match` (hkask-mcp-prediction-markets). Deterministic market anchor for the key-forces step — market-implied probabilities pre-weight STEEP forces by likelihood. An empty result is a valid signal that no relevant market exists, not an error.
 
 ### key-forces
 
@@ -62,6 +44,22 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 3. Cluster related forces into thematic groups.
 4. Assess each force for its impact (high/medium/low) on the focal question.
 5. Assess each force for its predictability (high/medium/low) trajectory.
+
+### driving-forces
+
+1. Map driving forces across the five macro STEEP domains: society, technology, economy, environment, and politics.
+2. Plot each driving force on a 2D importance × uncertainty matrix.
+3. Select the two most critical uncertainties from the high-importance, high-uncertainty quadrant as scenario axes.
+4. Verify that the two selected axes are independent and not causally linked.
+5. Rate each force on importance (1-5) and uncertainty (1-5).
+
+### axes-and-narratives
+
+1. Define the two axes from the provided critical uncertainties.
+2. Write a detailed narrative (300+ words) for each of the 4 quadrants.
+3. Start each narrative from the present, chain events causally, and reach the planning horizon.
+4. Ensure scenarios are plausible, divergent, consistent, and challenging.
+5. Give each scenario a vivid, memorable name that captures its essence.
 
 ### scenario-quality-gate
 
@@ -73,6 +71,20 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 6. Set the parametric variation flag to true if any two end states differ only in degree, not kind.
 7. Determine gate_pass as true only if there are exactly four scenarios and all three scores are ≥ 0.60.
 
+### implications-indicators
+
+1. Identify per-scenario implications, opportunities, and risks for the focal question.
+2. Derive robust strategies that perform well across all four scenarios, explaining the mechanism for each.
+3. Classify each robust and contingent strategy's constraint force as a prohibition, guardrail, or guideline.
+4. Define contingent strategies triggered by specific scenarios, ensuring each has a clear, observable trigger indicator.
+5. Identify measurable early indicators (tripwires) and map them to the scenarios they signal.
+6. Include the observation method for each early indicator.
+7. Formulate a brief plan for ongoing monitoring of early indicators.
+
+### scenario_build (step 9, execute — no template)
+
+1. Step 9 is an `execute` step (no template): persists the generated scenarios to the scenarios MCP via `scenario_build` (hkask-mcp-scenarios) for later comparison against actual outcomes. Closes the persistence half of the calibration loop — the scenarios are now in the forecast store where `scenario_score` can later Brier-score them.
+
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -82,7 +94,6 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 | `focal-question.j2` | KnowAct | Refine and bound the focal question with decision relevance, time horizon, and scope boundaries. Produces a current state summary. |
 | `implications-indicators.j2` | KnowAct | Derive per-scenario implications and identify early-warning indicators. Produces robust strategies (for all scenarios) and contingent strategies (for specific unfoldings). |
 | `key-forces.j2` | KnowAct | Identify micro-level forces: proximate factors, market dynamics, competitor actions, demand shifts, and regulatory changes. Clusters identified forces into thematic groups. |
-| `scenario-quality-gate.j2` | KnowAct | Independent quality gate that evaluates scenario divergence, consistency, and coverage without self-assessment bias. Receives scenarios from the narrative generator and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
 | `scenario-quality-gate.j2` | KnowAct | Independent quality gate that evaluates scenario divergence, consistency, and coverage without self-assessment bias. Receives scenarios from the narrative generator and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
 
 ## Constraints

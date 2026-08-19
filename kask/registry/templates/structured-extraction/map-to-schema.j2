@@ -1,4 +1,8 @@
 {# goal: Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports field-level coverage and unresolved fields. #}
+{# Reference: Information Extraction → Schema Alignment, formalized in #}
+{#   the TAC KBP (Knowledge Base Population) slot-filling task (2009-2014). #}
+{#   Type coercion follows the JSON Schema Validation spec (Wright & Andrews, #}
+{#   draft-07+). Coverage ratio is a standard IE metric (populated/total). #}
 [inference]
 template_type: KnowAct
 contract:

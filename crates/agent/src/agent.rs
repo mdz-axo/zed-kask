@@ -5218,7 +5218,7 @@ mod internal_tests {
                 disable_model_invocation: false,
                 visibility: SkillVisibility::Private,
                 dependencies: Vec::new(),
-                    core: false,
+                core: false,
             });
         }
 

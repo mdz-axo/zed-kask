@@ -40,13 +40,20 @@ Brier. Convergence is detected deterministically.
 2. Generate, branch, revise, hypothesize, and verify thoughts.
 3. Re-measure the current condition after the experiment.
 
+### skill-router-match (Kata Step 5: Skill-Router Dispatch — cross-skill template_ref, conditional)
+
+1. Cross-skill reuse: dispatches `skill_match_queries` emitted by the engine to the `skill-router/skill-router-match` template (`kask/registry/templates/skill-router/skill-router-match.j2`).
+2. Conditional on `step_4_result.skill_match_queries` — if the engine emitted no queries, this step returns an empty result.
+3. Returns up to 3 ranked skill recommendations for follow-up delegations.
+
 ### Convergence (Steps 6-10: Check + Act — deterministic compute, no LLM)
 
-1. Compute object-space gap (thought chain completeness).
-2. Compute process-space gap (delegation resolution).
-3. Compute hypotenuse.
-4. Score the prediction via Brier.
-5. Check convergence: gap, Cauchy, or calibration.
+1. Step 6 (`kata.object_gap`): compute Dublin Core object-space gap between current thought chain artifacts and the target spec.
+2. Step 7 (`kata.process_gap`): compute PKO process-space gap between current inquiry procedure state and target.
+3. Step 8 (`kata.hypotenuse`): compute total distance to target in combined space.
+4. Step 9 (`kata.prediction_vs_result`): Brier score for this cycle's prediction.
+5. Step 10 (`lisp.eval`): deterministic convergence signal — the hypotenuse value from step 8. Lower signal variance across iterations = convergence (Cauchy).
+6. Step 11 (`loop`): re-enter the Kata cycle at step 1 if not converged.
 
 ## Registry Templates
 

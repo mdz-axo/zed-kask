@@ -463,6 +463,28 @@ pub(crate) fn status_is_warning(status: &str) -> bool {
     WARNING_MARKERS.iter().any(|marker| status.contains(marker))
 }
 
+/// The backend mode string sent to `swarm_ai_assist` for a form surface.
+/// Reads ONLY the named surface's own target toggle: a tuple-match that also
+/// consulted the author form's target for the swarm surface would send ABW
+/// guidance to a Local compose (and vice versa). Pinned by tests including
+/// the exact hole (`swarm` + compose Cloud + author Local → `abw`).
+fn ai_assist_mode(
+    surface: &str,
+    compose_target: CreateTarget,
+    author_target: CreateTarget,
+) -> &'static str {
+    let target = if surface == "swarm" {
+        compose_target
+    } else {
+        author_target
+    };
+    if target == CreateTarget::Local {
+        "local"
+    } else {
+        "abw"
+    }
+}
+
 /// The three surfaces of the panel: browsing existing agents/swarms, authoring
 /// a new agent, and composing agents into a swarm. Sharing (extensions) is
 /// represented by the browse surface's discovery role.
@@ -790,12 +812,18 @@ impl SwarmPanel {
             let settings_sub = cx.observe_global::<SettingsStore>(|this, cx| {
                 let mode = Self::current_swarm_mode(cx);
                 if this.last_swarm_mode.as_ref() != Some(&mode) {
+                    this.steer_conversation = None;
                     // The settings change is an explicit backend declaration —
-                    // carry it into the panel's creation context too.
+                    // carry it into the panel's creation context too, and sync
+                    // the open form so its toggle doesn't go stale (the
+                    // stale-toggle gap: `active_backend` alone would leave the
+                    // visible toggle on the old backend until the next mode
+                    // switch).
                     this.active_backend = match &mode {
                         kask_bridge::SwarmModeConfig::Local => CreateTarget::Local,
                         kask_bridge::SwarmModeConfig::Abw => CreateTarget::Cloud,
                     };
+                    this.sync_open_form_target();
                     this.last_swarm_mode = Some(mode);
                 }
                 this.filter_entries(cx);
@@ -1034,15 +1062,7 @@ impl SwarmPanel {
         self.mode = mode;
         // Entering a creation surface syncs its form target to the panel's
         // backend context (see `target_on_surface_entry`).
-        if let Some(target) =
-            target_on_surface_entry(mode, self.author.editing_id.is_some(), self.active_backend)
-        {
-            match mode {
-                PanelMode::Author => self.author.create_target = target,
-                PanelMode::Compose => self.compose.create_target = target,
-                PanelMode::Browse | PanelMode::Steer => {}
-            }
-        }
+        self.sync_open_form_target();
         // Move focus to the target mode's first field — otherwise focus stays
         // on the now-hidden search editor and keyboard input goes nowhere (the
         // M5 finding). Steer focuses its conversation's editor.
@@ -1058,6 +1078,26 @@ impl SwarmPanel {
         };
         handle.focus(window, cx);
         cx.notify();
+    }
+
+    /// Sync the active creation form's target to `active_backend` (see
+    /// `target_on_surface_entry` for the rule). Called on surface entry
+    /// (`set_mode`) and when `kask.swarm.mode` changes — otherwise a settings
+    /// change updates `active_backend` while the open form's toggle keeps
+    /// showing the stale backend until the next mode switch (the stale-toggle
+    /// gap).
+    fn sync_open_form_target(&mut self) {
+        if let Some(target) = target_on_surface_entry(
+            self.mode,
+            self.author.editing_id.is_some(),
+            self.active_backend,
+        ) {
+            match self.mode {
+                PanelMode::Author => self.author.create_target = target,
+                PanelMode::Compose => self.compose.create_target = target,
+                PanelMode::Browse | PanelMode::Steer => {}
+            }
+        }
     }
 
     /// Reset the author form to a fresh create state (clear `editing_id`,
@@ -1840,14 +1880,11 @@ impl SwarmPanel {
         // The backend mode sent to `swarm_ai_assist` must match the surface's
         // own target toggle — reading the author form's target for the swarm
         // surface sent ABW guidance to a Local compose (and vice versa).
-        let mode = match (
+        let mode = ai_assist_mode(
             surface,
             self.compose.create_target,
             self.author.create_target,
-        ) {
-            ("swarm", CreateTarget::Local, _) | (_, _, CreateTarget::Local) => "local",
-            _ => "abw",
-        };
+        );
 
         let (name, agent_type, description, system_prompt, mission, agents) = if surface == "agent"
         {
@@ -3294,6 +3331,46 @@ mod tests {
         assert_eq!(
             target_on_surface_entry(PanelMode::Steer, false, CreateTarget::Local),
             None
+        );
+    }
+
+    // ── AI Assist mode derivation ──────────────────────────────────────────
+    //
+    // `swarm_ai_assist` must be told the backend of the surface it is
+    // advising. The original inline tuple-match had a hole: the arm
+    // `(_, _, CreateTarget::Local)` let the AUTHOR form's target win for the
+    // swarm surface, so a Local author form + Cloud compose sent "local"
+    // guidance to a Cloud compose. These tests pin the surface-specific read.
+
+    #[test]
+    fn ai_assist_mode_reads_only_the_named_surface() {
+        // The hole: swarm surface must ignore the author form's target.
+        assert_eq!(
+            ai_assist_mode("swarm", CreateTarget::Cloud, CreateTarget::Local),
+            "abw"
+        );
+        // And symmetrically: agent surface must ignore the compose form's target.
+        assert_eq!(
+            ai_assist_mode("agent", CreateTarget::Local, CreateTarget::Cloud),
+            "abw"
+        );
+        // Each surface reads its own target.
+        assert_eq!(
+            ai_assist_mode("swarm", CreateTarget::Local, CreateTarget::Cloud),
+            "local"
+        );
+        assert_eq!(
+            ai_assist_mode("agent", CreateTarget::Cloud, CreateTarget::Local),
+            "local"
+        );
+        // Cloud on both surfaces.
+        assert_eq!(
+            ai_assist_mode("swarm", CreateTarget::Cloud, CreateTarget::Cloud),
+            "abw"
+        );
+        assert_eq!(
+            ai_assist_mode("agent", CreateTarget::Cloud, CreateTarget::Cloud),
+            "abw"
         );
     }
 
