@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-
 // ── Complexity Tiers ──────────────────────────────────────────────────────
 
 /// Complexity tier derived from pixel-density heuristics.

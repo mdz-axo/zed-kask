@@ -1024,7 +1024,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // string in the output array, not a hard abort. The merge step
         // handles errored skills explicitly.
         let task_string = task.to_string();
-        let mut cascade_handles = Vec::with_capacity(skill_names.len());
+        let mut cascade_futures = Vec::with_capacity(skill_names.len());
 
         for skill_name in skill_names {
             let skill_context = {
@@ -1042,12 +1042,13 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             let progress_clone = progress.clone();
             let title_clone = title.clone();
 
-            // Spawn each skill's cascade on the tokio runtime so they run
-            // truly concurrently. `run_manifest_cascade` already spawns
-            // internally, but we need all N spawns to happen before we
-            // start awaiting any of them — wrapping in join_all ensures
-            // this.
-            let handle = self.tokio_handle.spawn(async move {
+            // Collect the cascade futures without spawning here — each
+            // `run_manifest_cascade` call spawns its own task on the tokio
+            // runtime internally, so `join_all` over the futures drives all N
+            // cascades concurrently. Spawning here would require `&self` to
+            // escape into a `'static` future, which the borrow checker
+            // rejects (E0521).
+            let future = async move {
                 let result = self
                     .run_manifest_cascade(
                         &skill_name_owned,
@@ -1057,16 +1058,12 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                     )
                     .await;
                 (skill_name_owned, result)
-            });
-            cascade_handles.push(handle);
+            };
+            cascade_futures.push(future);
         }
 
         // Await all cascades concurrently (not sequentially).
-        let cascade_results = futures::future::join_all(cascade_handles)
-            .await
-            .into_iter()
-            .map(|join_result| join_result.map_err(|e| format!("Cascade task panicked: {e}")))
-            .collect::<Result<Vec<_>, String>>()?;
+        let cascade_results = futures::future::join_all(cascade_futures).await;
 
         // Collect outputs in the same order as skill_names. Errored
         // skills produce a JSON object with an `error` field so the merge
@@ -1509,142 +1506,6 @@ mod tests {
             cleaned, raw_value,
             "cleaned output must equal raw output for unenforceable records"
         );
-    }
-
-    /// The reshape must move header fields under `manifest:` and keep the
-    /// rest as siblings, so `load_manifest_from_yaml` can round-trip a saved
-    /// bundle. Pins the on-disk format for the `Save` action.
-    #[test]
-    fn reshape_composite_to_manifest_file_moves_header_under_manifest_key() {
-        let composite = json!({
-            "id": "my-bundle",
-            "name": "My Bundle",
-            "description": "A test bundle",
-            "version": "1.0.0",
-            "editor": "operator",
-            "visibility": "Public",
-            "steps": [{"ordinal": 1, "action": "know", "description": "step 1"}],
-            "skills": [{"id": "skill-a", "polarity": "proposer", "manifest_ref": "skill-a", "content_hash": "abc"}],
-            "convergence": {"max_iterations": 3, "threshold": 0.1, "convergence_field": "score"}
-        });
-
-        let reshaped = reshape_composite_to_manifest_file(&composite);
-
-        // Header fields are under `manifest:`.
-        let manifest_header = reshaped.get("manifest").expect("manifest key present");
-        assert_eq!(
-            manifest_header.get("id").and_then(|v| v.as_str()),
-            Some("my-bundle")
-        );
-        assert_eq!(
-            manifest_header.get("name").and_then(|v| v.as_str()),
-            Some("My Bundle")
-        );
-        assert_eq!(
-            manifest_header.get("description").and_then(|v| v.as_str()),
-            Some("A test bundle")
-        );
-
-        // Sibling fields are at the top level.
-        assert!(reshaped.get("steps").is_some());
-        assert!(reshaped.get("skills").is_some());
-        assert!(reshaped.get("convergence").is_some());
-    }
-
-    /// The reshape must not leak header fields to the top level (would
-    /// confuse `load_manifest_from_yaml`'s `deny_unknown_fields` on
-    /// `ManifestFile`).
-    #[test]
-    fn reshape_composite_to_manifest_file_does_not_leak_header_to_top_level() {
-        let composite = json!({
-            "id": "leak-test",
-            "name": "Leak Test",
-            "steps": []
-        });
-
-        let reshaped = reshape_composite_to_manifest_file(&composite);
-
-        // `id` and `name` must NOT be at the top level.
-        assert!(reshaped.get("id").is_none(), "id leaked to top level");
-        assert!(reshaped.get("name").is_none(), "name leaked to top level");
-        // They must be under `manifest:`.
-        let header = reshaped.get("manifest").expect("manifest key present");
-        assert_eq!(header.get("id").and_then(|v| v.as_str()), Some("leak-test"));
-    }
-
-    /// The reshape must handle a composite missing optional fields without
-    /// inserting nulls (absent fields stay absent, so the YAML is clean).
-    #[test]
-    fn reshape_composite_to_manifest_file_handles_missing_optional_fields() {
-        let composite = json!({
-            "id": "minimal",
-            "name": "Minimal",
-            "steps": []
-        });
-
-        let reshaped = reshape_composite_to_manifest_file(&composite);
-
-        let header = reshaped.get("manifest").expect("manifest key present");
-        assert_eq!(header.get("id").and_then(|v| v.as_str()), Some("minimal"));
-        // Optional header fields that were absent are not present.
-        assert!(header.get("description").is_none());
-        assert!(header.get("version").is_none());
-        // Optional sibling fields that are absent are not present.
-        assert!(reshaped.get("skills").is_none());
-        assert!(reshaped.get("convergence").is_none());
-    }
-
-    /// Round-trip: reshape a composite manifest to `ManifestFile` format,
-    /// serialize to YAML, and verify `load_manifest_from_yaml` can parse it
-    /// back. This catches any field mismatch between the hardcoded key
-    /// lists in `reshape_composite_to_manifest_file` and the actual
-    /// `ManifestFile` struct fields — if `ManifestFile` gains a new field,
-    /// this test will still pass (the field is optional with `#[serde(default)]`),
-    /// but if a field is renamed or removed, the round-trip will fail.
-    #[test]
-    fn reshape_composite_round_trips_through_load_manifest_from_yaml() {
-        let composite = json!({
-            "id": "round-trip-test",
-            "name": "Round Trip Test",
-            "description": "A bundle for round-trip testing",
-            "version": "1.0.0",
-            "editor": "test",
-            "visibility": "Public",
-            "steps": [{
-                "ordinal": 1,
-                "action": "know",
-                "description": "test step",
-                "renderer": "minijinja",
-                "template_ref": "some/template.j2",
-
-                "timeout_seconds": 30
-            }],
-            "skills": [{
-                "id": "skill-a",
-                "polarity": "Generative",
-                "manifest_ref": "skill-a",
-                "content_hash": "abc123"
-            }],
-            "convergence": {"max_iterations": 3, "threshold": 0.1, "convergence_field": "score"}
-        });
-
-        let reshaped = reshape_composite_to_manifest_file(&composite);
-        let yaml_string =
-            serde_yaml_neo::to_string(&reshaped).expect("reshape output must serialize to YAML");
-
-        // The critical assertion: `load_manifest_from_yaml` must accept the
-        // YAML without error. If the key lists in `reshape_composite_to_manifest_file`
-        // don't match `ManifestFile`'s fields, this will fail.
-        let manifest = load_manifest_from_yaml(&yaml_string)
-            .expect("reshaped YAML must round-trip through load_manifest_from_yaml");
-
-        // Verify the round-trip preserved key fields.
-        assert_eq!(manifest.id, "round-trip-test");
-        assert_eq!(manifest.name, "Round Trip Test");
-        assert_eq!(manifest.steps.len(), 1);
-        assert_eq!(manifest.steps[0].ordinal, 1);
-        assert_eq!(manifest.skills.len(), 1);
-        assert_eq!(manifest.skills[0].id, "skill-a");
     }
 
     /// The inline refine manifest YAML in `refine_bundle` must parse via

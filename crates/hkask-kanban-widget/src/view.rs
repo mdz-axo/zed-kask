@@ -1182,7 +1182,7 @@ mod tests {
             description: None,
             assignee: None,
             swarm_id: None,
-            
+
             activity: None,
             ontology: None,
             priority: None,

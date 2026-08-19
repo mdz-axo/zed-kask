@@ -37,8 +37,8 @@ use crate::path_safety::{contain_for_read, contain_for_write};
 use crate::text::{chunk_text, strip_gutenberg_headers};
 use crate::{
     ExtractOutcome, IndexedPassage, OCR_FALLBACK_WORD_THRESHOLD, chunk_word_bounds,
-    default_embedding_model, extract_text, filter_outcome_to_pages,
-    ocr_concurrency, sanitize_links,
+    default_embedding_model, extract_text, filter_outcome_to_pages, ocr_concurrency,
+    sanitize_links,
 };
 
 /// Borrowed OCR + index state drawn from a `CorpusServer`.
@@ -181,20 +181,11 @@ impl<'a> ConvertService<'a> {
     }
 
     /// Perform OCR by sending base64-encoded bytes to a vision model.
-    pub async fn do_ocr(
-        &self,
-        file_bytes: &[u8],
-        model: &str,
-    ) -> Result<String, OcrError> {
+    pub async fn do_ocr(&self, file_bytes: &[u8], model: &str) -> Result<String, OcrError> {
         if file_bytes.is_empty() {
             return Err(OcrError::EmptyFile);
         }
-        crate::ocr::llm_ocr::vision_ocr_bytes(
-            &*self.inference_router,
-            file_bytes,
-            model,
-        )
-        .await
+        crate::ocr::llm_ocr::vision_ocr_bytes(&*self.inference_router, file_bytes, model).await
     }
 
     /// Persist pipeline outcome for Regulation observability.
@@ -469,10 +460,7 @@ impl<'a> ConvertService<'a> {
 
             // Final fallback: raw bytes OCR
             match self.resolve_ocr_model(None).await {
-                Ok(model) => match self
-                    .do_ocr(&file_bytes, &model)
-                    .await
-                {
+                Ok(model) => match self.do_ocr(&file_bytes, &model).await {
                     Ok(text) => {
                         let result = serde_json::json!({
                             "format": format,
@@ -710,53 +698,48 @@ impl<'a> ConvertService<'a> {
                     map_corpus_io_error(e, &format!("Failed to read file '{}' for OCR", path))
                 })?;
                 match self.resolve_ocr_model(None).await {
-                    Ok(model) => {
-                        match self
-                            .do_ocr(&file_bytes, &model)
-                            .await
-                        {
-                            Ok(ocr_text) => {
-                                let ocr_word_count = ocr_text.split_whitespace().count();
-                                let (final_text, final_word_count, method) =
-                                    if ocr_word_count > word_count {
-                                        (ocr_text, ocr_word_count, "ocr")
-                                    } else {
-                                        (
-                                            partial_text,
-                                            word_count,
-                                            "text_extraction_ocr_fallback_insufficient",
-                                        )
-                                    };
-                                let result = serde_json::json!({
+                    Ok(model) => match self.do_ocr(&file_bytes, &model).await {
+                        Ok(ocr_text) => {
+                            let ocr_word_count = ocr_text.split_whitespace().count();
+                            let (final_text, final_word_count, method) =
+                                if ocr_word_count > word_count {
+                                    (ocr_text, ocr_word_count, "ocr")
+                                } else {
+                                    (
+                                        partial_text,
+                                        word_count,
+                                        "text_extraction_ocr_fallback_insufficient",
+                                    )
+                                };
+                            let result = serde_json::json!({
+                                "format": format,
+                                "path": path,
+                                "method": method,
+                                "model": model,
+                                "text": final_text,
+                                "word_count": final_word_count,
+                                "extraction_word_count": word_count,
+                            });
+                            Ok(result)
+                        }
+                        Err(e) => {
+                            if word_count > 0 {
+                                Ok(serde_json::json!({
                                     "format": format,
                                     "path": path,
-                                    "method": method,
-                                    "model": model,
-                                    "text": final_text,
-                                    "word_count": final_word_count,
-                                    "extraction_word_count": word_count,
-                                });
-                                Ok(result)
-                            }
-                            Err(e) => {
-                                if word_count > 0 {
-                                    Ok(serde_json::json!({
-                                        "format": format,
-                                        "path": path,
-                                        "method": "text_extraction_ocr_failed",
-                                        "text": partial_text,
-                                        "word_count": word_count,
-                                        "ocr_error": e.to_string(),
-                                    }))
-                                } else {
-                                    Err(McpToolError::unavailable(format!(
-                                        "Text extraction returned near-empty result and OCR failed: {}",
-                                        e
-                                    )))
-                                }
+                                    "method": "text_extraction_ocr_failed",
+                                    "text": partial_text,
+                                    "word_count": word_count,
+                                    "ocr_error": e.to_string(),
+                                }))
+                            } else {
+                                Err(McpToolError::unavailable(format!(
+                                    "Text extraction returned near-empty result and OCR failed: {}",
+                                    e
+                                )))
                             }
                         }
-                    }
+                    },
                     Err(guidance) => {
                         if word_count > 0 {
                             Ok(serde_json::json!({
