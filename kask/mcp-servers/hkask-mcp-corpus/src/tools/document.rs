@@ -16,8 +16,8 @@ use crate::helpers::map_corpus_io_error;
 use crate::services::convert::ConvertService;
 use crate::{
     CorpusServer, ExtractOutcome, McpToolError, Parameters, chunk_structure, chunk_word_bounds,
-    convert, execute_tool_semantic, extract_text, filter_outcome_to_pages,
-    json, sanitize_links, serialize_passages, tokens_to_words, tool, tool_router,
+    convert, execute_tool_semantic, extract_text, filter_outcome_to_pages, json, sanitize_links,
+    serialize_passages, tokens_to_words, tool, tool_router,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -60,11 +60,7 @@ impl CorpusServer {
     )]
     pub async fn corpus_ocr(
         &self,
-        Parameters(OcrRequest {
-            path,
-            model,
-            
-        }): Parameters<OcrRequest>,
+        Parameters(OcrRequest { path, model }): Parameters<OcrRequest>,
     ) -> String {
         execute_tool_semantic(
             self,
@@ -194,7 +190,7 @@ impl CorpusServer {
             input_dir,
             output,
             entity_ref_prefix,
-            
+            max_tokens,
             overlap_tokens,
             strip_gutenberg,
             multi_tier,
@@ -216,7 +212,7 @@ impl CorpusServer {
                             &input_dir,
                             output.as_deref(),
                             &entity_ref_prefix,
-                            
+                            max_tokens,
                             overlap_tokens,
                             strip_gutenberg,
                             index,
@@ -309,10 +305,7 @@ impl CorpusServer {
                                         &format!("Failed to read '{}'", file_path),
                                     )
                                 })?;
-                                match service
-                                    .do_ocr(&file_bytes, &model)
-                                    .await
-                                {
+                                match service.do_ocr(&file_bytes, &model).await {
                                     Ok(ocr_text) if !ocr_text.is_empty() => {
                                         source_structure = Some(
                                             crate::backend::markdown_to_structure(&ocr_text, "pdf"),
@@ -347,10 +340,7 @@ impl CorpusServer {
                                         &format!("Failed to read '{}'", file_path),
                                     )
                                 })?;
-                                match service
-                                    .do_ocr(&file_bytes, &model)
-                                    .await
-                                {
+                                match service.do_ocr(&file_bytes, &model).await {
                                     Ok(ocr_text) if !ocr_text.is_empty() => {
                                         source_structure = Some(
                                             crate::backend::markdown_to_structure(&ocr_text, "pdf"),
@@ -624,8 +614,6 @@ pub struct OcrRequest {
     /// Vision model to use for OCR (must be available in the inference catalog).
     #[serde(default)]
     pub model: Option<String>,
-    /// Maximum tokens for OCR output.
-    #[serde(default = "default_ocr_max_tokens")]
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

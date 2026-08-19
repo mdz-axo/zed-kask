@@ -358,7 +358,6 @@ impl CondenserServer {
         Parameters(ThreadSummaryRequest {
             messages,
             current_query,
-            max_tokens,
             model,
         }): Parameters<ThreadSummaryRequest>,
     ) -> String {
@@ -375,18 +374,6 @@ impl CondenserServer {
             let messages: Vec<serde_json::Value> =
                 messages.into_iter().map(serde_json::Value::from).collect();
             let conversation_text = inference::format_conversation_text(&messages);
-            // `max_tokens` was removed from `LLMParameters` — the inference
-            // layer now handles output length internally. The request field
-            // is retained for API compatibility but no longer wired to the
-            // params struct. The saliency-window fallback is preserved as a
-            // tracing hint for operators tuning condensation length.
-            let _ = max_tokens.unwrap_or_else(|| {
-                let saliency = std::env::var("HKASK_CONDENSE_SALIENCY_WINDOW")
-                    .ok()
-                    .and_then(|v| v.parse::<usize>().ok())
-                    .unwrap_or(5);
-                (saliency * 100).clamp(150, 2000) as u32
-            });
 
             let summarization_prompt =
                 inference::build_summarization_prompt(&conversation_text, &current_query);

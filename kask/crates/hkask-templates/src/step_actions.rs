@@ -353,19 +353,19 @@ impl StepMachine {
                 // zed-kask: D25 — a truncated generation (finish_reason "length")
                 // never emits the structured-output tool call. Refuse to parse the
                 // partial text as JSON — surface a loud error so the regulation loop
-                // / UI can act (raise max_tokens, shrink prompt, or retry) instead of
+                // / UI can act (raise the token budget, shrink prompt, or retry) instead of
                 // silently feeding truncated output to parse_json_response.
                 if finish_reason.as_deref() == Some("length") {
                     tracing::warn!(
                         target: "reg.skill.cascade.step_executed",
                         step = node.ordinal,
                         failure_mode = "truncated",
-                        "Step truncated at max_tokens before emitting structured-output tool call"
+                        "Step truncated at token limit before emitting structured-output tool call"
                     );
                     return Err(TemplateError::ParseFailure {
                         step_ordinal: node.ordinal,
-                        detail: "truncated at max_tokens before emitting the structured-output \
-                             tool call — increase max_tokens or reduce the prompt; refusing to \
+                        detail: "truncated at token limit before emitting the structured-output \
+                             tool call — increase the token budget or reduce the prompt; refusing to \
                              parse partial output"
                             .to_string(),
                     });
@@ -381,7 +381,7 @@ impl StepMachine {
             // call. Without this guard, `parse_json_response("")` produces a
             // cryptic "EOF while parsing a value at line 1 column 0" that gives
             // the operator no signal. Surface the finish_reason and likely
-            // causes so the regulation loop / UI can act (raise max_tokens,
+            // causes so the regulation loop / UI can act (raise the token budget,
             // enable thinking_budget, retry, or convert the step to a
             // deterministic `render` action).
             if result_text.trim().is_empty() {
@@ -395,7 +395,7 @@ impl StepMachine {
                 return Err(TemplateError::ParseFailure {
                     step_ordinal: node.ordinal,
                     detail: format!(
-                        "returned empty output (finish_reason: {:?}). Likely causes: max_tokens too low, model spent its budget on reasoning, or the provider returned no completion. Remediation: raise max_tokens, enable thinking_budget, retry, or convert the manifest step from 'select' to 'render' action.",
+                        "returned empty output (finish_reason: {:?}). Likely causes: token budget too low, model spent its budget on reasoning, or the provider returned no completion. Remediation: raise the token budget, enable thinking_budget, retry, or convert the manifest step from 'select' to 'render' action.",
                         finish_reason
                     ),
                 });
@@ -2112,7 +2112,7 @@ mod tests {
     // only asserts that finish_reason is threaded out of call_inference_stream.
     // This test exercises the full execute_select path: when finish_reason is
     // "length" AND output_schema is set AND no structured tool call was emitted,
-    // execute_select must return Err containing "truncated at max_tokens" — not
+    // execute_select must return Err containing "truncated at token limit" — not
     // silently parse the partial text as JSON. Without this test, a refactor
     // could revert the refusal guard (step_actions.rs:345) and re-introduce the
     // silent-truncated-output bug the D25 comment describes.
@@ -2199,7 +2199,7 @@ convergence:
         );
         let msg = err.to_string();
         assert!(
-            msg.contains("truncated at max_tokens"),
+            msg.contains("truncated at token limit"),
             "error must mention truncation; got: {msg}"
         );
     }
@@ -2789,7 +2789,7 @@ error_handling:
             result.expect_err("truncated output must produce an error after retries are exhausted");
         let msg = err.to_string();
         assert!(
-            msg.contains("truncated at max_tokens"),
+            msg.contains("truncated at token limit"),
             "error must mention truncation; got: {msg}"
         );
 

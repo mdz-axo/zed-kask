@@ -210,7 +210,7 @@ impl OcrExecutor for LlmOcrExecutor {
                 message: format!("Failed to encode page image as JPEG: {e}"),
             })?;
 
-        let result = vision_ocr_bytes(&*self.router, &img_bytes, &model, 0).await;
+        let result = vision_ocr_bytes(&*self.router, &img_bytes, &model).await;
 
         // Circuit-breaker + rate-limit tracking on the vision-call outcome. The
         // breaker reacts to rate-limit, timeout, and connection errors; the warn
