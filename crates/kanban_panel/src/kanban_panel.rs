@@ -325,7 +325,6 @@ const ADVERTISED_KANBAN_TOOLS: &[&str] = &[
     "kanban_task_delete",
     "kanban_task_verify",
     "kanban_task_reopen",
-    "kanban_task_add_gas",
     "kanban_task_add_rjoules",
     "kanban_task_comment",
     "kanban_task_comments_since",
@@ -354,7 +353,6 @@ fn steer_system_prompt(selected_board_id: Option<&str>) -> SharedString {
          **Task tools**: `kanban_task_create`, `kanban_task_list`, `kanban_task_move`, \
          `kanban_task_assign`, `kanban_task_unassign`, `kanban_task_update`, `kanban_task_delete`, \
          `kanban_task_verify`, `kanban_task_reopen`.\n\
-         **Budget tools**: `kanban_task_add_gas`, `kanban_task_add_rjoules`.\n\
          **Communication**: `kanban_task_comment`, `kanban_task_comments_since`, `kanban_task_add_deliverable`.\n\
          **Swarm delegation**: `kanban_task_spawn` (delegates a task to a subagent or swarm agent), \
          `kanban_task_delegate_result` (reads the structured delegation result and verdict).\n\
@@ -440,7 +438,6 @@ struct TaskInfo {
     #[serde(default)]
     assignee: Option<String>,
     #[serde(default)]
-    gas_remaining: Option<u64>,
     #[serde(default)]
     swarm_id: Option<String>,
     #[serde(default)]
@@ -961,7 +958,6 @@ impl KanbanPanel {
                 description: None,
                 assignee: task.assignee.clone(),
                 swarm_id: task.swarm_id.clone(),
-                gas_remaining: task.gas_remaining,
                 activity: task.activity.as_ref().map(|activity| TaskActivityBody {
                     text: activity.text.clone(),
                     kind: activity.kind.clone(),
@@ -973,7 +969,7 @@ impl KanbanPanel {
                 criteria: Vec::new(),
                 comments: Vec::new(),
                 verification: None,
-                gas_spend: Vec::new(),
+                spend_log: Vec::new(),
             })
             .collect();
 
