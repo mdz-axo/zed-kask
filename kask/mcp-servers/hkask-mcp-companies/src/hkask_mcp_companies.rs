@@ -49,6 +49,7 @@ pub mod data_quality;
 pub mod economic_profit;
 pub mod fibo;
 mod financial_model;
+pub mod grounding_contracts;
 pub mod portfolio;
 mod providers;
 pub use providers::{CompanyProfile, HistoricalPriceView, KeyMetrics, Provider};
@@ -375,9 +376,19 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             // could never arrive and corpus-mode transcript search was
             // permanently unavailable (RR-0061).
             let serpapi_key = ctx.credentials.get("HKASK_SERPAPI_API_KEY").cloned();
+            // Construct the verification store and register the companies-tool
+            // grounding contracts. The contracts declare each tool's output
+            // fields and their grounding dispositions (Inferred for computed
+            // fields, Narrative for prose). Without registration, every tool
+            // call writes a coverage-gap record — the trend query shows 45
+            // tools with no contract. With registration, the trend query shows
+            // grounded delegations with `was_enforced: true`.
+            let verification_store =
+                std::sync::Arc::new(hkask_verification::VerificationStore::open());
+            grounding_contracts::register_all(&verification_store);
             Ok(CompaniesServer::new(
                 ctx.webid,
-                Arc::new(hkask_verification::VerificationStore::open()),
+                verification_store,
                 reqwest::Client::new(),
                 fmp_api_key,
                 eodhd_api_key,

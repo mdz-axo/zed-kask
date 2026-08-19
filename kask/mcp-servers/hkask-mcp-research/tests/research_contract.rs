@@ -159,6 +159,7 @@ fn test_server() -> ResearchServer {
     let pool = build_provider_pool(&HashMap::new()).expect("empty provider pool");
     ResearchServer::new(
         WebID::new(),
+        std::sync::Arc::new(hkask_verification::VerificationStore::in_memory()),
         Arc::new(pool),
         Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
         RateLimiter::new(30, 60),
@@ -272,6 +273,7 @@ fn test_server_with_db() -> ResearchServer {
     let pool = build_provider_pool(&HashMap::new()).expect("empty provider pool");
     ResearchServer::new(
         WebID::new(),
+        std::sync::Arc::new(hkask_verification::VerificationStore::in_memory()),
         Arc::new(pool),
         Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
         RateLimiter::new(30, 60),

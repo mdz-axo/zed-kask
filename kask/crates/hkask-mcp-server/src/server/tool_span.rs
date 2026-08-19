@@ -240,20 +240,26 @@ pub async fn execute_tool_semantic<C: ToolContext>(
     // (had_contract: false) — the trend query sees the gap, the operator
     // knows which tools need contracts. Silence must not read as a verdict.
     let grounded = match result {
-        Ok(ref value) => {
+        Ok(value) => {
             let response_str = value.to_string();
             let (_grounding_result, cleaned) = ctx.verification_store().enforce_for_agent(
+                // Core-level grounding: the source is prefixed with `core:`
+                // so trend queries can distinguish it from the tool's own
+                // `enforce_and_stamp` call (which uses the tool name
+                // directly). Both records are legitimate — the core grounds
+                // every tool output (the floor), and the tool's own call
+                // grounds with `tool_calls` visibility (the ceiling).
+                &format!("core:{tool_name}"),
                 tool_name,
                 tool_name,
-                tool_name,
-                value,
+                &value,
                 &[],
                 &response_str,
                 &[],
             );
             Ok(cleaned)
         }
-        Err(_) => result.clone(),
+        Err(e) => Err(e),
     };
     span.finish(grounded)
 }

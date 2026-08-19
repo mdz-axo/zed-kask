@@ -911,6 +911,18 @@ pub(crate) async fn gather_cascade_context_from_thread(
 ) {
     use language_model::{MessageContent, Role};
 
+    // These fallbacks MUST stay in sync with `KaskMemorySettings::default()`
+    // in `kask/crates/kask_bridge/src/settings.rs`. The agent crate cannot
+    // depend on kask_bridge (dependency direction is kask_bridge → agent),
+    // so the defaults are mirrored as named constants — the same seam
+    // pattern as `SwarmConfig::default()` (settings.rs L640-650). The
+    // `cascade_settings_fallbacks_match_agent_skill_tool_constants` test in
+    // kask_bridge pins the sync by importing these constants.
+    pub const DEFAULT_CASCADE_SHORT_TERM_TURNS: u32 = 6;
+    pub const DEFAULT_CASCADE_TURN_TOKEN_CAP: u32 = 512;
+    pub const DEFAULT_CASCADE_MEMORY_SALIENCY_FLOOR: f64 = 0.3;
+    pub const DEFAULT_CASCADE_MEMORY_MAX_CHUNKS: u32 = 5;
+
     // Snapshot the thread's recent turns.
     let (thread_messages, agent_id, thread_id) = {
         // Read the short-term turns setting from the settings store.
@@ -922,7 +934,7 @@ pub(crate) async fn gather_cascade_context_from_thread(
                 .and_then(|c| c.kask.clone())
                 .and_then(|c| c.memory)
                 .and_then(|m| m.cascade_short_term_turns)
-                .unwrap_or(6) as usize
+                .unwrap_or(DEFAULT_CASCADE_SHORT_TERM_TURNS) as usize
         });
         cx.update(|cx| {
             let thread = thread.read(cx);
@@ -948,7 +960,7 @@ pub(crate) async fn gather_cascade_context_from_thread(
             .and_then(|c| c.kask.clone())
             .and_then(|c| c.memory)
             .and_then(|m| m.cascade_turn_token_cap)
-            .unwrap_or(512) as usize
+            .unwrap_or(DEFAULT_CASCADE_TURN_TOKEN_CAP) as usize
     });
     let condenser = crate::thread_condenser();
     let prior_messages: Vec<crate::CascadeChatMessage> = thread_messages
@@ -995,11 +1007,11 @@ pub(crate) async fn gather_cascade_context_from_thread(
             kask_memory
                 .as_ref()
                 .and_then(|m| m.cascade_memory_saliency_floor)
-                .unwrap_or(0.3),
+                .unwrap_or(DEFAULT_CASCADE_MEMORY_SALIENCY_FLOOR),
             kask_memory
                 .as_ref()
                 .and_then(|m| m.cascade_memory_max_chunks)
-                .unwrap_or(5),
+                .unwrap_or(DEFAULT_CASCADE_MEMORY_MAX_CHUNKS),
         )
     });
     let memory_snippets = match crate::cascade_context_provider() {

@@ -969,11 +969,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         } else {
             raw_value
         };
-        Ok(match grounded_value {
-            Value::String(s) => s,
-            Value::Null => serde_json::to_string(&result.context.materialize()).unwrap_or_default(),
-            other => other.to_string(),
-        })
+        Ok(final_result_as_string(&grounded_value, &result.context))
     }
 
     async fn compose_and_execute_bundle(
@@ -1210,6 +1206,19 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
 /// `Value::Null`.
 fn extract_final_step_result(outcome: &CascadeOutcome) -> String {
     let value = hkask_templates::extract_final_step_result(outcome);
+    final_result_as_string(&value, &outcome.context)
+}
+
+/// Bridge Value→String policy, shared by the raw-extraction path
+/// (`extract_final_step_result`) and the post-grounding path in
+/// `execute_skill` (which needs the `Value` form for `enforce_for_agent`
+/// before stringifying). Keeping one policy guarantees both paths unwrap
+/// strings, serialize objects, and fall back to the materialized context
+/// identically.
+fn final_result_as_string(
+    value: &Value,
+    context: &hkask_templates::step_context::StepContext,
+) -> String {
     match value {
         // F1: `render` steps store Value::String(rendered_text). Calling
         // `to_string()` on Value::String produces `"s"` (quoted + escaped),
@@ -1217,8 +1226,8 @@ fn extract_final_step_result(outcome: &CascadeOutcome) -> String {
         // agent sees the raw rendered text (JSON or prose) directly.
         // `select` steps store Value::Object(parsed_json), which falls
         // through to `other.to_string()` producing the JSON string.
-        Value::String(s) => s,
-        Value::Null => serde_json::to_string(&outcome.context.materialize()).unwrap_or_default(),
+        Value::String(s) => s.clone(),
+        Value::Null => serde_json::to_string(&context.materialize()).unwrap_or_default(),
         other => other.to_string(),
     }
 }

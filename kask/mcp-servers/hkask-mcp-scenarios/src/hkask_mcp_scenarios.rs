@@ -1947,7 +1947,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 });
             Ok(ScenariosServer::new(
                 ctx.webid,
-                Arc::new(hkask_verification::VerificationStore::open()),
+                std::sync::Arc::new(hkask_verification::VerificationStore::open()),
                 std::sync::Arc::new(std::sync::Mutex::new(superforecast::ForecastStore::new(
                     Some(scenarios_data_dir),
                 ))),
@@ -1969,6 +1969,7 @@ mod tests {
     fn empty_server() -> ScenariosServer {
         ScenariosServer::new(
             hkask_types::WebID::default(),
+            std::sync::Arc::new(hkask_verification::VerificationStore::in_memory()),
             Arc::new(Mutex::new(superforecast::ForecastStore::new(None))),
             Mutex::new(None),
             Mutex::new(HashSet::new()),

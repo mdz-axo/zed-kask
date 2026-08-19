@@ -1663,7 +1663,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             let fred_api_key = ctx.credentials.get("HKASK_FRED_API_KEY").cloned();
             Ok(PredictionMarketsServer::new(
                 ctx.webid,
-                Arc::new(hkask_verification::VerificationStore::open()),
+                std::sync::Arc::new(hkask_verification::VerificationStore::open()),
                 reqwest::Client::new(),
                 cache_ttl_secs,
                 std::sync::Arc::new(std::sync::Mutex::new(store)),
@@ -1697,6 +1697,7 @@ mod tests {
         let portfolio_store = hkask_mcp_portfolio::PortfolioStore::with_dir(path);
         PredictionMarketsServer::new(
             hkask_types::WebID::default(),
+            std::sync::Arc::new(hkask_verification::VerificationStore::in_memory()),
             reqwest::Client::new(),
             60,
             std::sync::Arc::new(std::sync::Mutex::new(calibration::CalibrationStore::new())),

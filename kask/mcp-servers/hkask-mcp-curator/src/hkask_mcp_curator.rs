@@ -1019,7 +1019,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         |ctx: hkask_mcp_server::server::ServerContext| {
             let db = Arc::new(CuratorDb::from_context(&ctx));
             let verification_store = Arc::new(hkask_verification::VerificationStore::open());
-            Ok(CuratorServer::new(ctx.webid, db, verification_store))
+            Ok(CuratorServer::new(ctx.webid, verification_store, db))
         },
         vec![hkask_mcp_server::CredentialRequirement::optional(
             "HKASK_DB_PASSPHRASE",
