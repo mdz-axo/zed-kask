@@ -335,17 +335,17 @@ impl CodeGraphServer {
                 // match may exist outside the first `limit` hits, in which case the
                 // old filter path returned a spurious "symbol not found".
                 if let Some(ref name) = req.name {
-                    return match pipeline.store().find_symbol_by_name(name).map_err(db_err)? {
-                        Some(id) => match pipeline.store().get_symbol(id).map_err(db_err)? {
-                            Some(symbol) => Ok(serde_json::json!(&symbol)),
-                            None => Ok(serde_json::json!({
-                                "error": format!("symbol not found: {name}")
-                            })),
-                        },
-                        None => Ok(serde_json::json!({
+                    let ids = pipeline.store().find_symbols_by_name(name).map_err(db_err)?;
+                    if ids.is_empty() {
+                        return Ok(serde_json::json!({
                             "error": format!("symbol not found: {name}")
-                        })),
-                    };
+                        }));
+                    }
+                    let symbols: Vec<serde_json::Value> = ids.iter()
+                        .filter_map(|&id| pipeline.store().get_symbol(id).ok().flatten())
+                        .map(|s| serde_json::json!(&s))
+                        .collect();
+                    return Ok(serde_json::json!(symbols));
                 }
                 let results =
                     graph::search::search(pipeline.store().conn(), &req.query, req.limit as usize)
@@ -583,10 +583,15 @@ impl CodeGraphServer {
             let total_sym: usize = results.iter().map(|r| r.symbols).sum();
             let total_edg: usize = results.iter().map(|r| r.edges).sum();
             let indexed: usize = results.iter().filter(|r| !r.skipped).count();
-            // Recompute PageRank and reset staleness — matches ensure_indexed() behavior.
-            // Without this, codegraph_structure returns stale rankings after a forced reindex.
-            if let Err(e) = pipeline.finalize() {
-                tracing::warn!(target: "hkask.mcp.codegraph", error = %e, "Finalize failed after reindex");
+            let all_skipped = !results.is_empty() && results.iter().all(|r| r.skipped);
+            // Skip PageRank when no files changed — same optimization as
+            // ensure_indexed. PageRank over 670K+ symbols takes minutes.
+            if !all_skipped {
+                if let Err(e) = pipeline.finalize() {
+                    tracing::warn!(target: "hkask.mcp.codegraph", error = %e, "Finalize failed after reindex");
+                }
+            } else {
+                tracing::info!(target: "hkask.mcp.codegraph", "Reindex: all files skipped — skipping PageRank");
             }
             let stats = pipeline.stats().map_err(db_err)?;
             // Mark as indexed so subsequent read tool calls skip the walk.
@@ -824,7 +829,7 @@ mod tests {
         // response envelope); assertions unwrap via the canonical
         // `hkask_types::tool_response::parse_tool_response` seam.
 
-        // 1. Exact-name lookup returns the symbol directly.
+        // 1. Exact-name lookup returns an array of matching symbols.
         let req = QueryRequest {
             query: String::new(),
             limit: 1,
@@ -833,13 +838,16 @@ mod tests {
         let out = server.codegraph_query(Parameters(req)).await;
         let payload =
             hkask_types::tool_response::parse_tool_response(&out).expect("valid envelope");
+        // The response is an array of symbols; verify the first one matches.
+        let symbols = payload.as_array().expect("name lookup returns an array");
+        assert!(!symbols.is_empty(), "exact-name lookup must return at least one symbol: {out}");
         assert_eq!(
-            payload["name"].as_str(),
+            symbols[0]["name"].as_str(),
             Some(target),
             "exact-name lookup must return the symbol: {out}"
         );
         assert!(
-            payload.get("error").is_none(),
+            symbols[0].get("error").is_none(),
             "exact-name lookup for an existing symbol must not error: {out}"
         );
 

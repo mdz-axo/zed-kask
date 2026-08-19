@@ -19,7 +19,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fs::Fs;
-use hkask_templates::{CascadeOutcome, ManifestExecutor, load_manifest_from_yaml, validate_inputs};
+use hkask_templates::{
+    CascadeOutcome, ManifestExecutor, apply_input_defaults, load_manifest_from_yaml,
+    validate_inputs,
+};
 use hkask_types::InferencePort;
 use serde_json::Value;
 use std::path::Path;
@@ -731,7 +734,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
     async fn execute_skill(
         &self,
         skill_name: &str,
-        context: HashMap<String, Value>,
+        mut context: HashMap<String, Value>,
         prior_messages: Vec<agent::CascadeChatMessage>,
         memory_snippets: Vec<agent::MemorySnippetRecord>,
         progress: Option<agent::CascadeProgress>,
@@ -797,7 +800,17 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             }
         }
 
-        // Layer A: enforce the manifest's declared `inputs` contract.
+        // Layer A: apply declared `default` values for absent inputs, then
+        // enforce the manifest's declared `inputs` contract (required + type).
+        let defaults_applied = apply_input_defaults(manifest.inputs.as_ref(), &mut context);
+        if defaults_applied > 0 {
+            tracing::debug!(
+                target: "hkask.skill_executor",
+                skill = skill_name,
+                defaults_applied,
+                "applied manifest-declared default values for absent inputs",
+            );
+        }
         if let Err(e) = validate_inputs(
             manifest.enforce_inputs,
             manifest.inputs.as_ref(),

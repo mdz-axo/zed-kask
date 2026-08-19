@@ -497,25 +497,26 @@ pub trait SkillManifestExecutor: Send + Sync {
         title: Option<CascadeProgress>,
     ) -> Result<String, SkillExecutionError>;
 
-    /// Compose a bundle from multiple peer-level skills via the `skill-bundler`
-    /// manifest, then execute the composed bundle's cascade.
+    /// Execute a bundle of peer-level skills concurrently and merge their
+    /// outputs into a single unified report.
     ///
-    /// This is the two-phase orchestration for multi-skill prompts:
-    /// 1. Runs the `skill-bundler` manifest (compose → synthesize → validate →
-    ///    score → evolve → loop) to produce a governed `BundleManifest`.
-    /// 2. Executes the composed manifest's `steps` via `ManifestExecutor`.
+    /// This is the parallel fan-out + merge orchestration for multi-skill
+    /// prompts:
+    /// 1. Runs each skill's manifest cascade concurrently via tokio tasks.
+    /// 2. Collects all outputs (allSettled — partial results OK if a skill
+    ///    errors).
+    /// 3. Runs the `skill-bundler` manifest (single merge step) to synthesize
+    ///    a unified report with per-skill summaries, cross-skill insights,
+    ///    conflicts, and prioritized recommendations.
     ///
-    /// `skill_names` is the set of peer-level skills to compose (≥3 triggers
+    /// `skill_names` is the set of peer-level skills to run (≥3 triggers
     ///    the bundler; fewer should use `execute_skill` directly).
     /// `task` is the user's natural-language request.
-    /// `context` carries any extra context entries merged into the cascade.
+    /// `context` carries any extra context entries merged into each skill's
+    /// cascade.
     /// `progress` is an optional callback for real-time step-by-step feedback.
     ///
-    /// Returns the composed bundle manifest (as JSON), the cascade's final
-    /// output text, and the deterministic composition score (for the post-run
-    /// UI's save/refine/discard affordance). The `bundle_manifest` JSON is
-    /// the `step_4_result.candidates[0].composite_manifest` extracted from
-    /// the skill-bundler cascade context.
+    /// Returns the merged report text and the skill names that were executed.
     async fn compose_and_execute_bundle(
         &self,
         skill_names: &[String],
@@ -523,38 +524,6 @@ pub trait SkillManifestExecutor: Send + Sync {
         context: std::collections::HashMap<String, serde_json::Value>,
         progress: Option<CascadeProgress>,
         title: Option<CascadeProgress>,
-    ) -> Result<BundleExecutionResult, String>;
-
-    /// Persist a composed bundle manifest to the registry so it can be
-    /// re-invoked later by name. The bridge writes the manifest as YAML to
-    /// `registry_manifests_dir/<id>.yaml` — disk is the single source of
-    /// truth (D1), so a saved bundle is immediately discoverable by
-    /// `has_manifest` and executable via `execute_skill` on subsequent turns.
-    ///
-    /// `bundle_manifest` is the JSON value carried by
-    /// `BundleExecutionResult.bundle_manifest` (the
-    /// `step_4_result.candidates[0].composite_manifest` from the bundler
-    /// cascade). Returns the bundle's `id` on success.
-    async fn save_bundle(&self, bundle_manifest: serde_json::Value) -> Result<String, String>;
-
-    /// Re-compose a bundle via goal-delta-driven evolution. Runs the
-    /// `skill-bundler/bundler-evolve` template with the supplied
-    /// `goal_delta` (0 = goal met, 1 = completely unmet) and
-    /// `convergence_failure_reason`, producing an evolved manifest, then
-    /// executes the evolved manifest's cascade. The `Refine` action in the
-    /// post-run UI calls this when the operator judges the first composition
-    /// insufficient and supplies a goal correction.
-    ///
-    /// `bundle_manifest` is the prior composition's manifest JSON (the
-    /// `current_manifest` input to `bundler-evolve`). `goal_context` is the
-    /// original goal-extract output (step_1_result). Returns the evolved
-    /// manifest and the executed output, mirroring `compose_and_execute_bundle`.
-    async fn refine_bundle(
-        &self,
-        bundle_manifest: serde_json::Value,
-        goal_context: serde_json::Value,
-        goal_delta: f64,
-        convergence_failure_reason: String,
     ) -> Result<BundleExecutionResult, String>;
 
     /// Check whether a skill has an hKask manifest in the registry.
@@ -602,32 +571,13 @@ pub trait SkillManifestExecutor: Send + Sync {
     async fn validate_golden_outputs(&self, skill_name: &str) -> Result<String, String>;
 }
 
-/// The result of composing and executing a skill bundle.
-///
-/// Carries the structured data the post-run UI needs for the
-/// save/refine/discard affordance (section B of the spec).
+/// The result of executing a skill bundle (parallel fan-out + merge).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BundleExecutionResult {
-    /// The composed `BundleManifest` as JSON (the
-    /// `step_4_result.candidates[0].composite_manifest` from the
-    /// skill-bundler cascade). Persisted by the `Save` action.
-    pub bundle_manifest: serde_json::Value,
-    /// The final output text from executing the composed bundle's cascade.
+    /// The merged report text from the `skill-bundler` merge step.
     pub output: String,
-    /// The deterministic composition score from `lisp.eval` (ordinal 6).
-    /// Lower = better. Used by `Refine` to decide if re-composition is
-    /// worthwhile, and by the UI to display the score breakdown.
-    pub composition_score: Option<f64>,
-    /// The skill names that were actually placed in the composed bundle
-    /// (may differ from the input if the bundler dropped a skill via
-    /// dead-letter resolution). Used by `Save` for registry matching.
+    /// The skill names that were executed in parallel.
     pub composed_skill_names: Vec<String>,
-    /// The goal-extract step's output (step_1_result from the skill-bundler
-    /// cascade). Carried so the `Refine` action can pass it to
-    /// `bundler-evolve` as `goal_context` — without it, the evolve step runs
-    /// blind (it can't reference the original goal). `Null` if the bundler
-    /// cascade didn't produce a step_1_result.
-    pub goal_context: serde_json::Value,
 }
 
 impl SkillTool {

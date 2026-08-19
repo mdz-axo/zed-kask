@@ -169,11 +169,30 @@ impl GraphStore {
     }
 
     /// Get a symbol by name. Returns the database ID if found.
+    ///
+    /// If multiple symbols share the same name (common for types defined
+    /// in multiple crates), returns the first match. Callers that need
+    /// all matches should use `find_symbols_by_name`.
     pub fn find_symbol_by_name(&self, name: &str) -> Result<Option<i64>> {
         let mut stmt = self
             .conn
             .prepare("SELECT id FROM symbols WHERE name = ?1 LIMIT 1")?;
         let result = optional_query_row(&mut stmt, params![name], |row| row.get(0))?;
+        Ok(result)
+    }
+
+    /// Get all symbol IDs matching a name. Used when a symbol name is
+    /// ambiguous (defined in multiple files/crates) and the caller needs
+    /// to disambiguate or traverse all matches.
+    pub fn find_symbols_by_name(&self, name: &str) -> Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM symbols WHERE name = ?1 ORDER BY id")?;
+        let rows = stmt.query_map(params![name], |row| row.get::<_, i64>(0))?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
         Ok(result)
     }
 

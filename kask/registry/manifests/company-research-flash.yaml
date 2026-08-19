@@ -65,11 +65,14 @@ inputs:
     description: Equity ticker symbol (e.g. "AAPL", "MSFT").
   - name: analyst_id
     type: string
-    required: true
+    required: false
+    default: "zed-kask-operator"
     description: >
       Analyst identifier for forecast-ledger attribution and KATA PDCA
       tracking. Persisted with every forecast PT / probability / IMAGINE
-      prediction for later Brier scoring.
+      prediction for later Brier scoring. Defaults to "zed-kask-operator"
+      when not supplied; the invoking agent should resolve `git config
+      user.name` and pass it for proper attribution.
   - name: catalyst
     type: string
     required: false

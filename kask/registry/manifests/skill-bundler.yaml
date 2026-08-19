@@ -1,219 +1,54 @@
 # Skill Bundler Process Manifest
-# ℏKask v0.35.0 — PKO RDF graph synthesis: decimate + fuse + recompose PDCA loops
-# Template type: FlowDef — goal → compose → synthesize → validate → converge → evolve → loop
-# Dual-axis ontological anchoring per P5.4 (PKO + DC+BIBO)
+# hKask v0.35.0 — Parallel fan-out + merge
+#
+# The bundler runs each skill concurrently, then merges their outputs into a
+# single unified report. There is no iterative composition, PKO graph
+# synthesis, or convergence loop — the parallel execution happens in Rust
+# (BridgeManifestExecutor::compose_and_execute_bundle), and this manifest
+# handles only the merge step.
 
 manifest:
   id: skill-bundler
   category: skill
   name: Skill Bundler
   description: >
-    PKO RDF graph synthesis engine. Extracts a structured goal from user intent,
-    composes skills into a candidate set, synthesizes them into a single optimized
-    composite PKO Procedure through RDF graph decimation and recomposition,
-    validates structural and ontological rules, computes convergence, evolves on
-    goal delta, and iterates until the composite is optimally formed.
+    Run peer-level skills concurrently and merge their outputs into a single
+    unified report. The bundler does not compose or iterate — it dispatches
+    each skill in parallel, collects results, and synthesizes them.
   functional_role: flowdef
   version: "0.35.0"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true
 
-convergence:
-  convergence_mode: "cauchy"
-  cauchy_epsilon: 0.03
-  cauchy_window: 3
-  max_iterations: 10
-  min_iterations: 2
-  on_not_reached: escalate
-  target_artifacts_field: "current_artifacts"
-
-
-rjoule:
-  cap: 2
-  alert_threshold: 0.8
-  hard_limit: true
-
 inputs:
   - name: skill_names
     type: array
-    description: "Skills to compose"
+    description: "Skills that were executed in parallel"
     required: true
-  - name: user_intent
+  - name: task
     type: string
-    description: "User intent — what the bundle should achieve. Feeds goal extraction."
-    required: false
-  - name: existing_bundles
+    description: "The user's task — what the bundle was asked to achieve"
+    required: true
+  - name: skill_outputs
     type: array
-    description: "Existing bundle manifests for smart matching"
-    required: false
-  - name: skill_manifests
-    type: array
-    description: "Pre-loaded skill FlowDef manifests for RDF graph synthesis. Absent when manifests are unavailable (graceful degradation)."
-    required: false
-  - name: goal_verdict
-    type: object
-    description: "Previous goal verdict from bundle execution (for recomposition). Absent on initial composition."
-    required: false
+    description: "Outputs from each skill, in the same order as skill_names"
+    required: true
 
 steps:
   - ordinal: 1
     action: select
-    description: Extract structured goal from user intent with explicit completion criteria.
+    description: >
+      Merge the parallel skill outputs into a single unified report with
+      per-skill summaries, cross-skill insights, conflicts, and prioritized
+      recommendations.
     renderer: minijinja
-    template_ref: goal-analysis/create
-    timeout_seconds: 120
-    input_mapping:
-      user_intent: "{{ task | default(user_intent) }}"
-
-  - ordinal: 2
-    action: select
-    description: Compose a candidate skill set with PKO-anchored ordering from provided skills and goal context. On recomposition iterations, uses the evolved manifest as a base.
-    renderer: minijinja
-    template_ref: skill-bundler/bundler-compose
+    template_ref: skill-bundler/bundler-merge
     timeout_seconds: 180
     input_mapping:
       skill_names: "{{ skill_names }}"
-      existing_bundles: "{{ existing_bundles | default([]) }}"
-      goal: "{{ step_1_result }}"
-      previous_manifest: "{{ prev_step_8_result.evolved_manifest | default(none) }}"
-
-  # Deterministic recompute of coverage and overlap — the compose step
-  # (ordinal 2) asks the LLM to self-compute these, but the LLM's
-  # self-assessment is non-deterministic. This step recomputes them from
-  # the actual manifest data so the convergence score (ordinal 6) reads
-  # reproducible values, not LLM guesses.
-  - ordinal: 3
-    action: compute
-    compute_ref: lisp.eval
-    description: >
-      Deterministic recompute of coverage and overlap from the compose
-      step's actual bundle_manifest. Coverage = fraction of input
-      skill_names that appear in bundle_manifest.skills. Overlap = count
-      of same-phase skill pairs with matching artifact_contract targets.
-      These override the LLM's self-computed values in step_2_result so
-      the convergence score (ordinal 6) reads reproducible numbers.
-    timeout_seconds: 10
-    input_mapping:
-      form: >
-        (begin
-          (define skill-names
-            (lambda (skills)
-              (if (is_null skills)
-                  (list)
-                  (cons (assoc "name" (car skills)) (skill-names (cdr skills))))))
-          (define count-matches
-            (lambda (names snames)
-              (if (is_null names)
-                  0
-                  (if (member (car names) snames)
-                      (+ 1 (count-matches (cdr names) snames))
-                      (count-matches (cdr names) snames)))))
-          (let ((skills (assoc "skills" (assoc "bundle_manifest" step_2_result)))
-                (names step_2_input_skill_names)
-                (n (length step_2_input_skill_names)))
-            (if (= n 0)
-                0.0
-                (/ (count-matches names (skill-names skills))
-                   (* 1.0 n)))))
-      env:
-        step_2_result: "{{ step_2_result }}"
-        step_2_input_skill_names: "{{ skill_names }}"
-
-  - ordinal: 4
-    action: select
-    description: Synthesize the composed skills into a single optimized composite PKO Procedure. Parse each skill's PDCA graph into RDF triples, detect isomorphic substructures, decimate redundant nodes, fuse shared patterns, and generate novel loop structures.
-    renderer: minijinja
-    template_ref: skill-bundler/bundler-synthesize
-    timeout_seconds: 180
-    input_mapping:
-      composed_skills: "{{ step_2_result.bundle_manifest.skills }}"
-      goal: "{{ step_1_result }}"
-      skill_manifests: "{{ skill_manifests | default([]) }}"
-
-  - ordinal: 5
-    action: select
-    description: Validate the synthesized composite manifest against composition rules and ontological anchoring requirements.
-    renderer: minijinja
-    template_ref: skill-bundler/bundler-validate
-    timeout_seconds: 150
-    input_mapping:
-      bundle_manifest: "{{ step_4_result.candidates[0].composite_manifest }}"
-
-  # ── Deterministic compute: lisp.eval is available for custom logic ──
-  #
-  # In addition to the built-in compute_refs (lisp.eval for signal computation,
-  # kata.object_gap, kata.process_gap, kata.hypotenuse, etc.), skill
-  # authors can use `compute_ref: lisp.eval` to write custom deterministic
-  # logic inline in the manifest — no Rust change needed. The sandboxed
-  # Lisp interpreter supports arithmetic, conditionals, list ops, and
-  # lambda. Supports infix: `a + b` = `(+ a b)`. Example:
-  #
-  #   - ordinal: N
-  #     action: compute
-  #     compute_ref: lisp.eval
-  #     input_mapping:
-  #       form: "(if (< gap 0.1) 1 0)"  # prefix; also supports infix: "gap < 0.1"
-  #       env:
-  #         gap: "{{ step_1_result.convergence_metric }}"
-  #       max_steps: 10000
-  #       max_depth: 32
-  #
-  # Use cases: custom convergence formulas, weighted scoring, data
-  # transformation between steps, filtering findings by threshold.
-  # Security: gated to category: skill manifests only (human-reviewed).
-  - ordinal: 6
-    action: compute
-    compute_ref: lisp.eval
-    description: >
-      Deterministic composition-quality score combining three signals:
-      coverage (from deterministic recompute at step 3), overlap (from
-      compose), and validation violations/warnings/ontology_gaps (from
-      validate at step 5). The score is a weighted sum where lower =
-      better: coverage contributes negatively (higher coverage = lower
-      score = better), while overlap and violations contribute positively
-      (more = higher score = worse). This is the deterministic convergence
-      signal the loop (ordinal 8) converges on — removing `lisp.eval`
-      makes the score non-reproducible (the LLM's self-assessment is
-      non-deterministic), so the loop would drift on re-runs of the same
-      input (the falsifier test pins this).
-    timeout_seconds: 10
-    input_mapping:
-      form: >
-        (let ((coverage step_3_result)
-              (overlap (assoc "overlap" step_2_result))
-              (v (length (assoc "violations" step_5_result)))
-              (w (length (assoc "warnings" step_5_result)))
-              (o (length (assoc "ontology_gaps" step_5_result))))
-          (+ 0.0
-             (* 2.0 (- 1.0 coverage))
-             (* 0.5 overlap)
-             (+ v w) o))
-      env:
-        step_2_result: "{{ step_2_result }}"
-        step_3_result: "{{ step_3_result }}"
-        step_5_result: "{{ step_5_result }}"
-
-  - ordinal: 7
-    action: select
-    description: Evolve the composite via goal-delta-driven recomposition when convergence has not been met.
-    renderer: minijinja
-    template_ref: skill-bundler/bundler-evolve
-    timeout_seconds: 180
-    input_mapping:
-      bundle_name: "{{ step_4_result.candidates[0].name | default('composite-skill') }}"
-      current_manifest: "{{ step_4_result.candidates[0].composite_manifest }}"
-      changed_skills: "{{ step_2_result.bundle_manifest.skills }}"
-      goal_context: "{{ step_1_result }}"
-      goal_delta: "{{ prev_step_7_result.goal_delta | default(1.0) }}"
-      convergence_failure_reason: "{{ prev_step_7_result.rationale | default('') }}"
-
-  - ordinal: 8
-    action: loop
-    description: Re-enter composition cycle if convergence threshold was not met after evolution.
-    input_mapping:
-      loop_target: "{{ 2 }}"
-      convergence_signal: "{{ step_6_result }}"
+      task: "{{ task }}"
+      skill_outputs: "{{ skill_outputs }}"
 
 error_handling:
   on_timeout: retry
