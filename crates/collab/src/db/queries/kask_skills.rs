@@ -760,10 +760,21 @@ impl Database {
     pub async fn purge_expired_kask_skill_versions(&self) -> Result<usize> {
         self.transaction(|tx| async move {
             let now = time::OffsetDateTime::now_utc();
-            let versions = kask_skill_version::Entity::find().all(&*tx).await?;
+            // zed-kask: join versions → skills so we capture the
+            // `(source_user, skill_name, version)` triple for each expired
+            // version. The tarball fallback table (D30) is keyed by that
+            // triple, not by `kask_skill_id`, so we need the namespace to
+            // clean up orphaned tarball rows (the `kask_skill_tarballs`
+            // table has no FK to `kask_skills`).
+            let versions = kask_skill_version::Entity::find()
+                .inner_join(kask_skill::Entity)
+                .select_also(kask_skill::Entity)
+                .all(&*tx)
+                .await?;
 
             let mut expired_versions = Vec::new();
-            for version in &versions {
+            for (version, skill) in &versions {
+                let Some(skill) = skill else { continue };
                 let expires_at = time::OffsetDateTime::parse(
                     &version.expires_at,
                     &time::format_description::well_known::Rfc3339,
@@ -772,16 +783,34 @@ impl Database {
                     // Unparseable `expires_at` counts as expired: it can never
                     // satisfy the catalog filter, and keeping the row forever
                     // would let dead skills accumulate (plan D5 fail-closed).
-                    expired_versions.push((version.kask_skill_id, version.version.clone()));
+                    expired_versions.push((
+                        version.kask_skill_id,
+                        version.version.clone(),
+                        skill.source_user.clone(),
+                        skill.skill_name.clone(),
+                    ));
                 }
             }
 
-            for (skill_id, version) in &expired_versions {
+            for (skill_id, version, source_user, skill_name) in &expired_versions {
                 kask_skill_version::Entity::delete_many()
                     .filter(
                         kask_skill_version::Column::KaskSkillId
                             .eq(*skill_id)
                             .and(kask_skill_version::Column::Version.eq(version)),
+                    )
+                    .exec(&*tx)
+                    .await?;
+                // zed-kask: D30 — also delete the locally-stored tarball for
+                // this expired version so the local fallback store doesn't
+                // leak orphaned rows (the table has no FK cascade). No-op in
+                // production (S3 path); the local store is dev/self-hosted only.
+                kask_skill_tarball::Entity::delete_many()
+                    .filter(
+                        kask_skill_tarball::Column::SourceUser
+                            .eq(source_user)
+                            .and(kask_skill_tarball::Column::SkillName.eq(skill_name))
+                            .and(kask_skill_tarball::Column::Version.eq(version)),
                     )
                     .exec(&*tx)
                     .await?;

@@ -55,6 +55,7 @@ pub const CORE_SKILL_NAMES: &[&str] = &[
     "pragmatic-semantics",
     "superforecasting",
     // Curator human-in-the-loop review
+    "algedonic-review",
     "gemba-walk",
     // Universal quality gates
     "code-review",
