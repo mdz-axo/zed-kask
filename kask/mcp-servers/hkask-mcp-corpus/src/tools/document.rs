@@ -16,7 +16,7 @@ use crate::helpers::map_corpus_io_error;
 use crate::services::convert::ConvertService;
 use crate::{
     CorpusServer, ExtractOutcome, McpToolError, Parameters, chunk_structure, chunk_word_bounds,
-    convert, default_ocr_max_tokens, execute_tool_semantic, extract_text, filter_outcome_to_pages,
+    convert, execute_tool_semantic, extract_text, filter_outcome_to_pages,
     json, sanitize_links, serialize_passages, tokens_to_words, tool, tool_router,
 };
 use schemars::JsonSchema;
@@ -63,7 +63,7 @@ impl CorpusServer {
         Parameters(OcrRequest {
             path,
             model,
-            max_tokens,
+            
         }): Parameters<OcrRequest>,
     ) -> String {
         execute_tool_semantic(
@@ -91,7 +91,7 @@ impl CorpusServer {
                     }
                 };
 
-                match service.do_ocr(&file_bytes, &model, max_tokens).await {
+                match service.do_ocr(&file_bytes, &model).await {
                     Ok(text) => {
                         let result = serde_json::json!({
                             "path": path,
@@ -194,7 +194,7 @@ impl CorpusServer {
             input_dir,
             output,
             entity_ref_prefix,
-            max_tokens,
+            
             overlap_tokens,
             strip_gutenberg,
             multi_tier,
@@ -216,7 +216,7 @@ impl CorpusServer {
                             &input_dir,
                             output.as_deref(),
                             &entity_ref_prefix,
-                            max_tokens,
+                            
                             overlap_tokens,
                             strip_gutenberg,
                             index,
@@ -310,7 +310,7 @@ impl CorpusServer {
                                     )
                                 })?;
                                 match service
-                                    .do_ocr(&file_bytes, &model, default_ocr_max_tokens())
+                                    .do_ocr(&file_bytes, &model)
                                     .await
                                 {
                                     Ok(ocr_text) if !ocr_text.is_empty() => {
@@ -348,7 +348,7 @@ impl CorpusServer {
                                     )
                                 })?;
                                 match service
-                                    .do_ocr(&file_bytes, &model, default_ocr_max_tokens())
+                                    .do_ocr(&file_bytes, &model)
                                     .await
                                 {
                                     Ok(ocr_text) if !ocr_text.is_empty() => {
@@ -626,7 +626,6 @@ pub struct OcrRequest {
     pub model: Option<String>,
     /// Maximum tokens for OCR output.
     #[serde(default = "default_ocr_max_tokens")]
-    pub max_tokens: u32,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

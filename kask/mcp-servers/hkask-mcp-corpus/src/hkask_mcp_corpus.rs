@@ -50,7 +50,6 @@ pub(crate) use helpers::{
 };
 // Re-export OCR config and text-cleaning helpers from their semantic homes.
 pub(crate) use convert::sanitize_links;
-pub(crate) use ocr::default_ocr_max_tokens;
 // LLM JSON extraction is shared via `hkask_types::json_extract` (RR-0028).
 pub(crate) use hkask_types::json_extract::extract_json_from_response;
 

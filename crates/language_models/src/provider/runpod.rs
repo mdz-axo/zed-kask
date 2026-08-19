@@ -666,11 +666,14 @@ async fn fetch_runpod_endpoints(
             // default. The user can override via `available_models` in settings.
             max_tokens: 32_768,
             max_output_tokens: None,
-            // vLLM endpoints with vision models (e.g. OLMOCR) set this via the
-            // static `available_models` config; discovery conservatively
-            // reports `false` so the IPC vision-model list doesn't advertise
-            // a non-vision endpoint.
-            supports_images: false,
+            // Infer vision support from the MODEL_NAME env var. OLMOCR and
+            // other OCR models are vision models — discovery should report
+            // `true` so the IPC vision-model list includes them and
+            // `resolve_ocr_model` can verify the model is vision-capable.
+            supports_images: model_name_env.as_ref().is_some_and(|mn| {
+                let lower = mn.to_ascii_lowercase();
+                lower.contains("olmocr") || lower.contains("ocr") || lower.contains("vision")
+            }),
             // vLLM expects the `model` field to match MODEL_NAME unless
             // --served-model-name overrides it. Populate from the env var so
             // discovered endpoints work without manual config.
@@ -791,7 +794,7 @@ mod tests {
             endpoint_id: endpoint.id.clone(),
             max_tokens: 32_768,
             max_output_tokens: None,
-            supports_images: false,
+            supports_images: true,
             served_model_name: model_name,
         };
         assert_eq!(

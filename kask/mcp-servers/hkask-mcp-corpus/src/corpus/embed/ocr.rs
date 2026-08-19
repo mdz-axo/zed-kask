@@ -13,7 +13,6 @@
 // `build_ocr_prompt` template (`docproc/ocr-extract.j2` with
 // `OCR_FALLBACK_PROMPT` fallback), same `generate_vision` dispatch, same
 // `OcrError` surface, same `LLMParameters` (temperature 0.1, max_tokens from
-// `default_ocr_max_tokens`). The RunPod-specific code is deleted.
 //
 // The full typed pipeline (`ocr::pipeline::run_pipeline` — decimation,
 // complexity routing, cross-validation, calibration, verification) is NOT
@@ -26,7 +25,6 @@
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 use hkask_types::InferencePort;
 
-use crate::ocr::default_ocr_max_tokens;
 use crate::ocr::llm_ocr::vision_ocr_bytes;
 use crate::ocr::pipeline::OcrError;
 
@@ -84,7 +82,6 @@ fn map_ocr_error(error: OcrError) -> ServiceError {
 /// embed pipeline (`fetch_text` → `ocr_pdf_bytes`) therefore gets the same
 /// OCR behavior as the convert pipeline: shared `docproc/ocr-extract.j2`
 /// prompt template, shared `generate_vision` dispatch, shared
-/// `default_ocr_max_tokens` budget, shared `OcrError` surface.
 ///
 /// `inference_port` is threaded down from `EmbedService::embed_corpus`
 /// (which holds `Arc<dyn InferencePort>`) through `resolve_work_text` →
@@ -99,8 +96,7 @@ pub async fn ocr_pdf_bytes(
     tracing::info!(target: "hkask.embed", operation = "ocr_pdf_bytes", url = %url, byte_len = bytes.len(), "REG");
 
     let model = resolve_ocr_model();
-    let max_tokens = default_ocr_max_tokens();
-    vision_ocr_bytes(inference_port, bytes, &model, max_tokens)
+    vision_ocr_bytes(inference_port, bytes, &model)
         .await
         .map_err(map_ocr_error)
 }

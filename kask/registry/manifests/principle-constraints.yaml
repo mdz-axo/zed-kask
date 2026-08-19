@@ -76,9 +76,12 @@ steps:
   # results, DIVERGENCE.md excerpts). For exact line numbers and test names
   # the LLM cannot verify, it uses UNKNOWN and MISSING: prefixes.
   #
-  # To re-add codegraph access, use a separate execute step with
-  # on_failure: action: resume (not report) so failures don't escalate
-  # the cascade.
+  # The codegraph_query execute step was intentionally not added. The step's
+  # on_failure config can only escalate (report/halt/escalate all exit the
+  # cascade), so a codegraph server outage would abort the entire derivation.
+  # Instead, callers pass pre-gathered context via the code_context input
+  # parameter when they need symbol-level citations. This is simpler and
+  # doesn't introduce a failure dependency on the codegraph MCP server.
   - ordinal: 1
     action: select
     description: >

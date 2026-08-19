@@ -29,7 +29,6 @@ classifier:
      "is_flake":false,"suggested_fuzz_target":"description"}
 
   temperature: 0.0
-  max_tokens: 500
 
   fallback_category: Unknown
   cost_input_nj_per_token: 30 # $0.03/M input tokens → 30 nJ/token

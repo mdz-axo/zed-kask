@@ -53,7 +53,6 @@ pub(crate) async fn vision_ocr_bytes(
     router: &dyn InferencePort,
     bytes: &[u8],
     model: &str,
-    _max_tokens: u32,
 ) -> Result<String, OcrError> {
     let b64_data = base64::engine::general_purpose::STANDARD.encode(bytes);
     let params = LLMParameters {
@@ -140,7 +139,6 @@ pub struct LlmOcrExecutor {
     /// Shared inference port (constructed once, used by all concurrent tasks).
     router: Arc<dyn InferencePort>,
     /// Maximum output tokens per page.
-    max_tokens: u32,
     /// Circuit breaker for rate-limit resilience.
     breaker: CircuitBreaker,
 }
@@ -150,16 +148,11 @@ impl LlmOcrExecutor {
     pub fn new(router: Arc<dyn InferencePort>) -> Self {
         Self {
             router,
-            max_tokens: 4096,
             breaker: CircuitBreaker::new(5, 30), // 5 consecutive failures → 30s cooldown
         }
     }
 
     /// Set maximum output tokens per page.
-    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
-        self.max_tokens = max_tokens;
-        self
-    }
 
     #[cfg(test)]
     fn force_open_circuit(&self) {
@@ -217,7 +210,7 @@ impl OcrExecutor for LlmOcrExecutor {
                 message: format!("Failed to encode page image as JPEG: {e}"),
             })?;
 
-        let result = vision_ocr_bytes(&*self.router, &img_bytes, &model, self.max_tokens).await;
+        let result = vision_ocr_bytes(&*self.router, &img_bytes, &model, 0).await;
 
         // Circuit-breaker + rate-limit tracking on the vision-call outcome. The
         // breaker reacts to rate-limit, timeout, and connection errors; the warn

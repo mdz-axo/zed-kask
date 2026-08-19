@@ -20,7 +20,6 @@ classifier:
     For mutant passages: action=suggest, describe a fuzz target.
 
   temperature: 0.0
-  max_tokens: 300
 
   fallback_category: Unknown
   cost_input_nj_per_token: 30

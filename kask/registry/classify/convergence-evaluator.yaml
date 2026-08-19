@@ -52,4 +52,3 @@ classifier:
     {"convergence_metric":0.00,"convergence_method":"LLM-assessed hypothesis verification + chain stability + delegation resolution","metric_decomposition":{"hypothesis_exists":true,"hypothesis_verified":true,"chain_complete":true,"unresolved_branches":0,"pending_revisions":0,"confidence_calibrated":true,"answer_synthesized":true,"all_delegations_resolved":true,"delegation_results_incorporated":true,"chain_stable_between_iterations":true},"rationale":"Fully converged. Hypothesis verified, chain complete, diagnose delegation resolved and incorporated.","blockers":[]}
 
   temperature: 0.0
-  max_tokens: 500

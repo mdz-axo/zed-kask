@@ -46,6 +46,5 @@ classifier:
     {"category":"Implications"}
 
   temperature: 0.0
-  max_tokens: 15
 
   fallback_category: Statement
