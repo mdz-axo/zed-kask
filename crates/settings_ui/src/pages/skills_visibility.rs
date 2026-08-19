@@ -20,7 +20,7 @@ use std::path::Path;
 use agent_skills::{Skill, SkillIndex, SkillSource, SkillVisibility};
 use anyhow::{Context as _, Result};
 use fs::Fs;
-use gpui::{App, AppContext, Context, Task};
+use gpui::{App, Context, Task};
 use serde_yaml_ng::Mapping;
 
 use crate::SettingsWindow;
@@ -245,45 +245,84 @@ pub fn spawn_drain(queue: &mut SkillVisibilityQueue, cx: &mut Context<SettingsWi
         }
     }
 
-    cx.background_spawn(async move {
-        for (skill, version) in skills_to_publish {
-            let result = kask_extensions_ui::publish_skill(
-                fs.as_ref(),
-                &http_client,
-                &credentials,
-                &skill,
-                &source_user,
-                &version,
-            )
-            .await;
-            if let Err(error) = result {
-                // Per the `.rules` "process-global hooks need a startup-failure
-                // signal" trap: log with skill ID, failure reason, and
-                // remediation. Do NOT roll back the local `visibility` flag.
-                log::warn!(
-                    "kask-extensions: failed to publish skill '{}/{}' version {}: {error:#}. \
-                     The local visibility flag is preserved; the queue will retry on the next drain. \
-                     Remediation: check network connectivity and S3 credentials.",
-                    source_user,
-                    skill.name,
-                    version
-                );
-            }
-        }
-        for skill_name in skills_to_unpublish {
-            let result = kask_extensions_ui::unpublish_skill(&http_client, &credentials, &source_user, &skill_name)
+    let background = cx.background_executor().spawn({
+        let fs = fs.clone();
+        async move {
+            let mut failures: Vec<String> = Vec::new();
+            for (skill, version) in skills_to_publish {
+                let result = kask_extensions_ui::publish_skill(
+                    fs.as_ref(),
+                    &http_client,
+                    &credentials,
+                    &skill,
+                    &source_user,
+                    &version,
+                )
                 .await;
-            if let Err(error) = result {
-                log::warn!(
-                    "kask-extensions: failed to unpublish skill '{}/{}': {error:#}. \
-                     The local visibility flag is preserved; the queue will retry on the next drain. \
-                     Remediation: check network connectivity and S3 credentials.",
-                    source_user,
-                    skill_name
-                );
+                if let Err(error) = result {
+                    // Per the `.rules` "process-global hooks need a startup-failure
+                    // signal" trap: log with skill ID, failure reason, and
+                    // remediation. Do NOT roll back the local `visibility` flag.
+                    log::warn!(
+                        "kask-extensions: failed to publish skill '{}/{}' version {}: {error:#}. \
+                         The local visibility flag is preserved; the queue will retry on the next drain. \
+                         Remediation: check network connectivity and the marketplace server.",
+                        source_user,
+                        skill.name,
+                        version
+                    );
+                    failures.push(format!("{}/{}", source_user, skill.name));
+                }
             }
+            for skill_name in skills_to_unpublish {
+                let result = kask_extensions_ui::unpublish_skill(&http_client, &credentials, &source_user, &skill_name)
+                    .await;
+                if let Err(error) = result {
+                    log::warn!(
+                        "kask-extensions: failed to unpublish skill '{}/{}': {error:#}. \
+                         The local visibility flag is preserved; the queue will retry on the next drain. \
+                         Remediation: check network connectivity and the marketplace server.",
+                        source_user,
+                        skill_name
+                    );
+                    failures.push(format!("{}/{}", source_user, skill_name));
+                }
+            }
+            failures
         }
+    });
+
+    // zed-kask: dispatch the drain outcome back to the foreground so the user
+    // sees publish failures instead of a silent warn-only flip (the icon
+    // changed to "Public" even when the upload 501'd). Per the `.rules` trap
+    // "Cross-thread GPUI communication uses channels, not `AsyncApp` handles",
+    // this uses `cx.spawn`'s foreground `cx` + `settings_window` handle, not a
+    // captured `AsyncApp`.
+    cx.spawn(async move |settings_window, cx| {
+        let failures = background.await;
+        settings_window
+            .update(cx, |this, cx| {
+                this.last_publish_status = if failures.is_empty() {
+                    None
+                } else {
+                    Some(
+                        format!(
+                            "Failed to publish/unpublish {} skill(s): {}. \
+                             The local visibility flag is preserved; check the marketplace \
+                             server and retry.",
+                            failures.len(),
+                            failures.join(", ")
+                        )
+                        .into(),
+                    )
+                };
+                cx.notify();
+            })
+            .ok();
     })
+    .detach();
+
+    Task::ready(())
 }
 
 /// Handle a visibility toggle click for a `SkillSource::Global` skill.

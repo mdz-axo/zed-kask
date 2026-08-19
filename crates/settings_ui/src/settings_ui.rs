@@ -971,6 +971,11 @@ pub struct SettingsWindow {
     /// Pending marketplace visibility changes, drained lazily on page-leave /
     /// window-close / 30s debounce. See `skills_visibility::SkillVisibilityQueue`.
     pub(crate) skill_visibility_queue: pages::SkillVisibilityQueue,
+    /// zed-kask: outcome of the most recent visibility-toggle drain (publish /
+    /// unpublish). `None` until a drain completes; set to a user-facing message
+    /// on failure so the icon flip is not the only signal (the warn-only path
+    /// left the user thinking the skill was published when it had failed).
+    pub(crate) last_publish_status: Option<gpui::SharedString>,
     /// State for the active "add OpenAI/Anthropic-compatible provider" form sub-page, if open.
     pub(crate) llm_provider_form: Option<LlmProviderForm>,
     /// Stable focus handle for the LLM "Add Provider" button, so it can show a
@@ -2006,6 +2011,7 @@ impl SettingsWindow {
             configuring_provider: None,
             last_copied_skill_directory_path: None,
             skill_visibility_queue: pages::SkillVisibilityQueue::default(),
+            last_publish_status: None,
             llm_provider_form: None,
             llm_provider_add_focus_handle: cx.focus_handle(),
             mcp_server_form: None,
@@ -5338,6 +5344,7 @@ pub mod test {
                 external_agent_add_focus_handle: cx.focus_handle(),
                 skill_creator_page: None,
                 skill_visibility_queue: pages::SkillVisibilityQueue::default(),
+                last_publish_status: None,
             }
         }
     }
@@ -5478,6 +5485,7 @@ pub mod test {
             external_agent_add_focus_handle: cx.focus_handle(),
             skill_creator_page: None,
             skill_visibility_queue: pages::SkillVisibilityQueue::default(),
+            last_publish_status: None,
         };
 
         settings_window.build_filter_table();

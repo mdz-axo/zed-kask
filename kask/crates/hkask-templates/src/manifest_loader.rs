@@ -213,6 +213,24 @@ pub fn validate_mcp_references(
                 });
             }
         }
+        // `mcp_batch` entries carry the same class of reference as `mcp` —
+        // validate them too. Without this, a batch entry with a typo'd tool
+        // name passes load-time validation and fails only at runtime (or
+        // worse, silently lands in the `errors` sidecar under allSettled).
+        if let Some(ref batch) = step.mcp_batch {
+            for entry in batch {
+                if entry.mcp.contains("${") {
+                    continue;
+                }
+                if !known_tools.contains(entry.mcp.as_str()) {
+                    warnings.push(McpReferenceWarning {
+                        manifest_id: manifest.id.clone(),
+                        step_ordinal: step.ordinal,
+                        mcp_ref: entry.mcp.clone(),
+                    });
+                }
+            }
+        }
     }
     if !warnings.is_empty() {
         tracing::warn!(

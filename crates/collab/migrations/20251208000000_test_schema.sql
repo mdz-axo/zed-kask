@@ -242,6 +242,15 @@ CREATE TABLE public.kask_skill_votes (
     voted_at timestamp without time zone DEFAULT now() NOT NULL
 );
 
+-- zed-kask: D30 — local fallback blob store for the no-S3 publish path.
+CREATE TABLE public.kask_skill_tarballs (
+    source_user text NOT NULL,
+    skill_name text NOT NULL,
+    version text NOT NULL,
+    tarball bytea NOT NULL,
+    PRIMARY KEY (source_user, skill_name, version)
+);
+
 CREATE TABLE public.followers (
     id integer NOT NULL,
     room_id integer NOT NULL,

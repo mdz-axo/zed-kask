@@ -458,6 +458,15 @@ CREATE TABLE kask_skill_votes (
     PRIMARY KEY (kask_skill_id, user_id)
 );
 
+-- zed-kask: D30 — local fallback blob store for the no-S3 publish path.
+CREATE TABLE kask_skill_tarballs (
+    source_user TEXT NOT NULL,
+    skill_name TEXT NOT NULL,
+    version TEXT NOT NULL,
+    tarball BLOB NOT NULL,
+    PRIMARY KEY (source_user, skill_name, version)
+);
+
 CREATE TABLE IF NOT EXISTS "breakpoints" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
