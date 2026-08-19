@@ -73,13 +73,13 @@ Goal specification and verification. Extracts structured goals from user intent,
 ## Registry Templates
 
 | Template | Type | Purpose |
-|----------|------|--------|
-| `create.j2` | `WordAct` | Extract a structured goal from raw user intent. Produces goal text, completion criteria, visibility setting, and priority level. |
-| `goal-activate.j2` | `KnowAct` | Activate a goal for tracking. Registers the goal with the goal management system, emits the `reg.goal.create` span, and returns an activation confirmation. |
-| `judge.j2` | `KnowAct` | Verify goal completion via semantic evaluation of outcome summary and produced artifacts against the original goal criteria. |
-| `judge_command.j2` | `KnowAct` | Verify goal completion via executed command results against acceptance criteria. Produces a done/continue/blocked verdict with reasoning. |
-| `judge_simple.j2` | `KnowAct` | Fallback goal verification with minimal evaluation. Produces a continue verdict and default confidence for lightweight judgment. |
-| `goal-resolve.j2` | `KnowAct` | Resolve a goal as completed or blocked. Routes the judge verdict to a resolution action (complete, continue, escalate) and emits the corresponding `reg.goal.*` spans. |
+|----------|------|---------|
+| `create.j2` | WordAct | Extract a structured goal from raw user intent. Produces goal text, completion criteria, visibility setting, and priority level. |
+| `judge.j2` | KnowAct | Verify goal completion via semantic evaluation of outcome summary and produced artifacts against the original goal criteria. |
+| `judge_command.j2` | KnowAct | Verify goal completion via executed command results against acceptance criteria. Produces a done/continue/blocked verdict with reasoning. |
+| `judge_simple.j2` | KnowAct | Fallback goal verification with minimal evaluation. Produces a continue verdict and default confidence for lightweight judgment. |
+| `goal-activate.j2` | KnowAct | Activate a goal for tracking. Registers the goal with the goal management system and returns an activation confirmation. |
+| `goal-resolve.j2` | KnowAct | Resolve a goal as completed or blocked. Produces a final resolution record with the verdict, confidence, and reason. |
 
 ## Constraints
 

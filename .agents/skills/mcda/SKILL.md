@@ -67,13 +67,14 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `identify-criteria.j2` | KnowAct | Identify and classify decision criteria as benefit or cost dimensions. Validates criteria independence and produces a structured criterion set.  |
-| `rank-alternatives.j2` | KnowAct | Rank alternatives by composite scores with compensation masking detection. Produces a top choice recommendation with warnings for cases where strong performance on one criterion masks poor performance.  |
-| `sensitivity-analysis.j2` | KnowAct | Perform sensitivity analysis on decision rankings by perturbing weights. Identifies rank reversals, critical weights, and classifies overall decision robustness.  |
-| `weight-and-score.j2` | KnowAct | Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces normalized scores and composite rankings for each alternative.  |
+| `identify-criteria.j2` | KnowAct | Identify and classify decision criteria as benefit or cost dimensions. Validates criteria independence and produces a structured criterion set. |
+| `rank-alternatives.j2` | KnowAct | Rank alternatives by composite scores with compensation masking detection. Produces a top choice recommendation with warnings for cases where strong performance on one criterion masks poor performance. |
+| `sensitivity-analysis.j2` | KnowAct | Perform sensitivity analysis on decision rankings by perturbing weights. Identifies rank reversals, critical weights, and classifies overall decision robustness. |
+| `weight-and-score.j2` | KnowAct | Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces normalized scores and composite rankings for each alternative. |
 
 ## Constraints
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `identify-criteria.j2`: Public.
 - `rank-alternatives.j2`: Public.
 - `sensitivity-analysis.j2`: Public.

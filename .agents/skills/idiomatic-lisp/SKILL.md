@@ -48,12 +48,13 @@ Idiomatic Lisp design through the lens of McCarthy, Sussman, and Graham. Converg
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `idiomatic-lisp-inquiry.j2` | KnowAct | Assess a Lisp design problem against McCarthy/Sussman/Graham principles. Identify invariants, invalid states, evaluation models, and macro vs. function decisions. Produce a scored design assessment with specific improvement targets.  |
-| `idiomatic-lisp-design.j2` | KnowAct | Propose idiomatic Lisp solutions with code examples. Apply homoiconicity, metacircular evaluation, data-as-program patterns, hygienic macros, and proper use of special forms. Reference CLHS, SRFI, and ecosystem best practices.  |
-| `idiomatic-lisp-challenge.j2` | KnowAct | Adversarial review of a Lisp design proposal. Find gaps, test edge cases (tail-call depth, multiple-values, restarts, macro hygiene), challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives. Few-shot: if the critique score is below threshold, loop back to design with concrete targets.  |
+| `idiomatic-lisp-inquiry.j2` | KnowAct | Assess a Lisp design problem against the founding principles of Lisp. Identify invariants, invalid states, evaluation models, and macro vs. function decisions. Produce a scored design assessment with specific improvement targets. |
+| `idiomatic-lisp-design.j2` | KnowAct | Propose idiomatic Lisp solutions with code examples. Apply homoiconicity, metacircular evaluation, data-as-program patterns, hygienic macros, and proper use of special forms. Reference CLHS, SRFI, and ecosystem best practices. |
+| `idiomatic-lisp-challenge.j2` | KnowAct | Adversarial review of a Lisp design proposal. Find gaps, test edge cases (tail-call depth, multiple-values, restarts, macro hygiene), challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives. Few-shot: if the critique score is below threshold, loop back to design with concrete targets. |
 
 ## Constraints
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `idiomatic-lisp-inquiry.j2`: Public.
 - `idiomatic-lisp-design.j2`: Public.
 - `idiomatic-lisp-challenge.j2`: Public.

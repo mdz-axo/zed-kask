@@ -66,14 +66,15 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `../media/logo-discovery.yaml` | FlowDef | Discovery-phase pipeline: map qualitative brand identity inputs to formal logo design parameters, then select the appropriate generation strategy. Agent-coordinated; uses inference router for classification.  |
-| `../media/logo-discovery-map.j2` | KnowAct | Map qualitative brand identity inputs (industry, audience, values) to formal logo design parameters (style, type, shape, palette, density) using strategic brand reasoning. From Martin's Minimum Viable Brand.  |
-| `../media/logo-formal-prompt.j2` | KnowAct | Core logo generation prompt encoding Bokhua's five design gates: simplicity, monochrome viability, grid discipline, negative space, and scalability. Every logo generation flow delegates to this template.  |
-| `../media/logo-iterative-refine.yaml` | FlowDef | Peters-inspired iterative logo pipeline: generate N candidates, score each against 7 weighted critique dimensions (5 Bokhua gates + brand-fit + distinctiveness), select best, refine through critique cycles. Final output is background-removed for transparent PNG deliverables.  |
-| `../media/logo-presentation.yaml` | FlowDef | Generate a complete logo deliverables package from a refined logo: transparent PNG, monochrome variant, icon-only mark, and context mockup showing the logo in real-world use.  |
+| `../media/logo-discovery.yaml` | FlowDef | Discovery-phase pipeline: map qualitative brand identity inputs to formal logo design parameters, then select the appropriate generation strategy. Agent-coordinated; uses inference router for classification. |
+| `../media/logo-discovery-map.j2` | KnowAct | Map qualitative brand identity inputs (industry, audience, values) to formal logo design parameters (style, type, shape, palette, density) using strategic brand reasoning. From Martin's Minimum Viable Brand. |
+| `../media/logo-formal-prompt.j2` | KnowAct | Core logo generation prompt encoding Bokhua's five design gates: simplicity, monochrome viability, grid discipline, negative space, and scalability. Every logo generation flow delegates to this template. |
+| `../media/logo-iterative-refine.yaml` | FlowDef | Peters-inspired iterative logo pipeline: generate N candidates, score each against 7 weighted critique dimensions (5 Bokhua gates + brand-fit + distinctiveness), select best, refine through critique cycles. Final output is background-removed for transparent PNG deliverables. |
+| `../media/logo-presentation.yaml` | FlowDef | Generate a complete logo deliverables package from a refined logo: transparent PNG, monochrome variant, icon-only mark, and context mockup showing the logo in real-world use. |
 
 ## Constraints
 
+- rJoule cap: 5 per invocation. Maximum 10 iterations.
 - `../media/logo-discovery.yaml`: Public.
 - `../media/logo-discovery-map.j2`: Public.
 - `../media/logo-formal-prompt.j2`: Public.

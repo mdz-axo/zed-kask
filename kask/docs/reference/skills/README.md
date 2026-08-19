@@ -17,7 +17,7 @@ mds_categories: [domain, composition]
 >
 > The template crate is the **single source of truth** (P5.1). A **SKILL.md** companion in `.agents/skills/<name>/` (repo root, not under `kask/`) is _derived_ from the registry crate via the `skill-maintenance` skill (`skill-maintenance-reverse.j2`, LLM-driven) — it is not independently authored and is not required for runtime. Skills execute inside an agent's inference environment (the zed-kask agent panel); there is no standalone "run a skill" surface, by design.
 >
-> **Manifest category:** every FlowDef manifest carries a `manifest.category` field distinguishing agent skills from infrastructure that shares the `.yaml` form: `skill` (agent PDCA loop, bindable as an agent `process_manifest`), `qa-script` (run by `kask qa`), `runtime-config` (system bootstrap config), `daemon-process` (Regulation/Curator daemon, run directly — not agent-bound), `pipeline` (MCP-server/pipeline processes). `resolve_manifest` only binds `skill` manifests to agents; the audit counts only `skill`-category manifests as skills (non-skill manifests and template crates are health-checked but reported separately).
+> **Manifest category:** every FlowDef manifest carries a `manifest.category` field distinguishing agent skills from infrastructure that shares the `.yaml` form: `skill` (agent PDCA loop, bindable as an agent `process_manifest`), `qa-script` (run by `kask qa`), `runtime-config` (system bootstrap config), `daemon-process` (Regulation/Curator daemon, run directly — not agent-bound), `pipeline` (MCP-server/pipeline processes). The execution boundary (`kask_bridge::skill_executor`) only binds `skill` manifests to agents; the audit counts only `skill`-category manifests as skills (non-skill manifests and template crates are health-checked but reported separately).
 
 **Skill lifecycle:** Skills are PDCA (Plan-Do-Check-Act) loops with convergence thresholds, gas budgets, and `loop` actions; the cascade iterates until the convergence metric ≤ threshold or `max_iterations` is exhausted. Templates are one-shot prompt executions. The "kata bundle" is a conceptual composition of `kata-improvement` + `kata-coaching` realized by `KataEngine` routing — there is **no** `registry/bundles/kata/manifest.yaml` file; the kata skills each have their own FlowDef manifest in `kask/registry/manifests/`.
 
@@ -45,9 +45,8 @@ to category: skill manifests only"; match the anchored field only.
 **Infrastructure categories were removed (2026-08-12).** 41 manifests carrying
 `pipeline` (20), `qa-script` (11), `runtime-config` (7), and `daemon-process` (3)
 were deleted after an audit found **no runtime consumer for any of them**.
-`resolve_manifest` rejects non-`skill` categories with `NotASkill`
-(`manifest_loader.rs`) and the execution boundary rejects again
-(`kask_bridge::skill_executor`), so no loader for these categories ever existed:
+The execution boundary (`kask_bridge::skill_executor`) rejects non-`skill`
+categories, so no loader for these categories ever existed:
 they were embedded into the binary by `build.rs`, seeded to the user's disk,
 version-bumped by CI, schema-validated — and never read. Two of them
 (`harness-evolve-cycle`, `qa-mcp-server-smoke`) were additionally shadowed by

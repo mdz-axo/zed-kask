@@ -74,21 +74,21 @@ All tools are on the `hkask-mcp-kata-kanban` server.
 
 ## Registry Templates
 
-| Template | Phase | Purpose |
-|----------|-------|---------|
-| `triage.j2` | all | Determine which phase to run |
-| `gather-context.j2` | decompose | Extract structured project context |
-| `decompose-tasks.j2` | decompose | Decompose into INVEST-compliant tasks |
-| `review-tasks.j2` | decompose | Review for quality and completeness |
-| `populate-board.j2` | decompose | Board-ready format + MCP tool-call instructions |
-| `configure-spawn.j2` | delegate | Propose spawn configuration |
-| `execute-task.j2` | delegate | Execute task and report results |
-| `monitor-board.j2` | operate | Assess board state, identify blockers |
-| `coordinate-agents.j2` | operate | Prepare comment-thread replies |
-| `track-deliverables.j2` | operate | Assess deliverables for completeness |
-| `move-tasks.j2` | operate | Recommend status transitions with WIP enforcement |
-| `verify-completion.j2` | operate | Evaluate completion against criteria |
-| `escalate.j2` | operate | Prepare human-decision escalation records |
+| Template | Type | Purpose |
+|----------|------|---------|
+| `triage.j2` | KnowAct | Triage step. Examines available inputs (project_description, task_to_delegate, board_id) and determines which phase to run: decompose, delegate, or operate. |
+| `gather-context.j2` | KnowAct | Extract structured project context: project name, goals, constraints, resources, and target task size. Phase: decompose. |
+| `decompose-tasks.j2` | KnowAct | Decompose a project into INVEST-compliant tasks with vertical slicing, dependencies, recomposition strategy, and acceptance criteria. Phase: decompose. |
+| `review-tasks.j2` | KnowAct | Review decomposed tasks for INVEST compliance, completeness, and recomposition viability. Phase: decompose. |
+| `populate-board.j2` | KnowAct | Convert accepted tasks into board-ready format. Includes post-cascade instructions for the agent to call kanban_board_create and kanban_task_create. Phase: decompose. |
+| `configure-spawn.j2` | KnowAct | Configure spawn parameters: delegation level, skills, memory scope, rJoule budget, timeout. Includes post-cascade instructions for the agent to call kanban_task_spawn. Phase: delegate. |
+| `execute-task.j2` | KnowAct | Execute a delegated task within its approved configuration. Includes post-cascade instructions for the agent to call kanban_task_comment and kanban_task_add_deliverable. Phase: delegate. |
+| `monitor-board.j2` | KnowAct | Monitor board state, identify blockers, flag overdue tasks. Includes pre-cascade instructions for the agent to fetch board data via kanban_board_list and kanban_task_list. Phase: operate. |
+| `coordinate-agents.j2` | KnowAct | Read active-task comment threads and prepare actionable replies. Includes post-cascade instructions for the agent to call kanban_task_comment. Phase: operate. |
+| `track-deliverables.j2` | KnowAct | Assess deliverables for completeness. Includes post-cascade instructions for the agent to call kanban_task_move and kanban_task_add_deliverable. Phase: operate. |
+| `move-tasks.j2` | KnowAct | Recommend status transitions based on evidence. Includes post-cascade instructions for the agent to call kanban_task_move. Phase: operate. |
+| `verify-completion.j2` | KnowAct | Evaluate deliverables against acceptance criteria. Includes post-cascade instructions for the agent to call kanban_task_verify and kanban_task_move. Phase: operate. |
+| `escalate.j2` | KnowAct | Convert unresolved issues into human-operator-ready escalations. Includes post-cascade instructions for the agent to call kanban_task_comment. Phase: operate. |
 
 ## Constraints
 

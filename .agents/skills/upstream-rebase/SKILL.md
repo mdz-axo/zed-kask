@@ -127,11 +127,12 @@ The full process, with the `main.rs` functional inventory (28 units), DAG, and c
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `assess.j2` | KnowAct | Assess a D-seam file against the strategy decision rule (extract line-level kask wiring, count `// zed-kask:` markers and call sites). |
-| `map.j2` | KnowAct | Extract the functional inventory (F1, F2, ...), classify each unit by constraint force, build the dependency DAG. |
-| `decide.j2` | KnowAct | Apply the essentialist deletion test: full re-application vs. surgical marking + pinning. |
-| `execute.j2` | KnowAct | Execute the chosen strategy: add markers + pinning tests (surgical), or re-apply units in topological order (full). |
-| `document.j2` | KnowAct | Update DIVERGENCE.md and produce the final report (strategy, units, markers, tests, verification results). |
+| `assess.j2` | KnowAct | Assess a D-seam file against the strategy decision rule. Extract line counts, kask call site count, marker count. Recommend merge vs. mapped re-application. |
+| `map.j2` | KnowAct | Extract the functional inventory (F1, F2, ...), classify each unit by constraint force, and build the dependency DAG. |
+| `decide.j2` | KnowAct | Apply the essentialist deletion test: is full re-application necessary, or is surgical marking + pinning sufficient? |
+| `execute.j2` | KnowAct | Execute the chosen strategy: add markers + pinning tests (surgical), or re-apply onto clean upstream in topological order (full re-application). |
+| `document.j2` | KnowAct | Update DIVERGENCE.md and produce the final report. |
+| `document.j2` | KnowAct | Update DIVERGENCE.md and produce the final report. |
 
 The cascade also runs deterministic compute steps between the LLM steps: a `lisp.eval` verification gate (cargo check/test, isolation script, marker density) after execute, a `shell.exec` collision-surface cleanup after document, and a `lisp.eval` convergence signal before the loop.
 

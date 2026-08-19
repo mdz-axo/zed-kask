@@ -71,15 +71,16 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `inventory-components.j2` | KnowAct | Inventory all components in a target system. Enumerates every component with name, type, dependencies, and description. Exhaustive — missing components create map blind spots.  |
-| `classify-evolution.j2` | KnowAct | Classify each component on the Wardley evolution axis (Genesis, Custom, Product, Commodity) using maturity, adoption, standardization, and differentiation criteria.  |
-| `map-value-chain.j2` | KnowAct | Place each classified component on the value chain map (Y: visibility, X: evolution) with coordinates and dependency links. Generates a Mermaid quadrant chart.  |
-| `identify-movement.j2` | KnowAct | Identify strategic movement: what to commoditize, what to keep at Product, what's over-commoditized, what's missing, and drift from a previous map.  |
-| `synthesize-recommendations.j2` | KnowAct | Synthesize actionable strategic recommendations (commoditize, invest, divest, ecosystem, alignment) from the movement analysis and map. Prioritized by impact, specific, traceable to components.  |
-| `present-map.j2` | RenderAct | Surface the Wardley Map quadrant chart and recommendations as a markdown string with a fenced ```mermaid block. The cascade's final user-facing output — without it, the diagram stays buried in an intermediate step result. Deterministic (no LLM call).  |
+| `inventory-components.j2` | KnowAct | Inventory all components in a target system. Enumerates every component with name, type, dependencies, and description. Exhaustive — missing components create map blind spots. |
+| `classify-evolution.j2` | KnowAct | Classify each component on the Wardley evolution axis (Genesis, Custom, Product, Commodity) using maturity, adoption, standardization, and differentiation criteria. |
+| `map-value-chain.j2` | KnowAct | Place each classified component on the value chain map (Y: visibility, X: evolution) with coordinates and dependency links. Generates a Mermaid quadrant chart. |
+| `identify-movement.j2` | KnowAct | Identify strategic movement: what to commoditize, what to keep at Product, what's over-commoditized, what's missing, and drift from a previous map. |
+| `synthesize-recommendations.j2` | KnowAct | Synthesize actionable strategic recommendations (commoditize, invest, divest, ecosystem, alignment) from the movement analysis and map. Prioritized by impact, specific, traceable to components. |
+| `present-map.j2` | RenderAct | RenderAct — surfaces the quadrant chart (from map-value-chain) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block. This is the cascade's final user-facing output: without it, the diagram stays buried in an intermediate step result and never reaches the chat stream. Deterministic (no LLM call). |
 
 ## Constraints
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `inventory-components.j2`: Public.
 - `classify-evolution.j2`: Public.
 - `map-value-chain.j2`: Public.

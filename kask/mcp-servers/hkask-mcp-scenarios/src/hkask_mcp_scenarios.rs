@@ -2231,4 +2231,71 @@ mod tests {
         assert!(entry.get("basis").is_none());
         assert!(entry.get("reference_class").is_none());
     }
+
+    /// Pin the `scenario_propagate` emitter shape: the `tree` object in the
+    /// response carries `root_ids` *inside* it (the fix for the
+    /// missing-`root_ids` drift that broke `EventTreeProjection` deserialization
+    /// on the companies side). The companies-side pin is
+    /// `scenario_propagate_tree_round_trips_through_event_tree_projection` in
+    /// `hkask_mcp_companies::superforecast::tests`; if this test goes red, the
+    /// `root_ids`-inside-`tree` fix regressed, and if the companies test goes
+    /// red, the deserializer's `root_ids` requirement drifted from this emitter.
+    #[tokio::test]
+    async fn scenario_propagate_emits_root_ids_inside_tree() {
+        use crate::types::{ScenarioEvent, ScenarioType, TimeHorizon};
+        use rmcp::handler::server::wrapper::Parameters;
+
+        fn make_event(id: &str, prob: f64) -> ScenarioEvent {
+            ScenarioEvent {
+                id: id.into(),
+                name: format!("Event {id}"),
+                question: format!("Will {id} occur?"),
+                deadline: chrono::NaiveDate::from_ymd_opt(2026, 12, 31).expect("valid date"),
+                time_horizon: TimeHorizon::Strategic,
+                scenario_type: ScenarioType::CompanyAnalysis,
+                subject: "TEST".into(),
+                probability: prob,
+                basis: None,
+                depends_on: vec![],
+                sub_questions: vec![],
+                base_rate: None,
+                reference_class: None,
+                brier_score: None,
+                update_count: 0,
+            }
+        }
+
+        let server = empty_server();
+        let events = vec![make_event("evt-A", 0.6), make_event("evt-B", 0.7)];
+        let request = super::PropagateRequest {
+            events,
+            event_id: "evt-A".into(),
+            new_prior: 0.55,
+        };
+        let response = server.scenario_propagate(Parameters(request)).await;
+        let content = hkask_types::tool_response::parse_tool_response(&response)
+            .expect("scenario_propagate returns a content envelope");
+        let tree = content
+            .get("tree")
+            .expect("scenario_propagate emits a tree object");
+        let root_ids = tree
+            .get("root_ids")
+            .and_then(|r| r.as_array())
+            .expect("tree.root_ids is a non-empty array — the missing-root_ids drift regressed");
+        assert!(
+            !root_ids.is_empty(),
+            "tree.root_ids must be non-empty; got empty"
+        );
+        let root_id_strs: Vec<&str> = root_ids.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            root_id_strs.contains(&"evt-A"),
+            "tree.root_ids must contain evt-A; got {:?}",
+            root_id_strs
+        );
+        assert!(
+            root_id_strs.contains(&"evt-B"),
+            "tree.root_ids must contain evt-B; got {:?}",
+            root_id_strs
+        );
+    }
 }

@@ -91,16 +91,16 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 | Template | Type | Purpose |
 |----------|------|---------|
 | `skill-maintenance-validate.j2` | KnowAct | Validate skills against registry format and quality checks. Check manifest structure, .j2 frontmatter (template_type, contract, visibility). SKILL.md is validated as secondary companion. |
-| `skill-maintenance-build.j2` | KnowAct | Scaffold a new registry crate from a user description. Generate manifest.yaml with crate metadata, template entries, and lexicon_terms. Generate companion SKILL.md from the registry crate. Validate and confirm before writing. |
-| `skill-maintenance-translate.j2` | KnowAct | Forward translation: convert a classified source skill into a hKask registry crate (manifest.yaml + *.j2 templates). Map source elements to hKask equivalents, drop concepts with no equivalent, produce validated output with translation summary. |
-| `skill-maintenance-reverse.j2` | KnowAct | Reverse translation: generate a SKILL.md companion from a registry crate. Read manifest.yaml for crate metadata, read .j2 templates for methodology, produce a markdown companion suitable for the Zed coding agent. |
+| `skill-maintenance-build.j2` | KnowAct | Scaffold a new registry crate from a user description. Generate manifest.yaml with crate metadata, template entries, and . Generate companion SKILL.md from the registry crate. Validate and confirm before writing. |
+| `skill-maintenance-translate.j2` | KnowAct | Forward translation: convert a classified source skill into a hKask registry crate (manifest.yaml + *.j2 templates). Map source elements to hKask equivalents drop concepts with no equivalent, produce validated output with translation summary. |
+| `skill-maintenance-reverse.j2` | KnowAct | Reverse translation: generate a SKILL.md companion from a registry crate. Read manifest.yaml for crate metadata, read .j2 templates for methodology produce a markdown companion suitable for the Zed coding agent. |
 | `skill-maintenance-prose.j2` | KnowAct | Prose-only derivation: synthesize the "When to Use" and "Instructions" sections of a SKILL.md from a registry crate, emitted as raw markdown. Used by the skill-maintenance skill or agent panel alongside the mechanically-built skeleton (frontmatter, templates table, constraints) — the LLM only writes the prose that needs synthesis, not the structural parts copied from the registry. |
 | `skill-maintenance-audit.j2` | KnowAct | Run staleness and health audit for target scope. Checks R1-R12 registry rules, Z1-Z8 companion checks, X1-X4 cross-artifact checks. Used by the FlowDef manifest as step 1 of the maintenance PDCA loop. |
 | `skill-maintenance-coverage.j2` | KnowAct | Run corpus coverage analysis for uncovered/partial capabilities. Maps common task patterns against the existing skill corpus, identifies what is covered, uncovered, and partial. Used by the FlowDef manifest as step 2 of the maintenance PDCA loop. |
 
-
 ## Constraints
 
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - `skill-maintenance-validate.j2`: Public. R1-R12 mandatory; Z1-Z8 secondary; X1-X4 cross-artifact; E1-E16 executor compliance mandatory. R1-R5 failures are critical; E1/E2/E4/E5/E6/E7/E9/E11/E12/E16 failures are critical; E15 (on_failure config) failures are medium; E12 failures are critical; E13/E14 failures are high; E12 visual artifact surfacing failures are high (diagram silently dropped — user never sees visualization); Z5/Z6/Z7 failures are high; missing SKILL.md (Z1) is info, not failure.
 - `skill-maintenance-build.j2`: Public. Name must be lowercase, hyphenated, 2-40 chars, verb-noun or noun-noun, no reserved prefixes. Process manifest must have rjoule/convergence blocks, canonical actions, and a `ledger:` block with `span_namespace: reg.skill.<manifest.id>` (no abolished `spans:` list).
 - `skill-maintenance-translate.j2`: Public. template_type must be KnowAct/WordAct/FlowDef/RenderAct; visibility must be Private/Public/Shared Source actions must be mapped to canonical actions. Process manifest must have rjoule/convergence blocks.

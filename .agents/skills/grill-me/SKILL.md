@@ -51,12 +51,13 @@ Socratic interrogation skill. Tests deep understanding through escalating diffic
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `grill-me-round.j2` | KnowAct | Generate interrogation questions at the appropriate difficulty level, evaluate answers, and decide whether to escalate, hold, or re-probe.  |
-| `grill-me-assess.j2` | KnowAct | Synthesize final assessment with per-area ratings (Solid/Partial/Gap) and prioritized study recommendations.  |
-| `grill-me-escalate.j2` | KnowAct | Decide whether to escalate difficulty, hold, or re-probe based on answer quality ratio.  |
+| `grill-me-round.j2` | KnowAct | Generate interrogation questions at the appropriate difficulty level, evaluate answers, and decide whether to escalate, hold, or re-probe. |
+| `grill-me-assess.j2` | KnowAct | Synthesize final assessment with per-area ratings (Solid/Partial/Gap) and prioritized study recommendations. |
+| `grill-me-escalate.j2` | KnowAct | Decide whether to escalate difficulty, hold, or re-probe based on answer quality ratio. |
 
 ## Constraints
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `grill-me-round.j2`: Public.
 - `grill-me-assess.j2`: Public.
 - `grill-me-escalate.j2`: Public.

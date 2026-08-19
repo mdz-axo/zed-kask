@@ -364,8 +364,10 @@ impl BridgeManifestExecutor {
 
         if !manifest.is_skill() {
             return Err(format!(
-                "Skill '{skill_name}' has category '{:?}' — only `skill` manifests may execute via the skill tool",
-                manifest.category
+                "Skill '{skill_name}' has category '{}' — only `skill` manifests may execute via the skill tool",
+                manifest
+                    .category
+                    .map_or_else(|| "skill (unset)".to_string(), |c| c.to_string())
             ));
         }
 
@@ -408,8 +410,10 @@ impl BridgeManifestExecutor {
         // ever edited to add `category: pipeline`.
         if !manifest.is_skill() {
             return Err(format!(
-                "Refine manifest has category '{:?}' — only `skill` manifests may execute via the skill tool",
-                manifest.category
+                "Refine manifest has category '{}' — only `skill` manifests may execute via the skill tool",
+                manifest
+                    .category
+                    .map_or_else(|| "skill (unset)".to_string(), |c| c.to_string())
             ));
         }
 
@@ -720,8 +724,10 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                 skill_name: skill_name.to_string(),
                 phase: "category_check",
                 message: format!(
-                    "Skill '{skill_name}' has category '{:?}' — only `skill` manifests may execute via the skill tool",
-                    manifest.category
+                    "Skill '{skill_name}' has category '{}' — only `skill` manifests may execute via the skill tool",
+                    manifest
+                        .category
+                        .map_or_else(|| "skill (unset)".to_string(), |c| c.to_string())
                 ),
             });
         }
@@ -1120,7 +1126,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
 
         if dry_run {
             return Ok(format!(
-                "Dry run: manifest '{}' parsed successfully. {} steps, category: {:?}.",
+                "Dry run: manifest '{}' parsed successfully. {} steps, category: {}.",
                 manifest.id,
                 manifest.steps.len(),
                 manifest.category

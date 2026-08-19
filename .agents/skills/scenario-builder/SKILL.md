@@ -77,15 +77,17 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `axes-and-narratives.j2` | KnowAct | Generate divergent scenario narratives by selecting two critical uncertainty axes from identified driving forces. Produces four quadrant scenarios with internally consistent narratives.  |
-| `driving-forces.j2` | KnowAct | Map macro-level driving forces (STEEP: society, technology, economy, environment, politics) against an importance-uncertainty matrix to identify critical uncertainties.  |
-| `focal-question.j2` | KnowAct | Refine and bound the focal question with decision relevance, time horizon, and scope boundaries. Produces a current state summary.  |
-| `implications-indicators.j2` | KnowAct | Derive per-scenario implications and identify early-warning indicators. Produces robust strategies (for all scenarios) and contingent strategies (for specific unfoldings).  |
-| `key-forces.j2` | KnowAct | Identify micro-level forces: proximate factors, market dynamics, competitor actions, demand shifts, and regulatory changes. Clusters identified forces into thematic groups.  |
-| `scenario-quality-gate.j2` | KnowAct | Independent quality gate that evaluates scenario divergence, consistency, and coverage without self-assessment bias. Receives scenarios from the narrative generator and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes.  |
+| `axes-and-narratives.j2` | KnowAct | Generate divergent scenario narratives by selecting two critical uncertainty axes from identified driving forces. Produces four quadrant scenarios with internally consistent narratives. |
+| `driving-forces.j2` | KnowAct | Map macro-level driving forces (STEEP: society, technology, economy, environment, politics) against an importance-uncertainty matrix to identify critical uncertainties. |
+| `focal-question.j2` | KnowAct | Refine and bound the focal question with decision relevance, time horizon, and scope boundaries. Produces a current state summary. |
+| `implications-indicators.j2` | KnowAct | Derive per-scenario implications and identify early-warning indicators. Produces robust strategies (for all scenarios) and contingent strategies (for specific unfoldings). |
+| `key-forces.j2` | KnowAct | Identify micro-level forces: proximate factors, market dynamics, competitor actions, demand shifts, and regulatory changes. Clusters identified forces into thematic groups. |
+| `scenario-quality-gate.j2` | KnowAct | Independent quality gate that evaluates scenario divergence, consistency, and coverage without self-assessment bias. Receives scenarios from the narrative generator and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
+| `scenario-quality-gate.j2` | KnowAct | Independent quality gate that evaluates scenario divergence, consistency, and coverage without self-assessment bias. Receives scenarios from the narrative generator and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
 
 ## Constraints
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `axes-and-narratives.j2`: Public.
 - `driving-forces.j2`: Public.
 - `focal-question.j2`: Public.

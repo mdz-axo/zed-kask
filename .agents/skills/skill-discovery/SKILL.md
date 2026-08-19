@@ -92,13 +92,13 @@ flowchart LR
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `skill-discovery-detect-gap.j2` | KnowAct | Detect capability gaps in the registry corpus. Analyze task patterns against existing registry crate descriptions and template_type coverage. Classify gaps (coverage, feature, automation, knowledge, governance, quality) and prioritize by impact. Recommends actions including `route_to_skill_router` for feature gaps where an existing skill was not previously routed. |
-| `skill-discovery-search.j2` | KnowAct | Search the skill catalog for candidates that could fill a capability gap. Score each skill 0.0–1.0 on capability match (0.50), lexicon overlap (0.25), and trigger relevance (0.25). Return ranked candidates with fit scores and gap_fill_type (direct/extension/adaptation). Classifies search coverage as found, weak, or empty. |
-| `skill-discovery-evaluate.j2` | KnowAct | Evaluate a candidate registry crate against format, quality, and safety criteria. Check manifest structure, .j2 frontmatter validity, Magna Carta compliance, and Regulation span validity. Produce scored recommendation (install/revise/reject). |
-
+| `skill-discovery-detect-gap.j2` | KnowAct | Detect capability gaps in the registry corpus. Analyze task patterns against existing registry crate descriptions and template_type coverage. Classify gaps (coverage, feature, automation, knowledge, governance, quality, epistemic) and prioritize by impact. Recommends actions including route_to_skill_router for feature gaps where an existing skill was not previously routed. Epistemic gaps are distinct from knowledge gaps: epistemic means missing certainty-finding methods, knowledge means missing facts. |
+| `skill-discovery-search.j2` | KnowAct | Search the skill catalog for candidates that could fill a capability gap. Scores each skill 0.0–1.0 on capability match (0.50), lexicon overlap (0.25), and trigger relevance (0.25). Returns ranked candidates with fit scores and gap_fill_type (direct/extension/adaptation). Classifies search coverage as found (fit ≥0.60), weak (0.30–0.59), or empty (<0.30 → create_skill action). This is the SEARCH phase — the EVALUATE phase vets candidates for quality and safety. |
+| `skill-discovery-evaluate.j2` | KnowAct | Evaluate a candidate registry crate against format, quality, and safety criteria. Check manifest structure, .j2 frontmatter validity, Magna Carta compliance, and Regulation span validity. Produce scored recommendation. |
 
 ## Constraints
 
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - `skill-discovery-detect-gap.j2`: Public. Gap categories: coverage, feature, automation, knowledge, governance, quality, epistemic (7 categories). Input `skill_catalog` is the same array passed to skill-discovery-search and skill-router-match (standardized naming across the routing/discovery ecosystem). `epistemic` gaps are distinct from `knowledge` gaps: epistemic = missing certainty-finding methods; knowledge = missing facts.
 - `skill-discovery-search.j2`: Public. Scores all catalog entries; returns candidates with fit_score ≥ 0.20.
 - `skill-discovery-evaluate.j2`: Public. 11 checks scored 0–2; max score 22; min installable 16; safety 0 → reject.

@@ -49,11 +49,12 @@ General-purpose recursive eliminative interrogation. Enforces "always take away,
 ## Registry Templates
 
 | Template | Type | Purpose |
-|----------|------|--------|
-| `essentialist-flow.j2` | `KnowAct` | Run the 3-gate eliminative interrogation loop in either autonomous (agent evaluates and recommends without pause) or advisory (agent recommends, human accepts/rejects/overrides per gate) mode. Classify every finding by constraint-force (Prohibition → required, Guideline → suggested), escalate to human on retry exhaustion (3 max), abort on zero-delta completion. Delegates reasoning to deep-module (G1, G2) and coding-guidelines (G3) templates. |
+|----------|------|---------|
+| `essentialist-flow.j2` | KnowAct | Run the 3-gate eliminative interrogation loop in either autonomous (agent evaluates and recommends without pause) or advisory (agent recommends, human accepts/rejects/overrides per gate) mode. Classify every finding by constraint-force (Prohibition → required, Guideline → suggested), escalate to human on retry exhaustion (3 max), abort on zero-delta completion. Delegates reasoning to deep-module (G1, G2) and coding-guidelines (G3) templates. |
 
 ## Constraints
 
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - Visibility: Public — this skill's templates are shared across agents.
 - The default mode is **advisory** (agent recommends, human decides). Autonomous mode only activates on explicit user intent ("simplify", "strip", "run the essentialist").
 - The G1→G2→G3 order is FIXED. G1 (Exist) must come first.

@@ -1,8 +1,6 @@
-//! Error types and filesystem reader for registry and template execution
+//! Error types for registry and template execution
 //!
-//! Defines the error taxonomy (`TemplateError`, `SkillFinding`,
-//! `ManifestResolveError`) and the `FsSkillReader` filesystem wrapper used by
-//! `SkillLoader`.
+//! Defines the error taxonomy (`TemplateError`) for template execution.
 
 use hkask_types::NotFound;
 
@@ -44,21 +42,6 @@ pub enum TemplateError {
     PathTraversal(String),
     #[error("Sandbox violation: {0}")]
     SandboxViolation(String),
-
-    /// Failed to load a skill from disk (typed replacement for `anyhow::anyhow!`
-    /// in `skill_loader.rs`). Carries the path so callers can surface it in
-    /// findings without re-formatting.
-    #[error("skill load error at {path}: {source}")]
-    SkillLoad {
-        path: String,
-        source: std::io::Error,
-    },
-
-    /// SKILL.md frontmatter is missing or malformed. `detail` names the
-    /// exact repair (mirrors Nika's `SkillDefect` discipline: each variant
-    /// names the fix, not just the failure).
-    #[error("SKILL.md frontmatter error: {detail}")]
-    Frontmatter { detail: String },
 }
 
 impl From<NotFound> for TemplateError {
@@ -86,10 +69,10 @@ impl TemplateError {
             Self::PathTraversal(_) => "HKASK-SKILL-008",
             Self::SandboxViolation(_) => "HKASK-SKILL-009",
             // HKASK-SKILL-010 was `CapabilityDenied`, removed with the vacuous
-            // per-call capability gate. The code is retired, not reused, so old
-            // logs remain unambiguous.
-            Self::SkillLoad { .. } => "HKASK-SKILL-011",
-            Self::Frontmatter { .. } => "HKASK-SKILL-012",
+            // per-call capability gate. HKASK-SKILL-011 (`SkillLoad`) and
+            // HKASK-SKILL-012 (`Frontmatter`) were removed with the dead
+            // `skill_loader.rs` module. The codes are retired, not reused, so
+            // old logs remain unambiguous.
         }
     }
 
@@ -131,8 +114,8 @@ impl TemplateError {
             Self::Mcp(err) => &err.to_string(),
             // CircuitOpen is a sustained-breaker state, not a single throttle.
             // Json / NotFound / Render / Manifest / ParseFailure / Validation /
-            // Timeout / PathTraversal / SandboxViolation / SkillLoad / Frontmatter /
-            // Database are not throttles.
+            // Timeout / PathTraversal / SandboxViolation / Database are not
+            // throttles.
             _ => return false,
         };
         let lower = message.to_ascii_lowercase();
@@ -146,74 +129,3 @@ impl TemplateError {
 }
 
 pub type Result<T> = std::result::Result<T, TemplateError>;
-
-/// One skill-system finding — a typed failure surfaced by skill loading or
-/// manifest resolution (mirrors Nika's `SkillFinding`: `code` + `detail`,
-/// one voice for check and run). The `code` is a stable `&'static str`
-/// so consumers can switch on it without string-matching.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SkillFinding {
-    /// The skill or manifest the finding refers to.
-    pub skill_id: String,
-    /// Stable code (e.g. `"HKASK-SKILL-001"`). Consumers switch on this.
-    pub code: &'static str,
-    /// Human-readable detail naming the exact repair.
-    pub detail: String,
-}
-
-impl SkillFinding {
-    /// The human-facing row (check rung, run refusal, log line).
-    #[must_use]
-    pub fn row(&self) -> String {
-        format!(
-            "[{code}] {skill}: {detail}",
-            code = self.code,
-            skill = self.skill_id,
-            detail = self.detail
-        )
-    }
-
-    /// The machine-facing JSON object (check --json, structured logs).
-    #[must_use]
-    pub fn json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "skill_id": self.skill_id,
-            "code": self.code,
-            "detail": self.detail,
-        })
-    }
-}
-
-/// Why a manifest reference did not resolve. Replaces the prior
-/// `Option<BundleManifest>` return on `resolve_manifest` (which collapsed
-/// three distinct failure modes into `None`).
-#[derive(Debug, thiserror::Error)]
-pub enum ManifestResolveError {
-    /// The reference matched no registry entry and no file path.
-    #[error("manifest not found: {reference}")]
-    NotFound { reference: String },
-    /// A file path matched but the manifest failed to load.
-    #[error("manifest load failed for {reference}: {source}")]
-    LoadFailed {
-        reference: String,
-        #[source]
-        source: super::manifest_loader::ManifestLoadError,
-    },
-    /// The manifest loaded but is not a `skill` category (e.g. `qa-script`).
-    #[error("manifest '{reference}' is not a skill (category={category})")]
-    NotASkill { reference: String, category: String },
-}
-
-/// Production filesystem reader — thin wrapper over `std::fs::read_to_string`.
-#[derive(Debug, Clone, Copy)]
-pub struct FsSkillReader;
-
-impl FsSkillReader {
-    /// Read a file's contents as UTF-8 text.
-    ///
-    /// # Errors
-    /// Returns an error if the file cannot be read or is not valid UTF-8.
-    pub fn read_to_string(&self, path: &std::path::Path) -> std::io::Result<String> {
-        std::fs::read_to_string(path)
-    }
-}

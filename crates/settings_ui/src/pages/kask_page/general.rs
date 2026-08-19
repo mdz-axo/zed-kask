@@ -46,7 +46,7 @@ pub(crate) fn render_general_page(
     let complex_word_threshold_input = kask_string_input(
         "kask-tool-router-complex-word-threshold",
         "Complex-Word Threshold",
-        "Default: 40",
+        "Default: 6",
         tool_router.complex_word_threshold.to_string(),
         "tool_router",
         "complex_word_threshold",

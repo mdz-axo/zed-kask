@@ -132,3 +132,10 @@ templates, the registry wins.
 - Span namespace: `reg.skill.swarm-steering`
 - Pairs with `swarm-intelligence` (the planner); this skill is the actuator's
   instructions (Cybernetic Swarm Plan `steering_mode`).
+
+## Registry Templates
+
+| Template | Type | Purpose |
+|----------|------|---------|
+| `swarm-steering-direct.j2` | KnowAct | Take the swarm-intelligence plan (emitted_calls) + the swarm state + the credit budget, produce a structured steering directive: pre-flight checks (agents exist via swarm_list_local_agents; NO ledger-funding check — local delegation is never gated on funds), the ordered swarm_delegate_local execution sequence (agent_name, task, credits_authorized per delegate call), the delegate_results collection shape (LocalDelegateResult array), and the re-invoke instruction (re-invoke swarm-intelligence with delegate_results + steering_mode: steering). The Curator/human executes the directive. |
+

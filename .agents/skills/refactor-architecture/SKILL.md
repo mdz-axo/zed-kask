@@ -109,5 +109,6 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 
 ## Constraints
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - All templates are `KnowAct` type with `Public` visibility.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

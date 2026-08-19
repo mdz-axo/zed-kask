@@ -65,19 +65,19 @@ prediction calibration.
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `meta-grasp-current.j2` | KnowAct | Improvement Kata Step 1: measure the current metacognitive condition. |
-| `meta-establish-target.j2` | KnowAct | Improvement Kata Step 2: declare the target condition. |
-| `meta-predict.j2` | KnowAct | Improvement Kata Step 3: predict which calibration will close the gap, with confidence. |
-| `meta-experiment.j2` | KnowAct | Improvement Kata Step 4: apply the calibration (Falstaffian rotation, ellipsis analysis, or strategy adjustment) and re-measure. |
-| `ellipsis-analysis.j2` | KnowAct | Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional). Used by the experiment step for the ellipsis perspective. |
-| `falstaffian-perspective-engine.yaml` | RenderAct | Reference: three-fold structure (shapes, experience, spirit) with shape selection decision tree. |
-| `falstaffian-shapes.yaml` | RenderAct | Reference: seven semantic graph transformation operators. |
-| `falstaffian-variance-analysis.yaml` | RenderAct | Reference: three-pass variance calibration with agreement matrix. |
+| `meta-grasp-current.j2` | KnowAct | Measure the agent's actual metacognitive state right now. Identify obstacles, surface assumptions, count grounded claims, enumerate options. Produces current_artifacts and current_procedure for gap computation. |
+| `meta-establish-target.j2` | KnowAct | Declare the target metacognitive state — what sufficient meta-knowledge looks like for this goal. Produces target_artifacts and target_procedure for gap computation. |
+| `meta-predict.j2` | KnowAct | Predict which calibration will close the gap and by how much. Carry a confidence in [0,1]. The Brier score tracks whether the confidence is calibrated. |
+| `meta-experiment.j2` | KnowAct | Apply the predicted calibration — Falstaffian perspective rotation, ellipsis analysis, or strategy adjustment. Re-measure the current condition after the experiment. Produces new current_artifacts and current_procedure. |
+| `falstaffian-perspective-engine.yaml` | RenderAct | Reference: three-fold structure (shapes, experience, spirit) with metacognitive application steps and shape selection decision tree. |
+| `falstaffian-shapes.yaml` | RenderAct | Reference: seven semantic graph transformation operators — the Falstaffian shapes with input/output structures and tension components. |
+| `falstaffian-variance-analysis.yaml` | RenderAct | Reference: three-pass variance calibration with agreement matrix and final taxonomy of core, secondary, and candidate shapes. |
+| `ellipsis-analysis.j2` | KnowAct | Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional), and surface what is not inferable. Used by the experiment step for ellipsis perspective. |
 
 ## Constraints
 
 - All flow templates are KnowAct type with Public visibility. Reference documents are RenderAct.
-- rJoule cap: 4 per invocation. Maximum 10 iterations (safety valve — the real stop conditions are gap, Cauchy, and Brier).
+- rJoule cap: 4 per invocation. Maximum 10 iterations.
 - The convergence decision is deterministic (compute steps) — no LLM convergence-check template.
 - The LLM's job is the four Kata steps (grasp, target, predict, experiment); the executor computes the gap and Brier score.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.

@@ -440,6 +440,40 @@ mod tests {
         assert!(tree.cmp_provenance.is_empty());
     }
 
+    /// Pin the `scenario_propagate` emitter shape (the `tree` object with
+    /// `root_ids` *inside* it — the fix for the missing-`root_ids` drift —
+    /// `nodes` with `{id, marginal_probability, update_count}`, no
+    /// `cmp_provenance`). `scenario_propagate`'s `tree` object previously
+    /// omitted `root_ids`, which made `EventTreeProjection` deserialization
+    /// fail on the missing required field; this pin asserts the fix holds and
+    /// the shape round-trips through `tree_root_probabilities`. The
+    /// `update_count` field is extra (serde ignores unknown fields by default)
+    /// and does not affect the projection. The matching scenarios-side pin is
+    /// `scenario_propagate_emits_root_ids_inside_tree` in
+    /// `hkask_mcp_scenarios::tests`.
+    #[test]
+    fn scenario_propagate_tree_round_trips_through_event_tree_projection() {
+        let json = r#"{
+            "subject": "test_scenario",
+            "root_ids": ["evt-A", "evt-B"],
+            "topo_order": ["evt-A", "evt-B"],
+            "joint_probability": 0.42,
+            "nodes": [
+                {"id": "evt-A", "marginal_probability": 0.6, "update_count": 1},
+                {"id": "evt-B", "marginal_probability": 0.7, "update_count": 0}
+            ]
+        }"#;
+        let tree: EventTreeProjection =
+            serde_json::from_str(json).expect("scenario_propagate tree shape deserializes");
+        assert_eq!(tree.root_ids.len(), 2);
+        assert_eq!(tree.root_ids[0], "evt-A");
+        assert_eq!(tree.root_ids[1], "evt-B");
+        assert!(tree.cmp_provenance.is_empty());
+        let (g, m) = tree_root_probabilities(&tree).expect("two roots with valid marginals");
+        assert!((g - 0.6).abs() < 1e-9);
+        assert!((m - 0.7).abs() < 1e-9);
+    }
+
     #[test]
     fn tree_weighted_expected_intrinsic_hand_check() {
         // Quadrant intrinsics 200/150/120/80 with tree marginals g=0.6,

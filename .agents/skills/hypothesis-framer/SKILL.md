@@ -35,13 +35,14 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 ## Registry Templates
 
 | Template | Type | Purpose |
-|----------|------|--------|
+|----------|------|---------|
 | `finer-evaluate.j2` | KnowAct | Apply FINER criteria to a broad research topic. Evaluate feasibility (subjects, expertise, resources), interest (audience relevance), novelty (knowledge contribution), ethics (compliance), and relevance (clinical impact). Produces per-dimension scores with rationale and refinement suggestions. |
 | `pico-structure.j2` | KnowAct | Apply PICO framework to structure the research question. Identifies Population characteristics, Intervention/exposure, Comparison/control, and Outcome measures. Produces a structured question and completeness assessment. |
-| `hypothesis-operationalize.j2` | KnowAct | Derive a testable hypothesis from the PICO-structured question, formulate the null hypothesis, classify type, operationalize into research aims and objectives, assess testability against the specified objectives, verify five-link alignment, and recheck feasibility. Merges what were previously separate hypothesis and aims steps. |
+| `hypothesis-operationalize.j2` | KnowAct | Single cognitive act: derive a testable hypothesis from the PICO-structured question, formulate the null hypothesis, classify type, operationalize into research aims and objectives, assess testability against the specified objectives, verify five-link alignment, and recheck feasibility. Merges what were previously separate hypothesis and aims steps — because you cannot assess testability without knowing the objectives. |
 
 ## Constraints
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - All templates are `KnowAct` type with `Public` visibility
 - The research question must be a question, not a declarative statement; the research hypothesis must be a declarative statement, not a question
 - The null hypothesis must postulate no difference or no relationship

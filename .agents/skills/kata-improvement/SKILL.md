@@ -63,17 +63,18 @@ description: "4-step Improvement Kata templates for scientific capability develo
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `improvement-step1-direction.j2` | WordAct | Step 1 — Understand the direction. Articulate challenge, target, measurement plan, knowledge threshold. |
-| `improvement-step2-current.j2` | WordAct | Step 2 — Grasp the current condition. Collect data, detect patterns, establish baseline metrics. |
-| `improvement-step3-target.j2` | WordAct | Step 3 — Establish next target condition. Declare measurable target, detect obstacles, pick ONE focus obstacle. |
-| `improvement-step4-experiment.j2` | WordAct | Step 4 — Experiment toward target. Design PDCA experiment with specific prediction and measurement plan. |
-| `beginner-selector.j2` | KnowAct | Select appropriate beginner drill based on practice history and automaticity. (beginner_mode, folded from kata-starter) |
-| `beginner-five-questions.j2` | KnowAct | Five Questions Drill — practice asking the 5 coaching questions on a trivial process. (beginner_mode) |
-| `beginner-pdca-cycle.j2` | KnowAct | PDCA Cycle Drill — practice Plan-Do-Check-Act on a trivial measurable process. (beginner_mode) |
-| `beginner-observation-drill.j2` | KnowAct | Observation Drill — practice separating facts (IS) from interpretations (OUGHT). (beginner_mode) |
+| `beginner-selector.j2` | KnowAct | Select appropriate starter drill based on practice history and automaticity. If no history, start with Observation Drill. If automaticity is low in a specific drill, target that drill. If 7+ days since last practice, restart with Observation Drill. |
+| `beginner-five-questions.j2` | KnowAct | Five Questions Drill — exercise asking the 5 coaching questions in order on a trivial process (making toast, brewing coffee). |
+| `beginner-pdca-cycle.j2` | KnowAct | PDCA Cycle Drill — practice Plan-Do-Check-Act on a trivial, measurable process. |
+| `beginner-observation-drill.j2` | KnowAct | Observation Drill — practice separating observed facts (IS) from interpretations (OUGHT). |
+| `improvement-step1-direction.j2` | KnowAct | Step 1 of the Improvement Kata — understand the strategic direction and challenge from the level above. |
+| `improvement-step2-current.j2` | KnowAct | Step 2 of the Improvement Kata — grasp the current condition by gathering facts and data to establish a baseline. |
+| `improvement-step3-target.j2` | KnowAct | Step 3 of the Improvement Kata — establish a measurable, time-bounded next target condition. |
+| `improvement-step4-experiment.j2` | KnowAct | Step 4 of the Improvement Kata — define next experiment with testable predictions toward the target. |
 
 ## Constraints
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `improvement-step1-direction.j2`: Public.
 - `improvement-step2-current.j2`: Public.
 - `improvement-step3-target.j2`: Public.

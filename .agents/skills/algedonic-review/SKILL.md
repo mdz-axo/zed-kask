@@ -58,13 +58,11 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `algedonic-review/triage-briefing.j2` | `KnowAct` | Structure the alert backlog into a triage list with per-alert severity, domain, and recommended action. |
-| `algedonic-review/present-triage.j2` | `WordAct` | Render the triage list as a conversational summary with markdown tables. |
-| `algedonic-review/execute-decisions.j2` | `KnowAct` | Produce a structured list of resolve/dismiss calls for operator-confirmed decisions. |
-| `algedonic-review/verify-cleared.j2` | `WordAct` | Summarize what was resolved, dismissed, and what remains pending. |
+| `verify-cleared.j2` | WordAct | Summarize what was resolved, dismissed, and what remains pending. |
 
 ## Constraints
 
+- rJoule cap: 5 per invocation. Maximum 3 iterations.
 - All templates run at `visibility: Public`.
 - Human-in-the-loop: the skill proposes, the operator decides. The skill does NOT autonomously resolve or dismiss alerts.
 - Ground every claim in the raw alert data. Do not fabricate alerts or severities not present in the inputs.

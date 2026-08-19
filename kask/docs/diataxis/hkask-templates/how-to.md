@@ -27,7 +27,6 @@ This guide shows how to add a new step to an existing skill's
 | `ConvergenceTracker` struct | `kask/crates/hkask-templates/src/convergence.rs:82` |
 | `ConvergenceTracker::new` | `kask/crates/hkask-templates/src/convergence.rs:123` |
 | `ConvergenceTracker::check_met` | `kask/crates/hkask-templates/src/convergence.rs:307` |
-| `resolve_manifest` | `kask/crates/hkask-templates/src/manifest_loader.rs:207` |
 | `ManifestExecutor::execute_manifest` | `kask/crates/hkask-templates/src/executor.rs:141` |
 | `StepMachine::run` | `kask/crates/hkask-templates/src/step_machine.rs:97` |
 | `StepMachine::run_pass` | `kask/crates/hkask-templates/src/step_machine.rs:239` |
@@ -124,8 +123,8 @@ from prior step results; the result is stored as `step_{ordinal}_result`
 
 ### Step 5: Test the cascade
 
-Load the manifest with `resolve_manifest` (`manifest_loader.rs:207`) and
-execute it with `ManifestExecutor::execute_manifest` (`executor.rs:141`).
+Load the manifest with `load_manifest_from_yaml` (`manifest_loader.rs`) and
+execute it with `ManifestExecutor::execute_manifest` (`executor.rs`).
 The executor builds a `StepGraph` (`step_graph.rs:120`) and runs the
 `StepMachine` (`step_machine.rs:97`).
 

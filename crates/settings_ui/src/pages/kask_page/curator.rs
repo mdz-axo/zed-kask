@@ -339,14 +339,14 @@ pub(crate) fn render_curator_email_page(
     let inbox_poll_input = make_text_input(
         "kask-curator-email-inbox-poll-interval",
         "Inbox Poll Interval (secs)",
-        "IMAP inbox poll interval for inbound command replies. 0 = disabled. Default 60. Or set HKASK_INBOX_POLL_INTERVAL_SECS.",
+        "IMAP inbox poll interval for inbound command replies. 0 = disabled. Default 0 (unset — reserved for a future inbound IMAP path). Or set HKASK_INBOX_POLL_INTERVAL_SECS.",
         inbox_poll_interval,
         "0",
     );
     let digest_input = make_text_input(
         "kask-curator-email-digest-interval",
         "Digest Interval (secs)",
-        "Periodic escalation digest email interval. 0 = disabled. Default 86400 (daily). Or set HKASK_DIGEST_INTERVAL_SECS.",
+        "Periodic escalation digest email interval. 0 = disabled. Default 0 (unset — reserved for a future inbound IMAP path). Or set HKASK_DIGEST_INTERVAL_SECS.",
         digest_interval,
         "0",
     );

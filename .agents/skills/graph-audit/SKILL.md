@@ -76,24 +76,24 @@ The skill delegates to the `hkask-mcp-codegraph` MCP server:
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `code-discover.j2` | `KnowAct` | Discover and map the target codebase area (code mode step 1) |
-| `code-query.j2` | `KnowAct` | Query the code graph for goal-relevant symbols (code mode step 2) |
-| `code-analyze.j2` | `KnowAct` | Traverse the dependency graph and run quality analysis (code mode step 3) |
-| `code-context.j2` | `KnowAct` | Assemble token-budgeted context for downstream LLM use (code mode step 4) |
-| `semantic-classify.j2` | `KnowAct` | Force-classify every graph edge by pragmatic-semantics hierarchy (semantic mode step 1) |
-| `semantic-analyze.j2` | `KnowAct` | Evaluate graph health through four lenses (semantic mode step 2) |
-| `semantic-detect.j2` | `KnowAct` | Detect structural pathologies from graph topology (semantic mode step 3) |
-| `semantic-report.j2` | `KnowAct` | Synthesize graph-health convergence metric + markdown report (semantic mode step 4) |
-| `symbol-summarize.j2` | `KnowAct` | Generate one-sentence summaries of code symbols (utility, used by MCP server) |
-| `analysis-complexity.j2` | `KnowAct` | SQL query for complexity analysis (utility, used by MCP server) |
-| `analysis-dead-code.j2` | `KnowAct` | SQL query for dead code detection (utility, used by MCP server) |
-| `fix-suggestion.j2` | `KnowAct` | Generate fix suggestions for code issues (utility, used by MCP server) |
-| `symbol-embedding.j2` | `KnowAct` | Generate embeddings for code symbols (utility, used by MCP server) |
+| `code-discover.j2` | KnowAct | Discover and map the target codebase area. Synthesizes index statistics and structure overview into a discovery summary with relevant crates and entry symbols for further traversal. |
+| `code-query.j2` | KnowAct | Query the code graph for symbols relevant to the goal. Scores results by relevance, identifies traversal targets, and flags gaps. |
+| `code-analyze.j2` | KnowAct | Traverse the dependency graph and run quality analysis. Organizes results into dependency maps, caller maps, impact analysis, and quality findings with fix suggestions. |
+| `code-context.j2` | KnowAct | Assemble token-budgeted context from gathered analysis results for downstream LLM use. Formats symbol definitions, doc comments, and key relationships within the specified token budget. |
+| `semantic-classify.j2` | KnowAct | Force-classify every graph edge by the pragmatic-semantics constraint hierarchy (Prohibition > Guardrail > Guideline > Evidence > Hypothesis) with provenance and a per-edge rationale. |
+| `semantic-analyze.j2` | KnowAct | Evaluate graph health through four lenses: pragmatic-cybernetics (cycle 5-properties, Ashby requisite variety, Good Regulator), essentialist (deletion test, surface count, pass-through trace), grill-me (5-level gap probe), pragmatic-semantics (force coherence). |
+| `semantic-detect.j2` | KnowAct | Detect structural pathologies from graph topology: cycles, redundancies, gaps, orphans, fan-in/out anomalies, and force/structure mismatches. Severity reflects constraint force (a Prohibition cycle is critical). |
+| `semantic-report.j2` | KnowAct | Synthesize the classification, four-lens analysis, and structural detection into a normalized graph-health convergence metric and a readable markdown report. |
+| `symbol-summarize.j2` | KnowAct | Generate one-sentence summaries of code symbols. |
+| `analysis-complexity.j2` | KnowAct | Analyze code complexity metrics for symbols and modules. |
+| `analysis-dead-code.j2` | KnowAct | Detect dead code and unused symbols. |
+| `fix-suggestion.j2` | KnowAct | Generate fix suggestions for code issues. |
+| `symbol-embedding.j2` | KnowAct | Generate embeddings for code symbols. |
 
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility.
-- rJoule cap: 3 per invocation. Maximum 10 iterations (min 2 before convergence check).
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - Traversal depth: `immediate-neighbors` (default), `transitive` (2-hop), `full` (recursive CTE).
 - Only report findings relevant to the goal - don't list every symbol in the graph.
 - Impact analysis should identify the riskiest change points.

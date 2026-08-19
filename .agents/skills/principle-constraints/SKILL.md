@@ -53,6 +53,7 @@ Compiles a stated principle into a set of checkable, code-path-anchored constrai
 
 ## Constraints
 
+- rJoule cap: 2 per invocation. Maximum 1 iterations.
 - **No fabricated file:line citations.** If you did not read the file, you cannot cite it. Use `UNKNOWN` and let the human investigate.
 - **No fabricated test names.** If you did not find the test via grep, you cannot name it as a falsifier. Use `MISSING: <suggested name>`.
 - **No constraint without an `enforced_at` field.** Even if it's `UNKNOWN`, the field must be present — absence is not a verdict.
@@ -64,8 +65,8 @@ Compiles a stated principle into a set of checkable, code-path-anchored constrai
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `principle-derive.j2` | `KnowAct` | Derive a new constraint set from a stated principle. Locates enforcement code, identifies existing tests, flags gaps. |
-| `principle-verify.j2` | `KnowAct` | Verify an existing constraint set against the current codebase. Detects drift: code moved, test deleted, principle weakened/strengthened. |
+| `principle-derive.j2` | KnowAct | Take a principle as input (prose statement + source citation) and emit a proposed constraint set. Each constraint is test-shaped: assertion, enforced_at (file:line or UNKNOWN), falsifier (test name), status (enforced | gap | unverified). The template instructs the agent to locate enforcement code via grep/codegraph, identify existing tests that pin the enforcement, and flag gaps where the principle is asserted but enforcement is missing. The output is a proposal — a human reviews it before any constraint becomes permanent. |
+| `principle-verify.j2` | KnowAct | Take a previously-derived constraint set and verify each constraint against the current codebase: does enforced_at still point to real code? Does the falsifier test still exist and pass? Has the principle been weakened or strengthened since the constraint was derived? Emit a verification report with per-constraint status and a list of stale constraints requiring human review. This is the maintenance mode — run on architectural changes to detect constraint drift. |
 
 ## Reference: Manual Pass on P1
 

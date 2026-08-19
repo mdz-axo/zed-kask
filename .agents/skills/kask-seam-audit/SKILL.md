@@ -64,17 +64,17 @@ Final: report
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `seam-map.j2` | KnowAct | Map divergence surface (DIVERGENCE.md D1–D24), verify convention priors (live vs phantom), derive audit slices. Read-only. |
-| `refine-seam-map.j2` | KnowAct | Refine seam map in response to Gate A defects (phantom priors, missing slices). Only runs when Gate A found defects. |
-| `audit-security.j2` | KnowAct | kali-audit security track over the seam (OWASP LLM Top-10, MITRE ATLAS, NIST SSDF, 8-layer defense coverage). Every finding cites file:line. |
-| `audit-architecture.j2` | KnowAct | refactor-architecture dead-surface + deepening track with grep-verified caller counts. |
-| `audit-ui.j2` | KnowAct | ui-layout-discipline GPUI interaction audit: measured-layout discipline, action congestion, interaction-language gaps. |
-| `refine-findings.j2` | KnowAct | Refine findings in response to Gate B defects (missing citation, invalid severity, empty track). |
-| `adjudicate.j2` | KnowAct | Adjudicate findings via pragmatic-semantics + pragmatic-cybernetics + essentialist lenses. Produces annotated_findings. |
-| `mcda.j2` | KnowAct | MCDA ranking + ±20% sensitivity analysis. Each score traces to a finding. |
-| `remediate.j2` | KnowAct | Apply essentialist-surviving seam-scoped remediations; hard-stop if any touch requires an upstream non-D-seam edit. |
-| `remediation-repair.j2` | KnowAct | Repair remediation defects or emit hard-stop with the offending file and a proposed D-seam entry. |
-| `final-report.j2` | KnowAct | Consolidate the three tracks, defense-layer coverage, MCDA, applied remediations, hard-stop decision, and convergence score. |
+| `seam-map.j2` | KnowAct | PLAN — read DIVERGENCE.md D1–D24, grep `crates/` for each convention prior's artifact (live vs phantom), and derive the audit slices. Read-only. |
+| `refine-seam-map.j2` | KnowAct | Repair Gate A structural defects (phantom prior, invalid verdict, no slices). Only runs when Gate A found defects. |
+| `audit-security.j2` | KnowAct | DO — security review of the 8 priority surfaces (OWASP LLM Top-10, MITRE ATLAS, NIST SSDF, 8-layer defense coverage). Every finding cites file:line. |
+| `audit-architecture.j2` | KnowAct | DO — find dead surface (trait-with-one-impl, helper-test-only, folded re-exports) and deepening candidates; apply the essentialist deletion test with grep-verified caller counts. |
+| `audit-ui.j2` | KnowAct | DO — measured-layout discipline + Zed interaction-language gaps across kask-owned GPUI widgets; Toggle-vs-ToggleFocus and deploy-and-focus traps. |
+| `refine-findings.j2` | KnowAct | Re-cite or re-classify findings Gate B flagged (missing file_line, invalid severity, empty track). Never fabricates evidence; marks deferred with a reason. |
+| `adjudicate.j2` | KnowAct | CHECK — classify each finding by constraint force, run the deletion test, and check the feedback loop. Produces annotated_findings. |
+| `mcda.j2` | KnowAct | CHECK — rank remediation candidates against four weighted criteria and run a ±20% sensitivity analysis. Each score traces to a finding. |
+| `remediate.j2` | KnowAct | ACT — apply only mcda top-ranked remediations surviving essentialist; pin each with a test; declare within_kask per touched file; set hard_stop if any touch requires an upstream non-D-seam edit. |
+| `remediation-repair.j2` | KnowAct | Repair Gate C defects (missing test, out-of-seam touch) or emit the hard-stop with the offending file and a proposed D-seam entry. |
+| `final-report.j2` | KnowAct | Consolidate the three tracks, defense-layer coverage, MCDA, applied remediations, hard-stop decision, and convergence score. Cite file:line. |
 
 ## Constraints
 

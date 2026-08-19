@@ -39,15 +39,15 @@ Property-based testing skill. Identifies testable properties from a target funct
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `proptest/proptest-identify.j2` | KnowAct | Identify properties from target's contract, classify by oracle type |
-| `proptest/proptest-strategize.j2` | KnowAct | Design input strategies — harness-first, then custom |
-| `proptest/proptest-write.j2` | KnowAct | Generate complete proptest code with principle grounding |
-| `proptest/proptest-analyze.j2` | KnowAct | Execute test, analyze shrunk counterexamples |
-| `proptest/proptest-report.j2` | KnowAct | Report verified properties, failures, coverage |
+| `proptest-identify.j2` | KnowAct | Read the target function's contract (expect:, post:, inv:) and source code. Classify each testable property by oracle type: panic_freedom, invariant, round_trip, reference, or idempotency. Output properties with principle grounding (P1 or P4) and strategy hints. |
+| `proptest-strategize.j2` | KnowAct | For each property, check hkask-test-harness first (arb_json_value, test_token_for_tool, NoopToolPort). If the harness doesn't provide what's needed, design a custom strategy using select, prop_recursive, any, prop_filter, and tuple composition. Output strategy code with imports and prop_assume requirements. |
+| `proptest-write.j2` | KnowAct | Generate the complete proptest! block: file header with principle grounding, all arb_*() strategy functions, all test functions with oracle-appropriate assertions and descriptive failure messages. Handles the re-parse trick for float precision and per-field messages for round-trip tests. |
+| `proptest-analyze.j2` | KnowAct | Execute cargo test, parse results. If the test fails, analyze the shrunk counterexample: classify as real bug (flag for diagnose skill) or test bug (fix the property). Handle common compilation issues (missing imports, select needs &[...], prop_assert_eq! moves values). |
+| `proptest-report.j2` | KnowAct | Produce a structured report: properties verified with oracle type and principle grounding, failures found with shrunk counterexamples, coverage summary, harness usage, and recommended next steps. |
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Convergence: Cauchy, epsilon 0.03, window 3, max 10 iterations, min 2.
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `ledger.span_namespace: reg.skill.proptest` (CI-enforced, no `spans:` list).
 - The skill does not implement code — it tests existing code's properties. For new code, use TDD first.
 - For `panic_freedom` oracle: no `prop_assume!` filtering (accept all inputs). For other oracles: `prop_assume!` is allowed for relational constraints.

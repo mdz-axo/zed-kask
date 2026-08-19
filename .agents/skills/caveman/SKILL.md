@@ -38,11 +38,12 @@ Ultra-compressed communication mode. Cuts token usage ~75% by dropping filler, a
 ## Registry Templates
 
 | Template | Type | Purpose |
-|----------|------|--------|
-| `caveman-compress.j2` | `WordAct` | Compress a draft response into caveman mode: drop articles, filler, pleasantries, hedging. Preserve all technical substance. Insert clarity exceptions for security and irreversible actions. |
+|----------|------|---------|
+| `caveman-compress.j2` | KnowAct | Compress a draft response into caveman mode: drop articles, filler, pleasantries, hedging. Preserve all technical substance. Insert clarity exceptions for security and irreversible actions. |
 
 ## Constraints
 
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - Both templates run at `visibility: Public`
 - All technical substance must survive compression — no loss of meaning permitted.
 - Code blocks, error messages, and URLs are sacred and must not be modified.

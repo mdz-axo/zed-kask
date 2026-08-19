@@ -188,13 +188,6 @@ pub struct Skill {
     /// user gets a clear error before tokens are spent on a cascade that
     /// will fail mid-execution.
     pub dependencies: Vec<String>,
-    /// For built-in skills whose content is compiled into the binary,
-    /// In upstream zed, this holds the full SKILL.md body so the skill tool
-    /// can serve it without a filesystem read. In zed-kask, SKILL.md bodies
-    /// are never injected — skills execute via YAML manifests. This field
-    /// is retained for struct compatibility but is always `None` in production.
-    #[allow(dead_code)]
-    pub embedded_body: Option<&'static str>,
     /// When `true`, this skill is a core skill: always-on, re-seeded on every
     /// startup, locked against editing, undisableable, and unshadowable.
     /// See `SkillMetadata::core` for the full contract.
@@ -433,7 +426,6 @@ pub fn parse_skill_frontmatter(
         disable_model_invocation: metadata.disable_model_invocation,
         visibility: metadata.visibility,
         dependencies: metadata.dependencies,
-        embedded_body: None,
         core: metadata.core,
     })
 }
@@ -894,7 +886,6 @@ pub async fn load_skill_frontmatter(
 /// `---`. Called only when a skill is being materialized for the model
 /// (via `SkillTool` or a slash invocation). The body is intentionally
 /// NOT kept in memory between materializations.
-#[allow(dead_code)]
 pub async fn read_skill_body(
     fs: &dyn Fs,
     skill_file_path: &Path,
@@ -907,7 +898,6 @@ pub async fn read_skill_body(
     read_skill_body_from_content(skill_file_path, &content)
 }
 
-#[allow(dead_code)]
 pub fn read_skill_body_from_content(
     skill_file_path: &Path,
     content: &str,
@@ -939,18 +929,8 @@ include!(concat!(env!("OUT_DIR"), "/embedded_global_skills.rs"));
 /// this binary, exactly as authored in `.agents/skills/`. Seed-only: used by
 /// [`seed_shipped_skills`] to materialise the skills on disk. Not used as a
 /// runtime catalog source — the catalog is built from disk.
-pub fn shipped_skill_seed() -> &'static [(&'static str, &'static str)] {
+fn shipped_skill_seed() -> &'static [(&'static str, &'static str)] {
     SHIPPED_SKILL_SEED_ENTRIES
-}
-
-/// Parse the frontmatter of a SKILL.md content string into [`SkillMetadata`].
-/// Public so the extensions panel can derive `(name, description)` from a
-/// seed entry without a synthetic file path. The seed entry name already
-/// equals the parsed `name` (validated at build time), so callers may use
-/// either as the skill identity.
-pub fn parse_skill_metadata(content: &str) -> Result<SkillMetadata> {
-    let (metadata, _body) = extract_skill_frontmatter(content)?;
-    Ok(metadata)
 }
 
 /// Materialise the shipped kask skills onto the user's disk if missing.
@@ -2260,7 +2240,6 @@ description: A skill with no body content
             disable_model_invocation: false,
             visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
-            embedded_body: None,
             core: false,
         };
 

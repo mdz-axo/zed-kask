@@ -747,8 +747,6 @@ fn classify_failure_mode(error: &crate::ports::TemplateError) -> &'static str {
         crate::ports::TemplateError::Validation(_) => "validation_error",
         crate::ports::TemplateError::PathTraversal(_) => "path_traversal",
         crate::ports::TemplateError::SandboxViolation(_) => "sandbox_violation",
-        crate::ports::TemplateError::SkillLoad { .. } => "skill_load_error",
-        crate::ports::TemplateError::Frontmatter { .. } => "frontmatter_error",
     }
 }
 
@@ -859,26 +857,8 @@ mod classify_failure_mode_tests {
         );
     }
 
-    #[test]
-    fn skill_load_classifies_as_skill_load_error() {
-        assert_eq!(
-            classify_failure_mode(&TemplateError::SkillLoad {
-                path: "/missing/skill".to_string(),
-                source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
-            }),
-            "skill_load_error"
-        );
-    }
-
-    #[test]
-    fn frontmatter_classifies_as_frontmatter_error() {
-        assert_eq!(
-            classify_failure_mode(&TemplateError::Frontmatter {
-                detail: "missing name".to_string()
-            }),
-            "frontmatter_error"
-        );
-    }
+    // (SkillLoad/Frontmatter variants were removed with the dead
+    // `skill_loader.rs` module; their classifier tests went with them.)
 
     // The `Mcp` variant wraps `Box<dyn std::error::Error + Send + Sync>`.
     // Constructed via `From` from a concrete error to avoid depending on a

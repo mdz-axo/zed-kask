@@ -23,7 +23,6 @@ pub mod ports;
 pub mod prompt_strategy;
 pub mod registry;
 pub mod registry_sqlite;
-pub mod skill_loader;
 pub mod step_actions;
 pub mod step_context;
 pub mod step_graph;
@@ -33,6 +32,7 @@ pub mod template_renderer;
 pub use bundle::BundleManifest;
 pub use bundle::BundleRegistryIndex;
 pub use bundle::GoldenOutputFixture;
+pub use bundle::ManifestCategory;
 pub use executor::ManifestExecutor;
 pub use executor::extract_final_step_result;
 pub use step_graph::ExitKind;
@@ -42,10 +42,9 @@ pub use inputs::{
     InputValidationError, extract_contract_input_keys, render_input_param_spec, validate_inputs,
 };
 pub use manifest_loader::{
-    ManifestLoadError, McpReferenceWarning, load_manifest_from_file, load_manifest_from_yaml,
-    resolve_manifest, validate_mcp_references,
+    ManifestLoadError, McpReferenceWarning, load_manifest_from_yaml, validate_mcp_references,
 };
-pub use ports::{FsSkillReader, ManifestResolveError, Result, SkillFinding, TemplateError};
+pub use ports::{Result, TemplateError};
 pub use prompt_strategy::PromptStrategy;
 
 pub use registry::{
@@ -54,7 +53,6 @@ pub use registry::{
     template_yaml_file_seed,
 };
 pub use registry_sqlite::SqliteRegistry;
-pub use skill_loader::{SkillFrontMatter, SkillLoadResult, SkillLoader};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils {

@@ -56,6 +56,7 @@ Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loo
 
 ## Constraints
 
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - `cybernetics-analyze-loop.j2`: Public. Every property assessment must be grounded in evidence. Broken/none property → broken loop. Remediation must name specific mechanisms. No external monitoring stacks (Prometheus, Grafana) — hKask is headless.
 - `cybernetics-variety-check.j2`: Public. Every recommendation must reference a concrete hKask mechanism. Algedonic threshold: deficit > 50 → Warning, > 100 → Critical. Critical status requires explicit escalation directive.
 - `cybernetics-vsm-map.j2`: Public. Every component maps to exactly one primary subsystem. Missing/blocked algedonic channel (S1 → S5) → unviable (non-negotiable). S4 must have spec-drift detection. S5 must reference Magna Carta principles.

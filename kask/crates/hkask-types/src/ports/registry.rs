@@ -1,7 +1,6 @@
 use crate::NotFound;
 use crate::SkillPolarity;
 use crate::template_type::TemplateType;
-use crate::visibility::Visibility;
 use serde::{Deserialize, Serialize};
 
 /// Unified registry entry covering all template types with cascade metadata.
@@ -104,7 +103,6 @@ pub struct Skill {
     pub know_act: Option<String>,
     pub polarity: Option<SkillPolarity>,
     pub content_hash: Option<String>,
-    pub visibility: Visibility,
     pub zone: SkillZone,
     /// Namespace (agent handle) for collision-free public sharing.
     ///
@@ -132,7 +130,6 @@ impl Skill {
             know_act: None,
             polarity: None,
             content_hash: None,
-            visibility: Visibility::Private,
             zone: SkillZone::Private,
             namespace: None,
         }
@@ -183,15 +180,6 @@ impl Skill {
     #[must_use = "builder methods must be chained or assigned"]
     pub fn with_content_hash(mut self, v: String) -> Self {
         self.content_hash = Some(v);
-        self
-    }
-    /// Set the visibility.
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// post: returns Self with visibility set (builder)
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_visibility(mut self, v: Visibility) -> Self {
-        self.visibility = v;
         self
     }
     /// Set the zone.
@@ -248,7 +236,6 @@ impl Skill {
         let mut h = Sha256::new();
         h.update(self.id.as_bytes());
         h.update(self.domain.as_str().as_bytes());
-        h.update(self.visibility.as_str().as_bytes());
         h.update(self.zone.as_str().as_bytes());
         if let Some(ref v) = self.namespace {
             h.update(v.as_bytes());
@@ -287,21 +274,9 @@ pub trait SkillRegistryIndex {
     fn register_skill(&mut self, skill: Skill) -> std::result::Result<(), RegistryError>;
     fn get_skill(&self, id: &str) -> Option<Skill>;
     fn list_skills(&self) -> Vec<Skill>;
-    fn list_skills_by_visibility(&self, visibility: Visibility) -> Vec<Skill>;
     fn skills_by_domain(&self, domain: TemplateType) -> Vec<Skill>;
     fn skills_referencing_template(&self, template_id: &str) -> Vec<Skill>;
     fn remove_skill(&mut self, id: &str) -> std::result::Result<Option<Skill>, RegistryError>;
-    /// P2 (Affirmative Consent): default-deny access. Private context sees all skills. Public/Shared sees only Public or Shared.
-    fn list_skills_visible_to(&self, caller_visibility: Visibility) -> Vec<Skill> {
-        match caller_visibility {
-            Visibility::Private => self.list_skills(),
-            _ => {
-                let mut result = self.list_skills_by_visibility(Visibility::Shared);
-                result.extend(self.list_skills_by_visibility(Visibility::Public));
-                result
-            }
-        }
-    }
 }
 
 /// Template registry lookups. Moved to hkask-types for Authority DAG.

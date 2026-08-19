@@ -52,10 +52,10 @@ Security review skill for hKask. Audits Rust code, Jinja2 templates, YAML manife
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `select-surface.j2` | KnowAct | Select target surface, discover defense layers, read regression library. Forward-adaptable: surfaces discovered dynamically, layers are parameters. |
-| `audit.j2` | KnowAct | Run security checks consuming the regression library at runtime. Checks for evidence-backed patterns (OWASP, ANSSI, RustSec, Microsoft Research). |
-| `report.j2` | KnowAct | Synthesize findings with OWASP 2025 numbering, ATLAS tactics, NIST SSDF practices, and source citations. Proposes regression entries. |
-| `taxonomy-map.j2` | KnowAct | Map supply-chain findings to OSC&R attack taxonomy (folded from attack-taxonomy-mapper). Only runs for surface == 'supply-chain'. Emits reg.taxonomy.map spans. |
+| `select-surface.j2` | KnowAct | Select the security audit target surface (code, template, supply-chain, mcp, config) and map it to the applicable check catalog. Reads the regression library to know what has already been found. |
+| `audit.j2` | KnowAct | Run security checks for the selected surface. For code: unsafe blocks, panics, auth bypass, crypto misuse, deserialization, path traversal. For templates: SSTI, sandbox violations, untrusted input rendering. For supply-chain: cargo-deny, cargo-audit, RustSec advisories. For mcp: tool-behavior contracts, indirect_tool_output injection paths. |
+| `report.j2` | KnowAct | Synthesize audit findings into a structured report. For each confirmed finding, propose a regression entry (RR-NNNN.yaml) for human review. Classify by CWE, OWASP LLM, severity, and surface. |
+| `taxonomy-map.j2` | KnowAct | Map supply-chain audit findings to the OSC&R attack taxonomy (Open Software Supply Chain Attack Reference). Folded from the standalone attack-taxonomy-mapper skill. Only runs for surface == 'supply-chain'. Emits reg.taxonomy.map spans. |
 
 ## Defense-in-Depth Layer Catalog
 
@@ -87,6 +87,7 @@ The `security/regressions/` directory is the **deep artifact** — it compounds 
 
 ## Constraints
 
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - `select-surface.j2`: Public.
 - `audit.j2`: Public.
 - `report.j2`: Public.

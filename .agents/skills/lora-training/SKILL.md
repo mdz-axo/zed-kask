@@ -230,14 +230,15 @@ Do not create alternate finding shapes. A recommendation never overwrites
 ## Registry Templates
 
 | Template | Type | Purpose |
-|---|---|---|
-| `preflight-dataset.j2` | `KnowAct` | Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors HF's `dataset_inspector.py` three-state pattern (Ready / NeedsMapping / Incompatible). Optional — skipped when `dataset_path` is absent. |
-| `select-method.j2` | `KnowAct` | Produce an advisory composable recommendation via eight-gate refinement (G0 adapter purpose, G-D0 dataset analysis → G1-G5 method → G6 harness), with deep capability reasoning over the full harness×trainer×host×cost space when `provider_capabilities` is supplied, Good Regulator refinement from `prior_training_history`, mechanical PDCA loop closure via `prior_iteration`, and self-improvement signals from `prior_outcome` and `prior_operator_feedback`. |
-| `audit-config.j2` | `KnowAct` | Audit declared artifacts with phase-aware gates, states, evidence kinds, normalized findings, separate readiness, algedonic `refuse_escalation` for safety-boundary violations, mechanical no-fiction enforcement rejecting findings with null `config_path`/`line`, and G-R1 runtime alert assessment from `runtime_metrics` when supplied. |
-| `report.j2` | `KnowAct` | Preserve findings losslessly; report readiness and contract gaps; propose only evidence-backed pending regressions with `surface: training`. |
+|----------|------|---------|
+| `preflight-dataset.j2` | KnowAct | v0.32.0: Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors HF's dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). Optional — skipped when dataset_path is absent. This is the runtime-evidence source for G-D0. |
+| `select-method.j2` | KnowAct | Apply a deterministic 8-gate refinement without overwriting earlier constraints or operator requirements. v0.31.0: G6 reasons over the full capability space (3 harnesses × 6 trainers × 3 hosts × cost models) when provider_capabilities is supplied. G2 and G3 refine using prior_training_history when supplied (Good Regulator compliance). Consumes prior_iteration when present (mechanical PDCA loop closure via manifest). |
+| `audit-config.j2` | KnowAct | Read training config, harness, runtime, and post-training evidence. Evaluate the applicable subset of 19 quality gates. v0.31.0: emits refuse_escalation for refuse findings (algedonic S1→S5 short-circuit) and rejects findings with config_value/code_presence/code_absence evidence_kind but null config_path/line (no-fiction enforcement, mechanical not voluntary). Consumes dataset_profile from G-D0 for G-D1 dataset size/quality assessment. v0.32.0: consumes runtime_metrics for G-R1 runtime alert assessment (loss spikes, NaN gradients, vanishing loss) when supplied. v0.32.0: G-P1 persistence preflight verifies HuggingFace artifact persistence is configured before submit on ephemeral cloud hosts. |
+| `report.j2` | KnowAct | Synthesize audit findings with concrete config evidence, source citations (arXiv paper sections + PEFT v0.19.0 doc sections), severity (critical/high/medium/low), gate ID, and remediation. Propose RR-NNNN.yaml entries with surface: training for CI-enforced config gates. Preserve the normalized Finding schema, identify contract gaps, and separate recommendation from phase-aware readiness. Produce verdicts from evidence-backed states without reclassifying findings. |
 
 ## Constraints
 
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - The process manifest, registry manifest, and these four `.j2` templates are
   authoritative over this companion. If they conflict, the registry wins.
 - All four templates are public. No hidden training controls or parameters.

@@ -102,12 +102,13 @@ escalation.
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `idiomatic-rust-inquiry.j2` | KnowAct | Assess a Rust design problem against Graydon Hoare's principles using rust-analyzer diagnostics as ground truth. Identify invariants, invalid states, ownership graphs, and error domains. Produce a scored design assessment with specific improvement targets, marking each as compiler-confirmed or LLM-identified. |
-| `idiomatic-rust-design.j2` | KnowAct | Propose type-driven Rust solutions with code examples, informed by LSP code actions. Apply algebraic types, ownership patterns, error propagation, and trait design. Reference std library patterns, ecosystem best practices, and relevant RFCs. Record which decisions were compiler-suggested vs LLM-originated. |
-| `idiomatic-rust-challenge.j2` | KnowAct | Adversarial review of a Rust design proposal, grounded by find_references (blast radius), diagnostics (compile verification), and clippy (idiomatic lints). Find gaps, test edge cases, challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives, marking each as compiler-confirmed or LLM-identified. |
+| `idiomatic-rust-inquiry.j2` | KnowAct | Assess a Rust design problem against Graydon Hoare's principles, using rust-analyzer diagnostics as ground truth. The compiler's errors and warnings are the starting point — not the LLM's guess. Interpret each diagnostic through the Hoare lens (borrow checker → ownership, type mismatch → invalid states, etc.). Identify invariants, invalid states, ownership graphs, and error domains. Produce a scored design assessment with specific improvement targets, marking each as compiler-confirmed (extrinsic) or LLM-identified (intrinsic — lower confidence). |
+| `idiomatic-rust-design.j2` | KnowAct | Propose type-driven Rust solutions with code examples, informed by LSP code actions. Rust-analyzer's refactor suggestions (replace with enum, extract struct, add missing trait impl) are compiler-verified starting points. Apply algebraic types, ownership patterns, error propagation, and trait design. Reference std library patterns, ecosystem best practices, and relevant RFCs. Record which decisions were compiler- suggested vs LLM-originated. |
+| `idiomatic-rust-challenge.j2` | KnowAct | Adversarial review of a Rust design proposal, grounded by compiler feedback. Uses find_references (actual blast radius, not LLM's guess), diagnostics (compile verification of proposed code), and clippy (codified idiomatic Rust lints as ground-truth design feedback). Find gaps, test edge cases, challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives, marking each as compiler-confirmed or LLM-identified. |
 
 ## Constraints
 
+- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `idiomatic-rust-inquiry.j2`: Public.
 - `idiomatic-rust-design.j2`: Public.
 - `idiomatic-rust-challenge.j2`: Public.

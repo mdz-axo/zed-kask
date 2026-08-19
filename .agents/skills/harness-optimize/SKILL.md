@@ -80,13 +80,13 @@ The trace filesystem schema is defined at `kask/docs/architecture/test-harness-t
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `harness-optimize/harness-optimize-identify.j2` | KnowAct | Read traces, identify under-tested areas via mutation analysis + failure patterns |
-| `harness-optimize/harness-optimize-propose.j2` | KnowAct | Propose test improvement diff with evidence from traces |
-| `harness-optimize/harness-optimize-report.j2` | KnowAct | Structured report of proposed changes with rationale and expected impact |
+| `harness-optimize-identify.j2` | KnowAct | Read trace filesystem for revisions N and N-1. Compare mutation scores, failure patterns, and bug-hunt findings to identify under-tested areas. |
+| `harness-optimize-propose.j2` | KnowAct | Propose a test improvement diff based on the gap analysis. Dispatch to proptest in generate_only mode for specific under-tested functions. Cite specific trace files as evidence. |
+| `harness-optimize-report.j2` | KnowAct | Structured report of proposed test changes with rationale, evidence, and expected impact on mutation score and bug-find rate. |
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Convergence: single-pass (no loop — convergence is at the
+- rJoule cap: 2 per invocation. Maximum 1 iterations.
   `harness-evolve-cycle` level).
 - `ledger.span_namespace: reg.skill.harness-optimize` (CI-enforced, no `spans:` list).
 - The skill does NOT run tests. It proposes test code for CI to evaluate.
