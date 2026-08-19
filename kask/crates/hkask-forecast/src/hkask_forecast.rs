@@ -879,6 +879,58 @@ pub fn duration_vs_cmp_tenors(equity_duration_years: f64) -> Option<Vec<Duration
     )
 }
 
+// ── R3: CMP index provenance (shared bridge contract) ─────────────────────
+//
+// The bridge contract between `hkask-mcp-scenarios`'s `scenario_from_cmp_indices`
+// emitter and `hkask-mcp-companies`'s `EventTreeProjection` deserializer. Both
+// crates re-export this struct as their `superforecast::CmpIndexProvenance` so the
+// two sides cannot drift apart at the type level — the pin tests in each crate
+// (`scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree` in
+// scenarios, `cmp_provenance_round_trips_real_scenarios_emitter` in companies)
+// enforce that the real emitters produce the full 7-field shape.
+//
+// `id` is the canonical index identity (`cmp:{family}:{tenor}:{orientation}`);
+// the other 6 fields are the index identity components the companies bridge
+// surfaces in the tree-weighted output so the consumer can cite the CMP index
+// provenance without re-parsing the `id` string. Each field carries
+// `#[serde(default)]` so the struct deserializes from a minimal `
+// `{"id": "..."}` entry (the pre-R3 shape) — the pin tests enforce that the
+// real emitters populate all 7, but the deserializer tolerates partial output
+// rather than failing the whole tree on one malformed entry. The
+// `#[serde(default)]` per field is NOT a security gate (per the repo `.rules`
+// on advertised invariants) — the real gates are the two pin tests. Advertised
+// invariant: "the real emitters populate all 7 fields" — enforced by the pin
+// tests, not by the struct's `#[serde(default)]`.
+
+/// R3: CMP index provenance — the full 7-field identity of one CMP index in a
+/// `scenario_from_cmp_indices` tree. Re-exported by both `hkask-mcp-scenarios`
+/// and `hkask-mcp-companies` as their `superforecast::CmpIndexProvenance` so the
+/// bridge contract has a single type-level source of truth.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct CmpIndexProvenance {
+    /// The CMP index identity: `cmp:{family}:{tenor}:{orientation}`.
+    #[serde(default)]
+    pub id: String,
+    /// The base-event family label (e.g. `"policy_interest_rate"`).
+    #[serde(default)]
+    pub family: String,
+    /// The CMP tenor label (`"1m"`, `"2m"`, `"3m"`, `"6m"`).
+    #[serde(default)]
+    pub tenor: String,
+    /// The orientation (`"increase"`, `"decline"`, `"stable"`).
+    #[serde(default)]
+    pub orientation: String,
+    /// The venue (`"kalshi"`, `"polymarket"`).
+    #[serde(default)]
+    pub venue: String,
+    /// The construction method (`"interpolated"` or `"bucketed_sparse"`).
+    #[serde(default)]
+    pub method: String,
+    /// The maturity-matching error in days (|weighted maturity − target|).
+    #[serde(default)]
+    pub maturity_error_days: f64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

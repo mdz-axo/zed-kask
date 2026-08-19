@@ -126,9 +126,9 @@ Registry is authoritative — when this SKILL.md disagrees with registry
 templates, the registry wins.
 
 - Template manifest: `kask/registry/templates/swarm-steering/manifest.yaml`
-- Templates: `kask/registry/templates/swarm-steering/swarm-steering-direct.j2`
-- Process manifest: `kask/registry/manifests/swarm-steering.yaml` (1 step:
-  DIRECT, single-pass)
+- Templates: `kask/registry/templates/swarm-steering/swarm-steering-direct.j2` (KnowAct — produce the local-swarm steering directive: delegation sequence + delegate_results collection shape + re-invoke instruction)
+- Process manifest: `kask/registry/manifests/swarm-steering.yaml` (1 step: DIRECT, single-pass — `max_iterations: 1`)
+- rJoule cap: 3 per invocation
 - Span namespace: `reg.skill.swarm-steering`
 - Pairs with `swarm-intelligence` (the planner); this skill is the actuator's
   instructions (Cybernetic Swarm Plan `steering_mode`).

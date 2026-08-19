@@ -118,5 +118,14 @@ These constraints are non-obvious and were verified by the
 - No `eval` builtin (Lisp code cannot evaluate arbitrary strings). No
   `load`/`require`. Bounded recursion depth (64) and bounded evaluation
   steps (100000).
+- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - Registry is authoritative — when this SKILL.md disagrees with registry
   templates, the registry wins.
+
+## Registry Templates
+
+| Template | Type | Purpose |
+|----------|------|---------|
+| `propose-hypotheses.j2` | KnowAct | The LLM generates 3-7 candidate hypotheses, each with a prediction, falsifier, and likelihood estimate. |
+| `refine-hypotheses.j2` | KnowAct | The LLM refines the hypothesis set in response to the deterministic Lisp invariant check (gated by `condition:` on the Lisp verdict). |
+| `report.j2` | KnowAct | Final report: the surviving hypothesis set with the Lisp invariant verdict and convergence score — which defects did Lisp catch that the LLM missed? |

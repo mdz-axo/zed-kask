@@ -11,6 +11,7 @@ use ui::{
 };
 
 use crate::SwarmPanel;
+use crate::status_is_warning;
 
 /// State for the agent-authoring surface.
 pub(crate) struct AuthorForm {
@@ -588,10 +589,15 @@ impl SwarmPanel {
                         )
                     })
                     .when_some(self.author.status.clone(), |this, status| {
+                        let is_warning = status_is_warning(&status);
                         this.child(
                             Label::new(status)
                                 .size(LabelSize::Small)
-                                .color(Color::Muted),
+                                .color(if is_warning {
+                                    Color::Warning
+                                } else {
+                                    Color::Muted
+                                }),
                         )
                     }),
             )

@@ -91,6 +91,7 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 - All templates are `KnowAct` type with `Public` visibility.
 - Default effort is `medium`; default output_format is `inline`.
 - Single-pass pipeline — no PDCA loop. `max_iterations: 1` prevents re-entry.
+- rJoule cap: 2 per invocation.
 - Verify step is decoupled from the rewrite step (self-improvement §9.1).
 - Hypothesis-tier findings are never mutated — always deferred for user verification.
 - Step conditions use `condition:` (not `skip_condition:`) — the step runs when the condition is true.

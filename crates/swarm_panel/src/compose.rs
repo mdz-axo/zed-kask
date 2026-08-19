@@ -12,6 +12,7 @@ use ui::{
 };
 
 use crate::SwarmPanel;
+use crate::status_is_warning;
 
 /// State for the swarm-composition surface.
 pub(crate) struct ComposeForm {
@@ -231,7 +232,7 @@ impl SwarmPanel {
                             .gap_2()
                             .items_center()
                             .child(
-                                Label::new("★ Xaman Ek")
+                                Label::new("Xaman Ek")
                                     .size(LabelSize::Small)
                                     .color(Color::Accent),
                             )
@@ -332,10 +333,15 @@ impl SwarmPanel {
                             })),
                     )
                     .when_some(self.compose.status.clone(), |this, status| {
+                        let is_warning = status_is_warning(&status);
                         this.child(
                             Label::new(status)
                                 .size(LabelSize::Small)
-                                .color(Color::Muted),
+                                .color(if is_warning {
+                                    Color::Warning
+                                } else {
+                                    Color::Muted
+                                }),
                         )
                     }),
             )

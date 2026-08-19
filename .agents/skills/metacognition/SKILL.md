@@ -23,6 +23,11 @@ prediction calibration.
 
 ## Instructions
 
+### Step 0 — Read prior calibration (execute)
+
+1. Read prior calibration from the scenarios MCP forecast store via `scenario_calibration` — the Brier score history and overconfidence_bias from all resolved forecasts.
+2. The overconfidence_bias feeds the grasp-current step so the agent knows its historical calibration. On failure, the Kata cycle proceeds without calibration context.
+
 ### meta-grasp-current (Kata Step 1: Grasp Current Condition)
 
 1. Measure the agent's actual metacognitive state — don't assume, measure.
@@ -63,7 +68,8 @@ prediction calibration.
 | `meta-grasp-current.j2` | KnowAct | Improvement Kata Step 1: measure the current metacognitive condition. |
 | `meta-establish-target.j2` | KnowAct | Improvement Kata Step 2: declare the target condition. |
 | `meta-predict.j2` | KnowAct | Improvement Kata Step 3: predict which calibration will close the gap, with confidence. |
-| `meta-experiment.j2` | KnowAct | Improvement Kata Step 4: apply the calibration and re-measure. |
+| `meta-experiment.j2` | KnowAct | Improvement Kata Step 4: apply the calibration (Falstaffian rotation, ellipsis analysis, or strategy adjustment) and re-measure. |
+| `ellipsis-analysis.j2` | KnowAct | Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional). Used by the experiment step for the ellipsis perspective. |
 | `falstaffian-perspective-engine.yaml` | RenderAct | Reference: three-fold structure (shapes, experience, spirit) with shape selection decision tree. |
 | `falstaffian-shapes.yaml` | RenderAct | Reference: seven semantic graph transformation operators. |
 | `falstaffian-variance-analysis.yaml` | RenderAct | Reference: three-pass variance calibration with agreement matrix. |

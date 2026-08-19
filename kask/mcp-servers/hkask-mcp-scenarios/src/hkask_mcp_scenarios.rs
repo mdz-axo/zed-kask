@@ -1933,7 +1933,11 @@ fn parse_scenario_type(s: Option<&str>) -> ScenarioType {
 /// and the companies crate's `cmp_provenance_round_trips_real_scenarios_emitter`
 /// asserts the same shape round-trips through `EventTreeProjection`.
 ///
-/// `id` matches `superforecast::convert_cmp_index`'s format
+/// Constructs the shared `superforecast::CmpIndexProvenance` (re-exported from
+/// `hkask_forecast`) so the emitter and the companies deserializer share one
+/// type-level source of truth — if the shared struct's fields change, both
+/// sides track the change at compile time. `id` matches
+/// `superforecast::convert_cmp_index`'s format
 /// (`cmp:{family}:{tenor}:{orientation}`), which is the event id the tree
 /// builder uses, so entries line up 1:1 with the tree's root nodes.
 fn emit_cmp_provenance(
@@ -1951,14 +1955,30 @@ fn emit_cmp_provenance(
                 CmpMethod::Interpolated => "interpolated",
                 CmpMethod::BucketedSparse => "bucketed_sparse",
             };
-            serde_json::json!({
-                "id": format!("cmp:{family_label}:{tenor}:{orientation}"),
-                "family": family_label,
-                "tenor": tenor,
-                "orientation": orientation,
-                "venue": venue,
-                "method": method,
-                "maturity_error_days": idx.index.portfolio.maturity_error_days,
+            let id = format!("cmp:{family_label}:{tenor}:{orientation}");
+            let provenance = superforecast::CmpIndexProvenance {
+                id: id.clone(),
+                family: family_label.to_string(),
+                tenor: tenor.to_string(),
+                orientation,
+                venue,
+                method: method.to_string(),
+                maturity_error_days: idx.index.portfolio.maturity_error_days,
+            };
+            // `serde_json::to_value` on a plain struct with `String`/`f64`
+            // fields cannot fail except on a non-finite `maturity_error_days`
+            // (NaN/inf). Fall back to the manual JSON in that case so a
+            // degenerate portfolio never loses the other 6 fields.
+            serde_json::to_value(provenance).unwrap_or_else(|_| {
+                serde_json::json!({
+                    "id": id,
+                    "family": family_label,
+                    "tenor": tenor,
+                    "orientation": idx.index.orientation.to_string(),
+                    "venue": idx.venue.to_string(),
+                    "method": method,
+                    "maturity_error_days": idx.index.portfolio.maturity_error_days,
+                })
             })
         })
         .collect()

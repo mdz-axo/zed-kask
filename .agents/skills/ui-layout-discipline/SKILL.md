@@ -43,3 +43,19 @@ elements (≤5 primary per Hick's Law), **protect text** (≥20em residual),
 
 - Pure logic changes with no layout impact.
 - Single-element cards. Test-only changes.
+
+## Registry Templates
+
+| Template | Type | Purpose |
+|----------|------|---------|
+| `sense.j2` | KnowAct | Measure container width, child min-widths, and text-column residual (Fitts's Law, flexbox overflow invariant). |
+| `orient.j2` | KnowAct | Count actions vs budget (≤5 primary, Hick's Law), grep sibling card patterns, compute congestion score and action-to-content ratio. |
+| `decide.j2` | KnowAct | Gate on hard layout constraints (Fagan checklist): no overflow, primary action visible, text column ≥ min width, on-grid spacing, action count ≤ budget. |
+| `act.j2` | KnowAct | Apply progressive disclosure remedies: PopoverMenu with Ellipsis trigger, truncate(), flex_shrink_0, min_w_0, hide-secondary. |
+| `review.j2` | KnowAct | Adversarial probes: 40-char label, localized German string, 320px container, 7 actions. |
+
+## Constraints
+
+- All templates are `KnowAct` with `Public` visibility; they emit `reg.ui_layout.*` spans.
+- rJoule cap: 1 per invocation. Maximum 5 iterations (Sense → Orient → Decide → Act → Review loop; convergence = all gates pass under adversarial probes).
+- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
