@@ -100,17 +100,31 @@ The sole bidirectional seam is `kask_bridge` (D8), which lives under
 
 1. `git fetch upstream && git merge upstream/main`
 2. Conflicts will only appear in:
-   - The D-seam files listed above (D1–D27)
+   - The D-seam files listed above (D1–D29; D17 and D19 are retired)
    - `[workspace.members]` / `[workspace.dependencies]` in root `Cargo.toml`
+     and `crates/zed/Cargo.toml` (kask deps + upstream's crate renames, e.g.
+     `csv_preview` → `tabular_data_preview`).
+   - `Cargo.lock` — regenerate from the merged manifests (do not hand-merge;
+     `cargo check --workspace` rewrites it).
+   - `kask/deny.toml` `allow-git` list — upstream may adopt new git forks
+     (e.g. `zed-industries/async-tar`, `tree-sitter/tree-sitter`). Add the new
+     source URLs; verify with `cargo deny --config kask/deny.toml check`.
+   - `typos.toml` — upstream may add new identifiers; merge into the kask
+     allowlist (kask's is the superset).
    - Modify/delete conflicts — upstream may restore files zed-kask deliberately
      deleted under D7/D16 (icons, `.desktop` templates, bundle scripts, release
-     workflows). Resolve by re-deleting; verify with
+     workflows, community-bot workflows). Resolve by re-deleting; verify with
      `bash kask/scripts/build/check-zed-isolation.sh`.
-3. Everything under `kask/` is additive → never conflicts.
+3. Everything under `kask/` is additive → never conflicts. (Exception: kask
+   tracing targets using the `reg.*` prefix must be registered in
+   `CANONICAL_NAMESPACES` or retargeted to `hkask.*` — the reg-canonical gate
+   scans `kask/crates/` and `kask/mcp-servers/`. Performative log targets
+   belong on `hkask.*`, not `reg.*`.)
 4. After resolving, run `bash kask/scripts/check-hkask-no-zed-deps.sh` to
    verify the §13.1 invariant still holds.
 5. Run `cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server` to
-   verify the bridge + foundation still compile.
+   verify the bridge + foundation still compile. (Not yet a CI job — see
+   the CI gap note below.)
 6. Run `bash kask/scripts/build/check-zed-isolation.sh` — verifies deleted
    upstream surfaces (icons, `.desktop` templates, bundle scripts, release
    workflows) were not silently restored by the merge. Wired into CI
@@ -118,3 +132,26 @@ The sole bidirectional seam is `kask_bridge` (D8), which lives under
 7. Run `./script/clippy` (per `.rules` build guidelines — use this instead of
    `cargo clippy`; runs under `--deny warnings`). A `rust-toolchain.toml` bump
    may promote previously-allowed lints to denied — clippy catches these.
+8. Run the full verification gate (mirrors the CI jobs in
+   `.github/workflows/kask-ci.yml`):
+   - `cargo fmt --all -- --check`
+   - `cargo nextest run --no-fail-fast -p 'hkask-*' -p kask_bridge`
+   - `cargo deny --manifest-path Cargo.toml --config kask/deny.toml check`
+   - `cargo machete`
+   - `typos --config typos.toml`
+   - `buf lint crates/proto/proto` && `buf format --exit-code crates/proto/proto`
+   - `cd kask && bash scripts/check-unused-deps.sh` (nightly)
+   - All `kask/scripts/check-*-selftest.sh` scripts
+
+### CI gap: runbook step 5 is not mechanically enforced
+
+Step 5 (`cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server`)
+is a manual runbook step, not a CI job. The `kask-ci.yml` `invariants` job
+runs the isolation and no-zed-deps checks but not this three-crate compile
+check. A merge that breaks the bridge compile would only be caught by the
+`clippy` or `test` jobs (which compile the whole workspace) — both run
+after the `invariants` job, so a bridge break wastes ~10 min of CI before
+surfacing. **Recommendation:** add a `bridge-compile` job to `kask-ci.yml`
+that runs step 5's `cargo check` as a fast-failing gate before the heavy
+`clippy`/`test` jobs. This is low-risk (additive — a new job, no changes to
+existing jobs) and closes the gap between the documented runbook and CI.

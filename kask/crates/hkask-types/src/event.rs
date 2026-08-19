@@ -116,8 +116,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.adapter",
     "reg.pod",
     "reg.alert",
-    // ── Algedonic (pain/pleasure) signal — cybernetic feedback loop ──
-    "reg.algedonic",
     // ── Seam architecture ──
     "reg.architecture.seam.coverage",
     "reg.architecture.seam.drift",

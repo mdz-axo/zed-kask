@@ -47,7 +47,7 @@ impl AlgedonicLogSink for BridgeAlgedonicLogSink {
         let count_after = ledger.alert_log_count().await;
         let cleared = count_before.saturating_sub(count_after);
         tracing::info!(
-            target: "reg.algedonic",
+            target: "hkask.algedonic",
             cleared = cleared,
             remaining = count_after,
             "Algedonic log: cleared reviewed alerts"
@@ -60,7 +60,7 @@ impl AlgedonicLogSink for BridgeAlgedonicLogSink {
         let count_before = ledger.alert_log_count().await;
         ledger.clear_all_alerts().await;
         tracing::warn!(
-            target: "reg.algedonic",
+            target: "hkask.algedonic",
             cleared = count_before,
             "Algedonic log: cleared ALL alerts (including unresolved Critical)"
         );
