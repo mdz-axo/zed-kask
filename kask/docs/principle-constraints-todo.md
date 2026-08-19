@@ -2,6 +2,16 @@
 
 ## All tasks complete
 
+### Codegraph fix
+
+**Root cause**: `ensure_indexed()` in `kask/mcp-servers/hkask-mcp-codegraph/src/hkask_mcp_codegraph.rs` unconditionally called `index_directory` (file hash walk) + `finalize` (PageRank computation) on every server startup. With 670K symbols and 1M edges, PageRank takes minutes, blocking all MCP calls behind a 60-second context server timeout.
+
+**Fix** (`kask/mcp-servers/hkask-mcp-codegraph/src/hkask_mcp_codegraph.rs:74-105`):
+- If the database already has symbols (populated by a prior run), skip the index walk and PageRank entirely. The data is already valid — `codegraph_reindex` is the explicit way to refresh after code changes.
+- Also skip PageRank when `index_directory` finds all files unchanged (`all_skipped`).
+
+**Result**: Server starts at 0% CPU, queries return instantly. Verified by direct JSON-RPC test: `codegraph_query` with `name: "ProvenanceTag"` returns the symbol in <1 second.
+
 ### Cascade (end-to-end, tested 2026-08-19)
 
 Both derive and verify modes work end-to-end.
@@ -35,18 +45,12 @@ Both derive and verify modes work end-to-end.
 
 **Constraint set file** (`kask/docs/architecture/principle-constraints.yaml`):
 - Empty state (`principles: []`) — ready for human-approved constraint sets
-- Format: one entry per principle with constraint_set, gaps, summary
 
 **CI hook** (`kask/scripts/check-principle-constraints.sh`):
 - Verifies `enforced` constraints: checks `enforced_at` file exists, checks `falsifier` test exists via grep
 - Reports `gap` constraints as warnings (not failures)
 - Fails (exit 1) if any enforced constraint has drifted
-- Passes (exit 0) when no constraints or all enforced constraints intact
 - Tested with both valid and drifted fixtures
-
-### Codegraph decision
-
-The `codegraph_query` execute step was intentionally not added. The step's `on_failure` config can only escalate (`report`/`halt`/`escalate` all exit the cascade via `Effect::Exit(Escalated)`), so a codegraph server outage would abort the entire derivation. Instead, callers pass pre-gathered context via the `code_context` input parameter. This is simpler and doesn't introduce a failure dependency on the codegraph MCP server.
 
 ### max_tokens cleanup
 
@@ -69,8 +73,8 @@ Removed `max_tokens` from all skill templates:
 | P5 (one discipline applied twice) | derive | 9 | 1 | 8 |
 | P7 (forecast parameter impact check) | derive | 10 | 0 | 10 |
 
-## Decisions deferred to human
+## Remaining (deferred to human)
 
 - Which P6/P5/P7 gap remediations to implement
 - Whether to persist any of the derived constraint sets to `kask/docs/architecture/principle-constraints.yaml`
-- Whether to add a `compute` step with `lisp.eval` for iterative refinement (currently single-pass)
+- Whether to add a codegraph_query execute step to the manifest (codegraph is fixed, but `on_failure` can still only escalate — a `resume` action would need to be added to the step machine)

@@ -78,10 +78,18 @@ steps:
   #
   # The codegraph_query execute step was intentionally not added. The step's
   # on_failure config can only escalate (report/halt/escalate all exit the
-  # cascade), so a codegraph server outage would abort the entire derivation.
-  # Instead, callers pass pre-gathered context via the code_context input
-  # parameter when they need symbol-level citations. This is simpler and
-  # doesn't introduce a failure dependency on the codegraph MCP server.
+  # cascade via Effect::Exit(Escalated)), so a codegraph server outage would
+  # abort the entire derivation. Instead, callers pass pre-gathered context
+  # via the code_context input parameter when they need symbol-level
+  # citations. This is simpler and doesn't introduce a failure dependency on
+  # the codegraph MCP server.
+  #
+  # Codegraph itself is now fixed (ensure_indexed skips the index walk and
+  # PageRank when the database already has symbols), so the step could be
+  # re-added. The on_failure escalation issue remains — a codegraph_query
+  # step that fails would abort the cascade. To re-add: use a separate
+  # execute step and accept that codegraph outages escalate, or add a
+  # 'resume' on_failure action to the step machine.
   - ordinal: 1
     action: select
     description: >

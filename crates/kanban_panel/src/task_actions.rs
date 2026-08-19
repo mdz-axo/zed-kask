@@ -41,9 +41,6 @@ impl CreateTaskForm {
                 );
                 editor
             }),
-                let mut editor = Editor::single_line(window, cx);
-                editor
-            }),
         }
     }
 
@@ -70,8 +67,6 @@ impl CreateTaskForm {
             if !criteria.is_empty() {
                 args["criteria"] = json!(criteria);
             }
-        }
-        if let Ok(budget) = gas_text.trim().parse::<u64>() {
         }
         args
     }
@@ -205,9 +200,6 @@ impl SpawnTaskForm {
                 editor.set_placeholder_text("Swarm id (optional)", window, cx);
                 editor
             }),
-                let mut editor = Editor::single_line(window, cx);
-                editor
-            }),
             task_id: task_id.to_string(),
         }
     }
@@ -233,8 +225,6 @@ impl SpawnTaskForm {
         }
         if !swarm_id.trim().is_empty() {
             args["swarm_id"] = json!(swarm_id);
-        }
-        if let Ok(budget) = gas_text.trim().parse::<u64>() {
         }
         args
     }

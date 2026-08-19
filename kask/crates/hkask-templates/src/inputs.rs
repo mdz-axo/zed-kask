@@ -166,6 +166,40 @@ pub fn render_input_param_spec(manifest_inputs: Option<&Value>) -> String {
     parts.join("; ")
 }
 
+/// Apply declared `default` values for inputs that are absent from the runtime
+/// `context`. The manifest's `inputs` block may declare a `default` field per
+/// input; this function injects those defaults into the context map before
+/// `validate_inputs` runs, so non-required inputs without a caller-supplied
+/// value still receive a value.
+///
+/// This closes the gap noted in the module docstring: the `default` field was
+/// documented in the input spec (`{name, type, required, default, description}`)
+/// but never applied by the executor. Returns the number of defaults applied
+/// (for observability — a skill that always falls back to defaults may have an
+/// upstream wiring gap).
+pub fn apply_input_defaults(
+    inputs: Option<&Value>,
+    context: &mut HashMap<String, Value>,
+) -> usize {
+    let Some(Value::Array(declared)) = inputs else {
+        return 0;
+    };
+    let mut applied = 0;
+    for entry in declared {
+        let Some(name) = entry.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if context.contains_key(name) {
+            continue;
+        }
+        if let Some(default) = entry.get("default") {
+            context.insert(name.to_string(), default.clone());
+            applied += 1;
+        }
+    }
+    applied
+}
+
 /// Extract the set of input keys declared in a `.j2` template's `contract.input`
 /// frontmatter block.
 ///
