@@ -235,8 +235,8 @@ fn steer_system_prompt(
          `delegate_results` array into the next LOOP iteration so C5 (fault
          attribution) and C6 (reconfigure) close the loop structurally — no
          prompt instruction needed. In ABW mode, delegate to Xaman Ek via
-         `swarm_xaman` with the plan as the message. The operator can use the
-         "Launch Plan" button to inject this instruction if you did not execute
+         `swarm_xaman` with the plan as the message. The operator can use the \
+         \"Launch Plan\" button to inject this instruction if you did not execute
          automatically.
 
          The consent gate (ABW mode only) is enforced by `swarm_request_consent` \
