@@ -20,7 +20,7 @@ visibility: Public
 {# self-assessment bias. Distinct from the producer-coupled evaluate step: this #}
 {# gate is a deterministic rubric, not a generator. Mirrors superforecasting's #}
 {# forecast-quality-gate separation of concerns. #}
-{# v0.35.0: adds target_condition_coverage criterion (7 criteria total). #}
+{# v0.36.0: adds target_condition_coverage criterion (7 criteria total). #}
 {# Produces: gate_scores, gate_weighted_total, gate_pass, gate_findings #}
 
 [inference]
@@ -61,7 +61,7 @@ project-specific conventions independently of the producer's evaluation.
 {% endif %}
 
 {% if target_condition %}
-## Target Condition (v0.35.0 — coverage anchor)
+## Target Condition (v0.36.0 — coverage anchor)
 
 The target condition is the goal, end state, or outcome the plan must achieve. Use
 it to score the `target_condition_coverage` criterion independently: do the tasks

@@ -17,7 +17,6 @@ use std::sync::Arc;
 use credentials_provider::CredentialsProvider;
 use gpui::{App, ReadGlobal as _, Task};
 use settings::SettingsStore;
-use settings_content::OpenAiCompatibleSettingsContent;
 
 /// The URL prefix for kask-namespaced credentials in the keychain.
 /// Must match `kask_bridge::KASK_CREDENTIAL_NAMESPACE`.

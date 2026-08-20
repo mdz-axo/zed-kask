@@ -238,7 +238,7 @@ pub struct SetPoints {
     /// Read from the latest trace run's `metrics.json` `mutation_score`.
     /// Default: 0.50.
     pub mutation_score_floor: f64,
-    // ── Grounding (verification ladder Rung 3, v0.35.0) ──
+    // ── Grounding (verification ladder Rung 3, v0.36.0) ──
     /// Minimum grounding clean rate before the Cybernetics Loop alerts.
     /// When the fraction of grounded delegations with zero nulled fields
     /// drops below this, the `GroundingSensor` produces a signal — more

@@ -2,7 +2,7 @@
 title: "Prediction Markets MCP Server Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-08-06
-version: "0.35.0"
+version: "0.36.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [domain, composition, lifecycle]

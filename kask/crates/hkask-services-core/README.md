@@ -2,7 +2,7 @@
 
 Foundation crate for the hKask service layer. Defines shared types, configuration, error taxonomy, and port traits used across all service crates.
 
-**Version:** v0.35.0 | **Crate:** `hkask-services-core`
+**Version:** v0.36.0 | **Crate:** `hkask-services-core`
 
 ## Modules
 

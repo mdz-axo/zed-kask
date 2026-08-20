@@ -12,7 +12,8 @@ Kask↔Zed seam. The implementation lives in the registry:
 - **Templates**: `kask/registry/templates/kask-seam-audit/*.j2`
 
 This SKILL.md is a discovery-only catalog entry. Invoke the skill via the
-`skill` tool; the ManifestExecutor runs the registry cascade.
+`skill` tool; the agent reads the SKILL.md and calls `lisp_eval`, `render_template`,
+and MCP tools directly as the methodology instructs.
 
 ## When to use
 

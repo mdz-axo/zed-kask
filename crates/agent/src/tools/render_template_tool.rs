@@ -104,7 +104,7 @@ impl AgentTool for RenderTemplateTool {
             let template_body = strip_frontmatter(&content);
 
             // Build minijinja environment and render.
-            let mut env = minijinja::Environment::new();
+            let env = minijinja::Environment::new();
             // Add a loader for inline template — we render the body directly.
             let result = env.render_str(&template_body, &input.context).map_err(|e| {
                 RenderTemplateToolOutput::Error {

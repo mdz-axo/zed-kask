@@ -2,7 +2,7 @@
 title: "zed-kask — Minimal-Divergence Fork Architecture & Migration Plan"
 audience: [architects, integrators]
 last_updated: 2026-08-14
-version: "0.35.0"
+version: "0.36.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust, lifecycle]

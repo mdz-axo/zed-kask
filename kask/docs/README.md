@@ -2,7 +2,7 @@
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-08-15
-version: "0.35.0"
+version: "0.36.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]

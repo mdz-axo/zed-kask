@@ -884,7 +884,7 @@ fn main() {
         // status bar (wired later in the deferred task's model-dependent
         // wiring block).
         let panel_regulation_ledger = regulation_ledger.clone();
-        let regulation_ledger_for_model_task = regulation_ledger.clone();
+        let _regulation_ledger_for_model_task = regulation_ledger.clone();
         // The alert sink forwards critical alerts to a GPUI foreground task
         // that dispatches them as toasts, so the user is notified even when
         // the Kask panel is closed. The channel bridges the background tokio
@@ -1254,7 +1254,7 @@ fn main() {
         // task fires on `LanguageModelRegistry` events, independent of user
         // login — the skill cascade only needs the model + tool_port, not
         // the username.
-        let tool_port_for_model_task: std::sync::Arc<dyn hkask_capability::ToolPort> =
+        let _tool_port_for_model_task: std::sync::Arc<dyn hkask_capability::ToolPort> =
             tool_port.clone();
         {
             let user_store = app_state.user_store.clone();
@@ -2233,14 +2233,10 @@ fn main() {
                             std::sync::Arc::new(kask_bridge::NoModelInferencePort);
                         // No tool port here: the no-op port means no chat model
                         // is configured yet, so delegated agents have nothing to
-                        // dispatch against. The guarded IPC server (started after
+                        // dispatch against. The governed IPC server (started after
                         // the model resolves) carries the McpRuntime tool port.
-                        // Same for skill execution — the skill cascade
-                        // is wired by the separate model-dependent task
-                        // when the model resolves, not here.
                         match kask_bridge::InferenceIpcServer::start(
                             no_model_port,
-                            None,
                             None,
                             None,
                             cx,
