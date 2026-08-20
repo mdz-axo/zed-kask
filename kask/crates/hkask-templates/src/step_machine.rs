@@ -91,13 +91,8 @@ pub struct StepMachine {
     pub(crate) last_result_step: Option<StepId>,
     /// Matryoshka recursion depth. Only incremented by `FlowDefAction`.
     pub(crate) depth: u8,
-    /// Tool calls made during this cascade (execute steps only). Each entry
-    /// is `{"tool": "server/tool_name", "ok": true/false}` — same shape as
-    /// `LocalDelegateResult.tool_calls`. Surfaced on `CascadeOutcome` so the
-    /// skill executor can run grounding checks (Phase 5: skill cascade
-    /// grounding). Sub-cascade tool calls (from `execute_parallel` branches)
-    /// are tracked by their own `StepMachine`, not merged here.
     pub(crate) tool_calls: Vec<serde_json::Value>,
+    pub(crate) discovered_tools: Option<Vec<String>>,
 }
 
 /// The outcome of running a cascade to completion.
@@ -146,6 +141,7 @@ impl StepMachine {
             depth: 0,
             resume_text: None,
             tool_calls: Vec::new(),
+            discovered_tools: None,
         }
     }
 
@@ -450,6 +446,13 @@ impl StepMachine {
         let max_retries = if self.error_handling.on_timeout == "retry"
             || self.error_handling.on_parse_failure == "retry"
         {
+            if self.error_handling.max_retries == 0 {
+                tracing::warn!(
+                    target: "hkask.templates.retry",
+                    step = node.ordinal,
+                    "on_timeout/on_parse_failure is 'retry' but max_retries is 0 — no retries will fire"
+                );
+            }
             self.error_handling.max_retries
         } else {
             0
@@ -514,83 +517,77 @@ impl StepMachine {
                     continue;
                 }
                 Err(e) => {
-                    // Per-step on_failure: check for halt/escalate/report after
-                    // retries are exhausted. This is the enforcement point
-                    // for OnFailureConfig on execute/select/compute steps —
-                    // previously only gates checked it.
-                    if let Some(ref on_failure) = node.on_failure {
-                        match on_failure.action.as_str() {
-                            "report" => {
-                                // Co-evolution Phase 2, Loop 2: report the
-                                // failure to the curator before escalating.
-                                // The report is best-effort — if the curator
-                                // MCP server is down, the escalation still
-                                // proceeds (the resume text is logged).
-                                let tool_name = node.mcp.as_deref().unwrap_or("").to_string();
-                                let report_input = serde_json::json!({
-                                    "skill_name": self.manifest_id,
-                                    "tool_name": tool_name,
-                                    "step_ordinal": node.ordinal,
-                                    "error": format!("{e}"),
-                                    "tool_input": null,
-                                    "failure_type": null,
-                                });
-                                // Best-effort: log if the report fails.
-                                // Clone `infra.tools` into a standalone local
-                                // before the await — rustc's HRTB `Send` check
-                                // rejects a `&infra.tools` borrow held across an
-                                // `.await` under `tokio::spawn`.
-                                let tools = infra.tools.clone();
-                                if let Err(report_err) = crate::step_actions::invoke_tool(
-                                    tools,
-                                    "curator_report_skill_use_issue".to_string(),
-                                    report_input,
-                                )
-                                .await
-                                {
-                                    tracing::warn!(
-                                        target: "reg.skill.cascade.skill_use_issue_report_failed",
-                                        step = node.ordinal,
-                                        error = %report_err,
-                                        "Failed to report skill-use issue to curator — escalation proceeds without report",
-                                    );
-                                }
-                                tracing::warn!(
-                                    target: "reg.skill.cascade.step_failed",
-                                    step = node.ordinal,
-                                    action = %on_failure.action,
-                                    error = %e,
-                                    resume = %on_failure.resume,
-                                    "Step {} failed — on_failure report+escalate",
-                                    node.ordinal
-                                );
-                                self.resume_text = Some(on_failure.resume.clone());
-                                return Ok(crate::step_actions::Effect::Exit(
-                                    crate::step_graph::ExitKind::Escalated,
-                                ));
-                            }
-                            "halt" | "escalate" => {
-                                tracing::warn!(
-                                    target: "reg.skill.cascade.step_failed",
-                                    step = node.ordinal,
-                                    action = %on_failure.action,
-                                    error = %e,
-                                    resume = %on_failure.resume,
-                                    failure_mode = classify_failure_mode(&e),
-                                    "Step {} failed — on_failure config halts the cascade",
-                                    node.ordinal
-                                );
-                                self.resume_text = Some(on_failure.resume.clone());
-                                return Ok(crate::step_actions::Effect::Exit(
-                                    crate::step_graph::ExitKind::Escalated,
-                                ));
-                            }
-                            _ => {}
-                        }
+                    if let Some(effect) = self.handle_step_failure(&node, &infra, &e).await {
+                        return Ok(effect);
                     }
                     return Err(e);
                 }
             }
+        }
+    }
+
+    /// Check per-step `on_failure` config after retries are exhausted.
+    async fn handle_step_failure(
+        &mut self,
+        node: &crate::step_graph::StepNode,
+        infra: &Infra,
+        error: &crate::ports::TemplateError,
+    ) -> Option<crate::step_actions::Effect> {
+        let on_failure = node.on_failure.as_ref()?;
+        let exit = || crate::step_actions::Effect::Exit(crate::step_graph::ExitKind::Escalated);
+        match on_failure.action.as_str() {
+            "report" => {
+                let tool_name = node.mcp.as_deref().unwrap_or("").to_string();
+                let report_input = serde_json::json!({
+                    "skill_name": self.manifest_id,
+                    "tool_name": tool_name,
+                    "step_ordinal": node.ordinal,
+                    "error": format!("{error}"),
+                    "tool_input": null,
+                    "failure_type": null,
+                });
+                let tools = infra.tools.clone();
+                if let Err(report_err) = crate::step_actions::invoke_tool(
+                    tools,
+                    "curator_report_skill_use_issue".to_string(),
+                    report_input,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        target: "reg.skill.cascade.skill_use_issue_report_failed",
+                        step = node.ordinal,
+                        error = %report_err,
+                        "Failed to report skill-use issue to curator — escalation proceeds without report",
+                    );
+                }
+                tracing::warn!(
+                    target: "reg.skill.cascade.step_failed",
+                    step = node.ordinal,
+                    action = on_failure.action.as_str(),
+                    error = %error,
+                    resume = %on_failure.resume,
+                    "Step {} failed — on_failure report+escalate",
+                    node.ordinal
+                );
+                self.resume_text = Some(on_failure.resume.clone());
+                Some(exit())
+            }
+            "halt" | "escalate" => {
+                tracing::warn!(
+                    target: "reg.skill.cascade.step_failed",
+                    step = node.ordinal,
+                    action = on_failure.action.as_str(),
+                    error = %error,
+                    resume = %on_failure.resume,
+                    failure_mode = classify_failure_mode(error),
+                    "Step {} failed — on_failure config halts the cascade",
+                    node.ordinal
+                );
+                self.resume_text = Some(on_failure.resume.clone());
+                Some(exit())
+            }
+            _ => None,
         }
     }
 
@@ -682,17 +679,18 @@ impl StepMachine {
     }
 
     /// Check whether the `terminal` tool is available (for profile enforcement).
-    async fn is_terminal_available(&self, infra: Infra) -> bool {
+    async fn is_terminal_available(&mut self, infra: Infra) -> bool {
         match &infra.terminal_check {
             Some(check) => check(),
             None => {
-                // Clone `infra.tools` into a standalone local before the await —
-                // `discover_tools` returns a future borrowing `&self`, and
-                // rustc's HRTB `Send` check rejects a `&infra.tools` borrow
-                // held across `.await` under `tokio::spawn`.
-                let tools = infra.tools.clone();
-                let available = tools.discover_tools().await;
-                available.iter().any(|t| t == "terminal")
+                if self.discovered_tools.is_none() {
+                    let tools = infra.tools.clone();
+                    self.discovered_tools = Some(tools.discover_tools().await);
+                }
+                self.discovered_tools
+                    .as_ref()
+                    .map(|v| v.iter().any(|t| t == "terminal"))
+                    .unwrap_or(false)
             }
         }
     }

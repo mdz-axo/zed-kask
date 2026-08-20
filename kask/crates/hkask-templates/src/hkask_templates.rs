@@ -19,7 +19,6 @@ pub mod inputs;
 pub mod manifest_loader;
 mod output_schema;
 pub mod ports;
-pub mod prompt_strategy;
 pub mod registry;
 pub mod step_actions;
 pub mod step_context;
@@ -43,11 +42,10 @@ pub use manifest_loader::{
     ManifestLoadError, McpReferenceWarning, load_manifest_from_yaml, validate_mcp_references,
 };
 pub use ports::{Result, TemplateError};
-pub use prompt_strategy::PromptStrategy;
 
 pub use registry::{
-    KNOWN_MCP_TOOLS, Registry, company_source_seed, process_manifest_seed, template_file,
-    template_file_seed, template_manifest_seed, template_yaml_file, template_yaml_file_seed,
+    KNOWN_MCP_TOOLS, company_source_seed, process_manifest_seed, template_file, template_file_seed,
+    template_manifest_seed, template_yaml_file, template_yaml_file_seed,
 };
 
 #[cfg(any(test, feature = "test-utils"))]

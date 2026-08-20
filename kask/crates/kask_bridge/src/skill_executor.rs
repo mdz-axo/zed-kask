@@ -250,7 +250,7 @@ impl BridgeManifestExecutor {
 
             let result = match result {
                 Ok(outcome) => {
-                    let actual = extract_final_step_result(&outcome);
+                    let actual = final_result_as_string(&outcome);
                     let passed = actual == fixture.expected_output;
                     GoldenOutputResult {
                         fixture_index: i,
@@ -317,16 +317,21 @@ impl BridgeManifestExecutor {
                 )
             })?;
 
-        // Fast path: cache hit with matching mtime
-        if let Ok(cache) = self.manifest_cache.lock() {
-            if let Some((cached_mtime, manifest)) = cache.get(skill_name) {
-                if *cached_mtime == mtime {
+        match self.manifest_cache.lock() {
+            Ok(cache) => {
+                if let Some((cached_mtime, manifest)) = cache.get(skill_name)
+                    && *cached_mtime == mtime
+                {
                     return Ok(manifest.clone());
                 }
             }
+            Err(_) => tracing::warn!(
+                target: "hkask.bridge.manifest_cache",
+                skill = skill_name,
+                "manifest cache lock poisoned — re-reading from disk",
+            ),
         }
 
-        // Slow path: read from disk + parse
         let yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
             format!(
                 "No manifest found for skill '{skill_name}' on disk at {}",
@@ -336,7 +341,6 @@ impl BridgeManifestExecutor {
         let manifest = load_manifest_from_yaml(&yaml)
             .map_err(|e| format!("Failed to load manifest '{skill_name}': {e}"))?;
 
-        // Update cache
         if let Ok(mut cache) = self.manifest_cache.lock() {
             cache.insert(skill_name.to_string(), (mtime, manifest.clone()));
         }
@@ -353,6 +357,28 @@ impl BridgeManifestExecutor {
     /// path, factored out of `execute_skill` so both the single-skill and
     /// bundle-composition paths use the same wiring (model defaults injection,
     /// profile enforcement, tokio handle).
+    /// Shared spawn tail: build executor, spawn on tokio, await.
+    async fn spawn_cascade(
+        &self,
+        manifest: hkask_templates::BundleManifest,
+        context: HashMap<String, Value>,
+        prior_messages: Vec<hkask_types::ports::inference_types::ChatMessage>,
+        memory_snippets: Vec<hkask_types::ports::memory_port::MemorySnippet>,
+        progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+        title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    ) -> Result<CascadeOutcome, String> {
+        let executor = self.build_executor(progress, title, prior_messages, memory_snippets);
+        let join_handle = self.tokio_handle.spawn(async move {
+            executor
+                .execute_manifest_into(manifest, context)
+                .await
+                .map_err(|e| format!("Manifest execution failed: {e}"))
+        });
+        join_handle
+            .await
+            .map_err(|e| format!("Manifest execution task failed: {e}"))?
+    }
+
     async fn run_manifest_cascade(
         &self,
         skill_name: &str,
@@ -361,7 +387,6 @@ impl BridgeManifestExecutor {
         title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     ) -> Result<CascadeOutcome, String> {
         let manifest = self.load_cached_manifest(skill_name)?;
-
         if !manifest.is_skill() {
             return Err(format!(
                 "Skill '{skill_name}' has category '{}' — only `skill` manifests may execute via the skill tool",
@@ -370,30 +395,11 @@ impl BridgeManifestExecutor {
                     .map_or_else(|| "skill (unset)".to_string(), |c| c.to_string())
             ));
         }
-
-        // Inject model defaults (same as execute_skill).
         self.inject_model_defaults(&mut context);
-
-        // Sub-cascade path (run_manifest_cascade resolves by name) — no
-        // thread context. Prior messages and memory snippets are only
-        // injected at the top-level skill invocation site.
-        let executor = self.build_executor(progress, title, Vec::new(), Vec::new());
-
-        let join_handle = self.tokio_handle.spawn(async move {
-            executor
-                .execute_manifest_into(manifest, context)
-                .await
-                .map_err(|e| format!("Manifest execution failed: {e}"))
-        });
-
-        join_handle
+        self.spawn_cascade(manifest, context, Vec::new(), Vec::new(), progress, title)
             .await
-            .map_err(|e| format!("Manifest execution task failed: {e}"))?
     }
 
-    /// Variant of `run_manifest_cascade` that takes a pre-loaded manifest
-    /// instead of resolving by name. Used by `refine_bundle` to run the
-    /// minimal single-step evolve manifest without a registry lookup.
     async fn run_manifest_cascade_with_manifest(
         &self,
         manifest: &hkask_templates::BundleManifest,
@@ -403,127 +409,80 @@ impl BridgeManifestExecutor {
         progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
         title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     ) -> Result<CascadeOutcome, String> {
-        // Enforce the same `is_skill()` guard as `run_manifest_cascade` — the
-        // inline refine manifest is hardcoded (not user-supplied) so this is
-        // defense in depth, but the guard must be uniform to prevent an infra
-        // manifest from executing via the skill tool if the inline YAML is
-        // ever edited to add `category: pipeline`.
         if !manifest.is_skill() {
             return Err(format!(
-                "Refine manifest has category '{}' — only `skill` manifests may execute via the skill tool",
+                "Manifest '{}' has category '{}' — only `skill` manifests may execute via the skill tool",
+                manifest.id,
                 manifest
                     .category
                     .map_or_else(|| "skill (unset)".to_string(), |c| c.to_string())
             ));
         }
-
         self.inject_model_defaults(&mut context);
-
-        // NOTE: Short-term (prior_messages) and long-term (memory_snippets)
-        // context are injected structurally via `build_cascade_messages` in
-        // `step_actions.rs` — prepended as a system message to every
-        // `execute_select` inference call. They are NOT injected as template
-        // fields (`{{ session_history }}` / `{{ memory_context }}`).
-        //
-        // Per the design requirement: memory context must be part of the
-        // system prompt or injected with every template call — not an
-        // optional template field that templates must opt into. The
-        // structural injection in `build_cascade_messages` ensures every
-        // template step sees the memory and prior turns, regardless of
-        // whether the template references them by name.
-        //
-        // `prior_outcomes` (intra-cascade step results for Brier scoring)
-        // remains a separate template field — it is NOT conflated with
-        // memory context.
-        let executor = self.build_executor(progress, title, prior_messages, memory_snippets);
-
-        let join_handle = self.tokio_handle.spawn({
-            let manifest = manifest.clone();
-            async move {
-                executor
-                    .execute_manifest_into(manifest, context)
-                    .await
-                    .map_err(|e| format!("Manifest execution failed: {e}"))
-            }
-        });
-
-        join_handle
-            .await
-            .map_err(|e| format!("Manifest execution task failed: {e}"))?
+        self.spawn_cascade(
+            manifest.clone(),
+            context,
+            prior_messages,
+            memory_snippets,
+            progress,
+            title,
+        )
+        .await
     }
 
     /// Inject config-driven model defaults into the template context.
     /// Factored out of `execute_skill` so both paths share the same injection.
     fn inject_model_defaults(&self, context: &mut HashMap<String, Value>) {
-        if !context.contains_key("embedding_model") {
-            context.insert(
-                "embedding_model".into(),
-                Value::String(hkask_inference::model_constants::embedding_model()),
-            );
-        }
-        if !context.contains_key("classifier_model") {
-            context.insert(
-                "classifier_model".into(),
-                Value::String(hkask_inference::model_constants::classifier_model()),
-            );
-        }
-        if !context.contains_key("ocr_model") {
-            context.insert(
-                "ocr_model".into(),
-                Value::String(hkask_inference::model_constants::ocr_model()),
-            );
-        }
-        if !context.contains_key("default_model") {
-            context.insert(
-                "default_model".into(),
-                Value::String(std::env::var("HKASK_DEFAULT_MODEL").unwrap_or_else(|_| {
-                    hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL.to_string()
-                })),
-            );
-        }
-        if !context.contains_key("qa_model") {
-            context.insert(
-                "qa_model".into(),
-                Value::String(std::env::var("HKASK_QA_MODEL").unwrap_or_else(|_| {
-                    hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL.to_string()
-                })),
-            );
-        }
-        if !context.contains_key("tts_model") {
-            context.insert(
-                "tts_model".into(),
-                Value::String(std::env::var("HKASK_MEDIA_TTS_MODEL").unwrap_or_else(|_| {
-                    hkask_inference::model_constants::DEFAULT_TTS_MODEL.to_string()
-                })),
-            );
-        }
-        if !context.contains_key("stt_model") {
-            context.insert(
-                "stt_model".into(),
-                Value::String(std::env::var("HKASK_MEDIA_STT_MODEL").unwrap_or_else(|_| {
-                    hkask_inference::model_constants::DEFAULT_STT_MODEL.to_string()
-                })),
-            );
-        }
-        if !context.contains_key("vision_model") {
-            context.insert(
-                "vision_model".into(),
-                Value::String(
-                    std::env::var("HKASK_MEDIA_VISION_MODEL").unwrap_or_else(|_| {
-                        hkask_inference::model_constants::DEFAULT_VISION_MODEL.to_string()
-                    }),
-                ),
-            );
-        }
-        if !context.contains_key("image_gen_model") {
-            context.insert(
-                "image_gen_model".into(),
-                Value::String(
-                    std::env::var("HKASK_MEDIA_IMAGE_GEN_MODEL").unwrap_or_else(|_| {
-                        hkask_inference::model_constants::DEFAULT_IMAGE_GEN_MODEL.to_string()
-                    }),
-                ),
-            );
+        const DEFAULTS: &[(&str, &str, &str)] = &[
+            ("embedding_model", "", ""),
+            ("classifier_model", "", ""),
+            ("ocr_model", "", ""),
+            (
+                "default_model",
+                "HKASK_DEFAULT_MODEL",
+                hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL,
+            ),
+            (
+                "qa_model",
+                "HKASK_QA_MODEL",
+                hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL,
+            ),
+            (
+                "tts_model",
+                "HKASK_MEDIA_TTS_MODEL",
+                hkask_inference::model_constants::DEFAULT_TTS_MODEL,
+            ),
+            (
+                "stt_model",
+                "HKASK_MEDIA_STT_MODEL",
+                hkask_inference::model_constants::DEFAULT_STT_MODEL,
+            ),
+            (
+                "vision_model",
+                "HKASK_MEDIA_VISION_MODEL",
+                hkask_inference::model_constants::DEFAULT_VISION_MODEL,
+            ),
+            (
+                "image_gen_model",
+                "HKASK_MEDIA_IMAGE_GEN_MODEL",
+                hkask_inference::model_constants::DEFAULT_IMAGE_GEN_MODEL,
+            ),
+        ];
+        for (key, env_var, default) in DEFAULTS {
+            if context.contains_key(*key) {
+                continue;
+            }
+            let value = match *key {
+                "embedding_model" => {
+                    hkask_inference::model_constants::embedding_model().to_string()
+                }
+                "classifier_model" => {
+                    hkask_inference::model_constants::classifier_model().to_string()
+                }
+                "ocr_model" => hkask_inference::model_constants::ocr_model().to_string(),
+                _ => std::env::var(env_var).unwrap_or_else(|_| default.to_string()),
+            };
+            context.insert((*key).to_string(), Value::String(value));
         }
     }
 
@@ -975,7 +934,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         } else {
             raw_value
         };
-        Ok(final_result_as_string(&grounded_value, &result.context))
+        Ok(value_to_string(&grounded_value, &result.context))
     }
 
     async fn compose_and_execute_bundle(
@@ -1040,7 +999,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         for (skill_name, result) in cascade_results {
             match result {
                 Ok(outcome) => {
-                    let output_text = extract_final_step_result(&outcome);
+                    let output_text = final_result_as_string(&outcome);
                     skill_outputs.push(serde_json::json!({
                         "skill": skill_name,
                         "output": output_text,
@@ -1085,7 +1044,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             .run_manifest_cascade("skill-bundler", merge_context, progress, title)
             .await?;
 
-        let merged_report = extract_final_step_result(&merge_result);
+        let merged_report = final_result_as_string(&merge_result);
 
         Ok(agent::BundleExecutionResult {
             output: merged_report,
@@ -1154,26 +1113,10 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
 
         let mut context = HashMap::new();
         self.inject_model_defaults(&mut context);
-
-        // Pipeline path — no thread context (pipelines are invoked via the
-        // pipeline tool, not from a chat thread).
-        let executor = self.build_executor(progress, title, Vec::new(), Vec::new());
-
-        let join_handle = self.tokio_handle.spawn({
-            let manifest = manifest.clone();
-            async move {
-                executor
-                    .execute_manifest_into(manifest, context)
-                    .await
-                    .map_err(|e| format!("Pipeline execution failed: {e}"))
-            }
-        });
-
-        let result = join_handle
-            .await
-            .map_err(|e| format!("Pipeline execution task failed: {e}"))??;
-
-        Ok(extract_final_step_result(&result))
+        let result = self
+            .spawn_cascade(manifest, context, Vec::new(), Vec::new(), progress, title)
+            .await?;
+        Ok(final_result_as_string(&result))
     }
 
     async fn record_operator_feedback(
@@ -1212,32 +1155,17 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
 /// to the full context JSON (materialized) when no step stored a result — a
 /// bridge policy layer on top of the shared selector, which returns
 /// `Value::Null`.
-fn extract_final_step_result(outcome: &CascadeOutcome) -> String {
-    let value = hkask_templates::extract_final_step_result(outcome);
-    final_result_as_string(&value, &outcome.context)
-}
-
-/// Bridge Value→String policy, shared by the raw-extraction path
-/// (`extract_final_step_result`) and the post-grounding path in
-/// `execute_skill` (which needs the `Value` form for `enforce_for_agent`
-/// before stringifying). Keeping one policy guarantees both paths unwrap
-/// strings, serialize objects, and fall back to the materialized context
-/// identically.
-fn final_result_as_string(
-    value: &Value,
-    context: &hkask_templates::step_context::StepContext,
-) -> String {
+fn value_to_string(value: &Value, context: &hkask_templates::step_context::StepContext) -> String {
     match value {
-        // F1: `render` steps store Value::String(rendered_text). Calling
-        // `to_string()` on Value::String produces `"s"` (quoted + escaped),
-        // double-encoding the output. Unwrap to the inner string so the
-        // agent sees the raw rendered text (JSON or prose) directly.
-        // `select` steps store Value::Object(parsed_json), which falls
-        // through to `other.to_string()` producing the JSON string.
         Value::String(s) => s.clone(),
         Value::Null => serde_json::to_string(&context.materialize()).unwrap_or_default(),
         other => other.to_string(),
     }
+}
+
+fn final_result_as_string(outcome: &CascadeOutcome) -> String {
+    let value = hkask_templates::extract_final_step_result(outcome);
+    value_to_string(&value, &outcome.context)
 }
 
 #[cfg(test)]
@@ -1277,13 +1205,13 @@ mod tests {
     /// so `render` steps that store `Value::String(rendered_text)` return
     /// the raw text, not a double-quoted/escaped version.
     #[test]
-    fn extract_final_step_result_returns_last_result_step() {
+    fn final_result_as_string_returns_last_result_step() {
         let mut ctx = StepContext::new(std::collections::HashMap::new());
         ctx.store_result(0, 1, json!("first"));
         ctx.store_result(2, 3, json!("third"));
         ctx.store_result(1, 2, json!("second"));
         let outcome = outcome_with_last(ctx, Some(2));
-        let out = extract_final_step_result(&outcome);
+        let out = final_result_as_string(&outcome);
         assert_eq!(
             out, "third",
             "must return last_result_step's inner string value (step_id 2 = ordinal 3), not the double-quoted form"
@@ -1294,11 +1222,11 @@ mod tests {
     /// `select` steps store parsed JSON objects, which must still serialize
     /// to a JSON string via `to_string()`.
     #[test]
-    fn extract_final_step_result_serializes_object_not_string() {
+    fn final_result_as_string_serializes_object_not_string() {
         let mut ctx = StepContext::new(std::collections::HashMap::new());
         ctx.store_result(0, 1, json!({"answer": 42}));
         let outcome = outcome_with_last(ctx, Some(0));
-        let out = extract_final_step_result(&outcome);
+        let out = final_result_as_string(&outcome);
         assert_eq!(
             out, "{\"answer\":42}",
             "Value::Object must serialize to JSON string, not be unwrapped"
@@ -1306,13 +1234,13 @@ mod tests {
     }
 
     #[test]
-    fn extract_final_step_result_ignores_protocol_and_named_keys() {
+    fn final_result_as_string_ignores_protocol_and_named_keys() {
         let mut ctx = StepContext::new(std::collections::HashMap::new());
         ctx.store_result(0, 1, json!({"answer": 42}));
         ctx.insert_protocol("task".into(), json!("user request"));
         ctx.store_named(1, 2, "populated", json!("populated"));
         let outcome = outcome_with_last(ctx, Some(0));
-        let out = extract_final_step_result(&outcome);
+        let out = final_result_as_string(&outcome);
         assert_eq!(
             out, "{\"answer\":42}",
             "must return last_result_step's value, not protocol or named keys"
@@ -1320,12 +1248,12 @@ mod tests {
     }
 
     #[test]
-    fn extract_final_step_result_falls_back_to_full_context_when_no_step_results() {
+    fn final_result_as_string_falls_back_to_full_context_when_no_step_results() {
         let mut ctx = StepContext::new(std::collections::HashMap::new());
         ctx.insert_protocol("task".into(), json!("user request"));
         ctx.insert_protocol("_convergence".into(), json!({"status": "running"}));
         let outcome = outcome_with_last(ctx, None);
-        let out = extract_final_step_result(&outcome);
+        let out = final_result_as_string(&outcome);
         let parsed: serde_json::Value =
             serde_json::from_str(&out).expect("fallback must be valid JSON");
         assert_eq!(parsed["task"], json!("user request"));
@@ -1333,11 +1261,11 @@ mod tests {
     }
 
     #[test]
-    fn extract_final_step_result_handles_single_step() {
+    fn final_result_as_string_handles_single_step() {
         let mut ctx = StepContext::new(std::collections::HashMap::new());
         ctx.store_result(0, 1, json!({"convergence_metric": 0.05}));
         let outcome = outcome_with_last(ctx, Some(0));
-        let out = extract_final_step_result(&outcome);
+        let out = final_result_as_string(&outcome);
         assert!(out.contains("convergence_metric"));
         assert!(out.contains("0.05"));
     }
