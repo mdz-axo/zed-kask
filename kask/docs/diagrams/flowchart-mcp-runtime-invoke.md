@@ -57,13 +57,13 @@ flowchart TD
 
 ## Related
 
-- [hKask Capability Class Diagram](./class-hkask-capability.md) — the type system
+- [hKask Capability Class Diagram](./class-hkask-tool-port.md) — the type system
 - [Architecture Principles](../architecture/core/PRINCIPLES.md) — P4 Clear Boundaries
 - [MDS](../architecture/core/MDS.md) — Trust category
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-002
 verified_date: 2026-08-12
-verified_against: kask/crates/hkask-mcp/src/runtime.rs (impl hkask_capability::ToolPort for McpRuntime, call_tool_inner); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome); kask/crates/hkask-mcp/tests/invoke_gate.rs
+verified_against: kask/crates/hkask-mcp/src/runtime.rs (impl hkask_tool_port::ToolPort for McpRuntime, call_tool_inner); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome); kask/crates/hkask-mcp/tests/invoke_gate.rs
 status: VERIFIED
 -->

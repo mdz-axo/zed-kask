@@ -35,7 +35,7 @@
 //! (`connections.contains_key`) would short-circuit every recovery attempt and
 //! the only route back to a working connection was an operator settings change.
 
-use hkask_capability::ToolInfo;
+use hkask_tool_port::ToolInfo;
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::{Peer, RoleClient, ServiceExt};
 use rmcp::transport::TokioChildProcess;
@@ -1255,14 +1255,14 @@ impl Default for McpRuntime {
 // `tool_allowlist` on the inference IPC dispatch, each swarm card's `mcp_tools`
 // allowlist, and the per-server MCP env/credential allowlists.
 
-impl hkask_capability::ToolPort for McpRuntime {
+impl hkask_tool_port::ToolPort for McpRuntime {
     fn invoke<'a>(
         &'a self,
         server: &'a str,
         tool: &'a str,
         args: Value,
         agent: hkask_types::WebID,
-    ) -> hkask_capability::ToolFuture<'a, Result<Value, hkask_capability::ToolPortError>> {
+    ) -> hkask_tool_port::ToolFuture<'a, Result<Value, hkask_tool_port::ToolPortError>> {
         Box::pin(async move {
             // Metering + span emit. Skipped when governance is not configured
             // (tests, lightweight embedders).
@@ -1307,7 +1307,7 @@ impl hkask_capability::ToolPort for McpRuntime {
                             ceiling,
                             "runaway-loop breaker tripped - agent exhausted its per-tick call ceiling"
                         );
-                        return Err(hkask_capability::ToolPortError::EnergyBudgetExceeded(
+                        return Err(hkask_tool_port::ToolPortError::EnergyBudgetExceeded(
                             format!(
                                 "runaway-loop breaker: {agent:?} reached its per-tick ceiling of \
                                  {ceiling} calls (tool {tool}); resets next regulation tick"
@@ -1347,14 +1347,14 @@ impl hkask_capability::ToolPort for McpRuntime {
         })
     }
 
-    fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+    fn discover_tools<'a>(&'a self) -> hkask_tool_port::ToolFuture<'a, Vec<String>> {
         Box::pin(async move { McpRuntime::discover_tools(self).await })
     }
 
     fn get_tool_info<'a>(
         &'a self,
         tool_name: &'a str,
-    ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+    ) -> hkask_tool_port::ToolFuture<'a, Option<hkask_tool_port::ToolInfo>> {
         Box::pin(async move { McpRuntime::get_tool_info(self, tool_name).await })
     }
 }
@@ -1373,7 +1373,7 @@ impl McpRuntime {
         server: &str,
         tool: &str,
         args: Value,
-    ) -> Result<Value, hkask_capability::ToolPortError> {
+    ) -> Result<Value, hkask_tool_port::ToolPortError> {
         // `args` is owned and unused after this point — move the map out instead
         // of cloning (non-object args collapse to an empty map, matching the prior
         // `as_object().cloned().unwrap_or_default()`).
@@ -1403,7 +1403,7 @@ impl McpRuntime {
                     "Tool dispatch found no live transport - reconnecting and retrying once"
                 );
                 if !self.try_reconnect(server).await {
-                    return Err(hkask_capability::ToolPortError::Unavailable(format!(
+                    return Err(hkask_tool_port::ToolPortError::Unavailable(format!(
                         "Server '{server}' transport closed and could not be reconnected: {detail}"
                     )));
                 }
@@ -1466,22 +1466,22 @@ impl McpRuntime {
 
     /// The error for a server with no live connection and no working reconnect,
     /// distinguishing an unknown tool from an unavailable server.
-    async fn unavailable_error(&self, server: &str, tool: &str) -> hkask_capability::ToolPortError {
+    async fn unavailable_error(&self, server: &str, tool: &str) -> hkask_tool_port::ToolPortError {
         if !self.tool_exists(tool).await {
-            return hkask_capability::ToolPortError::NotFound(hkask_types::NotFound {
+            return hkask_tool_port::ToolPortError::NotFound(hkask_types::NotFound {
                 entity_type: "tool".to_string(),
                 id: format!("Tool '{}' not found in MCP runtime", tool),
             });
         }
         let known_launch = self.launch_specs.read().await.contains_key(server);
         if known_launch {
-            hkask_capability::ToolPortError::Unavailable(format!(
+            hkask_tool_port::ToolPortError::Unavailable(format!(
                 "Server '{server}' is not connected and could not be restarted — check that the \
                  hkask-mcp-{server} binary runs (set HKASK_MCP_{}_BIN to override the path)",
                 server.to_uppercase()
             ))
         } else {
-            hkask_capability::ToolPortError::Unavailable(format!(
+            hkask_tool_port::ToolPortError::Unavailable(format!(
                 "Server '{server}' registered but never started — call start_server_with_env() first"
             ))
         }
@@ -1503,16 +1503,16 @@ enum DispatchError {
 }
 
 impl DispatchError {
-    fn into_port_error(self) -> hkask_capability::ToolPortError {
+    fn into_port_error(self) -> hkask_tool_port::ToolPortError {
         match self {
             DispatchError::NotDelivered(detail) => {
-                hkask_capability::ToolPortError::Unavailable(format!("not delivered: {detail}"))
+                hkask_tool_port::ToolPortError::Unavailable(format!("not delivered: {detail}"))
             }
             DispatchError::Interrupted(detail) => {
-                hkask_capability::ToolPortError::Interrupted(detail)
+                hkask_tool_port::ToolPortError::Interrupted(detail)
             }
             DispatchError::Failed(detail) => {
-                hkask_capability::ToolPortError::InvocationFailed(detail)
+                hkask_tool_port::ToolPortError::InvocationFailed(detail)
             }
         }
     }

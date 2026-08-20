@@ -10,7 +10,7 @@ path = "src/hkask_mcp.rs"
 
 [dependencies]
 hkask-types.workspace = true
-hkask-capability.workspace = true
+hkask-tool-port.workspace = true
 hkask-regulation.workspace = true
 rmcp = { workspace = true, features = ["server", "macros", "transport-io", "client", "transport-child-process"] }
 tokio-util.workspace = true

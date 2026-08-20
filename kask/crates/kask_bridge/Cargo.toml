@@ -12,7 +12,7 @@ path = "src/kask_bridge.rs"
 [dependencies]
 # hKask side — port traits only (never concrete zed crates)
 hkask-types.workspace = true
-hkask-capability.workspace = true
+hkask-tool-port.workspace = true
 
 hkask-memory.workspace = true
 hkask-storage.workspace = true

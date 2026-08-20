@@ -27,7 +27,7 @@ The result is a crate that is, in effect, three buckets wearing one name: a **co
 2. The README and `description` repeatedly under-stated the surface (stale `agent_registry`/`NuEvent` references removed 2026-08-02).
 3. Domain types that *belong* with their domain crate (e.g. `wallet_types` logically lives with a wallet domain; `loops` with regulation) are stranded in the foundation crate.
 
-The cycle-break that motivated the consolidation may no longer be necessary: the Regulation subcrates that were blocked by the cycle have since been extracted, and `hkask-types` explicitly forbids depending on `hkask-capability` (the original cycle source). Whether the domain types can now return to their owning crates — or whether a clean two-crate split is the safer move — is the decision this ADR records.[^evans-ddd]
+The cycle-break that motivated the consolidation may no longer be necessary: the Regulation subcrates that were blocked by the cycle have since been extracted, and `hkask-types` explicitly forbids depending on `hkask-tool-port` (the original cycle source). Whether the domain types can now return to their owning crates — or whether a clean two-crate split is the safer move — is the decision this ADR records.[^evans-ddd]
 
 ## Decision
 
@@ -120,5 +120,5 @@ This ADR does **not** decide the MCP server error consolidation. A separate anal
 
 - `kask/docs/architecture/zed-host-architecture-plan.md` — D1–D28 seams, crate inventory.
 - `kask/crates/hkask-regulation/src/types/loops/mod.rs` — the "moved to break the circular dependency" note that motivates this ADR.
-- `kask/crates/hkask-types/Cargo.toml` — the `description` correction and the `hkask-capability` cycle guard.
+- `kask/crates/hkask-types/Cargo.toml` — the `description` correction and the `hkask-tool-port` cycle guard.
 - 2026-08-02 type-system refactoring analysis (essentialist + refactor-architecture skills).

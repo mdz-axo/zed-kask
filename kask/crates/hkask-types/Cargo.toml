@@ -10,7 +10,7 @@ description = "Foundation types for the hKask platform — IDs, errors, events, 
 path = "src/hkask_types.rs"
 
 [dependencies]
-# NOTE: hkask-types must NOT depend on hkask-capability (would create a cycle).
+# NOTE: hkask-types must NOT depend on hkask-tool-port (would create a cycle).
 # Modules that need capability types (kanban, goal, loops/curation) are being
 # migrated to their domain crates.
 serde.workspace = true

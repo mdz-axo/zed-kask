@@ -1,5 +1,5 @@
 [package]
-name = "hkask-capability"
+name = "hkask-tool-port"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,7 +7,7 @@ description = "Tool dispatch port"
 
 
 [lib]
-path = "src/hkask_capability.rs"
+path = "src/hkask_tool_port.rs"
 
 [dependencies]
 hkask-types.workspace = true

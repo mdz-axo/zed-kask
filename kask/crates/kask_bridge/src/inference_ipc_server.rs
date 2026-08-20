@@ -285,7 +285,7 @@ impl InferenceIpcServer {
     pub fn start(
         inference_port: Arc<dyn InferencePort>,
         embedding_port: Option<LanguageModelEmbeddingPort>,
-        tool_port: Option<Arc<dyn hkask_capability::ToolPort>>,
+        tool_port: Option<Arc<dyn hkask_tool_port::ToolPort>>,
         cx: &gpui::App,
     ) -> Result<Self, std::io::Error> {
         // Generate a unique socket path inside a per-user private directory
@@ -463,7 +463,7 @@ async fn handle_connection(
     stream: tokio::net::UnixStream,
     port: Arc<dyn InferencePort>,
     embedding_port: Option<LanguageModelEmbeddingPort>,
-    tool_port: Option<Arc<dyn hkask_capability::ToolPort>>,
+    tool_port: Option<Arc<dyn hkask_tool_port::ToolPort>>,
     list_models_tx: Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
@@ -568,7 +568,7 @@ async fn handle_connection(
 async fn dispatch(
     port: &Arc<dyn InferencePort>,
     embedding_port: Option<&LanguageModelEmbeddingPort>,
-    tool_port: Option<&Arc<dyn hkask_capability::ToolPort>>,
+    tool_port: Option<&Arc<dyn hkask_tool_port::ToolPort>>,
     list_models_tx: &Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,

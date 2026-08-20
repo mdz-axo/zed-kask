@@ -637,7 +637,7 @@ enforced via `step.gas_cap` + `CyberneticsLoop`, not `ocap`.
 **Token expiry is NOT enforced.** The `OcapConfig` struct, `ocap:` manifest
 blocks, `DelegationToken.expires_at`, `new_with_expiry`, `is_valid_for_at`,
 and `is_expired` were removed (see `kask/docs/diagrams/flowchart-mcp-runtime-invoke.md`,
-59 files). `DelegationToken` (`hkask-capability/src/token_types.rs`) carries no
+59 files). `DelegationToken` (`hkask-tool-port/src/token_types.rs`) carries no
 `expires_at` field; `is_valid_for` checks only `(resource, resource_id, action)`
 equality. All tokens are no-expiry. If token expiry is re-introduced, add an
 `expires_at` field to `DelegationToken`, an `is_valid_for_at` method that

@@ -1284,7 +1284,7 @@ fn main() {
         // task fires on `LanguageModelRegistry` events, independent of user
         // login — the skill cascade only needs the model + tool_port, not
         // the username.
-        let _tool_port_for_model_task: std::sync::Arc<dyn hkask_capability::ToolPort> =
+        let _tool_port_for_model_task: std::sync::Arc<dyn hkask_tool_port::ToolPort> =
             tool_port.clone();
         {
             let user_store = app_state.user_store.clone();
@@ -2148,7 +2148,7 @@ fn main() {
                         // server mints the panel token — the child process
                         // never holds token material.
                         let tool_port_for_ipc: Option<
-                            std::sync::Arc<dyn hkask_capability::ToolPort>,
+                            std::sync::Arc<dyn hkask_tool_port::ToolPort>,
                         > = Some(mcp_runtime_for_deferred.clone());
                         match kask_bridge::InferenceIpcServer::start(
                             inference_port,
@@ -3329,7 +3329,7 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
         tool: &str,
         args: serde_json::Value,
     ) -> gpui::Task<Result<String, swarm_panel::InvokeError>> {
-        use hkask_capability::ToolPort;
+        use hkask_tool_port::ToolPort;
         use hkask_types::WebID;
         use swarm_panel::InvokeError;
 
@@ -3355,15 +3355,15 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
                 .map_err(|error| {
                     let message = error.to_string();
                     match error {
-                        hkask_capability::ToolPortError::Unavailable(_) => {
+                        hkask_tool_port::ToolPortError::Unavailable(_) => {
                             InvokeError::Unavailable(message)
                         }
-                        hkask_capability::ToolPortError::Interrupted(_) => {
+                        hkask_tool_port::ToolPortError::Interrupted(_) => {
                             InvokeError::Interrupted(message)
                         }
-                        hkask_capability::ToolPortError::EnergyBudgetExceeded(_)
-                        | hkask_capability::ToolPortError::NotFound(_)
-                        | hkask_capability::ToolPortError::InvocationFailed(_) => {
+                        hkask_tool_port::ToolPortError::EnergyBudgetExceeded(_)
+                        | hkask_tool_port::ToolPortError::NotFound(_)
+                        | hkask_tool_port::ToolPortError::InvocationFailed(_) => {
                             InvokeError::Failed(message)
                         }
                     }

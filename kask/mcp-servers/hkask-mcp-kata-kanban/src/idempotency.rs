@@ -6,7 +6,7 @@
 //! reports both "the send failed" and "the response channel dropped" as the same
 //! `ServiceError::TransportClosed`, so once a request reaches a live peer, a
 //! transport loss is not proof of non-delivery (see
-//! `hkask_capability::ToolPortError::Interrupted`). The client is therefore
+//! `hkask_tool_port::ToolPortError::Interrupted`). The client is therefore
 //! forced to choose between never retrying (and stranding the operator) or
 //! retrying blindly (and risking a duplicate).
 //!

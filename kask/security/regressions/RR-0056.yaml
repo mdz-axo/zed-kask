@@ -5,7 +5,7 @@ cwe: CWE-1230
 owasp_llm_2025: LLM06
 atlas_tactic: AML.TA0008
 nist_ssdf: PW.4.1
-discovered_in: kask/crates/hkask-mcp/src/runtime.rs (ToolPort::invoke), kask/crates/hkask-capability/src/token_types.rs (DelegationToken::is_valid_for) — both deleted; the regression is enforced via cargo-test
+discovered_in: kask/crates/hkask-mcp/src/runtime.rs (ToolPort::invoke), kask/crates/hkask-tool-port/src/token_types.rs (DelegationToken::is_valid_for) — both deleted; the regression is enforced via cargo-test
 discovered_by: kali-audit
 discovered_at: 2026-08-12
 severity: high
