@@ -225,7 +225,7 @@ MDS is capability-driven, not constraint-driven:
 | Failure mode | Over-constrained | Under-governed |
 | hKask alignment | — | capability separation via caller-external tool allowlists |
 
-[^ocap]: Miller, M. (2006). *Robust Composition: Towards a National Research Agenda for Object Capability Security.* HP Labs. — Object capability model. hKask adopts the separation principle (authority only attenuates; a caller reaches only what a list it did not write allows) and not the per-call token-possession mechanism — see the [Capability Separation Boundaries](#capability-separation-boundaries) table and RR-0056.
+[^ocap]: Miller, M. (2006). *Robust Composition: Towards a National Research Agenda for Object Capability Security.* HP Labs. — Object capability model. hKask adopts the separation principle (authority only attenuates; a caller reaches only what a list it did not write allows) — see the [Capability Separation Boundaries](#capability-separation-boundaries) table.
 
 ---
 

@@ -208,6 +208,7 @@ impl LocalSwarmRuntime {
     /// Captures dropped due to channel backpressure or store failures.
     /// A sensor signal, not an error: the delegation path must never fail
     /// because capture is degraded.
+    #[allow(dead_code)] // sensor signal — incremented by wire_capture, awaiting a consumer
     pub(crate) fn capture_drops(&self) -> usize {
         self.capture_drops
             .load(std::sync::atomic::Ordering::Relaxed)

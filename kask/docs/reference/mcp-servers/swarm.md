@@ -486,7 +486,7 @@ plan's §14.
 
 [^ocap-swarm-consent]:
     Miller, M. S. (2006). _Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control_ (Doctoral dissertation, Johns Hopkins University). http://www.erights.org/talks/thesis/markm-thesis.pdf
-    Cited for the object-capability principle the single-use consent token enforces — authority only attenuates, never amplifies. The consent grant satisfies this because the panel mints it and the spend tool consumes it against a scope the spending caller did not choose; the per-call tool-capability token that once cited the same source did not, and was removed (RR-0056).
+    Cited for the object-capability principle the single-use consent token enforces — authority only attenuates, never amplifies. The consent grant satisfies this because the panel mints it and the spend tool consumes it against a scope the spending caller did not choose.
 
 [^owasp-swarm-errors]:
     OWASP. (2025). _OWASP Top 10 for Large Language Model Applications_. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/

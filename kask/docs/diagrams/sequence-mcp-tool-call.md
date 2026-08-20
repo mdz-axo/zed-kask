@@ -14,8 +14,8 @@ Reference-quadrant sequence diagram of an MCP tool call from the agent's
 tool-use loop. The `LazyToolRouter` filters MCP candidates by keyword score
 but **bypasses built-in tools** (they are never candidates). The retained
 tool set reaches `McpRuntime::invoke`, which meters one call against the
-agent's per-tick runaway ceiling and dispatches — it does **not** authorize
-(the per-call capability gate was removed 2026-08-12, RR-0056). The result is
+agent's per-tick runaway ceiling and dispatches — it does **not** authorize.
+The result is
 unwrapped from its `{"content": value}` envelope by `unwrap_tool_envelope`.
 Every participant and message traces to a grep-verified symbol.
 

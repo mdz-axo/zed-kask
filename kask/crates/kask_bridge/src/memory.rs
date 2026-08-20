@@ -1370,6 +1370,21 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
         // the leaf unit tests assert the bool.
         let user_message = !record.user_input.trim().is_empty();
         hkask_tool_invoker::correlate_reask(user_message);
+        // Emit a skill step verification span when a skill was invoked. This
+        // is the calibration info the consumer of the skill output reads —
+        // the ordered tool-call sequence shows which steps the model actually
+        // executed versus what the SKILL.md declared. Emitted as a
+        // `reg.curation.skill_verification` span so it is queryable via
+        // `reg_query` and visible to the curator's regulation loop.
+        if let Some(ref report) = record.skill_step_report {
+            hkask_types::regulation::RegulationSpan::Curation.emit("skill_verification");
+            tracing::info!(
+                target: "reg.curation",
+                skill = %report.skill_name,
+                tool_calls = ?report.tool_call_sequence,
+                "Skill step report — calibration info for skill output consumer"
+            );
+        }
         Box::pin(async move {
             inner
                 .ingest_turn(TurnRecord {
@@ -1431,1329 +1446,1317 @@ mod tests {
     use super::*;
     use hkask_storage::database::sqlite::SqliteDriver;
 
-        fn test_webid() -> WebID {
-            WebID::new()
+    fn test_webid() -> WebID {
+        WebID::new()
+    }
+
+    fn in_memory_port() -> RealMemoryPort {
+        in_memory_port_with_cadence(0, 0.3)
+    }
+
+    fn in_memory_port_with_cadence(
+        consolidation_cadence_secs: u64,
+        confidence_floor: f64,
+    ) -> RealMemoryPort {
+        let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
+        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
+        let embedding_store =
+            EmbeddingStore::from_driver(driver, 1024).expect("embedding store init");
+        let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
+
+        // Curator store — a separate in-memory driver so the curator copy
+        // lands in a different DB, mirroring production where the curator
+        // has its own `curator.db`.
+        let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
+            SqliteDriver::in_memory_driver();
+        let curator_h_mem_store =
+            HMemStore::from_driver(Arc::clone(&curator_driver)).expect("curator hmem store init");
+        let curator_embedding_store =
+            EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init");
+        let curator_store_inner = Arc::new(MemoryStore::new(
+            curator_h_mem_store,
+            curator_embedding_store,
+        ));
+
+        // Tests don't call embed — use a stub port with no backing task.
+        let embedding_port = LanguageModelEmbeddingPort::for_tests();
+
+        let consolidation = if consolidation_cadence_secs > 0 {
+            Some(Arc::new(MemoryConsolidator::new(Arc::clone(&store))))
+        } else {
+            None
+        };
+
+        // Curator consolidation service — mirrors the production construction
+        // in `RealMemoryPort::new`. Skipped when cadence is 0 (matches
+        // production). The curator store is always `Some` in tests.
+        let curator_consolidation = build_curator_consolidation(
+            consolidation_cadence_secs,
+            &Some(Arc::clone(&curator_store_inner)),
+        );
+
+        RealMemoryPort {
+            store,
+            curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
+            swarm_store: Arc::new(SwarmStore::for_tests(None)),
+            embedding_port,
+            embedding_model: "test-model".to_string(),
+            user_webid: test_webid(),
+            curator_webid: WebID::from_persona(b"curator"),
+            consolidation,
+            curator_consolidation: RwLock::new(curator_consolidation),
+            consolidation_cadence_secs,
+            confidence_floor,
+            last_consolidation: Mutex::new(None),
+            tokio_handle: tokio::runtime::Handle::current(),
+            ingest_semaphore: tokio::sync::Semaphore::new(1),
         }
+    }
 
-        fn in_memory_port() -> RealMemoryPort {
-            in_memory_port_with_cadence(0, 0.3)
+    /// Construct an in-memory `RealMemoryPort` whose embedding port is backed
+    /// by `embed_fn` (a deterministic text→vector closure) instead of the
+    /// channel-closed `for_tests()` stub. For tests that exercise the
+    /// end-to-end embedding recall path. The receiver task runs on the
+    /// current tokio runtime (the test's `#[tokio::test]` reactor).
+    fn in_memory_port_with_embed_fn<F>(embed_fn: Arc<F>) -> RealMemoryPort
+    where
+        F: Fn(&str) -> Vec<f32> + Send + Sync + 'static,
+    {
+        let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
+        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
+        let embedding_store =
+            EmbeddingStore::from_driver(driver, 1024).expect("embedding store init");
+        let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
+
+        let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
+            SqliteDriver::in_memory_driver();
+        let curator_h_mem_store =
+            HMemStore::from_driver(Arc::clone(&curator_driver)).expect("curator hmem store init");
+        let curator_embedding_store =
+            EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init");
+        let curator_store_inner = Arc::new(MemoryStore::new(
+            curator_h_mem_store,
+            curator_embedding_store,
+        ));
+
+        let embedding_port = LanguageModelEmbeddingPort::for_tests_with_embed_fn(
+            embed_fn,
+            tokio::runtime::Handle::current(),
+        );
+
+        RealMemoryPort {
+            store,
+            curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
+            swarm_store: Arc::new(SwarmStore::for_tests(None)),
+            embedding_port,
+            embedding_model: "test-model".to_string(),
+            user_webid: test_webid(),
+            curator_webid: WebID::from_persona(b"curator"),
+            consolidation: None,
+            curator_consolidation: RwLock::new(None),
+            consolidation_cadence_secs: 0,
+            confidence_floor: 0.3,
+            last_consolidation: Mutex::new(None),
+            tokio_handle: tokio::runtime::Handle::current(),
+            ingest_semaphore: tokio::sync::Semaphore::new(1),
         }
+    }
 
-        fn in_memory_port_with_cadence(
-            consolidation_cadence_secs: u64,
-            confidence_floor: f64,
-        ) -> RealMemoryPort {
-            let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
-            let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
-            let embedding_store =
-                EmbeddingStore::from_driver(driver, 1024).expect("embedding store init");
-            let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
+    #[tokio::test]
+    async fn ingest_turn_stores_episodic_h_mem() {
+        let port = in_memory_port();
+        let webid = port.user_webid;
+        let record = TurnRecord {
+            thread_id: "test-thread".to_string(),
+            user_input: "What is Rust?".to_string(),
+            agent_response: "Rust is a systems programming language.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: Some("Rust Discussion".to_string()),
+            agent_id: None,
+        };
 
-            // Curator store — a separate in-memory driver so the curator copy
-            // lands in a different DB, mirroring production where the curator
-            // has its own `curator.db`.
-            let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
-                SqliteDriver::in_memory_driver();
-            let curator_h_mem_store = HMemStore::from_driver(Arc::clone(&curator_driver))
-                .expect("curator hmem store init");
-            let curator_embedding_store =
-                EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init");
-            let curator_store_inner = Arc::new(MemoryStore::new(
-                curator_h_mem_store,
-                curator_embedding_store,
-            ));
+        let result = port.ingest_turn(record).await;
+        assert!(result.is_ok(), "ingest_turn should succeed");
 
-            // Tests don't call embed — use a stub port with no backing task.
-            let embedding_port = LanguageModelEmbeddingPort::for_tests();
+        // Verify episodic h_mem was stored
+        let h_mems = port
+            .store
+            .query_for_deduped_untouched("chat:thread:test-thread", webid)
+            .expect("query should succeed");
+        assert_eq!(h_mems.len(), 1, "one episodic h_mem should be stored");
+        assert_eq!(h_mems[0].attribute, "chatted");
+        // The ontology blob is what classifies this as episodic — not a
+        // separate store struct (P5.4 dual-axis anchoring).
+        let ontology = h_mems[0]
+            .ontology
+            .as_ref()
+            .expect("episodic h_mem carries an ontology blob");
+        assert_eq!(ontology.pko_procedure.as_deref(), Some("chat"));
+        assert_eq!(ontology.pko_step.as_deref(), Some("turn"));
+    }
 
-            let consolidation = if consolidation_cadence_secs > 0 {
-                Some(Arc::new(MemoryConsolidator::new(Arc::clone(&store))))
-            } else {
-                None
-            };
+    #[tokio::test]
+    async fn ingest_turn_stores_semantic_curator_copy() {
+        let port = in_memory_port();
+        let record = TurnRecord {
+            thread_id: "test-thread-2".to_string(),
+            user_input: "Explain async Rust".to_string(),
+            agent_response: "Async Rust uses tokio.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        };
 
-            // Curator consolidation service — mirrors the production construction
-            // in `RealMemoryPort::new`. Skipped when cadence is 0 (matches
-            // production). The curator store is always `Some` in tests.
-            let curator_consolidation = build_curator_consolidation(
-                consolidation_cadence_secs,
-                &Some(Arc::clone(&curator_store_inner)),
-            );
+        let result = port.ingest_turn(record).await;
+        assert!(result.is_ok());
 
-            RealMemoryPort {
-                store,
-                curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
-                swarm_store: Arc::new(SwarmStore::for_tests(None)),
-                embedding_port,
-                embedding_model: "test-model".to_string(),
-                user_webid: test_webid(),
-                curator_webid: WebID::from_persona(b"curator"),
-                consolidation,
-                curator_consolidation: RwLock::new(curator_consolidation),
-                consolidation_cadence_secs,
-                confidence_floor,
-                last_consolidation: Mutex::new(None),
-                tokio_handle: tokio::runtime::Handle::current(),
-                ingest_semaphore: tokio::sync::Semaphore::new(1),
-            }
-        }
+        // Verify semantic (curator) h_mem was stored in the curator's store,
+        // not the user's store.
+        let curator_store = port.curator_store.get().expect("curator store");
+        let h_mems = curator_store
+            .query_deduped("curator:thread:test-thread-2")
+            .expect("query should succeed");
+        assert_eq!(
+            h_mems.len(),
+            1,
+            "one curator semantic h_mem should be stored"
+        );
+        assert_eq!(h_mems[0].attribute, "turn");
+        let ontology = h_mems[0]
+            .ontology
+            .as_ref()
+            .expect("curator copy carries an ontology blob");
+        assert_eq!(ontology.dc_type, "bibo:Document");
+        assert!(
+            ontology.pko_procedure.is_none(),
+            "the curator copy is a semantic fact, not a process step"
+        );
 
-        /// Construct an in-memory `RealMemoryPort` whose embedding port is backed
-        /// by `embed_fn` (a deterministic text→vector closure) instead of the
-        /// channel-closed `for_tests()` stub. For tests that exercise the
-        /// end-to-end embedding recall path. The receiver task runs on the
-        /// current tokio runtime (the test's `#[tokio::test]` reactor).
-        fn in_memory_port_with_embed_fn<F>(embed_fn: Arc<F>) -> RealMemoryPort
-        where
-            F: Fn(&str) -> Vec<f32> + Send + Sync + 'static,
-        {
-            let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
-            let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
-            let embedding_store =
-                EmbeddingStore::from_driver(driver, 1024).expect("embedding store init");
-            let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
+        // The user's store should NOT contain the curator copy.
+        let user_h_mems = port
+            .store
+            .query_deduped("curator:thread:test-thread-2")
+            .expect("query should succeed");
+        assert_eq!(
+            user_h_mems.len(),
+            0,
+            "curator copy must not leak into the user's semantic store"
+        );
+    }
 
-            let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
-                SqliteDriver::in_memory_driver();
-            let curator_h_mem_store = HMemStore::from_driver(Arc::clone(&curator_driver))
-                .expect("curator hmem store init");
-            let curator_embedding_store =
-                EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init");
-            let curator_store_inner = Arc::new(MemoryStore::new(
-                curator_h_mem_store,
-                curator_embedding_store,
-            ));
+    #[tokio::test]
+    async fn ingest_turn_skips_curator_copy_when_store_absent() {
+        // Simulate the curator DB being unavailable — the curator store is
+        // `None`. Ingestion should still succeed (episodic record persists),
+        // and no curator copy should be written.
+        let port = in_memory_port();
+        port.curator_store.set_for_tests(None);
+        let webid = port.user_webid;
+        let record = TurnRecord {
+            thread_id: "test-no-curator".to_string(),
+            user_input: "What is memory?".to_string(),
+            agent_response: "Memory is persistence across time.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        };
 
-            let embedding_port = LanguageModelEmbeddingPort::for_tests_with_embed_fn(
-                embed_fn,
-                tokio::runtime::Handle::current(),
-            );
+        let result = port.ingest_turn(record).await;
+        assert!(
+            result.is_ok(),
+            "ingest should succeed without curator store"
+        );
 
-            RealMemoryPort {
-                store,
-                curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
-                swarm_store: Arc::new(SwarmStore::for_tests(None)),
-                embedding_port,
-                embedding_model: "test-model".to_string(),
-                user_webid: test_webid(),
-                curator_webid: WebID::from_persona(b"curator"),
-                consolidation: None,
-                curator_consolidation: RwLock::new(None),
-                consolidation_cadence_secs: 0,
-                confidence_floor: 0.3,
-                last_consolidation: Mutex::new(None),
-                tokio_handle: tokio::runtime::Handle::current(),
-                ingest_semaphore: tokio::sync::Semaphore::new(1),
-            }
-        }
+        // Episodic record should still be present.
+        let h_mems = port
+            .store
+            .query_for_deduped_untouched("chat:thread:test-no-curator", webid)
+            .expect("query should succeed");
+        assert_eq!(h_mems.len(), 1, "episodic h_mem should be stored");
+    }
 
-        #[tokio::test]
-        async fn ingest_turn_stores_episodic_h_mem() {
-            let port = in_memory_port();
-            let webid = port.user_webid;
-            let record = TurnRecord {
-                thread_id: "test-thread".to_string(),
-                user_input: "What is Rust?".to_string(),
-                agent_response: "Rust is a systems programming language.".to_string(),
-                model: "test-model".to_string(),
-                thread_title: Some("Rust Discussion".to_string()),
-                agent_id: None,
-            };
+    #[tokio::test]
+    async fn ingest_turn_handles_empty_prompt_gracefully() {
+        let port = in_memory_port();
+        let webid = port.user_webid;
+        let record = TurnRecord {
+            thread_id: "test-empty".to_string(),
+            user_input: String::new(),
+            agent_response: "Response".to_string(),
+            model: "test".to_string(),
+            thread_title: None,
+            agent_id: None,
+        };
 
-            let result = port.ingest_turn(record).await;
-            assert!(result.is_ok(), "ingest_turn should succeed");
+        let result = port.ingest_turn(record).await;
+        assert!(result.is_ok(), "empty prompt should not fail ingestion");
 
-            // Verify episodic h_mem was stored
-            let h_mems = port
-                .store
-                .query_for_deduped_untouched("chat:thread:test-thread", webid)
-                .expect("query should succeed");
-            assert_eq!(h_mems.len(), 1, "one episodic h_mem should be stored");
-            assert_eq!(h_mems[0].attribute, "chatted");
-            // The ontology blob is what classifies this as episodic — not a
-            // separate store struct (P5.4 dual-axis anchoring).
-            let ontology = h_mems[0]
-                .ontology
-                .as_ref()
-                .expect("episodic h_mem carries an ontology blob");
-            assert_eq!(ontology.pko_procedure.as_deref(), Some("chat"));
-            assert_eq!(ontology.pko_step.as_deref(), Some("turn"));
-        }
+        let h_mems = port
+            .store
+            .query_for_deduped_untouched("chat:thread:test-empty", webid)
+            .expect("query should succeed");
+        assert_eq!(h_mems.len(), 1, "episodic h_mem should still be stored");
+    }
 
-        #[tokio::test]
-        async fn ingest_turn_stores_semantic_curator_copy() {
-            let port = in_memory_port();
-            let record = TurnRecord {
-                thread_id: "test-thread-2".to_string(),
-                user_input: "Explain async Rust".to_string(),
-                agent_response: "Async Rust uses tokio.".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: None,
-            };
+    #[tokio::test]
+    async fn ingest_turn_does_not_fire_consolidation() {
+        // Consolidation is now decoupled from ingestion — it runs on a
+        // background timer (see start_consolidation_timer). Ingestion should
+        // NOT fire consolidation, even when the cadence has elapsed.
+        let port = in_memory_port_with_cadence(1, 0.3);
 
-            let result = port.ingest_turn(record).await;
-            assert!(result.is_ok());
+        let record = TurnRecord {
+            thread_id: "no-consolidation-from-ingest".to_string(),
+            user_input: "Tell me about memory consolidation".to_string(),
+            agent_response: "Consolidation promotes episodic to semantic.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        };
+        let result = port.ingest_turn(record).await;
+        assert!(result.is_ok(), "ingest_turn should succeed");
 
-            // Verify semantic (curator) h_mem was stored in the curator's store,
-            // not the user's store.
-            let curator_store = port.curator_store.get().expect("curator store");
-            let h_mems = curator_store
-                .query_deduped("curator:thread:test-thread-2")
-                .expect("query should succeed");
-            assert_eq!(
-                h_mems.len(),
-                1,
-                "one curator semantic h_mem should be stored"
-            );
-            assert_eq!(h_mems[0].attribute, "turn");
-            let ontology = h_mems[0]
-                .ontology
-                .as_ref()
-                .expect("curator copy carries an ontology blob");
-            assert_eq!(ontology.dc_type, "bibo:Document");
-            assert!(
-                ontology.pko_procedure.is_none(),
-                "the curator copy is a semantic fact, not a process step"
-            );
+        // last_consolidation should remain None — ingestion no longer fires it.
+        let last = port.last_consolidation.lock().expect("mutex not poisoned");
+        assert!(
+            last.is_none(),
+            "ingest_turn should not fire consolidation (timer-decoupled)"
+        );
+    }
 
-            // The user's store should NOT contain the curator copy.
-            let user_h_mems = port
-                .store
-                .query_deduped("curator:thread:test-thread-2")
-                .expect("query should succeed");
-            assert_eq!(
-                user_h_mems.len(),
-                0,
-                "curator copy must not leak into the user's semantic store"
-            );
-        }
+    #[tokio::test]
+    async fn maybe_consolidate_fires_when_cadence_elapsed() {
+        // Directly test the consolidation callback (what the timer calls).
+        let port = in_memory_port_with_cadence(1, 0.3);
+        let webid = port.user_webid;
 
-        #[tokio::test]
-        async fn ingest_turn_skips_curator_copy_when_store_absent() {
-            // Simulate the curator DB being unavailable — the curator store is
-            // `None`. Ingestion should still succeed (episodic record persists),
-            // and no curator copy should be written.
-            let port = in_memory_port();
-            port.curator_store.set_for_tests(None);
-            let webid = port.user_webid;
-            let record = TurnRecord {
-                thread_id: "test-no-curator".to_string(),
-                user_input: "What is memory?".to_string(),
-                agent_response: "Memory is persistence across time.".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: None,
-            };
+        // Ingest a turn so there's something to consolidate.
+        port.ingest_turn(TurnRecord {
+            thread_id: "consolidation-test".to_string(),
+            user_input: "Tell me about memory consolidation".to_string(),
+            agent_response: "Consolidation promotes episodic to semantic.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        })
+        .await
+        .expect("ingest succeeds");
 
-            let result = port.ingest_turn(record).await;
-            assert!(
-                result.is_ok(),
-                "ingest should succeed without curator store"
-            );
+        // Fire consolidation directly (simulating the timer callback).
+        port.maybe_consolidate();
 
-            // Episodic record should still be present.
-            let h_mems = port
-                .store
-                .query_for_deduped_untouched("chat:thread:test-no-curator", webid)
-                .expect("query should succeed");
-            assert_eq!(h_mems.len(), 1, "episodic h_mem should be stored");
-        }
+        // The last_consolidation timestamp should now be set.
+        let last = port
+            .last_consolidation
+            .lock()
+            .expect("mutex not poisoned")
+            .expect("consolidation should have fired");
+        assert!(
+            Utc::now().signed_duration_since(last).num_seconds() < 5,
+            "last_consolidation should be recent"
+        );
 
-        #[tokio::test]
-        async fn ingest_turn_handles_empty_prompt_gracefully() {
-            let port = in_memory_port();
-            let webid = port.user_webid;
-            let record = TurnRecord {
-                thread_id: "test-empty".to_string(),
-                user_input: String::new(),
-                agent_response: "Response".to_string(),
-                model: "test".to_string(),
-                thread_title: None,
-                agent_id: None,
-            };
+        // A second call immediately after should NOT re-fire consolidation
+        // (cadence hasn't elapsed).
+        port.maybe_consolidate();
+        let last_after = port
+            .last_consolidation
+            .lock()
+            .expect("mutex not poisoned")
+            .expect("consolidation timestamp should still be set");
+        assert_eq!(
+            last, last_after,
+            "second call within cadence should not re-fire consolidation"
+        );
 
-            let result = port.ingest_turn(record).await;
-            assert!(result.is_ok(), "empty prompt should not fail ingestion");
+        // After consolidation, the episodic h_mem may have been promoted
+        // to semantic and expired in episodic (consolidation is a one-way
+        // episodic → semantic promotion).
+        let h_mems = port
+            .store
+            .query_for_deduped_untouched("chat:thread:consolidation-test", webid)
+            .expect("query should succeed");
+        // The h_mem may or may not have been consolidated depending on
+        // confidence decay — we just verify the query succeeds.
+        let _ = h_mems;
+    }
 
-            let h_mems = port
-                .store
-                .query_for_deduped_untouched("chat:thread:test-empty", webid)
-                .expect("query should succeed");
-            assert_eq!(h_mems.len(), 1, "episodic h_mem should still be stored");
-        }
+    #[tokio::test]
+    async fn ingest_turn_skips_consolidation_when_cadence_zero() {
+        // Cadence of 0 — consolidation is disabled.
+        let port = in_memory_port_with_cadence(0, 0.3);
+        let record = TurnRecord {
+            thread_id: "no-consolidation".to_string(),
+            user_input: "Hello".to_string(),
+            agent_response: "Hi".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        };
+        let result = port.ingest_turn(record).await;
+        assert!(result.is_ok());
 
-        #[tokio::test]
-        async fn ingest_turn_does_not_fire_consolidation() {
-            // Consolidation is now decoupled from ingestion — it runs on a
-            // background timer (see start_consolidation_timer). Ingestion should
-            // NOT fire consolidation, even when the cadence has elapsed.
-            let port = in_memory_port_with_cadence(1, 0.3);
+        // last_consolidation should remain None (never fired).
+        let last = port.last_consolidation.lock().expect("mutex not poisoned");
+        assert!(
+            last.is_none(),
+            "consolidation should not fire when cadence is 0"
+        );
+    }
 
-            let record = TurnRecord {
-                thread_id: "no-consolidation-from-ingest".to_string(),
-                user_input: "Tell me about memory consolidation".to_string(),
-                agent_response: "Consolidation promotes episodic to semantic.".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: None,
-            };
-            let result = port.ingest_turn(record).await;
-            assert!(result.is_ok(), "ingest_turn should succeed");
+    /// Pin the N+1 fix in `recall_context`: the episodic keyword search must
+    /// load episodic h_mems exactly once per recall call, not once per query
+    /// word. The previous implementation re-queried the store for each of the
+    /// 5 query words using the same fixed entity string `"chat:thread:"`,
+    /// which also fired `touch_recall` on every row per iteration — turning
+    /// recall into a write storm under multi-thread load.
+    ///
+    /// We can't easily count SQL queries from here, but we can verify the
+    /// observable consequence: `recall_context` returns snippets that match
+    /// ANY query word (not just the last one), and the recall completes in
+    /// reasonable time. The regression symptom was that recall returned
+    /// results for only the last word (because the loop overwrote the entity
+    /// variable) and fired N×5 touch_recall UPDATEs.
+    #[tokio::test]
+    async fn recall_context_matches_any_query_word_single_load() {
+        let port = in_memory_port();
 
-            // last_consolidation should remain None — ingestion no longer fires it.
-            let last = port.last_consolidation.lock().expect("mutex not poisoned");
-            assert!(
-                last.is_none(),
-                "ingest_turn should not fire consolidation (timer-decoupled)"
-            );
-        }
-
-        #[tokio::test]
-        async fn maybe_consolidate_fires_when_cadence_elapsed() {
-            // Directly test the consolidation callback (what the timer calls).
-            let port = in_memory_port_with_cadence(1, 0.3);
-            let webid = port.user_webid;
-
-            // Ingest a turn so there's something to consolidate.
-            port.ingest_turn(TurnRecord {
-                thread_id: "consolidation-test".to_string(),
-                user_input: "Tell me about memory consolidation".to_string(),
-                agent_response: "Consolidation promotes episodic to semantic.".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: None,
-            })
-            .await
-            .expect("ingest succeeds");
-
-            // Fire consolidation directly (simulating the timer callback).
-            port.maybe_consolidate();
-
-            // The last_consolidation timestamp should now be set.
-            let last = port
-                .last_consolidation
-                .lock()
-                .expect("mutex not poisoned")
-                .expect("consolidation should have fired");
-            assert!(
-                Utc::now().signed_duration_since(last).num_seconds() < 5,
-                "last_consolidation should be recent"
-            );
-
-            // A second call immediately after should NOT re-fire consolidation
-            // (cadence hasn't elapsed).
-            port.maybe_consolidate();
-            let last_after = port
-                .last_consolidation
-                .lock()
-                .expect("mutex not poisoned")
-                .expect("consolidation timestamp should still be set");
-            assert_eq!(
-                last, last_after,
-                "second call within cadence should not re-fire consolidation"
-            );
-
-            // After consolidation, the episodic h_mem may have been promoted
-            // to semantic and expired in episodic (consolidation is a one-way
-            // episodic → semantic promotion).
-            let h_mems = port
-                .store
-                .query_for_deduped_untouched("chat:thread:consolidation-test", webid)
-                .expect("query should succeed");
-            // The h_mem may or may not have been consolidated depending on
-            // confidence decay — we just verify the query succeeds.
-            let _ = h_mems;
-        }
-
-        #[tokio::test]
-        async fn ingest_turn_skips_consolidation_when_cadence_zero() {
-            // Cadence of 0 — consolidation is disabled.
-            let port = in_memory_port_with_cadence(0, 0.3);
-            let record = TurnRecord {
-                thread_id: "no-consolidation".to_string(),
-                user_input: "Hello".to_string(),
-                agent_response: "Hi".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: None,
-            };
-            let result = port.ingest_turn(record).await;
-            assert!(result.is_ok());
-
-            // last_consolidation should remain None (never fired).
-            let last = port.last_consolidation.lock().expect("mutex not poisoned");
-            assert!(
-                last.is_none(),
-                "consolidation should not fire when cadence is 0"
-            );
-        }
-
-        /// Pin the N+1 fix in `recall_context`: the episodic keyword search must
-        /// load episodic h_mems exactly once per recall call, not once per query
-        /// word. The previous implementation re-queried the store for each of the
-        /// 5 query words using the same fixed entity string `"chat:thread:"`,
-        /// which also fired `touch_recall` on every row per iteration — turning
-        /// recall into a write storm under multi-thread load.
-        ///
-        /// We can't easily count SQL queries from here, but we can verify the
-        /// observable consequence: `recall_context` returns snippets that match
-        /// ANY query word (not just the last one), and the recall completes in
-        /// reasonable time. The regression symptom was that recall returned
-        /// results for only the last word (because the loop overwrote the entity
-        /// variable) and fired N×5 touch_recall UPDATEs.
-        #[tokio::test]
-        async fn recall_context_matches_any_query_word_single_load() {
-            let port = in_memory_port();
-
-            // Ingest two turns with distinct keywords so we can verify both match.
-            let records = [
-                TurnRecord {
-                    thread_id: "t-rust".to_string(),
-                    user_input: "Tell me about rust programming".to_string(),
-                    agent_response: "Rust is a systems language.".to_string(),
-                    model: "test-model".to_string(),
-                    thread_title: None,
-                    agent_id: None,
-                },
-                TurnRecord {
-                    thread_id: "t-python".to_string(),
-                    user_input: "Tell me about python programming".to_string(),
-                    agent_response: "Python is a scripting language.".to_string(),
-                    model: "test-model".to_string(),
-                    thread_title: None,
-                    agent_id: None,
-                },
-            ];
-            for record in records {
-                port.ingest_turn(record).await.expect("ingest succeeds");
-            }
-
-            // Query with two distinct keywords — both should match. Under the
-            // N+1 bug, only the last word's results survived (the entity variable
-            // was overwritten each iteration, and the loop re-queried the same
-            // entity 5 times, but the substring filter only kept matches for the
-            // current word — so earlier words' matches were lost when a later
-            // word had no overlap with the same h_mems).
-            let snippets = port
-                .recall_context("rust python", 10)
-                .await
-                .expect("recall succeeds");
-
-            // Both turns should be recalled — the fix loads episodic h_mems once
-            // and checks all query words against each.
-            let texts: Vec<&str> = snippets.iter().map(|s| s.text.as_str()).collect();
-            let has_rust = texts.iter().any(|t| t.contains("rust"));
-            let has_python = texts.iter().any(|t| t.contains("python"));
-            assert!(
-                has_rust && has_python,
-                "recall should match ANY query word, got: {snippets:?}"
-            );
-        }
-
-        /// A failed embedding call must degrade recall to the keyword leg —
-        /// never error, never lose keyword-matched turns. This pins the
-        /// behavioral contract of the embed-failure branch in `recall_from`:
-        /// a dead embedding endpoint costs semantic recall only. The warn
-        /// itself (the operator signal) mirrors the established `ingest_turn`
-        /// failure branches and is not separately pinned — like those, it is
-        /// exercised by every test using the channel-closed `for_tests()` port.
-        #[tokio::test]
-        async fn recall_degrades_to_keyword_leg_when_embedding_fails() {
-            let port = in_memory_port();
-
-            // Ingest a turn whose text contains a distinctive keyword. The
-            // `for_tests()` port fails every embed, so the semantic leg is dead
-            // and the keyword leg is the only path to this turn.
-            port.ingest_turn(TurnRecord {
-                thread_id: "embed-failure-degradation".to_string(),
-                user_input: "kangaroo wallaby emu cassowary".to_string(),
-                agent_response: "distinctive keyword quokka".to_string(),
+        // Ingest two turns with distinct keywords so we can verify both match.
+        let records = [
+            TurnRecord {
+                thread_id: "t-rust".to_string(),
+                user_input: "Tell me about rust programming".to_string(),
+                agent_response: "Rust is a systems language.".to_string(),
                 model: "test-model".to_string(),
                 thread_title: None,
                 agent_id: None,
-            })
-            .await
-            .expect("ingest succeeds despite embed failure");
-
-            // Recall must succeed (not error) and find the turn via the keyword
-            // leg — "quokka" appears in the stored text and passes the >3-char
-            // word filter.
-            let snippets = port
-                .recall_context("quokka habitat", 10)
-                .await
-                .expect("recall must not error when the embedding endpoint is down");
-            assert!(
-                snippets.iter().any(|s| s.text.contains("quokka")),
-                "keyword recall must survive embed failure — got: {snippets:?}"
-            );
-        }
-
-        // The embed-failure degradation holds for arbitrary queries: whatever
-        // the query, recall with a dead embedding endpoint never errors and
-        // returns only keyword-leg matches (a snippet with no shared >3-char
-        // word can only come from the semantic leg, which is dead). Each case
-        // builds its own current-thread runtime — `in_memory_port` captures
-        // `Handle::current()` for the embed spawn.
-        mod embed_failure_prop {
-            use super::*;
-            use proptest::prop_assert;
-
-            proptest::proptest! {
-                #![proptest_config(proptest::test_runner::Config {
-                    cases: 64,
-                    ..proptest::test_runner::Config::default()
-                })]
-
-                #[test]
-                fn query_returns_keyword_leg_matches_only(
-                    query in proptest::string::string_regex(r"[a-z ]{4,40}").unwrap()
-                ) {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .build()
-                        .expect("test runtime builds");
-                    let snippets = runtime.block_on(async {
-                        let port = in_memory_port();
-                        port.ingest_turn(TurnRecord {
-                            thread_id: "prop-embed-failure".to_string(),
-                            user_input: "the quick brown fox jumps".to_string(),
-                            agent_response: "lazy dog response".to_string(),
-                            model: "test-model".to_string(),
-                            thread_title: None,
-                            agent_id: None,
-                        })
-                        .await
-                        .expect("ingest succeeds");
-
-                        port.recall_context(&query, 10)
-                            .await
-                            .expect("recall must never error on embed failure")
-                    });
-
-                    let query_words: Vec<String> = query
-                        .split_whitespace()
-                        .filter(|w| w.len() > 3)
-                        .map(|w| w.to_lowercase())
-                        .collect();
-                    for snippet in &snippets {
-                        let text = snippet.text.to_lowercase();
-                        let shares_word = query_words.iter().any(|w| text.contains(w));
-                        prop_assert!(
-                            shares_word || query_words.is_empty(),
-                            "snippet returned without keyword overlap — the semantic \
-                             leg must be dead when embed fails: {snippet:?}"
-                        );
-                    }
-                }
-            }
-        }
-
-        /// Pin that the semantic (embedding KNN) recall leg works end-to-end.
-        /// Before the fix, the embedding was stored under `embedding:thread:...`
-        /// while the h_mem text lived under `chat:thread:...`, so the KNN
-        /// neighbor's `entity_ref` joined to no h_mem and the semantic leg
-        /// always returned zero snippets — silently degrading recall to the
-        /// keyword leg only. The fix stores the embedding under the same
-        /// `chat:thread:{id}` entity as the h_mem.
-        ///
-        /// This test isolates the semantic leg from the keyword leg by using a
-        /// stub embedding function that returns the same unit vector for any
-        /// non-empty input, so every query is a KNN match for every stored
-        /// embedding (cosine distance 0). The query shares NO words with the
-        /// stored turn, so the keyword leg misses — the only path to recall is
-        /// the semantic leg. Before the entity_ref fix, this returned zero
-        /// snippets.
-        #[tokio::test]
-        async fn recall_context_finds_turn_by_embedding_only() {
-            // Constant embedding: every text maps to the same unit vector. KNN
-            // search returns every stored embedding at cosine distance 0, so the
-            // semantic leg always finds every stored turn regardless of word
-            // overlap. The keyword leg is the only thing that could miss.
-            let embed_fn = Arc::new(|_text: &str| -> Vec<f32> {
-                let mut v = vec![0.0f32; 1024];
-                v[0] = 1.0;
-                v
-            });
-            let port = in_memory_port_with_embed_fn(embed_fn);
-
-            // Ingest a turn whose text contains none of the query words.
-            let record = TurnRecord {
-                thread_id: "t-unique-thread-id".to_string(),
-                user_input: "alpha beta gamma delta epsilon".to_string(),
-                agent_response: "zeta eta theta iota kappa".to_string(),
+            },
+            TurnRecord {
+                thread_id: "t-python".to_string(),
+                user_input: "Tell me about python programming".to_string(),
+                agent_response: "Python is a scripting language.".to_string(),
                 model: "test-model".to_string(),
                 thread_title: None,
                 agent_id: None,
-            };
+            },
+        ];
+        for record in records {
             port.ingest_turn(record).await.expect("ingest succeeds");
-
-            // Query with words that share NO tokens with the stored turn. All
-            // query words are >3 chars (pass the keyword filter) but none appear
-            // in the stored text — the keyword leg returns nothing. The semantic
-            // leg must find the turn via KNN (constant embedding → distance 0).
-            let snippets = port
-                .recall_context("kangaroo wallaby emu cassowary", 10)
-                .await
-                .expect("recall succeeds");
-            assert!(
-                snippets.iter().any(|s| s.text.contains("alpha beta gamma")),
-                "semantic-only recall should find the turn despite zero word overlap, got: {snippets:?}"
-            );
         }
 
-        /// Pin that `recall_context` touches `recalled_at` only on h_mems that
-        /// survive the limit, not on every recalled candidate. The previous
-        /// implementation touched every deduped h_mem inside `query_for_deduped`,
-        /// even ones filtered out by `recall_min_confidence` in the injector.
-        ///
-        /// We verify this by checking that h_mems NOT in the final snippets have
-        /// their `recalled_at` unchanged after a recall that truncates them.
-        #[tokio::test]
-        async fn recall_context_touches_only_injected_h_mems() {
-            let port = in_memory_port();
-            let webid = port.user_webid;
-
-            // Ingest one turn.
-            port.ingest_turn(TurnRecord {
-                thread_id: "touch-test".to_string(),
-                user_input: "unique_keyword_xyz".to_string(),
-                agent_response: "response".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: None,
-            })
+        // Query with two distinct keywords — both should match. Under the
+        // N+1 bug, only the last word's results survived (the entity variable
+        // was overwritten each iteration, and the loop re-queried the same
+        // entity 5 times, but the substring filter only kept matches for the
+        // current word — so earlier words' matches were lost when a later
+        // word had no overlap with the same h_mems).
+        let snippets = port
+            .recall_context("rust python", 10)
             .await
-            .expect("ingest succeeds");
+            .expect("recall succeeds");
 
-            // Read the stored recalled_at via the untouched query (no side effects).
-            let before = port
-                .store
-                .query_for_deduped_untouched("chat:thread:touch-test", webid)
-                .expect("untouched query succeeds");
-            assert_eq!(before.len(), 1);
-            let recalled_at_before = before[0].recalled_at;
+        // Both turns should be recalled — the fix loads episodic h_mems once
+        // and checks all query words against each.
+        let texts: Vec<&str> = snippets.iter().map(|s| s.text.as_str()).collect();
+        let has_rust = texts.iter().any(|t| t.contains("rust"));
+        let has_python = texts.iter().any(|t| t.contains("python"));
+        assert!(
+            has_rust && has_python,
+            "recall should match ANY query word, got: {snippets:?}"
+        );
+    }
 
-            // Sleep so a touch would be observable.
-            std::thread::sleep(std::time::Duration::from_millis(10));
+    /// A failed embedding call must degrade recall to the keyword leg —
+    /// never error, never lose keyword-matched turns. This pins the
+    /// behavioral contract of the embed-failure branch in `recall_from`:
+    /// a dead embedding endpoint costs semantic recall only. The warn
+    /// itself (the operator signal) mirrors the established `ingest_turn`
+    /// failure branches and is not separately pinned — like those, it is
+    /// exercised by every test using the channel-closed `for_tests()` port.
+    #[tokio::test]
+    async fn recall_degrades_to_keyword_leg_when_embedding_fails() {
+        let port = in_memory_port();
 
-            // Recall with a query that does NOT match the stored keyword — the
-            // h_mem should be loaded as a candidate but NOT injected (no keyword
-            // overlap), so its recalled_at should NOT be touched.
-            let snippets = port
-                .recall_context("completely_different_query", 10)
-                .await
-                .expect("recall succeeds");
-            assert!(
-                snippets.is_empty(),
-                "no snippets should match a non-overlapping query"
-            );
+        // Ingest a turn whose text contains a distinctive keyword. The
+        // `for_tests()` port fails every embed, so the semantic leg is dead
+        // and the keyword leg is the only path to this turn.
+        port.ingest_turn(TurnRecord {
+            thread_id: "embed-failure-degradation".to_string(),
+            user_input: "kangaroo wallaby emu cassowary".to_string(),
+            agent_response: "distinctive keyword quokka".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        })
+        .await
+        .expect("ingest succeeds despite embed failure");
 
-            let after = port
-                .store
-                .query_for_deduped_untouched("chat:thread:touch-test", webid)
-                .expect("untouched query succeeds");
-            assert_eq!(after.len(), 1);
-            assert_eq!(
-                after[0].recalled_at, recalled_at_before,
-                "recalled_at should be unchanged when the h_mem is not injected"
-            );
-
-            // Now recall with a matching query — the h_mem should be injected and
-            // its recalled_at should be touched.
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            let snippets = port
-                .recall_context("unique_keyword_xyz", 10)
-                .await
-                .expect("recall succeeds");
-            assert_eq!(snippets.len(), 1, "matching query should recall the h_mem");
-
-            let after_match = port
-                .store
-                .query_for_deduped_untouched("chat:thread:touch-test", webid)
-                .expect("untouched query succeeds");
-            assert_eq!(after_match.len(), 1);
-            assert!(
-                after_match[0].recalled_at > recalled_at_before,
-                "recalled_at should be updated when the h_mem is injected"
-            );
-        }
-
-        /// Pin that the ingestion semaphore serializes concurrent ingestions.
-        /// Two concurrent ingestions should both complete successfully, but the
-        /// second should wait for the first to release its permit.
-        #[tokio::test]
-        async fn ingestion_semaphore_serializes_concurrent_ingestions() {
-            let port = std::sync::Arc::new(in_memory_port());
-
-            let port1 = port.clone();
-            let port2 = port.clone();
-
-            let record1 = TurnRecord {
-                thread_id: "sem-1".to_string(),
-                user_input: "first".to_string(),
-                agent_response: "response1".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: None,
-            };
-            let record2 = TurnRecord {
-                thread_id: "sem-2".to_string(),
-                user_input: "second".to_string(),
-                agent_response: "response2".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: None,
-            };
-
-            // Spawn both ingestions concurrently.
-            let (r1, r2) = tokio::join!(
-                async move { port1.ingest_turn(record1).await },
-                async move { port2.ingest_turn(record2).await }
-            );
-
-            assert!(r1.is_ok(), "first ingestion should succeed: {r1:?}");
-            assert!(r2.is_ok(), "second ingestion should succeed: {r2:?}");
-
-            // Both turns should be stored.
-            let webid = port.user_webid;
-            let h1 = port
-                .store
-                .query_for_deduped_untouched("chat:thread:sem-1", webid)
-                .expect("query succeeds");
-            let h2 = port
-                .store
-                .query_for_deduped_untouched("chat:thread:sem-2", webid)
-                .expect("query succeeds");
-            assert_eq!(h1.len(), 1, "first turn should be stored");
-            assert_eq!(h2.len(), 1, "second turn should be stored");
-        }
-
-        /// Curator turns must be ingested into the curator's sovereign DB with the
-        /// curator's WebID (Private, curator perspective), mirroring the user
-        /// agent's episodic loop. This is the core of the curator memory mirror —
-        /// without it, the curator has no first-person experiential memory.
-        #[tokio::test]
-        async fn ingest_curator_turn_stores_curator_perspective_episodic() {
-            let port = in_memory_port();
-            let curator_webid = port.curator_webid;
-            let record = TurnRecord {
-                thread_id: "curator-thread-1".to_string(),
-                user_input: "What is the regulation status?".to_string(),
-                agent_response: "All systems nominal.".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: Some("Curator".to_string()),
-            };
-
-            let result = port.ingest_turn(record).await;
-            assert!(result.is_ok(), "curator turn ingestion should succeed");
-
-            // The curator's store should have the turn, tagged with the curator's
-            // WebID (Private, curator perspective).
-            let curator_store = port.curator_store.get().expect("curator store");
-            let h_mems = curator_store
-                .query_for_deduped_untouched("chat:thread:curator-thread-1", curator_webid)
-                .expect("curator episodic query should succeed");
-            assert_eq!(
-                h_mems.len(),
-                1,
-                "one curator-perspective episodic h_mem should be stored"
-            );
-            assert_eq!(h_mems[0].attribute, "chatted");
-
-            // The user's episodic store should ALSO contain the turn (Private,
-            // user perspective) — dual-perspective writes give each party a
-            // first-person record of the shared conversation.
-            let user_h_mems = port
-                .store
-                .query_for_deduped_untouched("chat:thread:curator-thread-1", port.user_webid)
-                .expect("user episodic query should succeed");
-            assert_eq!(
-                user_h_mems.len(),
-                1,
-                "curator turn must also land in the user's episodic store"
-            );
-
-            // The same curator store also holds the Shared semantic copy — the
-            // ontology blob distinguishes it from the episodic record above.
-            let semantic_h_mems = curator_store
-                .query_deduped("curator:thread:curator-thread-1")
-                .expect("curator semantic query should succeed");
-            assert_eq!(
-                semantic_h_mems.len(),
-                1,
-                "one curator semantic h_mem should be stored"
-            );
-            assert_eq!(semantic_h_mems[0].attribute, "turn");
-        }
-
-        /// Curator turns write to BOTH perspectives' episodic stores (dual-
-        /// perspective memory: each party keeps a first-person record of the
-        /// shared conversation) but the Shared semantic copy stays sovereign to
-        /// the curator's DB — the user's semantic store holds consolidated
-        /// facts, not per-turn records.
-        #[tokio::test]
-        async fn ingest_curator_turn_writes_user_perspective_but_not_user_semantic() {
-            let port = in_memory_port();
-            let record = TurnRecord {
-                thread_id: "curator-isolation-test".to_string(),
-                user_input: "Check the guard layer".to_string(),
-                agent_response: "Guard layer is healthy.".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: Some("Curator".to_string()),
-            };
-
-            port.ingest_turn(record)
-                .await
-                .expect("ingestion should succeed");
-
-            // User episodic — the user's first-person record of the curator
-            // conversation must be present.
-            let user_episodic = port
-                .store
-                .query_for_deduped_untouched("chat:thread:curator-isolation-test", port.user_webid)
-                .expect("user episodic query should succeed");
-            assert_eq!(
-                user_episodic.len(),
-                1,
-                "curator turn must write the user's episodic perspective"
-            );
-
-            // User semantic — should not have the curator entity (per-turn
-            // semantic records are sovereign to the curator's DB).
-            let user_semantic = port
-                .store
-                .query_deduped("curator:thread:curator-isolation-test")
-                .expect("user semantic query should succeed");
-            assert_eq!(
-                user_semantic.len(),
-                0,
-                "curator semantic copy must not leak into the user's semantic store"
-            );
-        }
-
-        /// `recall_context_curator` should recall from the curator's stores, not
-        /// the user's. This pins the curator recall path that the
-        /// `BridgeCuratorContextInjector` delegates to.
-        #[tokio::test]
-        async fn recall_context_curator_reads_curator_store() {
-            let port = in_memory_port();
-
-            // Ingest a curator turn.
-            let record = TurnRecord {
-                thread_id: "curator-recall-test".to_string(),
-                user_input: "regulation_status_check_keyword".to_string(),
-                agent_response: "All regulation systems are operational.".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: Some("Curator".to_string()),
-            };
-            port.ingest_turn(record)
-                .await
-                .expect("ingestion should succeed");
-
-            // Recall from the curator's store — the keyword should match.
-            let snippets = port
-                .recall_context_curator("regulation_status_check_keyword", 5)
-                .await
-                .expect("curator recall should succeed");
-            assert!(
-                !snippets.is_empty(),
-                "curator recall should find the ingested curator turn"
-            );
-
-            // The recalled snippet should come from the curator's episodic store.
-            assert_eq!(snippets[0].source, "episodic");
-        }
-
-        /// `recall_thread` should recall a thread's prior turns by exact entity
-        /// match, not by content similarity. This pins the static-context fix —
-        /// the previous `inject_static_context` passed the `thread_id` UUID as the
-        /// query to `recall_context`, which never matched stored turn text (the
-        /// stored embeddings are of `user_input`, not the thread_id), so static
-        /// context injection was dead code.
-        #[tokio::test]
-        async fn recall_thread_recalls_thread_by_entity() {
-            let port = in_memory_port();
-            let thread_id = "user-thread-recall-test";
-
-            // Ingest a user turn.
-            let record = TurnRecord {
-                thread_id: thread_id.to_string(),
-                user_input: "how do I configure the embedding model".to_string(),
-                agent_response: "Set kask.corpus.embedding_dim in settings.json.".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: None,
-            };
-            port.ingest_turn(record)
-                .await
-                .expect("ingestion should succeed");
-
-            // Recall by thread_id — should find the turn via exact entity match.
-            let snippets = port
-                .recall_thread(thread_id, 10)
-                .await
-                .expect("thread recall should succeed");
-            assert!(
-                !snippets.is_empty(),
-                "recall_thread should find the ingested turn by entity, not content"
-            );
-        }
-
-        /// `recall_thread_curator` should recall the curator's prior turns on a
-        /// thread from the curator's sovereign stores. Mirrors the user-side test.
-        #[tokio::test]
-        async fn recall_thread_curator_recalls_curator_thread() {
-            let port = in_memory_port();
-            let thread_id = "curator-thread-recall-test";
-
-            // Ingest a curator turn.
-            let record = TurnRecord {
-                thread_id: thread_id.to_string(),
-                user_input: "regulation status check".to_string(),
-                agent_response: "All regulation systems are operational.".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: Some("Curator".to_string()),
-            };
-            port.ingest_turn(record)
-                .await
-                .expect("ingestion should succeed");
-
-            // Recall by thread_id from the curator's stores.
-            let snippets = port
-                .recall_thread_curator(thread_id, 10)
-                .await
-                .expect("curator thread recall should succeed");
-            assert!(
-                !snippets.is_empty(),
-                "recall_thread_curator should find the ingested curator turn by entity"
-            );
-        }
-
-        /// Curator consolidation should promote the curator's episodic h_mems to
-        /// the curator's semantic store, mirroring the user's consolidation loop.
-        /// This pins the Fix 1 wiring — without the `curator_consolidation` field,
-        /// the curator's episodic store would grow unbounded and the curator would
-        /// never learn consolidated facts from its own experience.
-        #[tokio::test]
-        async fn maybe_consolidate_fires_curator_pass() {
-            let port = in_memory_port_with_cadence(1, 0.3);
-            let curator_webid = port.curator_webid;
-
-            // Ingest a curator turn so there's something to consolidate.
-            port.ingest_turn(TurnRecord {
-                thread_id: "curator-consolidation-test".to_string(),
-                user_input: "regulation status check".to_string(),
-                agent_response: "All regulation systems are operational.".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: Some("Curator".to_string()),
-            })
+        // Recall must succeed (not error) and find the turn via the keyword
+        // leg — "quokka" appears in the stored text and passes the >3-char
+        // word filter.
+        let snippets = port
+            .recall_context("quokka habitat", 10)
             .await
-            .expect("ingest succeeds");
+            .expect("recall must not error when the embedding endpoint is down");
+        assert!(
+            snippets.iter().any(|s| s.text.contains("quokka")),
+            "keyword recall must survive embed failure — got: {snippets:?}"
+        );
+    }
 
-            // Verify the curator store has the turn before consolidation.
-            let curator_store = port
-                .curator_store
-                .get()
-                .expect("curator store should be available in tests");
-            let h_mems_before = curator_store
-                .query_for_deduped_untouched(
-                    "chat:thread:curator-consolidation-test",
-                    curator_webid,
-                )
-                .expect("curator episodic query should succeed");
-            assert_eq!(
-                h_mems_before.len(),
-                1,
-                "curator episodic store should have the ingested turn"
-            );
-
-            // Fire consolidation directly (simulating the timer callback).
-            // This should fire both the user and curator consolidation passes.
-            port.maybe_consolidate();
-
-            // The last_consolidation timestamp should now be set (shared between
-            // user and curator passes — both fire under the same mutex).
-            port.last_consolidation
-                .lock()
-                .expect("mutex not poisoned")
-                .expect("consolidation should have fired");
-
-            // After consolidation, the curator's episodic h_mem may have been
-            // promoted to the curator's semantic store and expired in episodic
-            // (consolidation is a one-way episodic → semantic promotion). We
-            // verify the query succeeds — whether the h_mem was promoted depends
-            // on confidence decay, but the consolidation pass itself must not error.
-            let h_mems_after = curator_store
-                .query_for_deduped_untouched(
-                    "chat:thread:curator-consolidation-test",
-                    curator_webid,
-                )
-                .expect("curator episodic query should succeed after consolidation");
-            // The h_mem may or may not have been consolidated depending on
-            // confidence decay — we just verify the query succeeds and the
-            // curator consolidation pass didn't panic.
-            let _ = h_mems_after;
-        }
-
-        /// Dual-perspective pin: a curator turn must produce first-person
-        /// episodic records for BOTH parties — the user (user_webid, user DB)
-        /// and the curator (curator_webid, curator DB) — plus the Shared
-        /// semantic copy in the curator's DB. Three records, one conversation.
-        #[tokio::test]
-        async fn ingest_curator_turn_writes_both_perspectives() {
-            let port = in_memory_port();
-            let record = TurnRecord {
-                thread_id: "dual-perspective-test".to_string(),
-                user_input: "status?".to_string(),
-                agent_response: "nominal".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: Some("Curator".to_string()),
-            };
-            port.ingest_turn(record).await.expect("ingest succeeds");
-
-            let user_perspective = port
-                .store
-                .query_for_deduped_untouched("chat:thread:dual-perspective-test", port.user_webid)
-                .expect("user query");
-            assert_eq!(user_perspective.len(), 1, "user perspective present");
-
-            let curator_store = port.curator_store.get().expect("curator store");
-            let curator_perspective = curator_store
-                .query_for_deduped_untouched(
-                    "chat:thread:dual-perspective-test",
-                    port.curator_webid,
-                )
-                .expect("curator query");
-            assert_eq!(curator_perspective.len(), 1, "curator perspective present");
-
-            let shared = curator_store
-                .query_deduped("curator:thread:dual-perspective-test")
-                .expect("semantic query");
-            assert_eq!(shared.len(), 1, "shared semantic copy present");
-        }
-
-        /// Dual-perspective recall pin: the user's `recall_context` must surface
-        /// the user's own first-person record of a CURATOR conversation (it
-        /// happened to the user), while the curator's record stays sovereign to
-        /// the curator's DB — queried only via `recall_context_curator`.
-        #[tokio::test]
-        async fn user_recall_finds_user_perspective_of_curator_turn() {
-            let port = in_memory_port();
-            port.ingest_turn(TurnRecord {
-                thread_id: "dual-recall-test".to_string(),
-                user_input: "unique_zebra_keyword status?".to_string(),
-                agent_response: "nominal".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: Some("Curator".to_string()),
-            })
-            .await
-            .expect("ingest succeeds");
-
-            // User-side recall surfaces the user's record of the curator turn.
-            let user_snippets = port
-                .recall_context("unique_zebra_keyword", 5)
-                .await
-                .expect("user recall succeeds");
-            assert!(
-                !user_snippets.is_empty(),
-                "user recall must find the user's record of the curator conversation"
-            );
-
-            // Curator-side recall surfaces the curator's own record.
-            let curator_snippets = port
-                .recall_context_curator("unique_zebra_keyword", 5)
-                .await
-                .expect("curator recall succeeds");
-            assert!(
-                !curator_snippets.is_empty(),
-                "curator recall must find the curator's record of the same conversation"
-            );
-        }
-
-        /// Memory-health probe pin: reports the curator store up when healthy,
-        /// degraded when it is down, and — critically — does NOT trigger a
-        /// heal (a status read must be side-effect-free, or the probe would
-        /// drive the re-open path and flap the warn-once signal).
-        #[tokio::test]
-        async fn memory_health_json_reports_degraded_without_healing() {
-            let port = in_memory_port();
-
-            let healthy = port.memory_health_json();
-            assert_eq!(healthy["curator_store"], true);
-            // The swarm store is `None` in the test port (for_tests(None)), so
-            // `degraded` is true even when the curator store is healthy — the
-            // swarm store is simply not configured in tests.
-            assert_eq!(healthy["swarm_store"], false);
-            assert_eq!(healthy["degraded"], true);
-
-            // Simulate a curator outage. Healing is disabled in test handles, so
-            // if the probe attempted a heal it would fail — the point is it must
-            // not attempt one at all.
-            port.curator_store.set_for_tests(None);
-            let degraded = port.memory_health_json();
-            assert_eq!(degraded["curator_store"], false);
-            assert_eq!(degraded["swarm_store"], false);
-            assert_eq!(degraded["degraded"], true);
-
-            // Store still down after the probe — the probe didn't heal.
-            assert!(port.curator_store.get().is_none());
-        }
-
-        /// `memory_health_json` must reflect the swarm store's availability, not
-        /// just the curator store's. The down-state is covered by
-        /// `memory_health_json_reports_degraded_without_healing` (the test port
-        /// builds `SwarmStore::for_tests(None)`); this test pins the up-state by
-        /// installing a real in-memory `MemoryStore` via `set_for_tests` and
-        /// asserting `swarm_store` flips to true and `degraded` follows the
-        /// curator store (which is healthy here).
-        #[tokio::test]
-        async fn memory_health_json_reflects_swarm_store_availability() {
-            let port = in_memory_port();
-
-            // Baseline: curator up, swarm down (the test port's default).
-            let baseline = port.memory_health_json();
-            assert_eq!(baseline["curator_store"], true);
-            assert_eq!(baseline["swarm_store"], false);
-            assert_eq!(baseline["degraded"], true);
-
-            // Install a real in-memory swarm store — `availability()` must flip.
-            let swarm_driver: Arc<dyn hkask_storage::DatabaseDriver> =
-                SqliteDriver::in_memory_driver();
-            let swarm_store = Arc::new(MemoryStore::new(
-                HMemStore::from_driver(Arc::clone(&swarm_driver)).expect("swarm hmem init"),
-                EmbeddingStore::from_driver(swarm_driver, 1024).expect("swarm embedding init"),
-            ));
-            port.swarm_store.set_for_tests(Some(swarm_store));
-
-            let healthy = port.memory_health_json();
-            assert_eq!(healthy["curator_store"], true);
-            assert_eq!(healthy["swarm_store"], true);
-            assert_eq!(healthy["degraded"], false);
-
-            // Take the swarm store back down — `degraded` returns.
-            port.swarm_store.set_for_tests(None);
-            let degraded = port.memory_health_json();
-            assert_eq!(degraded["swarm_store"], false);
-            assert_eq!(degraded["degraded"], true);
-        }
-
-        /// Self-healing pin: when the curator store is down, `get()` returns
-        /// `None` without healing (heal disabled in tests), and after
-        /// `set_for_tests` restores it, subsequent reads see the healed
-        /// store. This mirrors the production heal path where a failed open is
-        /// retried on the next access.
-        #[tokio::test]
-        async fn curator_store_heals_after_outage() {
-            let port = in_memory_port();
-
-            // Simulate an outage — the store goes None.
-            port.curator_store.set_for_tests(None);
-            assert!(port.curator_store.get().is_none(), "store down");
-
-            // Ingestion during the outage still succeeds (user record persists,
-            // curator writes skip).
-            port.ingest_turn(TurnRecord {
-                thread_id: "outage-test".to_string(),
-                user_input: "during outage".to_string(),
-                agent_response: "response".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: Some("Curator".to_string()),
-            })
-            .await
-            .expect("ingestion during outage succeeds");
-            let user_record = port
-                .store
-                .query_for_deduped_untouched("chat:thread:outage-test", port.user_webid)
-                .expect("user query");
-            assert_eq!(user_record.len(), 1, "user record persisted during outage");
-
-            // Heal: restore a fresh in-memory store and verify reads see it.
-            let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
-                SqliteDriver::in_memory_driver();
-            let healed = Arc::new(MemoryStore::new(
-                HMemStore::from_driver(Arc::clone(&curator_driver)).expect("hmem init"),
-                EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init"),
-            ));
-            port.curator_store.set_for_tests(Some(Arc::clone(&healed)));
-
-            assert!(port.curator_store.get().is_some(), "store healed");
-
-            // Post-heal ingestion writes curator records again.
-            port.ingest_turn(TurnRecord {
-                thread_id: "post-heal-test".to_string(),
-                user_input: "after heal".to_string(),
-                agent_response: "response".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: Some("Curator".to_string()),
-            })
-            .await
-            .expect("post-heal ingestion succeeds");
-            let curator_record = healed
-                .query_for_deduped_untouched("chat:thread:post-heal-test", port.curator_webid)
-                .expect("curator query");
-            assert_eq!(curator_record.len(), 1, "curator record written after heal");
-        }
-
-        /// T7b wiring pin: `BridgeMemoryPort::ingest_turn` must call the reask
-        /// correlator (`hkask_tool_invoker::correlate_reask`) without panicking.
-        /// The correlator drains the process-global render buffer that
-        /// provenance-carrying widgets populate via `record_render`. We cannot
-        /// easily assert the `reg.widget.reask` tracing span fired without a
-        /// capture subscriber (the repo has none); the leaf's unit tests cover the
-        /// correlator state machine. This test pins the call path is wired: record
-        /// a render, then ingest a user-message turn, and assert no error.
-        #[tokio::test]
-        async fn bridge_ingest_turn_calls_reask_correlator() {
-            use agent::ThreadMemoryPort as _;
-
-            // Record a widget render so the correlator has state to drain.
-            hkask_tool_invoker::record_render(Some("portfolio_returns".into()), None);
-
-            // Construct a BridgeMemoryPort over the in-memory RealMemoryPort.
-            let inner: std::sync::Arc<dyn MemoryPort> = std::sync::Arc::new(in_memory_port());
-            let bridge = BridgeMemoryPort::new(inner);
-
-            // Ingest a user-message turn (non-empty user_input). The correlator
-            // fires inside ingest_turn before the inner call.
-            let record = agent::ThreadTurnRecord {
-                thread_id: "reask-wiring-test".to_string(),
-                user_input: "now show me the portfolio returns".to_string(),
-                agent_response: "here are the returns".to_string(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: None,
-            };
-            let result = bridge.ingest_turn(record).await;
-            assert!(
-                result.is_ok(),
-                "ingest_turn with correlator wired should succeed: {result:?}"
-            );
-        }
-
-        // ── BridgeAlertEscalationSink tests ──────────────────────────────────
-
-        /// `BridgeAlertEscalationSink::persist_alert` must write to the
-        /// `EscalationQueue` so the entry is readable via `list_pending` — this
-        /// pins the Store seam end-to-end (sink → queue → `curator_escalations`).
-        /// If the adapter drops the call or the queue write fails silently, the
-        /// alert never reaches the reviewable backlog.
-        #[test]
-        fn bridge_alert_escalation_sink_writes_to_queue() {
-            use hkask_regulation::AlertEscalationSink;
-            use hkask_storage::EscalationQueue;
-            use hkask_storage::database::sqlite::SqliteDriver;
-
-            let driver = SqliteDriver::in_memory_driver();
-            let queue =
-                Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
-            let sink = BridgeAlertEscalationSink::new(queue.clone());
-
-            // Persist a critical alert
-            sink.persist_alert(
-                "Variety deficit 150 exceeds threshold 100",
-                1.0,
-                r#"{"domain":"test","deficit":150,"threshold":100,"severity":"Critical"}"#,
-            );
-
-            // The alert must be readable via list_pending (the same method
-            // `curator_escalations` calls).
-            let pending = queue.list_pending().expect("list_pending must succeed");
-            assert_eq!(pending.len(), 1, "the alert must reach the queue");
-            assert_eq!(
-                pending[0].output,
-                "Variety deficit 150 exceeds threshold 100"
-            );
-            assert!((pending[0].confidence - 1.0).abs() < f64::EPSILON);
-            assert!(
-                pending[0]
-                    .error_context
-                    .contains("\"severity\":\"Critical\"")
-            );
-            assert_eq!(pending[0].status, hkask_storage::EscalationStatus::Pending);
-        }
-
-        /// When the queue write fails, `persist_alert` must not panic — it logs
-        /// and swallows. This pins the best-effort contract: a failing queue
-        /// never breaks the regulation loop.
-        #[test]
-        fn bridge_alert_escalation_sink_does_not_panic_on_write_failure() {
-            use hkask_regulation::AlertEscalationSink;
-            use hkask_storage::EscalationQueue;
-            use hkask_storage::database::sqlite::SqliteDriver;
-
-            let driver = SqliteDriver::in_memory_driver();
-            let queue =
-                Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
-            // Drop the underlying driver by dropping the queue, then reconstruct
-            // a sink over a dangling Arc — this is hard to simulate cleanly, so
-            // instead we just verify the happy path doesn't panic on a normal
-            // call (the error path is covered by the queue's own tests).
-            let sink = BridgeAlertEscalationSink::new(queue);
-            sink.persist_alert("test", 0.5, "{}");
-        }
-
-        // ── Env var parsing proptests ─────────────────────────────────────────
-        //
-        // The `HKASK_MEMORY_STORAGE_BUDGET` and `HKASK_MEMORY_LIFE_DAYS` env vars
-        // are parsed by `parse_storage_budget` / `parse_memory_life_days`. The
-        // contract: any string that parses to a valid in-range value is accepted;
-        // any other string falls back to the default. These proptests exercise
-        // the full input space (arbitrary strings, arbitrary integers/floats) so
-        // a malformed value never panics and never silently disables the budget
-        // or decay (the `.rules` "Process-global hooks set at runtime need a
-        // startup-failure signal" trap).
-
-        use proptest::prop_assert_eq;
+    // The embed-failure degradation holds for arbitrary queries: whatever
+    // the query, recall with a dead embedding endpoint never errors and
+    // returns only keyword-leg matches (a snippet with no shared >3-char
+    // word can only come from the semantic leg, which is dead). Each case
+    // builds its own current-thread runtime — `in_memory_port` captures
+    // `Handle::current()` for the embed spawn.
+    mod embed_failure_prop {
+        use super::*;
+        use proptest::prop_assert;
 
         proptest::proptest! {
             #![proptest_config(proptest::test_runner::Config {
-                cases: 256,
+                cases: 64,
                 ..proptest::test_runner::Config::default()
             })]
 
-            /// Any string that parses to a positive `usize` is accepted verbatim;
-            /// any other string falls back to the default. The parser must never
-            /// panic on arbitrary input.
             #[test]
-            fn prop_parse_storage_budget_accepts_positive_usize_falls_back_otherwise(
-                raw in proptest::string::string_regex(r"[0-9a-zA-Z.+\- ]{0,32}").unwrap()
+            fn query_returns_keyword_leg_matches_only(
+                query in proptest::string::string_regex(r"[a-z ]{4,40}").unwrap()
             ) {
-                let result = parse_storage_budget(&raw);
-                match raw.trim().parse::<usize>() {
-                    Ok(budget) if budget > 0 => {
-                        prop_assert_eq!(result, budget);
-                    }
-                    _ => {
-                        prop_assert_eq!(result, hkask_memory::MemoryStore::default_storage_budget());
-                    }
-                }
-            }
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .expect("test runtime builds");
+                let snippets = runtime.block_on(async {
+                    let port = in_memory_port();
+                    port.ingest_turn(TurnRecord {
+                        thread_id: "prop-embed-failure".to_string(),
+                        user_input: "the quick brown fox jumps".to_string(),
+                        agent_response: "lazy dog response".to_string(),
+                        model: "test-model".to_string(),
+                        thread_title: None,
+                        agent_id: None,
+                    })
+                    .await
+                    .expect("ingest succeeds");
 
-            /// Any string that parses to a non-negative `f64` is accepted verbatim;
-            /// any other string falls back to the default. The parser must never
-            /// panic on arbitrary input (including NaN, infinity, overflow).
-            #[test]
-            fn prop_parse_memory_life_days_accepts_nonneg_f64_falls_back_otherwise(
-                raw in proptest::string::string_regex(r"[0-9a-zA-Z.+\-eE ]{0,32}").unwrap()
-            ) {
-                let result = parse_memory_life_days(&raw);
-                match raw.trim().parse::<f64>() {
-                    Ok(days) if days.is_finite() && days >= 0.0 => {
-                        prop_assert_eq!(result, days);
-                    }
-                    _ => {
-                        prop_assert_eq!(result, hkask_memory::MemoryStore::default_memory_life_days());
-                    }
+                    port.recall_context(&query, 10)
+                        .await
+                        .expect("recall must never error on embed failure")
+                });
+
+                let query_words: Vec<String> = query
+                    .split_whitespace()
+                    .filter(|w| w.len() > 3)
+                    .map(|w| w.to_lowercase())
+                    .collect();
+                for snippet in &snippets {
+                    let text = snippet.text.to_lowercase();
+                    let shares_word = query_words.iter().any(|w| text.contains(w));
+                    prop_assert!(
+                        shares_word || query_words.is_empty(),
+                        "snippet returned without keyword overlap — the semantic \
+                         leg must be dead when embed fails: {snippet:?}"
+                    );
                 }
             }
         }
     }
+
+    /// Pin that the semantic (embedding KNN) recall leg works end-to-end.
+    /// Before the fix, the embedding was stored under `embedding:thread:...`
+    /// while the h_mem text lived under `chat:thread:...`, so the KNN
+    /// neighbor's `entity_ref` joined to no h_mem and the semantic leg
+    /// always returned zero snippets — silently degrading recall to the
+    /// keyword leg only. The fix stores the embedding under the same
+    /// `chat:thread:{id}` entity as the h_mem.
+    ///
+    /// This test isolates the semantic leg from the keyword leg by using a
+    /// stub embedding function that returns the same unit vector for any
+    /// non-empty input, so every query is a KNN match for every stored
+    /// embedding (cosine distance 0). The query shares NO words with the
+    /// stored turn, so the keyword leg misses — the only path to recall is
+    /// the semantic leg. Before the entity_ref fix, this returned zero
+    /// snippets.
+    #[tokio::test]
+    async fn recall_context_finds_turn_by_embedding_only() {
+        // Constant embedding: every text maps to the same unit vector. KNN
+        // search returns every stored embedding at cosine distance 0, so the
+        // semantic leg always finds every stored turn regardless of word
+        // overlap. The keyword leg is the only thing that could miss.
+        let embed_fn = Arc::new(|_text: &str| -> Vec<f32> {
+            let mut v = vec![0.0f32; 1024];
+            v[0] = 1.0;
+            v
+        });
+        let port = in_memory_port_with_embed_fn(embed_fn);
+
+        // Ingest a turn whose text contains none of the query words.
+        let record = TurnRecord {
+            thread_id: "t-unique-thread-id".to_string(),
+            user_input: "alpha beta gamma delta epsilon".to_string(),
+            agent_response: "zeta eta theta iota kappa".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        };
+        port.ingest_turn(record).await.expect("ingest succeeds");
+
+        // Query with words that share NO tokens with the stored turn. All
+        // query words are >3 chars (pass the keyword filter) but none appear
+        // in the stored text — the keyword leg returns nothing. The semantic
+        // leg must find the turn via KNN (constant embedding → distance 0).
+        let snippets = port
+            .recall_context("kangaroo wallaby emu cassowary", 10)
+            .await
+            .expect("recall succeeds");
+        assert!(
+            snippets.iter().any(|s| s.text.contains("alpha beta gamma")),
+            "semantic-only recall should find the turn despite zero word overlap, got: {snippets:?}"
+        );
+    }
+
+    /// Pin that `recall_context` touches `recalled_at` only on h_mems that
+    /// survive the limit, not on every recalled candidate. The previous
+    /// implementation touched every deduped h_mem inside `query_for_deduped`,
+    /// even ones filtered out by `recall_min_confidence` in the injector.
+    ///
+    /// We verify this by checking that h_mems NOT in the final snippets have
+    /// their `recalled_at` unchanged after a recall that truncates them.
+    #[tokio::test]
+    async fn recall_context_touches_only_injected_h_mems() {
+        let port = in_memory_port();
+        let webid = port.user_webid;
+
+        // Ingest one turn.
+        port.ingest_turn(TurnRecord {
+            thread_id: "touch-test".to_string(),
+            user_input: "unique_keyword_xyz".to_string(),
+            agent_response: "response".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        })
+        .await
+        .expect("ingest succeeds");
+
+        // Read the stored recalled_at via the untouched query (no side effects).
+        let before = port
+            .store
+            .query_for_deduped_untouched("chat:thread:touch-test", webid)
+            .expect("untouched query succeeds");
+        assert_eq!(before.len(), 1);
+        let recalled_at_before = before[0].recalled_at;
+
+        // Sleep so a touch would be observable.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Recall with a query that does NOT match the stored keyword — the
+        // h_mem should be loaded as a candidate but NOT injected (no keyword
+        // overlap), so its recalled_at should NOT be touched.
+        let snippets = port
+            .recall_context("completely_different_query", 10)
+            .await
+            .expect("recall succeeds");
+        assert!(
+            snippets.is_empty(),
+            "no snippets should match a non-overlapping query"
+        );
+
+        let after = port
+            .store
+            .query_for_deduped_untouched("chat:thread:touch-test", webid)
+            .expect("untouched query succeeds");
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            after[0].recalled_at, recalled_at_before,
+            "recalled_at should be unchanged when the h_mem is not injected"
+        );
+
+        // Now recall with a matching query — the h_mem should be injected and
+        // its recalled_at should be touched.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let snippets = port
+            .recall_context("unique_keyword_xyz", 10)
+            .await
+            .expect("recall succeeds");
+        assert_eq!(snippets.len(), 1, "matching query should recall the h_mem");
+
+        let after_match = port
+            .store
+            .query_for_deduped_untouched("chat:thread:touch-test", webid)
+            .expect("untouched query succeeds");
+        assert_eq!(after_match.len(), 1);
+        assert!(
+            after_match[0].recalled_at > recalled_at_before,
+            "recalled_at should be updated when the h_mem is injected"
+        );
+    }
+
+    /// Pin that the ingestion semaphore serializes concurrent ingestions.
+    /// Two concurrent ingestions should both complete successfully, but the
+    /// second should wait for the first to release its permit.
+    #[tokio::test]
+    async fn ingestion_semaphore_serializes_concurrent_ingestions() {
+        let port = std::sync::Arc::new(in_memory_port());
+
+        let port1 = port.clone();
+        let port2 = port.clone();
+
+        let record1 = TurnRecord {
+            thread_id: "sem-1".to_string(),
+            user_input: "first".to_string(),
+            agent_response: "response1".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        };
+        let record2 = TurnRecord {
+            thread_id: "sem-2".to_string(),
+            user_input: "second".to_string(),
+            agent_response: "response2".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        };
+
+        // Spawn both ingestions concurrently.
+        let (r1, r2) = tokio::join!(
+            async move { port1.ingest_turn(record1).await },
+            async move { port2.ingest_turn(record2).await }
+        );
+
+        assert!(r1.is_ok(), "first ingestion should succeed: {r1:?}");
+        assert!(r2.is_ok(), "second ingestion should succeed: {r2:?}");
+
+        // Both turns should be stored.
+        let webid = port.user_webid;
+        let h1 = port
+            .store
+            .query_for_deduped_untouched("chat:thread:sem-1", webid)
+            .expect("query succeeds");
+        let h2 = port
+            .store
+            .query_for_deduped_untouched("chat:thread:sem-2", webid)
+            .expect("query succeeds");
+        assert_eq!(h1.len(), 1, "first turn should be stored");
+        assert_eq!(h2.len(), 1, "second turn should be stored");
+    }
+
+    /// Curator turns must be ingested into the curator's sovereign DB with the
+    /// curator's WebID (Private, curator perspective), mirroring the user
+    /// agent's episodic loop. This is the core of the curator memory mirror —
+    /// without it, the curator has no first-person experiential memory.
+    #[tokio::test]
+    async fn ingest_curator_turn_stores_curator_perspective_episodic() {
+        let port = in_memory_port();
+        let curator_webid = port.curator_webid;
+        let record = TurnRecord {
+            thread_id: "curator-thread-1".to_string(),
+            user_input: "What is the regulation status?".to_string(),
+            agent_response: "All systems nominal.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+        };
+
+        let result = port.ingest_turn(record).await;
+        assert!(result.is_ok(), "curator turn ingestion should succeed");
+
+        // The curator's store should have the turn, tagged with the curator's
+        // WebID (Private, curator perspective).
+        let curator_store = port.curator_store.get().expect("curator store");
+        let h_mems = curator_store
+            .query_for_deduped_untouched("chat:thread:curator-thread-1", curator_webid)
+            .expect("curator episodic query should succeed");
+        assert_eq!(
+            h_mems.len(),
+            1,
+            "one curator-perspective episodic h_mem should be stored"
+        );
+        assert_eq!(h_mems[0].attribute, "chatted");
+
+        // The user's episodic store should ALSO contain the turn (Private,
+        // user perspective) — dual-perspective writes give each party a
+        // first-person record of the shared conversation.
+        let user_h_mems = port
+            .store
+            .query_for_deduped_untouched("chat:thread:curator-thread-1", port.user_webid)
+            .expect("user episodic query should succeed");
+        assert_eq!(
+            user_h_mems.len(),
+            1,
+            "curator turn must also land in the user's episodic store"
+        );
+
+        // The same curator store also holds the Shared semantic copy — the
+        // ontology blob distinguishes it from the episodic record above.
+        let semantic_h_mems = curator_store
+            .query_deduped("curator:thread:curator-thread-1")
+            .expect("curator semantic query should succeed");
+        assert_eq!(
+            semantic_h_mems.len(),
+            1,
+            "one curator semantic h_mem should be stored"
+        );
+        assert_eq!(semantic_h_mems[0].attribute, "turn");
+    }
+
+    /// Curator turns write to BOTH perspectives' episodic stores (dual-
+    /// perspective memory: each party keeps a first-person record of the
+    /// shared conversation) but the Shared semantic copy stays sovereign to
+    /// the curator's DB — the user's semantic store holds consolidated
+    /// facts, not per-turn records.
+    #[tokio::test]
+    async fn ingest_curator_turn_writes_user_perspective_but_not_user_semantic() {
+        let port = in_memory_port();
+        let record = TurnRecord {
+            thread_id: "curator-isolation-test".to_string(),
+            user_input: "Check the guard layer".to_string(),
+            agent_response: "Guard layer is healthy.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+        };
+
+        port.ingest_turn(record)
+            .await
+            .expect("ingestion should succeed");
+
+        // User episodic — the user's first-person record of the curator
+        // conversation must be present.
+        let user_episodic = port
+            .store
+            .query_for_deduped_untouched("chat:thread:curator-isolation-test", port.user_webid)
+            .expect("user episodic query should succeed");
+        assert_eq!(
+            user_episodic.len(),
+            1,
+            "curator turn must write the user's episodic perspective"
+        );
+
+        // User semantic — should not have the curator entity (per-turn
+        // semantic records are sovereign to the curator's DB).
+        let user_semantic = port
+            .store
+            .query_deduped("curator:thread:curator-isolation-test")
+            .expect("user semantic query should succeed");
+        assert_eq!(
+            user_semantic.len(),
+            0,
+            "curator semantic copy must not leak into the user's semantic store"
+        );
+    }
+
+    /// `recall_context_curator` should recall from the curator's stores, not
+    /// the user's. This pins the curator recall path that the
+    /// `BridgeCuratorContextInjector` delegates to.
+    #[tokio::test]
+    async fn recall_context_curator_reads_curator_store() {
+        let port = in_memory_port();
+
+        // Ingest a curator turn.
+        let record = TurnRecord {
+            thread_id: "curator-recall-test".to_string(),
+            user_input: "regulation_status_check_keyword".to_string(),
+            agent_response: "All regulation systems are operational.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+        };
+        port.ingest_turn(record)
+            .await
+            .expect("ingestion should succeed");
+
+        // Recall from the curator's store — the keyword should match.
+        let snippets = port
+            .recall_context_curator("regulation_status_check_keyword", 5)
+            .await
+            .expect("curator recall should succeed");
+        assert!(
+            !snippets.is_empty(),
+            "curator recall should find the ingested curator turn"
+        );
+
+        // The recalled snippet should come from the curator's episodic store.
+        assert_eq!(snippets[0].source, "episodic");
+    }
+
+    /// `recall_thread` should recall a thread's prior turns by exact entity
+    /// match, not by content similarity. This pins the static-context fix —
+    /// the previous `inject_static_context` passed the `thread_id` UUID as the
+    /// query to `recall_context`, which never matched stored turn text (the
+    /// stored embeddings are of `user_input`, not the thread_id), so static
+    /// context injection was dead code.
+    #[tokio::test]
+    async fn recall_thread_recalls_thread_by_entity() {
+        let port = in_memory_port();
+        let thread_id = "user-thread-recall-test";
+
+        // Ingest a user turn.
+        let record = TurnRecord {
+            thread_id: thread_id.to_string(),
+            user_input: "how do I configure the embedding model".to_string(),
+            agent_response: "Set kask.corpus.embedding_dim in settings.json.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        };
+        port.ingest_turn(record)
+            .await
+            .expect("ingestion should succeed");
+
+        // Recall by thread_id — should find the turn via exact entity match.
+        let snippets = port
+            .recall_thread(thread_id, 10)
+            .await
+            .expect("thread recall should succeed");
+        assert!(
+            !snippets.is_empty(),
+            "recall_thread should find the ingested turn by entity, not content"
+        );
+    }
+
+    /// `recall_thread_curator` should recall the curator's prior turns on a
+    /// thread from the curator's sovereign stores. Mirrors the user-side test.
+    #[tokio::test]
+    async fn recall_thread_curator_recalls_curator_thread() {
+        let port = in_memory_port();
+        let thread_id = "curator-thread-recall-test";
+
+        // Ingest a curator turn.
+        let record = TurnRecord {
+            thread_id: thread_id.to_string(),
+            user_input: "regulation status check".to_string(),
+            agent_response: "All regulation systems are operational.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+        };
+        port.ingest_turn(record)
+            .await
+            .expect("ingestion should succeed");
+
+        // Recall by thread_id from the curator's stores.
+        let snippets = port
+            .recall_thread_curator(thread_id, 10)
+            .await
+            .expect("curator thread recall should succeed");
+        assert!(
+            !snippets.is_empty(),
+            "recall_thread_curator should find the ingested curator turn by entity"
+        );
+    }
+
+    /// Curator consolidation should promote the curator's episodic h_mems to
+    /// the curator's semantic store, mirroring the user's consolidation loop.
+    /// This pins the Fix 1 wiring — without the `curator_consolidation` field,
+    /// the curator's episodic store would grow unbounded and the curator would
+    /// never learn consolidated facts from its own experience.
+    #[tokio::test]
+    async fn maybe_consolidate_fires_curator_pass() {
+        let port = in_memory_port_with_cadence(1, 0.3);
+        let curator_webid = port.curator_webid;
+
+        // Ingest a curator turn so there's something to consolidate.
+        port.ingest_turn(TurnRecord {
+            thread_id: "curator-consolidation-test".to_string(),
+            user_input: "regulation status check".to_string(),
+            agent_response: "All regulation systems are operational.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+        })
+        .await
+        .expect("ingest succeeds");
+
+        // Verify the curator store has the turn before consolidation.
+        let curator_store = port
+            .curator_store
+            .get()
+            .expect("curator store should be available in tests");
+        let h_mems_before = curator_store
+            .query_for_deduped_untouched("chat:thread:curator-consolidation-test", curator_webid)
+            .expect("curator episodic query should succeed");
+        assert_eq!(
+            h_mems_before.len(),
+            1,
+            "curator episodic store should have the ingested turn"
+        );
+
+        // Fire consolidation directly (simulating the timer callback).
+        // This should fire both the user and curator consolidation passes.
+        port.maybe_consolidate();
+
+        // The last_consolidation timestamp should now be set (shared between
+        // user and curator passes — both fire under the same mutex).
+        port.last_consolidation
+            .lock()
+            .expect("mutex not poisoned")
+            .expect("consolidation should have fired");
+
+        // After consolidation, the curator's episodic h_mem may have been
+        // promoted to the curator's semantic store and expired in episodic
+        // (consolidation is a one-way episodic → semantic promotion). We
+        // verify the query succeeds — whether the h_mem was promoted depends
+        // on confidence decay, but the consolidation pass itself must not error.
+        let h_mems_after = curator_store
+            .query_for_deduped_untouched("chat:thread:curator-consolidation-test", curator_webid)
+            .expect("curator episodic query should succeed after consolidation");
+        // The h_mem may or may not have been consolidated depending on
+        // confidence decay — we just verify the query succeeds and the
+        // curator consolidation pass didn't panic.
+        let _ = h_mems_after;
+    }
+
+    /// Dual-perspective pin: a curator turn must produce first-person
+    /// episodic records for BOTH parties — the user (user_webid, user DB)
+    /// and the curator (curator_webid, curator DB) — plus the Shared
+    /// semantic copy in the curator's DB. Three records, one conversation.
+    #[tokio::test]
+    async fn ingest_curator_turn_writes_both_perspectives() {
+        let port = in_memory_port();
+        let record = TurnRecord {
+            thread_id: "dual-perspective-test".to_string(),
+            user_input: "status?".to_string(),
+            agent_response: "nominal".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+        };
+        port.ingest_turn(record).await.expect("ingest succeeds");
+
+        let user_perspective = port
+            .store
+            .query_for_deduped_untouched("chat:thread:dual-perspective-test", port.user_webid)
+            .expect("user query");
+        assert_eq!(user_perspective.len(), 1, "user perspective present");
+
+        let curator_store = port.curator_store.get().expect("curator store");
+        let curator_perspective = curator_store
+            .query_for_deduped_untouched("chat:thread:dual-perspective-test", port.curator_webid)
+            .expect("curator query");
+        assert_eq!(curator_perspective.len(), 1, "curator perspective present");
+
+        let shared = curator_store
+            .query_deduped("curator:thread:dual-perspective-test")
+            .expect("semantic query");
+        assert_eq!(shared.len(), 1, "shared semantic copy present");
+    }
+
+    /// Dual-perspective recall pin: the user's `recall_context` must surface
+    /// the user's own first-person record of a CURATOR conversation (it
+    /// happened to the user), while the curator's record stays sovereign to
+    /// the curator's DB — queried only via `recall_context_curator`.
+    #[tokio::test]
+    async fn user_recall_finds_user_perspective_of_curator_turn() {
+        let port = in_memory_port();
+        port.ingest_turn(TurnRecord {
+            thread_id: "dual-recall-test".to_string(),
+            user_input: "unique_zebra_keyword status?".to_string(),
+            agent_response: "nominal".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+        })
+        .await
+        .expect("ingest succeeds");
+
+        // User-side recall surfaces the user's record of the curator turn.
+        let user_snippets = port
+            .recall_context("unique_zebra_keyword", 5)
+            .await
+            .expect("user recall succeeds");
+        assert!(
+            !user_snippets.is_empty(),
+            "user recall must find the user's record of the curator conversation"
+        );
+
+        // Curator-side recall surfaces the curator's own record.
+        let curator_snippets = port
+            .recall_context_curator("unique_zebra_keyword", 5)
+            .await
+            .expect("curator recall succeeds");
+        assert!(
+            !curator_snippets.is_empty(),
+            "curator recall must find the curator's record of the same conversation"
+        );
+    }
+
+    /// Memory-health probe pin: reports the curator store up when healthy,
+    /// degraded when it is down, and — critically — does NOT trigger a
+    /// heal (a status read must be side-effect-free, or the probe would
+    /// drive the re-open path and flap the warn-once signal).
+    #[tokio::test]
+    async fn memory_health_json_reports_degraded_without_healing() {
+        let port = in_memory_port();
+
+        let healthy = port.memory_health_json();
+        assert_eq!(healthy["curator_store"], true);
+        // The swarm store is `None` in the test port (for_tests(None)), so
+        // `degraded` is true even when the curator store is healthy — the
+        // swarm store is simply not configured in tests.
+        assert_eq!(healthy["swarm_store"], false);
+        assert_eq!(healthy["degraded"], true);
+
+        // Simulate a curator outage. Healing is disabled in test handles, so
+        // if the probe attempted a heal it would fail — the point is it must
+        // not attempt one at all.
+        port.curator_store.set_for_tests(None);
+        let degraded = port.memory_health_json();
+        assert_eq!(degraded["curator_store"], false);
+        assert_eq!(degraded["swarm_store"], false);
+        assert_eq!(degraded["degraded"], true);
+
+        // Store still down after the probe — the probe didn't heal.
+        assert!(port.curator_store.get().is_none());
+    }
+
+    /// `memory_health_json` must reflect the swarm store's availability, not
+    /// just the curator store's. The down-state is covered by
+    /// `memory_health_json_reports_degraded_without_healing` (the test port
+    /// builds `SwarmStore::for_tests(None)`); this test pins the up-state by
+    /// installing a real in-memory `MemoryStore` via `set_for_tests` and
+    /// asserting `swarm_store` flips to true and `degraded` follows the
+    /// curator store (which is healthy here).
+    #[tokio::test]
+    async fn memory_health_json_reflects_swarm_store_availability() {
+        let port = in_memory_port();
+
+        // Baseline: curator up, swarm down (the test port's default).
+        let baseline = port.memory_health_json();
+        assert_eq!(baseline["curator_store"], true);
+        assert_eq!(baseline["swarm_store"], false);
+        assert_eq!(baseline["degraded"], true);
+
+        // Install a real in-memory swarm store — `availability()` must flip.
+        let swarm_driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
+        let swarm_store = Arc::new(MemoryStore::new(
+            HMemStore::from_driver(Arc::clone(&swarm_driver)).expect("swarm hmem init"),
+            EmbeddingStore::from_driver(swarm_driver, 1024).expect("swarm embedding init"),
+        ));
+        port.swarm_store.set_for_tests(Some(swarm_store));
+
+        let healthy = port.memory_health_json();
+        assert_eq!(healthy["curator_store"], true);
+        assert_eq!(healthy["swarm_store"], true);
+        assert_eq!(healthy["degraded"], false);
+
+        // Take the swarm store back down — `degraded` returns.
+        port.swarm_store.set_for_tests(None);
+        let degraded = port.memory_health_json();
+        assert_eq!(degraded["swarm_store"], false);
+        assert_eq!(degraded["degraded"], true);
+    }
+
+    /// Self-healing pin: when the curator store is down, `get()` returns
+    /// `None` without healing (heal disabled in tests), and after
+    /// `set_for_tests` restores it, subsequent reads see the healed
+    /// store. This mirrors the production heal path where a failed open is
+    /// retried on the next access.
+    #[tokio::test]
+    async fn curator_store_heals_after_outage() {
+        let port = in_memory_port();
+
+        // Simulate an outage — the store goes None.
+        port.curator_store.set_for_tests(None);
+        assert!(port.curator_store.get().is_none(), "store down");
+
+        // Ingestion during the outage still succeeds (user record persists,
+        // curator writes skip).
+        port.ingest_turn(TurnRecord {
+            thread_id: "outage-test".to_string(),
+            user_input: "during outage".to_string(),
+            agent_response: "response".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+        })
+        .await
+        .expect("ingestion during outage succeeds");
+        let user_record = port
+            .store
+            .query_for_deduped_untouched("chat:thread:outage-test", port.user_webid)
+            .expect("user query");
+        assert_eq!(user_record.len(), 1, "user record persisted during outage");
+
+        // Heal: restore a fresh in-memory store and verify reads see it.
+        let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
+            SqliteDriver::in_memory_driver();
+        let healed = Arc::new(MemoryStore::new(
+            HMemStore::from_driver(Arc::clone(&curator_driver)).expect("hmem init"),
+            EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init"),
+        ));
+        port.curator_store.set_for_tests(Some(Arc::clone(&healed)));
+
+        assert!(port.curator_store.get().is_some(), "store healed");
+
+        // Post-heal ingestion writes curator records again.
+        port.ingest_turn(TurnRecord {
+            thread_id: "post-heal-test".to_string(),
+            user_input: "after heal".to_string(),
+            agent_response: "response".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+        })
+        .await
+        .expect("post-heal ingestion succeeds");
+        let curator_record = healed
+            .query_for_deduped_untouched("chat:thread:post-heal-test", port.curator_webid)
+            .expect("curator query");
+        assert_eq!(curator_record.len(), 1, "curator record written after heal");
+    }
+
+    /// T7b wiring pin: `BridgeMemoryPort::ingest_turn` must call the reask
+    /// correlator (`hkask_tool_invoker::correlate_reask`) without panicking.
+    /// The correlator drains the process-global render buffer that
+    /// provenance-carrying widgets populate via `record_render`. We cannot
+    /// easily assert the `reg.widget.reask` tracing span fired without a
+    /// capture subscriber (the repo has none); the leaf's unit tests cover the
+    /// correlator state machine. This test pins the call path is wired: record
+    /// a render, then ingest a user-message turn, and assert no error.
+    #[tokio::test]
+    async fn bridge_ingest_turn_calls_reask_correlator() {
+        use agent::ThreadMemoryPort as _;
+
+        // Record a widget render so the correlator has state to drain.
+        hkask_tool_invoker::record_render(Some("portfolio_returns".into()), None);
+
+        // Construct a BridgeMemoryPort over the in-memory RealMemoryPort.
+        let inner: std::sync::Arc<dyn MemoryPort> = std::sync::Arc::new(in_memory_port());
+        let bridge = BridgeMemoryPort::new(inner);
+
+        // Ingest a user-message turn (non-empty user_input). The correlator
+        // fires inside ingest_turn before the inner call.
+        let record = agent::ThreadTurnRecord {
+            thread_id: "reask-wiring-test".to_string(),
+            user_input: "now show me the portfolio returns".to_string(),
+            agent_response: "here are the returns".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        };
+        let result = bridge.ingest_turn(record).await;
+        assert!(
+            result.is_ok(),
+            "ingest_turn with correlator wired should succeed: {result:?}"
+        );
+    }
+
+    // ── BridgeAlertEscalationSink tests ──────────────────────────────────
+
+    /// `BridgeAlertEscalationSink::persist_alert` must write to the
+    /// `EscalationQueue` so the entry is readable via `list_pending` — this
+    /// pins the Store seam end-to-end (sink → queue → `curator_escalations`).
+    /// If the adapter drops the call or the queue write fails silently, the
+    /// alert never reaches the reviewable backlog.
+    #[test]
+    fn bridge_alert_escalation_sink_writes_to_queue() {
+        use hkask_regulation::AlertEscalationSink;
+        use hkask_storage::EscalationQueue;
+        use hkask_storage::database::sqlite::SqliteDriver;
+
+        let driver = SqliteDriver::in_memory_driver();
+        let queue = Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
+        let sink = BridgeAlertEscalationSink::new(queue.clone());
+
+        // Persist a critical alert
+        sink.persist_alert(
+            "Variety deficit 150 exceeds threshold 100",
+            1.0,
+            r#"{"domain":"test","deficit":150,"threshold":100,"severity":"Critical"}"#,
+        );
+
+        // The alert must be readable via list_pending (the same method
+        // `curator_escalations` calls).
+        let pending = queue.list_pending().expect("list_pending must succeed");
+        assert_eq!(pending.len(), 1, "the alert must reach the queue");
+        assert_eq!(
+            pending[0].output,
+            "Variety deficit 150 exceeds threshold 100"
+        );
+        assert!((pending[0].confidence - 1.0).abs() < f64::EPSILON);
+        assert!(
+            pending[0]
+                .error_context
+                .contains("\"severity\":\"Critical\"")
+        );
+        assert_eq!(pending[0].status, hkask_storage::EscalationStatus::Pending);
+    }
+
+    /// When the queue write fails, `persist_alert` must not panic — it logs
+    /// and swallows. This pins the best-effort contract: a failing queue
+    /// never breaks the regulation loop.
+    #[test]
+    fn bridge_alert_escalation_sink_does_not_panic_on_write_failure() {
+        use hkask_regulation::AlertEscalationSink;
+        use hkask_storage::EscalationQueue;
+        use hkask_storage::database::sqlite::SqliteDriver;
+
+        let driver = SqliteDriver::in_memory_driver();
+        let queue = Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
+        // Drop the underlying driver by dropping the queue, then reconstruct
+        // a sink over a dangling Arc — this is hard to simulate cleanly, so
+        // instead we just verify the happy path doesn't panic on a normal
+        // call (the error path is covered by the queue's own tests).
+        let sink = BridgeAlertEscalationSink::new(queue);
+        sink.persist_alert("test", 0.5, "{}");
+    }
+
+    // ── Env var parsing proptests ─────────────────────────────────────────
+    //
+    // The `HKASK_MEMORY_STORAGE_BUDGET` and `HKASK_MEMORY_LIFE_DAYS` env vars
+    // are parsed by `parse_storage_budget` / `parse_memory_life_days`. The
+    // contract: any string that parses to a valid in-range value is accepted;
+    // any other string falls back to the default. These proptests exercise
+    // the full input space (arbitrary strings, arbitrary integers/floats) so
+    // a malformed value never panics and never silently disables the budget
+    // or decay (the `.rules` "Process-global hooks set at runtime need a
+    // startup-failure signal" trap).
+
+    use proptest::prop_assert_eq;
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config {
+            cases: 256,
+            ..proptest::test_runner::Config::default()
+        })]
+
+        /// Any string that parses to a positive `usize` is accepted verbatim;
+        /// any other string falls back to the default. The parser must never
+        /// panic on arbitrary input.
+        #[test]
+        fn prop_parse_storage_budget_accepts_positive_usize_falls_back_otherwise(
+            raw in proptest::string::string_regex(r"[0-9a-zA-Z.+\- ]{0,32}").unwrap()
+        ) {
+            let result = parse_storage_budget(&raw);
+            match raw.trim().parse::<usize>() {
+                Ok(budget) if budget > 0 => {
+                    prop_assert_eq!(result, budget);
+                }
+                _ => {
+                    prop_assert_eq!(result, hkask_memory::MemoryStore::default_storage_budget());
+                }
+            }
+        }
+
+        /// Any string that parses to a non-negative `f64` is accepted verbatim;
+        /// any other string falls back to the default. The parser must never
+        /// panic on arbitrary input (including NaN, infinity, overflow).
+        #[test]
+        fn prop_parse_memory_life_days_accepts_nonneg_f64_falls_back_otherwise(
+            raw in proptest::string::string_regex(r"[0-9a-zA-Z.+\-eE ]{0,32}").unwrap()
+        ) {
+            let result = parse_memory_life_days(&raw);
+            match raw.trim().parse::<f64>() {
+                Ok(days) if days.is_finite() && days >= 0.0 => {
+                    prop_assert_eq!(result, days);
+                }
+                _ => {
+                    prop_assert_eq!(result, hkask_memory::MemoryStore::default_memory_life_days());
+                }
+            }
+        }
+    }
+}

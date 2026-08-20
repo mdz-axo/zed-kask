@@ -33,36 +33,7 @@ worthless.
 | Per-server credential allowlist      | `kask/crates/kask_bridge/src/mcp_servers.rs:26-43`             |
 | Taint gate removal rationale         | `kask/crates/hkask-capability/src/hkask_capability.rs:19-21`   |
 
-## What was removed and why
-
-The per-call capability gate was deleted (RR-0056). The mechanics of its
-failure are worth stating precisely, because the shape recurs:
-
-- `DelegationToken::is_valid_for` was field-wise equality: `resource == resource
-  && resource_id == resource_id && action == action`.
-- All three production mint sites — the panel tool invoker, the inference IPC
-  `tool_invoke` dispatch, and the MCP runtime's tool dispatch —
-  derived the token's `resource_id` from the same `tool` value they then passed
-  to `invoke`.
-- So the gate compared a caller-supplied value against itself. It returned true
-  unconditionally, on every tool call, forever, while `DIVERGENCE.md` D3
-  advertised it as "the enforced gate."
-
-**A capability check is a gate only when the authority list is not chosen by the
-caller being checked.** That is the whole lesson, and it is why the earlier
-cryptographic ceremony had already failed the same way: the Ed25519 signature
-removed earlier was verified against the public key embedded in the token
-itself, not against a trusted root — a hostile caller could mint anything.
-Signing a self-asserted claim does not make it an authority.
-
-Deleted with the gate: `DelegationToken`, `panel_default_token`,
-`capabilities_match`, `capability_from_server_id`, `CapabilitySpec`,
-`DelegationResource`, `DelegationAction`,
-`ToolPortError::CapabilityDenied`, and `McpRuntime::verify_capability_domain`.
-`invoke` now takes `agent: WebID`, which is an accounting identity — a meter
-reading, not a credential.
-
-## Where authority moved (it did not disappear)
+## Where authority lives
 
 Capability separation is enforced at boundaries that hold a list the caller
 cannot set:
@@ -82,7 +53,7 @@ cannot set:
   only the credentials scoped to it.
 
 Each of these is a list written by a different actor than the one it
-constrains. That is what the deleted gate lacked.
+constrains.
 
 ## The invoke pipeline
 
@@ -119,32 +90,13 @@ fail-closed behavior demonstrated why: `main.rs` seeded a ceiling only for the
 runtime used a different persona, so every delegated tool call was refused for a wiring
 omission that had nothing to do with authority.
 
-## The taint gate failed the same way, and was deleted too
+## Information flow control (Layer 5) is absent by decision
 
-A second removal (RR-0053) took the FIDES taint machinery: `ToolTaint`,
-`can_flow_to`, the `ToolInfo.taint` field, and the `DefaultPolicy` check in
-the MCP runtime's tool dispatch that consumed them. It is worth recording
-next to the capability gate, because the shape is the same one again — a check
-that runs and cannot decide:
-
-- The policy's one prohibition was `Source` → `Sink`.
-- `McpRuntime::get_tool_info` hardcoded `ToolTaint::Pure` at the only site that
-  constructed a `ToolInfo`, so no tool was ever `Sink`.
-- The executor's untrusted-input flag read legacy `__taint__{key}` context
-  markers that the write path had stopped emitting, so it was always `false`.
-
-Both inputs were constants, so the block could never fire — and, as with the
-capability gate, a passing wiring test concealed it. **A wiring test proves a
-call happens, not that the call can ever decide anything.** That is the shared
-lesson across RR-0053 (this), RR-0056 (the capability gate), and RR-0057 (the
-fail-closed meter).
-
-The operator chose deletion over repair, so defense **Layer 5 (information
-flow control) is absent by decision** — the same disposition Layer 3
-(instruction hierarchy) has. That is the honest state and the safer one: an
-inert gate invites reliance on a protection that does not exist, and every
-downstream doc re-credits it. RR-0053 is now an absence check, and it states
-what a real IFC gate would have to prove. Rationale in full:
+Defense **Layer 5 (information flow control) is absent by decision** — the
+same disposition Layer 3 (instruction hierarchy) has. That is the honest state
+and the safer one: an inert gate invites reliance on a protection that does
+not exist. RR-0053 is an absence check, and it states what a real IFC gate
+would have to prove. Rationale in full:
 [`DIVERGENCE.md`](../../../../DIVERGENCE.md) D4 (guard layer removal) and
 `kask/security/regressions/RR-0053.yaml` (taint gate removal).
 
@@ -199,4 +151,4 @@ without that proof — see `kask/security/regressions/RR-0056.yaml`.
 
 [^fides-cap]: Microsoft Research. (2025). _FIDES: Information flow control for LLM agents_ (arXiv:2505.23643). The Source/Sink/Pure/Endorser lattice and the Source→Sink endorsement rule. Retained as the academic source for a design this crate no longer implements — the lattice was deleted (RR-0053). Citing it is not a claim that information flow control is deployed.
 
-[^miller-ocap]: Miller, M. S. (2006). _Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control._ Johns Hopkins University. <https://www.erights.org/talks/thesis/markm-thesis.pdf>. The Object Capability model, retained here as the source of the principle that survived: authority must be *separated* by a list the caller cannot choose. The in-process token *matching* that once cited this reference was removed as vacuous.
+[^miller-ocap]: Miller, M. S. (2006). _Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control._ Johns Hopkins University. <https://www.erights.org/talks/thesis/markm-thesis.pdf>. The Object Capability model, retained here as the source of the principle that authority must be *separated* by a list the caller cannot choose.
