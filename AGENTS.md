@@ -2,7 +2,7 @@
 
 # Agent Operating Guide — hKask
 
-**hKask** (ℏKask) — A Rust framework for agent skills using upstream Zed's body-injection model plus `lisp_eval` and `render_template` tools for deterministic computation and Jinja2 template rendering. The `kask` workspace holds the libraries and MCP servers; `hkask-` is the crate prefix. See `Cargo.toml` for the current version.
+**hKask** (ℏKask) — A Rust framework for agent skills using upstream Zed's body-injection model plus `lisp_eval` and `render_template` tools for deterministic computation and structured prompt rendering. The `kask` workspace holds the libraries and MCP servers; `hkask-` is the crate prefix. See `Cargo.toml` for the current version.
 
 ---
 
@@ -10,27 +10,27 @@
 
 ### Execution Model
 
-Skills execute via **upstream Zed body injection**: the `skill` tool reads the `SKILL.md` body from disk and injects it into the conversation as a `<skill_content>` envelope. The model reads the body and follows the instructions. No manifest executor, no step machine, no YAML cascade — the model IS the executor.
+Skills execute via **upstream Zed body injection**: the `skill` tool reads the `SKILL.md` body from disk and injects it into the conversation as a `<skill_content>` envelope. The model reads the body and follows the instructions. The model IS the executor.
 
 ### Skill Tools
 
 Two built-in tools support skill composition beyond what upstream Zed provides:
 
-- **`lisp_eval`** — sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O, no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 64). The model calls it when a SKILL.md instructs deterministic computation: convergence signals, invariant checks, scoring, counting items in structured output.
-- **`render_template`** — renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips YAML frontmatter. Path traversal protection via `canonicalize` + `starts_with`. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup (dev: `kask/registry/templates/`, prod: `{kask_data_dir}/skills/registry/templates/`). The model calls it when a SKILL.md instructs structured prompt scaffolding for a specific step.
+- **`lisp_eval`** — sandboxed Lisp interpreter. No I/O, no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 64). The model calls it when a SKILL.md instructs deterministic computation: convergence signals, invariant checks, scoring, counting items in structured output.
+- **`render_template`** — renders prompt templates from `kask/registry/templates/` with context variables. Path traversal protection via `canonicalize` + `starts_with`. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup. The model calls it when a SKILL.md instructs structured prompt scaffolding for a specific step.
 
 ### PDCA Loops
 
-PDCA (Plan-Do-Check-Act) loops are **model-coordinated**, not machine-enforced. The SKILL.md body describes:
+PDCA (Plan-Do-Check-Act) loops are **model-coordinated**. The SKILL.md body describes:
 - What to do (the methodology)
 - Convergence criteria (when to stop iterating)
 - Maximum iteration count (when to escalate)
 
-The model executes each full iteration, evaluates the convergence criteria (optionally using `lisp_eval` for deterministic checks), and re-enters the cycle if convergence is not met. There is no Cauchy tracker, no rJoule gas budget, no OCAP-gated tool access — the agent loop's token budget and tool permissions are the only limits.
+The model executes each full iteration, evaluates the convergence criteria (optionally using `lisp_eval` for deterministic checks), and re-enters the cycle if convergence is not met. The agent loop's token budget and tool permissions are the only limits.
 
 ### Skill Authoring
 
-A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains the full methodology. Optional Jinja2 templates in `kask/registry/templates/<skill>/` provide structured prompt scaffolding the model can render via `render_template`.
+A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains the full methodology. Optional prompt templates in `kask/registry/templates/<skill>/` provide structured scaffolding the model can render via `render_template`.
 
 - **Creating a skill** → activate `create-skill`.
 - **Validating / editing / translating / pruning** → activate `skill-maintenance`.
@@ -41,7 +41,7 @@ A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains t
 
 - **Project-local skills:** `.agents/skills/<name>/SKILL.md` (in the worktree)
 - **Global skills:** `~/.local/share/hkask/skills/<name>/SKILL.md` (seeded from the compiled-in payload at startup; core skills are always overwritten, user skills are seed-if-missing)
-- **Jinja2 templates:** `kask/registry/templates/<skill>/*.j2` (dev: live source tree; prod: seeded to `{kask_data_dir}/skills/registry/templates/`)
+- **Prompt templates:** `kask/registry/templates/<skill>/*.j2` (dev: live source tree; prod: seeded to `{kask_data_dir}/skills/registry/templates/`)
 - `skill-router` matches tasks to EXISTING installed skills; `skill-discovery` acquires NEW skills when `skill-router` emits uncovered capabilities.
 
 ---
@@ -64,7 +64,6 @@ hKask ships **10 MCP servers** launched by zed's `context_server` as child proce
 
 - **Runtime registry (authoritative, always current):** `BUILT_IN_MCP_SERVERS` in `kask/crates/kask_bridge/src/mcp_servers.rs`.
 - **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — companies, corpus, curator, kata-kanban, portfolio, prediction-markets, research, scenarios, swarm, training.
-- **Removed servers:** codegraph, condenser, media — eliminated in the skill system migration. Their tool surface is no longer available. Skills that referenced these tools (e.g., `graph-audit` depended on codegraph) need their tool references updated or the skill removed.
 - **Catalog + per-tool contracts:** `kask/docs/reference/mcp-servers/README.md` (server catalog) + `kask/docs/qa/per-tool-contracts.md` (per-tool input struct, output shape, LLM I/O boundary).
 - **Tool dispatch:** `McpRuntime::invoke` (per-tick call ceiling / runaway-loop breaker) + per-agent `mcp_tools` allowlist (D3/D8). Tool responses are `{"content": ...}` envelopes — use `unwrap_tool_envelope`, don't re-implement.
 - **§13.1 at the MCP boundary:** MCP servers reach hKask primitives via `kask_bridge` (D8); they never link zed-kask crates directly.
@@ -147,7 +146,7 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 | Hard bug / regression | `diagnose` | `bug-hunt` (exploratory testing) |
 | Low confidence / high uncertainty | `metacognition` (assess + calibrate) | `falsifiability` (if hypothesis-conflict) or `improv` (riffing, for divergent exploration) |
 | Module design / simplification | `essentialist` (3 gates) | `deep-module` |
-| Security audit | `kali-audit` | `supply-chain-sentinel` (dependency manifests) |
+| Security audit | `kali-audit` | `supply-chain-sentinel` (dependency files) |
 | LoRA/QLoRA training config audit | `lora-training` | `tdd` (training-loop code) |
 | GPU training pod creation | [`kask/docs/research/archive/gpu-provider-research-2026-07-23.md`](kask/docs/research/archive/gpu-provider-research-2026-07-23.md) | `lora-training` (config audit) |
 | Self-improvement / prompt evolution | `metacognition` | `gpa-evolution` (post-convergence) |

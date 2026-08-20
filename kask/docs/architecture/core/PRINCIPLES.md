@@ -1,8 +1,8 @@
 ---
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
-last_updated: 2026-08-04
-version: "0.36.0"
+last_updated: 2026-08-20
+version: "0.36.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -76,7 +76,7 @@ Shared data is **consent-bound** and must pass `require_sovereignty` + `require_
 #### P5 — Essentialism & Minimalism
 Remove before adding. Every module must earn existence by reducing total system action.
 
-**P5.1 — Single Source of Truth for Skills:** Every skill has exactly one canonical source: its registry crate (`manifest.yaml` + `*.j2` templates). The SKILL.md file is a generated companion for development tooling, derived from the registry — not independently authored. Maintaining parallel representations of the same skill semantics across two formats is a P5 violation. When registry and SKILL.md disagree, the registry is authoritative.
+**P5.1 — Single Source of Truth for Skills (updated 2026-08-20):** Every skill has exactly one canonical source: its `SKILL.md` file in `.agents/skills/`. Skill execution is **upstream-Zed body injection** — `SkillTool::run` reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it via `render_skill_envelope`; the model reads the body and follows the instructions. There is no `ManifestExecutor`, no step machine, and no `hkask-templates` crate (deleted, commit 5f4cf5f10d). The `*.j2` templates under each skill directory are companion resources the model retrieves on demand via the `render_template` tool — they are not a parallel representation of skill semantics. 60 skills ship in `.agents/skills/`. PDCA iteration is model-coordinated: the `SKILL.md` body describes convergence criteria, and the model uses `lisp_eval` for deterministic checks and `render_template` for structured prompt scaffolding within iterations.
 
 **P5.2 — 5W1H Ontological Core (v0.31.0):** Essentialism requires an anchor. The 5W1H framework — **Who, What, When, Where, Why, How** — is hKask's drop-dead-simple ontological core. Every artifact, module, representation, and claim in hKask must answer at least one of these six questions. An artifact that answers none is ontological noise and fails the minimalism test.
 
@@ -106,19 +106,18 @@ Every artifact in hKask has both a state identity and a process identity — it 
 
 | MCP Server | Process Axis | State Axis | Domain Bridge |
 |---|---|---|---|
-| **codegraph** | PKO | DC+BIBO | — |
 | **companies** | PKO | DC+BIBO | FIBO (financial concepts) |
-| **condenser** | PKO | DC+BIBO | — (DC is the connective tissue for graph saliency) |
 | **corpus** | PKO | DC+BIBO | GOLEM (narrative structure, for the replica sub-system) |
 | **curator** | PKO | DC+BIBO | — (the curator IS the 5W1H core applied as Socratic inquiry) |
 | **kata-kanban** | PKO | DC+BIBO | — |
+| **portfolio** | PKO | DC+BIBO | — (provider-agnostic, no ontology mapping) |
 | **research** | PKO | DC+BIBO | — |
 | **scenarios** | PKO | DC+BIBO | — |
 | **swarm** | PKO | DC+BIBO | Onto4MAT (multi-agent teaming; Reynolds/Kennedy-Eberhart/Dorigo swarm-intelligence substrate) |
 | **training** | PKO | DC+BIBO | ML-Schema (ML experiments) |
 | **prediction-markets** | PKO | DC+BIBO | FIBO (financial contracts — CMP economic-object mapping) |
 
-> **Note (v0.31.0, in-process pivot):** The four servers `skill`, `memory`, `communication`, and `filesystem` were deleted. Skill lifecycle is now driven by the in-process skill registry (`kask/registry/` manifests + `hkask-templates`/`ManifestExecutor`); memory is owned by the per-user SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. `docproc` and `replica` were folded into `corpus`. The servers above plus `portfolio` (added 2026-08-12 — provider-agnostic, no ontology mapping) are the surviving set on disk (13 total; curator may be unloaded via `kask.mcp.overrides`); `swarm` was added 2026-08-01 (Agent Bestiary World integration) and `prediction-markets` 2026-08-05. (Corrected 2026-07-29: the prior reference to `crates/hkask-skills` was stale — that crate does not exist; the skill registry lives at `kask/registry/`.)
+> **Note (v0.31.0, in-process pivot; updated 2026-08-20):** The four servers `skill`, `memory`, `communication`, and `filesystem` were deleted. Skill lifecycle is now driven by **upstream-Zed body injection** — `SkillTool::run` reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it via `render_skill_envelope`; the model reads the body and follows the instructions. There is no `ManifestExecutor` and no `hkask-templates` crate (deleted, commit 5f4cf5f10d); 60 skills ship in `.agents/skills/`. Memory is owned by the per-user SQLCipher store; the `communication` server depended on the deleted Matrix transport; filesystem access is mediated by zed's own file I/O surfaces. `docproc` and `replica` were folded into `corpus`. The 10 servers above are the surviving set on disk (10 total; curator may be unloaded via `kask.mcp.overrides`); `swarm` was added 2026-08-01 (Agent Bestiary World integration) and `prediction-markets` 2026-08-05. The `codegraph`, `condenser`, and `media` MCP servers were removed — codegraph/media functionality is handled by agent tools and the viz widget layer; the condenser library crate (`kask/crates/hkask-condenser`) remains for in-process thread condensation via `kask_bridge::BridgeThreadCondenser`.
 
 **Bridge locations (v0.33.0 — single shared crate):**
 - Universal axes (DC+BIBO+CiTO state, PKO process) and all domain supplements (FIBO, ESO, GOLEM, ML-Schema) live in the single shared crate `crates/hkask-bridge-ontology/`. The domain-selection logic (`OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor`) lives in the same crate.

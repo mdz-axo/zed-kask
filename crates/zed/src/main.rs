@@ -820,9 +820,6 @@ fn main() {
         } else {
             cybernetics_loop_inner
         };
-        // zed-kask: D3/D8 — F11: grounding health sensing (verification ladder Rung 3).
-        // Wire the central verification ledger into the CyberneticsLoop so the
-        // sense phase reads grounding violation trends. This closes the
         // zed-kask: D3/D8 — F5: swarm-panel gas budget persona (call cap seed).
         // Seed a call cap for the `swarm-panel` persona (see
         // `SWARM_PANEL_CALL_CAP` for the rationale — fail-closed gate, no other
@@ -1583,16 +1580,6 @@ fn main() {
                                 // up the new env vars. The ContextServerStore
                                 // re-evaluates descriptors on notify.
                                 cx.update(|cx| sync_kask_mcp_servers(cx));
-
-                                // zed-kask: Wire the swarm ledger's DelegationCounter
-                                // into the CyberneticsLoop's LivenessGap sensor.
-                                // Without this, the liveness gap is always 0.0 —
-                                // delegations that skip `enforce_and_stamp` are
-                                // invisible. The counter opens the swarm ledger
-                                // at the same path the swarm server uses; SQLite
-                                // creates the file if it doesn't exist yet, so
-                                // this can run before the swarm server receives
-                                // its first tool call.
 
                                 // D11: Wire the context injector now that the real memory port exists.
                                 // The injector shares the same memory port as the ingestion path.

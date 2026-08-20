@@ -434,8 +434,6 @@ impl LocalSwarmRuntime {
             // from the executor-populated `delegate_results`.
             task_success: None,
             bind_matched: None,
-            raw_response: None,
-            envelope: None,
         })
     }
 }
@@ -535,27 +533,6 @@ pub struct LocalDelegateResult {
     /// enforces `accepts` labels resolve to registered types.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bind_matched: Option<bool>,
-    /// The raw LLM response before grounding enforcement (paper §4:
-    /// "the raw response is retained. Not the digest."). When grounding
-    /// runs, `response` is replaced with the cleaned JSON (unsourced fields
-    /// nulled), but the raw response is kept here for audit and future
-    /// reprocessing — when a new tool is integrated, historical outputs
-    /// can be re-run through grounding to see what changes. `None` when
-    /// grounding did not run (non-task agent types or non-JSON output).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub raw_response: Option<String>,
-    /// The delegation envelope carrying grounding status, provenance, and
-    /// validation. `None` when grounding was not applied (the delegation
-    /// path didn't call `apply_grounding`). Built by `apply_grounding`
-    /// from the `EnforcementOutcome` so all four delegation paths
-    /// (`swarm_delegate_local`, `swarm_fanout_local`,
-    /// `swarm_pipeline_local`, `swarm_execute_plan_local`) get the
-    /// envelope automatically without duplicating the envelope-building
-    /// code at each call site. The envelope is additive — consumers that
-    /// don't know about it ignore it; consumers that do can read
-    /// grounding status without parsing the `GroundingResult`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub envelope: Option<serde_json::Value>,
 }
 
 impl LocalDelegateResult {
@@ -583,41 +560,8 @@ impl LocalDelegateResult {
         if include_details {
             entry["tool_calls"] = serde_json::Value::Array(self.tool_calls.clone());
         }
-        // The envelope is additive — include it when present so consumers
-        // (swarm-intelligence ORIENT, the swarm widget, downstream agents)
-        // can read grounding status without parsing the `GroundingResult`.
-        // Skipped when absent (the delegation path didn't call
-        // `apply_grounding`) so the result shape is unchanged for callers
-        // that ignore it.
-        if let Some(envelope) = &self.envelope {
-            entry["envelope"] = envelope.clone();
-        }
         entry
     }
-
-    /// Apply grounding enforcement to this result: replace `response` with
-    /// the cleaned JSON when grounding ran, retain the raw response for
-    /// audit, and build the delegation envelope so provenance survives the
-    /// hop. The single source of truth for the stamping logic — previously
-    /// duplicated byte-for-byte across `swarm_delegate_local` and
-    /// `swarm_execute_plan_local`.
-    ///
-    /// When grounding ran (`outcome.result.is_some()`), `response` becomes
-    /// the cleaned JSON (unsourced fields nulled) and `raw_response` retains
-    /// the pre-cleaning original. When the output was a JSON object but no
-    /// contract existed (`outcome.was_object` && `outcome.result.is_none()`),
-    /// the verification store wrote a coverage-gap record and we retain the
-    /// raw response. Otherwise (non-object output) nothing is stamped.
-    ///
-    /// In all cases the envelope is built and stored on `self.envelope` so
-    /// consumers can read grounding status without parsing the
-    /// `GroundingResult`. The envelope is additive — it does not alter any
-    /// existing field.
-    ///
-    /// `validation` carries the schema validation result (Rung 2) when the
-    /// caller computed it (e.g. `swarm_delegate_local` validates the output
-    /// against the `produces` port schema). `None` leaves the envelope's
-    /// validation status as `NoSchema`.
 
     /// Shape a failed delegation as the per-entry JSON object. Used by
     /// fanout/pipeline/execute_plan when `delegate` returns `Err`.

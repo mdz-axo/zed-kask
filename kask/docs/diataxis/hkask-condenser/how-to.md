@@ -1,8 +1,8 @@
 ---
 title: "hkask-condenser — How-to: Tune Compression and Saliency"
 audience: [developers, operators]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "Condensation"
 mds_categories: [composition]
@@ -133,9 +133,13 @@ For persona-based scoring, `score_against_persona`
 (`kask/crates/hkask-condenser/src/saliency.rs:52`) scores text against a
 keyword set. In the wired runtime, persona keywords come from
 `KaskCondenserSettings.persona_keywords`
-(`kask/crates/kask_bridge/src/settings.rs:348`) and are exported to the
-condenser MCP server as `HKASK_CONDENSER_PERSONA_KEYWORDS`
-(`kask/crates/kask_bridge/src/settings.rs:789`).
+(`kask/crates/kask_bridge/src/settings.rs:348`). The setting is still
+emitted as `HKASK_CONDENSER_PERSONA_KEYWORDS`
+(`kask/crates/kask_bridge/src/settings.rs:789`) for MCP-server env
+injection, but the `hkask-mcp-condenser` server that consumed it was
+deleted (commit `26215d845e`); the env var is currently emitted with no
+surviving reader. The in-process `BridgeThreadCondenser` path reads
+persona keywords directly from `KaskCondenserSettings`.
 
 ### Step 5: Wire the condenser
 

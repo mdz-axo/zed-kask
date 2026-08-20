@@ -1,8 +1,8 @@
 ---
 title: "hKask Capability — Class Diagram"
 audience: [architects, developers]
-last_updated: 2026-08-12
-version: "2.1.0"
+last_updated: 2026-08-20
+version: "2.2.0"
 status: "Active"
 domain: "Trust"
 mds_categories: [trust]
@@ -85,7 +85,10 @@ classDiagram
   (RR-0057)
 - The FIDES taint lattice: `ToolTaint`, `can_flow_to`, `can_flow_to_matrix`, the
   whole `src/tool_taint.rs` file, and the `ToolInfo.taint` field — deleted with the
-  `DefaultPolicy` gate in `hkask-templates` that consumed them (RR-0053). The gate
+  `DefaultPolicy` gate in `hkask-templates` that consumed them (RR-0053). The
+  `hkask-templates` crate was subsequently deleted entirely (commit
+  `5f4cf5f10d`) — skill execution is now upstream-Zed body injection via
+  `SkillTool::run` → `render_skill_envelope`. The gate
   was inert: `McpRuntime::get_tool_info` hardcoded `Pure` at the only `ToolInfo`
   construction site, so `Source`→`Sink` could never fire. The orphaned `serde`
   dependency went with it.
@@ -101,7 +104,9 @@ classDiagram
 - `ToolFuture` — the `Pin<Box<dyn Future + Send>>` alias that keeps `ToolPort`
   dyn-compatible
 - `SYSTEM_MAX_RECURSION` — cascade depth limit (matryoshka), used by the manifest
-  executor and the registry bootstrap; a recursion breaker, not an authority limit
+  executor and the registry bootstrap; a recursion breaker, not an authority limit.
+  (Historical — the manifest executor was deleted with `hkask-templates`; the
+  constant's current callers, if any, should be verified against the codebase.)
 
 Authority itself lives outside this crate: the per-request `tool_allowlist` on
 the inference IPC dispatch, each swarm card's `mcp_tools` allowlist, and the
@@ -119,7 +124,7 @@ in the same register as Layer 3 (instruction hierarchy, RR-0010) — see
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-001
-verified_date: 2026-08-12
+verified_date: 2026-08-20
 verified_against: kask/crates/hkask-capability/src/tool_port.rs; kask/crates/hkask-capability/src/token_types.rs; kask/crates/hkask-capability/src/hkask_capability.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs
 status: VERIFIED
 -->

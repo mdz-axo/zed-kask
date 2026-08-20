@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — How-to: Add a Built-in MCP Server"
 audience: [developers extending the kask MCP surface]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "Integration"
 mds_categories: [composition]

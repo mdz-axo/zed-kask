@@ -1156,38 +1156,10 @@ impl CyberneticsLoop {
             format!("efferent:{}", action.action_type.as_str())
         };
         let message = if is_native_escalate {
-            // Grounding alerts carry their own message — the generic
-            // "Variety deficit" message is wrong for grounding signals.
-            // The deficit/threshold extraction returns (0, 0) for
-            // grounding variants (they don't carry deficit/threshold in
-            // the variety sense), so the generic message would read
-            // "Variety deficit 0 exceeds threshold 0" — meaningless.
-            match &action.parameters.data {
-                RegulationData::GroundingCleanRateDegraded {
-                    clean_rate, floor, ..
-                } => format!(
-                    "Grounding clean rate {:.1}% below floor {:.1}% — grounded delegations have nulled fields (fabricated values no tool could source). Use curator_grounding_violations to investigate.",
-                    clean_rate * 100.0,
-                    floor * 100.0,
-                ),
-                RegulationData::GroundingCoverageDegraded {
-                    coverage_rate,
-                    floor,
-                } => format!(
-                    "Grounding coverage rate {:.1}% below floor {:.1}% — delegations have no grounding contract (paper §6: coverage is a metric, not a pass). Use curator_grounding_coverage to see which agent types need contracts.",
-                    coverage_rate * 100.0,
-                    floor * 100.0,
-                ),
-                RegulationData::GroundingViolationDeltaIncreased { delta, .. } => format!(
-                    "Grounding violation delta +{} — new nulled fields since last regulation tick. A tool may have broken, an agent's prompt may have drifted, or a model may have been swapped. Use curator_grounding_violations to investigate.",
-                    delta,
-                ),
-                // Other native Escalate variants use the generic message.
-                _ => format!(
-                    "Variety deficit {} exceeds threshold {}",
-                    deficit, threshold
-                ),
-            }
+            format!(
+                "Variety deficit {} exceeds threshold {}",
+                deficit, threshold
+            )
         } else {
             format!(
                 "Efferent action {} (target: {}) recommended but not wired — reason: {}",
@@ -1327,8 +1299,6 @@ impl CyberneticsLoop {
             let delta = after_val - before_val;
             // For EnergyRemaining: higher is better (positive delta = improved).
             // For VarietyDeficit: lower is better (negative delta = improved).
-            // For GroundingCleanRate / GroundingCoverageRate: higher is better.
-            // For GroundingViolationDelta: lower is better (fewer nulled delegations).
             let improved = match metric {
                 SignalMetric::EnergyRemaining => delta > 0.0,
                 SignalMetric::VarietyDeficit => delta < 0.0,
@@ -1909,70 +1879,6 @@ impl CyberneticsLoop {
                             threshold: dev.signal.set_point,
                         },
                     ),
-                ))
-            }
-            // -- Grounding (verification ladder Rung 3) ---------------------
-            //
-            // Grounding signals are quality regressions: a tool broke, an
-            // agent's prompt drifted, or a model was swapped. The regulation
-            // system surfaces these to the Curator (algedonic alert) — it does
-            // not auto-fix grounding contracts (that's a human decision).
-            RegulationReason::GroundingCleanRateDegraded => {
-                tracing::warn!(
-                    target: "reg.grounding",
-                    clean_rate = dev.signal.value,
-                    floor = dev.signal.set_point,
-                    "Grounding clean rate degraded below floor — grounded delegations have nulled fields"
-                );
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    proposed.action_type,
-                    RegulatoryActionParams::with_data(
-                        "grounding_clean_rate_degraded",
-                        RegulationData::GroundingCleanRateDegraded {
-                            clean_rate: dev.signal.value,
-                            floor: dev.signal.set_point,
-                        },
-                    ),
-                    "grounding_clean_rate".into(),
-                ))
-            }
-            RegulationReason::GroundingCoverageDegraded => {
-                tracing::warn!(
-                    target: "reg.grounding",
-                    coverage_rate = dev.signal.value,
-                    floor = dev.signal.set_point,
-                    "Grounding coverage rate degraded below floor — delegations have no grounding contract"
-                );
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    proposed.action_type,
-                    RegulatoryActionParams::with_data(
-                        "grounding_coverage_degraded",
-                        RegulationData::GroundingCoverageDegraded {
-                            coverage_rate: dev.signal.value,
-                            floor: dev.signal.set_point,
-                        },
-                    ),
-                    "grounding_coverage_rate".into(),
-                ))
-            }
-            RegulationReason::GroundingViolationDeltaIncreased => {
-                tracing::warn!(
-                    target: "reg.grounding",
-                    delta = dev.signal.value,
-                    "Grounding violation delta positive — new nulled fields since last tick"
-                );
-                Some(RegulatoryAction::with_metric(
-                    proposed.target,
-                    proposed.action_type,
-                    RegulatoryActionParams::with_data(
-                        "grounding_violation_delta_increased",
-                        RegulationData::GroundingViolationDeltaIncreased {
-                            delta: dev.signal.value as i64,
-                        },
-                    ),
-                    "grounding_violation_delta".into(),
                 ))
             }
             _ => {

@@ -1,8 +1,8 @@
 ---
 title: "Swarm Server Class Diagram"
 audience: [architects, developers]
-last_updated: 2026-08-14
-version: "1.0.2"
+last_updated: 2026-08-20
+version: "1.0.3"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust]
@@ -19,8 +19,17 @@ local agent registry, the lazily-initialized local runtime, and the central
 verification store (grounding ledger). The spend gate
 consumes consent grants before any debit; the local runtime owns the
 debit-before-return invariant (it debits the ledger, then `AgentExecutor`
-returns the result so a failed delegation still costs credits). The verification
-store runs grounding enforcement on every delegation via `enforce_and_stamp()`.
+returns the result so a failed delegation still costs credits).
+
+> **Note (2026-08-20):** The `hkask-verification` crate (which provided
+> `VerificationStore`, `enforce_grounding`, and `enforce_and_stamp`) was
+> deleted (commit `9e9c41ef3c`). The "central verification store (grounding
+> ledger)" collaborator and the `enforce_and_stamp()` grounding enforcement
+> step documented above are no longer wired. The `AgentExecutor`,
+> `ConsentStore`, `LocalSwarmRuntime`, and `A2A` collaborators survive. The
+> `AgentExecutor.skill_exec: SkillExecPort` field is also stale — the
+> `SkillExecPort` trait is dead code pending removal (see `DIVERGENCE.md` D1).
+
 The A2A layer
 wraps the existing `delegate` in protocol-compliant types over the in-process
 transport (no HTTP server required). See the [Swarm MCP Server Architecture](flowchart-swarm-architecture.md).
@@ -120,7 +129,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-006
-verified_date: 2026-08-16
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (combined_router, tool_surface_is_exactly_52_registered_tools); kask/mcp-servers/hkask-mcp-swarm/src/consent.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs (crate-private authorize_*/complete_* fns, no pub struct SpendGate); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs; kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (AgentExecutor: inference, tool_dispatch, skill_exec — no guard field, no scan_input/scan_output); kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs; kask/crates/hkask-verification/src/ledger.rs (VerificationStore, enforce_and_stamp)
+verified_date: 2026-08-20
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (combined_router, tool_surface_is_exactly_52_registered_tools); kask/mcp-servers/hkask-mcp-swarm/src/consent.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs (crate-private authorize_*/complete_* fns, no pub struct SpendGate); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs; kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (AgentExecutor: inference, tool_dispatch, skill_exec — no guard field, no scan_input/scan_output); kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs
 status: VERIFIED
 -->

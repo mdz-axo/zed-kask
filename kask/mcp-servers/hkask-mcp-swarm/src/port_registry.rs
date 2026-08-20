@@ -23,7 +23,7 @@ use std::collections::HashMap;
 /// is `None`, only label resolution is checked (the current behavior).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PortTypeEntry {
-    /// Optional JSON Schema (subset supported by `hkask_verification::schema_validate`).
+    /// Optional JSON Schema (subset supported by `crate::schema_validate`).
     /// When present, the agent's output is validated against this schema
     /// at invocation time. When absent, only label resolution is checked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,8 +45,8 @@ pub const BUILTIN_PORT_TYPES: &[&str] = &["text", "json", "task", "task_result"]
 /// `PortRegistry` at construction so both swarm and kata-kanban paths
 /// validate against the same schema (the paper's "one artifact, two uses").
 /// `deliverable_path` and `test_verdict` are `["string", "null"]` because
-/// grounding nulls unsourced fields — the schema must accept the cleaned
-/// document, not just the pre-grounding one.
+/// they may be absent — the schema must accept the document with or without
+/// them.
 ///
 /// Returned as a function (not a `const`) because `serde_json::Value` has
 /// non-const destructors and cannot be constructed in a `const` context.
@@ -128,9 +128,7 @@ impl PortRegistry {
     /// `NoSchema` (label resolution is the only check — the current
     /// behavior). When the `produces` list is empty, returns `NoSchema`.
     ///
-    /// Uses `hkask_verification::schema_validate` to check the output —
-    /// the same validator used for grounding contract output validation.
-    /// Unsupported schema keywords are NOT a pass (the `.rules` trap).
+    /// Uses `crate::schema_validate` to check the output.
     pub fn validate_output(
         &self,
         produces: &[String],
@@ -146,9 +144,11 @@ impl PortRegistry {
             had_schema = true;
             let report = crate::schema_validate::validate(schema, output);
             if report.is_contradiction() {
-                violations.extend(report.violations.iter().map(|v| crate::schema_validate::SchemaViolation {
-                    path: v.path.clone(),
-                    message: v.message.clone(),
+                violations.extend(report.violations.iter().map(|v| {
+                    crate::schema_validate::SchemaViolation {
+                        path: v.path.clone(),
+                        message: v.message.clone(),
+                    }
                 }));
             }
             unsupported.extend(report.unsupported.iter().cloned());

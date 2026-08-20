@@ -1196,14 +1196,13 @@ impl KanbanServer {
                 ))
             })?;
 
-        // Rung 2 (Schema validation): validate the cleaned document
-        // AFTER grounding, BEFORE it persists. The schema is retrieved from
-        // the `PortRegistry` (the single source of truth for `task_result`),
-        // not hardcoded here — so swarm and kata-kanban validate against the
-        // same schema (the paper's "one artifact, two uses"). Unsupported
-        // keywords are NOT a pass. Logged at warn — schema violations are
-        // diagnostic, not blocking (the cleaned document is still the best
-        // available output).
+        // Rung 2 (Schema validation): validate the document BEFORE it
+        // persists. The schema is retrieved from the `PortRegistry` (the
+        // single source of truth for `task_result`), not hardcoded here —
+        // so swarm and kata-kanban validate against the same schema (the
+        // paper's "one artifact, two uses"). Unsupported keywords are NOT
+        // a pass. Logged at warn — schema violations are diagnostic, not
+        // blocking (the document is still the best available output).
         let mut schema_validation: Option<
             hkask_mcp_swarm::schema_validate::StatusValidationResult,
         > = None;
@@ -1218,7 +1217,7 @@ impl KanbanServer {
                     task_id = %tid,
                     agent_id = %result.agent_id,
                     violations = ?validation.violations,
-                    "schema validation: {} violation(s) after grounding",
+                    "schema validation: {} violation(s)",
                     validation.violations.len(),
                 );
             }
@@ -1667,7 +1666,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     // All DBs should be encrypted at rest; using a hardcoded
                     // public key provides zero confidentiality. In-memory mode
                     // loses persistence but matches the security posture of
-                    // the curator and condenser servers.
+                    // the curator server.
                     hkask_storage::Database::in_memory()
                         .map_err(|e| anyhow::anyhow!("in-memory DB: {e}"))?
                 };

@@ -161,13 +161,13 @@ impl AgentExecutor {
                         {
                             Ok(value) => {
                                 // Cap large string returns to prevent unbounded
-                                // memory growth in the tool_calls summary. The
-                                // grounding check only needs to find short
-                                // field values (paths, URLs, verdicts) in the
-                                // result — a 64KB prefix is sufficient. Object
-                                // and array returns are typically structured
-                                // and small enough; only raw string returns
-                                // (file contents, terminal output) grow large.
+                                // memory growth in the tool_calls summary. A
+                                // 64KB prefix is sufficient for short field
+                                // values (paths, URLs, verdicts) in the
+                                // result. Object and array returns are
+                                // typically structured and small enough; only
+                                // raw string returns (file contents, terminal
+                                // output) grow large.
                                 let capped = match &value {
                                     serde_json::Value::String(s) if s.len() > 64 * 1024 => {
                                         serde_json::Value::String(

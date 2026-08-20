@@ -465,8 +465,7 @@ pub struct CreateLocalAgentRequest {
     pub visibility: String,
     /// Valence / personality parameters. Optional.
     pub valence: Option<ValenceInput>,
-    /// Optional output contract for card-declared grounding (N1). When
-    /// present, the `grounding` sub-object is validated at admission.
+    /// Optional output contract for the agent's structured output.
     #[serde(default)]
     pub output_contract: Option<serde_json::Value>,
 }

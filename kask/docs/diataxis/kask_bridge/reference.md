@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "Integration"
 mds_categories: [domain, composition, trust]
@@ -12,7 +12,7 @@ mds_categories: [domain, composition, trust]
 
 `kask_bridge` is the D8 composition root adapter — the sole bidirectional
 seam between zed-kask and hKask. It implements hKask port traits
-(`InferencePort`, `MemoryPort`, `SkillManifestExecutor`, `ThreadCondenser`,
+(`InferencePort`, `MemoryPort`, `ThreadCondenser`,
 `ContextInjector`, `MetacognitionProvider`, `CuratorDirectiveSink`,
 `AlertEscalationSink`, `KaskCompletionPort`) over zed facilities
 (`LanguageModel`, the in-process tool registry, the settings system, the
@@ -20,6 +20,14 @@ keychain). Every integration seam passes through this crate. The governing
 invariant is at `kask/crates/kask_bridge/src/kask_bridge.rs:9-10`: hKask
 crates never depend on zed crates; zed-kask depends on hKask; this bridge
 is the only crate that depends on both sides.
+
+Skill execution is **not** a bridge concern. It follows upstream Zed's
+body-injection model: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`)
+reads the `SKILL.md` body via `agent_skills::read_skill_body` and injects it
+via `render_skill_envelope`. The `lisp_eval` and `render_template` built-in
+agent tools (`crates/agent/src/tools/`) support the model-coordinated PDCA
+loops the SKILL.md bodies describe. There is no `SkillManifestExecutor` trait,
+no `BridgeManifestExecutor`, and no `skill_executor.rs` in this crate.
 
 ## Source citations
 
@@ -53,7 +61,7 @@ is the only crate that depends on both sides.
 | `KaskToolRouterSettings` | `kask/crates/kask_bridge/src/settings.rs:666-675` |
 | `KaskSettings::mcp_env` | `kask/crates/kask_bridge/src/settings.rs:717-1046` |
 | `BuiltinMcpServer` | `kask/crates/kask_bridge/src/mcp_servers.rs:24-48` |
-| `BUILT_IN_MCP_SERVERS` (12 servers) | `kask/crates/kask_bridge/src/mcp_servers.rs:53-394` |
+| `BUILT_IN_MCP_SERVERS` (10 servers) | `kask/crates/kask_bridge/src/mcp_servers.rs:53-394` |
 | `BUILT_IN_MCP_SERVERS_IDS` | `kask/crates/kask_bridge/src/mcp_servers.rs:398-412` |
 | `BUILT_IN_MCP_SERVERS_PAIRS` | `kask/crates/kask_bridge/src/mcp_servers.rs:416-451` |
 | `find_server` | `kask/crates/kask_bridge/src/mcp_servers.rs:455-457` |
@@ -81,12 +89,11 @@ is the only crate that depends on both sides.
 | `InferenceIpcServer` | `kask/crates/kask_bridge/src/inference_ipc_server.rs` |
 | `INFERENCE_PROVIDERS` | `kask/crates/kask_bridge/src/inference_providers.rs:44-69` |
 | `DATA_SERVICES` | `kask/crates/kask_bridge/src/inference_providers.rs` |
-| `BridgeManifestExecutor` | `kask/crates/kask_bridge/src/skill_executor.rs:88-109` |
-| `BridgeManifestExecutor::new` | `kask/crates/kask_bridge/src/skill_executor.rs:118-134` |
-| `seed_registry_to_disk` | `kask/crates/kask_bridge/src/skill_executor.rs:457-531` |
-| `SkillManifestExecutor` impl | `kask/crates/kask_bridge/src/skill_executor.rs:534-908` |
-| `ProfileResolver` trait | `kask/crates/kask_bridge/src/skill_executor.rs:50-52` |
-| `SnapshotProfileResolver` | `kask/crates/kask_bridge/src/skill_executor.rs:67-81` |
+| `SkillTool::run` (D1 — body injection) | `crates/agent/src/tools/skill_tool.rs:266` |
+| `render_skill_envelope` | `crates/agent/src/agent.rs` |
+| `lisp_eval` tool | `crates/agent/src/tools/lisp_eval_tool.rs` |
+| `render_template` tool | `crates/agent/src/tools/render_template_tool.rs` |
+| `set_template_base_path` (OnceLock) | `crates/agent/src/agent.rs` (wired in `crates/zed/src/main.rs`) |
 | `BridgeContextInjector` | `kask/crates/kask_bridge/src/context_injector.rs:144-160` |
 | `BridgeContextInjector::new` | `kask/crates/kask_bridge/src/context_injector.rs:168-181` |
 | `BridgeContextInjector::new_curator` | `kask/crates/kask_bridge/src/context_injector.rs:191-204` |
@@ -227,7 +234,7 @@ status: VERIFIED
 ## MCP server registry
 
 `BUILT_IN_MCP_SERVERS` (`mcp_servers.rs:53-394`) is the canonical list of
-12 built-in kask MCP servers. Each entry binds an `id` to a `binary`, a
+10 built-in kask MCP servers. Each entry binds an `id` to a `binary`, a
 human-readable `description`, and two allowlists: `credentials` (keychain
 secrets) and `config_env` (non-secret config from `mcp_env()`).
 
@@ -241,26 +248,23 @@ classDiagram
         +config_env: Option~&'static [&'static str]~
     }
     class BUILT_IN_MCP_SERVERS {
-        codegraph
         portfolio
         companies
-        condenser
         corpus
         curator
         kata_kanban
-        media
         research
         scenarios
         prediction_markets
         swarm
         training
     }
-    BUILT_IN_MCP_SERVERS --> BuiltinMcpServer : 12 entries
+    BUILT_IN_MCP_SERVERS --> BuiltinMcpServer : 10 entries
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-004
-verified_date: 2026-08-13
+verified_date: 2026-08-20
 verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:24-48,53-394,398-412
 status: VERIFIED
 -->
@@ -269,14 +273,11 @@ status: VERIFIED
 
 | ID | Binary | Credentials allowlist size | Config allowlist size |
 |----|--------|---------------------------|----------------------|
-| `codegraph` | `hkask-mcp-codegraph` | 2 | 3 |
 | `portfolio` | `hkask-mcp-portfolio` | 0 | 1 |
 | `companies` | `hkask-mcp-companies` | 6 | 2 |
-| `condenser` | `hkask-mcp-condenser` | 1 | 4 |
 | `corpus` | `hkask-mcp-corpus` | 1 | 16 |
 | `curator` | `hkask-mcp-curator` | 2 | 13 |
 | `kata-kanban` | `hkask-mcp-kata-kanban` | 1 | 2 |
-| `media` | `hkask-mcp-media` | 2 | 6 |
 | `research` | `hkask-mcp-research` | 7 | 3 |
 | `scenarios` | `hkask-mcp-scenarios` | 0 | 1 |
 | `prediction-markets` | `hkask-mcp-prediction-markets` | 1 | 3 |
@@ -420,20 +421,32 @@ The `LanguageModelInferencePort` adapter holds only channel senders
 executor via a spawned task that owns the `AsyncApp` (`inference.rs:189-216`).
 This split is forced by GPUI: `AsyncApp` is not `Send`.
 
-## Skill executor
+## Skill execution (D1 — body injection)
 
-`BridgeManifestExecutor` (`skill_executor.rs:88-109`) is the D1 seam between
-zed's `SkillManifestExecutor` trait and hKask's `ManifestExecutor`. It holds
-an `InferencePort`, a `ToolPort`, the registry manifests/templates dirs, a
-tokio handle, an optional `ProfileResolver` for proposer/evaluator separation,
-and a manifest cache keyed by skill name with mtime invalidation
-(`skill_executor.rs:103-108`).
+Skill execution is **not** implemented in `kask_bridge`. It follows upstream
+Zed's body-injection model and lives entirely in the `agent` crate:
 
-`seed_registry_to_disk` (`skill_executor.rs:457-531`) populates the on-disk
-registry at `{kask_data_dir}/skills/registry/` (D28) from the compiled seed
-payload. Existing files are never overwritten — user edits are sovereign.
-The disk copy is the single runtime source of truth; YAML/J2 edits take
-effect immediately without recompilation.
+- `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the
+  `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects
+  it into the conversation via `render_skill_envelope`
+  (`crates/agent/src/agent.rs`). The model reads the body and follows the
+  instructions. `SkillTool::new(skills, fs)` matches the upstream constructor.
+- `lisp_eval` (`crates/agent/src/tools/lisp_eval_tool.rs`) — wraps
+  `hkask_lisp::eval_sandboxed_with_budget`. Registered in `add_default_tools`.
+  The agent calls it directly when a SKILL.md instructs deterministic
+  computation (convergence signals, invariant checks, scoring).
+- `render_template` (`crates/agent/src/tools/render_template_tool.rs`) —
+  renders Jinja2 templates from `kask/registry/templates/` via `minijinja`.
+  Registered in `register_session` alongside `SkillTool`. The template base
+  path is wired via `agent::set_template_base_path()` (OnceLock), called from
+  `crates/zed/src/main.rs` at startup (dev: `kask/registry/templates/`, prod:
+  `{kask_data_dir}/skills/registry/templates/`).
+
+The former `BridgeManifestExecutor` / `skill_executor.rs` / `ManifestExecutor`
+infrastructure (and the `hkask-templates` executor crate) was deleted. PDCA
+iteration is model-coordinated: the SKILL.md body describes convergence
+criteria, and the model uses `lisp_eval` for deterministic convergence checks
+and `render_template` for structured prompt scaffolding within iterations.
 
 ## Context injector
 
@@ -457,7 +470,8 @@ The crate root (`kask_bridge.rs:25-72`) re-exports the public surface:
 identity types, inference ports, the IPC server, inference provider
 descriptors, the MCP server registry and helpers, memory ports and
 curator-store openers, `resolve_model_names`, all `Kask*Settings` structs,
-`BridgeManifestExecutor` + `seed_registry_to_disk`, and
-`BridgeMetacognitionProvider` / `BridgeCuratorDirectiveSink`. The
+and `BridgeMetacognitionProvider` / `BridgeCuratorDirectiveSink`. The
 `KASK_CREDENTIAL_NAMESPACE` constant (`kask_bridge.rs:74-76`) is the URL
-prefix for kask-namespaced keychain credentials.
+prefix for kask-namespaced keychain credentials. Skill-execution types are
+**not** re-exported here — they live in the `agent` crate (see "Skill
+execution" above).

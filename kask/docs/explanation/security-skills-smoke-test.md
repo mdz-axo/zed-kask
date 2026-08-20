@@ -1,8 +1,8 @@
 ---
 title: "Security Skills — Execution Smoke Test Procedure"
 audience: [operators, developers, security-engineers]
-last_updated: 2026-08-04
-version: "0.36.0"
+last_updated: 2026-08-20
+version: "0.37.0"
 status: "Active"
 domain: "Security"
 mds_categories: [domain, trust, lifecycle, curation]
@@ -44,7 +44,9 @@ operator validates manually.[^nist-ssdf][^bach-bolton]
 
 Invoke the `supply-chain-sentinel` skill from the zed-kask agent panel
 (native agent, D2). The skill executes
-in-process through the `ManifestExecutor` (D1); there is no `kask skill
+in-process through upstream-Zed body injection (D1): `SkillTool::run` reads
+the `SKILL.md` body from disk and injects it via `render_skill_envelope`;
+there is no `kask skill
 run` CLI. Supply the surface and target path as context:
 
 ```
@@ -146,8 +148,8 @@ verify it matches the contract.
 
 To run all smoke tests, invoke each skill from the zed-kask agent panel
 with the context below. There is no standalone `kask
-skill run` CLI — skills execute in-process through the `ManifestExecutor`
-(D1).[^mcp-spec]
+skill run` CLI — skills execute in-process through upstream-Zed body
+injection (D1): `SkillTool::run` → `render_skill_envelope`.[^mcp-spec]
 
 ```
 # 1. Supply chain audit
@@ -221,7 +223,7 @@ recommended as a pre-release checklist, not a CI gate.
 
 [^mcp-spec]:
     Anthropic. (2024). _Model Context Protocol Specification_. Anthropic PBC. https://modelcontextprotocol.io/specification
-    Cited for the MCP protocol the in-process ManifestExecutor (D1) implements.
+    Cited for the MCP protocol the in-process skill execution path (D1) interoperates with.
 
 [^bach-bolton-smoke]:
     Bach, J., & Bolton, M. (2019). _Rapid Software Testing_. Satisfice, Inc. https://www.satisfice.com/rapid-software-testing
