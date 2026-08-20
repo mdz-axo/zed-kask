@@ -26,7 +26,7 @@ pub mod types;
 
 pub mod runtime;
 pub use algedonic::{AlertEmailSink, AlertEscalationSink, RuntimeAlert};
-pub use cybernetics_loop::CyberneticsLoop;
+pub use cybernetics_loop::{CyberneticsLoop, RolloutEventSource};
 pub use energy::{
     AgentCallCapStatus, CallCap, CallCapError, CallCapManager, CallMeterOutcome,
     DEFAULT_CALL_CAP_ALERT_THRESHOLD, DEFAULT_RUNAWAY_CALL_CEILING,
