@@ -318,15 +318,17 @@ fn handle_jsonrpc(
                     .await
             });
             match result {
-                Ok(mut delegate_result) => {
+                Ok(delegate_result) => {
                     // Rung 2 (Typing): validate against the agent's `produces`
                     // port schema, same as `validate_produces` on SwarmServer.
                     // Inline because `handle_jsonrpc` is a free function, not a
                     // method on SwarmServer.
-                    let validation = if !agent.produces.is_empty() {
-                        let val = registry
-                            .port_registry()
-                            .validate_output(&agent.produces, &serde_json::from_str(&delegate_result.response).unwrap_or(serde_json::Value::Null));
+                    if !agent.produces.is_empty() {
+                        let val = registry.port_registry().validate_output(
+                            &agent.produces,
+                            &serde_json::from_str(&delegate_result.response)
+                                .unwrap_or(serde_json::Value::Null),
+                        );
                         if val.status != crate::schema_validate::ValidationStatus::Valid
                             && val.status != crate::schema_validate::ValidationStatus::NoSchema
                         {
@@ -339,10 +341,7 @@ fn handle_jsonrpc(
                                 "Port schema validation failed — agent output does not match its declared produces schema"
                             );
                         }
-                        Some(val)
-                    } else {
-                        None
-                    };
+                    }
                     let task = crate::a2a::task_from_response(
                         &delegate_result.response,
                         context_id,

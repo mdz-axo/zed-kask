@@ -81,14 +81,14 @@ Return a JSON object:
 - If ALL criteria pass → passed: true
 - If ANY criterion fails → passed: false, with specific feedback on each failure
 
-## MCP Tool Calls (Agent Action — Post-Cascade)
+## MCP Tool Calls (Agent Action — Post-Process)
 
-These instructions are for the agent running the skill, not for the template's LLM. The cascade produces the verification result; the agent then records it on the task:
+These instructions are for the agent running the skill, not for the template's LLM. The process produces the verification result; the agent then records it on the task:
 
 1. Call `kanban_task_verify` with `{"task_id": "...", "evidence": "..."}`. Use the `reasoning` field as the evidence string. This records the verification result on the task and (if passed) advances the task to `done`.
 2. If `passed` is true, call `kanban_task_move` with `{"task_id": "...", "target_status": "done"}` to advance the task to Done (the verify call may do this automatically, but the move is idempotent).
 3. If `passed` is false, call `kanban_task_comment` with the per-criterion feedback so the assigned agent can see what to fix. Then call `kanban_task_move` with `{"target_status": "in_progress"}` to return the task to InProgress.
-4. If the task needs rework after being returned, call `kanban_task_reopen` with optional new gas/rjoule budgets if the agent needs more resources.
+4. If the task needs rework after being returned, call `kanban_task_reopen` with optional new rjoule budgets if the agent needs more resources.
 
 All tools are on the `hkask-mcp-kata-kanban` server.
 {% endif %}

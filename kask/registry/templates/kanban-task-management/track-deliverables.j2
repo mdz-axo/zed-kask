@@ -60,9 +60,9 @@ Return a JSON object:
 
 The output describes deliverable readiness, not final acceptance.
 
-## MCP Tool Calls (Agent Action — Post-Cascade)
+## MCP Tool Calls (Agent Action — Post-Process)
 
-These instructions are for the agent running the skill, not for the template's LLM. The cascade produces the deliverable assessment; the agent then acts on it:
+These instructions are for the agent running the skill, not for the template's LLM. The process produces the deliverable assessment; the agent then acts on it:
 
 1. If `action` is `ready_for_review`, call `kanban_task_move` with `{"task_id": "...", "target_status": "review"}` to advance the task to the Review column.
 2. If `action` is `request_deliverables`, call `kanban_task_comment` with the `comment` field to request the missing deliverables from the assigned agent.

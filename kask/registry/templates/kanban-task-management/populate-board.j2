@@ -66,9 +66,9 @@ Return a JSON object:
 
 `board_tasks` is the complete, creation-ready list for the board. Do not add rejected, duplicate, or new tasks.
 
-## MCP Tool Calls (Agent Action — Post-Cascade)
+## MCP Tool Calls (Agent Action — Post-Process)
 
-These instructions are for the agent running the skill, not for the template's LLM. The cascade produces `board_tasks`; the agent then materializes the board by calling these MCP tools:
+These instructions are for the agent running the skill, not for the template's LLM. The process produces `board_tasks`; the agent then materializes the board by calling these MCP tools:
 
 1. Call `kanban_board_create` with `{"name": "{{ project_name }}", "columns": null}` (standard 5-column layout). Record the returned `board_id`. If this call fails, abort — all subsequent task creates depend on the board_id.
 2. For each task in `board_tasks`, call `kanban_task_create` with:

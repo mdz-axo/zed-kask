@@ -51,12 +51,11 @@ impl SwarmServer {
                     ))
                 })?;
                 let ceiling = self.client.config().max_credits_per_dispatch;
-                let mut result = runtime
+                let result = runtime
                     .delegate(&agent, &req.message, req.credits_authorized, ceiling)
                     .await
                     .map_err(map_local_swarm_error)?;
-                let validation =
-                    self.validate_produces(&req.agent_name, &agent.produces, &result.response);
+                self.validate_produces(&req.agent_name, &agent.produces, &result.response);
                 let mut task = a2a::task_from_response(
                     &result.response,
                     req.context_id.clone(),
@@ -196,12 +195,8 @@ impl SwarmServer {
                         .delegate(&agent, &req.message, req.credits_authorized, ceiling)
                         .await
                     {
-                        Ok(mut result) => {
-                            let validation = self.validate_produces(
-                                member_id,
-                                &agent.produces,
-                                &result.response,
-                            );
+                        Ok(result) => {
+                            self.validate_produces(member_id, &agent.produces, &result.response);
                             let task = a2a::task_from_response(
                                 &result.response,
                                 Some(context_id.clone()),
