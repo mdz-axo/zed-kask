@@ -17,25 +17,6 @@ use hkask_inference::InferenceConfig;
 // same defaults instead of duplicating string literals.
 
 const DEFAULT_REG_THRESHOLD: u64 = 100;
-/// Default template cache path, resolved from the platform cache directory.
-///
-/// Uses `$XDG_CACHE_HOME/hkask/templates` on Linux, `~/Library/Caches/hkask/templates`
-/// on macOS, and `%LOCALAPPDATA%/hkask/templates` on Windows via `dirs::cache_dir()`.
-/// Falls back to `/tmp/hkask-templates` only if `dirs` cannot determine a cache dir.
-/// Override: `HKASK_TEMPLATE_CACHE_PATH` env var.
-fn default_template_cache_path() -> String {
-    dirs::cache_dir()
-        .map(|d| {
-            d.join("hkask")
-                .join("templates")
-                .to_string_lossy()
-                .to_string()
-        })
-        .unwrap_or_else(|| DEFAULT_TEMPLATE_CACHE_PATH_FALLBACK.to_string())
-}
-
-/// Fallback when `dirs::cache_dir()` returns `None` (rare: no HOME set).
-const DEFAULT_TEMPLATE_CACHE_PATH_FALLBACK: &str = "/tmp/hkask-templates";
 /// Fallback agent name when `HKASK_AGENT_NAME` is not set.
 ///
 /// In zed-kask, the composition root sets `HKASK_AGENT_NAME` from the
@@ -89,9 +70,6 @@ pub struct ServiceConfig {
     /// for standalone CLI). The 1:1 agent name.
     pub user_name: String,
 
-    /// Path for the template cache (Git CAS storage).
-    pub template_cache_path: String,
-
     /// Path for the memory database (episodic + semantic stores).
     ///
     /// When `in_memory: false`, memory stores persist to this file.
@@ -111,8 +89,7 @@ pub struct ServiceConfig {
 impl ServiceConfig {
     /// Resolve configuration from environment variables and keychain.
     ///
-    /// Reads `HKASK_DB_PATH`, `HKASK_TEMPLATE_CACHE_PATH`,
-    /// `HKASK_MEMORY_DB_PATH`, and `HKASK_AGENT_NAME` from environment.
+    /// Reads `HKASK_DB_PATH`, `HKASK_MEMORY_DB_PATH`, and `HKASK_AGENT_NAME` from environment.
     /// The database passphrase is resolved via `hkask-keystore`.
     ///
     /// The agent name defaults to `HKASK_AGENT_NAME` env var (set by the
@@ -129,8 +106,6 @@ impl ServiceConfig {
             .unwrap_or_else(|_| data_dir.join(DEFAULT_DB_PATH).to_string_lossy().to_string());
         let inference_config = InferenceConfig::from_env();
         let default_model = inference_config.default_model.clone();
-        let template_cache_path = std::env::var("HKASK_TEMPLATE_CACHE_PATH")
-            .unwrap_or_else(|_| default_template_cache_path());
         let memory_db_path = std::env::var("HKASK_MEMORY_DB_PATH").ok();
         let user_name = std::env::var("HKASK_AGENT_NAME")
             .ok()
@@ -175,7 +150,6 @@ impl ServiceConfig {
             reg_threshold: DEFAULT_REG_THRESHOLD,
             in_memory: false,
             user_name,
-            template_cache_path,
             memory_db_path,
             memory_life_days,
         })
@@ -196,8 +170,6 @@ impl ServiceConfig {
         let db_path = std::env::var("HKASK_DB_PATH")
             .unwrap_or_else(|_| data_dir.join(DEFAULT_DB_PATH).to_string_lossy().to_string());
         let inference_config = InferenceConfig::from_env();
-        let template_cache_path = std::env::var("HKASK_TEMPLATE_CACHE_PATH")
-            .unwrap_or_else(|_| default_template_cache_path());
         let memory_db_path = std::env::var("HKASK_MEMORY_DB_PATH").ok();
         // A malformed numeric env var must warn, not silently fall back (`.rules`
         // failure-signal trap). Mirrors `from_env` and the canonical
@@ -225,7 +197,6 @@ impl ServiceConfig {
             in_memory: false,
             default_model: inference_config.default_model,
             user_name,
-            template_cache_path,
             memory_db_path,
             memory_life_days,
         }
@@ -249,7 +220,6 @@ impl ServiceConfig {
             in_memory: true,
             default_model: inference_config.default_model,
             user_name: TEST_USER_NAME.to_string(),
-            template_cache_path: default_template_cache_path(),
             memory_db_path: None,
             memory_life_days: DEFAULT_MEMORY_LIFE_DAYS,
         }

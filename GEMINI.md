@@ -286,8 +286,8 @@ the failure branch naming the hook, the failure reason, and the remediation
 `a2a_secret` resolution path silently producing an empty secret; the same
 pattern exists for `TOOL_ROUTER`, `CONTEXT_INJECTOR`, and `THREAD_CONDENSER`.
 
-`OnceLock`-based hooks (`set_manifest_executor`, `set_context_injector`,
-`set_curator_context_injector`) must `log::warn!` on the `Err` branch of
+`OnceLock`-based hooks (`set_context_injector`,
+`set_curator_context_injector`, `set_template_base_path`) must `log::warn!` on the `Err` branch of
 `OnceLock::set` — a second call (e.g. deferred task re-firing) is silently
 dropped without the warn. `Mutex`-based hooks (`set_memory_port`,
 `set_thread_condenser`, `set_tool_invoker`, `set_tool_router`,
@@ -296,7 +296,7 @@ second call replaces the first).
 
 When a deferred task wires multiple `set_*` hooks inside a single `if`
 block, the `else` branch warn must name ALL hooks left unwired, not just
-one. An operator reading the log sees "manifest executor not wired" and
+one. An operator reading the log sees "context injector not wired" and
 misses that 4 other hooks are also unwired. The warn is the effector that
 drives operator remediation; if it only names 1 of 5 hooks, the operator
 cannot remediate correctly.
@@ -354,9 +354,8 @@ systems. Do not try to unify them — they serve different consumers with
 different scoping and governance requirements:
 
 1. **`McpRuntime` (app-global)** — launches one copy of each server for
-   governed dispatch (OCAP token verification, gas/rjoule budgeting,
-   `reg.tool.*` span emission). Serves the skill cascade (FlowDef) and kask
-   panel. Runs outside any project context.
+   governed dispatch (call metering, `reg.tool.*` span emission). Serves the
+   skill system and kask panel. Runs outside any project context.
 
 2. **`ContextServerStore` (per-project)** — each project launches its own
    copies via `ContextServerDescriptorRegistry` descriptors (registered by
@@ -366,7 +365,7 @@ different scoping and governance requirements:
 The `ContextServerDescriptorRegistry` is app-level (global), but the
 `ContextServerStore` that actually spawns processes is per-project. Both
 systems launching independent process instances is correct — removing either
-path breaks its consumers (removing `McpRuntime` breaks FlowDef skills;
+path breaks its consumers (removing `McpRuntime` breaks skill tool calls;
 removing `ContextServerStore` registration hides kask tools from the agent).
 
 The `KaskMcpDescriptor::command()` method resolves env vars (credentials,
@@ -375,22 +374,14 @@ deferred task post-login), `sync_kask_mcp_servers` must be called again so
 the registry notifies `ContextServerStore` to restart servers with the
 updated env.
 
-## Model-dependent kask wiring: manifest executor vs. user-dependent hooks
+## Model-dependent kask wiring: template base path vs. user-dependent hooks
 
-The `set_manifest_executor` hook is `OnceLock`-based and depends on
-`LanguageModelRegistry::default_model()` being populated. The model registry
-is populated from `settings.json` (`agent.default_model`), not from Zed
-cloud auth — so the manifest executor must NOT be gated on Zed user login.
-Previously it was wired inside the user-login-gated deferred task, which
-meant users with a configured default model but no cloud login had skills
-silently disabled (the `skill` tool returned the no-op envelope). The
-manifest executor is now wired by a separate `cx.spawn` task that
-subscribes to `LanguageModelRegistry` events (`DefaultModelChanged`,
-`ProviderStateChanged`, `AddedProvider`, `ProvidersChanged`) and fires as
-soon as `default_model()` returns `Some`, independent of user login. An
-`AtomicBool` ensures it fires only once (the `OnceLock` would warn on a
-second call). The `try_wire_manifest_executor` helper in `main.rs`
-encapsulates the wiring logic.
+The `set_template_base_path` hook is `OnceLock`-based and depends on
+the kask data directory being resolved. The template base path is
+resolved from the kask data dir (prod) or the repo's
+`kask/registry/templates/` (dev), not from Zed cloud auth — so it must
+NOT be gated on Zed user login. It is wired by a separate `cx.spawn` task
+that runs at startup, independent of user login.
 
 `set_thread_condenser` and `set_memory_port` are `Mutex`-based (re-settable)
 and are wired twice: once unconditionally (pre-login, so the condenser works
@@ -427,35 +418,22 @@ When a user asks to "run", "apply", "use", or "invoke" a skill on a target
 (e.g., "run skill-maintenance on each of the 42 skills"), the correct agent
 action is a single `skill` tool call with the skill's name and the target as
 context. Do not `read_file` the `SKILL.md` body and improvise the methodology
-— the manifest encodes the methodology; the catalog `description` only tells the
+— the SKILL.md body encodes the methodology; the catalog `description` only tells the
 agent which skill to invoke. The system-prompt skills section
 (`crates/agent/src/templates/system_prompt.hbs`) pins this for the model;
 this rule pins it for agent sessions that read `.rules`. The failure mode is
 the agent `read_file`-ing `~/.agents/skills/<name>/SKILL.md` and then
-researching/questioning the skill instead of running its cascade — observed
+researching/questioning the skill instead of invoking it — observed
 when asked to run `skill-maintenance` across the corpus.
 
-## ManifestExecutor final-result extraction must be ordinal-keyed
-
-`ManifestExecutor::execute_manifest` returns `HashMap<String, Value>` with step
-results under `step_{ordinal}_result` keys. HashMap iteration order is
-randomized (`RandomState`), so `values().last()` picks an arbitrary step, not
-the final one. Any caller that extracts a "final result" must parse the ordinal
-from `step_N_result` keys and pick the highest. The canonical extractors are
-`extract_final_step_result` in `kask_bridge/src/skill_executor.rs` (for the
-bridge) and the same-named free function in `hkask-templates/src/executor.rs`
-(for `execute_flowdef`'s sub-cascade result). Reuse them — do not re-implement
-with `.last()`. This bug was found independently in both call sites in the
-same audit.
-
-## Skill cascade context must carry the user's task
+## Skill body injection carries the user's task
 
 Both `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs`) and
 `NativeAgent::send_skill_invocation` (`crates/agent/src/agent.rs`) must inject
-the user's task into the cascade context as `task` (a
-`serde_json::Value::String`). Templates reference `{{ task }}` to act on the
-user's request. Passing an empty context (`HashMap::new()`) causes the cascade
-to run blind — templates get model defaults but never the actual request,
+the user's task into the skill context as `task` (a
+`serde_json::Value::String`). The SKILL.md body references `{{ task }}` to act on the
+user's request. Passing an empty context causes the skill to
+run blind — the body gets model defaults but never the actual request,
 producing generic outputs unrelated to the user's intent. The `SkillToolInput.task`
 field exists for this purpose; do not remove it or bypass it. The failure mode
 is silent (no error, just wrong output) and was present at both call sites

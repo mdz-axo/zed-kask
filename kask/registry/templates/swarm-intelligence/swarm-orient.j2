@@ -185,13 +185,13 @@ builds):
 3. **Execution crash.** Else if any `delegate_results[]` entry has
    `tool_calls[].ok = false` (a dispatch failed or was not in the declared
    `mcp_tools` allowlist), attribute to the **earliest such agent**.
-4. **Skill cascade failure.** Else if any `delegate_results[]` entry has
-   `executed_skills[].ok = false` (a declared skill cascade failed),
+4. **Skill execution failure.** Else if any `delegate_results[]` entry has
+   `executed_skills[].ok = false` (a declared skill execution failed),
    attribute to the **earliest such agent**.
 5. **Tie-break** by `delegate_results` array order (deterministic).
 
 If no `delegate_results` telemetry is present (the default in the planning
-cascade), OR no failure is present, set `agent_at_fault = null`. When
+phase), OR no failure is present, set `agent_at_fault = null`. When
 non-null, `agent_at_fault = { agent_name, reason, rule_matched (1-5),
 failure_detail }`. Never fabricate a verdict from the plan's `emitted_calls`.
 

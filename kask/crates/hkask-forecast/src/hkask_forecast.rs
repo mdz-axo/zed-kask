@@ -11,8 +11,6 @@
 //! 3. Bayesian updating — P(H|E) = P(E|H) × P(H) / P(E)
 //! 4. Brier scoring — (prediction - outcome)²
 
-pub mod falsification;
-
 use thiserror::Error;
 
 // ── Error type ──────────────────────────────────────────────────────────────

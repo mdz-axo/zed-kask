@@ -67,7 +67,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 * Skills execute via **upstream Zed body injection**: `SkillTool::run` reads the `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it via `render_skill_envelope`. The model reads the body and follows the instructions. `SkillTool::new(skills, fs)` matches the upstream constructor.
 * `lisp_eval` tool — registered in `add_default_tools`. Do NOT register it again in `register_session` — causes "Duplicate tool name" panic.
-* `render_template` tool — registered in `register_session` (not `add_default_tools`). Path traversal protection via `canonicalize` + `starts_with` — do not bypass this check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup. If the base path is not wired, the tool returns an error — it does not silently render from the wrong path.
+* `render_template` tool — registered in `add_default_tools` (alongside `lisp_eval`). Path traversal protection via `canonicalize` + `starts_with` — do not bypass this check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup. If the base path is not wired, the tool returns an error — it does not silently render from the wrong path.
 * PDCA loops are **model-coordinated**. The SKILL.md body describes convergence criteria; the model self-iterates. The model calls `lisp_eval` for deterministic checks and `render_template` for structured prompt scaffolding.
 * `LazyToolRouter` filters MCP tools only — built-in Zed tools (`lisp_eval`, `render_template`, `read_file`, etc.) must bypass the router.
 * Convention priors from `.rules` must be verified against the codebase before use — rules can be stale.

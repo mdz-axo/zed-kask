@@ -20,8 +20,6 @@
 //! runtime-policy gate they fed: every `ToolInfo` was labelled `Pure` at its
 //! only construction site, so the `Source`→`Sink` block could not fire.
 
-pub mod token_types;
 pub mod tool_port;
 
-pub use token_types::SYSTEM_MAX_RECURSION;
 pub use tool_port::{ToolFuture, ToolInfo, ToolPort, ToolPortError};
