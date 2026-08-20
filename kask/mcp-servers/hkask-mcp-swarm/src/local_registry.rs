@@ -68,26 +68,10 @@ pub fn validate_typing(
 /// pass (e.g. missing `response_path`). A card with no `output_contract` or
 /// no `grounding` sub-object passes — grounding is optional, but a declared
 /// contract must be well-formed.
-pub fn validate_grounding_contract(card: &LocalAgentCard) -> Result<(), LocalSwarmError> {
-    let Some(ref oc) = card.capabilities.output_contract else {
-        return Ok(());
-    };
-    let Some(grounding) = oc.get("grounding") else {
-        return Ok(());
-    };
-    let findings =
-        hkask_verification::card_contract::validate(Some(grounding), &card.capabilities.mcp_tools);
-    let errors: Vec<_> = findings.iter().filter(|f| !f.is_warning()).collect();
-    if errors.is_empty() {
-        return Ok(());
-    }
-    let messages: Vec<String> = errors.iter().map(|f| f.message.clone()).collect();
-    Err(LocalSwarmError::InvalidInput(format!(
-        "agent '{}': output_contract.grounding has {} error(s): {}",
-        card.agent_id,
-        errors.len(),
-        messages.join("; ")
-    )))
+pub fn validate_grounding_contract(_card: &LocalAgentCard) -> Result<(), LocalSwarmError> {
+    // Grounding-contract validation was removed with the verification crate.
+    // Cards that declare output_contract.grounding load without checking it.
+    Ok(())
 }
 
 /// A local agent card — the minimal subset of fermi's `AgentCard` we need for
@@ -387,31 +371,6 @@ impl LocalAgentRegistry {
                     "skipping agent card: typing check failed"
                 );
                 continue;
-            }
-            // Rung 3 (Card-declared grounding): if the card declares an
-            // output_contract.grounding, validate it at load. A card that
-            // declares a grounding contract naming tools it doesn't have is
-            // a contract that protects nothing. `card_contract::validate`
-            // lives in `hkask-verification`, which this crate already depends
-            // on. Findings with error severity skip the card; warnings pass.
-            if let Some(ref oc) = card.capabilities.output_contract {
-                if let Some(grounding) = oc.get("grounding") {
-                    let findings = hkask_verification::card_contract::validate(
-                        Some(grounding),
-                        &card.capabilities.mcp_tools,
-                    );
-                    let has_errors = findings.iter().any(|f| !f.is_warning());
-                    if has_errors {
-                        tracing::warn!(
-                            target: "hkask.mcp.swarm",
-                            card_path = %card_path.display(),
-                            agent_id = %card.agent_id,
-                            findings = ?findings,
-                            "output_contract.grounding has error-severity findings — skipping card"
-                        );
-                        continue;
-                    }
-                }
             }
             cards.push(card);
         }

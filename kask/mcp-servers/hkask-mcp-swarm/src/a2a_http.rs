@@ -55,7 +55,6 @@ impl A2aHttpServer {
     pub fn start(
         runtime: Arc<LazyLocalSwarmRuntime>,
         registry: Arc<LocalAgentRegistry>,
-        verification_store: Arc<hkask_verification::VerificationStore>,
         tokio_handle: tokio::runtime::Handle,
         max_credits_per_dispatch: u32,
     ) -> Result<Self, LocalSwarmError> {
@@ -75,7 +74,6 @@ impl A2aHttpServer {
                 server,
                 runtime,
                 registry,
-                verification_store,
                 tokio_handle,
                 base_url,
                 max_credits_per_dispatch,
@@ -98,7 +96,6 @@ fn run_server(
     server: tiny_http::Server,
     runtime: Arc<LazyLocalSwarmRuntime>,
     registry: Arc<LocalAgentRegistry>,
-    verification_store: Arc<hkask_verification::VerificationStore>,
     tokio_handle: tokio::runtime::Handle,
     base_url: String,
     max_credits_per_dispatch: u32,
@@ -110,7 +107,6 @@ fn run_server(
                     request,
                     &runtime,
                     &registry,
-                    &verification_store,
                     &tokio_handle,
                     &base_url,
                     max_credits_per_dispatch,
@@ -128,7 +124,6 @@ fn handle_request(
     mut request: tiny_http::Request,
     runtime: &Arc<LazyLocalSwarmRuntime>,
     registry: &Arc<LocalAgentRegistry>,
-    verification_store: &Arc<hkask_verification::VerificationStore>,
     tokio_handle: &tokio::runtime::Handle,
     base_url: &str,
     max_credits_per_dispatch: u32,
@@ -160,7 +155,6 @@ fn handle_request(
                 &body,
                 runtime,
                 registry,
-                verification_store,
                 tokio_handle,
                 max_credits_per_dispatch,
             );
@@ -239,7 +233,6 @@ fn handle_jsonrpc(
     body: &str,
     runtime: &Arc<LazyLocalSwarmRuntime>,
     registry: &Arc<LocalAgentRegistry>,
-    verification_store: &Arc<hkask_verification::VerificationStore>,
     tokio_handle: &tokio::runtime::Handle,
     max_credits_per_dispatch: u32,
 ) -> JsonRpcResponse {
@@ -326,28 +319,6 @@ fn handle_jsonrpc(
             });
             match result {
                 Ok(mut delegate_result) => {
-                    // Rung 3 (Grounding): enforce via the central verification
-                    // ledger, same as the in-process A2A tools. A2A HTTP
-                    // responses are free prose — grounding records an
-                    // unenforceable record, visible in the trend.
-                    hkask_verification::card_contract::register_if_valid(
-                        verification_store,
-                        agent
-                            .capabilities
-                            .output_contract
-                            .as_ref()
-                            .and_then(|oc| oc.get("grounding")),
-                        &agent.capabilities.mcp_tools,
-                        &agent.agent_type,
-                    );
-                    let outcome = verification_store.enforce_and_stamp(
-                        "swarm_a2a_http",
-                        &agent.agent_id,
-                        &agent.agent_type,
-                        &delegate_result.response,
-                        &delegate_result.tool_calls,
-                        &[],
-                    );
                     // Rung 2 (Typing): validate against the agent's `produces`
                     // port schema, same as `validate_produces` on SwarmServer.
                     // Inline because `handle_jsonrpc` is a free function, not a
@@ -355,10 +326,9 @@ fn handle_jsonrpc(
                     let validation = if !agent.produces.is_empty() {
                         let val = registry
                             .port_registry()
-                            .validate_output(&agent.produces, &outcome.cleaned);
-                        if val.status != hkask_verification::envelope::ValidationStatus::Valid
-                            && val.status
-                                != hkask_verification::envelope::ValidationStatus::NoSchema
+                            .validate_output(&agent.produces, &serde_json::from_str(&delegate_result.response).unwrap_or(serde_json::Value::Null));
+                        if val.status != crate::schema_validate::ValidationStatus::Valid
+                            && val.status != crate::schema_validate::ValidationStatus::NoSchema
                         {
                             tracing::warn!(
                                 target: "hkask.swarm.port_registry",
@@ -373,7 +343,6 @@ fn handle_jsonrpc(
                     } else {
                         None
                     };
-                    delegate_result.apply_grounding(outcome, validation.as_ref());
                     let task = crate::a2a::task_from_response(
                         &delegate_result.response,
                         context_id,

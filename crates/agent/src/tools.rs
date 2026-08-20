@@ -17,15 +17,13 @@ mod find_references_tool;
 mod get_code_actions_tool;
 mod go_to_definition_tool;
 mod grep_tool;
+mod lisp_eval_tool;
 mod list_agents_and_models_tool;
 mod list_directory_tool;
 mod move_path_tool;
-mod pipeline_tool;
 mod read_file_tool;
 mod rename_tool;
-mod skill_bundle_tool;
 mod skill_tool;
-pub(crate) use skill_tool::gather_cascade_context_from_thread;
 mod spawn_agent_tool;
 mod symbol_locator;
 mod terminal_tool;
@@ -143,13 +141,12 @@ pub use find_references_tool::*;
 pub use get_code_actions_tool::*;
 pub use go_to_definition_tool::*;
 pub use grep_tool::*;
+pub use lisp_eval_tool::*;
 pub use list_agents_and_models_tool::*;
 pub use list_directory_tool::*;
 pub use move_path_tool::*;
-pub use pipeline_tool::*;
 pub use read_file_tool::*;
 pub use rename_tool::*;
-pub use skill_bundle_tool::*;
 pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
@@ -271,12 +268,11 @@ tools! {
     GrepTool,
     ListAgentsAndModelsTool,
     ListDirectoryTool,
+    LispEvalTool,
     MovePathTool,
     ReadFileTool,
     RenameTool,
-    SkillBundleTool,
     SkillTool,
-    PipelineTool,
     SpawnAgentTool,
     TerminalTool,
     WebSearchTool,

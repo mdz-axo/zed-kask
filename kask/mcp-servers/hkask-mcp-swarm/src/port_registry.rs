@@ -135,7 +135,7 @@ impl PortRegistry {
         &self,
         produces: &[String],
         output: &serde_json::Value,
-    ) -> hkask_verification::envelope::ValidationResult {
+    ) -> crate::schema_validate::StatusValidationResult {
         let mut violations = Vec::new();
         let mut unsupported = Vec::new();
         let mut had_schema = false;
@@ -144,9 +144,9 @@ impl PortRegistry {
                 continue;
             };
             had_schema = true;
-            let report = hkask_verification::schema_validate::validate(schema, output);
+            let report = crate::schema_validate::validate(schema, output);
             if report.is_contradiction() {
-                violations.extend(report.violations.iter().map(|v| SchemaViolation {
+                violations.extend(report.violations.iter().map(|v| crate::schema_validate::SchemaViolation {
                     path: v.path.clone(),
                     message: v.message.clone(),
                 }));
@@ -154,15 +154,15 @@ impl PortRegistry {
             unsupported.extend(report.unsupported.iter().cloned());
         }
         let status = if !unsupported.is_empty() {
-            ValidationStatus::UnsupportedSchema
+            crate::schema_validate::ValidationStatus::UnsupportedSchema
         } else if !violations.is_empty() {
-            ValidationStatus::Invalid
+            crate::schema_validate::ValidationStatus::Invalid
         } else if had_schema {
-            ValidationStatus::Valid
+            crate::schema_validate::ValidationStatus::Valid
         } else {
-            ValidationStatus::NoSchema
+            crate::schema_validate::ValidationStatus::NoSchema
         };
-        ValidationResult {
+        crate::schema_validate::StatusValidationResult {
             status,
             violations,
             unsupported,

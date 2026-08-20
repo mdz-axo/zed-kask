@@ -348,41 +348,13 @@ impl Default for KaskMemorySettings {
         }
     }
 }
-///
-/// Controls how tool results are compressed before entering the message
-/// history, and what compression profile to use.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-    /// Compression profile: "heavy", "normal", "soft", or "light".
-    /// - Heavy: 10% retention, 30 max lines — aggressive compression
-    /// - Normal: 20% retention, 80 max lines — balanced
-    /// - Soft: 60% retention, 200 max lines — light touch
-    /// - Light: 95% retention, no max — near-passthrough
-    pub profile: String,
 
-    /// Whether to automatically compress tool results before they enter
-    /// the message history. When false, tool results are stored verbatim.
-    pub auto_compress_tool_results: bool,
-
-    /// Persona keywords for saliency scoring (comma-separated in settings.json).
-    /// relevant to the user's domain.
-    pub persona_keywords: Vec<String>,
-
-    /// Saliency window multiplier for thread summarization.
-    /// Controls the max_tokens budget: saliency_window * 100, clamped [150, 2000].
-    pub saliency_window: u32,
-}
-
-    fn default() -> Self {
-        Self {
-            profile: "normal".to_string(),
-            auto_compress_tool_results: false,
-            persona_keywords: Vec::default(),
-            saliency_window: 5,
-        }
-    }
-}
+/// Research MCP server configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
-    pub db_path: String,
+pub struct KaskResearchSettings {
+    /// RSS database path for persistent feed storage. When empty, the server
+    /// resolves a default path under the hKask data directory.
+    pub rss_db: String,
 }
 
 /// Research MCP server configuration.
@@ -799,16 +771,6 @@ impl KaskSettings {
         // MCP servers when `KaskMcpSettings::default()` disagreed with the
         // serde default).
         let corpus_default = KaskCorpusSettings::default();
-            env.insert(
-            );
-        }
-            env.insert(
-                "HKASK_CONDENSE_SALIENCY_WINDOW".to_string(),
-            );
-        }
-            env.insert(
-            );
-        }
 
         // ── Research ──
         if !self.research.rss_db.is_empty() {
@@ -886,12 +848,6 @@ impl KaskSettings {
             env.insert(
                 "HKASK_TEMPLATE_ROOT".to_string(),
                 self.corpus.template_root.clone(),
-            );
-        }
-            env.insert(
-            );
-        }
-            env.insert(
             );
         }
         if !self.media.vision_model.is_empty() {
@@ -1191,25 +1147,6 @@ impl From<KaskMemorySettingsContent> for KaskMemorySettings {
     }
 }
 
-        let default = Self::default();
-        Self {
-            profile: c.profile.unwrap_or(default.profile),
-            auto_compress_tool_results: c
-                .auto_compress_tool_results
-                .unwrap_or(default.auto_compress_tool_results),
-            persona_keywords: c.persona_keywords.unwrap_or(default.persona_keywords),
-            saliency_window: c.saliency_window.unwrap_or(default.saliency_window),
-        }
-    }
-}
-
-        let default = Self::default();
-        Self {
-            db_path: c.db_path.unwrap_or(default.db_path),
-        }
-    }
-}
-
 impl From<KaskResearchSettingsContent> for KaskResearchSettings {
     fn from(c: KaskResearchSettingsContent) -> Self {
         let default = Self::default();
@@ -1235,9 +1172,27 @@ impl From<KaskCompaniesSettingsContent> for KaskCompaniesSettings {
 impl From<KaskCorpusSettingsContent> for KaskCorpusSettings {
     fn from(c: KaskCorpusSettingsContent) -> Self {
         let default = Self::default();
-        // Treat 0 as "        Self {
-            vision_model: c.vision_model.unwrap_or(default.vision_model),
-            image_gen_model: c.image_gen_model.unwrap_or(default.image_gen_model),
+        // Treat 0 as "use default" — a user setting `embedding_dim: 0` would
+        // otherwise construct a zero-dimensional EmbeddingStore that silently
+        // rejects every vector (DimensionMismatch { expected: 0, ... }),
+        // disabling embedding-based recall with no startup signal.
+        Self {
+            embedding_dim: c
+                .embedding_dim
+                .filter(|&d| d > 0)
+                .unwrap_or(default.embedding_dim),
+            embedding_model: c.embedding_model.unwrap_or(default.embedding_model),
+            // Treat 0 as "use default" — 0 concurrency would silently disable
+            // OCR (no pages processed in parallel).
+            ocr_concurrency: c
+                .ocr_concurrency
+                .filter(|&d| d > 0)
+                .unwrap_or(default.ocr_concurrency),
+            ocr_simple_max: c.ocr_simple_max.unwrap_or(default.ocr_simple_max),
+            ocr_moderate_max: c.ocr_moderate_max.unwrap_or(default.ocr_moderate_max),
+            ocr_sample_rate: c.ocr_sample_rate.unwrap_or(default.ocr_sample_rate),
+            ocr_tuneable: c.ocr_tuneable.unwrap_or(default.ocr_tuneable),
+            template_root: c.template_root.unwrap_or(default.template_root),
         }
     }
 }
@@ -1507,11 +1462,6 @@ impl From<KaskSettingsContent> for KaskSettings {
         assert!(
             KaskMemorySettings::default().auto_inject,
             "KaskMemorySettings::default() must return auto_inject: true"
-        );
-    }
-
-    #[test]
-        assert!(
         );
     }
 

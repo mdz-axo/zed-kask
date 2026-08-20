@@ -1038,55 +1038,7 @@ impl KanbanServer {
                             build_task_agent_card(tid, &task.title, &skills_for_agent)
                         });
 
-                    // Phase 7: Surface coverage gaps at spawn time. When an
-                    // expert agent is reused and its agent_type has no
-                    // grounding contract in the verification store, log a
-                    // warning naming the agent_type. This surfaces the gap
-                    // at spawn time, not just in the trend query — the
-                    // operator can register a contract before the next
-                    // delegation. Card-declared contracts (checked below)
-                    // may still provide grounding even when the registry has
-                    // no contract for this agent_type.
-                    if !self.verification_store.has_contract(&agent.agent_type)
-                        && agent.capabilities.output_contract.as_ref().and_then(|oc| oc.get("grounding")).is_none()
-                    {
-                        tracing::warn!(
-                            target: "hkask.mcp.kata_kanban",
-                            task_id = %tid,
-                            agent_id = %agent.agent_id,
-                            agent_type = %agent.agent_type,
-                            "expert agent reused with agent_type '{}' that has no grounding contract \
-                             and no card-declared grounding. Outputs will not be checked for fabricated \
-                             values. Register a contract via VerificationStore::register_contract for \
-                             this agent_type, or declare an output_contract.grounding on the agent card.",
-                            agent.agent_type,
-                        );
-                    }
 
-                    // Rung 3 (Card-declared grounding): register the card's
-                    // output_contract.grounding as an enforceable contract.
-                    // `register_if_valid` validates internally — error findings
-                    // prevent registration, warnings pass. Admission-time
-                    // validation in `write_card`/`load` already logs bad
-                    // contracts, so this path doesn't re-log findings.
-                    if let Some(ref oc) = agent.capabilities.output_contract {
-                        let grounding = oc.get("grounding");
-                        if hkask_verification::card_contract::register_if_valid(
-                            &self.verification_store,
-                            grounding,
-                            &agent.capabilities.mcp_tools,
-                            &agent.agent_type,
-                        ) {
-                            tracing::info!(
-                                target: "hkask.mcp.kata_kanban",
-                                task_id = %tid,
-                                agent_id = %agent.agent_id,
-                                agent_type = %agent.agent_type,
-                                "card-declared grounding contract registered for agent_type '{}'",
-                                agent.agent_type,
-                            );
-                        }
-                    }
 
                     // P1: Try worktree-isolated spawn first. When the zed IPC bridge
                     // is available and a workspace with an AgentPanel is open, this
@@ -1248,29 +1200,6 @@ impl KanbanServer {
                 ))
             })?;
 
-        // Rung 3 (Grounding): enforce the grounding contract via the
-        // central verification ledger. The store runs `enforce_grounding`
-        // (when a contract exists for the agent_type), writes a full
-        // `GroundingRecord` to the cross-tool ledger (append-only), and
-        // returns the result + cleaned JSON. The contract may be compiled
-        // (e.g. `task_agent_contract()`) or card-declared (registered at
-        // spawn time from the agent's `output_contract.grounding`). Agents
-        // whose `agent_type` has no compiled contract and no card-declared
-        // contract get a coverage-gap record (had_contract: false) so the
-        // gap is visible in the trend (paper §6: coverage is itself a
-        // metric).
-        let outcome = self.verification_store.enforce_and_stamp(
-            "kanban_task_spawn",
-            &result.agent_id,
-            &agent.agent_type,
-            &result.response,
-            &result.tool_calls,
-            // Top-level delegation from the kanban task-spawn path — no
-            // parent envelope. The monotone-provenance cap applies to
-            // agent-to-agent composition hops, not the operator's first
-            // delegation into a task agent.
-            &[],
-        );
         // Rung 2 (Schema validation): validate the cleaned document
         // AFTER grounding, BEFORE it persists. The schema is retrieved from
         // the `PortRegistry` (the single source of truth for `task_result`),
@@ -1279,12 +1208,12 @@ impl KanbanServer {
         // keywords are NOT a pass. Logged at warn — schema violations are
         // diagnostic, not blocking (the cleaned document is still the best
         // available output).
-        let mut schema_validation: Option<hkask_verification::envelope::ValidationResult> = None;
-        if outcome.result.is_some() {
+        let mut schema_validation: Option<hkask_mcp_swarm::schema_validate::StatusValidationResult> = None;
+        if let Ok(cleaned) = serde_json::from_str::<serde_json::Value>(&result.response) {
             let validation = self
                 .local_registry
                 .port_registry()
-                .validate_output(&["task_result".to_string()], &outcome.cleaned);
+                .validate_output(&["task_result".to_string()], &cleaned);
             if !validation.violations.is_empty() {
                 tracing::warn!(
                     target: "hkask.mcp.kata_kanban",
@@ -1305,70 +1234,6 @@ impl KanbanServer {
             }
             schema_validation = Some(validation);
         }
-        // Build the delegation envelope so provenance survives the hop to
-        // the caller (N2). The envelope is additive — it carries the enforced
-        // payload, provenance, violations, and validation status. Built in
-        // all three branches so every delegation carries grounding status.
-        //
-        // Grounding status mapping:
-        // - Enforced:     contract ran (outcome.result.is_some())
-        // - NoContract:   output was an object but no contract for this agent_type
-        // - Unenforceable: output was not a JSON object (contract couldn't run)
-        //
-        // Payload status mapping:
-        // - NoResponse:    raw response string is empty
-        // - EmptyResponse: output was an empty JSON object (no fields)
-        // - Document:      output was a non-empty JSON object
-        // - ProseOnly:     output was non-empty but not an object
-        let grounding_status = if outcome.result.is_some() {
-            hkask_verification::envelope::GroundingStatus::Enforced
-        } else if outcome.was_object {
-            hkask_verification::envelope::GroundingStatus::NoContract
-        } else {
-            hkask_verification::envelope::GroundingStatus::Unenforceable
-        };
-        let payload_status = if outcome.raw_response.is_empty() {
-            hkask_verification::envelope::PayloadStatus::NoResponse
-        } else if outcome.was_object {
-            // Distinguish an empty object ({}) from a populated document.
-            // An empty object means the agent returned no structured fields —
-            // the grounding contract had nothing to check.
-            match &outcome.cleaned {
-                serde_json::Value::Object(map) if map.is_empty() => {
-                    hkask_verification::envelope::PayloadStatus::EmptyResponse
-                }
-                _ => hkask_verification::envelope::PayloadStatus::Document,
-            }
-        } else {
-            hkask_verification::envelope::PayloadStatus::ProseOnly
-        };
-        let envelope = hkask_verification::envelope::build(
-            &result.agent_id,
-            if outcome.was_object {
-                Some(&outcome.cleaned)
-            } else {
-                None
-            },
-            grounding_status,
-            payload_status,
-            outcome.result.as_ref(),
-            schema_validation.as_ref(),
-        );
-        // Replace the response with the cleaned JSON (with provenance
-        // stamps and nulled unsourced fields) when grounding ran.
-        if outcome.result.is_some() {
-            result.response =
-                serde_json::to_string(&outcome.cleaned).unwrap_or_else(|_| result.response.clone());
-        }
-        // Retain the raw response for audit and future reprocessing.
-        result.raw_response = Some(outcome.raw_response);
-        // Log the envelope at debug — it's diagnostic, not blocking.
-        tracing::debug!(
-            target: "hkask.mcp.kata_kanban",
-            task_id = %tid,
-            envelope = %envelope,
-            "delegation envelope built",
-        );
 
         let verdict = result.task_success.clone();
         if let Err(error) =
@@ -1920,7 +1785,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     }
                 };
 
-                Ok(KanbanServer::new(ctx.webid, Arc::new(hkask_verification::VerificationStore::open()), service, local_runtime, local_registry, worktree_spawn_port, Arc::new(idempotency)))
+                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry, worktree_spawn_port, Arc::new(idempotency)))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
                 context: "kanban server init".into(),

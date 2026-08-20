@@ -18,47 +18,6 @@ fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent
     LanguageModelToolResultContent::from(e.to_string())
 }
 
-/// Detect a read of a skill's `SKILL.md` — the discovery-only catalog entry
-/// whose body is never injected (see `skill_tool.rs`: body injection is disabled
-/// in zed-kask). Reading it bypasses the manifest cascade, the gas/OCAP
-/// membrane, and the convergence loop.
-///
-/// This is the enforcement point for the invariant the system prompt states.
-/// It was previously advisory (`log::warn!` only), which made the prompt prose
-/// the *sole* defense — and per the `.rules` "advertised invariants need
-/// enforcement points" trap, an invariant with no gate is a declaration. The
-/// model's trained prior actively pushes against it: every other major agent
-/// system loads skill bodies as prose, so "read the skill file" is the
-/// statistically expected action.
-///
-/// Only the catalog file itself is gated. Resource files *inside* a skill
-/// directory (templates, references, scripts) stay readable — a cascade result
-/// may legitimately direct the model to them.
-fn is_skill_catalog_file(path: &Path) -> bool {
-    if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
-        return false;
-    }
-    // A skills directory is one whose parent is `.agents` (project) or the
-    // global skills root (D28: `{kask_data_dir}/skills/` or legacy
-    // `paths::data_dir()/agents/skills/`). Walk ancestors so nested layouts
-    // (`.../skills/_marketplace/<name>/SKILL.md`) match too.
-    //
-    // zed-kask: D28 — the global skills dir is resolved via
-    // `agent_skills::global_skills_dir()` which honors the override hook.
-    // We check `starts_with` against it so any kask data root (custom
-    // `HKASK_DATA_DIR`, XDG default, etc.) is accepted.
-    let global_skills_dir = agent_skills::global_skills_dir();
-    path.ancestors().skip(1).any(|anc| {
-        anc.file_name().and_then(|n| n.to_str()) == Some("skills")
-            && (anc
-                .parent()
-                .and_then(|p| p.file_name())
-                .map(|n| n == ".agents" || n == "agents")
-                .unwrap_or(false)
-                || anc.starts_with(&global_skills_dir))
-    })
-}
-
 /// Refuse a `SKILL.md` read, returning the redirect the model should act on.
 ///
 /// Returns `Err` (the tool-error channel) when `resolved_path` is a skill
@@ -75,11 +34,6 @@ fn is_skill_catalog_file(path: &Path) -> bool {
 /// `log` record rather than a `tracing` event because the `agent` crate has no
 /// `tracing` dependency and no `log`→`tracing` bridge is installed, so a
 /// `target:`-style span here would not reach the regulation ledger.
-/// Telemetry key for a refused `SKILL.md` read. Named as a constant so the
-/// namespace test asserts on the value actually emitted rather than on this
-/// file's source text.
-const BLOCKED_READ_TELEMETRY_KEY: &str = "skill.catalog_read_blocked";
-
 fn refuse_skill_catalog_read(
     _resolved_path: &Path,
     _requested_path: &str,
@@ -632,51 +586,6 @@ mod test {
     use util::path;
 
     #[test]
-    fn test_is_skill_catalog_file_detects_skill_catalog_reads() {
-        // Project skill: `.agents/skills/<name>/SKILL.md`.
-        assert!(is_skill_catalog_file(Path::new(
-            "/home/u/proj/.agents/skills/hypothesis-framer/SKILL.md"
-        )));
-        // Global skill: `<data>/agents/skills/<name>/SKILL.md`.
-        assert!(is_skill_catalog_file(Path::new(
-            "/home/u/.local/share/zed-kask/agents/skills/grill-me/SKILL.md"
-        )));
-        // Marketplace skill nested under `_marketplace` is still detected.
-        assert!(is_skill_catalog_file(Path::new(
-            "/home/u/.local/share/zed-kask/agents/skills/_marketplace/published/SKILL.md"
-        )));
-        // A resource file inside a skill dir is NOT a catalog read.
-        assert!(!is_skill_catalog_file(Path::new(
-            "/home/u/proj/.agents/skills/hypothesis-framer/templates/foo.j2"
-        )));
-        // A user file named SKILL.md not under a skills dir is NOT flagged.
-        assert!(!is_skill_catalog_file(Path::new(
-            "/home/u/proj/docs/SKILL.md"
-        )));
-        // A `skills/` dir whose parent is neither `.agents` nor `agents` is NOT
-        // flagged (avoids false positives on unrelated `skills/` trees).
-        assert!(!is_skill_catalog_file(Path::new(
-            "/home/u/repos/skills/foo/SKILL.md"
-        )));
-        // zed-kask: D28 — a `skills/` dir under the kask data root (via the
-        // `global_skills_dir` override) IS flagged. Use a tempdir so the
-        // path matches what `global_skills_dir()` returns.
-        {
-            let tmp = tempfile::TempDir::new().expect("tempdir");
-            let kask_skills = tmp.path().join("skills");
-            std::fs::create_dir_all(&kask_skills).expect("create skills dir");
-            agent_skills::set_global_skills_dir_override(Some(kask_skills.clone()));
-            assert!(is_skill_catalog_file(
-                &kask_skills.join("my-skill/SKILL.md")
-            ));
-            assert!(is_skill_catalog_file(
-                &kask_skills.join("_marketplace/alice/bug-hunt/SKILL.md")
-            ));
-            agent_skills::set_global_skills_dir_override(None);
-        }
-    }
-
-    #[test]
     fn test_refuse_skill_catalog_read_allows_skill_md() {
         // D1 revert: SKILL.md reads are now allowed. The `skill` tool reads
         // the body from disk and injects it. `read_file` can also read it.
@@ -685,30 +594,6 @@ mod test {
             ".agents/skills/hypothesis-framer/SKILL.md",
         )
         .expect("SKILL.md reads must be allowed (body injection restored)");
-    }
-
-    /// The blocked-read telemetry key must stay out of the `reg.skill.*`
-    /// namespace, which is reserved for per-skill feedback spans recorded via
-    /// `RegulationLedger::record_skill_span` and CI-enforced to be exactly
-    /// `reg.skill.<manifest.id>` by `kask/scripts/check-skill-span-namespace.sh`.
-    /// A tool-boundary event squatting on that prefix would look like a skill's
-    /// own outcome span to anything grepping the logs.
-    #[test]
-    fn test_blocked_read_telemetry_key_avoids_reserved_skill_span_namespace() {
-        // Reconstruct the reserved prefix at runtime so this assertion's own
-        // source text cannot satisfy the `contains` check it performs.
-        let reserved_prefix = format!("reg{}skill{}", ".", ".");
-        let emitted_key = BLOCKED_READ_TELEMETRY_KEY;
-        assert!(
-            !emitted_key.starts_with(&reserved_prefix),
-            "blocked-read telemetry key `{emitted_key}` must not use the reserved \
-             `reg.skill.*` feedback-span namespace (CI-enforced for per-skill \
-             feedback spans)"
-        );
-        assert!(
-            emitted_key.contains("catalog_read_blocked"),
-            "the key must name the event it reports: {emitted_key}"
-        );
     }
 
     #[test]

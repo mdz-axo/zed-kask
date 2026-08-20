@@ -64,8 +64,6 @@ impl LazyLocalSwarmRuntime {
             .await
     }
 
-    /// Pre-populate the runtime with a pre-built instance (test-only).
-    /// Skips the async `new` path (which resolves real inference/tool ports).
 }
 
 /// The initialized local swarm runtime — ledger + agent executor.
@@ -464,75 +462,6 @@ impl LocalSwarmRuntime {
         })
     }
 
-    /// Construct a `DelegationCounter` from this runtime's ledger. Used by
-    /// the regulation loop to detect delegations that skipped grounding
-    /// enforcement (the liveness gap). The counter queries the ledger for
-    /// debit transactions on the operator account; a failed query returns
-    /// `None` (absence ≠ 0 — a failed read is not a measured zero).
-    pub fn delegation_counter(&self) -> SwarmDelegationCounter {
-        SwarmDelegationCounter::new(
-            self.ledger.clone(),
-            self.operator_account.clone(),
-            self.asset.clone(),
-        )
-    }
-}
-
-/// Adapter that implements `DelegationCounter` for the swarm ledger.
-///
-/// Each delegation is a debit transaction with `metadata: { "action": "debit" }`
-/// (see `LocalSwarmRuntime::record_spend`). The count is the total number of
-/// debit transactions for the operator account — fund transactions are
-/// deposits, not delegations, and are filtered out.
-///
-/// Returns `None` on query failure rather than `Some(0)`: a database outage
-/// must not enter the regulation loop as "zero delegations" (the
-/// `.rules` broken-feedback-loop trap).
-pub struct SwarmDelegationCounter {
-    ledger: std::sync::Arc<hkask_ledger::Ledger>,
-    operator_account: String,
-    asset: String,
-}
-
-impl SwarmDelegationCounter {
-    pub fn new(
-        ledger: std::sync::Arc<hkask_ledger::Ledger>,
-        operator_account: String,
-        asset: String,
-    ) -> Self {
-        Self {
-            ledger,
-            operator_account,
-            asset,
-        }
-    }
-}
-
-impl hkask_verification::DelegationCounter for SwarmDelegationCounter {
-    fn delegation_count(&self) -> Option<u64> {
-        let range = hkask_ledger::DateRange {
-            start: "0000-01-01T00:00:00Z".to_string(),
-            end: "9999-12-31T23:59:59Z".to_string(),
-        };
-        let filter = hkask_ledger::QueryFilter {
-            account: Some(self.operator_account.clone()),
-            asset: Some(self.asset.clone()),
-            namespace: None,
-        };
-        let txs = self.ledger.query(&range, &filter).ok()?;
-        // Count only debit transactions (delegations). Fund transactions
-        // are deposits, not delegations.
-        Some(
-            txs.iter()
-                .filter(|tx| {
-                    tx.metadata
-                        .get("action")
-                        .and_then(|a| a.as_str())
-                        .is_some_and(|a| a == "debit")
-                })
-                .count() as u64,
-        )
-    }
 }
 /// Rung 4 (Binding): does the request match any declared `accepts` label?
 ///
@@ -717,70 +646,6 @@ impl LocalDelegateResult {
     /// caller computed it (e.g. `swarm_delegate_local` validates the output
     /// against the `produces` port schema). `None` leaves the envelope's
     /// validation status as `NoSchema`.
-    pub(crate) fn apply_grounding(
-        &mut self,
-        outcome: EnforcementOutcome,
-        validation: Option<&hkask_verification::envelope::ValidationResult>,
-    ) {
-        if outcome.result.is_some() {
-            self.response =
-                serde_json::to_string(&outcome.cleaned).unwrap_or_else(|_| self.response.clone());
-            self.raw_response = Some(outcome.raw_response.clone());
-        } else if outcome.was_object {
-            self.raw_response = Some(outcome.raw_response.clone());
-        }
-
-        // Build the delegation envelope so provenance survives the hop to
-        // the caller (N2). The envelope is additive — it carries the enforced
-        // payload, provenance, violations, and validation status. Built in
-        // all branches so every delegation carries grounding status, even
-        // when grounding did not run (NoContract / Unenforceable).
-        //
-        // Grounding status mapping:
-        // - Enforced:      contract ran (outcome.result.is_some())
-        // - NoContract:    output was an object but no contract for this agent_type
-        // - Unenforceable: output was not a JSON object (contract couldn't run)
-        //
-        // Payload status mapping:
-        // - NoResponse:    raw response string is empty
-        // - EmptyResponse: output was an empty JSON object (no fields)
-        // - Document:      output was a non-empty JSON object
-        // - ProseOnly:     output was non-empty but not an object
-        let grounding_status = if outcome.result.is_some() {
-            hkask_verification::envelope::GroundingStatus::Enforced
-        } else if outcome.was_object {
-            hkask_verification::envelope::GroundingStatus::NoContract
-        } else {
-            hkask_verification::envelope::GroundingStatus::Unenforceable
-        };
-        let payload_status = if outcome.raw_response.is_empty() {
-            hkask_verification::envelope::PayloadStatus::NoResponse
-        } else if outcome.was_object {
-            // Distinguish an empty object ({}) from a populated document.
-            // An empty object means the agent returned no structured fields —
-            // the grounding contract had nothing to check.
-            match &outcome.cleaned {
-                serde_json::Value::Object(map) if map.is_empty() => {
-                    hkask_verification::envelope::PayloadStatus::EmptyResponse
-                }
-                _ => hkask_verification::envelope::PayloadStatus::Document,
-            }
-        } else {
-            hkask_verification::envelope::PayloadStatus::ProseOnly
-        };
-        self.envelope = Some(hkask_verification::envelope::build(
-            &self.agent_id,
-            if outcome.was_object {
-                Some(&outcome.cleaned)
-            } else {
-                None
-            },
-            grounding_status,
-            payload_status,
-            outcome.result.as_ref(),
-            validation,
-        ));
-    }
 
     /// Shape a failed delegation as the per-entry JSON object. Used by
     /// fanout/pipeline/execute_plan when `delegate` returns `Err`.

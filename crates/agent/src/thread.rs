@@ -2,8 +2,8 @@ use crate::{
     ApplyCodeActionTool, AskUserTool, CodeActionStore, ContextServerRegistry, CopyPathTool,
     CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
-    GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
-    ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
+    GoToDefinitionTool, GrepTool, LispEvalTool, ListAgentsAndModelsTool, ListDirectoryTool,
+    MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
     WriteFileTool, decide_permission_from_settings,
 };
@@ -2505,6 +2505,7 @@ impl Thread {
             environment.clone(),
         ));
         self.add_tool(WebSearchTool);
+        self.add_tool(LispEvalTool);
 
         self.add_tool(AskUserTool);
 
