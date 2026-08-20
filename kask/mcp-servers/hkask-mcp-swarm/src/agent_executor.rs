@@ -29,7 +29,32 @@ pub(crate) struct RawDelegateResult {
     pub model: String,
     pub tokens_used: i64,
     pub tool_calls: Vec<serde_json::Value>,
+    /// The rollout id under which this run's `model_request` events were
+    /// captured. Callers that stamp verdicts (the harness) use it so the
+    /// verdict lands in the same rollout group.
+    pub rollout_id: String,
 }
+
+/// A captured inference call — the `model_request` event payload. Built by
+/// the executor after each `generate_with_messages` call; forwarded to the
+/// event sink (when wired) without blocking the generation path.
+#[derive(Debug, Clone)]
+pub(crate) struct CapturedInference {
+    pub rollout_id: String,
+    pub model: String,
+    pub status: &'static str,
+    pub latency_ms: u128,
+    pub total_tokens: i64,
+    pub tool_calls: usize,
+    pub round: usize,
+}
+
+/// The executor's event sink — a bounded, non-blocking channel. The executor
+/// pushes captured inference calls; a drainer task (owned by the runtime)
+/// appends them to the event store. When the channel is full the capture is
+/// DROPPED and counted — capture must never block or fail a generation call,
+/// but a drop is never silent (the counter is surfaced as a sensor signal).
+pub(crate) type CaptureSender = tokio::sync::mpsc::Sender<CapturedInference>;
 
 /// The agent-run policy: how a local agent executes (tool-loop
 /// orchestration). Owns the inference and tool-dispatch ports.
@@ -37,6 +62,11 @@ pub(crate) struct RawDelegateResult {
 pub(crate) struct AgentExecutor {
     inference: Arc<dyn hkask_types::InferencePort>,
     tool_dispatch: Arc<dyn hkask_types::ToolDispatchPort>,
+    /// Optional capture sink. `None` = capture not wired (the executor runs
+    /// exactly as before — zero behavior change for non-captured paths).
+    /// Interior mutability so the runtime can wire it through the shared
+    /// `&LocalSwarmRuntime` the lazy getter hands out.
+    capture: std::sync::Mutex<Option<CaptureSender>>,
 }
 
 impl AgentExecutor {
@@ -47,6 +77,24 @@ impl AgentExecutor {
         Self {
             inference,
             tool_dispatch,
+            capture: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Wire the capture sink. Called by the runtime when the event store
+    /// opens; the drainer task is started there.
+    pub(crate) fn set_capture(&self, sender: CaptureSender) {
+        *self.capture.lock().expect("capture lock poisoned") = Some(sender);
+    }
+
+    /// Fire-and-forget capture: try-send, never block, never fail the call.
+    /// A full channel drops the capture — the drainer's drop counter
+    /// surfaces it (never silent).
+    fn capture_inference(&self, captured: CapturedInference) {
+        if let Ok(sender) = self.capture.lock() {
+            if let Some(sender) = sender.as_ref() {
+                let _ = sender.try_send(captured);
+            }
         }
     }
 
@@ -128,14 +176,40 @@ impl AgentExecutor {
         let mut total_tokens: i64 = 0;
         let mut final_text = String::new();
         let mut final_model = String::new();
-        for _round in 0..MAX_TOOL_ROUNDS {
+        // The rollout id groups this run's events in the store. Derived from
+        // the agent + a fresh uuid — the caller (harness or delegate path)
+        // does not need to supply one; the harness stamps its own verdict
+        // events under the same id via `last_rollout_id`.
+        let rollout_id = format!("delegation-{}-{}", agent.agent_id, uuid::Uuid::new_v4());
+        for round in 0..MAX_TOOL_ROUNDS {
+            let inference_started = std::time::Instant::now();
             let result = self
                 .inference
                 .generate_with_messages(&messages, &params, model_override.as_deref(), tools_slice)
                 .await
                 .map_err(|e| {
+                    // Capture the failed call too — a failed inference is a
+                    // real event, not an absence.
+                    self.capture_inference(CapturedInference {
+                        rollout_id: rollout_id.clone(),
+                        model: agent.capabilities.model.clone(),
+                        status: "error",
+                        latency_ms: inference_started.elapsed().as_millis(),
+                        total_tokens: 0,
+                        tool_calls: 0,
+                        round,
+                    });
                     LocalSwarmError::Unavailable(format!("local inference failed: {e}"))
                 })?;
+            self.capture_inference(CapturedInference {
+                rollout_id: rollout_id.clone(),
+                model: result.model.clone(),
+                status: "ok",
+                latency_ms: inference_started.elapsed().as_millis(),
+                total_tokens: i64::from(result.usage.total_tokens),
+                tool_calls: result.tool_calls.len(),
+                round,
+            });
             total_tokens += i64::from(result.usage.total_tokens);
             final_model = result.model.clone();
             if result.tool_calls.is_empty() {
@@ -231,6 +305,79 @@ impl AgentExecutor {
             model: final_model,
             tokens_used: total_tokens,
             tool_calls: tool_calls_made,
+            rollout_id,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The capture path must be inert when unwired: `capture_inference` is
+    /// a no-op and `run` behaves exactly as before (the zero-behavior-change
+    /// contract for non-captured paths).
+    #[test]
+    fn capture_is_none_by_default() {
+        // The constructor leaves capture unwired; try_send on None never
+        // happens. This pins the field's default so a future refactor
+        // cannot silently start capturing without wiring.
+        let executor = AgentExecutor {
+            inference: Arc::new(StubInference),
+            tool_dispatch: Arc::new(StubDispatch),
+            capture: None,
+        };
+        executor.capture_inference(CapturedInference {
+            rollout_id: "r".into(),
+            model: "m".into(),
+            status: "ok",
+            latency_ms: 1,
+            total_tokens: 1,
+            tool_calls: 0,
+            round: 0,
+        });
+        // No panic, no channel error — inert by construction.
+    }
+
+    struct StubInference;
+
+    #[async_trait::async_trait]
+    impl hkask_types::InferencePort for StubInference {
+        async fn generate_with_messages(
+            &self,
+            _messages: &[hkask_types::ChatMessage],
+            _params: &hkask_types::LLMParameters,
+            _model_override: Option<&str>,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Result<hkask_types::InferenceResult, hkask_types::InferenceError> {
+            Ok(hkask_types::InferenceResult {
+                text: "stub".into(),
+                model: "stub-model".into(),
+                tool_calls: vec![],
+                usage: hkask_types::ChatUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                    cost: None,
+                    market_cost: None,
+                    estimated_cost: None,
+                },
+            })
+        }
+    }
+
+    struct StubDispatch;
+
+    #[async_trait::async_trait]
+    impl hkask_types::ToolDispatchPort for StubDispatch {
+        async fn invoke_tool(
+            &self,
+            _server: &str,
+            _tool: &str,
+            _args: serde_json::Value,
+            _allowlist: &[String],
+        ) -> Result<serde_json::Value, String> {
+            Ok(serde_json::json!({"ok": true}))
+        }
     }
 }

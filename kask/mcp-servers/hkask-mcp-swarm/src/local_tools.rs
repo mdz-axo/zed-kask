@@ -1596,11 +1596,17 @@ impl SwarmServer {
                     ))
                 })?;
                 let ceiling = self.client.config().max_credits_per_dispatch;
-                // The event store is the data plane: every rollout appends a
-                // model_request event and a verdict event. A store failure is
-                // logged and counted (`events_dropped`), never swallowed —
-                // the report must distinguish "recorded" from "record lost".
+                // The event store is the data plane. The harness wires the
+                // executor's capture path (phase 3) so every inference call
+                // emits a model_request event automatically, then stamps the
+                // verdict under the executor-assigned rollout id. A store
+                // failure is logged and counted (`events_dropped`), never
+                // swallowed — the report must distinguish "recorded" from
+                // "record lost".
                 let event_store = self.event_store.get_or_init().ok();
+                if let Some(store) = &event_store {
+                    runtime.wire_capture(std::sync::Arc::clone(store));
+                }
                 let mut events_dropped = 0usize;
                 let harness_run_id = format!("harness-{}-{}", req.agent_name, uuid::Uuid::new_v4());
 
@@ -1614,9 +1620,6 @@ impl SwarmServer {
                     let mut errors = 0usize;
                     let mut latencies_ms: Vec<u64> = Vec::with_capacity(repeats as usize);
                     for repeat_index in 0..repeats {
-                        // One rollout = one delegation. The rollout id groups
-                        // its events in the store.
-                        let rollout_id = format!("{harness_run_id}-t{task_index}-r{repeat_index}");
                         match runtime
                             .delegate(&agent, &task.task, task.credits_authorized, ceiling)
                             .await
@@ -1636,34 +1639,31 @@ impl SwarmServer {
                                 if passed {
                                     passes += 1;
                                 }
-                                if let Some(store) = &event_store {
-                                    let model_request = serde_json::json!({
-                                        "model": result.model,
-                                        "status": "ok",
-                                        "latency_ms": result.latency_ms,
-                                        "usage": { "total_tokens": result.tokens_used },
-                                        "cost": result.cost,
-                                        "cost_uncapped": result.cost_uncapped,
-                                        "tool_calls": result.tool_calls.len(),
-                                    });
+                                // The verdict lands under the executor-assigned
+                                // rollout id so it groups with the
+                                // model_request events the capture path
+                                // already appended for this delegation.
+                                if let (Some(store), Some(rollout_id)) =
+                                    (&event_store, result.rollout_id.as_ref())
+                                {
                                     let verdict = serde_json::json!({
                                         "pass": passed,
                                         "source": "deterministic_evaluator",
                                         "evaluator": task.evaluator.evaluator,
                                         "spec_len": task.evaluator.spec.len(),
+                                        "harness_run_id": harness_run_id,
+                                        "task_index": task_index,
+                                        "repeat_index": repeat_index,
                                     });
-                                    let appended = store
-                                        .append(&rollout_id, "model_request", &model_request)
-                                        .and_then(|_| {
-                                            store.append(&rollout_id, "verdict", &verdict)
-                                        });
-                                    if let Err(error) = appended {
+                                    if let Err(error) =
+                                        store.append(rollout_id, "verdict", &verdict)
+                                    {
                                         events_dropped += 1;
                                         tracing::warn!(
                                             target: "hkask.mcp.swarm",
                                             rollout = %rollout_id,
                                             error = %error,
-                                            "event store append failed — rollout not recorded"
+                                            "event store append failed — verdict not recorded"
                                         );
                                     }
                                 }
@@ -1689,6 +1689,7 @@ impl SwarmServer {
                 let balance: Option<i64> = runtime.balance();
                 Ok(serde_json::json!({
                     "agent_name": req.agent_name,
+                    "harness_run_id": harness_run_id,
                     "tasks": task_reports,
                     "total_rollouts": total_rollouts,
                     "total_passes": total_passes,
@@ -1697,6 +1698,7 @@ impl SwarmServer {
                     "total_cost_uncapped": total_cost_uncapped,
                     "total_tokens": total_tokens,
                     "balance": balance,
+                    "events_dropped": events_dropped,
                 }))
             },
         )
