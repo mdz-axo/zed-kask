@@ -142,7 +142,7 @@ impl StepMachine {
 
         // Copy convergence signal from protocol to inputs so the
         // convergence tracker can find it.
-        if let Some(v) = self.context.protocol(("convergence_signal") {
+        if let Some(v) = self.context.protocol("convergence_signal") {
             self.context
                 .inputs
                 .insert("convergence_signal".to_string(), v.clone());
@@ -1225,7 +1225,8 @@ impl StepMachine {
             let branch_results: Vec<Value> = ordered
                 .iter()
                 .map(|(_, o)| crate::executor::extract_final_step_result(o))
-                .collect();                value: Value::Array(branch_results),
+                .collect();
+            value: Value::Array(branch_results),
             });
         }
 
