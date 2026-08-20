@@ -66,9 +66,11 @@ pub trait DelegationCounter: Send + Sync {
 /// agents constructs one (sharing the same DB file) and calls
 /// `enforce_for_agent()` on each delegation.
 ///
-/// The contract registry starts with the default `task_agent_contract()`
-/// registered for the `"task"` agent_type. Additional contracts are
-/// registered via `register_contract()`.
+/// The contract registry starts with built-in contracts for known agent
+/// types (task, research, narrator, skill, creative, meta) and administrative
+/// contracts for MCP tools whose core-level output is the tool's direct
+/// return (see [`crate::grounding::ADMINISTRATIVE_TOOL_NAMES`]). Additional
+/// contracts are registered via `register_contract()`.
 pub struct VerificationStore {
     store: HMemStore,
     /// Contract registry keyed by agent_type. New contracts registered via
@@ -95,6 +97,18 @@ impl VerificationStore {
         contracts.insert(creative_contract.agent_type.clone(), creative_contract);
         let meta_contract = meta_agent_contract();
         contracts.insert(meta_contract.agent_type.clone(), meta_contract);
+        // Register administrative contracts for MCP tools whose core-level
+        // output is the tool's direct return (no LLM synthesis). Closes the
+        // grounding coverage gap without creating false violations — empty
+        // `field_sources` means all output fields are kept as
+        // `UncommissionedInference` (object outputs) or the delegation records
+        // `unenforceable` (non-object outputs). Both count as "with contract."
+        for name in crate::grounding::ADMINISTRATIVE_TOOL_NAMES {
+            contracts.insert(
+                name.to_string(),
+                crate::grounding::administrative_tool_contract(name),
+            );
+        }
         Self {
             store,
             contracts: Mutex::new(contracts),

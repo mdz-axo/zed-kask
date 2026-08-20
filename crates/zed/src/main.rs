@@ -2118,18 +2118,19 @@ fn main() {
                         // fallback.
                         let inference_model: Arc<dyn language_model::LanguageModel> = {
                             let kask_default = kask_settings.models.effective_default_model();
-                            if kask_default != kask_bridge::KaskModelsSettings::DEFAULT_INFERENCE_MODEL {
-                                if let Some(model) = kask_bridge::resolve_model_names(
-                                    model_registry,
-                                    &[kask_default.to_string()],
-                                    cx,
-                                ).0.into_values().next() {
+                            match kask_bridge::resolve_model_names(
+                                model_registry,
+                                &[kask_default.to_string()],
+                                cx,
+                            ).0.into_values().next() {
+                                Some(model) => {
                                     log::info!(
                                         "hKask inference using kask.models.default_model: {}",
                                         kask_default
                                     );
                                     model
-                                } else {
+                                }
+                                None => {
                                     log::warn!(
                                         "kask.models.default_model '{}' could not be resolved \
                                          from LanguageModelRegistry — falling back to zed default",
@@ -2137,8 +2138,6 @@ fn main() {
                                     );
                                     configured.model.clone()
                                 }
-                            } else {
-                                configured.model.clone()
                             }
                         };
 
@@ -3163,26 +3162,23 @@ async fn try_wire_manifest_executor(
             )
         })?;
 
-        // Resolve the kask default model override (if any).
+        // Resolve the kask default model from the registry.
         let kask_settings = kask_bridge::KaskSettings::get_global(cx).clone();
         let kask_default = kask_settings.models.effective_default_model();
-        let inference_model: std::sync::Arc<dyn language_model::LanguageModel> = {
-            if kask_default != kask_bridge::KaskModelsSettings::DEFAULT_INFERENCE_MODEL {
-                if let Some(model) = kask_bridge::resolve_model_names(
-                    model_registry,
-                    &[kask_default.to_string()],
-                    cx,
-                )
+        let inference_model: std::sync::Arc<dyn language_model::LanguageModel> =
+            match kask_bridge::resolve_model_names(model_registry, &[kask_default.to_string()], cx)
                 .0
                 .into_values()
                 .next()
-                {
+            {
+                Some(model) => {
                     log::info!(
                         "hKask manifest executor using kask.models.default_model: {}",
                         kask_default
                     );
                     model
-                } else {
+                }
+                None => {
                     log::warn!(
                         "kask.models.default_model '{}' could not be resolved \
                          from LanguageModelRegistry — falling back to zed default",
@@ -3190,10 +3186,7 @@ async fn try_wire_manifest_executor(
                     );
                     configured.model.clone()
                 }
-            } else {
-                configured.model.clone()
-            }
-        };
+            };
 
         let async_cx = cx.to_async();
         let (inference_port, inference_task) =

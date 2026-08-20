@@ -11193,6 +11193,7 @@ dependencies = [
  "hkask-email",
  "hkask-inference",
  "hkask-keystore",
+ "hkask-ledger",
  "hkask-mcp-swarm",
  "hkask-memory",
  "hkask-regulation",

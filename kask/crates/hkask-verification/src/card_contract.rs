@@ -40,15 +40,21 @@
 
 use serde_json::Value;
 
+use crate::grounding::{DerivedSpec, FieldSpec, GroundingContract};
+
 /// Minimum length of a `why`. Short enough not to be tyrannical, long
 /// enough that "n/a" and "tool" do not pass.
 pub const MIN_WHY: usize = 40;
 
 /// Dispositions an author may declare. Closed set: an open one would let
-/// `"status": "estimated"` through, which is the fabrication reappearing as
-/// a metadata value.
+/// `"status": "estimated"` through, which is the fabrication reappearing as a
+/// metadata value.
 pub const GROUNDING_STATUSES: &[&str] =
     &["sourced", "inferred", "narrative", "unavailable", "derived"];
+
+/// Finding checks that are warnings, not errors. A contract with only these
+/// findings is still usable for enforcement.
+pub const WARNING_CHECKS: &[&str] = &["grounding_sourced_response_path"];
 
 /// One violation of the card-declared grounding contract, phrased for the
 /// person who has to fix it.
@@ -58,6 +64,14 @@ pub struct Finding {
     pub check: &'static str,
     /// What is wrong and what to do about it.
     pub message: String,
+}
+
+impl Finding {
+    /// Whether this finding is a warning, not an error. A contract with only
+    /// warnings is still usable for enforcement.
+    pub fn is_warning(&self) -> bool {
+        WARNING_CHECKS.contains(&self.check)
+    }
 }
 
 fn finding(check: &'static str, message: impl Into<String>) -> Finding {
@@ -228,6 +242,106 @@ pub fn validate(grounding: Option<&Value>, tool_names: &[String]) -> Vec<Finding
     }
 
     out
+}
+
+/// Convert a card's `output_contract.grounding` JSON into an enforceable
+/// `GroundingContract`. Returns `None` when the grounding is absent, not an
+/// object, or empty. Call `validate` first to catch structural defects —
+/// this function does not re-validate, it converts.
+///
+/// The card-declared contract takes precedence over the compiled contract
+/// for the same `agent_type` (e.g. `task_agent_contract()`). This is the
+/// intent: the card declaration is specific to the agent's actual output
+/// fields, while the compiled contract is a generic default. If multiple
+/// agents share the same `agent_type` but declare different grounding, the
+/// last registration wins — a known limitation of `agent_type`-keyed
+/// contracts.
+///
+/// Status mapping:
+/// - `sourced` → `sources` from `tools`, `response_path` from card or `""`
+/// - `inferred` / `narrative` / `unavailable` → empty `sources` (Inferred)
+/// - `derived` → `derived_from` from card's `from` field
+pub fn from_card_grounding(
+    grounding: Option<&Value>,
+    agent_type: &str,
+) -> Option<GroundingContract> {
+    let grounding = grounding?;
+    let entries = grounding.as_object()?;
+    if entries.is_empty() {
+        return None;
+    }
+
+    let mut field_sources = HashMap::new();
+    for (field, spec) in entries {
+        let status = spec.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        let why = spec
+            .get("why")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let response_path = spec
+            .get("response_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let transform = spec
+            .get("transform")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let field_spec = match status {
+            "sourced" => {
+                let tools = spec
+                    .get("tools")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                FieldSpec {
+                    sources: tools,
+                    response_path,
+                    why,
+                    derived_from: None,
+                    transform,
+                }
+            }
+            "derived" => {
+                let from = spec
+                    .get("from")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                FieldSpec {
+                    sources: vec![],
+                    response_path: String::new(),
+                    why,
+                    derived_from: Some(DerivedSpec {
+                        from,
+                        how: "card_declared".to_string(),
+                    }),
+                    transform: None,
+                }
+            }
+            // "inferred", "narrative", "unavailable" — commissioned
+            // judgment or prose, no tool sourcing.
+            _ => FieldSpec {
+                sources: vec![],
+                response_path: String::new(),
+                why,
+                derived_from: None,
+                transform: None,
+            },
+        };
+        field_sources.insert(field.clone(), field_spec);
+    }
+
+    Some(GroundingContract {
+        agent_type: agent_type.to_string(),
+        field_sources,
+    })
 }
 
 #[cfg(test)]
