@@ -297,7 +297,7 @@ pub struct BundleManifest {
     pub complementarities: Vec<BundleComplementarity>,
     pub steps: Vec<BundleManifestStep>,
     pub convergence: ConvergenceConfig,
-    pub     pub error_handling: ErrorHandlingConfig,
+    pub error_handling: ErrorHandlingConfig,
     pub ledger: BundleLedgerConfig,
     pub audit: BundleAuditConfig,
     #[serde(default)]
