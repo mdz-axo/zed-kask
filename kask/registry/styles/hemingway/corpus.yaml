@@ -6,8 +6,6 @@
 #
 # Declarative specification for constructing the Hemingway style embedding corpus.
 # Processed by: kask embed-corpus (subcommand of hkask-cli)
-# Manifest:   registry/manifests/style-corpus-embed.yaml
-# Skill:       registry/manifests/skills/style-corpus-embed.yaml
 # Storage:     hKask sqlite-vec via EmbeddingStore
 #
 # Pipeline: web_extract → chunk → embed_sentences → semantic_embed → semantic_centroid

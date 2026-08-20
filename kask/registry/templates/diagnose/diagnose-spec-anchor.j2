@@ -121,8 +121,6 @@ Respond with a JSON object:
   "dcterms_source": "kask/crates/hkask-test-harness/src/hkask_test_harness.rs:179",
   "dcterms_subject": "Lifecycle",
   "pko_procedure": [
-    {"step": "BridgeManifestExecutor::execute", "edge": "calls"},
-    {"step": "ManifestExecutor::execute_manifest", "edge": "calls"},
     {"step": "write_trace", "edge": "calls", "issue": true}
   ],
   "pko_step": "write_trace",
@@ -133,8 +131,6 @@ Respond with a JSON object:
     "trait_impl": null
   },
   "impact_radius": [
-    "BridgeManifestExecutor::execute",
-    "ManifestExecutor::execute_manifest",
     "proptest-analyze.j2 (via write_trace)"
   ],
   "anchor_summary": "pko:IssueOccurrence at write_trace (dcterms:type=function, dcterms:subject=Lifecycle) in the procedure execute_manifest → write_trace; impact radius: 3 callers"

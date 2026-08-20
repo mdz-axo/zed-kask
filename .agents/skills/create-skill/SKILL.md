@@ -11,7 +11,7 @@ prompt templates. The agent reads the SKILL.md, follows its instructions,
 and calls tools (`lisp_eval`, MCP tools, `read_file`, `skill`, etc.) as
 directed. The agent IS the executor.
 
-## The new skill model
+## The skill model
 
 A kask skill has two artifacts:
 
@@ -49,19 +49,6 @@ The agent reads the template, understands the expected output format, and
 produces the analysis following the template's guidance. The template is a
 *resource* — the agent uses it as a prompt specification, not as code to
 execute.
-
-### What's gone
-
-- **`kask/registry/manifests/<name>.yaml`** — removed. The agent
-  follows SKILL.md instructions directly.
-- **`kask/registry/templates/<name>/manifest.yaml`** — no template manifest.
-  Templates are just files in the skill directory.
-- **`action: execute`, `action: select`, `action: compute`, `action: loop`** —
-  removed. The agent calls tools when the SKILL.md tells it to.
-- **`compute_ref: lisp.eval`** — use the `lisp_eval` agent tool instead.
-- **`convergence_signal`, `cauchy_epsilon`, `max_iterations`** — the agent
-  decides when to loop based on the SKILL.md's convergence criteria. Use
-  `lisp_eval` to compute convergence signals deterministically.
 
 ## Core principle: idiosyncratic, not generalized
 
@@ -186,7 +173,6 @@ Generate the skill artifacts:
    - Jinja2 variables for context injection (`{{ task }}`, `{{ step_1_result }}`)
    - The prompt structure (what the agent should analyze/synthesize)
    - The expected JSON output shape (as a comment or schema description)
-   - No `[inference]` frontmatter — templates are resources, not executed code
 
 ### How to write SKILL.md instructions that use tools
 
@@ -213,9 +199,8 @@ Each instruction step should be concrete and tool-oriented:
 
 ### Convergence pattern
 
-Instead of `action: loop` with `convergence_signal`, the SKILL.md describes
-when to loop in natural language, backed by `lisp_eval` for deterministic
-checks:
+The SKILL.md describes when to loop in natural language, backed by
+`lisp_eval` for deterministic checks:
 
 ```
 ### Convergence
@@ -232,8 +217,8 @@ iteration, stop and report what you have (diminishing returns).
 
 ### Composition pattern
 
-Instead of `template_ref` to another skill's manifest, the SKILL.md
-instructs the agent to call the `skill` tool:
+The SKILL.md instructs the agent to call the `skill` tool to compose
+with another skill:
 
 ```
 ### Phase 4 — Delegate validation
@@ -245,8 +230,7 @@ Call the `skill` tool:
 
 ### Persistence-grounded learning pattern
 
-Instead of an `execute` step at ordinal 0 that reads prior outputs, the
-SKILL.md instructs the agent to call an MCP tool:
+The SKILL.md instructs the agent to call an MCP tool for prior context:
 
 ```
 ### Phase 0 — Prior context
@@ -259,8 +243,8 @@ Before starting, call `curator_memory_recall`:
 
 ### Failure surfacing pattern
 
-Instead of `on_failure: { action: report }`, the SKILL.md instructs the
-agent to call `curator_report_skill_use_issue`:
+The SKILL.md instructs the agent to call `curator_report_skill_use_issue`
+on tool failures:
 
 ```
 If any MCP tool call fails, call `curator_report_skill_use_issue` with:
@@ -289,10 +273,6 @@ failures and re-enter at Phase 1 with the failure report as prior context.
   invariant checks, convergence signals).
 - Use MCP tools directly for data retrieval, persistence, and actions.
 - Use the `skill` tool to compose with other skills.
-- The `read_file` tool refuses to serve SKILL.md files to the model (D1
-  enforcement) — the `skill` tool is the only path to skill content. This
-  means SKILL.md instructions are delivered to the agent via the `skill`
-  tool's envelope, not via `read_file`.
 - Name must be lowercase, hyphenated, 2-40 characters, verb-noun or
   noun-noun, no reserved prefixes.
 - Core skills (`core: true` in frontmatter) are always-on, re-seeded on

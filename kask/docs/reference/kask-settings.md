@@ -29,10 +29,8 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `curator` | `KaskCuratorSettings` | `Default` |
 | `memory` | `KaskMemorySettings` | `Default` |
 | `condenser` | `KaskCondenserSettings` | `Default` |
-| `codegraph` | `KaskCodegraphSettings` | derived `Default` |
 | `companies` | `KaskCompaniesSettings` | derived `Default` |
 | `corpus` | `KaskCorpusSettings` | `Default` |
-| `media` | `KaskMediaSettings` | derived `Default` |
 | `scenarios` | `KaskScenariosSettings` | derived `Default` |
 | `prediction_markets` | `KaskPredictionMarketsSettings` | derived `Default` |
 | `swarm` | `KaskSwarmSettings` | `Default` |
@@ -43,16 +41,15 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 
 ## MCP Servers (`KaskMcpSettings`)
 
-Toggle which of the 13 built-in kask MCP servers are loaded.[^mcp-spec-settings]
-The 13 servers (settings.rs:37 comment still says 11 — the `Default` and the
-`BUILT_IN_MCP_SERVERS_IDS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:323-336`
-are authoritative): `codegraph`, `companies`, `condenser`, `corpus`, `curator`,
-`kata-kanban`, `media`, `portfolio`, `research`, `scenarios`, `prediction-markets`,
-`swarm`, `training`. The crates live under `kask/mcp-servers/` (13 `hkask-mcp-*` crates).
+Toggle which of the 10 built-in kask MCP servers are loaded.[^mcp-spec-settings]
+The 10 servers (`BUILT_IN_MCP_SERVERS_IDS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:330`):
+`companies`, `corpus`, `curator`, `kata-kanban`, `portfolio`, `prediction-markets`,
+`research`, `scenarios`, `swarm`, `training`. The crates live under `kask/mcp-servers/`
+(10 `hkask-mcp-*` crates).
 
 | Field | Type | Default |
 |-------|------|--------|
-| `load_default` | `bool` | `true` — load all 13 servers |
+| `load_default` | `bool` | `true` — load all 10 servers |
 | `overrides` | `HashMap<String, bool>` | empty — per-server overrides (e.g. `"curator": false`) |
 
 The master `load_default` toggle controls all servers; individual `overrides`
@@ -484,7 +481,7 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_CURATOR_DB` | curator | injected by deferred task |
 | `HKASK_KANBAN_DB` | kata-kanban | Operator override for kanban DB path (default `mcp/kata-kanban/kanban.db`) |
 | `HKASK_RSS_DB` | research | Operator override for RSS DB path (default `mcp/research/rss.db`) |
-| `HKASK_MEDIA_DB` | media | Operator override for gallery DB path (default `mcp/media/gallery.db`) |
+| `HKASK_MEDIA_DB` | media | Operator override for gallery DB path (default `mcp/media/gallery.db`) — the media MCP server was removed; this env var is consumed by the media settings module for TTS/STT/vision model configuration |
 | `HKASK_TRAINING_DB` | training | Operator override for training DB path (default `mcp/training/training.db`) |
 | `HKASK_SWARM_LEDGER_PATH` | swarm | Operator override for swarm ledger path (default `mcp/swarm/ledger.db`) |
 | `HKASK_SWARM_CONSENT_STORE` | swarm | Operator override for consent store path (default `mcp/swarm/consent.db`) |

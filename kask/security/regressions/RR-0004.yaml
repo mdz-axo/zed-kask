@@ -5,7 +5,7 @@ cwe: CWE-732
 owasp_llm_2025: LLM06
 atlas_tactic: AML.TA0008
 nist_ssdf: PW.6.1
-discovered_in: crates/hkask-guard/src/lib.rs, crates/hkask-types/src/lib.rs, crates/hkask-ports/src/lib.rs, crates/hkask-templates/src/lib.rs
+discovered_in: crates/hkask-types/src/lib.rs, crates/hkask-ports/src/lib.rs
 discovered_by: kali-audit
 discovered_at: 2026-07-17
 severity: high
@@ -19,9 +19,9 @@ detection:
   # inside the regression library itself.
   semantics: presence
   pattern: '#!\[forbid\(unsafe_code\)\]'
-  include: "crates/hkask-types/src/hkask_types.rs crates/hkask-templates/src/hkask_templates.rs"
+  include: "crates/hkask-types/src/hkask_types.rs"
 mitigation: "Add #![forbid(unsafe_code)] as the first line of src/lib.rs in all hkask-* library crates that do not use unsafe blocks."
 source: "https://anssi-fr.github.io/rust-guide/ — ANSSI Secure Rust Guidelines"
 ci_gate: scripts/check-kali-regressions.sh
 status: enforced
-note: "hkask-guard crate deleted 2026-08-10; removed from the include list. The other two crates remain in scope."
+note: "hkask-guard and hkask-templates crates deleted. The remaining crate (hkask-types) is still in scope."

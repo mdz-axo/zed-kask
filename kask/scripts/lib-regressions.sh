@@ -107,8 +107,7 @@ check_regressions() {
         local rr_include
         rr_include=$(grep -m1 'include:' "$rr_file" | sed 's/.*include:\s*//' | sed 's/^"\(.*\)"$/\1/')
         # Extract the crate name from the include path (e.g.,
-        # "crates/hkask-templates/src/executor.rs" → "hkask-templates",
-        # "mcp-servers/hkask-mcp-corpus/src/path_safety.rs" → "hkask-mcp-corpus").
+        # "crates/hkask-mcp/src/runtime.rs" → "hkask-mcp").
         local crate_name=""
         if [ -n "$rr_include" ]; then
           crate_name=$(echo "$rr_include" | sed -n 's|.*crates/\([^/][^/]*\)/.*|\1|p')

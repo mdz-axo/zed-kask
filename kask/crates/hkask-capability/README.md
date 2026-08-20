@@ -34,13 +34,13 @@ enforced; per-call capability **gating** is deliberately not.
 
 ## Related
 
-- The FIDES `ToolTaint` labels used to live here and fed a `Source`→`Sink` runtime
-  policy check in `hkask_templates::step_actions::invoke_tool` (RR-0053).
-  **Both were removed (2026-08-12) because the check was inert:** every `ToolInfo`
-  was labelled `Pure` at its only construction site (`McpRuntime::get_tool_info`),
-  and the untrusted-input flag read taint markers the context write side had
-  stopped emitting — so the block could never fire. Reinstating information-flow
-  control means first giving tools real labels and propagating taint on write.
+- The FIDES `ToolTaint` labels used to live here. Both the labels and the
+  runtime policy check were removed (2026-08-12) because the check was inert:
+  every `ToolInfo` was labelled `Pure` at its only construction site
+  (`McpRuntime::get_tool_info`), and the untrusted-input flag read taint markers
+  the context write side had stopped emitting — so the block could never fire.
+  Reinstating information-flow control means first giving tools real labels and
+  propagating taint on write.
 - The call meter (runaway-loop breaker, fail-open on an unseeded agent) lives in
   `hkask_regulation::CallCapManager` — see RR-0057.
 

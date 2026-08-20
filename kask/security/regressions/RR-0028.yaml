@@ -5,7 +5,7 @@ cwe: CWE-1336
 owasp_llm_2025: LLM02
 atlas_tactic: AML.TA0005
 nist_ssdf: PW.4.1
-discovered_in: kask/crates/hkask-templates/src/executor.rs, kask/mcp-servers/hkask-mcp-corpus/src/runtime/classify_impl.rs
+discovered_in: kask/mcp-servers/hkask-mcp-corpus/src/runtime/classify_impl.rs
 discovered_by: kali-audit
 discovered_at: 2026-07-31
 severity: high
@@ -17,6 +17,8 @@ detection:
   # three more sites in cycle 2; this regression scans the whole kask tree.
   # Excludes json_extract.rs (the secure implementation) and test modules
   # (which legitimately reference the pattern to assert against it).
+  # Originally discovered in the deleted hkask-templates executor; the pattern
+  # check remains valid across the whole tree.
   pattern: '\.find\([^)]*[{][^)]*\).*\.rfind\([^)]*[}][^)]*\)'
   include: "--include=*.rs --exclude=json_extract.rs ."
 mitigation: "Use brace-balanced JSON extraction via hkask_types::json_extract::extract_json_from_response instead of the first-brace to last-brace slice. The secure primitive lives in hkask-types/src/json_extract.rs so all LLM-output parsers share it. The old approach silently merged an injected JSON block (echoed by the LLM in its reasoning preamble) with the model's real answer, allowing a poisoned chunk to control parsed output. Brace-balanced extraction returns exactly one top-level object, defeating the injection."
