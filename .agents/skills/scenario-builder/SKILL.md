@@ -97,11 +97,10 @@ Scenario planning methodology following Schwartz's framework. Refines focal ques
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `axes-and-narratives.j2`: Public.
 - `driving-forces.j2`: Public.
 - `focal-question.j2`: Public.
 - `implications-indicators.j2`: Public.
 - `key-forces.j2`: Public.
 - `scenario-quality-gate.j2`: Public.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

@@ -63,12 +63,11 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 ## Constraints
 
 - All templates run at `visibility: Public`.
-- rJoule cap: 5 per invocation. Maximum 3 iterations.
 - Human-in-the-loop: the skill proposes, the operator decides. The skill does NOT execute refinement actions — it only recommends.
 - Ground every claim in the raw signal data. Do not fabricate alerts, escalations, or skill issues that are not present in the inputs.
 - If a signal channel returned an error or empty result, note it in the briefing — do not silently omit it.
 - Skill feedback spans (outcome, operator_feedback, convergence) live in the in-memory RegulationLedger and are not exposed via MCP. The skill uses `curator_consult` as a proxy signal (skill-use issue reports are persisted to the curator's memory).
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 ## Design References
 

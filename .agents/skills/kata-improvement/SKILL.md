@@ -73,9 +73,8 @@ description: "4-step Improvement Kata templates for scientific capability develo
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `improvement-step1-direction.j2`: Public.
 - `improvement-step2-current.j2`: Public.
 - `improvement-step3-target.j2`: Public.
 - `improvement-step4-experiment.j2`: Public.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

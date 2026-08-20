@@ -237,9 +237,7 @@ Do not create alternate finding shapes. A recommendation never overwrites
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
-- The process manifest, registry manifest, and these four `.j2` templates are
-  authoritative over this companion. If they conflict, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - All four templates are public. No hidden training controls or parameters.
 - Preserve operator sovereignty and authenticated `userpod_host` identity.
 - Emit only values, findings, states, citations, and measurements supported by

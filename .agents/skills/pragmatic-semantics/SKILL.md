@@ -60,10 +60,9 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - `semantics-classify-statement.j2`: Public. IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). FIBO +0.10, SUMO +0.05, unanchored -0.15.
 - `semantics-provenance-trace.j2`: Public. Every step must identify a concrete location. Unknown source → confidence ≤ 0.2. Direct spec quotes → confidence ≥ 0.9. Inference steps reduce confidence by ≥ 0.1.
 - `semantics-conflict-resolve.j2`: Public. OUGHT never loses to IS. Two Prohibitions conflicting → escalate. Resolution enum: override, scope, defer, escalate, confirm.
 - Step 3 (conflict-resolve) is conditional — it only runs when `step_2_result.conflicts_detected == true`. Downstream steps must use `step_3_result | default({})` to handle the skipped case.
 - Convergence check incorporates all three analysis steps (classification, provenance, conflict resolution), not just classification.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

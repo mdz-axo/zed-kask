@@ -73,9 +73,8 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `identify-criteria.j2`: Public.
 - `rank-alternatives.j2`: Public.
 - `sensitivity-analysis.j2`: Public.
 - `weight-and-score.j2`: Public.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

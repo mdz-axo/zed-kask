@@ -44,7 +44,7 @@ Each compiler diagnostic is interpreted through the Hoare lens:
 Plan:  Phase 1 — Inquiry   → Assess against Hoare's principles using rust-analyzer diagnostics as ground truth
 Do:    Phase 2 — Design    → Propose type-driven solutions informed by LSP code actions
 Check: Phase 3 — Challenge → Adversarial review verified by find_references, diagnostics, and clippy
-Check: Phase 4 — Converge  → Cauchy criterion on critique score (design has stopped moving)
+Check: Phase 4 — Converge  → evaluate critique score stability (design has stopped moving)
 Act:   Phase 5 — Loop      → Re-enter inquiry (step 1) with refinement directives from challenge
 ```
 
@@ -107,7 +107,6 @@ escalation.
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `idiomatic-rust-inquiry.j2`: Public.
 - `idiomatic-rust-design.j2`: Public.
 - `idiomatic-rust-challenge.j2`: Public.
@@ -115,4 +114,4 @@ escalation.
 - The convergence check (step 5) is mandatory — the loop must not run until iteration or timeout exhaustion.
 - Step 4 uses `lisp.eval` to compute a custom design-quality score (weighted combination of critique score, compiler-confirmed findings, and unresolved issues). This demonstrates inline deterministic compute — no Rust change needed for custom scoring logic. See the manifest for the Lisp form. The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple scoring expressions, prefix for complex nested logic.
 - Compiler grounding is preferred but not required — when LSP tools are unavailable (pure FlowDef execution), the skill falls back to intrinsic reasoning with reduced confidence.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

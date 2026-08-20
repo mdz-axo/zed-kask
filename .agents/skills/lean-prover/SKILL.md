@@ -107,10 +107,9 @@ Act:   Phase 4 — Erase     → Reason about proof irrelevance and erasure
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - All templates are `KnowAct` type with `Public` visibility.
 - The Lean type-checker is the extrinsic oracle — always run `lean` or `lake build` to verify proofs.
 - A proof with `sorry` is not a complete proof — it's a proof obligation with holes.
 - The Prop/Type boundary is inviolable: computational content cannot leak from Prop to Type without large elimination.
 - Termination is mandatory: every recursive function must have a termination proof.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

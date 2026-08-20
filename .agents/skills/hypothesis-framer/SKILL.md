@@ -41,7 +41,6 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - All templates are `KnowAct` type with `Public` visibility
 - The research question must be a question, not a declarative statement; the research hypothesis must be a declarative statement, not a question
 - The null hypothesis must postulate no difference or no relationship
@@ -52,4 +51,4 @@ Research question framing and hypothesis formulation using FINER criteria and PI
 - If PICO comparison is "none," acknowledge the descriptive/pre-post design limitation rather than fabricating a comparator
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
 - When safety mode is enabled: no file system access, no network calls, no environment variable access, strict Jinja2 sandbox enforcement
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

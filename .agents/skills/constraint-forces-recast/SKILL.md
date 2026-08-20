@@ -64,10 +64,9 @@ The shape is idiosyncratic to CFR's domain — the Project phase (minimal-satisf
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.
-- rJoule cap: 4 per invocation. Maximum 5 iterations.
 - The forcing operator is minimal-satisfiability projection — not entailment, not bare satisfiability. Changing the operator is a breaking change, not a refactor.
 - The weakened thesis T1' must not drift back to T1 ("the mechanism"). CFR is _a_ mechanism, not the only one.
 - Corroborated is not confirmed. Use "survived", "withstood", "corroborated" — never "proven" or "verified true."
 - The relabel control is mandatory — a mutant without a relabel control is not a discriminating test.
 - Scope boundary: translational research moves insights into the target vocabulary; CFR keeps the mutant in the source vocabulary. Different operations. Do not add a "bilingual" mode to bridge them — that was a metaphor-driven conflation (see the translational amendment).
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

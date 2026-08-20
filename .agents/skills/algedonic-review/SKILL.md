@@ -60,13 +60,12 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 
 ## Constraints
 
-- rJoule cap: 5 per invocation. Maximum 3 iterations.
 - All templates run at `visibility: Public`.
 - Human-in-the-loop: the skill proposes, the operator decides. The skill does NOT autonomously resolve or dismiss alerts.
 - Ground every claim in the raw alert data. Do not fabricate alerts or severities not present in the inputs.
 - If a signal channel returned an error or empty result, note it in the briefing — do not silently omit it.
 - The in-memory algedonic log is a capped ring buffer (default 200 entries). The skill reviews the durable escalation queue, not the in-memory log — the in-memory log self-evicts when full. The `AlgedonicLogApproachingCap` signal is the trigger for running this skill, not a condition the skill itself clears.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 ## Design References
 

@@ -45,7 +45,7 @@ The process manifest invokes only `principle-derive` (ordinal 1) via `template_r
 4. **Flag gaps.** A gap means: the principle is asserted but the code doesn't enforce it, or the code enforces it but no test pins it. Gaps are the skill's highest-value output. For each gap, emit the principle asserted, the enforcement status, and a proposed remediation.
 5. **Emit the summary.** Counts: total, enforced, gaps, unverified. `human_review_required` is true if any gaps or unverified.
 
-### Verify mode (legacy — `principle-verify.j2` is registered in the crate but NOT invoked by the process manifest cascade; verify mode runs through `principle-derive.j2` at ordinal 1 via the `mode: verify` input)
+### Verify mode (legacy — `principle-verify.j2` is registered in the crate but NOT invoked by the skill execution; verify mode runs through `principle-derive.j2` at ordinal 1 via the `mode: verify` input)
 
 1. For each constraint in `existing_constraints`, read the file at `enforced_at` and confirm the enforcement logic is still there.
 2. Grep for the falsifier test name. If it exists and passes, the constraint is still enforced. If deleted or renamed, the constraint is stale.
@@ -54,7 +54,6 @@ The process manifest invokes only `principle-derive` (ordinal 1) via `template_r
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 1 iterations.
 - **No fabricated file:line citations.** If you did not read the file, you cannot cite it. Use `UNKNOWN` and let the human investigate.
 - **No fabricated test names.** If you did not find the test via grep, you cannot name it as a falsifier. Use `MISSING: <suggested name>`.
 - **No constraint without an `enforced_at` field.** Even if it's `UNKNOWN`, the field must be present — absence is not a verdict.

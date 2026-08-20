@@ -37,11 +37,10 @@ Behavioral guardrails for LLM coding based on Karpathy's four principles: Think 
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - Visibility is Public across all KnowAct templates; the anti-patterns fragment has no standalone contract
 - Safety mode, when enabled, enforces no file system access, no network calls, no environment variable access, and strict Jinja2 sandbox enforcement
 - Do not execute arbitrary Python code in Jinja2 expressions — sandboxed execution only
 - Preserve original prompt structure and formatting; handle missing variables gracefully
 - Every file in a constrained plan's `files_to_touch` must trace directly to the task description
 - Line estimates over 50 per step trigger a simplicity warning
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

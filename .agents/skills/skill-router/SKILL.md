@@ -49,6 +49,5 @@ flowchart LR
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 1 iterations.
 - `skill-router-match.j2`: Public. Evaluates every skill in the catalog — do not skip seemingly-irrelevant skills without scoring. fit_score is a float in [0.0, 1.0]; dimension_scores each in [0.0, 1.0]. Return at most `max_recommendations` (default 3); only recommendations with fit_score ≥ 0.30. If coverage is `full`, `uncovered_capabilities` must be empty; if `none`, recommendations may be empty but `uncovered_capabilities` must be non-empty. Do not recommend skill-router or skill-discovery (meta-skills). Input `skill_catalog` is the same array passed to skill-discovery (standardized naming across the routing/discovery ecosystem).
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

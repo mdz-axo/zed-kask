@@ -56,8 +56,7 @@ Socratic interrogation skill. Tests deep understanding through escalating diffic
 
 ## Constraints
 
-- rJoule cap: 3 per invocation. Maximum 10 iterations.
 - `grill-me-round.j2`: Public.
 - `grill-me-assess.j2`: Public.
 - `grill-me-escalate.j2`: Public.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

@@ -15,7 +15,6 @@ Brier. Convergence is detected deterministically.
 
 - When an agent needs to reason through a complex problem with branching, revision, and hypothesis testing.
 - When an agent needs to delegate to specialized skills (hypothesis-framer, mcda, diagnose, falsifiability) based on the problem's needs.
-- When the convergence decision should be deterministic (gap + Brier) rather than an LLM self-grade.
 
 ## Instructions
 
@@ -71,6 +70,5 @@ Brier. Convergence is detected deterministically.
 ## Constraints
 
 - All flow templates are KnowAct type with Public visibility.
-- rJoule cap: 4 per invocation. Maximum 10 iterations.
-- The convergence decision is deterministic (compute steps) — no LLM convergence-check template.
-- Registry is authoritative.
+- Evaluate convergence after each full iteration using the criteria described above.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

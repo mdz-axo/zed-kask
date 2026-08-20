@@ -73,7 +73,6 @@ time, system functional at every step.
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - `falsifiability-admit.j2`: Public.
 - `falsifiability-hypothesize.j2`: Public.
 - `falsifiability-counterfactual.j2`: Public.
@@ -88,4 +87,4 @@ time, system functional at every step.
 - If every hypothesis is eliminated, the verdict is `none_corroborated` — the framing is wrong and must be restarted from hypothesize, not iterated.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Handle missing variables gracefully (leave as-is or use default if specified).
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

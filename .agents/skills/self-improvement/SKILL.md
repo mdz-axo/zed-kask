@@ -182,7 +182,7 @@ This separation is critical because the paper identifies a key tension: "self-im
 
 ## Improvement Measure
 
-Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
+Evaluate convergence after each full iteration: the iterates have stopped moving. Converged when stable across 3 iterations. Minimum 2 iterations.
 
 **Max iterations**: 10 (outer Kata), 5 (inner PDCA per Kata step).
 
@@ -217,7 +217,6 @@ The skill implements the paper's safety recommendations (Section 9.1):
 
 ## Constraints
 
-- rJoule cap: 5 per invocation. Maximum 10 iterations.
 - `si-kata-direction.j2`: Public.
 - `si-kata-current.j2`: Public.
 - `si-kata-target.j2`: Public.
@@ -233,13 +232,13 @@ The skill implements the paper's safety recommendations (Section 9.1):
 - `si-evaluate-improvement.j2`: Public.
 - `si-commit-or-rollback.j2`: Public.
 
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - Default pathway is Scaffolding Improvement (Σ) unless FM fine-tuning is explicitly permitted.
 - All updates must pass verifier-gated checks before commitment.
 - Version history must be maintained for rollback.
 - The critic (evaluator) must be decoupled from the generator to prevent self-confirming loops.
 - Max iterations: 10 (outer Kata), 5 (inner PDCA per Kata step).
-- Convergence is detected deterministically via the Cauchy criterion — the iterates have stopped moving. No LLM convergence-check template is used.
+- Evaluate convergence after each full iteration: the iterates have stopped moving. Converged when stable across 3 iterations. Minimum 2 iterations.
 - `decision` field must be exactly "commit" or "rollback" (lowercase).
 - `next_step` field must be exactly "re-enter", "exit", or "refine" (lowercase).
 - `signal_type` may be a single value or an array for multi-signal support.

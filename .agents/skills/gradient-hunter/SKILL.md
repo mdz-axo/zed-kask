@@ -107,8 +107,7 @@ Key non-obvious rules the taxonomy encodes:
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - The prior must be explicit before gradient detection.
 - The fractal recurrence check is mandatory.
 - Do not collapse the eight ontologies into one — each shape implies a different intervention.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

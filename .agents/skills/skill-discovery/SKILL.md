@@ -97,9 +97,8 @@ flowchart LR
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - `skill-discovery-detect-gap.j2`: Public. Gap categories: coverage, feature, automation, knowledge, governance, quality, epistemic (7 categories). Input `skill_catalog` is the same array passed to skill-discovery-search and skill-router-match (standardized naming across the routing/discovery ecosystem). `epistemic` gaps are distinct from `knowledge` gaps: epistemic = missing certainty-finding methods; knowledge = missing facts.
 - `skill-discovery-search.j2`: Public. Scores all catalog entries; returns candidates with fit_score ≥ 0.20.
 - `skill-discovery-evaluate.j2`: Public. 11 checks scored 0–2; max score 22; min installable 16; safety 0 → reject.
 - **`lisp.eval` is available for custom deterministic compute steps.** When evaluating candidate skills, `lisp.eval` can compute custom scoring formulas (e.g., weighted combinations of quality, safety, and fit scores) inline in the manifest — no Rust change needed. Security: gated to `category: skill` manifests only. The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple weighted-score expressions, prefix for complex nested logic.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

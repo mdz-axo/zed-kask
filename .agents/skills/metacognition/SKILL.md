@@ -19,7 +19,6 @@ prediction calibration.
 - When an agent needs to establish a measurable target condition for its meta-knowledge.
 - When an agent needs to make a calibrated prediction about which intervention will improve its understanding.
 - When an agent needs to run an experiment (apply a calibration) and measure whether it closed the gap.
-- When the convergence decision should be deterministic (gap + Brier) rather than an LLM self-grade.
 
 ## Instructions
 
@@ -77,7 +76,6 @@ prediction calibration.
 ## Constraints
 
 - All flow templates are KnowAct type with Public visibility. Reference documents are RenderAct.
-- rJoule cap: 4 per invocation. Maximum 10 iterations.
-- The convergence decision is deterministic (compute steps) — no LLM convergence-check template.
-- The LLM's job is the four Kata steps (grasp, target, predict, experiment); the executor computes the gap and Brier score.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- Evaluate convergence after each full iteration using the criteria described above.
+- Execute the four Kata steps (grasp, target, predict, experiment), then evaluate the gap and Brier score to determine convergence.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

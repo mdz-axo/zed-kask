@@ -85,7 +85,7 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 
 1. If convergence is not met (metric > 0.15) and refinement directives exist, loop back to DECOMPOSE (step 2) with directives as focused, task-addressable improvement targets.
 2. v0.31.0: refinement_directives are explicitly routed back to decompose (was implicit, depended on the manifest executor preserving cross-iteration step results — now mechanical and documented).
-3. Carry `prior_metric` forward so the Cauchy criterion can detect a stable-but-unconverged plan. Each iteration narrows the gap.
+3. Carry `prior_metric` forward so you can detect a stable-but-unconverged plan. Each iteration narrows the gap.
 
 ## Registry Templates
 
@@ -99,10 +99,9 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 
 ## Constraints
 
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
 - `task-breakdown-plan.j2`: Public. Read-only mode — no code proposals, file edits, or implementation sketches. Empty-spec validation is mandatory before producing any output. `prior_outcome` and `prior_operator_feedback` calibrate but do not override evidence-based decomposition principles.
 - `task-breakdown-decompose.j2`: Public. Every task is a vertical feature path, not a horizontal layer. No task may be XL. No "and" in a task title. The "~5 files" limit is advisory for cross-crate Rust features (legitimate 5–7 file touches allowed with justification). Every task must have acceptance criteria AND a verification step AND declared dependencies (or "None"). Dependency order must be respected. `skill_match_query` is required per task when `skill_catalog` is provided, omitted otherwise. `plan_escalation` is emitted for catastrophic conditions (algedonic short-circuit).
 - `task-breakdown-evaluate.j2`: Public. Score each criterion independently 0–1; do not inflate. Weighted_total must lie in [0,1]. Only emit refinement directives for criteria scored above 0.00. Task-count awareness (>20 or <3) applies to the sizing criterion only.
 - `task-breakdown-quality-gate.j2`: Public. Independent evaluation — do not inherit the producer's scores. Compensation masking: any single criterion > 0.30 forces `gate_pass: false`. Report `bias_delta` only where |your_score − producer_score| > 0.2 for that criterion.
 - `task-breakdown-write-plan.j2`: Public. Both files must be complete, self-contained markdown. `plan.md` must include overview, architecture decisions, phased task list with checkpoints, risks table, open questions, and (when refinement occurred) Refinement History. `todo.md` must be a checklist grouped by phase. Do not invent tasks not present in the input `tasks` array.
-- Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
