@@ -11,7 +11,6 @@ path = "src/hkask_templates.rs"
 [dependencies]
 hkask-types.workspace = true
 hkask-capability.workspace = true
-hkask-forecast.workspace = true
 hkask-lisp.workspace = true
 futures-util.workspace = true
 minijinja.workspace = true

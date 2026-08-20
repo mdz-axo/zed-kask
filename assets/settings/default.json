@@ -1218,6 +1218,7 @@
           "spawn_agent": true,
           "terminal": true,
           "search_web": true,
+          "lisp_eval": true,
         },
       },
       "ask": {
@@ -1241,6 +1242,7 @@
           "skill_bundle": true,
           "spawn_agent": true,
           "search_web": true,
+          "lisp_eval": true,
         },
       },
       "minimal": {

@@ -320,6 +320,7 @@ dependencies = [
  "gpui_tokio",
  "handlebars 4.5.0",
  "heck 0.5.0",
+ "hkask-lisp",
  "html_to_markdown",
  "http_client",
  "http_proxy",
@@ -9181,7 +9182,6 @@ name = "hkask-inference"
 version = "0.35.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "futures-util",
  "hkask-types",
  "serde",
@@ -9664,7 +9664,6 @@ version = "0.35.0"
 dependencies = [
  "futures-util",
  "hkask-capability",
- "hkask-forecast",
  "hkask-lisp",
  "hkask-types",
  "minijinja",

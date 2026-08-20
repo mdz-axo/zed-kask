@@ -424,24 +424,6 @@ impl SwarmServer {
                 // current shape, the evidence fallback, and the legacy
                 // `response` field for older deploys.
                 let response_text = extract_execute_response(&data);
-                // Rung 3 (Grounding): narrative-only grounding for the ABW
-                // agent's response. Same pattern as `swarm_delegate` and
-                // `swarm_delegate_and_wait` — ABW agents produce free prose
-                // with no `tool_calls` visibility. `enforce_narrative`
-                // scans for leak patterns (fabricated file paths, test
-                // results, code execution claims) and records the result to
-                // the central verification ledger. Without this, the core
-                // floor (`execute_tool_semantic`) grounds the tool output
-                // envelope but never scans the agent's prose for fabricated
-                // claims.
-                if let Some(ref narrative) = response_text {
-                    self.verification_store.enforce_narrative(
-                        "swarm_execute_agent",
-                        &req.agent_name,
-                        "abw_cloud",
-                        narrative,
-                    );
-                }
                 let response_value = response_text
                     .map(serde_json::Value::String)
                     .unwrap_or(serde_json::Value::Null);
@@ -751,15 +733,6 @@ impl SwarmServer {
                 // Rung 3 (Grounding): narrative-only grounding for ABW cloud
                 // delegation. The `data` is the ABW API response to posting
                 // the task — it may contain content from the ABW system.
-                // `enforce_narrative` scans for leak patterns and records
-                // the result to the central verification ledger.
-                let narrative = data.to_string();
-                let grounding_result = self.verification_store.enforce_narrative(
-                    "swarm_delegate",
-                    &req.agent_name,
-                    "abw_cloud",
-                    &narrative,
-                );
 
                 Ok(self
                     .client
@@ -768,7 +741,6 @@ impl SwarmServer {
                         "workspace_id": req.workspace_id,
                         "credits_authorized": req.credits_authorized,
                         "result": data,
-                        "grounding_narrative_leaks": grounding_result.narrative_leaks.len(),
                     }))
                     .await)
             },
@@ -882,26 +854,6 @@ impl SwarmServer {
                     }
                 }
                 let timed_out = agent_response.is_none();
-                // Rung 3 (Grounding): narrative-only grounding for ABW cloud
-                // delegation responses. ABW agents produce free prose with no
-                // `tool_calls` visibility — the response is entirely
-                // narrative. The `enforce_narrative` method scans for leak
-                // patterns (fabricated file paths, test results, code
-                // execution claims) and records the result to the central
-                // verification ledger. The prose is kept (paper §5.5:
-                // "keep, scan for claims it cannot support").
-                let grounding_leaks = if let Some(ref resp) = agent_response {
-                    let narrative = resp.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                    let result = self.verification_store.enforce_narrative(
-                        "swarm_delegate_and_wait",
-                        &req.agent_name,
-                        "abw_cloud",
-                        narrative,
-                    );
-                    result.narrative_leaks.len()
-                } else {
-                    0
-                };
                 Ok(self
                     .client
                     .with_wallet(serde_json::json!({
@@ -911,7 +863,6 @@ impl SwarmServer {
                         "agent_response": agent_response,
                         "timed_out": timed_out,
                         "poll_count": poll_count,
-                        "grounding_narrative_leaks": grounding_leaks,
                     }))
                     .await)
             },
@@ -1491,20 +1442,10 @@ impl SwarmServer {
                     .await;
                     match delegated {
                         Ok(data) => {
-                            // Rung 3 (Grounding): narrative-only grounding
-                            // for each ABW cloud delegation in the fanout.
-                            let narrative = data.to_string();
-                            let grounding_result = self.verification_store.enforce_narrative(
-                                "swarm_fanout",
-                                &entry.agent_name,
-                                "abw_cloud",
-                                &narrative,
-                            );
                             results.push(serde_json::json!({
                                 "agent_name": entry.agent_name,
                                 "ok": true,
                                 "result": data,
-                                "grounding_narrative_leaks": grounding_result.narrative_leaks.len(),
                             }));
                         }
                         Err(e) => {

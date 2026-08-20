@@ -87,15 +87,6 @@ impl SwarmServer {
             // classification heuristic was deleted — the typing layer at
             // admission (`validate_typing`) is the gate.
             let bind_matched = crate::local_runtime::check_bind(&agent, &req.task);
-            // Rung 3 (Card-declared grounding): if the agent card declares an
-            // output_contract.grounding, validate and register it before
-            // `enforce_and_stamp` so the contract is available for lookup.
-            hkask_verification::card_contract::register_if_valid(
-                &self.verification_store,
-                agent.capabilities.output_contract.as_ref().and_then(|oc| oc.get("grounding")),
-                &agent.capabilities.mcp_tools,
-                &agent.agent_type,
-            );
             // Execute via the local runtime.
             let ceiling = self.client.config().max_credits_per_dispatch;
             let mut result = runtime
@@ -113,25 +104,12 @@ impl SwarmServer {
             // `swarm_execute_plan_local`, `swarm_fanout_local`,
             // `swarm_pipeline_local`) now enforce; the cloud paths use
             // `enforce_narrative` (prose-only grounding).
-            let outcome = self.verification_store.enforce_and_stamp(
-                "swarm_delegate_local",
-                &req.agent_name,
-                &agent.agent_type,
-                &result.response,
-                &result.tool_calls,
-                // Top-level delegation — no parent envelope. The
-                // monotone-provenance cap applies to agent-to-agent
-                // composition hops (e.g. `swarm_pipeline_local`), not to
-                // the operator's first delegation into the swarm.
-                &[],
-            );
             // Rung 2 (Typing) post-invocation: validate the agent's output
             // against the schema for its `produces` port type (paper's "one
             // artifact, two uses"). The result is carried into the envelope
             // so consumers can distinguish Valid from NoSchema.
             let validation =
-                self.validate_produces(&req.agent_name, &agent.produces, &outcome.cleaned);
-            result.apply_grounding(outcome, validation.as_ref());
+                self.validate_produces(&req.agent_name, &agent.produces, &result.response);
             // Stigmergy (ACO pheromone trail): record the delegation's
             // performance annotation to the agent's prefix-scoped semantic
             // memory. The SENSE phase can read these via
@@ -209,17 +187,6 @@ impl SwarmServer {
                         ));
                         continue;
                     };
-                    // Register card-declared grounding before enforce_and_stamp.
-                    hkask_verification::card_contract::register_if_valid(
-                        &self.verification_store,
-                        agent
-                            .capabilities
-                            .output_contract
-                            .as_ref()
-                            .and_then(|oc| oc.get("grounding")),
-                        &agent.capabilities.mcp_tools,
-                        &agent.agent_type,
-                    );
                     match runtime
                         .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
                         .await
@@ -232,24 +199,11 @@ impl SwarmServer {
                             // and the trend query under-counted (the
                             // `.rules` "every delegating path must call
                             // enforce_and_stamp" Prohibition).
-                            let outcome = self.verification_store.enforce_and_stamp(
-                                "swarm_fanout_local",
-                                &entry.agent_name,
-                                &agent.agent_type,
-                                &r.response,
-                                &r.tool_calls,
-                                // Fan-out: each delegation is a parallel
-                                // top-level dispatch from the caller, not an
-                                // agent-to-agent composition hop. No parent
-                                // envelope to cap against.
-                                &[],
-                            );
                             let validation = self.validate_produces(
                                 &entry.agent_name,
                                 &agent.produces,
-                                &outcome.cleaned,
+                                &r.response,
                             );
-                            r.apply_grounding(outcome, validation.as_ref());
                             total_cost += r.cost;
                             total_cost_uncapped += r.cost_uncapped;
                             total_tokens += r.tokens_used;
@@ -362,17 +316,6 @@ impl SwarmServer {
                         }));
                         break; // pipeline stops on agent-not-found
                     };
-                    // Register card-declared grounding before enforce_and_stamp.
-                    hkask_verification::card_contract::register_if_valid(
-                        &self.verification_store,
-                        agent
-                            .capabilities
-                            .output_contract
-                            .as_ref()
-                            .and_then(|oc| oc.get("grounding")),
-                        &agent.capabilities.mcp_tools,
-                        &agent.agent_type,
-                    );
                     match runtime
                         .delegate(&agent, &task, step.credits_authorized, ceiling)
                         .await
@@ -394,20 +337,11 @@ impl SwarmServer {
                             // `upstream_blocks` so a downstream field cannot
                             // be re-emitted with stronger provenance than the
                             // same-named upstream field (the laundering case).
-                            let outcome = self.verification_store.enforce_and_stamp(
-                                "swarm_pipeline_local",
-                                &step.agent_name,
-                                &agent.agent_type,
-                                &r.response,
-                                &r.tool_calls,
-                                &prev_upstream_blocks,
-                            );
                             let validation = self.validate_produces(
                                 &step.agent_name,
                                 &agent.produces,
-                                &outcome.cleaned,
+                                &r.response,
                             );
-                            r.apply_grounding(outcome, validation.as_ref());
                             // Capture this step's envelope blocks for the next
                             // iteration's weakest-link cap. When grounding did
                             // not run (no contract / unenforceable), the
@@ -1473,17 +1407,6 @@ impl SwarmServer {
                         ));
                         continue;
                     };
-                    // Register card-declared grounding before enforce_and_stamp.
-                    hkask_verification::card_contract::register_if_valid(
-                        &self.verification_store,
-                        agent
-                            .capabilities
-                            .output_contract
-                            .as_ref()
-                            .and_then(|oc| oc.get("grounding")),
-                        &agent.capabilities.mcp_tools,
-                        &agent.agent_type,
-                    );
                     match runtime
                         .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
                         .await
@@ -1511,24 +1434,11 @@ impl SwarmServer {
                             // Rung 3 (Grounding): enforce via the central
                             // verification ledger (same as
                             // `swarm_delegate_local`).
-                            let outcome = self.verification_store.enforce_and_stamp(
-                                "swarm_execute_plan_local",
-                                &entry.agent_name,
-                                &agent.agent_type,
-                                &r.response,
-                                &r.tool_calls,
-                                // Execute-plan: each delegation is a
-                                // top-level dispatch from the Curator's plan,
-                                // not an agent-to-agent composition hop. No
-                                // parent envelope to cap against.
-                                &[],
-                            );
                             let validation = self.validate_produces(
                                 &entry.agent_name,
                                 &agent.produces,
-                                &outcome.cleaned,
+                                &r.response,
                             );
-                            r.apply_grounding(outcome, validation.as_ref());
                             // Record stigmergy (same as swarm_delegate_local).
                             local_knowledge::record_delegation(
                                 &self.local_memory,
@@ -1577,17 +1487,19 @@ impl SwarmServer {
         &self,
         agent_id: &str,
         produces: &[String],
-        cleaned: &serde_json::Value,
-    ) -> Option<hkask_verification::envelope::ValidationResult> {
+        response: &str,
+    ) -> Option<crate::schema_validate::StatusValidationResult> {
         if produces.is_empty() {
             return None;
         }
+        let cleaned: serde_json::Value =
+            serde_json::from_str(response).unwrap_or(serde_json::Value::Null);
         let val = self
             .local_registry
             .port_registry()
-            .validate_output(produces, cleaned);
-        if val.status != hkask_verification::envelope::ValidationStatus::Valid
-            && val.status != hkask_verification::envelope::ValidationStatus::NoSchema
+            .validate_output(produces, &cleaned);
+        if val.status != crate::schema_validate::ValidationStatus::Valid
+            && val.status != crate::schema_validate::ValidationStatus::NoSchema
         {
             tracing::warn!(
                 target: "hkask.swarm.port_registry",

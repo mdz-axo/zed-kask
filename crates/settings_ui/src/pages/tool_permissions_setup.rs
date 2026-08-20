@@ -1434,6 +1434,9 @@ mod tests {
             // is contained via find_project_path (same as ReadFileTool), and
             // permission checks happen inside the cascade's tool calls.
             "run_pipeline",
+            // Deterministic sandboxed computation — no I/O, no network, no
+            // side effects. No permission checks needed.
+            "lisp_eval",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

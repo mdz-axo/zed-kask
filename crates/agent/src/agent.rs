@@ -2577,51 +2577,6 @@ fn strip_slash_command_prefix(text: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Parse leading `key=value` pairs from a slash-command argument string and
-/// return them as a context map plus the remaining task text. This gives
-/// the slash-command path (`send_skill_invocation`) a context channel
-/// equivalent to the model-invoked `skill` tool's `SkillToolInput.context`
-/// field — context-dependent skills like `swarm-intelligence` (which
-/// branches on `mode` and requires `swarm_id`) can receive these values
-/// without the cascade silently defaulting.
-///
-/// Pairs must appear before the task text: the first token that doesn't
-/// match `key=value` (where `key` is `[a-zA-Z0-9_]+` and `value` is
-/// non-whitespace) ends the context region and starts the task. This avoids
-/// ambiguity with task text that happens to contain `=` (e.g. "filter
-/// x=y") — once a non-pair token is seen, parsing stops.
-///
-/// Example: `"mode=local swarm_id=ws-1 compose my swarm"`
-///   → context: `{mode: "local", swarm_id: "ws-1"}`
-///   → task: `"compose my swarm"`
-fn parse_slash_command_context(
-    text: &str,
-) -> (std::collections::HashMap<String, serde_json::Value>, String) {
-    let mut context = std::collections::HashMap::new();
-    let mut rest = text;
-    loop {
-        let trimmed = rest.trim_start();
-        let Some(eq_pos) = trimmed.find('=') else {
-            break;
-        };
-        let key_part = &trimmed[..eq_pos];
-        if key_part.is_empty() || !key_part.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            break;
-        }
-        let after_eq = &trimmed[eq_pos + 1..];
-        let (value, remaining) = match after_eq.find(char::is_whitespace) {
-            Some(end) => (&after_eq[..end], &after_eq[end..]),
-            None => (after_eq, ""),
-        };
-        context.insert(
-            key_part.to_string(),
-            serde_json::Value::String(value.to_string()),
-        );
-        rest = remaining;
-    }
-    (context, rest.trim_start().to_string())
-}
-
 struct NativeAgentModelSelector {
     session_id: acp::SessionId,
     connection: NativeAgentConnection,
@@ -7796,54 +7751,6 @@ mod internal_tests {
         // block, the safe behavior is to return it unchanged rather than
         // silently mangling unrelated user text.
         assert_eq!(strip_slash_command_prefix("hello world"), "hello world",);
-    }
-
-    #[test]
-    fn test_parse_slash_command_context_extracts_leading_pairs() {
-        let (ctx, task) = parse_slash_command_context("mode=local swarm_id=ws-1 compose");
-        assert_eq!(ctx.get("mode").and_then(|v| v.as_str()), Some("local"));
-        assert_eq!(ctx.get("swarm_id").and_then(|v| v.as_str()), Some("ws-1"));
-        assert_eq!(task, "compose");
-    }
-
-    #[test]
-    fn test_parse_slash_command_context_no_pairs_returns_all_as_task() {
-        let (ctx, task) = parse_slash_command_context("compose my swarm");
-        assert!(ctx.is_empty());
-        assert_eq!(task, "compose my swarm");
-    }
-
-    #[test]
-    fn test_parse_slash_command_context_stops_at_non_pair_token() {
-        // A token without `=` ends the context region — task text with `=`
-        // after a non-pair token is NOT parsed as context.
-        let (ctx, task) = parse_slash_command_context("mode=abw filter x=y now");
-        assert_eq!(ctx.get("mode").and_then(|v| v.as_str()), Some("abw"));
-        assert_eq!(task, "filter x=y now");
-    }
-
-    #[test]
-    fn test_parse_slash_command_context_rejects_non_alphanumeric_key() {
-        // Keys must be alphanumeric+underscore — a key starting with a dash
-        // is not a context pair, it's task text.
-        let (ctx, task) = parse_slash_command_context("-flag=v compose");
-        assert!(ctx.is_empty());
-        assert_eq!(task, "-flag=v compose");
-    }
-
-    #[test]
-    fn test_parse_slash_command_context_empty_input() {
-        let (ctx, task) = parse_slash_command_context("");
-        assert!(ctx.is_empty());
-        assert_eq!(task, "");
-    }
-
-    #[test]
-    fn test_parse_slash_command_context_value_to_end_of_input() {
-        // A value with no trailing whitespace runs to the end.
-        let (ctx, task) = parse_slash_command_context("mode=local");
-        assert_eq!(ctx.get("mode").and_then(|v| v.as_str()), Some("local"));
-        assert_eq!(task, "");
     }
 }
 

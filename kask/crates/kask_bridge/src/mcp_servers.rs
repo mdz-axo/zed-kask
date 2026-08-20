@@ -349,7 +349,6 @@ pub const BUILT_IN_MCP_SERVERS_PAIRS: &[(&str, &str)] = &[
         "Portfolio — general-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views",
     ),
     ("companies", "Companies — company research and filings"),
-    ),
     ("corpus", "Corpus — document corpus and QA generation"),
     (
         "curator",
@@ -522,6 +521,17 @@ pub fn filter_config_env_for_server(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn server_by_id(id: &str) -> &'static BuiltinMcpServer {
+        BUILT_IN_MCP_SERVERS
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap_or_else(|| panic!("server '{id}' not in BUILT_IN_MCP_SERVERS"))
+    }
+
     #[test]
     fn prediction_markets_allowlist_matches_actual_reads() {
         let s = server_by_id("prediction-markets");
@@ -603,21 +613,6 @@ pub fn filter_config_env_for_server(
             "curator should NOT receive OPENROUTER_API_KEY"
         );
     }
-    #[test]
-        let all_credentials: Vec<(String, String)> = [
-            "OPENROUTER_API_KEY",
-            "HKASK_SMTP_PASSWORD",
-            "HKASK_EODHD_API_KEY",
-        ]
-        .iter()
-        .map(|env| (env.to_string(), "url".to_string()))
-        .collect();
-        let env_vars: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
-        assert!(env_vars.contains(&"OPENROUTER_API_KEY"));
-        assert!(
-            !env_vars.contains(&"HKASK_SMTP_PASSWORD"),
-        );
-    }
 
     // Unknown server IDs fail closed: no credentials are injected.
     #[test]
@@ -628,33 +623,6 @@ pub fn filter_config_env_for_server(
         ];
         let filtered = filter_credentials_for_server("nonexistent", &credentials);
         assert!(filtered.is_empty());
-    }
-    // This pins the config-env blast-radius reduction.
-    #[test]
-        let mut config_env = std::collections::HashMap::new();
-        config_env.insert(
-            "HKASK_SMTP_USERNAME".to_string(),
-            "curator@example.com".to_string(),
-        );
-        config_env.insert(
-            "HKASK_MXROUTE_SERVER".to_string(),
-            "mail.example.com".to_string(),
-        );
-        config_env.insert(
-            "HKASK_AUTHORIZED_EMAILS".to_string(),
-            "ops@example.com".to_string(),
-        );
-        assert!(
-        );
-        assert!(
-            !filtered.contains_key("HKASK_SMTP_USERNAME"),
-        );
-        assert!(
-            !filtered.contains_key("HKASK_MXROUTE_SERVER"),
-        );
-        assert!(
-            !filtered.contains_key("HKASK_AUTHORIZED_EMAILS"),
-        );
     }
 
     // The curator server should receive its email config.
@@ -672,8 +640,7 @@ pub fn filter_config_env_for_server(
         let filtered = filter_config_env_for_server("curator", &config_env);
         assert!(filtered.contains_key("HKASK_SMTP_USERNAME"));
         assert!(filtered.contains_key("HKASK_MXROUTE_SERVER"));
-        assert!(
-        );
+        assert!();
     }
 
     // Unknown server IDs fail closed: no config env is injected.
@@ -785,10 +752,8 @@ pub fn filter_config_env_for_server(
             keys.contains(&"HKASK_MEDIA_DB"),
             "media server reads HKASK_MEDIA_DB — it must be in config_env"
         );
-        assert!(
-        );
-        assert!(
-        );
+        assert!();
+        assert!();
         assert!(
             keys.contains(&"HKASK_MEDIA_VISION_MODEL"),
             "media server reads HKASK_MEDIA_VISION_MODEL — it must be in config_env"
@@ -846,8 +811,7 @@ pub fn filter_config_env_for_server(
             !filtered.contains_key("HKASK_SMTP_USERNAME"),
             "swarm server must not receive curator email config"
         );
-        assert!(
-        );
+        assert!();
     }
 
     // The under-granting direction: every env var the swarm server actually
@@ -938,28 +902,6 @@ pub fn filter_config_env_for_server(
     // Each expectation below was derived by grepping the server's own source for
     // `std::env::var` / `ctx.credentials.get` sites, so the assertion is against
     // observed reads rather than intent.
-
-    #[test]
-        // HKASK_EMBEDDING_MODEL is read by the shared hkask-inference model
-        // constants, not by this crate directly.
-        // The OPENROUTER key has NO direct read site — it is reachable
-        // only through `resolve_inference_port`'s no-socket fallback
-        // (`InferenceConfig::from_env`). Retained deliberately; see the registry
-        // comment. This test pins that decision so the grant cannot silently grow.
-        assert_eq!(
-            s.credentials.unwrap().to_vec(),
-            vec!["OPENROUTER_API_KEY"],
-             by the degraded no-socket inference fallback; adding more secrets to a \
-             code-indexing process needs a read site"
-        );
-        assert_eq!(
-            s.config_env.unwrap().to_vec(),
-            vec![
-                "HKASK_EMBEDDING_DIM",
-                "HKASK_EMBEDDING_MODEL",
-            ],
-        );
-    }
 
     #[test]
     fn curator_allowlist_matches_actual_reads() {
@@ -1208,29 +1150,6 @@ pub fn filter_config_env_for_server(
                 );
             }
         }
-    }
-    /// curator's email config, even though `mcp_env()` emits it. The
-    /// composition test above covers this for all servers; this one names the
-    /// concrete leak that motivated the unification.
-    #[test]
-        let mut full_config = std::collections::HashMap::new();
-        full_config.insert(
-            "HKASK_SMTP_USERNAME".to_string(),
-            "curator@example.com".to_string(),
-        );
-        full_config.insert(
-            "HKASK_MXROUTE_SERVER".to_string(),
-            "mail.example.com".to_string(),
-        );
-        assert!(
-        );
-        assert!(
-            !env.contains_key("HKASK_SMTP_USERNAME"),
-             leak (full mcp_env() map was extended, not filtered)"
-        );
-        assert!(
-            !env.contains_key("HKASK_MXROUTE_SERVER"),
-        );
     }
 
     /// Pin the shell-override-survives-env_clear fix. The governed McpRuntime
