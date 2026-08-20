@@ -86,9 +86,9 @@ mod local_runtime;
 mod local_swarms;
 mod local_tools;
 pub mod port_registry;
-pub mod schema_validate;
 pub mod request_types;
 mod sanitize;
+pub mod schema_validate;
 mod spend_gate;
 
 // ── Canonical tool-name list ─────────────────────────────────────────────
@@ -262,7 +262,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 });
             let local_runtime = std::sync::Arc::new(LazyLocalSwarmRuntime::lazy(
                 ledger_path,
-                config.skills_dir.clone(),
             ));
 
             // Local swarm registry — the local replica of an ABW workspace

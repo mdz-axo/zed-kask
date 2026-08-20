@@ -1,10 +1,10 @@
 //! Agent executor — the local agent-run policy, extracted from
 //! `LocalSwarmRuntime::delegate`.
 //!
-//! `AgentExecutor::run` runs a local agent: executes the declared skills,
-//! builds the declared tool set, and runs the multi-round inference/tool-
-//! dispatch loop. It returns a `RawDelegateResult` carrying the raw output
-//! text, model, token usage, and tool/skill summaries.
+//! `AgentExecutor::run` runs a local agent: builds the declared tool set,
+//! and runs the multi-round inference/tool-dispatch loop. It returns a
+//! `RawDelegateResult` carrying the raw output text, model, token usage, and
+//! tool call summary.
 //!
 //! **The executor does NOT debit the ledger.** The caller
 //! (`LocalSwarmRuntime::delegate`) is responsible for debit: it computes the
@@ -232,80 +232,5 @@ impl AgentExecutor {
             tokens_used: total_tokens,
             tool_calls: tool_calls_made,
         })
-    }
-}
-
-/// Parse the `name` and `description` fields from a `SKILL.md` frontmatter
-/// block (the YAML between the opening and closing `---` lines). Returns
-/// `None` if either field is missing or the frontmatter is malformed.
-///
-/// This is a minimal extractor — the swarm server does not depend on the
-/// zed-side `agent_skills` crate (which is GPUI-bound) or a full YAML parser.
-/// The `name` field is a plain scalar; the `description` field may be a
-/// quoted scalar, a folded scalar (`>`), or a literal scalar (`|`).
-/// Validate a skill id for path safety. Skill ids must be non-empty,
-/// lowercase letters, numbers, and hyphens only — no path separators, no
-/// `..`, no leading/trailing hyphens. Mirrors `agent_skills::validate_name`
-/// (which the swarm server can't depend on — it's GPUI-bound). This is the
-/// path-traversal gate for `build_skill_catalog`: a malicious cloned ABW card
-/// could declare `skills: ["../../../etc/passwd"]` to read arbitrary files.
-fn is_valid_skill_id(id: &str) -> bool {
-    if id.is_empty() || id.starts_with('-') || id.ends_with('-') {
-        return false;
-    }
-    id.chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-}
-
-fn parse_skill_frontmatter(content: &str) -> Option<(String, String)> {
-    let lines: Vec<&str> = content.lines().collect();
-    if lines.is_empty() || lines[0].trim() != "---" {
-        return None;
-    }
-    // Find the closing `---`.
-    let end = lines.iter().skip(1).position(|l| l.trim() == "---")? + 1;
-    let frontmatter = &lines[1..end];
-    let mut name: Option<String> = None;
-    let mut description: Option<String> = None;
-    let mut i = 0;
-    while i < frontmatter.len() {
-        let line = frontmatter[i];
-        if let Some(rest) = line.strip_prefix("name:") {
-            name = Some(rest.trim().trim_matches('"').to_string());
-        } else if let Some(rest) = line.strip_prefix("description:") {
-            let trimmed = rest.trim();
-            if trimmed.starts_with('"') {
-                // Quoted scalar — may span multiple lines (folded quotes).
-                let mut buf = trimmed.trim_start_matches('"').to_string();
-                while !buf.contains('"') && i + 1 < frontmatter.len() {
-                    i += 1;
-                    buf.push('\n');
-                    buf.push_str(frontmatter[i].trim());
-                }
-                // Remove the closing quote.
-                description = Some(buf.trim_end_matches('"').trim().to_string());
-            } else if trimmed == ">" || trimmed == "|" {
-                // Folded/literal scalar — collect indented continuation lines.
-                let mut buf = String::new();
-                i += 1;
-                while i < frontmatter.len() && frontmatter[i].starts_with(' ') {
-                    if !buf.is_empty() {
-                        buf.push(' ');
-                    }
-                    buf.push_str(frontmatter[i].trim());
-                    i += 1;
-                }
-                description = Some(buf.trim().to_string());
-                continue;
-            } else if !trimmed.is_empty() {
-                // Plain scalar.
-                description = Some(trimmed.to_string());
-            }
-        }
-        i += 1;
-    }
-    match (name, description) {
-        (Some(n), Some(d)) if !n.is_empty() && !d.is_empty() => Some((n, d)),
-        _ => None,
     }
 }

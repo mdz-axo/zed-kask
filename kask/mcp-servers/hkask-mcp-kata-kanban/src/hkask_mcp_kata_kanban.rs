@@ -1038,8 +1038,6 @@ impl KanbanServer {
                             build_task_agent_card(tid, &task.title, &skills_for_agent)
                         });
 
-
-
                     // P1: Try worktree-isolated spawn first. When the zed IPC bridge
                     // is available and a workspace with an AgentPanel is open, this
                     // creates a worktree-backed agent thread (isolated git worktree).
@@ -1054,9 +1052,7 @@ impl KanbanServer {
                     }
 
                     // Fallback: in-memory spawn via LazyLocalSwarmRuntime.
-                    let response = self
-                        .spawn_via_local_runtime(tid, &task, &agent)
-                        .await?;
+                    let response = self.spawn_via_local_runtime(tid, &task, &agent).await?;
                     serde_json::to_value(response)
                         .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
                 },
@@ -1208,7 +1204,9 @@ impl KanbanServer {
         // keywords are NOT a pass. Logged at warn — schema violations are
         // diagnostic, not blocking (the cleaned document is still the best
         // available output).
-        let mut schema_validation: Option<hkask_mcp_swarm::schema_validate::StatusValidationResult> = None;
+        let mut schema_validation: Option<
+            hkask_mcp_swarm::schema_validate::StatusValidationResult,
+        > = None;
         if let Ok(cleaned) = serde_json::from_str::<serde_json::Value>(&result.response) {
             let validation = self
                 .local_registry
@@ -1702,22 +1700,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         .to_string_lossy()
                         .to_string()
                     });
-                let skills_dir = std::env::var("HKASK_SKILLS_DIR")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty())
-                    .map(|raw| {
-                        if std::path::Path::new(&raw).is_absolute() {
-                            raw
-                        } else {
-                            hkask_types::agent_paths::resolve_under_data_dir(
-                                std::path::Path::new(&raw),
-                            )
-                            .to_string_lossy()
-                            .to_string()
-                        }
-                    });
                 let local_runtime =
-                    Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, skills_dir));
+                    Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path));
 
                 // Local agent registry — same dir resolution as hkask-mcp-swarm
                 // (relative paths resolve under the hKask data dir, not CWD).

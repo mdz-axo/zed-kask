@@ -120,15 +120,6 @@ pub struct SwarmConfig {
     /// path (`query_deduped`) used by `swarm_search_knowledge_local` does not
     /// depend on it. Default 1024. Read from `HKASK_SWARM_EMBEDDING_DIM`.
     pub embedding_dim: usize,
-    /// Directory containing the zed-kask skill corpus (`.agents/skills/`),
-    /// read by `AgentExecutor::build_skill_catalog` to inject skill
-    /// descriptions into the local agent's system prompt (Slice 6 — local
-    /// agent skill-awareness). `None` = skill-awareness disabled (the agent
-    /// runs skill-blind, the pre-Slice-6 behavior). Read from
-    /// `HKASK_SKILLS_DIR`; an absolute path is used as-is, a relative path is
-    /// resolved under the hKask data dir. The bridge sets this from the
-    /// project's `.agents/skills/` directory.
-    pub skills_dir: Option<String>,
 }
 
 impl Default for SwarmConfig {
@@ -159,7 +150,6 @@ impl Default for SwarmConfig {
             memory_passphrase: "allostery".to_string(),
             memory_db_path: "swarm_memory.db".to_string(),
             embedding_dim: 1024,
-            skills_dir: None,
         }
     }
 }
@@ -271,18 +261,6 @@ impl SwarmConfig {
             .and_then(|s| s.trim().parse().ok())
             .filter(|d| *d > 0)
             .unwrap_or(default.embedding_dim);
-        let skills_dir = std::env::var("HKASK_SKILLS_DIR")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .map(|raw| {
-                if std::path::Path::new(&raw).is_absolute() {
-                    raw
-                } else {
-                    hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(&raw))
-                        .to_string_lossy()
-                        .to_string()
-                }
-            });
         let warning = if api_key.is_none() && mode == SwarmMode::Abw {
             Some(
                 "HKASK_ABW_API_KEY not set and mode=abw — swarm server in catalogue-only mode; \
@@ -321,7 +299,6 @@ impl SwarmConfig {
                 memory_passphrase,
                 memory_db_path,
                 embedding_dim,
-                skills_dir,
             },
             warning,
         )

@@ -38,17 +38,15 @@ use crate::sanitize::strip_leading_mentions;
 /// by the observer.
 pub struct LazyLocalSwarmRuntime {
     ledger_path: String,
-    skills_dir: Option<String>,
     inner: tokio::sync::OnceCell<LocalSwarmRuntime>,
 }
 
 impl LazyLocalSwarmRuntime {
     /// Store the config without initializing. The runtime is constructed
     /// on first call to `get_or_init`.
-    pub fn lazy(ledger_path: String, skills_dir: Option<String>) -> Self {
+    pub fn lazy(ledger_path: String) -> Self {
         Self {
             ledger_path,
-            skills_dir,
             inner: tokio::sync::OnceCell::new(),
         }
     }
@@ -58,9 +56,7 @@ impl LazyLocalSwarmRuntime {
     /// Subsequent calls return the cached runtime.
     pub async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, LocalSwarmError> {
         self.inner
-            .get_or_try_init(|| async {
-                LocalSwarmRuntime::new(&self.ledger_path, self.skills_dir.as_deref()).await
-            })
+            .get_or_try_init(|| async { LocalSwarmRuntime::new(&self.ledger_path).await })
             .await
     }
 }
@@ -88,10 +84,7 @@ impl LocalSwarmRuntime {
     ///
     /// The operator account is ensured in the ledger namespace "local_swarm".
     /// It starts at balance 0 — the operator funds it via `swarm_fund_local`.
-    pub(crate) async fn new(
-        db_path: &str,
-        skills_dir: Option<&str>,
-    ) -> Result<Self, LocalSwarmError> {
+    pub(crate) async fn new(db_path: &str) -> Result<Self, LocalSwarmError> {
         // Open the ledger at the file path. Create the directory if needed.
         if let Some(parent) = std::path::Path::new(db_path).parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -112,21 +105,16 @@ impl LocalSwarmRuntime {
         let ledger = hkask_ledger::Ledger::from_driver(driver)
             .map_err(|e| LocalSwarmError::Database(format!("failed to init ledger: {e}")))?;
 
-        // Resolve the agent-run ports once at construction: inference,
-        // tool dispatch, and skill execution all route through the zed IPC
-        // bridge (or fall back to media/stub when the socket is absent). These
-        // compose into the `AgentExecutor`, which owns the agent-run policy
-        // (the runtime owns the spending policy). Resolving them here (rather
-        // than inside `AgentExecutor::new`) keeps the env-var reads at the
-        // runtime construction seam, mirroring the other kask MCP servers.
+        // Resolve the agent-run ports once at construction: inference and
+        // tool dispatch both route through the zed IPC bridge (or fall back
+        // to media/stub when the socket is absent). These compose into the
+        // `AgentExecutor`, which owns the agent-run policy (the runtime owns
+        // the spending policy). Resolving them here (rather than inside
+        // `AgentExecutor::new`) keeps the env-var reads at the runtime
+        // construction seam, mirroring the other kask MCP servers.
         let inference = hkask_inference::resolve_inference_port().await;
         let tool_dispatch = hkask_inference::resolve_tool_dispatch_port().await;
-        // Resolve the skill-corpus directory for `AgentExecutor`'s
-        // skill-awareness (None = skill-blind). Passed from
-        // `LazyLocalSwarmRuntime`, which reads `HKASK_SKILLS_DIR` in
-        // `SwarmConfig::from_env`.
-        let skills_dir = skills_dir.map(std::path::PathBuf::from);
-        let executor = AgentExecutor::new(inference, tool_dispatch, skills_dir);
+        let executor = AgentExecutor::new(inference, tool_dispatch);
 
         // Ensure the operator account exists.
         let operator_account = "operator".to_string();
@@ -362,8 +350,8 @@ impl LocalSwarmRuntime {
         // dispatch (a cost-amplification limit), which is a different concern
         // from whether an account is funded.
 
-        // Run the agent (skill cascade + tool loop). The executor returns the
-        // RAW output — it does NOT debit the ledger.
+        // Run the agent (tool loop). The executor returns the RAW output —
+        // it does NOT debit the ledger.
         let raw: RawDelegateResult = self.executor.run(agent, &task_clean).await?;
 
         // Compute the cost: 1 credit per 1000 tokens (mirrors ABW's
@@ -440,7 +428,6 @@ impl LocalSwarmRuntime {
             balance: new_balance,
             latency_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
             tool_calls: raw.tool_calls,
-            executed_skills: raw.executed_skills,
             // The server cannot judge task success — the executor (Curator or
             // human) stamps this after running a declared deterministic
             // evaluator against `response`. Left `None` here; ORIENT reads it
@@ -527,9 +514,6 @@ pub struct LocalDelegateResult {
     /// `server/tool` name + ok/error). Empty when the agent declares no
     /// `mcp_tools` or the model made no calls.
     pub tool_calls: Vec<serde_json::Value>,
-    /// Summary of skill cascades executed before the LLM call (skill id +
-    /// ok/error). Empty when the agent declares no `skills`.
-    pub executed_skills: Vec<serde_json::Value>,
     /// Optional deterministic task-success verdict, populated by the executor
     /// (the Kask Curator or a human in the loop) after running a declared
     /// evaluator against `response`. The swarm MCP server cannot judge task
@@ -582,9 +566,9 @@ impl LocalDelegateResult {
     /// method is the single source of truth for the per-delegation result
     /// shape.
     ///
-    /// `include_details` controls whether `tool_calls` and `executed_skills`
-    /// are included — fanout surfaces them, pipeline omits them (the pipeline
-    /// caller cares about the output chain, not the tool trace).
+    /// `include_details` controls whether `tool_calls` is included — fanout
+    /// surfaces it, pipeline omits it (the pipeline caller cares about the
+    /// output chain, not the tool trace).
     pub(crate) fn to_result_json(&self, include_details: bool) -> serde_json::Value {
         let mut entry = serde_json::json!({
             "agent_name": self.agent_id,
@@ -598,7 +582,6 @@ impl LocalDelegateResult {
         });
         if include_details {
             entry["tool_calls"] = serde_json::Value::Array(self.tool_calls.clone());
-            entry["executed_skills"] = serde_json::Value::Array(self.executed_skills.clone());
         }
         // The envelope is additive — include it when present so consumers
         // (swarm-intelligence ORIENT, the swarm widget, downstream agents)
