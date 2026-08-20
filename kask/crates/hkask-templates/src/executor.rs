@@ -394,6 +394,70 @@ steps:
         )
     }
 
+    /// Compute results are auxiliary (convergence signals, validation lists),
+    /// not the skill's product — 49 of ~58 registry manifests end in
+    /// `…compute → loop`, and a compute step setting `last_result_step` made
+    /// every one return its bare convergence signal ("0") instead of the
+    /// last select step's report. This manifest isolates the rule: a lone
+    /// compute step whose result must NOT become the cascade's final output.
+    const COMPUTE_ONLY_MANIFEST: &str = r#"
+manifest:
+  id: compute-final-result-test
+  category: skill
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 3
+  min_iterations: 1
+  target_artifacts_field: "test_verdict"
+  on_not_reached: proceed
+steps:
+  - ordinal: 1
+    action: compute
+    compute_ref: lisp.eval
+    description: emit a constant convergence signal
+    timeout_seconds: 10
+    input_mapping:
+      form: "42"
+  - ordinal: 2
+    action: loop
+    description: re-enter until the constant signal converges
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      convergence_signal: "{{ step_1_result }}"
+"#;
+
+    #[tokio::test]
+    async fn compute_result_is_not_the_final_result() {
+        let executor = make_executor(vec![]);
+        let manifest = crate::manifest_loader::load_manifest_from_yaml(COMPUTE_ONLY_MANIFEST)
+            .expect("parse compute-only manifest");
+        let outcome = executor
+            .execute_manifest_into(manifest, HashMap::new())
+            .await
+            .expect("compute-only cascade must run");
+        // The compute step's 42 must remain reachable as step_1_result (the
+        // loop's convergence_signal binding resolved — otherwise the cascade
+        // would not have exited cleanly)...
+        assert_eq!(
+            outcome
+                .context
+                .lookup("step_1_result")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            serde_json::json!(42),
+            "compute output stays reachable as step_N_result for downstream bindings"
+        );
+        // ...but it must NOT be the cascade's final result.
+        assert_eq!(
+            extract_final_step_result(&outcome),
+            serde_json::Value::Null,
+            "a compute step's auxiliary output must not become the skill's \
+             final result — before the StoredNamed fix this returned 42"
+        );
+    }
+
     #[tokio::test]
     async fn profile_gate_fires_when_terminal_check_says_enabled() {
         let executor = make_executor(vec![]).with_terminal_check(Arc::new(|| true));
