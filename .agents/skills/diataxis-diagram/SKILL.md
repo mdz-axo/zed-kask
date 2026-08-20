@@ -43,6 +43,8 @@ Generate Mermaid diagrams from code using Diataxis methodology. The skill runs a
 | `diataxis-diagram-write.j2` | KnowAct | Finalize the diagram into a markdown file. Wraps the Mermaid source in a code block, adds a plain-English description paragraph keyed to the target Diataxis quadrant's voice, includes cross-links to related documentation, and outputs to docs/diagrams/{type}-{target}.md. |
 | `present-diagram.j2` | RenderAct | RenderAct — surfaces the finalized diagram markdown (containing the fenced ```mermaid block) as the cascade's final output string. Without this step, extract_final_step_result returns the write step's JSON object {file_path, file_content, description_paragraph} and the model must discover and extract the file_content field. This render step flattens it to a raw markdown string so the model sees the mermaid block directly. Deterministic (no LLM call). |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - All templates are `visibility: Public` — no restricted spans generated

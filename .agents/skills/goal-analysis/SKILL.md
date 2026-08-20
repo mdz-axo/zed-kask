@@ -80,6 +80,8 @@ Goal specification and verification. Extracts structured goals from user intent,
 | `goal-activate.j2` | KnowAct | Activate a goal for tracking. Registers the goal with the goal management system and returns an activation confirmation. |
 | `goal-resolve.j2` | KnowAct | Resolve a goal as completed or blocked. Produces a final resolution record with the verdict, confidence, and reason. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - All templates declare `visibility: Public` at the template level; goal-level visibility defaults to `private` to preserve user sovereignty.

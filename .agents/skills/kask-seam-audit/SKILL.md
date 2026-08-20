@@ -76,6 +76,8 @@ Final: report
 | `remediation-repair.j2` | KnowAct | Repair Gate C defects (missing test, out-of-seam touch) or emit the hard-stop with the offending file and a proposed D-seam entry. |
 | `final-report.j2` | KnowAct | Consolidate the three tracks, defense-layer coverage, MCDA, applied remediations, hard-stop decision, and convergence score. Cite file:line. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - Hard-stop on any remediation requiring an upstream non-D-seam edit.

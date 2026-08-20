@@ -51,6 +51,8 @@ General-purpose recursive eliminative interrogation. Enforces "always take away,
 |----------|------|---------|
 | `essentialist-flow.j2` | KnowAct | Run the 3-gate eliminative interrogation loop in either autonomous (agent evaluates and recommends without pause) or advisory (agent recommends, human accepts/rejects/overrides per gate) mode. Classify every finding by constraint-force (Prohibition → required, Guideline → suggested), escalate to human on retry exhaustion (3 max), abort on zero-delta completion. Delegates reasoning to deep-module (G1, G2) and coding-guidelines (G3) templates. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - Visibility: Public — this skill's templates are shared across agents.

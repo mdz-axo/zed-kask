@@ -68,7 +68,7 @@ Feedback: the re-invoke instruction (re-invoke swarm-intelligence with delegate_
 ```
 
 One-shot directive producer — the Curator/human executes the directive; this
-skill does not execute delegations itself (no `action: execute` step). The
+skill does not execute delegations itself (no direct tool execution). The
 shape emerges from PKO's specification/execution separation + the Good
 Regulator's "model the system you control."
 
@@ -107,7 +107,7 @@ fidelity was raised in the 2026-08-03 structural fixes (full analysis in the
   regulation is downstream in the planner.
 - **Loop A closure — now structural (Gap 4 fix, 2026-08-18).** The
   `swarm-intelligence` manifest's default `steering_mode` is now `steering`,
-  and a post-Act execute step (step 8) calls `swarm_execute_plan_local`
+  and a post-Act step (step 8) calls `swarm_execute_plan_local`
   deterministically and feeds `delegate_results` into the next LOOP
   iteration. This skill's directive is now the human-inspectable representation
   of what the manifest does structurally — the operator can still use it to
@@ -136,3 +136,4 @@ This SKILL.md body is the authoritative methodology. Jinja2 templates in the reg
 |----------|------|---------|
 | `swarm-steering-direct.j2` | KnowAct | Take the swarm-intelligence plan (emitted_calls) + the swarm state + the credit budget, produce a structured steering directive: pre-flight checks (agents exist via swarm_list_local_agents; NO ledger-funding check — local delegation is never gated on funds), the ordered swarm_delegate_local execution sequence (agent_name, task, credits_authorized per delegate call), the delegate_results collection shape (LocalDelegateResult array), and the re-invoke instruction (re-invoke swarm-intelligence with delegate_results + steering_mode: steering). The Curator/human executes the directive. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.

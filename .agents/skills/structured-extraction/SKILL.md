@@ -55,6 +55,8 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 | `identify-entities.j2` | KnowAct | Identify entities in unstructured text against a target schema with extraction hints. Tracks unmapped text and entity count. |
 | `map-to-schema.j2` | KnowAct | Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports field-level coverage and unresolved fields. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - `extract-relations.j2`: Public.

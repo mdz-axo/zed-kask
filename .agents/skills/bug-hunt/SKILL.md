@@ -106,6 +106,8 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 | `bug-hunt-report.j2` | KnowAct | Compile charter, oracle, and taxonomy results into a structured JSON bug report. Consolidates findings, computes summary statistics, and produces the final expedition report. v0.31.0: emits lessons_learned and pattern_signatures fields that the next expedition's charter consumes to close the feedback loop. |
 | `bug-hunt-expedition.j2` | KnowAct | Legacy monolithic expedition template (v0.30.0). Retained for backward compatibility. Prefer the decomposed pipeline: charter → probe → oracle → taxonomize → report → convergence-check. v0.31.0: divergence from the decomposed pipeline is now documented in the template header — missing crate_model, prior_expedition consumption, dynamic pattern expansion, missing-tests detection, algedonic escalation, reproducibility axis, citation enforcement, lessons_learned/pattern_signatures outputs, and composite convergence metric. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - `bug-hunt-charter.j2`: Public. Beizer category selection must be justified against the `crate_model`, not generic prevalence. When `prior_expedition` is present, the charter MUST consume it — silent ignoring is a feedback-loop violation.

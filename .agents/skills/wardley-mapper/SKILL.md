@@ -77,6 +77,8 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 | `synthesize-recommendations.j2` | KnowAct | Synthesize actionable strategic recommendations (commoditize, invest, divest, ecosystem, alignment) from the movement analysis and map. Prioritized by impact, specific, traceable to components. |
 | `present-map.j2` | RenderAct | RenderAct — surfaces the quadrant chart (from map-value-chain) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block. This is the cascade's final user-facing output: without it, the diagram stays buried in an intermediate step result and never reaches the chat stream. Deterministic (no LLM call). |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - `inventory-components.j2`: Public.

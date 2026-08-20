@@ -60,6 +60,8 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 | `present-briefing.j2` | WordAct | Render the structured briefing as a conversational summary with markdown tables: system health overview, algedonic alert table, escalation backlog table, per-skill performance table, grounding health table. Closes with a prompt for the operator to ask follow-up questions in the regular conversation. |
 | `recommend-actions.j2` | KnowAct | Propose refinement actions for operator approval. For each skill with a "watch" or "intervene" classification, propose one of: curator_directive, skill-maintenance, validate_golden_outputs, direct_edit, or no_action. Additionally proposes grounding-specific actions: register a contract for agent types with delegations but no contract, review recent violations, or investigate narrative leaks. Recommendations, not autonomous actions. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - All templates run at `visibility: Public`.

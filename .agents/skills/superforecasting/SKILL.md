@@ -168,6 +168,8 @@ preserving the forecast probability (alignment invariant).
 | `forecast-quality-gate.j2` | KnowAct | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
 | `forecast-quality-gate.j2` | KnowAct | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Receives calibration and record outputs and produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - `stage_0_triage.j2`: Public.

@@ -62,6 +62,8 @@ The shape is idiosyncratic to GSR's domain — the Inventory phase (enumerate on
 | `gsr-prioritize.j2` | KnowAct | Compile detected gradients and their reason hypotheses into a structured, prioritized ranking. Prioritizes by reason class (broken allosteric coupling > metastable trap > MNAR > MAR > MCAR), then fractal recurrence, then magnitude, then populated-side criticality. Emits lessons_learned and pattern_signatures for the next iteration's prior. |
 | `gsr-select-seeds.j2` | KnowAct | For each high-priority recombination site, select the seed concept as the most central concept in the source ontology — the concept with the highest degree in the ontology's concept graph (most sub- and super-class relations). Central concepts have the richest structure to mutate; peripheral concepts produce trivial mutants. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.

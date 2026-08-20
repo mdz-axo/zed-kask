@@ -100,6 +100,8 @@ The skill is steered by passing keys in the `context` map of the `skill` tool in
 | `code-review-report.j2` | KnowAct | Produce a verdict driven by Blocker presence (not nit count): Approve / Request changes / Comment. Group findings by severity, lead with what matters, attach a NAMED structural remedy to every architectural/structural finding, rank the 3 highest-leverage top fixes, and emit coverage honesty (checked / not_checked / residual_risk — never a bare "LGTM"). Emits lessons_learned and next_review_focus for loop closure. |
 | `code-review-implement.j2` | KnowAct | Act phase (Fagan rework). SKIPPED when fix_mode == 'none' (the default) via step.condition — the review is review-first; setting fix_mode to a non-`none` value IS the user's consent to modify code. For each finding at/above the requested tier with a concrete remedy, produce ONE surgical edit (file, location, exact verbatim old_text read from the actual file, new_text). Reuses the report's structural remedies. Honors project conventions and .rules. Never fabricates old_text — skips findings it cannot ground. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - All templates are `KnowAct`, `Public`

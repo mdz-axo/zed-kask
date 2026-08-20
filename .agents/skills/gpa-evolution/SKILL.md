@@ -41,6 +41,8 @@ GEPA (Genetic-Pareto) evolutionary optimization over text artifacts. The skill s
 | `gpa-test-variants.j2` | KnowAct | Step 4 — Execute each mutated artifact against the eval set and collect per-objective scores (mean, min, max) plus cost (rollouts, rJoules, latency). |
 | `gpa-frontier-update.j2` | KnowAct | Step 5 — Update Pareto frontier. Merge current frontier with newly tested variants, keep non-dominated members, prune by crowding distance if frontier exceeds size limit. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - All templates have `visibility: Public`

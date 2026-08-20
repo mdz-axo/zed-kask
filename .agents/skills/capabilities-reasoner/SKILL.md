@@ -108,7 +108,7 @@ principles discovered through the co-evolution of skills and MCP tools
   `compute`, use `select` only for LLM judgment.
 - **Persistence-grounded learning** (floor): read prior outputs from MCP
   persistence before the cascade starts.
-- **Failure surfacing** (floor): every `execute` step has `on_failure: report`.
+- **Failure surfacing** (floor): every direct MCP tool call has on failure, report.
 - **Lisp scaffold** (maturity gate): the `lisp_eval` tool checks structural invariants
   after LLM-generated structured output.
 - **Co-evolution loop** (maturity gate): on failure, report signals flow to
@@ -217,6 +217,8 @@ given query, because they can disagree:
 | `capability-reason.j2` | KnowAct | Determine interventions under the object-capability attenuation rule: authority may only narrow — never widen — without re-authorization. For each evaluation result: FLOOR VIOLATION → expand or redesign (the system is deprived). CEILING VIOLATION → apply the Akselrod three-part warrant test (other interventions insufficient + harm high + targeted intervention exists) before restricting. MATURITY VIOLATION → block until prerequisites met. WIDENING → requires explicit re-authorization with a recorded warrant; cannot happen silently. Emits capability tokens (AIP model: append-only, signed, scope narrows on delegation). |
 | `capability-report.j2` | KnowAct | Compile per-capability verdicts into a structured report. Each capability entry includes: name, dimension, definition used, elicited level, floor, ceiling, maturity prerequisites, verdict (expand/restrict/block/ authorize/maintain), warrant (if restricting), token (if granting), and confidence. Emits capability_lessons and verdict_signatures for the next iteration's registry (feedback loop closure). |
 | `capability-ontology.yaml` | RenderAct | Reference: three limit types (floor, ceiling, maturity gate) drawn from the capability approach (Nussbaum, object-capability security, CMMI), and five capability definitions drawn from ML capability evaluation (task-performance, latent-variable, hierarchical-structural, emergence-threshold, elicitation). The limit types are the substrate (WHY capability reasoning has limits); the definitions are the surface (HOW capability is measured). Each definition can disagree with the others — the reasoner must declare which it is using per query. |
+
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
 
 ## Constraints
 

@@ -72,6 +72,8 @@ Pragmatic and principled logo design using LLM-assisted generation. Synthesizes 
 | `../media/logo-iterative-refine.yaml` | FlowDef | Peters-inspired iterative logo pipeline: generate N candidates, score each against 7 weighted critique dimensions (5 Bokhua gates + brand-fit + distinctiveness), select best, refine through critique cycles. Final output is background-removed for transparent PNG deliverables. |
 | `../media/logo-presentation.yaml` | FlowDef | Generate a complete logo deliverables package from a refined logo: transparent PNG, monochrome variant, icon-only mark, and context mockup showing the logo in real-world use. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - `../media/logo-discovery.yaml`: Public.

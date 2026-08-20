@@ -97,6 +97,8 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 | `task-breakdown-quality-gate.j2` | KnowAct | Independent quality gate — evaluates the plan WITHOUT self-assessment bias, distinct from the producer-coupled evaluate step. v0.35.0: scores seven criteria including target_condition_coverage. v0.31.0: receives context_summary for independent project-specific convention checking. Scores the seven criteria independently, flags compensation masking, and detects bias deltas vs the producer's self-assessment. |
 | `task-breakdown-write-plan.j2` | KnowAct | ACT phase — finalize the plan into tasks/plan.md (target condition, overview, architecture decisions, phased task list with checkpoints, risks, open questions) and tasks/todo.md (checklist-style task list), with a pko_anchors map giving each element a PKO process-axis identity. v0.35.0: includes the target condition at the top of plan.md so the plan is always anchored to what it's achieving. v0.31.0: includes Refinement History section in plan.md documenting what was refined across PDCA iterations, making the loop visible in the artifact. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - `task-breakdown-plan.j2`: Public. Read-only mode — no code proposals, file edits, or implementation sketches. Empty-spec validation is mandatory before producing any output. `prior_outcome` and `prior_operator_feedback` calibrate but do not override evidence-based decomposition principles.

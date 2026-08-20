@@ -61,6 +61,8 @@ The shape is idiosyncratic to CFR's domain — the Project phase (minimal-satisf
 | `cfr-compare.j2` | KnowAct | Compare the mutant's structural delta to the relabel control's structural delta. The mutant must have a larger structural delta than the relabel. If mutant Δ ≤ relabel Δ, the recast did not mutate — it only relabeled. Report falsification of M1 for this cell. |
 | `cfr-frontier.j2` | KnowAct | Update the Pareto frontier on (novelty, validity, cost-inverted). Novelty = 1 - (max subsumption by A); validity = fraction of B's axioms satisfied; cost-inverted = 1 - (rater/reasoner effort, normalized). Merge current frontier with newly tested variants, keep non-dominated members, prune by crowding distance if frontier exceeds size limit. |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Constraints
 
 - All flow templates are `KnowAct` type with `Public` visibility. Reference documents are `RenderAct`.

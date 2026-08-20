@@ -191,6 +191,8 @@ When the gather step takes Path B (research delegation), follow this protocol:
 | `sankey-adapt.j2` | KnowAct | Fill the user's extracted data into the matched canonical example's structure. Verify structure (node count, edge pattern, conservation mode), render Mermaid sankey-beta CSV with front-matter config, and wrap in a markdown document with description, conservation check, data sources with PROV-O provenance, and references. Single pass — no iteration loop. Self-corrects against the example structure if the draft deviates. |
 | `present-sankey.j2` | RenderAct | RenderAct — surfaces the finalized Sankey markdown (containing the fenced ```mermaid block) as the cascade's final output string. Flattens the adapt step's JSON object to a raw markdown string. Deterministic (no LLM call). |
 
+To render a template, call the `render_template` tool with the template ref (e.g., `essentialist/essentialist-flow`) and a context object with the required variables.
+
 ## Examples
 
 ### Example 1: Vague prompt, full interrogation
