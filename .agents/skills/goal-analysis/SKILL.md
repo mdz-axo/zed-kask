@@ -5,7 +5,7 @@ description: "Goal specification and verification. Extracts structured goals fro
 
 # Goal Analysis
 
-Goal specification and verification. Extracts structured goals from user intent, judges completion via semantic evaluation or command execution, and produces calibrated verdicts with confidence scoring. This skill provides the full PDCA lifecycle for goal management — from intention extraction through deterministic convergence and resolution routing.
+Goal specification and verification. Extracts structured goals from user intent, judges completion via semantic evaluation or command execution, and produces calibrated verdicts with confidence scoring. This skill provides the full PDCA lifecycle for goal management — from intention extraction through model-evaluated convergence and resolution routing.
 
 ## When to Use
 

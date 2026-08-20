@@ -113,7 +113,6 @@ pub struct StepNode {
     pub branching_field: Option<Arc<str>>,
     pub profile: Option<Arc<str>>,
     pub timeout_seconds: u32,
-    pub phase: Arc<str>,
     pub on_complete: ControlFlow,
     /// Optional string identifier (from `id:` field). `None` for skill
     /// manifests that use `ordinal` only.
@@ -196,7 +195,6 @@ impl StepGraph {
                 branching_field: step.branching_field.clone().map(Arc::from),
                 profile: step.profile.clone().map(Arc::from),
                 timeout_seconds: step.timeout_seconds,
-                phase: Arc::from(step.phase_str()),
                 on_complete,
                 step_id_name: step.id.clone().map(Arc::from),
                 command: step.command.clone().map(Arc::from),

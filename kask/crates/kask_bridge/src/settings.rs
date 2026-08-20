@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings};
 use settings_content::{
-    KaskCodegraphSettingsContent, KaskCompaniesSettingsContent, KaskCondenserSettingsContent,
+    KaskCompaniesSettingsContent, KaskCondenserSettingsContent,
     KaskCorpusSettingsContent, KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent,
     KaskDataServiceSettingsContent, KaskGeneralSettingsContent,
     KaskInferenceProvidersSettingsContent, KaskMcpSettingsContent, KaskMediaSettingsContent,
@@ -63,9 +63,6 @@ pub struct KaskSettings {
 
     /// Research MCP server configuration.
     pub research: KaskResearchSettings,
-
-    /// Codegraph MCP server configuration.
-    pub codegraph: KaskCodegraphSettings,
 
     /// Companies MCP server configuration.
     pub companies: KaskCompaniesSettings,
@@ -404,13 +401,6 @@ impl Default for KaskCondenserSettings {
             saliency_window: 5,
         }
     }
-}
-
-/// Codegraph MCP server configuration.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
-pub struct KaskCodegraphSettings {
-    /// Database path for the codegraph store. When empty, uses in-memory.
-    pub db_path: String,
 }
 
 /// Research MCP server configuration.
@@ -850,14 +840,6 @@ impl KaskSettings {
             );
         }
 
-        // ── Codegraph ──
-        if !self.codegraph.db_path.is_empty() {
-            env.insert(
-                "HKASK_CODEGRAPH_DB".to_string(),
-                self.codegraph.db_path.clone(),
-            );
-        }
-
         // ── Research ──
         if !self.research.rss_db.is_empty() {
             env.insert("HKASK_RSS_DB".to_string(), self.research.rss_db.clone());
@@ -1261,14 +1243,6 @@ impl From<KaskCondenserSettingsContent> for KaskCondenserSettings {
     }
 }
 
-impl From<KaskCodegraphSettingsContent> for KaskCodegraphSettings {
-    fn from(c: KaskCodegraphSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            db_path: c.db_path.unwrap_or(default.db_path),
-        }
-    }
-}
 
 impl From<KaskResearchSettingsContent> for KaskResearchSettings {
     fn from(c: KaskResearchSettingsContent) -> Self {

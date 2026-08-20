@@ -150,7 +150,7 @@ pub struct LocalAgentCapabilities {
     #[serde(default)]
     pub system_prompt: Option<String>,
     /// MCP tools this agent may call, as qualified `server/tool` names
-    /// (e.g. `"codegraph/codegraph_query"`). `swarm_delegate_local` declares
+    /// (e.g. `"research/web_search"`). `swarm_delegate_local` declares
     /// these to the model and dispatches tool calls through the zed IPC
     /// bridge's governed `McpRuntime` — the allowlist IS the enforcement:
     /// a call for a tool not listed here is never dispatched.
