@@ -109,10 +109,10 @@ principles discovered through the co-evolution of skills and MCP tools
 - **Persistence-grounded learning** (floor): read prior outputs from MCP
   persistence before the cascade starts.
 - **Failure surfacing** (floor): every `execute` step has `on_failure: report`.
-- **Lisp scaffold** (maturity gate): `lisp.eval` checks structural invariants
+- **Lisp scaffold** (maturity gate): the `lisp_eval` tool checks structural invariants
   after LLM-generated structured output.
-- **Co-evolution loop** (maturity gate): `on_failure: report` signals flow to
-  the Curator; new MCP capabilities are adopted via `execute` steps.
+- **Co-evolution loop** (maturity gate): on failure, report signals flow to
+  the Curator; new MCP capabilities are adopted via direct MCP tool calls.
 
 For a capabilities reasoner:
 - **Floor** = a skill without these patterns is deprived — it pays LLM costs
@@ -177,7 +177,7 @@ Register and Evaluate).
 
 ## Improvement Measure
 
-**Field**: `step_7_result` (lisp.eval compute at ordinal 7 — sums `expand` + `restrict` + `block` counts from `step_6_result.verdict_summary`). **Threshold**: 0.25. **Max iterations**: 3.
+**Field**: the result of step 7 (call `lisp_eval` at step 7 — sums `expand` + `restrict` + `block` counts from the result of step 6's `verdict_summary`). **Threshold**: 0.25. **Max iterations**: 3.
 
 Composite of two sub-metrics (weighted 0.5/0.5):
 1. **verdict_stability_metric** (0.0–1.0): fraction of capabilities whose verdict
@@ -224,7 +224,7 @@ given query, because they can disagree:
 - The capability definition must be declared before elicitation — different definitions produce different verdicts.
 - The attenuation rule is inviolable: authority may only narrow without re-authorization. Widening requires explicit re-authorization with a recorded warrant.
 - The metric-stability check is mandatory — a verdict that flips under a different metric is a mirage [mirage-2023], not a capability finding.
-- **Self-evaluation**: The capabilities-reasoner practices what it preaches — it has 1 execute step (curator_memory_recall at ordinal 0 for persistence-grounded learning), 2 compute steps (lisp.eval for structural manifest analysis and convergence check), 5 select steps (LLM judgment for registry, elicitation, evaluation, reasoning, reporting), and on_failure: report on all execute and compute steps. It is above floor on all five composition principles.
+- **Self-evaluation**: The capabilities-reasoner practices what it preaches — it has 1 direct MCP tool call (curator_memory_recall at step 0 for persistence-grounded learning), 2 `lisp_eval` calls (for structural manifest analysis and convergence check), 5 `render_template` calls (LLM judgment for registry, elicitation, evaluation, reasoning, reporting), and on failure, report on all direct MCP tool and `lisp_eval` calls. It is above floor on all five composition principles.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 ## References

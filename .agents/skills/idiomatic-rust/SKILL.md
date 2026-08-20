@@ -55,10 +55,10 @@ findings → re-assess → re-design → re-challenge.
 
 ## Improvement Measure
 
-**Field**: `step_4_result.convergence_metric`. **Threshold**: 0.25. **Max iterations**: 3.
+**Field**: the result of step 4's `convergence_metric`. **Threshold**: 0.25. **Max iterations**: 3.
 
 The critique score (0.0 = design survives all challenges, 1.0 = design is
-broken) is pushed into `kata_hypotenuse` for the Cauchy convergence check.
+broken) is pushed into `kata_hypotenuse` for the stability check.
 Oscillating scores (design improves on one dimension, challenge finds new
 issues on another) indicate the design is not converging and may need
 escalation.
@@ -112,6 +112,6 @@ escalation.
 - `idiomatic-rust-challenge.j2`: Public.
 - The loop targets step 1 (inquiry), not step 2 (design) — challenge findings must re-inform the assessment.
 - The convergence check (step 5) is mandatory — the loop must not run until iteration or timeout exhaustion.
-- Step 4 uses `lisp.eval` to compute a custom design-quality score (weighted combination of critique score, compiler-confirmed findings, and unresolved issues). This demonstrates inline deterministic compute — no Rust change needed for custom scoring logic. See the manifest for the Lisp form. The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple scoring expressions, prefix for complex nested logic.
+- Step 4 uses `lisp_eval` to compute a custom design-quality score (weighted combination of critique score, compiler-confirmed findings, and unresolved issues). This demonstrates inline deterministic compute — no Rust change needed for custom scoring logic. The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple scoring expressions, prefix for complex nested logic.
 - Compiler grounding is preferred but not required — when LSP tools are unavailable (pure FlowDef execution), the skill falls back to intrinsic reasoning with reduced confidence.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

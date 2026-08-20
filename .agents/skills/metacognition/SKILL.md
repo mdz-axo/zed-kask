@@ -58,7 +58,7 @@ prediction calibration.
 2. Compute process-space gap (PKO procedure progress).
 3. Compute hypotenuse: sqrt(object_gap² + process_gap²).
 4. Score the prediction via Brier score.
-5. Check convergence: gap < epsilon, or Cauchy (iterates stabilized), or Brier calibrated.
+5. Check convergence: gap < epsilon, or stability check (iterates stabilized), or Brier calibrated.
 
 ## Registry Templates
 

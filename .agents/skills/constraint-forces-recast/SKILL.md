@@ -35,7 +35,7 @@ Do:     Phase 4 — Control      → Generate relabel control (vocabulary swap, 
 Check:  Phase 5 — Three-criterion → Check (i) expressible in A's signature, (ii) absent from A, (iii) consistent under B
 Check:  Phase 6 — Compare      → Mutant Δ > relabel Δ (else M1 falsified for this cell)
 Act:    Phase 7 — Frontier     → Update Pareto frontier on (novelty, validity, cost-inverted)
-Check:  Phase 8 — Converge     → Pareto-frontier stability (lisp.eval: hypervolume_delta + 0.05 × new_non_dominated)
+Check:  Phase 8 — Converge     → Pareto-frontier stability (`lisp_eval`: hypervolume_delta + 0.05 × new_non_dominated)
 Act:    Phase 9 — Loop         → If not converged, re-enter at Phase 1 with next seed from frontier
 ```
 

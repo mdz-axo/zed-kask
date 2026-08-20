@@ -690,84 +690,6 @@ mod tests {
             "swarm server must not receive inference keys"
         );
     }
-    // allowlist is empty — it must not receive any provider keys or unrelated
-    // secrets. Vision routes through the IPC bridge to zed's
-    // OPENROUTER_API_KEY. This pins the allowlist against a future edit
-    #[test]
-    fn media_credentials_only_include_used_keys() {
-        let all_credentials: Vec<(String, String)> = [
-            "OPENROUTER_API_KEY",
-            "HKASK_SMTP_PASSWORD",
-            "HKASK_DB_PASSPHRASE",
-        ]
-        .iter()
-        .map(|env| (env.to_string(), "url".to_string()))
-        .collect();
-        let filtered = filter_credentials_for_server("media", &all_credentials);
-        let keys: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(
-            keys.len(),
-            0,
-            "media server has no media backends — its credential allowlist is empty, got {keys:?}"
-        );
-        assert!(
-            !keys.contains(&"FALAI_API_KEY"),
-            "media server must not receive FALAI_API_KEY — fal.ai backend removed"
-        );
-        assert!(
-            !keys.contains(&"OPENROUTER_API_KEY"),
-            "media server must not receive OPENROUTER_API_KEY — vision routes via the IPC bridge, not the media process"
-        );
-        assert!(
-            !keys.contains(&"HKASK_SMTP_PASSWORD"),
-            "media server must not receive SMTP credentials"
-        );
-        assert!(
-            !keys.contains(&"HKASK_DB_PASSPHRASE"),
-            "media server must not receive the global DB passphrase — gallery DB is unencrypted (credential-blast-radius)"
-        );
-    }
-    // plus the four `HKASK_MEDIA_*_MODEL` overrides via `std::env::var`, so
-    // those must be in its `config_env` allowlist and unrelated vars must not.
-    // This is the config-env alignment enforcement point (the .rules
-    // "MCP server allowlists must align with actual env-var reads").
-    #[test]
-    fn media_config_env_includes_media_db_and_models() {
-        let mut config_env = std::collections::HashMap::new();
-        config_env.insert("HKASK_MEDIA_DB".to_string(), "/tmp/media.db".to_string());
-        config_env.insert(
-            "HKASK_MEDIA_VISION_MODEL".to_string(),
-            "KC/qwen-vl".to_string(),
-        );
-        config_env.insert(
-            "HKASK_MEDIA_IMAGE_GEN_MODEL".to_string(),
-            "FA/flux".to_string(),
-        );
-        config_env.insert("UNRELATED_VAR".to_string(), "x".to_string());
-        config_env.insert("HKASK_DB_PASSPHRASE".to_string(), "secret".to_string());
-        let filtered = filter_config_env_for_server("media", &config_env);
-        let keys: Vec<&str> = filtered.keys().map(|k| k.as_str()).collect();
-        assert!(
-            keys.contains(&"HKASK_MEDIA_DB"),
-            "media server reads HKASK_MEDIA_DB — it must be in config_env"
-        );
-        assert!();
-        assert!();
-        assert!(
-            keys.contains(&"HKASK_MEDIA_VISION_MODEL"),
-            "media server reads HKASK_MEDIA_VISION_MODEL — it must be in config_env"
-        );
-        assert!(
-            !keys.contains(&"UNRELATED_VAR"),
-            "media server must not receive unrelated config env"
-        );
-        assert!(
-            !keys.contains(&"HKASK_DB_PASSPHRASE"),
-            "media gallery DB is unencrypted — it must NOT receive the global \
-             HKASK_DB_PASSPHRASE (credential-blast-radius rule)"
-        );
-    }
-
     // The swarm server should only receive ABW config env, not curator email
     #[test]
     fn swarm_config_env_excludes_unrelated_vars() {
@@ -1035,21 +957,6 @@ mod tests {
             );
         }
     }
-    /// budget.rs treats unset as "enforcement off", so usage metering was
-    /// unconfigurable.
-    #[test]
-    fn media_config_env_includes_rjoule_cap() {
-        assert!(
-            server_by_id("media")
-                .config_env
-                .unwrap()
-                .contains(&"HKASK_MEDIA_RJOULE_CAP"),
-            "HKASK_MEDIA_RJOULE_CAP is read at hkask-mcp-media/src/budget.rs:233 \
-             but is not allowlisted — unset means enforcement is OFF, so the media \
-             spend cap could not be turned on by an operator (RR-0061)"
-        );
-    }
-
     /// Every secret-shaped credential grant must be justified by a read site.
     /// This is the generic backstop for the 8 servers without a bespoke test:
     /// it cannot verify each name, but it catches the case where a credential

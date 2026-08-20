@@ -45,7 +45,7 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 3. Determine the historical frequency, sample size, and data quality for each reference class.
 4. Establish a starting probability anchor based on the base rates before considering case-specific details.
 
-> **MCP tool step (ordinal 4, execute — no template):** before this step, the cascade runs `market_match` (hkask-mcp-prediction-markets) to fetch prediction-market candidates for the forecasting question. The market-implied probabilities feed this step's `market_context` input as a deterministic anchor. An empty result is a valid signal that no relevant market exists, not an error.
+> **MCP tool step (step 4, call `market_match` directly — no template):** before this step, call `market_match` (hkask-mcp-prediction-markets) to fetch prediction-market candidates for the forecasting question. The market-implied probabilities feed this step's `market_context` input as a deterministic anchor. An empty result is a valid signal that no relevant market exists, not an error.
 
 ### stage_3_probability_estimate (delegated split)
 
@@ -53,7 +53,7 @@ The former single inside-view step is split into three FlowDef steps. Generation
 
 1. **Generate causal hypotheses (delegate to falsifiability).** Invoke `falsifiability/falsifiability-hypothesize` with `admitted_target` = the forecasting question, `domain` = "forecasting", `context` = the sub-questions and outside-view output. Produces 3–7 ranked candidate causal pathways with forced diversity (≥1 primary, ≥1 alternative, ≥1 contamination/false-positive, ≥1 opposing-outcome), each with a Platt-form prediction and a falsifier; discards vibes at generation.
 2. **Construct counterfactuals / necessary conditions (delegate to falsifiability).** Invoke `falsifiability/falsifiability-counterfactual` with the generated `hypotheses`, `admitted_target`, `domain`. For each hypothesis construct the minimal do(not X) counterfactual, hold confounders fixed, and derive the testable consequence that distinguishes the counterfactual world from the factual one. Flag irreducible causes.
-3. **Estimate probabilities and emit the tree (superforecasting).** Invoke `superforecasting/stage_3_probability_estimate` with the `hypotheses`, `counterfactuals`, `starting_probability` (the outside-view anchor), `outside_view_output`, and the conditional probability tree from stage 1 (`sub_question_tree`, `topological_order`, `outcome_node_id`). For each hypothesis weigh evidence pro/con against its counterfactual's testable consequence, assign an individual probability, and enforce internal consistency. For each tree node estimate a marginal (roots) or a conditional table (dependents) — the combinator (AND/OR/mixture) is encoded structurally in the conditional values, not as a separate field. The `combine_tree_probabilities` compute step (next ordinal) walks the tree via `hkask_forecast::marginalize` and produces `tree_combined_probability` — the exact inside-view posterior fed to stage 4 as the prior. The LLM no longer estimates `combined_probability`; the compute step owns that.
+3. **Estimate probabilities and emit the tree (superforecasting).** Invoke `superforecasting/stage_3_probability_estimate` with the `hypotheses`, `counterfactuals`, `starting_probability` (the outside-view anchor), `outside_view_output`, and the conditional probability tree from stage 1 (`sub_question_tree`, `topological_order`, `outcome_node_id`). For each hypothesis weigh evidence pro/con against its counterfactual's testable consequence, assign an individual probability, and enforce internal consistency. For each tree node estimate a marginal (roots) or a conditional table (dependents) — the combinator (AND/OR/mixture) is encoded structurally in the conditional values, not as a separate field. The `combine_tree_probabilities` call (next step) walks the tree via `hkask_forecast::marginalize` and produces `tree_combined_probability` — the exact inside-view posterior fed to stage 4 as the prior. The LLM no longer estimates `combined_probability`; the `lisp_eval` call owns that.
 
 ### stage_4_evidence_update
 
@@ -89,7 +89,7 @@ The former single inside-view step is split into three FlowDef steps. Generation
 4. Define what would count as resolution and what evidence will determine the outcome.
 5. Set an expiration date for when the forecast should be evaluated.
 
-> **MCP tool step (ordinal 16, execute — no template):** after this step, the cascade runs `scenario_score` (hkask-mcp-scenarios) to persist the forecast for later Brier scoring against actual outcomes.
+> **MCP tool step (step 16, call `scenario_score` directly — no template):** after this step, call `scenario_score` (hkask-mcp-scenarios) to persist the forecast for later Brier scoring against actual outcomes.
 
 ### forecast-quality-gate
 
@@ -99,7 +99,7 @@ The former single inside-view step is split into three FlowDef steps. Generation
 4. If gate_pass is false, each failing dimension must have a specific, actionable fix note.
 5. You are evaluating, not generating — do not rewrite or improve the forecast.
 
-> **MCP tool step (ordinal 18, execute — no template):** after this gate, the cascade runs `scenario_calibration` (hkask-mcp-scenarios) to fetch the calibration curve (Brier score, overconfidence per bin) from resolved forecasts, feeding the `apply_calibration_adjustment` compute step (ordinal 20) that closes the Brier feedback loop.
+> **MCP tool step (step 18, call `scenario_calibration` directly — no template):** after this gate, call `scenario_calibration` (hkask-mcp-scenarios) to fetch the calibration curve (Brier score, overconfidence per bin) from resolved forecasts, feeding the `apply_calibration_adjustment` call (step 20) that closes the Brier feedback loop.
 
 ## LEAP Integration
 

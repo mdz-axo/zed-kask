@@ -134,7 +134,7 @@ The cascade is example-anchored match → adapt → render (single pass, 2 LLM c
 
    After delegation, validate the extracted spec: are all weights sourced? Are all nodes present? If gaps remain, mark them as placeholders — do not re-delegate the whole task.
 
-3. **Conservation check (deterministic).** A `lisp.eval` compute step sums source-side and sink-side edge weights for mandatory conservation mode and compares for equality (within epsilon 0.01). Returns conservation_verified, source_total, sink_total, delta. Non-mandatory modes return verified: true (skipped). No LLM call.
+3. **Conservation check (deterministic).** Call `lisp_eval` to sum source-side and sink-side edge weights for mandatory conservation mode and compare for equality (within epsilon 0.01). Returns conservation_verified, source_total, sink_total, delta. Non-mandatory modes return verified: true (skipped). No LLM call.
 
 4. **Surface the diagram.** A final `render` step (`present-sankey.j2`, RenderAct — deterministic, no LLM call) wraps the adapt step's mermaid source in a titled, annotated markdown document with a title, description, the mermaid diagram, the conservation check, a data table annotating each flow with its weight and provenance, and references. This becomes the cascade's final output — the fenced ```mermaid block reaches the chat stream directly, not buried inside a JSON object field.
 

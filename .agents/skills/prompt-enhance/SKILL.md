@@ -67,7 +67,7 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 2. Decoupled from step 2 — do not defend the prompt you (didn't) write.
 3. Tier-scaled rounds: 1 (Recall+Mechanism) at medium; 3 escalating at high.
 4. Verdict: `pass`, `rewrite_needed`, or `fail`. No PDCA re-entry — the verdict is surfaced in the output change log.
-5. Gated by `condition: step_1_result.effort_tier != 'low'`.
+5. Gated by the result of step 1's `effort_tier != 'low'`.
 
 ### Step 4 — Output (enhance-output-render.j2, deterministic render)
 

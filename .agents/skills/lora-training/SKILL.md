@@ -132,8 +132,8 @@ This skill does not train, load, initialize, merge, or evaluate models.
    Axolotl remains the runtime default when harness is undetermined and
    adapter_purpose is instruction — no silent migration. For non-instruction
    purposes, axolotl is not a valid default.
-8. The select-method phase is the first turn of a PDCA loop mechanically closed
-   by the process manifest's loop step (ordinal 5), which routes
+8. The select-method phase is the first turn of a PDCA loop closed by
+   re-entering the cycle at step 5, which routes
    `convergence_metric`, `blockers`, and `gate_results_summary` back as
    `prior_iteration`. The operator may also revise inputs and re-invoke. The
    loop converges when the convergence metric is ≤ 0.10 and no hard blockers

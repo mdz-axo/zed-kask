@@ -25,7 +25,7 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 
 1. A single `mcp_batch` step queries five independent channels concurrently: `curator_algedonic_log` (default 24h lookback), `curator_escalations`, `curator_consult` (skill performance patterns, scoped to `focus_skill` when set), `curator_grounding_trend`, and `curator_grounding_coverage`.
 2. Algedonic alerts are pain/pleasure signals from the cybernetics loop — variety deficits, energy exhaustion, outcome plateaus. Grounding trend/coverage come from the verification ledger (clean_rate, coverage gaps).
-3. If any channel fails, the `on_failure: report` config reports the issue and the synthesis proceeds with whichever results are available; missing channels are noted as gaps.
+3. If any channel fails, on failure, report surfaces the issue and the synthesis proceeds with whichever results are available; missing channels are noted as gaps.
 
 ### ANALYZE — Synthesize briefing (step 2)
 
@@ -49,8 +49,8 @@ The skill implements the Prepare and Present phases of the six-phase gemba loop 
 
 ### CONVERGE — Deterministic check (step 5) and loop (step 6)
 
-1. A `lisp.eval` compute step extracts the `briefing_complete` flag from the synthesize step as the convergence signal (1 = complete, 0 = incomplete; absent = 0 — surfaces the failure rather than masking it).
-2. If not converged, the loop re-enters at step 2, bounded by `max_iterations: 3` — a gemba walk that cannot produce a briefing in 3 passes escalates.
+1. Call `lisp_eval` to extract the `briefing_complete` flag from the synthesize step as the convergence signal (1 = complete, 0 = incomplete; absent = 0 — surfaces the failure rather than masking it).
+2. If not converged, re-enter the cycle at step 2, bounded by a maximum of 3 iterations — a gemba walk that cannot produce a briefing in 3 passes escalates.
 
 ## Registry Templates
 
