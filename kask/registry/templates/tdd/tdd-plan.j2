@@ -121,7 +121,7 @@ Per Testing Discipline §5, each MDS category has a distinct primary seam, key i
 | Domain | P1 | `WebID`, `NuEvent` APIs | Unit: construction, parsing, validation | Lexicon round-trips | Testing internal hashmap structure |
 | Capability | P4 | `ToolPort`, per-request `tool_allowlist`, per-server credential allowlists | Integration: a tool outside the allowlist is refused before dispatch; a child's env excludes non-allowlisted secrets | Fail-closed on a missing/empty allowlist | Per-call token matching (`DelegationToken`/`CapabilitySpec` deleted 2026-08-12, RR-0056) |
 | Interface | P3 | CLI ↔ API ↔ MCP equivalence | Integration: cross-surface parity | `MCP ≡ CLI ≡ API` for every op | Testing only one surface |
-| Composition | P7 | `SqliteRegistry`, `TemplateResolver` | Integration: register→resolve→render | Cascade terminates within depth | Testing Jinja2 string manipulation |
+| Composition | P7 | `SqliteRegistry`, `TemplateResolver` | Integration: register→resolve→render | Process terminates within depth | Testing Jinja2 string manipulation |
 | Trust | P4 + P2 | `GovernedTool`, capability verification | Unit + integration: deterministic derivation | Boundaries never relaxed by default | Only testing happy path |
 | Observability | P9 | `RegulationRuntime`, `AlgedonicManager` | Unit: span emission; Integration: feedback loop | Alerts fire at threshold; homeostasis restores | Testing `tracing::info!` format |
 | Persistence | P8 | Repository traits | Integration: round-trip via `TestDb` | Bitemporal queries correct; encryption requires key | Testing SQL query strings |

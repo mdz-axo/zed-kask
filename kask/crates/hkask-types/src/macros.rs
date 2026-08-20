@@ -11,9 +11,9 @@
 /// # Example
 ///
 /// ```ignore
-/// enum_str_ops!(SkillPolarity, {
-///     Generative => ("Generative", "generative"),
-///     Evaluative => ("Evaluative", "evaluative"),
+/// enum_str_ops!(MyEnum, {
+///     Foo => ("Foo", "foo"),
+///     Bar => ("Bar", "bar"),
 /// });
 /// ```
 #[macro_export]
