@@ -26,7 +26,7 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 
 ### bug-hunt-charter
 
-> **Pre-compute (step 0, execute — no template):** before the charter, the cascade runs `codegraph_analysis` (MCP) for deterministic dead-code + complexity analysis. The `precomputed_analysis` feeds this step's Beizer category selection and probe planning. `on_failure: report` surfaces a broken codegraph channel without blocking the bug hunt.
+> **Pre-compute (step 0, call `codegraph_analysis` directly — no template):** before the charter, call `codegraph_analysis` (MCP) for deterministic dead-code + complexity analysis. The `precomputed_analysis` feeds this step's Beizer category selection and probe planning. On failure, report surfaces a broken codegraph channel without blocking the bug hunt.
 
 1. Build a lightweight `crate_model` first (Good Regulator compliance — Conant-Ashby): read `Cargo.toml`, `lib.rs`/`main.rs`, and module structure; describe architecture, data_flow, critical_paths, dependency_surface, and observed_characteristics (async, unsafe, trait_objects, concurrency, ffi, macros, proc_macros).
 2. If `prior_expedition` is present, consume it: distill `lessons_learned` into 1-3 probe-strategy adjustments, extend the probe pattern list with `pattern_signatures`, and (if present) make `next_charter_focus` the primary `target_area` unless already exhausted.

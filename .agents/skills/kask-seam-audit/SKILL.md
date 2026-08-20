@@ -28,13 +28,13 @@ This SKILL.md is a discovery-only catalog entry. Invoke the skill via the
 ## Ontological anchors
 
 - **PKO** — the engagement is a Procedure (spec/execution split); Steps map
-  to `pko:Step` with `pko:StepVerification` (the lisp.eval gates).
+  to `pko:Step` with `pko:StepVerification` (the `lisp_eval` tool gates).
 - **ESO** — each finding is an Event with pre/post situations; the
   divergence-surface membership check is the Situation boundary.
 - **OWASP LLM Top-10 (2025) / MITRE ATLAS v5.1 / NIST SSDF SP 800-218A** —
   the security-track ontology.
 - **de la Torre (2025, arXiv:2506.10021)** — symbolic-neural scaffolding via
-  stateless `lisp.eval` gates (count / completeness / exclusivity invariants).
+  stateless `lisp_eval` tool gates (count / completeness / exclusivity invariants).
 - **Ousterhout** — the deep-module deletion test (essentialist G1/G2/G3).
 
 ## PDCA shape
@@ -81,8 +81,8 @@ Final: report
 - Hard-stop on any remediation requiring an upstream non-D-seam edit.
 - No fabrication: every finding cites `file:line` or is `deferred` with a
   reason; every MCDA score traces to a finding.
-- `lisp.eval` gates are authoritative between phases; `condition:` branches
-  reference real `step_N_result` keys, not LLM self-assessment.
+- `lisp_eval` tool gates are authoritative between phases; condition branches
+  reference real step-N result keys, not LLM self-assessment.
 - `ledger.span_namespace` is `reg.skill.kask-seam-audit` (CI-enforced).
 
 ## Example invocation

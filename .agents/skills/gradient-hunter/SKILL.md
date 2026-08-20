@@ -48,7 +48,7 @@ Feedback loop closure: convergence emits `next_prior_focus` (consumed by next it
 
 ## Improvement Measure
 
-**Field**: `step_6_result.convergence_metric`. **Threshold**: 0.25. **Max iterations**: 3.
+**Field**: the result of step 6's `convergence_metric`. **Threshold**: 0.25. **Max iterations**: 3.
 
 | Score | Meaning |
 |-------|---------|

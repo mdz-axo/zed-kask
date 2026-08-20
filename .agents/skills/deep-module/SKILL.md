@@ -53,7 +53,7 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 3. Verify dependency direction: dependencies are acyclic and point toward stability.
 4. Assess caller benefit: callers genuinely benefit from the abstraction (not pass-through).
 5. Check that depth-improvement recommendations are specific and actionable.
-6. The convergence signal is the public-interface item count (`step_3_result.public_interface | length`). Track this signal across iterations and evaluate convergence: the iterates have stopped moving when the signal is stable across iterations (minimum 2 iterations). Re-enter at assess after each iteration; stop when the signal has stabilized. When the design step is skipped (DELETE/MERGE recommendation), `step_3_result` is undefined and the signal defaults to 0, which is stable — convergence is reached after the minimum iteration count.
+6. The convergence signal is the public-interface item count (the result of step 3's `public_interface | length`). Track this signal across iterations and evaluate convergence: the iterates have stopped moving when the signal is stable across iterations (minimum 2 iterations). Re-enter at assess after each iteration; stop when the signal has stabilized. When the design step is skipped (DELETE/MERGE recommendation), the result of step 3 is undefined and the signal defaults to 0, which is stable — convergence is reached after the minimum iteration count.
 
 ## Registry Templates
 

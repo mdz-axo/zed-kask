@@ -42,7 +42,7 @@ Brier. Evaluate convergence after each iteration.
 ### skill-router-match (Kata Step 5: Skill-Router Dispatch — cross-skill template_ref, conditional)
 
 1. Cross-skill reuse: dispatches `skill_match_queries` emitted by the engine to the `skill-router/skill-router-match` template (`kask/registry/templates/skill-router/skill-router-match.j2`).
-2. Conditional on `step_4_result.skill_match_queries` — if the engine emitted no queries, this step returns an empty result.
+2. Conditional on the result of step 4's `skill_match_queries` — if the engine emitted no queries, this step returns an empty result.
 3. Returns up to 3 ranked skill recommendations for follow-up delegations.
 
 ### Convergence (Steps 6-10: Check + Act — model-evaluated)
@@ -51,8 +51,8 @@ Brier. Evaluate convergence after each iteration.
 2. Step 7 (`kata.process_gap`): compute PKO process-space gap between current inquiry procedure state and target.
 3. Step 8 (`kata.hypotenuse`): compute total distance to target in combined space.
 4. Step 9 (`kata.prediction_vs_result`): Brier score for this cycle's prediction.
-5. Step 10 (`lisp.eval`): convergence signal — the hypotenuse value from step 8. Lower signal variance across iterations = convergence (Cauchy).
-6. Step 11 (`loop`): re-enter the Kata cycle at step 1 if not converged.
+5. Step 10 (call `lisp_eval`): convergence signal — the hypotenuse value from step 8. Lower signal variance across iterations = convergence (stability check).
+6. Step 11 (re-enter the cycle): re-enter the Kata cycle at step 1 if not converged.
 
 ## Registry Templates
 

@@ -20,9 +20,9 @@ Human-in-the-loop review and triage of the algedonic alert backlog. The algedoni
 
 ### SENSE — Query alert backlog (step 1)
 
-1. Step 1 is an `mcp_batch` execute step (no template): runs two concurrent curator MCP calls — `curator_escalations` (pending backlog) and `curator_algedonic_log` (24h lookback).
-2. `curator_status` is an agent tool, not an MCP tool — the skill cannot call it from `mcp_batch`. The alert-log cap status is carried by the `AlgedonicLogApproachingCap` signal that triggers this skill's invocation, so the skill doesn't re-query it.
-3. Results are keyed by `escalations` and `algedonic` in `step_1_result`.
+1. Step 1 calls two curator MCP tools directly (no template): `curator_escalations` (pending backlog) and `curator_algedonic_log` (24h lookback).
+2. `curator_status` is an agent tool, not an MCP tool — the skill cannot batch-call it. The alert-log cap status is carried by the `AlgedonicLogApproachingCap` signal that triggers this skill's invocation, so the skill doesn't re-query it.
+3. Results are keyed by `escalations` and `algedonic` in the result of step 1.
 
 ### TRIAGE — Synthesize triage briefing (step 2)
 
