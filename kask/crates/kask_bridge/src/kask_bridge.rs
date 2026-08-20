@@ -9,10 +9,9 @@
 //! Governing invariant: hKask crates NEVER depend on zed crates; zed-kask
 //! depends on hKask. This bridge is the only crate that depends on both sides.
 
-mod cascade_context;
 mod concurrency;
-mod context_injector;
 mod condenser_bridge;
+mod context_injector;
 
 mod identity;
 mod inference;
@@ -22,9 +21,7 @@ mod mcp_servers;
 mod memory;
 mod model_resolution;
 mod settings;
-mod skill_executor;
 
-pub use cascade_context::{AgentCascadeContextProviderAdapter, BridgeCascadeContextProvider};
 pub use concurrency::{global_concurrency_limiter, set_global_concurrency_limiter};
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
@@ -54,15 +51,11 @@ pub use memory::{
 };
 pub use model_resolution::resolve_model_names;
 pub use settings::{
-    KaskCodegraphSettings, KaskCollabSettings, KaskCompaniesSettings, KaskCondenserSettings,
-    KaskCorpusSettings, KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings,
-    KaskGeneralSettings, KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings,
-    KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
-    KaskScenariosSettings, KaskSettings, KaskSwarmSettings, KaskToolRouterSettings,
-    KaskTrainingSettings, SwarmModeConfig,
-};
-pub use skill_executor::{
-    BridgeManifestExecutor, ProfileResolver, SnapshotProfileResolver, seed_registry_to_disk,
+    KaskCollabSettings, KaskCompaniesSettings, KaskCondenserSettings, KaskCorpusSettings,
+    KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings, KaskGeneralSettings,
+    KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
+    KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings, KaskScenariosSettings,
+    KaskSettings, KaskSwarmSettings, KaskToolRouterSettings, KaskTrainingSettings, SwarmModeConfig,
 };
 
 mod metacognition_bridge;
@@ -73,7 +66,6 @@ pub use directive_bridge::BridgeCuratorDirectiveSink;
 
 mod algedonic_log_bridge;
 pub use algedonic_log_bridge::BridgeAlgedonicLogSink;
-
 
 /// The URL prefix for kask-namespaced credentials in the keychain.
 /// Used by the settings UI to read/write API keys via zed's CredentialsProvider.

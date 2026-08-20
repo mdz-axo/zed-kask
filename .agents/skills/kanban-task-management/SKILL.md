@@ -49,8 +49,7 @@ which phase to run:
 | `board_id` | operate | monitor-board → coordinate-agents → track-deliverables → move-tasks → verify-completion → escalate |
 
 Templates for non-active phases receive the triage phase and produce a
-skip result without meaningful work. This is necessary because the
-manifest executor runs all steps in ordinal order.
+skip result without meaningful work. This is necessary because skill execution processes all phases in ordinal order.
 
 ## MCP Tools
 

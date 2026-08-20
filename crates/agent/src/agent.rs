@@ -2762,53 +2762,6 @@ pub static CURATOR_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("
 
 /// Global hook for the hKask manifest executor (D1).
 ///
-/// Set by the zed-kask composition root at startup. When set, `SkillTool`
-/// uses it to run the hKask cascade instead of body injection. When `None`
-/// (upstream zed, or before the composition root runs), falls back to body injection.
-static MANIFEST_EXECUTOR: std::sync::OnceLock<Option<Arc<dyn SkillManifestExecutor>>> =
-    std::sync::OnceLock::new();
-
-/// Set the global hKask manifest executor (D1 composition root).
-///
-/// Called by zed-kask's app startup to wire the `kask_bridge::BridgeManifestExecutor`
-/// into the `SkillTool`. After this is called, skill activations run the hKask
-/// cascade (KnowAct/FlowDef/RenderAct + PDCA) instead of injecting the
-/// `SKILL.md` body.
-///
-/// `None` disables the manifest executor (reverts to body injection).
-pub fn set_manifest_executor(executor: Option<Arc<dyn SkillManifestExecutor>>) {
-    if let Err(prev) = MANIFEST_EXECUTOR.set(executor) {
-        log::warn!(
-            "set_manifest_executor: hook already set — second wiring attempt dropped. \
-             This usually means the deferred post-login task re-ran (re-login, multi-window, \
-             or retry). The previously-wired executor remains active. Remediation: if skills \
-             are not executing, restart the app to re-wire from a clean process."
-        );
-        let _ = prev; // explicit: the rejected payload is intentionally dropped
-    }
-}
-
-/// Get the global manifest executor, if set.
-pub(crate) fn manifest_executor() -> Option<&'static Arc<dyn SkillManifestExecutor>> {
-    MANIFEST_EXECUTOR.get().and_then(|opt| opt.as_ref())
-}
-
-/// Get a cloned handle to the global manifest executor, if set.
-///
-/// This is the invocation-time resolver used by `SkillTool` (via
-/// `with_manifest_executor_resolver`) to close the session-creation race:
-/// the closure reads the global each time the tool runs, so sessions
-/// created before the deferred post-login task wires the executor pick
-/// it up on later invocations. `Arc::clone` is cheap (atomic refcount),
-/// so calling this per skill invocation is not a measurable cost.
-///
-/// `pub` (not `pub(crate)`) so the composition root can back the IPC
-/// `SkillExecPort` (main.rs `AgentSkillExec`) with the same global — the
-/// zed-side skill-execution path for MCP servers runs through here too.
-pub fn manifest_executor_cloned() -> Option<Arc<dyn SkillManifestExecutor>> {
-    crate::manifest_executor().cloned()
-}
-
 // ── D6: Thread → memory ingestion hook ─────────────────────────────────────
 
 /// A completed thread turn offered to the memory system for ingestion.
@@ -7329,7 +7282,6 @@ mod internal_tests {
             LanguageModelRegistry::test(cx);
         });
     }
-
 }
 
 fn mcp_message_content_to_acp_content_block(

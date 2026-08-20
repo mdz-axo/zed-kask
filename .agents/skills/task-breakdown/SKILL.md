@@ -84,7 +84,7 @@ Decompose work into small, verifiable, vertically-sliced tasks with explicit acc
 ### loop (step 8)
 
 1. If convergence is not met (metric > 0.15) and refinement directives exist, loop back to DECOMPOSE (step 2) with directives as focused, task-addressable improvement targets.
-2. v0.31.0: refinement_directives are explicitly routed back to decompose (was implicit, depended on the manifest executor preserving cross-iteration step results — now mechanical and documented).
+2. v0.31.0: refinement_directives are explicitly routed back to decompose (was implicit, depended on cross-iteration step result preservation — now mechanical and documented).
 3. Carry `prior_metric` forward so you can detect a stable-but-unconverged plan. Each iteration narrows the gap.
 
 ## Registry Templates

@@ -9,7 +9,7 @@ description: "Create a new kask skill: SKILL.md process instructions + .j2 promp
 Create a new kask skill as a SKILL.md process document with companion .j2
 prompt templates. The agent reads the SKILL.md, follows its instructions,
 and calls tools (`lisp_eval`, MCP tools, `read_file`, `skill`, etc.) as
-directed. No manifest cascade — the agent IS the executor.
+directed. The agent IS the executor.
 
 ## The new skill model
 
@@ -52,12 +52,12 @@ execute.
 
 ### What's gone
 
-- **`kask/registry/manifests/<name>.yaml`** — no manifest cascade. The agent
+- **`kask/registry/manifests/<name>.yaml`** — removed. The agent
   follows SKILL.md instructions directly.
 - **`kask/registry/templates/<name>/manifest.yaml`** — no template manifest.
   Templates are just files in the skill directory.
 - **`action: execute`, `action: select`, `action: compute`, `action: loop`** —
-  no step machine. The agent calls tools when the SKILL.md tells it to.
+  removed. The agent calls tools when the SKILL.md tells it to.
 - **`compute_ref: lisp.eval`** — use the `lisp_eval` agent tool instead.
 - **`convergence_signal`, `cauchy_epsilon`, `max_iterations`** — the agent
   decides when to loop based on the SKILL.md's convergence criteria. Use

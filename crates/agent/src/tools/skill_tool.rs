@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use crate::{AgentTool, CascadeChatMessage, MemorySnippetRecord, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
 /// XML-escape a string so a malicious skill author cannot break out of the
 /// `<skill_content>` envelope (or the `<available_skills>` catalog) by
@@ -82,77 +82,6 @@ pub fn render_skill_envelope(skill: &Skill, body: &str) -> String {
     out
 }
 
-/// Typed error from skill manifest execution, distinguishing structural
-/// (compile-time) failures from execution (runtime) failures.
-///
-/// `CompileTime` failures indicate the manifest itself is broken — the
-/// caller should suggest `skill-maintenance`, not retry.
-///
-/// `Runtime` failures indicate the manifest is fine but execution failed
-/// — the caller may retry or surface the error to the user.
-#[derive(Debug, Clone)]
-pub enum SkillExecutionError {
-    /// Structural failure: manifest parse, input validation, schema
-    /// resolution. The manifest is broken — trigger skill-maintenance,
-    /// not retry.
-    CompileTime {
-        skill_name: String,
-        phase: &'static str,
-        message: String,
-    },
-    /// Execution failure: inference, tool invocation, gas exhaustion,
-    /// convergence not reached. The manifest is fine — retry or degrade.
-    Runtime {
-        skill_name: String,
-        phase: &'static str,
-        message: String,
-    },
-}
-
-impl SkillExecutionError {
-    /// The skill name involved in the failure.
-    pub fn skill_name(&self) -> &str {
-        match self {
-            Self::CompileTime { skill_name, .. } | Self::Runtime { skill_name, .. } => skill_name,
-        }
-    }
-
-    /// The failure phase (e.g. "load", "inference", "rjoule_exhausted").
-    pub fn phase(&self) -> &'static str {
-        match self {
-            Self::CompileTime { phase, .. } | Self::Runtime { phase, .. } => phase,
-        }
-    }
-
-    /// Whether this is a compile-time (structural) failure.
-    pub fn is_compile_time(&self) -> bool {
-        matches!(self, Self::CompileTime { .. })
-    }
-}
-
-impl std::fmt::Display for SkillExecutionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::CompileTime {
-                skill_name,
-                phase,
-                message,
-            } => {
-                write!(f, "[{phase}] {skill_name}: {message}")
-            }
-            Self::Runtime {
-                skill_name,
-                phase,
-                message,
-            } => {
-                write!(f, "[{phase}] {skill_name}: {message}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for SkillExecutionError {}
-
 /// Retrieves the content and resources of a skill by name. Use this when a user's request matches a skill's description.
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SkillToolInput {
@@ -161,23 +90,8 @@ pub struct SkillToolInput {
     /// The user's full request, passed to the skill as `task`. Include the
     /// target, question, scope, and constraints — the skill runs against this
     /// text, so a bare summary makes it run blind.
-    //
-    // Rationale (not model-facing): injected into the cascade context as `task`
-    // so templates can reference `{{ task }}`. Slash-command activation uses the
-    // trailing text after the command. Defaults to empty for callers that pass
-    // only `name`.
     #[serde(default)]
     pub task: String,
-    /// Optional key/value context for skills that branch on configuration — e.g.
-    /// `swarm-intelligence` needs `mode` ("abw" or "local") and `swarm_id`.
-    /// Omit unless a skill documents a field it requires.
-    //
-    // Rationale (not model-facing): without this channel the cascade renders an
-    // empty `{{ mode }}` and always takes the default branch. `task` is injected
-    // after this map, so a `context["task"]` entry cannot clobber the real
-    // request.
-    #[serde(default)]
-    pub context: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -211,75 +125,9 @@ impl From<SkillToolOutput> for LanguageModelToolResultContent {
 /// project after the thread was created.
 pub type SkillsResolver = Arc<dyn Fn(&App) -> Arc<Vec<Skill>> + Send + Sync>;
 
-// Cascade-memory settings fallbacks. These MUST stay in sync with
-// `KaskMemorySettings::default()` in `kask/crates/kask_bridge/src/settings.rs`.
-// The agent crate cannot depend on kask_bridge (dependency direction is
-// kask_bridge → agent), so the defaults are mirrored as named constants — the
-// same seam pattern as `SwarmConfig::default()` (settings.rs L640-650). The
-// `cascade_settings_fallbacks_match_agent_skill_tool_constants` test in
-// kask_bridge pins the sync by importing these constants.
-pub const DEFAULT_CASCADE_SHORT_TERM_TURNS: u32 = 6;
-pub const DEFAULT_CASCADE_TURN_TOKEN_CAP: u32 = 512;
-pub const DEFAULT_CASCADE_MEMORY_SALIENCY_FLOOR: f64 = 0.3;
-pub const DEFAULT_CASCADE_MEMORY_MAX_CHUNKS: u32 = 5;
-
 pub struct SkillTool {
     skills: SkillsResolver,
     fs: Arc<dyn Fs>,
-}
-
-/// Trait for executing hKask skill manifests (D1 seam).
-///
-/// Implemented by `kask_bridge` over the compiled-in `ManifestExecutor`.
-/// This keeps zed's `agent` crate from depending on hKask crates directly —
-/// the bridge provides the implementation.
-///
-/// `CascadeProgress` is a `Send + Sync` callback that updates the active tool
-/// call in the agent UI. Tools create it from `ToolCallEventStream::thinking_sender()`
-/// and pass it through so the user can see cascade progress in real time.
-pub type CascadeProgress = Arc<dyn Fn(&str) + Send + Sync>;
-
-#[async_trait::async_trait]
-pub trait SkillManifestExecutor: Send + Sync {
-    /// Execute an hKask skill manifest by name and return the result as text.
-    ///
-    /// The implementation resolves the skill name to its `manifest.yaml` in the
-    /// hKask registry (`kask/registry/manifests/<skill_name>.yaml`), loads it as a
-    /// `BundleManifest`, and runs the `ManifestExecutor` cascade (KnowAct/FlowDef/
-    /// RenderAct + PDCA + gas/rjoule + OCAP).
-    ///
-    /// `skill_name` is the hKask skill ID (e.g., "grill-me", "essentialist").
-    /// `context` is the initial context for the cascade (user input, etc.).
-    /// `progress` is an optional callback for real-time step-by-step feedback.
-    /// When `Some`, the executor calls it at each cascade step with a
-    /// human-readable description, which appears as the tool call title in the
-    /// agent UI. When `None` (slash commands without an event stream), no
-    /// progress is emitted.
-    ///
-    /// `title` is an optional callback for step-label updates (short labels
-    /// like "Step 2/5: scope"). When `Some`, the executor calls it at each
-    /// cascade step so the tool call header shows which step is running.
-    ///
-    /// Returns the cascade's final output as text, or a typed error
-    /// distinguishing compile-time (structural) from runtime (execution)
-    /// failures.
-    async fn execute_skill(
-        &self,
-        skill_name: &str,
-        context: std::collections::HashMap<String, serde_json::Value>,
-        prior_messages: Vec<CascadeChatMessage>,
-        memory_snippets: Vec<MemorySnippetRecord>,
-        progress: Option<CascadeProgress>,
-        title: Option<CascadeProgress>,
-    ) -> Result<String, SkillExecutionError>;
-
-    /// Check whether a skill has an hKask manifest in the registry.
-    ///
-    /// Returns `true` if `kask/registry/manifests/<skill_name>.yaml` exists.
-    /// Used by the `SkillTool` to decide whether to run the cascade or
-    /// return the no-manifest envelope (body injection is disabled in
-    /// zed-kask — the SKILL.md body is never injected).
-    fn has_manifest(&self, skill_name: &str) -> bool;
 }
 
 impl SkillTool {
@@ -364,9 +212,9 @@ impl AgentTool for SkillTool {
             };
 
             // zed-kask: Check that all declared dependencies are installed
-            // before running the cascade. This fails fast with a clear error
-            // instead of wasting tokens on a cascade that will fail
-            // mid-execution when a delegate template is missing.
+            // before running the skill. This fails fast with a clear error
+            // instead of wasting tokens on a skill that will fail
+            // mid-execution when a delegate is missing.
             if !skill.dependencies.is_empty() {
                 let installed_names: std::collections::HashSet<&str> =
                     snapshot.iter().map(|s| s.name.as_str()).collect();
@@ -380,8 +228,7 @@ impl AgentTool for SkillTool {
                     return Err(SkillToolOutput::Error {
                         error: format!(
                             "Skill '{}' depends on {} that are not installed: {}. \
-                             Install them via the Kask Extensions panel (View → Kask Extensions) \
-                             or create them locally before running this skill.",
+                             Install or create them locally before running this skill.",
                             input.name,
                             if missing.len() == 1 {
                                 "a skill"
