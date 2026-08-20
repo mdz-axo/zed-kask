@@ -11543,14 +11543,20 @@ impl ThreadView {
     fn render_skill_loading_issues(&self, cx: &mut Context<Self>) -> Vec<Callout> {
         let border_position = self.callout_border_position();
 
-        // zed-kask: Only `LoadFailed` issues are produced — description-length
-        // warnings and catalog-budget exceeded issues are disabled (see
-        // `validate_description_for_loading` and `select_catalog_skills`).
-        // The upstream `DescriptionTooLong` / `CatalogBudgetExceeded` arms
-        // are removed because those issue kinds are never produced.
-        let callouts = self
+        let description_warnings = self
             .skill_loading_issues
             .iter()
+            .filter(|issue| issue.kind == SkillLoadingIssueKind::DescriptionTooLong)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let long_description_warning =
+            self.render_skill_description_warnings(description_warnings, cx);
+
+        let other_warnings = self
+            .skill_loading_issues
+            .iter()
+            .filter(|issue| issue.kind != SkillLoadingIssueKind::DescriptionTooLong)
             .enumerate()
             .map(|(index, issue)| {
                 let abs_path = issue.path.clone();
@@ -11560,6 +11566,10 @@ impl ThreadView {
 
                 let title = match issue.kind {
                     SkillLoadingIssueKind::LoadFailed => "Skill Failed to Load",
+                    SkillLoadingIssueKind::DescriptionTooLong => unreachable!(),
+                    SkillLoadingIssueKind::CatalogBudgetExceeded => {
+                        "Skill Omitted from Model Catalog"
+                    }
                 };
 
                 Callout::new()
@@ -11600,8 +11610,9 @@ impl ThreadView {
             })
             .collect::<Vec<_>>();
 
-        callouts
+        long_description_warning
             .into_iter()
+            .chain(other_warnings)
             .map(|callout| callout.border_position(border_position))
             .collect()
     }

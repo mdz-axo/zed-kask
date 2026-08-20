@@ -39,9 +39,9 @@ use acp_thread::{
 use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
     AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, ProjectSkillGroup, SKILL_FILE_NAME, Skill,
-    SkillIndex, SkillLoadError, SkillScopeId, SkillSource, SkillSummary, global_skills_dir,
-    load_marketplace_skills, load_skills_from_directory, parse_skill_frontmatter,
-    project_skills_relative_path, seed_shipped_skills,
+    SkillIndex, SkillLoadError, SkillLoadWarning, SkillScopeId, SkillSource, SkillSummary,
+    global_skills_dir, load_marketplace_skills, load_skills_from_directory,
+    parse_skill_frontmatter, project_skills_relative_path, seed_shipped_skills,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -89,6 +89,8 @@ pub struct RulesLoadingError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SkillLoadingIssueKind {
     LoadFailed,
+    DescriptionTooLong,
+    CatalogBudgetExceeded,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -112,6 +114,19 @@ impl SkillLoadingIssueData {
             path: error.path,
             message: error.message,
             kind: SkillLoadingIssueKind::LoadFailed,
+        }
+    }
+
+    fn from_load_warning(skill: &Skill, warning: &SkillLoadWarning) -> Self {
+        let kind = match warning {
+            SkillLoadWarning::DescriptionTooLong { .. } => {
+                SkillLoadingIssueKind::DescriptionTooLong
+            }
+        };
+        Self {
+            path: skill.skill_file_path.clone(),
+            message: warning.message(),
+            kind,
         }
     }
 }
@@ -1341,11 +1356,14 @@ impl NativeAgent {
                 .into_iter()
                 .map(SkillLoadingIssueData::from_load_error)
                 .collect::<Vec<_>>();
-            // zed-kask: `load_warnings` is always empty — description-length
-            // warnings are disabled (see `validate_description_for_loading`).
-            // The upstream loop that mapped `SkillLoadWarning` →
-            // `SkillLoadingIssueData` is removed because the only warning
-            // variant (`DescriptionTooLong`) is never produced.
+            for skill in &skills {
+                skill_issues.extend(
+                    skill
+                        .load_warnings
+                        .iter()
+                        .map(|warning| SkillLoadingIssueData::from_load_warning(skill, warning)),
+                );
+            }
 
             // Apply project-overrides-global before catalog selection
             // so the model sees at most one entry per name. The full
@@ -4162,7 +4180,7 @@ fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadi
         errors.push(SkillLoadingIssueData {
             path: first.skill_file_path.clone(),
             message,
-            kind: SkillLoadingIssueKind::LoadFailed,
+            kind: SkillLoadingIssueKind::CatalogBudgetExceeded,
         });
     }
 
