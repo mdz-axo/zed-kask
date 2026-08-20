@@ -2357,7 +2357,7 @@ convergence:
     /// (`finish_reason: "length"`, partial JSON, no tool calls). Each `generate`
     /// call increments the counter so the retry test can verify the typed
     /// `TemplateError::ParseFailure` variant is retried by `dispatch_with_retry`
-    /// when `on_parse_failure: "retry"`.
+    /// when `on_error: "retry"`.
     struct TruncationCountingInference {
         calls: std::sync::atomic::AtomicUsize,
     }
@@ -2413,7 +2413,7 @@ convergence:
     }
 
     /// Verifies that the typed `TemplateError::ParseFailure` variant is retried
-    /// by `dispatch_with_retry` when `on_parse_failure: "retry"`. The
+    /// by `dispatch_with_retry` when `on_error: "retry"`. The
     /// `is_parse_failure` string matching was replaced with a typed variant
     /// match — this test pins that the typed match arm fires and retries.
     ///
@@ -2453,7 +2453,7 @@ steps:
 convergence:
   max_iterations: 1
 error_handling:
-  on_parse_failure: retry
+  on_error: retry
   max_retries: 2
   retry_backoff_seconds: 0
 "#;
@@ -2479,7 +2479,7 @@ error_handling:
         assert_eq!(
             inference.calls(),
             3,
-            "on_parse_failure: retry with max_retries: 2 must call generate 3 times (1 + 2 retries)"
+            "on_error: retry with max_retries: 2 must call generate 3 times (1 + 2 retries)"
         );
     }
 
@@ -2588,7 +2588,7 @@ steps:
 convergence:
   max_iterations: 1
 error_handling:
-  on_timeout: abort
+  on_error: abort
 "#;
         let manifest =
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");
@@ -2662,7 +2662,7 @@ steps:
 convergence:
   max_iterations: 1
 error_handling:
-  on_timeout: abort
+  on_error: abort
 "#;
         let manifest =
             crate::manifest_loader::load_manifest_from_yaml(manifest_yaml).expect("parse manifest");

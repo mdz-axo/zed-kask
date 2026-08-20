@@ -262,10 +262,9 @@ steps:
       convergence_signal: "{{ step_12_result }}"
 
 error_handling:
-  on_timeout: retry
+  on_error: retry
   max_retries: 1
   retry_backoff_seconds: 1
-  on_validation_failure: abort
 
 # Recommends: improv skill for self-directed coaching posture during Step 4.
 # - Plan (design experiment) → Yes But

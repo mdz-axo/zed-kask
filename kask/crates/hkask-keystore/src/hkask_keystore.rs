@@ -8,7 +8,7 @@
 //! `LanguageModelRegistry` — the kask keystore only handles sovereignty
 //! keys (db_passphrase).
 //!
-//! Inference keys (`DEEPINFRA_API_KEY`, `OPENROUTER_API_KEY`, etc.) are
+//! Inference keys (`OPENROUTER_API_KEY`, etc.) are
 //! **never** read from this keystore. They are injected into MCP server
 //! child processes as environment variables by the parent zed process
 //! (via `kask_bridge::build_mcp_server_env`, which reads from zed's

@@ -167,10 +167,9 @@ steps:
       convergence_signal: "{{ step_6_result }}"
 
 error_handling:
-  on_timeout: retry
+  on_error: retry
   max_retries: 1
   retry_backoff_seconds: 2
-  on_validation_failure: abort
 
 # Regulation: GEPA is a curation activity — the Curator optimizes artifacts.
 # Uses the canonical reg.curation namespace. GEPA does not introduce new

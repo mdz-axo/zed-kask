@@ -1926,9 +1926,8 @@ mod env_isolation_tests {
             ("PATH", "/usr/bin:/bin"),
             ("HOME", "/home/tester"),
             ("RUST_LOG", "hkask=debug"),
-            ("DEEPINFRA_API_KEY", "parent-deepinfra-secret"),
             ("OPENROUTER_API_KEY", "parent-openrouter-secret"),
-            ("ATLASCLOUD_API_KEY", "parent-atlascloud-secret"),
+            ("HKASK_FRED_API_KEY", "parent-fred-secret"),
             ("HKASK_SMTP_PASSWORD", "parent-smtp-secret"),
             ("HKASK_DB_PASSPHRASE", "parent-db-secret"),
         ]

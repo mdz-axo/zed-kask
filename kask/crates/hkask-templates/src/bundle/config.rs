@@ -298,84 +298,30 @@ impl Default for RjouleConfig {
 
 /// Error handling configuration. Loaded from manifest YAML.
 ///
-/// **Timeout retry is enforced** (`on_timeout`, `max_retries`,
-/// `retry_backoff_seconds`): `StepMachine::dispatch_with_retry` reads these
-/// to retry a `TemplateError::Timeout` up to `max_retries` times with
-/// `retry_backoff_seconds` between attempts. Only timeouts are retried —
-/// other errors (validation, not-found, render) propagate immediately.
-///
-/// **Validation policy is not yet enforced** (`on_validation_failure`): a step that fails `validate_inputs` aborts the
-/// cascade immediately regardless of these fields. They are retained for
-/// schema stability.
+/// `on_error` controls retry for all transient step failures (timeout,
+/// inference rate-limit, parse failure, database, MCP). Read by
+/// `StepMachine::dispatch_with_retry`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ErrorHandlingConfig {
-    /// Policy for step timeouts: `"retry"` (retry up to `max_retries` times) or
-    /// `"abort"` (propagate immediately). Read by
-    /// `StepMachine::dispatch_with_retry`. Only `TemplateError::Timeout` is
-    /// retried; other transient errors (`Inference`, `Mcp`) propagate without
-    /// consulting this field (they surface from the action handler directly).
-    pub on_timeout: String,
-    /// Policy for JSON parse failures from `select` steps: `"retry"` (retry
-    /// up to `max_retries` times with a correction preamble) or `"abort"`
-    /// (propagate immediately). Read by `StepMachine::dispatch_with_retry`.
-    /// Parse failures are `TemplateError::ParseFailure` errors (JSON parse,
-    /// empty output, or truncation). These are often transient — the
-    /// model may emit valid JSON on retry. Non-parse `Manifest` errors
-    /// (e.g. missing `mcp` reference) propagate immediately regardless of
-    /// this field.
-    #[serde(default = "default_on_parse_failure")]
-    pub on_parse_failure: String,
-    /// Maximum retry attempts when `on_timeout == "retry"` or
-    /// `on_parse_failure == "retry"`. Read by
-    /// `StepMachine::dispatch_with_retry`. 0 disables retry.
+    /// Policy for transient step failures: `"retry"` or `"abort"`.
+    /// Covers `TemplateError::Timeout`, `Inference`, `ParseFailure`,
+    /// `Database`, and `Mcp` — all errors where `is_transient()` returns true.
+    #[serde(alias = "on_timeout")]
+    pub on_error: String,
+    /// Maximum retry attempts when `on_error == "retry"`. 0 disables retry.
     pub max_retries: u32,
-    /// Seconds to wait between retry attempts. Read by
-    /// `StepMachine::dispatch_with_retry`.
+    /// Seconds to wait between retry attempts.
     pub retry_backoff_seconds: u32,
-    /// **Accepted but ignored.** No code reads this field. A `validate_inputs`
-    /// failure aborts the cascade immediately (the error returns from
-    /// `BridgeManifestExecutor::execute_skill`).
-    pub on_validation_failure: String,
-    /// **Accepted but ignored.** No code reads this field.
-    ///
-    /// It described a policy for `ToolPortError::CapabilityDenied`, which no
-    /// longer exists: the per-call capability gate it reacted to was removed
-    /// because every production mint site derived the token's `resource_id` from
-    /// the tool name it then invoked, so the check compared a value against
-    /// itself and could not deny. Even before that removal this field had no
-    /// reader — the "wired into the executor" claim it previously carried was
-    /// never true.
-    ///
-    /// Retained only so manifests already seeded to disk keep parsing under
-    /// `deny_unknown_fields`. It is stripped from the shipped manifests and must
-    /// not be reintroduced or given behavior; authority belongs at the allowlist
-    /// boundaries, not in per-skill config.
-    #[serde(default)]
-    pub on_capability_denied: String,
 }
 impl Default for ErrorHandlingConfig {
     fn default() -> Self {
         Self {
-            on_timeout: "retry".into(),
-            on_parse_failure: default_on_parse_failure(),
+            on_error: "retry".into(),
             max_retries: 2,
             retry_backoff_seconds: 1,
-            on_validation_failure: "abort".into(),
-            // Ignored (see the field docs); default to empty rather than
-            // implying an active "escalate" policy.
-            on_capability_denied: String::new(),
         }
     }
-}
-
-/// Default for `on_parse_failure`. Defaults to `"retry"` — parse failures
-/// are often transient (model emitted malformed JSON, empty output, or
-/// truncated output) and a retry with a correction preamble frequently
-/// succeeds. Manifests that want to abort on parse failure can set
-/// `on_parse_failure: abort`.
-fn default_on_parse_failure() -> String {
-    "retry".into()
 }
 
 /// Regulation monitoring configuration. Loaded from manifest YAML, spans handled by `McpRuntime::invoke` / `ToolGovernance` (in `hkask-mcp`) at runtime.

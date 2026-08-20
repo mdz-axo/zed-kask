@@ -284,7 +284,6 @@ steps:
       prev_frontier: "{{ step_7_result.frontier | default([]) }}"
 
 error_handling:
-  on_timeout: retry
+  on_error: retry
   max_retries: 1
   retry_backoff_seconds: 1
-  on_validation_failure: abort

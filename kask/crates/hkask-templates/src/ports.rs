@@ -86,7 +86,11 @@ impl TemplateError {
     pub fn is_transient(&self) -> bool {
         matches!(
             self,
-            Self::Database(_) | Self::Inference(_) | Self::Mcp(_) | Self::Timeout { .. }
+            Self::Database(_)
+                | Self::Inference(_)
+                | Self::Mcp(_)
+                | Self::Timeout { .. }
+                | Self::ParseFailure { .. }
         )
     }
 

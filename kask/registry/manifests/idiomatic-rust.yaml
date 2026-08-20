@@ -210,10 +210,9 @@ steps:
       convergence_signal: "{{ step_4_result }}"
 
 error_handling:
-  on_timeout: retry
+  on_error: retry
   max_retries: 1
   retry_backoff_seconds: 1
-  on_validation_failure: abort
 
 ledger:
   emit_spans: true

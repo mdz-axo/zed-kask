@@ -120,7 +120,6 @@ steps:
       convergence_signal: "{{ (step_1_result.summary.enforced | default(0)) + (step_1_result.summary.gaps | default(0)) }}"
 
 error_handling:
-  on_timeout: retry
+  on_error: retry
   max_retries: 1
   retry_backoff_seconds: 1
-  on_validation_failure: abort

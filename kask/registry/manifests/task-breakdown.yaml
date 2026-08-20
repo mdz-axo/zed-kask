@@ -328,12 +328,11 @@ steps:
       refinement_directives: "{{ step_4_result.refinement_directives | default([]) }}"
 
 error_handling:
-  # on_timeout: retry is now enforced — StepMachine::dispatch_with_retry
+  # on_error: retry is now enforced — StepMachine::dispatch_with_retry
   # retries a TemplateError::Timeout up to max_retries times.
-  on_timeout: retry
+  on_error: retry
   max_retries: 1
   retry_backoff_seconds: 1
-  on_validation_failure: abort
 
 ledger:
   emit_spans: true

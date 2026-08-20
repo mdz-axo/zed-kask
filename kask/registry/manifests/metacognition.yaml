@@ -238,7 +238,7 @@ steps:
     # prior comment claimed). 120s aligns with DEFAULT_STEP_TIMEOUT_SECONDS
     # — the 90s override was too tight for cold-cache cloud LLM calls
     # carrying full goal + current/target condition + prior prediction JSON.
-    # The on_timeout: retry with max_retries: 1 gives two attempts, but both
+    # The on_error: retry with max_retries: 1 gives two attempts, but both
     # can exceed 90s on a cold provider node.
     timeout_seconds: 120
     input_mapping:
@@ -380,12 +380,11 @@ steps:
       convergence_signal: "{{ step_9_result }}"
 
 error_handling:
-  # on_timeout: retry is now enforced — StepMachine::dispatch_with_retry
+  # on_error: retry is now enforced — StepMachine::dispatch_with_retry
   # retries a TemplateError::Timeout up to max_retries times with
   # retry_backoff_seconds between attempts. A thinking-mode model that
   # streams long reasoning chains may time out on a cold cache and succeed
   # on retry once the cache warms.
-  on_timeout: retry
+  on_error: retry
   max_retries: 1
   retry_backoff_seconds: 1
-  on_validation_failure: abort

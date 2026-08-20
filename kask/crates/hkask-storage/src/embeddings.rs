@@ -90,8 +90,8 @@ impl EmbeddingStore {
                 "EmbeddingStore::from_driver called with dim == 0 — \
                  clamping to 1024 to avoid a zero-dimensional store. \
                  Set kask_settings.corpus.embedding_dim (or HKASK_EMBEDDING_DIM) \
-                 to match the embedding model's output (default 1024 for \
-                 DeepInfra/Qwen/Qwen3-Embedding-0.6B)."
+                 to match the embedding model's output (default 1024 for
+                 ollama/nomic-embed-text)."
             );
             1024
         } else {

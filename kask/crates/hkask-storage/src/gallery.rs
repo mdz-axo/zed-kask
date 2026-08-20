@@ -145,7 +145,7 @@ pub struct GenerationRecord {
     pub op: String,
     pub prompt: Option<String>,
     pub model: Option<String>,
-    /// "fal.ai" | "deepinfra" | "atlascloud" | ... (historical label — the
+    /// Provider label ("fal.ai", "openrouter", ... — historical label — the
     /// asset stays viewable if the provider is later removed).
     pub provider: Option<String>,
     pub seed: Option<i64>,
