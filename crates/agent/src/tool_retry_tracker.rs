@@ -35,7 +35,7 @@ pub const HARD_CAP: u32 = 5;
 
 /// Per-tool hard-cap overrides. Tools listed here use the override value
 /// instead of `HARD_CAP`. The `skill` tool runs a multi-step PDCA cascade
-/// (manifest executor) that can legitimately fail several times in a row
+/// (skill cascade) that can legitimately fail several times in a row
 /// while the cascade iterates toward convergence — the default cap of 5
 /// is too tight for a single skill invocation that may retry internally.
 /// Raising the cap for `skill` only (not all tools) preserves the

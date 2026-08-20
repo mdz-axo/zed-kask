@@ -2765,7 +2765,7 @@ pub static ZED_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Zed 
 /// backed by hKask's regulation + metacognition loops.
 pub static CURATOR_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Curator"));
 
-/// Global hook for the hKask manifest executor (D1).
+/// Global hook for the hKask skill cascade (D1).
 ///
 // ── D6: Thread → memory ingestion hook ─────────────────────────────────────
 

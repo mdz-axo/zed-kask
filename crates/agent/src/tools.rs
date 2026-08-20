@@ -276,7 +276,7 @@ tools! {
     RenameTool,
     SkillTool,
     SpawnAgentTool,
-    TemplateRenderTool,
+    RenderTemplateTool,
     TerminalTool,
     WebSearchTool,
     WriteFileTool,

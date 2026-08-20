@@ -1219,7 +1219,7 @@
           "terminal": true,
           "search_web": true,
           "lisp_eval": true,
-          "template_render": true,
+          "render_template": true,
         },
       },
       "ask": {
@@ -1244,7 +1244,7 @@
           "spawn_agent": true,
           "search_web": true,
           "lisp_eval": true,
-          "template_render": true,
+          "render_template": true,
         },
       },
       "minimal": {
