@@ -1312,15 +1312,6 @@ impl CyberneticsLoop {
                 RegulationData::VarietyDeficitExceeded { deficit, .. } => {
                     (*deficit, SignalMetric::VarietyDeficit)
                 }
-                RegulationData::GroundingCleanRateDegraded { clean_rate, .. } => {
-                    (*clean_rate, SignalMetric::GroundingCleanRate)
-                }
-                RegulationData::GroundingCoverageDegraded { coverage_rate, .. } => {
-                    (*coverage_rate, SignalMetric::GroundingCoverageRate)
-                }
-                RegulationData::GroundingViolationDeltaIncreased { delta, .. } => {
-                    (*delta as f64, SignalMetric::GroundingViolationDelta)
-                }
                 _ => continue,
             };
 
@@ -1330,53 +1321,6 @@ impl CyberneticsLoop {
                     .map(|(_, s)| s.remaining as f64 / s.ceiling.max(1) as f64)
                     .fold(1.0, f64::min),
                 SignalMetric::VarietyDeficit => current_deficit,
-                SignalMetric::GroundingCleanRate
-                | SignalMetric::GroundingCoverageRate
-                | SignalMetric::GroundingViolationDelta => {
-                    // Re-sense grounding metrics from the verification ledger.
-                    // If the store is not wired or the query fails, we can't
-                    // measure impact — skip rather than fabricate a value
-                    // (absence ≠ 0, paper Rule 5.3).
-                    let Some(ref store) = self.verification_store else {
-                        continue;
-                    };
-                    let report = match store
-                        .grounding_trend(&hkask_verification::TrendScope::Global)
-                    {
-                        Ok(report) => report,
-                        Err(error) => {
-                            tracing::warn!(
-                                target: "reg.grounding",
-                                error = %error,
-                                "verify_impact: grounding trend query failed — skipping impact verification for grounding action (not 'no change')"
-                            );
-                            continue;
-                        }
-                    };
-                    match metric {
-                        SignalMetric::GroundingCleanRate => {
-                            // clean_rate is None when no grounded delegations
-                            // exist — absence ≠ 0. Skip rather than treat as 0.
-                            match report.clean_rate() {
-                                Some(rate) => rate,
-                                None => continue,
-                            }
-                        }
-                        SignalMetric::GroundingCoverageRate => match report.coverage_rate() {
-                            Some(rate) => rate,
-                            None => continue,
-                        },
-                        SignalMetric::GroundingViolationDelta => {
-                            // For violation delta, the "after" value is the
-                            // current delegations_with_nulled count. If it
-                            // decreased, the alert was effective (violations
-                            // went down). If it increased or stayed the same,
-                            // the alert was ineffective.
-                            report.delegations_with_nulled as f64
-                        }
-                        _ => continue,
-                    }
-                }
                 _ => continue,
             };
 
@@ -1388,10 +1332,6 @@ impl CyberneticsLoop {
             let improved = match metric {
                 SignalMetric::EnergyRemaining => delta > 0.0,
                 SignalMetric::VarietyDeficit => delta < 0.0,
-                SignalMetric::GroundingCleanRate | SignalMetric::GroundingCoverageRate => {
-                    delta > 0.0
-                }
-                SignalMetric::GroundingViolationDelta => delta < 0.0,
                 _ => delta.abs() > f64::EPSILON,
             };
 

@@ -81,35 +81,13 @@ fn is_skill_catalog_file(path: &Path) -> bool {
 const BLOCKED_READ_TELEMETRY_KEY: &str = "skill.catalog_read_blocked";
 
 fn refuse_skill_catalog_read(
-    resolved_path: &Path,
-    requested_path: &str,
+    _resolved_path: &Path,
+    _requested_path: &str,
 ) -> Result<(), LanguageModelToolResultContent> {
-    if !is_skill_catalog_file(resolved_path) {
-        return Ok(());
-    }
-    log::warn!(
-        "{}: refused read_file of SKILL.md at {} (requested '{}') — \
-         SKILL.md is discovery-only; the `skill` tool executes the manifest cascade.",
-        BLOCKED_READ_TELEMETRY_KEY,
-        resolved_path.display(),
-        requested_path
-    );
-    let skill_name = resolved_path
-        .parent()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("<name>");
-    Err(LanguageModelToolResultContent::from(format!(
-        "Refused: `{requested_path}` is a skill catalog entry, not a readable \
-         document. Its body is never injected — reading it would bypass the \
-         manifest cascade, the gas/OCAP membrane, and the convergence loop.\n\n\
-         To run this skill, call the `skill` tool with name `{skill_name}` and \
-         the user's full request as `task`. The tool executes the skill's \
-         manifest and returns its result; you do not need to read or interpret \
-         the methodology yourself.\n\n\
-         Resource files inside the skill directory (templates, references) are \
-         still readable if a cascade result directs you to one."
-    )))
+    // zed-kask D1 revert: SKILL.md body injection is restored. `read_file`
+    // may read SKILL.md files — the `skill` tool also reads them and injects
+    // the body into the conversation. No gate needed.
+    Ok(())
 }
 
 /// Resolves the optional `start_line` / `end_line` inputs from the tool schema

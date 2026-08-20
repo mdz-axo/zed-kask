@@ -504,7 +504,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
- "url",
  "util",
 ]
 
@@ -9143,6 +9142,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-condenser"
+version = "0.35.0"
+dependencies = [
+ "criterion",
+ "hkask-bridge-ontology",
+ "hkask-types",
+ "proptest",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "hkask-conversation-injector"
 version = "0.35.0"
 dependencies = [
@@ -10983,6 +10996,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "hkask-capability",
+ "hkask-condenser",
  "hkask-email",
  "hkask-inference",
  "hkask-keystore",

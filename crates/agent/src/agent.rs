@@ -939,49 +939,9 @@ impl NativeAgent {
             // after the thread is constructed are still visible to the
             // model — without this, the catalog and tool would drift out
             // of sync until the session was reopened.
-            // D1: The manifest executor is resolved at invocation time by
-            // reading the process-global `manifest_executor()`. This closes
-            // the session-creation race: if a session is created before the
-            // deferred post-login task wires the executor, the resolver
-            // returns `None` on early invocations and `Some(...)` once
-            // `set_manifest_executor` runs. Caching the executor at
-            // session-creation time would pin `None` for the session's
-            // entire lifetime. The slash-command path (`send_skill_invocation`)
-            // already reads the global at invocation time; this aligns the
-            // model-invocation path with it.
-            thread.add_tool(SkillTool::with_manifest_executor_resolver(
+            thread.add_tool(SkillTool::new(
                 skills_resolver_for_project(weak.clone(), project_id),
-                crate::manifest_executor_cloned,
-            ));
-            // Register the skill_bundle tool for multi-skill composition.
-            // Shares the same skills resolver and manifest executor resolver
-            // as SkillTool — the bundler is invoked when ≥3 peer-level skills
-            // are named, producing a governed BundleManifest before execution.
-            thread.add_tool(SkillBundleTool::with_manifest_executor_resolver(
-                skills_resolver_for_project(weak.clone(), project_id),
-                crate::manifest_executor_cloned,
-            ));
-            // Register the pipeline tool for executing pipeline manifests
-            // (category: pipeline). Shares the same manifest executor resolver
-            // as SkillTool — the bridge loads the manifest from a file path
-            // and runs the cascade with access to all MCP tools. The project
-            // entity is passed for path containment (same pattern as
-            // ReadFileTool — resolve_project_path enforces worktree boundaries).
-            thread.add_tool(PipelineTool::with_manifest_executor_resolver(
-                project.clone(),
-                crate::manifest_executor_cloned,
-            ));
-            // Register the record_skill_feedback tool for operator feedback
-            // on skill invocations. Shares the same manifest executor resolver
-            // — the bridge routes the feedback to RegulationLedger's
-            // SkillSpanStore as a reg.skill.<id>.operator_feedback span.
-            thread.add_tool(RecordSkillFeedbackTool::with_manifest_executor_resolver(
-                crate::manifest_executor_cloned,
-            ));
-            // Register the validate_golden_outputs tool for maintenance-time
-            // validation of skills with deterministic-ish output contracts.
-            thread.add_tool(ValidateGoldenOutputsTool::with_manifest_executor_resolver(
-                crate::manifest_executor_cloned,
+                self.fs.clone(),
             ));
         });
 
@@ -1302,16 +1262,11 @@ impl NativeAgent {
 
                     let mut worktree_results = Vec::new();
                     for skill_file in skill_files {
-                        // zed-kask: SKILL.md files are reference-only — they are
-                        // never injected into prompts (skills execute via YAML
-                        // manifests in the kask registry). The file size limit
-                        // and warning are disabled because large SKILL.md files
-                        // are harmless when body injection is off.
-                        //
-                        // (Original zed checks skill_file.size > MAX_SKILL_FILE_SIZE
-                        // and pushes a SkillLoadError. The size check is enforced
-                        // at the parse layer — `extract_skill_frontmatter` /
-                        // `load_skill_frontmatter` in `agent_skills` reject
+                        // SKILL.md files contain frontmatter (name, description)
+                        // plus the body (methodology instructions). The body is
+                        // injected on demand via the `skill` tool — the
+                        // frontmatter is parsed here for the system prompt
+                        // catalog.
                         // oversized files before they reach this loop — so this
                         // call site no longer repeats the check.)
 
@@ -2160,16 +2115,14 @@ impl NativeAgent {
         })
     }
 
-    /// Activate a skill in response to a `/skill-name` slash command. In
-    /// zed-kask, skills execute via YAML manifests in the kask registry —
-    /// the SKILL.md body is NOT injected. If a manifest executor is
-    /// configured, the slash command runs the manifest cascade. If not,
-    /// a minimal envelope is returned (no body injection).
-    ///
-    /// Any text the user typed after the command on the same line — plus
-    /// any additional content blocks they attached (file mentions, etc.) —
-    /// is appended to the same user message after the skill envelope, so
-    /// the model sees the skill result followed by the user's request.
+    /// Activate a skill in response to a `/skill-name` slash command. The
+    /// skill body is wrapped in the same `<skill_content>` envelope the
+    /// model-driven `skill` tool uses, so the conversation looks the same
+    /// regardless of who initiated the load. Any text the user typed after
+    /// the command on the same line — plus any additional content blocks they
+    /// attached (file mentions, etc.) — is appended to the same user
+    /// message after the skill envelope, so the model sees the skill
+    /// instructions followed by the user's request.
     fn send_skill_invocation(
         &self,
         client_user_message_id: ClientUserMessageId,
@@ -2182,6 +2135,7 @@ impl NativeAgent {
             return Task::ready(Err(anyhow!("Project state not found for session")));
         };
         let path_style = state.project.read(cx).path_style(cx);
+        let fs = self.fs.clone();
 
         cx.spawn(async move |this, cx| {
             let (acp_thread, thread) = this.update(cx, |this, _cx| {
@@ -2192,125 +2146,18 @@ impl NativeAgent {
                 anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
             })??;
 
-            // zed-kask: Run the manifest cascade if a manifest executor is
-            // configured. Do NOT read or inject the SKILL.md body — it is
-            // reference-only. If no manifest executor is configured, return
-            // a minimal envelope.
-            //
-            // The user's task (text from `original_content`) is injected into
-            // the cascade context as `task` so templates can reference
-            // `{{ task }}`. Without this, the cascade runs blind.
-            //
-            // The slash-command path has no `SkillToolInput.context` channel
-            // (unlike the model-invoked `skill` tool, where the model passes
-            // `context: {mode, swarm_id, ...}`). To let context-dependent
-            // skills (e.g. `swarm-intelligence` needs `mode` and `swarm_id`)
-            // receive context here, leading `key=value` pairs in the
-            // argument text are parsed into the context map. The slash-command
-            // prefix is stripped first so `task` is the argument, not
-            // "/swarm-intelligence compose my swarm".
-            //
-            // Example: `/swarm-intelligence mode=local swarm_id=ws-1 compose`
-            //   → context: {mode: "local", swarm_id: "ws-1"}
-            //   → task: "compose"
-            let user_task = original_content
-                .iter()
-            // Find the first text block — the user's typed request.
-                .find_map(|block| {
-                    if let acp::ContentBlock::Text(text) = block {
-                        Some(text.text.clone())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_default();
-            let stripped_task = strip_slash_command_prefix(&user_task);
-            let (slash_context, task_text) = parse_slash_command_context(&stripped_task);
-            let envelope = if let Some(executor) = crate::manifest_executor() {
-                let skill_name = skill.name.as_ref();
-                if executor.has_manifest(skill_name) {
-                    // Extract swarm_id before the context map is moved into
-                    // `context.extend`. Used by the cascade context provider
-                    // to determine whether to recall from the swarm store.
-                    let slash_swarm_id = slash_context
-                        .get("swarm_id")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
-
-                    let mut context = std::collections::HashMap::new();
-                    context.extend(slash_context);
-                    context.insert(
-                        "task".to_string(),
-                        serde_json::Value::String(task_text.clone()),
-                    );
-
-                    // Inject the thread's current model so the cascade's
-                    // inference calls route through it instead of the
-                    // InferencePort's startup-pinned default.
-                    let thread_model = cx.update(|cx| {
-                        thread.read(cx).model().map(|model| {
-                            format!(
-                                "{}/{}",
-                                model.provider_id().0,
-                                model.id().0
-                            )
-                        })
-                    });
-                    if let Some(model_id) = thread_model {
-                        context.insert(
-                            "thread_model".to_string(),
-                            serde_json::Value::String(model_id),
-                        );
-                    }
-
-                    // Gather short-term (thread) and long-term (memory)
-                    // context for the cascade — same as the model-invoked
-                    // `skill` tool path. The slash-command path has the
-                    // thread entity directly (from the session), so we
-                    // snapshot recent turns and gather memory here rather
-                    // than going through `ToolCallEventStream`.
-                    let (prior_messages, memory_snippets) =
-                        crate::tools::gather_cascade_context_from_thread(
-                            &thread,
-                            &task_text,
-                            slash_swarm_id,
-                            cx,
-                        )
-                        .await;
-
-                    match executor
-                        .execute_skill(
-                            skill_name,
-                            context,
-                            prior_messages,
-                            memory_snippets,
-                            None,
-                            None,
-                        )
-                        .await
-                    {
-                        Ok(result_text) => {
-                            crate::tools::render_skill_envelope(&skill, &result_text)
-                        }
-                        Err(e) => {
-                            crate::tools::render_skill_envelope(
-                                &skill,
-                                &crate::tools::manifest_execution_failed_body(skill_name, &e),
-                            )
-                        }
-                    }
-                } else {
-                    crate::tools::render_skill_envelope(
-                        &skill,
-                        "(No manifest configured for this skill. Use the skill description as guidance.)",
+            // Read the skill body on demand from disk. Bodies live on disk
+            // between materializations to keep memory cost O(total
+            // frontmatter) rather than O(total file size).
+            let body = agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to read skill body from {}",
+                        skill.skill_file_path.display()
                     )
-                }
-            } else {
-                crate::tools::render_skill_envelope(
-                    &skill,
-                    "(Skill manifest executor not configured. SKILL.md body injection is disabled in zed-kask.)",
-                )
-            };
+                })?;
+            let envelope = crate::tools::render_skill_envelope(&skill, &body);
             let envelope_block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
 
             let mut user_blocks = original_content;

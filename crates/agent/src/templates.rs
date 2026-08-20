@@ -502,24 +502,14 @@ mod tests {
         assert!(!rendered.contains("Rules title:"));
     }
 
-    // zed-kask: The Agent Skills section diverges from upstream. Upstream
-    // describes skills as markdown bodies the model retrieves and follows
-    // manually ("use the `skill` tool to retrieve the full instructions",
-    // "If the Skill references additional files, use `read_file`..."). In
-    // zed-kask, skills execute via YAML manifests driving a PDCA cascade of
-    // Jinja2 templates — the `skill` tool runs the cascade and returns its
-    // result; the SKILL.md body is discovery-only and must not be read.
-    // This test pins the divergent wording so the upstream text cannot
-    // silently regress (per the .rules "Tests must pin deliberate zed-kask
-    // deviations from upstream" trap).
+    // The Agent Skills section follows upstream Zed: skills are markdown
+    // bodies the model retrieves and follows. This test pins the upstream
+    // wording so the D1 manifest-cascade text cannot silently regress.
     #[test]
-    fn test_system_prompt_skills_section_describes_manifest_cascade() {
+    fn test_system_prompt_skills_section_describes_body_retrieval() {
         use agent_skills::SkillSummary;
         use prompt_store::ProjectContext;
 
-        // Construct a SkillSummary directly so the test doesn't break when
-        // `Skill` gains fields in unrelated work (e.g. the marketplace
-        // visibility flag). The template only consumes `SkillSummary`.
         let summary = SkillSummary {
             name: "skill-maintenance".to_string(),
             description: "Skill lifecycle management.".to_string(),
@@ -540,61 +530,33 @@ mod tests {
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
 
-        // The section must describe the manifest cascade, not body retrieval.
         assert!(
-            rendered.contains("PDCA (Plan-Do-Check-Act) cascade of Jinja2 templates"),
-            "skills section must describe the PDCA/Jinja2 manifest cascade"
-        );
-        assert!(
-            rendered.contains("gas/rjoule budgets"),
-            "skills section must mention gas/rjoule budgets"
-        );
-
-        // The tool executes the cascade and returns its result — it does
-        // not return instructions for the model to follow manually.
-        assert!(
-            rendered.contains("it executes the skill's manifest cascade in-process and returns the cascade's result"),
-            "skills section must state the tool executes the cascade, not retrieves instructions"
+            rendered.contains("use the `skill` tool to retrieve the full instructions"),
+            "skills section must describe body retrieval"
         );
         assert!(
             rendered.contains(
-                "does **not** return the skill's instructions for you to follow manually"
-            ),
-            "skills section must explicitly disclaim manual instruction following"
-        );
-
-        // The model must be told NOT to read_file the SKILL.md body. Asserted
-        // on the invariant (a prohibition naming `read_file` and `SKILL.md`)
-        // rather than one exact sentence, so the prose can be tightened without
-        // a false failure — while still failing if the prohibition disappears.
-        assert!(
-            rendered.contains("Never `read_file` the `SKILL.md`")
-                || rendered.contains("Do **not** `read_file` the `SKILL.md`"),
-            "skills section must forbid reading the SKILL.md body"
-        );
-        assert!(
-            rendered.contains("discovery-only catalog entry"),
-            "skills section must label SKILL.md as discovery-only"
-        );
-        // The prohibition is now backed by a runtime gate in `read_file`
-        // (`refuse_skill_catalog_read`). Saying so converts an unenforceable
-        // OUGHT into a statement of fact the model can rely on.
-        assert!(
-            rendered.contains("`read_file` refuses it"),
-            "skills section must state the refusal is enforced by the tool, not \
-             merely requested"
-        );
-
-        // The upstream phrasing that taught the bypass must be gone.
-        assert!(
-            !rendered.contains("use the `skill` tool to retrieve the full instructions"),
-            "upstream 'retrieve the full instructions' phrasing must be removed"
-        );
-        assert!(
-            !rendered.contains(
                 "If the Skill references additional files, use `read_file` to access them"
             ),
-            "upstream 'read_file additional files' instruction must be removed"
+            "skills section must instruct reading additional files"
+        );
+        assert!(
+            rendered.contains("PDCA loop: Plan-Do-Check-Act"),
+            "skills section must frame PDCA iteration for skills that describe iterative processes"
+        );
+
+        // The D1 manifest-cascade wording must be gone.
+        assert!(
+            !rendered.contains("PDCA (Plan-Do-Check-Act) cascade of Jinja2 templates"),
+            "D1 manifest-cascade phrasing must be removed"
+        );
+        assert!(
+            !rendered.contains("gas/rjoule budgets"),
+            "D1 gas/rjoule mention must be removed"
+        );
+        assert!(
+            !rendered.contains("discovery-only catalog entry"),
+            "D1 discovery-only label must be removed"
         );
 
         // The catalog itself is still rendered.

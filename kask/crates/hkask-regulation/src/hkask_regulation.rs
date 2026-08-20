@@ -43,7 +43,7 @@ pub use runtime::NoopEventSink;
 pub use runtime::RegulationLedger;
 pub use runtime::StoredSkillSpan;
 pub use sensor_provider::{
-    EnergyBudgetSensor, GroundingSensor, GroundingSensorMetric, Sensor, SensorBus, SensorRegistry,
+    EnergyBudgetSensor, Sensor, SensorBus, SensorRegistry,
     ToolReliabilitySensor, VarietySensor,
 };
 pub use set_points::{
