@@ -2718,6 +2718,95 @@ mod tests {
 
     // ── Narrator agent contract ──
 
+    // ── Creative agent contract ──
+
+    #[test]
+    fn creative_agent_contract_has_why_for_every_field() {
+        let contract = creative_agent_contract();
+        for (field, spec) in &contract.field_sources {
+            assert!(
+                spec.why.len() >= 40,
+                "field '{}' has a short why ({} chars): '{}'",
+                field,
+                spec.why.len(),
+                spec.why
+            );
+        }
+    }
+
+    #[test]
+    fn creative_agent_contract_content_and_summary_are_inferred() {
+        // Both `content` and `summary` are commissioned judgments. They must
+        // NOT be nulled even when no tools were called.
+        let contract = creative_agent_contract();
+        let output = json!({
+            "content": "A creative story about...",
+            "summary": "a story about creativity"
+        });
+        let (result, cleaned) = enforce_grounding(&contract, &output, &[], &output.to_string());
+        assert!(
+            !result.nulled_fields.contains(&"content".to_string()),
+            "content must NOT be nulled (commissioned judgment)"
+        );
+        assert!(
+            !result.nulled_fields.contains(&"summary".to_string()),
+            "summary must NOT be nulled (commissioned judgment)"
+        );
+        assert_eq!(
+            cleaned.get("content"),
+            Some(&json!("A creative story about..."))
+        );
+    }
+
+    // ── Meta agent contract ──
+
+    #[test]
+    fn meta_agent_contract_has_why_for_every_field() {
+        let contract = meta_agent_contract();
+        for (field, spec) in &contract.field_sources {
+            assert!(
+                spec.why.len() >= 40,
+                "field '{}' has a short why ({} chars): '{}'",
+                field,
+                spec.why.len(),
+                spec.why
+            );
+        }
+    }
+
+    #[test]
+    fn meta_agent_contract_fields_are_inferred() {
+        // `analysis`, `summary`, and `recommendations` are commissioned
+        // judgments. They must NOT be nulled even when no tools were called.
+        let contract = meta_agent_contract();
+        let output = json!({
+            "analysis": "the strategic situation requires...",
+            "summary": "meta-analysis complete",
+            "recommendations": [{"action": "delegate"}]
+        });
+        let (result, cleaned) = enforce_grounding(&contract, &output, &[], &output.to_string());
+        assert!(
+            !result.nulled_fields.contains(&"analysis".to_string()),
+            "analysis must NOT be nulled (commissioned judgment)"
+        );
+        assert!(
+            !result.nulled_fields.contains(&"summary".to_string()),
+            "summary must NOT be nulled (commissioned judgment)"
+        );
+        assert!(
+            !result
+                .nulled_fields
+                .contains(&"recommendations".to_string()),
+            "recommendations must NOT be nulled (commissioned judgment)"
+        );
+        assert_eq!(
+            cleaned.get("analysis"),
+            Some(&json!("the strategic situation requires..."))
+        );
+    }
+
+    // ── Narrator agent contract ──
+
     #[test]
     fn narrator_agent_contract_has_why_for_every_field() {
         let contract = narrator_agent_contract();

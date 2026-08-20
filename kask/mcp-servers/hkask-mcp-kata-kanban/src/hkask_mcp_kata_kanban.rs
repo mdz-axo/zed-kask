@@ -1083,21 +1083,11 @@ impl KanbanServer {
 
                     // Rung 3 (Card-declared grounding validation + enforcement):
                     // If the agent card declares an output_contract.grounding,
-                    // validate it. Every sourced entry must name a tool the
-                    // agent declares in mcp_tools. why is mandatory (≥40 chars).
-                    // Findings are logged at warn — they don't block the spawn,
-                    // but they surface contract defects.
-                    //
-                    // When the validation passes (no errors, only warnings
-                    // like a missing response_path), the card-declared
-                    // grounding is converted into a `GroundingContract` and
-                    // registered in the verification store. This makes the
-                    // card declaration enforceable — `enforce_and_stamp`
-                    // (below) looks up the contract by `agent_type` and
-                    // applies it. Without this, the card declaration is a
-                    // lint: it surfaces defects but doesn't prevent
-                    // fabrication. With this, a card that says "my `sources`
-                    // field comes from `zed/web_search`" is actually checked.
+                    // validate it and register it as an enforceable contract.
+                    // `register_if_valid` validates, converts, and registers in
+                    // one call — it logs nothing (the swarm local tools call it
+                    // without logging; this path logs findings at warn first for
+                    // the operator).
                     if let Some(ref oc) = agent.capabilities.output_contract {
                         let grounding = oc.get("grounding");
                         let findings = hkask_verification::card_contract::validate(
@@ -1110,33 +1100,26 @@ impl KanbanServer {
                                 target: "hkask.mcp.kata_kanban",
                                 task_id = %tid,
                                 agent_id = %agent.agent_id,
-                                findings = ?findings.iter().map(|f| f.message.as_str()).collect::Vec<_>(),
+                                findings = ?findings.iter().map(|f| f.message.as_str()).collect::<Vec<_>>(),
                                 "card-declared grounding contract has {} finding(s){}",
                                 findings.len(),
                                 if only_warnings { " (warnings only — contract still registered)" } else { " (errors — contract NOT registered)" },
                             );
                         }
-                        // Register the card-declared contract when there are
-                        // no error-level findings. Warnings (e.g. missing
-                        // response_path) don't prevent enforcement — the
-                        // loosest matching mode still catches fabricated
-                        // values, just with more false positives.
-                        let only_warnings = findings.iter().all(|f| f.is_warning());
-                        if findings.is_empty() || only_warnings {
-                            if let Some(contract) = hkask_verification::card_contract::from_card_grounding(
-                                grounding,
-                                &agent.agent_type,
-                            ) {
-                                self.verification_store.register_contract(contract);
-                                tracing::info!(
-                                    target: "hkask.mcp.kata_kanban",
-                                    task_id = %tid,
-                                    agent_id = %agent.agent_id,
-                                    agent_type = %agent.agent_type,
-                                    "card-declared grounding contract registered for agent_type '{}'",
-                                    agent.agent_type,
-                                );
-                            }
+                        if hkask_verification::card_contract::register_if_valid(
+                            &self.verification_store,
+                            grounding,
+                            &agent.capabilities.mcp_tools,
+                            &agent.agent_type,
+                        ) {
+                            tracing::info!(
+                                target: "hkask.mcp.kata_kanban",
+                                task_id = %tid,
+                                agent_id = %agent.agent_id,
+                                agent_type = %agent.agent_type,
+                                "card-declared grounding contract registered for agent_type '{}'",
+                                agent.agent_type,
+                            );
                         }
                     }
 

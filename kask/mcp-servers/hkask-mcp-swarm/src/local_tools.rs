@@ -85,6 +85,15 @@ impl SwarmServer {
             // contradiction". `None` = no accepts declared; `Some(false)` =
             // mismatch (logged at warn).
             let bind_matched = crate::local_runtime::check_bind(&agent, &req.task);
+            // Rung 3 (Card-declared grounding): if the agent card declares an
+            // output_contract.grounding, validate and register it before
+            // `enforce_and_stamp` so the contract is available for lookup.
+            hkask_verification::card_contract::register_if_valid(
+                &self.verification_store,
+                agent.capabilities.output_contract.as_ref().and_then(|oc| oc.get("grounding")),
+                &agent.capabilities.mcp_tools,
+                &agent.agent_type,
+            );
             // Execute via the local runtime.
             let ceiling = self.client.config().max_credits_per_dispatch;
             let mut result = runtime
@@ -212,6 +221,17 @@ impl SwarmServer {
                         ));
                         continue;
                     };
+                    // Register card-declared grounding before enforce_and_stamp.
+                    hkask_verification::card_contract::register_if_valid(
+                        &self.verification_store,
+                        agent
+                            .capabilities
+                            .output_contract
+                            .as_ref()
+                            .and_then(|oc| oc.get("grounding")),
+                        &agent.capabilities.mcp_tools,
+                        &agent.agent_type,
+                    );
                     match runtime
                         .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
                         .await
@@ -349,6 +369,17 @@ impl SwarmServer {
                         }));
                         break; // pipeline stops on agent-not-found
                     };
+                    // Register card-declared grounding before enforce_and_stamp.
+                    hkask_verification::card_contract::register_if_valid(
+                        &self.verification_store,
+                        agent
+                            .capabilities
+                            .output_contract
+                            .as_ref()
+                            .and_then(|oc| oc.get("grounding")),
+                        &agent.capabilities.mcp_tools,
+                        &agent.agent_type,
+                    );
                     match runtime
                         .delegate(&agent, &task, step.credits_authorized, ceiling)
                         .await
@@ -1238,8 +1269,13 @@ impl SwarmServer {
             // for composition guidance) and returns the LLM's JSON output as
             // text. The skill exec port routes through the zed IPC bridge to the
             // `BridgeManifestExecutor`, which loads the manifest + template from
-            // `{kask_data_dir}/skills/registry/` — edits to the on-disk template take
-            // effect without recompiling.
+            // `{kask_data_dir}/skills/registry/`. In dev mode (when
+            // `kask/registry/{manifests,templates}` exists relative to CWD), the
+            // executor reads the repo live — edits take effect without
+            // recompiling. In production mode, the compiled-in `include_str!`
+            // seed is written to the data dir at startup and core skills are
+            // overwritten on every seeding — on-disk edits to core skills are
+            // clobbered on restart; the repo is the source of truth.
             let runtime = self
                 .local_runtime
                 .get_or_init()
@@ -1439,6 +1475,17 @@ impl SwarmServer {
                         ));
                         continue;
                     };
+                    // Register card-declared grounding before enforce_and_stamp.
+                    hkask_verification::card_contract::register_if_valid(
+                        &self.verification_store,
+                        agent
+                            .capabilities
+                            .output_contract
+                            .as_ref()
+                            .and_then(|oc| oc.get("grounding")),
+                        &agent.capabilities.mcp_tools,
+                        &agent.agent_type,
+                    );
                     match runtime
                         .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
                         .await
