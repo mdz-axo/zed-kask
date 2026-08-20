@@ -81,9 +81,11 @@ impl SwarmServer {
                 ))
             })?;
             // Rung 4 (Binding): check the request against the agent's declared
-            // `accepts` labels. Recorded, not fatal — the paper's "absence ≠
-            // contradiction". `None` = no accepts declared; `Some(false)` =
-            // mismatch (logged at warn).
+            // `accepts` labels. `None` = no accepts declared or non-text label
+            // (absence ≠ contradiction, paper Rule 5.3). `Some(true)` = the
+            // agent declares `accepts: ["text"]` (universal accept). The
+            // classification heuristic was deleted — the typing layer at
+            // admission (`validate_typing`) is the gate.
             let bind_matched = crate::local_runtime::check_bind(&agent, &req.task);
             // Rung 3 (Card-declared grounding): if the agent card declares an
             // output_contract.grounding, validate and register it before

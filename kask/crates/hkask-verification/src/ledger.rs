@@ -1259,9 +1259,15 @@ mod tests {
             "enforce_narrative must not produce field-level provenance (no monotone cap): {:?}",
             result.provenance
         );
-        // Narrative leaks may be present (the prose contains claim patterns).
-        // The point is that leaks are not provenance — they are violations.
-        assert!(!result.nulled_fields.is_empty() || !result.narrative_leaks.is_empty());
+        // Narrative leaks must be present (the prose contains claim patterns
+        // like file paths and test verdicts). nulled_fields is always empty
+        // for enforce_narrative — scan_narrative_for_leaks populates only
+        // narrative_leaks, never nulled_fields.
+        assert!(
+            !result.narrative_leaks.is_empty(),
+            "narrative with claim patterns must produce leaks: {:?}",
+            result
+        );
     }
 
     // ── Monotone provenance (weakest-link) wiring tests ─────────────────

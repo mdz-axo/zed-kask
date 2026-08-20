@@ -113,9 +113,11 @@ pub struct ConvergenceTracker {
     improvement_ratio: f64,
     improvement_gate: String,
     baseline_quality: Option<f64>,
-    /// Self-grade quality history — used by the legacy stability gates.
-    /// Retained for manifests that haven't migrated to the Kata model.
     quality_history: Vec<f64>,
+    /// True when every signal reading has been non-finite — the loop step's
+    /// `convergence_signal` binding never resolved to a number. The machine
+    /// escalates instead of running to `max_iterations` with no signal.
+    signal_broken: bool,
 }
 
 impl ConvergenceTracker {
@@ -145,6 +147,7 @@ impl ConvergenceTracker {
             improvement_gate: config.improvement_gate.clone(),
             baseline_quality: None,
             quality_history: Vec::new(),
+            signal_broken: false,
         }
     }
 
@@ -229,6 +232,7 @@ impl ConvergenceTracker {
             // operator reading logs can distinguish "signal is 0" from "signal
             // binding is broken" (the .rules "startup-failure signal" trap).
             if !signal.is_finite() {
+                self.signal_broken = true;
                 tracing::warn!(
                     target: "hkask.templates.convergence",
                     field = "convergence_signal",
@@ -315,6 +319,13 @@ impl ConvergenceTracker {
 
         // Legacy self-grade model
         self.check_legacy_met(context)
+    }
+
+    /// True when every signal reading has been non-finite — the loop step's
+    /// `convergence_signal` binding never resolved to a number. The machine
+    /// escalates instead of running to `max_iterations` with no signal.
+    pub fn signal_is_broken(&self) -> bool {
+        self.signal_broken
     }
 
     /// Kata convergence check: gap, Cauchy, and/or calibration.

@@ -51,10 +51,34 @@ impl SwarmServer {
                     ))
                 })?;
                 let ceiling = self.client.config().max_credits_per_dispatch;
-                let result = runtime
+                let mut result = runtime
                     .delegate(&agent, &req.message, req.credits_authorized, ceiling)
                     .await
                     .map_err(map_local_swarm_error)?;
+                // Rung 3 (Grounding): enforce via the central verification
+                // ledger, same as `swarm_delegate_local`. A2A responses are
+                // typically free prose — grounding records an unenforceable
+                // record (contract exists but output isn't JSON), which is
+                // correct and visible in the trend.
+                hkask_verification::card_contract::register_if_valid(
+                    &self.verification_store,
+                    agent
+                        .capabilities
+                        .output_contract
+                        .as_ref()
+                        .and_then(|oc| oc.get("grounding")),
+                    &agent.capabilities.mcp_tools,
+                    &agent.agent_type,
+                );
+                let outcome = self.verification_store.enforce_and_stamp(
+                    "swarm_a2a_send",
+                    &req.agent_name,
+                    &agent.agent_type,
+                    &result.response,
+                    &result.tool_calls,
+                    &[],
+                );
+                result.apply_grounding(outcome, None);
                 let mut task = a2a::task_from_response(
                     &result.response,
                     req.context_id.clone(),
@@ -194,7 +218,28 @@ impl SwarmServer {
                         .delegate(&agent, &req.message, req.credits_authorized, ceiling)
                         .await
                     {
-                        Ok(result) => {
+                        Ok(mut result) => {
+                            // Rung 3 (Grounding): enforce via the central
+                            // verification ledger, same as `swarm_a2a_send`.
+                            hkask_verification::card_contract::register_if_valid(
+                                &self.verification_store,
+                                agent
+                                    .capabilities
+                                    .output_contract
+                                    .as_ref()
+                                    .and_then(|oc| oc.get("grounding")),
+                                &agent.capabilities.mcp_tools,
+                                &agent.agent_type,
+                            );
+                            let outcome = self.verification_store.enforce_and_stamp(
+                                "swarm_a2a_broadcast",
+                                member_id,
+                                &agent.agent_type,
+                                &result.response,
+                                &result.tool_calls,
+                                &[],
+                            );
+                            result.apply_grounding(outcome, None);
                             let task = a2a::task_from_response(
                                 &result.response,
                                 Some(context_id.clone()),
