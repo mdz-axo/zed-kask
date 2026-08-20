@@ -119,12 +119,11 @@ Only the *provably unreachable* form survives as Category 4.
   generality), `.rules:734-752` (Convention helpers with only test callers
   are dead code), `.rules:752-775` (Folded-service dead surface),
   `.rules:602-631` (Advertised invariants need enforcement points). **All
-  current instances are `kask/`-side** (e.g. `hkask-guard` deleted
-  `DIVERGENCE.md` L81; ocap/`OcapConfig`/`required_capabilities` removed
-  `.rules:642-665`; `AdapterPort`/`AdapterRouter` removed `.rules:594-600`).
-  **No existing *upstream* anchor — proposed.** Applying this to upstream is
-  unproven; it MUST be exercised as disable-behind-a-D-seam + test-pin, never
-  as file deletion.
+  current instances are `kask/`-side** (e.g. ocap/`OcapConfig`/
+  `required_capabilities` removed `.rules:642-665`; `AdapterPort`/
+  `AdapterRouter` removed `.rules:594-600`). **No existing *upstream* anchor
+  — proposed.** Applying this to upstream is unproven; it MUST be exercised
+  as disable-behind-a-D-seam + test-pin, never as file deletion.
 - **Scope boundary:** Does NOT authorize deleting upstream files — only
   disabling via a D-seam with a test pin. Does NOT authorize removing surface
   that is merely "rarely used" or "inelegant" — it must be *unreachable*.

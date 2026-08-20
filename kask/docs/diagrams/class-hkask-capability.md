@@ -83,12 +83,11 @@ classDiagram
 - The fail-closed branch on an *absent* call ceiling — the meter now auto-registers
   an unseeded agent at `DEFAULT_RUNAWAY_CALL_CEILING` and logs the wiring gap
   (RR-0057)
-- The FIDES taint lattice: `ToolTaint`, `can_flow_to`, `can_flow_to_matrix`, the
-  whole `src/tool_taint.rs` file, and the `ToolInfo.taint` field — deleted with the
-  `DefaultPolicy` gate that consumed them (RR-0053). The gate was inert:
-  `McpRuntime::get_tool_info` hardcoded `Pure` at the only `ToolInfo` construction
-  site, so `Source`→`Sink` could never fire. The orphaned `serde` dependency went
-  with it.
+- The FIDES taint lattice: the taint types, the taint file, and the
+  `ToolInfo.taint` field — deleted with the `DefaultPolicy` gate that consumed
+  them (RR-0053). The gate was inert: `McpRuntime::get_tool_info` hardcoded
+  `Pure` at the only `ToolInfo` construction site, so `Source`→`Sink` could
+  never fire. The orphaned `serde` dependency went with it.
 
 ## What remains
 

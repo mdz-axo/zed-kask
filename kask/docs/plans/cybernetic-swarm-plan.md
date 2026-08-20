@@ -133,10 +133,10 @@ extracts one specific value-added component each.
 - The hKask consent gate **is a Kanban pull-system for credits**: the operator
   mints a consent token only when ready to spend (= pull); the per-dispatch
   ceiling (`HKASK_ABW_MAX_CREDITS`) is the WIP limit on spend.
-- The `metacognition` skill (`kask/registry/manifests/metacognition.yaml`) is
-  the Kata applied to the agent's own map-building — same four steps, with a
-  deterministic gap + Brier convergence compute. This plan was produced using
-  that skill's methodology (see §9.2 for the honest metacognitive record).
+- The `metacognition` skill is the Kata applied to the agent's own
+  map-building — same four steps, with a deterministic gap + Brier
+  convergence compute. This plan was produced using that skill's methodology
+  (see §9.2 for the honest metacognitive record).
 
 ## 1. The single cybernetic argument (S1 + S2 compose)
 
@@ -169,10 +169,9 @@ itself is calibrated (Go See).
 
 ## 2. The six principles × hKask swarm substrate
 
-Every hKask surface below is verified against the manifest
-(`kask/registry/manifests/swarm-intelligence.yaml`), the runtime
-(`kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs`), or the substrate
-plan (`abw-swarm-intelligence.md`).
+Every hKask surface below is verified against the `swarm-intelligence`
+skill, the runtime (`kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs`),
+or the substrate plan (`abw-swarm-intelligence.md`).
 
 | # | Principle (S1) | Paper's prescription | hKask surface (verified) | Status | Gap |
 |---|---|---|---|---|---|
@@ -719,12 +718,12 @@ flowchart TD
 
 ### 9.2 The metacognitive record (this plan was produced with the metacognition skill)
 
-The `metacognition` skill (`kask/registry/manifests/metacognition.yaml`) is the
-Toyota Improvement Kata applied to the agent's own map-building. The four Kata
-steps were run inline (the deterministic gap + Brier compute did not execute —
-that requires the registry templates; disclosed honestly per the skill's
-"the convergence decision is deterministic (compute steps) — no LLM
-convergence-check template"):
+The `metacognition` skill is the Toyota Improvement Kata applied to the
+agent's own map-building. The four Kata steps were run inline (the
+deterministic gap + Brier compute did not execute — that requires the
+registry templates; disclosed honestly per the skill's "the convergence
+decision is deterministic (compute steps) — no LLM convergence-check
+template"):
 
 - **meta-grasp-current (revision 1):** measured the agent's state — 1/6
   principles grounded before the experiment; obstacles O1 (conflated
@@ -810,7 +809,7 @@ convergence-check template"):
 
 ### 10.2 hKask internal (verified surfaces)
 
-- `kask/registry/manifests/swarm-intelligence.yaml` — the SENSE→ORIENT→DECIDE
+- The `swarm-intelligence` skill — the SENSE→ORIENT→DECIDE
   →ACT→CHECK→CONVERGE→LOOP skill; Cauchy on `d`; algedonic override; gas/rjoule
   caps; `input_mapping` passing `task`/`mode`/`prior_iteration`; the
   no-delegation-chains invariant (L8–10).
@@ -1236,8 +1235,8 @@ changed and the validation that passed.
 ### C0 — deterministic task-success `s` (precondition, spans S3/S4/S5/S7, Step 1)
 
 - **Files:**
-  - `kask/registry/manifests/swarm-intelligence.yaml` — new `task_success`
-    input (object, required: false); CHECK step `input_mapping` binds
+  - The `swarm-intelligence` skill — new `task_success` input (object,
+    required: false); CHECK step `input_mapping` binds
     `task_success: "{{ task_success | default(none) }}"`; CHECK description
     documents the optional fourth axis `(1 - s)^2`.
   - `kask/registry/templates/swarm-intelligence/swarm-check.j2` — contract
@@ -1519,7 +1518,7 @@ in-process agent that runs zed-kask — it has governed tool access (the MCP
 servers via McpRuntime), sovereign memory, and the regulation/metacognition
 loops. In steering mode it calls `swarm_delegate_local` per emitted call,
 collects `LocalDelegateResult`s, and re-invokes swarm-intelligence with
-`delegate_results` set to that array — closing the loop without a new FlowDef
+`delegate_results` set to that array — closing the loop without a new
 execution surface (the Curator's normal tool-call turn IS the execution). The
 Curator steers using swarm-intelligence itself, OR a more focused swarm
 steering skill (a future artifact codifying just the execute-and-feed-back
@@ -1540,5 +1539,4 @@ ORIENT binds `delegate_results` (replaced the prior `prior_act` binding); ACT
 binds `steering_mode` and emits `steering_directive`. Manifest-structure test
 pins the `delegate_results` binding. This is the honest end state — C5's
 accumulator is deterministic; the rule fires on real telemetry supplied by the
-Curator (steering) or operator (advisory). Final: cargo test -p hkask-templates
-(136 lib + integration) passes.
+Curator (steering) or operator (advisory). Final: the swarm test suite passes.

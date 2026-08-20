@@ -13,9 +13,7 @@ mds_categories: [domain, composition]
 > **Execution model (verified 2026-08-20):** Skills execute via **upstream Zed body injection**.
 > `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the `SKILL.md` body from disk
 > and injects it into the agent's context via `render_skill_envelope`. The model reads the body
-> and follows the instructions. There is no `ManifestExecutor`, no `StepMachine`, no PDCA cascade
-> machinery — the agent is the executor. The prior manifest-driven cascade model
-> (`hkask-templates`, `registry/manifests/`, `FlowDef`) was deleted (commit `5f4cf5f10d`).
+> and follows the instructions. The agent is the executor.
 >
 > **Two tools support skill execution:**
 > - `lisp_eval` — sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O,
@@ -34,8 +32,7 @@ mds_categories: [domain, composition]
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
 > plus a markdown body of process instructions. 60 skills ship. 62 template crates remain under
 > `kask/registry/templates/` for use by `render_template` — these are companion resources, not the
-> source of truth for skill execution. The `kask/registry/manifests/` directory does not exist
-> (all FlowDef manifests were deleted, commit `5f4cf5f10d`).
+> source of truth for skill execution.
 
 **Skill lifecycle:** A skill is activated when the agent invokes the `skill` tool with a skill
 name. `SkillTool::run` resolves the skill directory, reads `SKILL.md`, and injects the body via
@@ -51,10 +48,8 @@ for external capabilities. Convergence is the model's judgment, optionally check
 |---------|-------|-------|
 | SKILL.md directories (`.agents/skills/*/`, repo root) | **60** | Every directory contains a `SKILL.md` |
 | Template crates (`kask/registry/templates/*/`) | **62** | Companion Jinja2 resources for `render_template` |
-| FlowDef manifests (`kask/registry/manifests/`) | **0** | Directory deleted (commit `5f4cf5f10d`) |
 
-**The SKILL.md is the source of truth.** The prior model — where `registry/manifests/<name>.yaml`
-was canonical and `SKILL.md` was derived — is gone. A skill is its `SKILL.md`. Template crates are
+**The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
 
 ---
@@ -196,6 +191,4 @@ read-only resources the skill body may reference via `render_template`.
 
 > **Filesystem reality (verified 2026-08-20):** `.agents/skills/` (repo root) contains 60 SKILL.md
 > directories. `kask/registry/templates/` contains 62 template crates (companion Jinja2 resources
-> for `render_template`). `kask/registry/manifests/` does not exist — all FlowDef manifests were
-> deleted (commit `5f4cf5f10d`). The prior 1:1 manifest↔SKILL.md invariant and its
-> `skill_companion_consistency` test are gone with the `hkask-templates` crate.
+> for `render_template`).

@@ -2,16 +2,14 @@
 
 > **⚠️ Partially deprecated 2026-08-20.** The classifier model selection
 > (default switched to `OpenRouter/z-ai/glm-5.2`) and the corpus-server
-> evidence remain current. However, §7 and §8 cite `hkask-templates` files
+> evidence remain current. However, §7 and §8 cite deleted files
 > (`template_renderer.rs`, `step_actions.rs`) as locations for proposed
-> changes — the `hkask-templates` crate was deleted (commit `5f4cf5f10d`).
-> The `thinking_budget` normalization and dead-key deletion actions that
-> targeted `hkask-templates/src/step_actions.rs` and
-> `hkask-templates/src/template_renderer.rs` are void; the template parameter
-> parsing surface moved with the crate's deletion (the `render_template`
-> agent tool renders Jinja2 templates but does not parse `[inference]` blocks
-> the way the deleted `template_renderer.rs` did). The `work_effort`/
-> `verbosity` dead-key findings are historical.
+> changes — those files are gone. The `thinking_budget` normalization and
+> dead-key deletion actions that targeted them are void; the template
+> parameter parsing surface moved with the crate's deletion (the
+> `render_template` agent tool renders Jinja2 templates but does not parse
+> `[inference]` blocks the way the deleted `template_renderer.rs` did). The
+> `work_effort`/`verbosity` dead-key findings are historical.
 
 **Date:** 2026-08-17 · **Status:** Complete — default switched to `OpenRouter/z-ai/glm-5.2`
 **Sources:** OpenRouter `/api/v1/models` + `/api/v1/models/{id}/endpoints` (catalog, gate
@@ -132,7 +130,7 @@ Settings >> Kask >> Models  (classifier_model field)
          └─ hkask_inference::model_constants::classifier_model()   [model_constants.rs:57-60]
             (env HKASK_CLASSIFIER_MODEL  →  DEFAULT_CLASSIFIER_MODEL constant)
             └─ ClassifierConfig::from_def resolves empty `model:`  [classify_impl.rs:221-223]
-               └─ skill_executor injects into context              [skill_executor.rs:465-476]
+               └─ injected into context via the skill body
 ```
 
 - **Single default constant:** `DEFAULT_CLASSIFIER_MODEL = "OpenRouter/z-ai/glm-5.2"`
@@ -191,24 +189,21 @@ Settings >> Kask >> Models  (classifier_model field)
 
 ## 7. Template parameter surface (D1/D5) — evidence summary
 
-- Only 3 keys have effect: `temperature`, `max_tokens`, `thinking_budget` (parsed
-  `hkask-templates/src/template_renderer.rs:281-285, 330-341`; applied
-  `hkask-templates/src/step_actions.rs:239-262`).
+- Only 3 keys have effect: `temperature`, `max_tokens`, `thinking_budget`.
 - `work_effort` (275 files) and `verbosity` (267 files) are **dead keys** — dropped by the parser's
-  `_ => {}` arm; only test heuristics read them (`tests/manifest_invariants.rs:633-642`,
-  `tests/token_budget_audit.rs:195-199, 230`).
+  `_ => {}` arm; only test heuristics read them.
 - `thinking_budget` values outside `{full, on, off, none}` (22 files: `standard`/`medium`/`low`/
   `minimal`/`high`) trigger warn-only fallback → **thinking silently enabled**
-  (`step_actions.rs:253-262`) — wrong-direction default for templates expecting a budget cap.
+  — wrong-direction default for templates expecting a budget cap.
 - Default when no override: temperature 0.6, max_tokens 2048, thinking on
   (`hkask-types/src/template.rs:88-110`).
 
 **Refactor actions (each serves the contract axis):**
 1. Delete `work_effort` and `verbosity` from all `[inference]` blocks (essentialist deletion test:
    zero runtime value) — shrinks the surface from 5 keys to 3.
-2. Normalize the 22 non-canonical `thinking_budget` values to `full|off` (one match arm at
-   `step_actions.rs:246-251`), and flip the unrecognized-value default from warn-and-keep-thinking-on
-   to warn-and-disable (classification-adjacent templates are the majority default).
+2. Normalize the 22 non-canonical `thinking_budget` values to `full|off`, and flip the
+   unrecognized-value default from warn-and-keep-thinking-on to warn-and-disable
+   (classification-adjacent templates are the majority default).
 3. Merge the duplicate `h_mem-extractor.yaml` ≈ `hmem-extractor.yaml` (deep-module deletion test).
 4. Wire `timeout_secs` into a `tokio::time::timeout` around the batch (`classify_impl.rs:364-368`)
    or remove the field — declared-but-unenforced config is a broken feedback loop.
@@ -222,7 +217,7 @@ Settings >> Kask >> Models  (classifier_model field)
 | Stale tool-description + doc-example fixes | `hkask-mcp-corpus/src/tools/semantic/mod.rs:365`, `classify_impl.rs:70` | n/a — applied |
 | Provider pin for classifier (throughput optimization) | `LanguageModelInferencePort::generate_with_model` provider pass-through (`kask/crates/kask_bridge/src/inference.rs:519-535`) | new kask-side plumbing only; pin test: override resolves to pinned endpoint |
 | `timeout_secs` enforcement | `hkask-mcp-corpus/src/runtime/classify_impl.rs` | unit test: hung inference future fails after `timeout`; kask-only file |
-| `thinking_budget` normalization + default flip | `hkask-templates/src/step_actions.rs` | extend parser tests (`template_renderer.rs:629-679`); kask crate |
+| `thinking_budget` normalization + default flip | (deleted crate) | extend parser tests; kask crate |
 | Dead-key deletion in `.j2` + `[meta]` blocks | `kask/registry/templates/**` | `manifest_invariants.rs` rule: `work_effort`/`verbosity` forbidden in `[inference]` blocks |
 
 No upstream `crates/` files are touched by the remaining actions; all land in `kask/` per
