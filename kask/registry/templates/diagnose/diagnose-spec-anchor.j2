@@ -54,9 +54,9 @@ This replaces spec-anchoring. The bug is grounded in the real code graph, not in
 {% endif %}
 
 {% if blast_radius %}
-## Blast Radius (from codegraph_impact MCP tool)
+## Blast Radius (from blast radius analysis)
 
-The codegraph impact analysis shows how many downstream symbols are affected
+The blast radius analysis shows how many downstream symbols are affected
 by changing the bug's location. Use this to assess the severity and scope.
 
 ```json
@@ -68,25 +68,25 @@ by changing the bug's location. Use this to assess the severity and scope.
 
 ### Step 1: Find the affected entity (Dublin Core thing)
 
-Call the `codegraph_query` MCP tool to locate the affected symbol(s):
-- If a `symbol_name` was provided, query with `name: "{{ symbol_name }}"`.
-- Otherwise, derive candidate symbol names from the `bug_description` and `target_file` and query with `query: "<derived terms>"`.
+Use `grep` to locate the affected symbol(s):
+- If a `symbol_name` was provided, search with the exact symbol name.
+- Otherwise, derive candidate symbol names from the `bug_description` and `target_file` and search for those terms.
 - If `target_file` was provided, match symbols whose source file matches.
 
 From the query results, identify the primary affected symbol. Classify it using Dublin Core vocabulary:
 
 | Dublin Core term | Maps to |
 |---|---|
-| `dcterms:type` | The codegraph `SymbolKind` (function, struct, trait, module, impl, etc.) — this is the THING type |
+| `dcterms:type` | The symbol kind (function, struct, trait, module, impl, etc.) — this is the THING type |
 | `dcterms:identifier` | The symbol's qualified name (e.g. `hkask_test_harness::write_trace`) |
 | `dcterms:source` | The file path and line number (e.g. `kask/crates/hkask-test-harness/src/hkask_test_harness.rs:179`) |
 | `dcterms:subject` | The MDS domain category, DERIVED from the entity's ontological position — not looked up from a spec. A function in the capability crate → "Trust"; a function in the template executor → "Composition"; a persistence function → "Lifecycle". The subject is a tag on the thing, derived from where it sits in the graph. |
 
 ### Step 2: Locate the flow (PKO procedure)
 
-Call the `codegraph_traverse` MCP tool to trace the call chain:
-- Traverse INCOMING (callers): `codegraph_traverse` with `symbol: "<primary symbol>", direction: "incoming", max_depth: 5` — find who calls the affected function.
-- Traverse OUTGOING (callees): `codegraph_traverse` with `symbol: "<primary symbol>", direction: "outgoing", max_depth: 3` — find what the affected function calls.
+Use `grep` to trace the call chain:
+- Find callers (incoming): `grep` for the primary symbol name across the codebase to find who calls the affected function.
+- Find callees (outgoing): `read_file` on the affected function's source file to identify what it calls.
 
 The call chain IS a PKO Procedure:
 - `pko:Procedure` — the overall execution path from entry point to the buggy function (the incoming traversal result).
@@ -95,11 +95,11 @@ The call chain IS a PKO Procedure:
 - `pko:StepExecution` — the specific execution of the buggy Step where the issue manifests.
 - `pko:IssueOccurrence` — the bug itself: what went wrong at this StepExecution.
 
-If the affected entity implements a trait (codegraph `EdgeKind::Implements`), note it — the bug may be in the trait contract, not just the impl.
+If the affected entity implements a trait, note it — the bug may be in the trait contract, not just the impl.
 
 ### Step 3: Assess blast radius (PKO impact)
 
-Call the `codegraph_impact` MCP tool: `codegraph_impact` with `symbol: "<primary symbol>", max_depth: 3`.
+Use `grep` to find references to the primary symbol with `max_depth: 3`.
 
 This reveals what ELSE is affected — every caller of the buggy function, transitively. This is the `pko:IssueOccurrence` scope: the set of Procedures that flow through the buggy Step and are therefore impacted.
 
@@ -139,11 +139,11 @@ Respond with a JSON object:
 
 ## Constraints
 
-- Every diagnosis must be anchored to a real codegraph entity. Do not fabricate symbols — use `codegraph_query` results.
-- The `dcterms:subject` (MDS category) is DERIVED from the entity's position in the code graph, not looked up from a spec document.
-- If the codegraph is unavailable (not indexed, MCP server not running), fall back to classifying from the `bug_description` and `target_file` alone, and note that the anchor is unverified (no graph traversal).
-- The `pko:procedure` array must reflect the actual call chain from `codegraph_traverse`, ordered from entry point to the buggy step.
-- Do not fabricate call chains — only include steps returned by the codegraph tools.
+- Every diagnosis must be anchored to a real code entity. Do not fabricate symbols — use `grep` results.
+- The `dcterms:subject` (MDS category) is DERIVED from the entity's position in the code, not looked up from a spec document.
+- If the code structure is unavailable, fall back to classifying from the `bug_description` and `target_file` alone, and note that the anchor is unverified (no traversal).
+- The `pko:procedure` array must reflect the actual call chain from `grep`, ordered from entry point to the buggy step.
+- Do not fabricate call chains — only include steps returned by the grep results.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

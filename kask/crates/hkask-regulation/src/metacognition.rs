@@ -27,6 +27,7 @@
 //! and emits `reg.curator.metacognition.*` spans for observability.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use hkask_types::curator::EscalationSeverity;
@@ -96,6 +97,12 @@ pub struct HealthSnapshot {
     /// phase. Zero means no threshold was breached; a positive count means
     /// the Curator should self-calibrate or surface the breach to the user.
     pub escalation_count: usize,
+    // zed-kask: D34 — skill verification failures in the recent window.
+    /// Count of `Incomplete` skill verification verdicts emitted since the
+    /// last tick. Populated by the skill verification sense path, which
+    /// reads a counter incremented by the bridge on each incomplete
+    /// verdict. Zero means all skills verified or no skills ran.
+    pub skill_verification_failures: usize,
 }
 
 /// Escalation alert emitted when a threshold is breached.
@@ -114,6 +121,9 @@ pub enum EscalationTrigger {
     VarietyDeficit,
     CriticalAlerts,
     LowEffectiveness,
+    SkillVerificationFailure {
+        count: usize,
+    },
     /// Operator feedback acceptance rate for a skill is declining over
     /// the rolling window — the skill's outputs may be drifting.
     FeedbackDrift {
@@ -138,6 +148,10 @@ pub struct MetacognitionConfig {
     /// the prior window's rate, emit a FeedbackDrift alert. E.g. 0.8 means
     /// alert when current rate < 80% of prior rate.
     pub feedback_drift_decline_ratio: f64,
+    // zed-kask: D34 — skill verification failure threshold. When the
+    // number of incomplete skill verdicts since the last tick exceeds this,
+    // the metacognition loop emits a SkillVerificationFailure alert.
+    pub skill_verification_failure_threshold: usize,
 }
 
 impl Default for MetacognitionConfig {
@@ -150,8 +164,31 @@ impl Default for MetacognitionConfig {
             feedback_drift_min_samples: 10,
             feedback_drift_window: 10,
             feedback_drift_decline_ratio: 0.8,
+            skill_verification_failure_threshold: 2,
         }
     }
+}
+
+// zed-kask: D34 — process-global skill verification failure counter.
+// Incremented by the bridge (`BridgeMemoryPort::ingest_turn`) on each
+// `Incomplete` verdict. Read and reset by the metacognition loop on each
+// tick. This is the sense path: the bridge observes incomplete skills →
+// increments the counter → the metacognition loop senses it → compares
+// against the threshold → emits a `SkillVerificationFailure` alert →
+// the curator's regulation loop acts on it.
+static SKILL_VERIFICATION_FAILURES: AtomicUsize = AtomicUsize::new(0);
+
+/// Record a skill verification failure. Called by the bridge when a
+/// `SkillStepReport` carries an `Incomplete` verdict.
+pub fn record_skill_verification_failure() {
+    SKILL_VERIFICATION_FAILURES.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Read and reset the skill verification failure counter. Called by the
+/// metacognition loop on each tick. Returns the number of failures since
+/// the last tick.
+pub fn drain_skill_verification_failures() -> usize {
+    SKILL_VERIFICATION_FAILURES.swap(0, Ordering::Relaxed)
 }
 
 /// The metacognition loop — the Curator's governance mechanism.
@@ -257,6 +294,9 @@ impl MetacognitionLoop {
             regulation_health,
             // Filled in after `compare` produces the alerts below.
             escalation_count: 0,
+            // D34 — populated by the skill verification sense path; zero
+            // until that path runs.
+            skill_verification_failures: 0,
         };
 
         // ── Compare + Compute ──────────────────────────────────────────

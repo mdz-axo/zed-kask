@@ -3744,10 +3744,10 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
         .unwrap();
     cx.run_until_parked();
 
-    let skill_tool = Arc::new(SkillTool::new(skills_resolver_for_project(
-        agent.downgrade(),
-        project.entity_id(),
-    )));
+    let skill_tool = Arc::new(SkillTool::new(
+        skills_resolver_for_project(agent.downgrade(), project.entity_id()),
+        fs.clone(),
+    ));
     let (event_stream, mut event_stream_rx) = ToolCallEventStream::test();
 
     let input = SkillToolInput {

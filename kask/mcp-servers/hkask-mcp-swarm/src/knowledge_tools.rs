@@ -62,6 +62,62 @@ impl SwarmServer {
         .await
     }
 
+    /// Recall prior swarm turns from the shared knowledgebase by semantic
+    /// similarity (the episodic-memory complement to `swarm_search_knowledge_local`,
+    /// which searches the EAV graph). Spans ALL agents and ALL swarms — a turn
+    /// any agent produced is retrievable here. Degrades to a `memory_unconfigured`
+    /// note when the store cannot be opened or the query cannot be embedded.
+    #[tool(
+        description = "Recall prior swarm turns from the shared swarm memory by semantic similarity to a query. Spans all agents and all swarms (one shared knowledgebase). Returns the most similar past turns (task + response + model + producing agent). The episodic-memory complement to swarm_search_knowledge_local (which searches the EAV graph). Degrades to an empty result with a memory_unconfigured note when the store cannot be opened or the query cannot be embedded."
+    )]
+    pub(crate) async fn swarm_recall_local(
+        &self,
+        parameters: Parameters<RecallLocalRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_recall_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.query.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "query must be non-empty".to_string(),
+                    ));
+                }
+                let limit = req.limit.unwrap_or(10).clamp(1, 50);
+                let runtime = self
+                    .local_runtime
+                    .get_or_init()
+                    .await
+                    .map_err(map_local_swarm_error)?;
+                let inference = runtime.inference();
+                match local_knowledge::recall_turns(
+                    &self.local_memory,
+                    &inference,
+                    &req.query,
+                    limit,
+                )
+                .await
+                {
+                    Ok(turns) => Ok(serde_json::json!({
+                        "turns": turns,
+                        "source": "local_episodic_memory",
+                        "count": turns.len(),
+                        "note": "",
+                    })),
+                    Err(reason) => Ok(serde_json::json!({
+                        "turns": [],
+                        "source": "local_episodic_memory",
+                        "count": 0,
+                        "note": format!("memory_unconfigured: {reason}"),
+                    })),
+                }
+            },
+        )
+        .await
+    }
+
     /// Generate a system prompt for a local agent from a description (the kask
     /// analog of ABW `swarm_generate_prompt`). Authoring aid — read-only. Uses
     /// the local `InferencePort` (no ABW); seeded with the agent's consolidated

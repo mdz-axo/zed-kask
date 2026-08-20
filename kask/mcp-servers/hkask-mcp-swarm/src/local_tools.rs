@@ -200,6 +200,22 @@ impl SwarmServer {
                 &result.response,
             )
             .await;
+            // Episodic turn memory (the shared knowledgebase): store the FULL
+            // turn (task + response + model) as one h_mem plus an embedding of
+            // the task, so the turn is retrievable by `swarm_recall_local` via
+            // semantic similarity across all swarms. `record_delegation` above
+            // is the stigmergy trail (fitness); this is the experience record
+            // (knowledge). Failures are logged (non-fatal) — the delegation
+            // result is returned regardless.
+            local_knowledge::ingest_turn(
+                &self.local_memory,
+                &runtime.inference(),
+                &req.agent_name,
+                &req.task,
+                &result.response,
+                &result.model,
+            )
+            .await;
             Ok(serde_json::to_value(&result).unwrap_or_else(|_| {
                 serde_json::json!({ "error": "failed to serialize result" })
             }))

@@ -78,11 +78,8 @@ if [ -n "${ALLOWLIST+x}" ]; then
   mapfile -t ALLOWLIST_ARR < <(printf '%s\n' "$ALLOWLIST" | grep -v '^$' || true)
 else
   ALLOWLIST_ARR=(
-    "hkask-mcp-codegraph|2026-07-17|tools query a code-graph DB; need a populated graph fixture"
     "hkask-mcp-companies|2026-07-17|tools require SerpAPI/external HTTP; need network mocking"
-    "hkask-mcp-condenser|2026-07-17|tool invokes an LLM condenser; need an inference mock"
     "hkask-mcp-corpus|2026-07-17|tools require SQLite + embedding store; need a fixture store"
-    "hkask-mcp-media|2026-07-17|tools call Fal.ai workflow APIs; need a media-API mock"
     "hkask-mcp-portfolio|2026-07-17|no tests dir yet; tools wrap portfolio storage"
     "hkask-mcp-prediction-markets|2026-07-17|tools fetch live Polymarket/Kalshi data; need network mocking"
     "hkask-mcp-swarm|2026-07-17|existing tests use the panel invoke seam / live HTTP, not Parameters<T>"

@@ -21,12 +21,12 @@ You are the `mcda` ranker. Task: {{ task }}.
 
 ## Criteria (default weights; adjust by operator_priority)
 - **security severity** (0.35) — does the remediation reduce attack surface?
-- **codegraph simplification** (0.25) — does it remove dead surface / deepen a module?
+- **codebase simplification** (0.25) — does it remove dead surface / deepen a module?
 - **UI consistency** (0.25) — does it adopt a Zed interaction primitive?
 - **cost-inverted** (0.15) — 1.0 = trivial, 0.0 = expensive.
 
 `operator_priority` = `{{ operator_priority }}`. If "security", use defaults. If
-"codegraph", shift weight toward codegraph (e.g. 0.25/0.40/0.15/0.10). If "ui",
+"codebase", shift weight toward codebase (e.g. 0.25/0.40/0.15/0.10). If "ui",
 shift toward UI (e.g. 0.25/0.15/0.40/0.10). Renormalize to sum 1.0. Record the
 weight vector in the output.
 
@@ -42,7 +42,7 @@ weight vector in the output.
    module (complexity reappears because the module deserves to exist). Mark
    `essentialist_survives: true|false`.
 4. Run a ±20% sensitivity analysis: for each single-axis weight emphasis
-   (security, codegraph, ui, cost), recompute the top 3 and record whether the
+   (security, codebase, ui, cost), recompute the top 3 and record whether the
    top-3 membership flipped. `stable_under_perturbation` = true iff the top-3
    set is unchanged under ALL four ±20% perturbations.
 
@@ -50,12 +50,12 @@ weight vector in the output.
 
 ```json
 {
-  "weight_vector": { "security": 0.35, "codegraph": 0.25, "ui": 0.25, "cost_inverted": 0.15 },
+  "weight_vector": { "security": 0.35, "codebase": 0.25, "ui": 0.25, "cost_inverted": 0.15 },
   "ranked_remediations": [
     {
       "id": "KS-NN|RA-NN|UI-NN",
       "remediation": "short",
-      "scores": { "security": 0.8, "codegraph": 0.2, "ui": 0.0, "cost_inverted": 0.5 },
+      "scores": { "security": 0.8, "codebase": 0.2, "ui": 0.0, "cost_inverted": 0.5 },
       "weighted_total": 0.405,
       "essentialist_survives": true
     }
@@ -65,7 +65,7 @@ weight vector in the output.
     "baseline_top3": [ "ID", "ID", "ID" ],
     "perturbations": [
       { "axis": "security", "top3": [ "...", "...", "..." ], "flipped": false },
-      { "axis": "codegraph", "top3": [ "...", "...", "..." ], "flipped": false },
+      { "axis": "codebase", "top3": [ "...", "...", "..." ], "flipped": false },
       { "axis": "ui", "top3": [ "...", "...", "..." ], "flipped": false },
       { "axis": "cost", "top3": [ "...", "...", "..." ], "flipped": false }
     ],
