@@ -25,7 +25,7 @@ pub const SKILLS_DIR_NAME: &str = "skills";
 /// This list is the single source of truth for which skills are core. It is
 /// consumed by:
 /// - `seed_shipped_skills` — to decide whether to overwrite or seed-once.
-/// - `kask_bridge::seed_registry_to_disk` — same, for manifest.yaml + .j2
+/// - `kask_bridge` — seeds registry artifacts to disk at startup
 ///   templates.
 /// - `apply_skill_overrides` — to enforce unshadowability.
 /// - `skill_tool` — to skip the authorization prompt.
@@ -909,7 +909,7 @@ pub fn read_skill_body_from_content(
 // The SKILL.md is the *interface* (frontmatter parsed for discovery); the
 // *implementation* (YAML manifests + Jinja2 templates) is seeded to disk by
 // the `hkask-templates` seeding path and resolved from disk at runtime by
-// `BridgeManifestExecutor` and `TemplateRenderer`.
+// the skill system (SKILL.md body injection via `SkillTool`).
 include!(concat!(env!("OUT_DIR"), "/embedded_global_skills.rs"));
 
 /// Returns the `(name, raw_content)` pairs for the kask skills shipped with
@@ -968,7 +968,7 @@ pub async fn seed_shipped_skills(fs: &dyn Fs, skills_dir: &Path) {
 /// storage layout (`kask/docs/architecture/standardized-artifact-storage.md`).
 ///
 /// zed-kask skills are manifest-driven (manifest.yaml + Jinja2 templates
-/// executed via BridgeManifestExecutor), not SKILL.md body-injection. They
+/// read as body text by the agent via the `skill` tool.) They
 /// are not portable to upstream Zed or any tool without the hKask cascade
 /// engine.
 ///

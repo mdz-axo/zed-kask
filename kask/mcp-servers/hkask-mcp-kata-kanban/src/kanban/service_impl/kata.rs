@@ -5,7 +5,7 @@
 //! methodology — that lives in the `kata-coaching` and `kata-improvement`
 //! skills (`.agents/skills/kata-*/SKILL.md`) and their registry templates
 //! (`kask/registry/templates/kata-*/`), which execute via the skill cascade
-//! (`BridgeManifestExecutor`) with structured JSON output.
+//! the inference port with structured JSON output.
 //!
 //! The split is deliberate: the MCP tools return a sync `String` for immediate
 //! human display; the registry templates run the async skill cascade with

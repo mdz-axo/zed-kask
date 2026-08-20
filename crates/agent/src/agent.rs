@@ -2989,49 +2989,6 @@ pub(crate) fn context_injector_for(
     context_injector()
 }
 
-// ── D11: Cascade context provider — memory + short-term context for skills ─
-
-/// A request for cascade context gathering. The `agent` crate's local mirror
-/// of `hkask_types::CascadeContextRequest`. The bridge adapts between the two.
-pub struct CascadeContextRequest {
-    pub thread_id: String,
-    pub task: String,
-    pub agent_id: Option<String>,
-    pub swarm_id: Option<String>,
-    pub short_term_messages: Vec<language_model::LanguageModelRequestMessage>,
-    pub saliency_floor: f64,
-    pub max_chunks: u32,
-}
-
-/// The gathered context for a skill cascade invocation. The `agent` crate's
-/// local mirror of `hkask_types::CascadeContext`.
-pub struct CascadeContext {
-    pub short_term_messages: Vec<language_model::LanguageModelRequestMessage>,
-    /// Long-term memory snippets as serialized JSON (text + source +
-    /// confidence + relevance_score). The bridge converts these to
-    /// `hkask_types::MemorySnippet` when threading through to the executor.
-    pub long_term_snippets: Vec<MemorySnippetRecord>,
-}
-
-/// A recalled memory snippet — the `agent` crate's local mirror of
-/// `hkask_types::MemorySnippet`.
-#[derive(Debug, Clone)]
-pub struct MemorySnippetRecord {
-    pub text: String,
-    pub source: String,
-    pub confidence: f64,
-    pub relevance_score: f64,
-}
-
-/// A chat message for cascade context injection — the `agent` crate's local
-/// mirror of `hkask_types::ChatMessage`. The bridge converts these to
-/// `hkask_types::ChatMessage` when threading through to the executor.
-#[derive(Debug, Clone)]
-pub struct CascadeChatMessage {
-    pub role: String,
-    pub content: String,
-}
-
 /// Thread condenser — compresses tool results before they enter the message
 /// history (D8).
 ///

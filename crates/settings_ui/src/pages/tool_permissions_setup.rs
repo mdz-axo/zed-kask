@@ -1430,7 +1430,7 @@ mod tests {
             // permission checks happen inside the composed cascade's tool calls.
             "skill_bundle",
             // run_pipeline executes a pipeline manifest via the same
-            // SkillManifestExecutor as skill/skill_bundle. The manifest path
+            // the same inference path as skill. No manifest executor —
             // is contained via find_project_path (same as ReadFileTool), and
             // permission checks happen inside the cascade's tool calls.
             "run_pipeline",

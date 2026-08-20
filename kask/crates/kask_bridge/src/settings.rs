@@ -103,8 +103,8 @@ pub struct KaskSettings {
 
 /// Kask-wide general configuration: global inference concurrency + batching.
 /// The limiter is process-global (one `Arc` shared across all consumers —
-/// skill cascades, corpus OCR, MCP tool calls). See `kask_bridge::concurrency`
-/// for the wiring and `hkask_templates::concurrency` for the limiter impl.
+/// corpus OCR, MCP tool calls). See `kask_bridge::concurrency`
+/// for the wiring and the limiter impl.
 ///
 /// `Default` is the single source of truth for defaults — `From<Content>`
 /// reads from it via `unwrap_or(default.field)`. Do not add

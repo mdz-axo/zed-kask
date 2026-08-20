@@ -280,7 +280,7 @@ impl MetacognitionLoop {
     ///
     /// This is the automated drift detection layer (Compiled AI gap 2).
     /// It uses the `reg.skill.<id>.outcome` spans emitted by
-    /// `BridgeManifestExecutor::execute_skill` (Step 0 of the revised plan).
+    /// the inference port (Step 0 of the revised plan).
     async fn sense_feedback_drift(&self, ledger: &RegulationLedger) -> Vec<EscalationAlert> {
         let skill_ids = ledger.skill_ids_with_feedback("outcome").await;
         let mut alerts = Vec::new();
