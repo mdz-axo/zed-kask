@@ -59,7 +59,7 @@ visibility: Public
   structured data — but the data was already structured (audit_findings,
   grill_ratings, mutations_applied are all JSON arrays/objects). An LLM
   call for deterministic formatting was the single largest source of
-  cascade failures: the model sometimes returned empty output (reasoning
+  process failures: the model sometimes returned empty output (reasoning
   budget exhausted, provider hiccup), and `parse_json_response("")`
   produced "EOF while parsing a value at line 1 column 0" — killing the
   whole skill after 4 successful LLM calls. Converting to `render`

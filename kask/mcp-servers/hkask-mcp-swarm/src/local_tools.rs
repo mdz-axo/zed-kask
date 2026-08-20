@@ -53,6 +53,49 @@ fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bool, Mc
     }
 }
 
+/// Build the per-task report for one `swarm_eval_agent_local` task. Pure —
+/// takes the counted outcomes, returns the JSON entry. Extracted so the
+/// pass-rate and standard-error math is unit-testable without inference.
+fn eval_task_report(
+    task: &EvalAgentTask,
+    passes: usize,
+    errors: usize,
+    latencies_ms: &[u64],
+) -> serde_json::Value {
+    let attempts = passes + errors;
+    let pass_rate = if attempts == 0 {
+        // `repeats >= 1` is enforced by the caller, so attempts == 0 is
+        // unreachable; guard anyway rather than divide by zero.
+        f64::NAN
+    } else {
+        passes as f64 / attempts as f64
+    };
+    // Standard error of a proportion: sqrt(p(1-p)/n). With small n this is
+    // wide — that is the point: a pass rate without variance is noise
+    // (non-determinism risk in the event-substrate proposal).
+    let std_error = if attempts > 1 {
+        (pass_rate * (1.0 - pass_rate) / attempts as f64).sqrt()
+    } else {
+        f64::NAN
+    };
+    let mean_latency_ms = if latencies_ms.is_empty() {
+        None
+    } else {
+        Some(latencies_ms.iter().sum::<u64>() / latencies_ms.len() as u64)
+    };
+    serde_json::json!({
+        "task": task.task,
+        "evaluator": task.evaluator.evaluator,
+        "spec": task.evaluator.spec,
+        "repeats": attempts,
+        "passes": passes,
+        "errors": errors,
+        "pass_rate": pass_rate,
+        "pass_rate_std_error": std_error,
+        "mean_latency_ms": mean_latency_ms,
+    })
+}
+
 #[tool_router(router = local_router, vis = "pub")]
 impl SwarmServer {
     /// Delegate a task to a local agent. The agent must exist in the local
@@ -1521,40 +1564,7 @@ impl SwarmServer {
                         }
                     }
                     total_passes += passes;
-                    let attempts = passes + errors;
-                    let pass_rate = if attempts == 0 {
-                        // `repeats >= 1` is enforced above, so attempts == 0
-                        // is unreachable; guard anyway rather than divide by
-                        // zero.
-                        f64::NAN
-                    } else {
-                        passes as f64 / attempts as f64
-                    };
-                    // Standard error of a proportion: sqrt(p(1-p)/n). With
-                    // small n this is wide — that is the point: a pass rate
-                    // without variance is noise (non-determinism risk in the
-                    // proposal).
-                    let std_error = if attempts > 1 {
-                        (pass_rate * (1.0 - pass_rate) / attempts as f64).sqrt()
-                    } else {
-                        f64::NAN
-                    };
-                    let mean_latency_ms = if latencies_ms.is_empty() {
-                        None
-                    } else {
-                        Some(latencies_ms.iter().sum::<u64>() / latencies_ms.len() as u64)
-                    };
-                    task_reports.push(serde_json::json!({
-                        "task": task.task,
-                        "evaluator": task.evaluator.evaluator,
-                        "spec": task.evaluator.spec,
-                        "repeats": attempts,
-                        "passes": passes,
-                        "errors": errors,
-                        "pass_rate": pass_rate,
-                        "pass_rate_std_error": std_error,
-                        "mean_latency_ms": mean_latency_ms,
-                    }));
+                    task_reports.push(eval_task_report(task, passes, errors, &latencies_ms));
                 }
                 let overall_pass_rate = total_passes as f64 / total_rollouts as f64;
                 let balance: Option<i64> = runtime.balance();
@@ -1606,5 +1616,106 @@ impl SwarmServer {
             );
         }
         Some(val)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::request_types::{EvalAgentLocalRequest, EvalAgentTask, PlanEvaluator};
+
+    fn task(text: &str, evaluator: &str, spec: &str) -> EvalAgentTask {
+        EvalAgentTask {
+            task: text.to_string(),
+            credits_authorized: 10,
+            evaluator: PlanEvaluator {
+                evaluator: evaluator.to_string(),
+                spec: spec.to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn eval_task_report_computes_pass_rate_and_std_error() {
+        let t = task("summarize", "contains", "done");
+        let report = eval_task_report(&t, 2, 2, &[100, 200, 300, 500]);
+        assert_eq!(report["repeats"], 4);
+        assert_eq!(report["passes"], 2);
+        assert_eq!(report["errors"], 2);
+        assert_eq!(report["pass_rate"].as_f64().unwrap(), 0.5);
+        // sqrt(0.5 * 0.5 / 4) = 0.25
+        assert_eq!(report["pass_rate_std_error"].as_f64().unwrap(), 0.25);
+        assert_eq!(report["mean_latency_ms"], 275);
+    }
+
+    #[test]
+    fn eval_task_report_counts_errors_as_failures() {
+        // A crashed rollout is a failed rollout: 1 pass + 2 errors = 1/3.
+        let t = task("t", "contains", "x");
+        let report = eval_task_report(&t, 1, 2, &[50]);
+        assert_eq!(report["repeats"], 3);
+        let rate = report["pass_rate"].as_f64().unwrap();
+        assert!((rate - 1.0 / 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn eval_task_report_single_attempt_has_no_std_error() {
+        // n = 1: the standard error of one observation is undefined, not 0 —
+        // 0 would claim certainty the sample cannot support.
+        let t = task("t", "contains", "x");
+        let report = eval_task_report(&t, 1, 0, &[42]);
+        assert_eq!(report["pass_rate"], 1.0);
+        assert!(report["pass_rate_std_error"].is_null());
+    }
+
+    #[test]
+    fn eval_task_report_zero_attempts_is_nan_not_zero() {
+        // Unreachable via the tool (repeats >= 1 enforced), but the pure
+        // function must not fabricate a 0.0 pass rate if ever reached.
+        let t = task("t", "contains", "x");
+        let report = eval_task_report(&t, 0, 0, &[]);
+        assert!(report["pass_rate"].is_null());
+        assert!(report["mean_latency_ms"].is_null());
+    }
+
+    #[test]
+    fn run_evaluator_rejects_unknown_kind() {
+        let err = run_evaluator("resp", "jsonpath", "$.x").unwrap_err();
+        assert!(err.to_string().contains("jsonpath"));
+    }
+
+    #[test]
+    fn run_evaluator_contains_and_regex() {
+        assert!(run_evaluator("hello world", "contains", "world").unwrap());
+        assert!(!run_evaluator("hello world", "not_contains", "world").unwrap());
+        assert!(run_evaluator("a1b2", "regex", "[0-9]").unwrap());
+        // Invalid regex must error, not stamp pass:false (false fault
+        // attribution — the agent would be blamed for a bad evaluator).
+        assert!(run_evaluator("x", "regex", "(").is_err());
+    }
+
+    #[test]
+    fn eval_request_defaults_and_caps() {
+        // Deserialization-level contract: repeats is optional, tasks carry a
+        // required evaluator (an unmeasurable task is rejected at the schema,
+        // not silently counted as neither pass nor fail).
+        let raw = serde_json::json!({
+            "agent_name": "researcher",
+            "tasks": [{
+                "task": "do the thing",
+                "credits_authorized": 5,
+                "evaluator": { "evaluator": "contains", "spec": "ok" }
+            }]
+        });
+        let req: EvalAgentLocalRequest = serde_json::from_value(raw).unwrap();
+        assert_eq!(req.repeats, None);
+        assert_eq!(req.tasks.len(), 1);
+        assert_eq!(req.tasks[0].evaluator.evaluator, "contains");
+        // A task without an evaluator must fail to deserialize.
+        let bad = serde_json::json!({
+            "agent_name": "researcher",
+            "tasks": [{ "task": "t", "credits_authorized": 5 }]
+        });
+        assert!(serde_json::from_value::<EvalAgentLocalRequest>(bad).is_err());
     }
 }

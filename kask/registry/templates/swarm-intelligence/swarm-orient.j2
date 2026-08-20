@@ -62,7 +62,7 @@ entry (the last delegation produced the terminal output the task metric
 scored).
 {% else %}
 ## Delegate Results — Execution Telemetry
-No `delegate_results` supplied. The planning cascade's ACT emits dispatch
+No `delegate_results` supplied. The planning process's ACT emits dispatch
 intents (`emitted_calls`), not executed outcomes — do NOT fabricate
 `tool_calls[].ok` / `executed_skills[].ok` from intents (the `.rules`
 never-fabricate trap). Set `agent_at_fault = null` (honest: no execution data
@@ -154,7 +154,7 @@ set cybernetic_assessment = null.
 Attribute fault ONLY when `delegate_results` execution telemetry is present
 (an array of `LocalDelegateResult`-shaped objects, each with `agent_id`,
 `tool_calls[].ok`, `executed_skills[].ok`, and an optional `task_success`).
-The planning cascade's `emitted_calls` are dispatch INTENTS, not outcomes —
+The planning process's `emitted_calls` are dispatch INTENTS, not outcomes —
 they do NOT carry `tool_calls[].ok` / `executed_skills[].ok` / `task_success`,
 so they are not attribution inputs. Do not fabricate outcomes from intents.
 
