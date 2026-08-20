@@ -178,7 +178,7 @@ Release Notes:
 # Sankey diagrams
 
 * Sankey conservation is domain-dependent, not universal. The original engineering Sankey (Sankey 1898, Schmidt 2008) requires conservation of energy/mass, but user-journey funnels, attribution paths, and value-stream maps do not conserve. A Sankey skill must carry a per-domain conservation mode (mandatory/asserted/none), not a single global rule. Assuming universal conservation produces silent "balancing" that fabricates loss branches — the exact failure mode the "never fabricate" rule exists to prevent.
-* When a prompt references an external source (URL, financial statement, codebase), delegate extraction to a specialized skill (structured-extraction, sequential-inquiry, graph-audit) — do not ask the user to transcribe data that already exists in a machine-readable source. Transcription requests shift cognitive load to the user and introduce transcription errors.
+* When a prompt references an external source (URL, financial statement, codebase), delegate extraction to a specialized skill (structured-extraction, sequential-inquiry — do not ask the user to transcribe data that already exists in a machine-readable source. Transcription requests shift cognitive load to the user and introduce transcription errors.
 * Never fabricate Sankey weights. A Sankey's entire semantic value is that link width encodes flow magnitude. A fabricated width is a visualization of the LLM's guess, which is worse than no diagram. If the user declines to provide a weight, mark the edge as `value=1` (unitless placeholder) and note it in the description.
 
 # Rules Hygiene
@@ -702,9 +702,7 @@ All MCP servers that consume `HKASK_DB_PASSPHRASE` must use `hkask_mcp_server::s
 
 `kask_bridge::identity::mirror_provisioned_db_passphrase` must `.await` to completion in the deferred post-login task **before** governed MCP server launch. The mirror copies the `provision_agent`-written `hkask-db-passphrase` keychain entry into `kask://credentials/hkask_db_passphrase` via `CredentialsProvider::write_credentials`. If the deferred task is reordered so server launch precedes the mirror, the primary `ctx.credentials` tier misses on first run and silently falls back to the env/keychain tier — a broken feedback loop (the operator cannot distinguish "not provisioned" from "mirror not yet run"). The ordering is currently enforced by `.await`ing the mirror in `crates/zed/src/main.rs` before launching governed MCP servers.
 
-## `ExitKind` re-export is the stable surface
 
-`hkask_templates::ExitKind` is re-exported at the crate root (`pub use step_graph::ExitKind` at `kask/crates/hkask-templates/src/hkask_templates.rs:38`). Downstream crates must match on `hkask_templates::ExitKind`, not `hkask_templates::step_graph::ExitKind` — the submodule path is not part of the stable surface and a future module rename would silently break callers that import the long path.
 
 ## Live-mutation probe suites must run serialized
 

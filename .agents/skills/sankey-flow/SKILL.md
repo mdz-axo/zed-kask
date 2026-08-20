@@ -129,7 +129,7 @@ The process is example-anchored match → adapt → render (single pass, 2 LLM c
    **Research delegation** (when the prompt references a URL, file, financial statement, codebase, or database): Delegate extraction to an analytical skill rather than asking the user to transcribe data. Delegation targets:
    - **`structured-extraction`**: when the source is a document (PDF, HTML, financial statement) and you need to extract entities (line items, stages, services) and relations (flows) into a structured schema. Provide a schema matching the Sankey spec: `{nodes: [{id, label, ontology_concept}], edges: [{source, target, weight, weight_unit, weight_source}]}`.
    - **`sequential-inquiry`**: when the source is ambiguous or multi-step (e.g., "research how our competitors handle onboarding and map the flow") and you need to reason through what the flow actually is before extracting weights. Template: `sequential-inquiry/sequential-inquiry-engine`.
-   - **`graph-audit` (code mode)**: when the source is a codebase and you need to trace data flow through services/modules via the code graph. Template: `graph-audit/code-discover`.
+   - **`grep` + manual analysis**: when the source is a codebase and you need to trace data flow through services/modules via the code graph. Use grep + manual analysis.
    - **`firecrawl_scrape` / `firecrawl_extract`**: when the source is a URL and you need to pull structured data (e.g., a financial statement from a 10-K filing).
 
    After delegation, validate the extracted spec: are all weights sourced? Are all nodes present? If gaps remain, mark them as placeholders — do not re-delegate the whole task.
@@ -142,7 +142,7 @@ The process is example-anchored match → adapt → render (single pass, 2 LLM c
 
 When the gather step takes Path B (research delegation), follow this protocol:
 
-1. **Identify the source type**: URL (use `firecrawl_scrape` or `firecrawl_extract`), file in project (use `read_file` or `structured-extraction`), codebase (use `graph-audit` code mode), ambiguous/multi-step (use `sequential-inquiry`).
+1. **Identify the source type**: URL (use `firecrawl_scrape` or `firecrawl_extract`), file in project (use `read_file` or `structured-extraction`), codebase (use grep + manual analysis), ambiguous/multi-step (use `sequential-inquiry`).
 
 2. **Define the extraction schema**: Always provide a schema matching the Sankey spec. For financial statements, anchor to FIBO concepts:
    ```json

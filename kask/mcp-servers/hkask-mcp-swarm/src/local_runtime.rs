@@ -41,6 +41,67 @@ pub struct LazyLocalSwarmRuntime {
     inner: tokio::sync::OnceCell<LocalSwarmRuntime>,
 }
 
+/// The rollout event store, constructed lazily on first write. The store
+/// lives beside the ledger (`mcp/swarm/events.db` under the data dir,
+/// operator-configurable via `HKASK_SWARM_EVENTS_PATH`) and is the data
+/// plane of the event-substrate proposal: `model_request` and `verdict`
+/// events for rollout trajectories, opaque pass-through for everything
+/// else. Position in the log is identity.
+pub struct LazyEventStore {
+    db_path: String,
+    inner: std::sync::OnceLock<std::sync::Arc<hkask_event_store::EventStore>>,
+}
+
+impl LazyEventStore {
+    /// Store the config without initializing. The store is constructed on
+    /// first call to `get_or_init`.
+    pub fn lazy(db_path: String) -> Self {
+        Self {
+            db_path,
+            inner: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Get the store, initializing it on first call. Returns `Err` if the
+    /// database cannot be opened. Subsequent calls return the cached store.
+    pub fn get_or_init(
+        &self,
+    ) -> Result<std::sync::Arc<hkask_event_store::EventStore>, LocalSwarmError> {
+        if let Some(store) = self.inner.get() {
+            return Ok(std::sync::Arc::clone(store));
+        }
+        let store = self.open()?;
+        // A racing first-write may have won; either store is equivalent
+        // (same schema, same file), so keep whichever is present.
+        let _ = self.inner.set(std::sync::Arc::clone(&store));
+        Ok(store)
+    }
+
+    fn open(&self) -> Result<std::sync::Arc<hkask_event_store::EventStore>, LocalSwarmError> {
+        if let Some(parent) = std::path::Path::new(&self.db_path).parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                LocalSwarmError::Io(format!(
+                    "failed to create event store dir {}: {e}",
+                    parent.display()
+                ))
+            })?;
+        }
+        let manager = r2d2_sqlite::SqliteConnectionManager::file(&self.db_path)
+            .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
+        let pool = r2d2::Pool::builder()
+            .max_size(4)
+            .build(manager)
+            .map_err(|e| {
+                LocalSwarmError::Database(format!("failed to create event store pool: {e}"))
+            })?;
+        let driver: std::sync::Arc<dyn hkask_storage::DatabaseDriver> =
+            std::sync::Arc::new(hkask_storage::SqliteDriver::new(pool));
+        let store = hkask_event_store::EventStore::from_driver(driver)
+            .map_err(|e| LocalSwarmError::Database(format!("failed to init event store: {e}")))?;
+        Ok(std::sync::Arc::new(store))
+    }
+}
+
 impl LazyLocalSwarmRuntime {
     /// Store the config without initializing. The runtime is constructed
     /// on first call to `get_or_init`.

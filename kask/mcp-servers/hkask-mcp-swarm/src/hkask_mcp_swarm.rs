@@ -127,8 +127,8 @@ pub mod test_utils {
 // this crate's `src/` and `tests/`).
 pub use crate::local_registry::{LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry};
 pub use crate::local_runtime::{
-    LazyLocalSwarmRuntime, LocalDelegateResult, LocalSwarmRuntime, TaskSuccessProvenance,
-    TaskSuccessVerdict,
+    LazyEventStore, LazyLocalSwarmRuntime, LocalDelegateResult, LocalSwarmRuntime,
+    TaskSuccessProvenance, TaskSuccessVerdict,
 };
 
 use crate::abw_client::SwarmClient;
@@ -146,6 +146,7 @@ hkask_mcp_server::mcp_server!(
         pub local_runtime: std::sync::Arc<LazyLocalSwarmRuntime>,
         pub local_swarms: std::sync::Arc<LocalSwarmRegistry>,
         pub local_memory: std::sync::Arc<local_knowledge::LazyLocalMemory>,
+        pub event_store: std::sync::Arc<LazyEventStore>,
     }
 );
 
@@ -265,6 +266,23 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 ledger_path,
             ));
 
+            // The rollout event store (event-substrate data plane). Same D28
+            // layout as the ledger: `mcp/swarm/events.db` under the data dir,
+            // operator-configurable via `HKASK_SWARM_EVENTS_PATH`. Lazy —
+            // opened on first write, so a missing/unwritable path surfaces at
+            // the first `swarm_eval_agent_local` call, not at startup.
+            let events_path = std::env::var("HKASK_SWARM_EVENTS_PATH")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| {
+                    hkask_types::agent_paths::resolve_under_data_dir(
+                        &hkask_types::agent_paths::mcp_server_db("swarm", "events"),
+                    )
+                    .to_string_lossy()
+                    .to_string()
+                });
+            let event_store = std::sync::Arc::new(LazyEventStore::lazy(events_path));
+
             // Local swarm registry — the local replica of an ABW workspace
             // roster. A missing directory is not an error (created on first
             // `swarm_create_local_swarm`); an empty roster is the normal
@@ -373,6 +391,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 local_runtime,
                 local_swarms,
                 local_memory,
+                event_store,
             ))
         },
         vec![CredentialRequirement::optional(

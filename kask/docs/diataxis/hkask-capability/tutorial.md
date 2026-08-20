@@ -123,8 +123,8 @@ assert_eq!(info.server_id, "test-server");
 // Also: info.description, info.input_schema.
 ```
 
-`server_id` is what callers need in practice: it is how the manifest executor's
-`invoke_tool` resolves which server to dispatch to. `get_tool_info` takes no
+`server_id` is what callers need in practice: it is how the MCP runtime's
+tool dispatch resolves which server to dispatch to. `get_tool_info` takes no
 identity, because tool schemas are public per the MCP protocol design —
 `tools/list` is an unauthenticated handshake.
 

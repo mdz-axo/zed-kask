@@ -37,7 +37,7 @@ The skill is steered by passing keys in the `context` map of the `skill` tool in
 
 `task` (the user's natural-language request) is injected after `context`, so a `context["task"]` entry never clobbers the user's actual request.
 
-**Enforced at the boundary (`enforce_inputs: true`).** This skill opts in to input validation: an invocation that omits a required input (`change_spec` / `diff_base`) or passes a wrong-typed `context` value (e.g. `fix_mode` as a bool instead of a string) is rejected with a structured error *before* the process runs — instead of silently running on empty/wrong inputs. Unknown keys are warned (not rejected). See `hkask_templates::validate_inputs`.
+**Enforced at the boundary (`enforce_inputs: true`).** This skill opts in to input validation: an invocation that omits a required input (`change_spec` / `diff_base`) or passes a wrong-typed `context` value (e.g. `fix_mode` as a bool instead of a string) is rejected with a structured error *before* the process runs — instead of silently running on empty/wrong inputs. Unknown keys are warned (not rejected). See the skill tool input validation.
 
 ## Instructions
 

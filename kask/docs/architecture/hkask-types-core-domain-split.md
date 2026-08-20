@@ -10,7 +10,7 @@ mds_categories: [composition, lifecycle]
 
 # ADR: Split `hkask-types` into core primitives and domain types
 
-**Status:** Draft — not yet decided. This ADR records the decision context and options so the split is not undertaken lightly or reversed silently. No code moves until a consumer-dependency audit (graph-audit semantic mode) confirms the chosen option is cycle-free.
+**Status:** Draft — not yet decided. This ADR records the decision context and options so the split is not undertaken lightly or reversed silently. No code moves until a consumer-dependency audit (manual grep-based) confirms the chosen option is cycle-free.
 
 ## Context
 
@@ -62,7 +62,7 @@ The cycle-break that motivated the consolidation may no longer be necessary: the
 
 ## Audit results (2026-08-02)
 
-The consumer-dependency audit is complete (graph-audit semantic mode, manual grep-based; consumers verified via actual `use hkask_types::` imports, not type-name greps, to avoid common-word false positives like `Signal`/`Deviation`). A move of bucket -> owner is cycle-free iff the owner's transitive dependency closure contains no consumer of the bucket.
+The consumer-dependency audit is complete (manual grep-based; consumers verified via actual `use hkask_types::` imports, not type-name greps, to avoid common-word false positives like `Signal`/`Deviation`). A move of bucket -> owner is cycle-free iff the owner's transitive dependency closure contains no consumer of the bucket.
 
 **Cycle-free (viable Option-B moves):**
 - `loops`, `regulation`, `curator`, `goal` -> `hkask-regulation`
@@ -93,7 +93,7 @@ The consumer-dependency audit is complete (graph-audit semantic mode, manual gre
 ## Verification
 
 - Whichever option is chosen: `cargo check` across all 24+ consumers, `./script/clippy` (per `.rules`), and the existing test suites (e.g. `hkask-types` id/visibility tests, `hkask-regulation` loop tests) must pass.
-- For Option B specifically: a dependency-graph cycle check before and after each domain move (graph-audit semantic mode).
+- For Option B specifically: a dependency-graph cycle check before and after each domain move (manual grep-based).
 - A structural-pin test should assert the new crate(s)' public surface matches the intended core/domain split, so the split doesn't silently drift back.[^fowler-refactoring]
 
 ## Non-goals
@@ -121,4 +121,4 @@ This ADR does **not** decide the MCP server error consolidation. A separate anal
 - `kask/docs/architecture/zed-host-architecture-plan.md` — D1–D28 seams, crate inventory.
 - `kask/crates/hkask-regulation/src/types/loops/mod.rs` — the "moved to break the circular dependency" note that motivates this ADR.
 - `kask/crates/hkask-types/Cargo.toml` — the `description` correction and the `hkask-capability` cycle guard.
-- 2026-08-02 type-system refactoring analysis (essentialist + graph-audit + refactor-architecture skills).
+- 2026-08-02 type-system refactoring analysis (essentialist + refactor-architecture skills).

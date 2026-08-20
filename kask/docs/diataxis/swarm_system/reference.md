@@ -64,7 +64,6 @@ classDiagram
     class AgentExecutor {
         -inference: Arc~InferencePort~
         -tool_dispatch: Arc~ToolDispatchPort~
-        -skill_exec: Arc~SkillExecPort~
         -skills_dir: Option~PathBuf~
         +run(agent, task) RawDelegateResult
     }

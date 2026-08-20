@@ -72,7 +72,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Reference: Manual Pass on P1
 
-The manual pass on the principle "conclusions never promoted to verified fact" (paper §4, last paragraph) produced five constraints from `kask/crates/hkask-verification/src/grounding.rs`:
+The manual pass on the principle "conclusions never promoted to verified fact" (paper §4, last paragraph) produced five constraints from the deleted `kask/crates/hkask-verification/src/grounding.rs` (historical reference):
 
 1. `Derived` from `Inferred` is `Inferred`, not `Derived` (L1001-1022, falsifier: `derived_from_inferred_is_inferred`)
 2. `Derived` from `Unsourced` (nulled) is nulled (L988-998, falsifier: `derived_from_nulled_is_nulled`)

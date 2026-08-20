@@ -1524,18 +1524,18 @@ impl SwarmServer {
         .await
     }
 
-    /// The rollout harness (event-substrate phase 1): run one agent card
-    /// against a task set N times each, stamp deterministic verdicts, and
-    /// report per-task pass rates with standard error. In-memory only — no
-    /// event store yet; this phase validates that task sets reuse across
-    /// cards before any infrastructure is built.
+    /// The rollout harness (event-substrate): run one agent card against a
+    /// task set N times each, stamp deterministic verdicts, and report
+    /// per-task pass rates with standard error. Each rollout appends a
+    /// `model_request` event and a `verdict` event to the event store —
+    /// the harness is the store's first writer.
     ///
     /// Rollouts run sequentially (the local ledger is single-writer, same
     /// constraint as fanout/plan). A delegation error counts as a failed
     /// rollout for that task — the harness measures end-to-end pass rate,
     /// which includes crashes, not just wrong answers.
     #[tool(
-        description = "Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator (contains/not_contains/regex), and report per-task pass rates with standard error and totals. In-memory only. Tasks capped at 10, repeats at 10, total rollouts at 50."
+        description = "Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator (contains/not_contains/regex), and report per-task pass rates with standard error and totals. Each rollout is recorded as model_request + verdict events in the event store. Tasks capped at 10, repeats at 10, total rollouts at 50."
     )]
     pub(crate) async fn swarm_eval_agent_local(
         &self,
@@ -1596,17 +1596,27 @@ impl SwarmServer {
                     ))
                 })?;
                 let ceiling = self.client.config().max_credits_per_dispatch;
+                // The event store is the data plane: every rollout appends a
+                // model_request event and a verdict event. A store failure is
+                // logged and counted (`events_dropped`), never swallowed —
+                // the report must distinguish "recorded" from "record lost".
+                let event_store = self.event_store.get_or_init().ok();
+                let mut events_dropped = 0usize;
+                let harness_run_id = format!("harness-{}-{}", req.agent_name, uuid::Uuid::new_v4());
 
                 let mut task_reports = Vec::with_capacity(req.tasks.len());
                 let mut total_passes = 0usize;
                 let mut total_cost = 0i64;
                 let mut total_cost_uncapped = 0i64;
                 let mut total_tokens = 0i64;
-                for task in &req.tasks {
+                for (task_index, task) in req.tasks.iter().enumerate() {
                     let mut passes = 0usize;
                     let mut errors = 0usize;
                     let mut latencies_ms: Vec<u64> = Vec::with_capacity(repeats as usize);
-                    for _repeat in 0..repeats {
+                    for repeat_index in 0..repeats {
+                        // One rollout = one delegation. The rollout id groups
+                        // its events in the store.
+                        let rollout_id = format!("{harness_run_id}-t{task_index}-r{repeat_index}");
                         match runtime
                             .delegate(&agent, &task.task, task.credits_authorized, ceiling)
                             .await
@@ -1618,12 +1628,44 @@ impl SwarmServer {
                                 latencies_ms.push(result.latency_ms);
                                 // The evaluator is deterministic, so a pass
                                 // here is a real verdict, not a sample.
-                                if run_evaluator(
+                                let passed = run_evaluator(
                                     &result.response,
                                     &task.evaluator.evaluator,
                                     &task.evaluator.spec,
-                                )? {
+                                )?;
+                                if passed {
                                     passes += 1;
+                                }
+                                if let Some(store) = &event_store {
+                                    let model_request = serde_json::json!({
+                                        "model": result.model,
+                                        "status": "ok",
+                                        "latency_ms": result.latency_ms,
+                                        "usage": { "total_tokens": result.tokens_used },
+                                        "cost": result.cost,
+                                        "cost_uncapped": result.cost_uncapped,
+                                        "tool_calls": result.tool_calls.len(),
+                                    });
+                                    let verdict = serde_json::json!({
+                                        "pass": passed,
+                                        "source": "deterministic_evaluator",
+                                        "evaluator": task.evaluator.evaluator,
+                                        "spec_len": task.evaluator.spec.len(),
+                                    });
+                                    let appended = store
+                                        .append(&rollout_id, "model_request", &model_request)
+                                        .and_then(|_| {
+                                            store.append(&rollout_id, "verdict", &verdict)
+                                        });
+                                    if let Err(error) = appended {
+                                        events_dropped += 1;
+                                        tracing::warn!(
+                                            target: "hkask.mcp.swarm",
+                                            rollout = %rollout_id,
+                                            error = %error,
+                                            "event store append failed — rollout not recorded"
+                                        );
+                                    }
                                 }
                             }
                             Err(e) => {

@@ -34,7 +34,7 @@ proceed to Step 8 to verify the merge did not silently restore them.
 
 ### Step 1 — Establish the functional inventory (code-graph extraction)
 
-Extract every kask-wiring functional unit from the fork's file. A _functional unit_ is a contiguous block implementing one kask capability. Use `graph-audit` code mode (via `hkask-mcp-codegraph` MCP server) when available; otherwise extract manually via `git diff upstream/main HEAD -- <file>` + `grep` for section headers and kask symbols.
+Extract every kask-wiring functional unit from the fork's file. A _functional unit_ is a contiguous block implementing one kask capability. Use `git diff upstream/main HEAD -- <file>` + `grep` to extract manually via `git diff upstream/main HEAD -- <file>` + `grep` for section headers and kask symbols.
 
 Output: a numbered list of functional units (F1, F2, …) with line ranges and one-sentence purpose.
 
@@ -107,7 +107,7 @@ list updates independently of this skill.
 
 | Skill               | Role                                                                                          | When Invoked  |
 | ------------------- | --------------------------------------------------------------------------------------------- | ------------- |
-| `graph-audit`       | Code-graph extraction (code mode) + constraint-force classification (semantic mode)           | Steps 1–2     |
+| `grep` + manual analysis     | Code-graph extraction (manual)                                    | Steps 1-2     |
 | `essentialist`      | Deletion test: is full re-application necessary, or is surgical marking + pinning sufficient? | Before Step 5 |
 | `coding-guidelines` | Surgical re-application guardrails                                                            | Step 5        |
 | `task-breakdown`    | Slice the re-application into vertical tasks                                                  | Step 5        |
