@@ -1,8 +1,8 @@
 ---
 title: "Swarm Steering Loop"
 audience: [architects, developers]
-last_updated: 2026-08-04
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.0.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, trust]
@@ -46,7 +46,12 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-010
-verified_date: 2026-08-16
-verified_against: .agents/skills/swarm-steering/SKILL.md:60,64; .agents/skills/swarm-intelligence/SKILL.md:147,156,184; kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39,73,check_bind; kask/crates/hkask-verification/src/grounding.rs:enforce_grounding
+verified_date: 2026-08-20
+verified_against: .agents/skills/swarm-steering/SKILL.md:60,64; .agents/skills/swarm-intelligence/SKILL.md:147,156,184; kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39,73,check_bind
 status: VERIFIED
 -->
+
+> **Note (2026-08-20):** The `hkask-verification` crate (which provided
+> `enforce_grounding`) was deleted (commit `9e9c41ef3c`). The "Rung 3
+> Grounding enforce_grounding" step in the diagram above is no longer wired;
+> the `check_bind` Rung 4 binding check survives in `local_runtime.rs`.

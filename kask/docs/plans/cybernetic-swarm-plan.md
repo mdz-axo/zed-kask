@@ -1,14 +1,34 @@
 ---
 title: "Cybernetic Swarm Plan — Reference Model, Map, and Findings"
 audience: [architects, developers]
-last_updated: 2026-08-04
-version: "1.0.0"
-status: "Active"
+last_updated: 2026-08-20
+version: "1.1.0"
+status: "Partially Deprecated"
 domain: "Swarm"
 mds_categories: [composition, trust]
 ---
 
 # Cybernetic Swarm Plan — Reference Model, Map, and Findings
+
+> **⚠️ Partially deprecated 2026-08-20.** The cybernetic reference model
+> (six canonical loops, C0–C6) and the swarm-intelligence composition
+> remain current. However, many implementation details reference deleted
+> subsystems:
+> - The `ManifestExecutor` / `BridgeManifestExecutor` skill-cascade path
+>   and `kask/registry/manifests/*.yaml` FlowDef manifests were removed with
+>   `hkask-templates` (commit `5f4cf5f10d`). Skill execution is now
+>   upstream-Zed body injection (`SkillTool::run` → `render_skill_envelope`);
+>   PDCA loops are model-coordinated via `lisp_eval` and `render_template`.
+> - The `hkask-guard` crate was deleted (2026-08-10); guard scanning is gone.
+> - The `hkask-verification` crate was deleted (commit `9e9c41ef3c`);
+>   `enforce_grounding`, `VerificationStore`, and the `GroundingSensor`
+>   regulation-loop sensor are gone.
+> - `cargo test -p hkask-templates` commands throughout the validation
+>   sections are no longer runnable (the crate is deleted).
+>
+> The cybernetic frame, the swarm-intelligence and swarm-steering skills, and
+> the `hkask-mcp-swarm` server survive. Claims that reference the deleted
+> subsystems are historical.
 
 > Companion to `abw-swarm-intelligence.md`. That document is the
 > **current-state** substrate (ABW semantics, tool surface, consent gate). This

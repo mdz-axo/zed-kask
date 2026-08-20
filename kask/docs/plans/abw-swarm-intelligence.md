@@ -1,14 +1,31 @@
 ---
 title: "ABW Swarm Intelligence — Design & Current State"
 audience: [architects, developers]
-last_updated: 2026-08-04
-version: "1.0.0"
-status: "Active"
+last_updated: 2026-08-20
+version: "1.1.0"
+status: "Partially Deprecated"
 domain: "Swarm"
 mds_categories: [domain, composition, trust]
 ---
 
 # Agent Bestiary World (ABW) Swarm Intelligence — Design & Current State
+
+> **⚠️ Partially deprecated 2026-08-20.** The ABW substrate, tool surface,
+> consent gate, and local runtime described here remain current. However,
+> several integration details reference deleted subsystems:
+> - The `ManifestExecutor` / IPC `SkillExecute` skill-cascade path was
+>   removed with `hkask-templates` (commit `5f4cf5f10d`). Declared
+>   `capabilities.skills` now execute via upstream-Zed body injection
+>   (`SkillTool::run` → `render_skill_envelope`) — there is no
+>   `ManifestExecutor` and no IPC `SkillExecute` method.
+> - The `hkask-guard` input/output guard scanning was removed
+>   (2026-08-10); skill outputs are no longer guard-scanned.
+> - The `hkask-verification` grounding enforcement was removed
+>   (commit `9e9c41ef3c`); `enforce_grounding` is no longer wired.
+>
+> Claims below that reference these subsystems are historical. The ABW
+> REST client, consent store, spend gate, local agent registry, and
+> `LocalSwarmRuntime` survive.
 
 > Supersedes the original 2026-08-01 integration plan (removed 2026-08-01 as
 > stale in `8f3ebd5a00`). This document is **current-state**: every claim below

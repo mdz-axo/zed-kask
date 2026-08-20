@@ -1,5 +1,18 @@
 # hkask Classifier Model Review
 
+> **⚠️ Partially deprecated 2026-08-20.** The classifier model selection
+> (default switched to `OpenRouter/z-ai/glm-5.2`) and the corpus-server
+> evidence remain current. However, §7 and §8 cite `hkask-templates` files
+> (`template_renderer.rs`, `step_actions.rs`) as locations for proposed
+> changes — the `hkask-templates` crate was deleted (commit `5f4cf5f10d`).
+> The `thinking_budget` normalization and dead-key deletion actions that
+> targeted `hkask-templates/src/step_actions.rs` and
+> `hkask-templates/src/template_renderer.rs` are void; the template parameter
+> parsing surface moved with the crate's deletion (the `render_template`
+> agent tool renders Jinja2 templates but does not parse `[inference]` blocks
+> the way the deleted `template_renderer.rs` did). The `work_effort`/
+> `verbosity` dead-key findings are historical.
+
 **Date:** 2026-08-17 · **Status:** Complete — default switched to `OpenRouter/z-ai/glm-5.2`
 **Sources:** OpenRouter `/api/v1/models` + `/api/v1/models/{id}/endpoints` (catalog, gate
 screening, price); live `/chat/completions` eval (12 models × 50 cases, 2026-08-17); repo

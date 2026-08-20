@@ -1,5 +1,20 @@
 # Skill–MCP Co-Evolution Feedback Loops
 
+> **⚠️ Deprecated 2026-08-20.** This plan describes feedback loops that
+> depend on deleted subsystems:
+> - `BridgeManifestExecutor::execute_skill` and the `reg.skill.<id>.outcome`
+>   span emission path were removed with `hkask-templates` (commit
+>   `5f4cf5f10d`). Skill execution is now upstream-Zed body injection
+>   (`SkillTool::run` → `render_skill_envelope`); there is no
+>   `BridgeManifestExecutor`.
+> - The `hkask-verification` grounding enforcement surface
+>   (`enforce_grounding`, `VerificationStore`) was deleted (commit
+>   `9e9c41ef3c`). The grounding-contract tightening loop (Loop 2) is gone.
+>
+> The calibration loop (Loop 1, forecast outcomes → adjusted priors) and the
+> regulation-threshold loop (Loop 4) survive in reduced form. Retained for
+> historical reference.
+
 ## Overview
 
 This document describes the four feedback loops that connect skill outcomes,

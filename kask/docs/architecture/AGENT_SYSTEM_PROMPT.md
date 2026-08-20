@@ -196,11 +196,16 @@ fenced tag. The prompt must disambiguate the two, not deny either.
 - **zed-kask** `:46-47`: copy the ` ```media ` block from a `display_hint` /
   `display_hints` tool-result field verbatim into the reply.
 - **Upstream** has neither bullet.
-- **Why load-bearing:** `kask/mcp-servers/hkask-mcp-media/src/media_block.rs:44-51`
-  builds the hint body as pure JSON (`kind`, `src`, `ontology`, `provenance`) with
-  **no self-describing instruction**. Nothing else tells the model what to do with
-  the field, so removing these bullets breaks inline media rendering. This was
-  evaluated for deletion and rejected on that evidence.
+- **Why load-bearing (historical):** the former
+  `kask/mcp-servers/hkask-mcp-media/src/media_block.rs:44-51` built the hint
+  body as pure JSON (`kind`, `src`, `ontology`, `provenance`) with **no
+  self-describing instruction**. The `hkask-mcp-media` MCP server was deleted
+  (commit `26215d845e`); no surviving MCP server emits `display_hint` /
+  `display_hints` fields. The media block *renderer* survives in
+  `hkask_viz_core::block_renderer()` (wired at
+  `crates/agent_ui/src/conversation_view.rs:3516`), so the prompt bullets
+  remain live for any future tool that emits the ` ```media ` fenced block.
+  This was evaluated for deletion and rejected on that evidence.
 
 ### 5.5 `## Agent Skills` — body injection (D1)
 

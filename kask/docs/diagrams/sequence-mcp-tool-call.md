@@ -1,8 +1,8 @@
 ---
 title: "MCP Tool Call — LazyToolRouter to McpRuntime::invoke to unwrap_tool_envelope"
 audience: [architects, developers, agents]
-last_updated: 2026-08-15
-version: "0.36.0"
+last_updated: 2026-08-20
+version: "0.37.0"
 status: "Active"
 domain: "Trust"
 mds_categories: [trust, composition]
@@ -120,8 +120,12 @@ single seam that extracts the inner value: if the payload is an object with
 a `content` key, it returns that key's value; otherwise it returns the
 payload unchanged. `parse_tool_response` composes JSON parse + unwrap. The
 property `unwrap_tool_envelope({"content": P}) == P` for all JSON payloads
-`P` is pinned by proptest in `hkask-types/src/tool_response.rs` and
-`hkask-templates/tests/executor_properties.rs`.
+`P` is pinned by proptest in `hkask-types/src/tool_response.rs`.
+
+> **Note (2026-08-20):** The former companion proptest in
+> `hkask-templates/tests/executor_properties.rs` was deleted with the
+> `hkask-templates` crate (commit `5f4cf5f10d`). The proptest in
+> `hkask-types/src/tool_response.rs` survives.
 
 ## Related
 
@@ -132,7 +136,7 @@ property `unwrap_tool_envelope({"content": P}) == P` for all JSON payloads
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SEQ-MCP-TOOL-CALL-001
-verified_date: 2026-08-15
+verified_date: 2026-08-20
 verified_against: crates/agent/src/tool_router.rs (LazyToolRouter, apply_router_bypassing_built_ins, ToolRouter trait, select_tools, should_activate, default_thresholds_are_the_documented_values); crates/agent/src/thread.rs (enabled_tools calls apply_router_bypassing_built_ins); kask/crates/hkask-capability/src/tool_port.rs (ToolPort trait, ToolPortError::EnergyBudgetExceeded, invoke); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime, charge_call_metered, CallMeterOutcome branches); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome, CallCapManager::charge_metered, DEFAULT_RUNAWAY_CALL_CEILING); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope, parse_tool_response); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer.credentials)
 status: VERIFIED
 -->
