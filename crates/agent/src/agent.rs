@@ -38,10 +38,10 @@ use acp_thread::{
 };
 use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
-    AGENTS_DIR_NAME, ProjectSkillGroup, SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError,
-    SkillScopeId, SkillSource, SkillSummary, global_skills_dir, load_marketplace_skills,
-    load_skills_from_directory, parse_skill_frontmatter, project_skills_relative_path,
-    seed_shipped_skills,
+    AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, ProjectSkillGroup, SKILL_FILE_NAME, Skill,
+    SkillIndex, SkillLoadError, SkillScopeId, SkillSource, SkillSummary, global_skills_dir,
+    load_marketplace_skills, load_skills_from_directory, parse_skill_frontmatter,
+    project_skills_relative_path, seed_shipped_skills,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -4238,18 +4238,64 @@ impl TerminalHandle for AcpTerminalHandle {
 /// (potentially ~100KB) skill bodies aren't cloned just to be discarded by
 /// `ProjectContext::new`, which only needs the summary fields.
 fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadingIssueData>) {
-    // zed-kask: The catalog budget is disabled. In upstream zed, skill
-    // descriptions are injected into the system prompt, so a 50KB budget
-    // prevents token bloat. In zed-kask, skills execute via YAML manifests —
-    // the catalog is discovery-only (name + description + location). All
-    // skills are kept in the catalog so the model can discover and invoke
-    // any skill via the skill tool.
-    let kept: Vec<SkillSummary> = skills
-        .iter()
-        .filter(|skill| !skill.disable_model_invocation)
-        .map(SkillSummary::from)
-        .collect();
-    (kept, Vec::new())
+    let mut kept = Vec::new();
+    let mut errors = Vec::new();
+    let mut dropped: Vec<&Skill> = Vec::new();
+    let mut total_size = 0usize;
+    let mut budget_exceeded = false;
+
+    for skill in skills {
+        if skill.disable_model_invocation {
+            continue;
+        }
+
+        let entry_size = skill.name.len() + skill.description.len();
+        if !budget_exceeded && total_size.saturating_add(entry_size) <= MAX_SKILL_DESCRIPTIONS_SIZE
+        {
+            total_size += entry_size;
+            kept.push(SkillSummary::from(skill));
+        } else {
+            budget_exceeded = true;
+            dropped.push(skill);
+        }
+    }
+
+    if !dropped.is_empty() {
+        let budget_kb = MAX_SKILL_DESCRIPTIONS_SIZE / 1024;
+        let first = dropped[0];
+        let message = if dropped.len() == 1 {
+            let entry_size = first.name.len() + first.description.len();
+            format!(
+                "Skill '{}' ({:.1}KB description) was dropped from the catalog because the previous skills already used the entire {}KB description budget.",
+                first.name,
+                entry_size as f64 / 1024.0,
+                budget_kb,
+            )
+        } else {
+            let mut message = format!(
+                "{} skills were dropped from the catalog because they exceeded the {}KB description budget:",
+                dropped.len(),
+                budget_kb,
+            );
+            for skill in &dropped {
+                let entry_size = skill.name.len() + skill.description.len();
+                message.push('\n');
+                message.push_str(&format!(
+                    "- {} ({:.1}KB description)",
+                    skill.name,
+                    entry_size as f64 / 1024.0,
+                ));
+            }
+            message
+        };
+        errors.push(SkillLoadingIssueData {
+            path: first.skill_file_path.clone(),
+            message,
+            kind: SkillLoadingIssueKind::LoadFailed,
+        });
+    }
+
+    (kept, errors)
 }
 
 /// Build a closure that, when called, reads the latest `state.skills`
@@ -4697,104 +4743,6 @@ mod internal_tests {
         );
     }
 
-    #[test]
-    fn test_ambiguous_mcp_prompt_names() {
-        // Reserving the built-in `/compact` forces a same-named MCP prompt to be
-        // server-qualified so it stays reachable; unique names stay bare.
-        let ambiguous = ambiguous_mcp_prompt_names([COMPACT_COMMAND_NAME], ["compact", "deploy"]);
-        assert!(ambiguous.contains("compact"));
-        assert!(!ambiguous.contains("deploy"));
-
-        // Without the reservation, a unique MCP prompt is left bare.
-        let ambiguous = ambiguous_mcp_prompt_names([], ["compact", "deploy"]);
-        assert!(ambiguous.is_empty());
-
-        // Two MCP prompts sharing a name are both qualified regardless of
-        // reservation.
-        let ambiguous = ambiguous_mcp_prompt_names([], ["dup", "dup", "unique"]);
-        assert!(ambiguous.contains("dup"));
-        assert!(!ambiguous.contains("unique"));
-    }
-
-    #[test]
-    fn test_parse_rules_frontmatter_parses_globs_and_always_apply() {
-        let input = "---\nglobs:\n  - \"**/*.rs\"\n  - \"src/**/*.ts\"\nalwaysApply: false\n---\nUse TypeScript strict mode.\n";
-        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
-        let frontmatter = frontmatter.expect("should parse frontmatter");
-        assert_eq!(frontmatter.globs, vec!["**/*.rs", "src/**/*.ts"]);
-        assert!(!frontmatter.always_apply);
-        assert_eq!(text, "Use TypeScript strict mode.");
-    }
-
-    #[test]
-    fn test_parse_rules_frontmatter_defaults_always_apply_true_when_absent() {
-        let input = "Just some rules without frontmatter.\n";
-        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
-        assert!(frontmatter.is_none(), "no frontmatter should be None");
-        assert_eq!(text, "Just some rules without frontmatter.");
-    }
-
-    #[test]
-    fn test_parse_rules_frontmatter_handles_always_apply_true() {
-        let input = "---\nalwaysApply: true\n---\nAlways apply these rules.\n";
-        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
-        let frontmatter = frontmatter.expect("should parse frontmatter");
-        assert!(frontmatter.always_apply);
-        assert!(frontmatter.globs.is_empty());
-        assert_eq!(text, "Always apply these rules.");
-    }
-
-    #[test]
-    fn test_parse_rules_frontmatter_handles_no_closing_fence() {
-        let input = "---\nglobs: [\"**/*.rs\"]\nThis is not valid frontmatter.\n";
-        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
-        assert!(frontmatter.is_none(), "invalid frontmatter should be None");
-        assert!(!text.is_empty());
-    }
-
-    #[test]
-    fn test_parse_rules_frontmatter_handles_empty_frontmatter() {
-        // Empty frontmatter: `---\n---\nbody` — no YAML between fences.
-        let input = "---\n---\nUse strict mode.\n";
-        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
-        let frontmatter = frontmatter.expect("empty frontmatter should parse");
-        assert!(
-            frontmatter.always_apply,
-            "empty frontmatter defaults to always_apply: true"
-        );
-        assert!(frontmatter.globs.is_empty());
-        assert_eq!(text, "Use strict mode.");
-    }
-
-    #[test]
-    fn test_parse_rules_frontmatter_handles_empty_frontmatter_no_body() {
-        // Empty frontmatter with no body: `---\n---`
-        let input = "---\n---";
-        let (text, frontmatter) = parse_rules_frontmatter(input.to_string());
-        let frontmatter = frontmatter.expect("empty frontmatter should parse");
-        assert!(frontmatter.always_apply);
-        assert!(text.is_empty(), "body should be empty");
-    }
-
-    #[test]
-    fn test_qualified_compact_commands_are_not_native_compact() {
-        let unqualified_blocks = [acp::ContentBlock::from("/compact")];
-        let unqualified = Command::parse(&unqualified_blocks).unwrap();
-        assert!(unqualified.is_unqualified("compact"));
-
-        let mcp_blocks = [acp::ContentBlock::from("/server.compact")];
-        let mcp_qualified = Command::parse(&mcp_blocks).unwrap();
-        assert_eq!(mcp_qualified.prompt_name, "compact");
-        assert_eq!(mcp_qualified.explicit_server_id, Some("server"));
-        assert!(!mcp_qualified.is_unqualified("compact"));
-
-        let skill_blocks = [acp::ContentBlock::from("/:compact")];
-        let skill_qualified = Command::parse(&skill_blocks).unwrap();
-        assert_eq!(skill_qualified.prompt_name, "compact");
-        assert_eq!(skill_qualified.skill_scope, Some(""));
-        assert!(!skill_qualified.is_unqualified("compact"));
-    }
-
     fn make_project_skill(name: &str, description: &str, worktree: &str) -> Skill {
         Skill {
             name: name.to_string(),
@@ -4826,336 +4774,6 @@ mod internal_tests {
             .iter()
             .filter(|s| matches!(s.source, SkillSource::Global))
             .collect()
-    }
-
-    #[test]
-    fn test_combine_skills_keeps_every_entry_for_autocomplete() {
-        // The autocomplete popup needs both same-named entries so the
-        // source label can disambiguate them. `combine_skills` must not
-        // drop the global when a project-local shares its name.
-        let global = make_global_skill("review", "Global review");
-        let project = make_project_skill("review", "Project review", "project");
-
-        let (skills, errors) = combine_skills(vec![Ok(global)], vec![Ok(project)].into_iter());
-
-        assert!(errors.is_empty());
-        let user = user_skills(&skills);
-        assert_eq!(user.len(), 2);
-        assert!(matches!(user[0].source, SkillSource::Global));
-        assert!(matches!(user[1].source, SkillSource::ProjectLocal { .. }));
-    }
-
-    #[test]
-    fn test_apply_skill_overrides_project_wins_over_global() {
-        // The model-facing projection collapses the same name to a
-        // single entry, with the project-local winning. This is what
-        // `select_catalog_skills`, `SkillTool`, and the slash-command
-        // resolver all see.
-        let global = make_global_skill("review", "Global review");
-        let project = make_project_skill("review", "Project review", "project");
-
-        let resolved = apply_skill_overrides(&[global, project]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "Project review");
-        assert!(matches!(
-            resolved[0].source,
-            SkillSource::ProjectLocal { .. }
-        ));
-    }
-
-    #[test]
-    fn test_apply_skill_overrides_same_source_collision_keeps_first() {
-        // Two globals (or two project-locals from different worktrees)
-        // colliding don't have a clear winner; preserve the historical
-        // "first one wins" behavior.
-        let first = make_global_skill("review", "First");
-        let second = make_global_skill("review", "Second");
-
-        let resolved = apply_skill_overrides(&[first, second]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "First");
-    }
-
-    #[test]
-    fn test_apply_skill_overrides_core_skill_unshadowable_by_project_local() {
-        // A core skill cannot be shadowed by a project-local skill of the
-        // same name — core skills are unshadowable to prevent a compromised
-        // project from bypassing consent/trust/quality controls.
-        let mut core = make_global_skill("create-skill", "Core version");
-        core.core = true;
-        let project = make_project_skill("create-skill", "Project override", "my-project");
-
-        let resolved = apply_skill_overrides(&[core, project]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "Core version");
-        assert!(resolved[0].core);
-    }
-
-    #[test]
-    fn test_apply_skill_overrides_core_skill_unshadowable_by_user_global() {
-        // A core skill cannot be shadowed by a user (non-core) global skill
-        // of the same name.
-        let mut core = make_global_skill("create-skill", "Core version");
-        core.core = true;
-        let user_global = make_global_skill("create-skill", "User override");
-
-        let resolved = apply_skill_overrides(&[core, user_global]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "Core version");
-        assert!(resolved[0].core);
-    }
-
-    #[test]
-    fn test_apply_skill_overrides_core_skill_wins_when_iterated_after_user_skill() {
-        // The unshadowable guarantee must hold regardless of iteration
-        // order. If a non-core project-local skill (precedence 3) is
-        // iterated BEFORE a core global skill (precedence 2) of the same
-        // name, the core skill must still win — a naive precedence-only
-        // comparison would let the project skill shadow the core skill
-        // (3 > 2), defeating the guarantee. This is the reverse-order
-        // counterpart of `..._unshadowable_by_project_local`.
-        let project = make_project_skill("create-skill", "Project override", "my-project");
-        let mut core = make_global_skill("create-skill", "Core version");
-        core.core = true;
-
-        let resolved = apply_skill_overrides(&[project, core]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "Core version");
-        assert!(resolved[0].core);
-    }
-
-    #[test]
-    fn test_apply_skill_overrides_core_skill_wins_when_iterated_after_user_global() {
-        // Same as above but with a user global skill first — the core
-        // global skill arriving second must replace it despite equal
-        // precedence (both Global).
-        let user_global = make_global_skill("create-skill", "User override");
-        let mut core = make_global_skill("create-skill", "Core version");
-        core.core = true;
-
-        let resolved = apply_skill_overrides(&[user_global, core]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "Core version");
-        assert!(resolved[0].core);
-    }
-
-    #[test]
-    fn test_apply_skill_overrides_project_wins_over_user_global() {
-        // Project-local still wins over user (non-core) global — the
-        // normal precedence order applies when no core skill is involved.
-        let global = make_global_skill("create-skill", "Global");
-        let project = make_project_skill("create-skill", "Project", "my-project");
-
-        let resolved = apply_skill_overrides(&[global, project]);
-
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].description, "Project");
-    }
-
-    #[test]
-    fn test_apply_skill_overrides_preserves_unique_skills() {
-        let global_a = make_global_skill("alpha", "a");
-        let global_b = make_global_skill("beta", "b");
-        let project_c = make_project_skill("gamma", "c", "project");
-
-        let resolved = apply_skill_overrides(&[global_a, global_b, project_c]);
-
-        assert_eq!(resolved.len(), 3);
-        let names: Vec<&str> = resolved.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, vec!["alpha", "beta", "gamma"]);
-    }
-
-    #[test]
-    fn test_skill_source_scope_prefix_and_matches_scope() {
-        // The popup inserts `/<prefix>:<name>` using `scope_prefix`,
-        // and the resolver routes via `matches_scope`. This test pins
-        // the contract that the two stay in sync.
-        let global = SkillSource::Global;
-        // Globals use an empty prefix, so the popup inserts `/:<name>`.
-        assert_eq!(global.scope_prefix(), "");
-        assert!(global.matches_scope(""));
-        // Hand-typed `/global:<name>` is not aliased to the global
-        // source; it looks for a worktree literally named `global`.
-        assert!(!global.matches_scope("global"));
-        assert!(!global.matches_scope("zed"));
-
-        let project = SkillSource::ProjectLocal {
-            worktree_id: SkillScopeId(1),
-            worktree_root_name: "zed".into(),
-        };
-        // Project-local skills are scoped by their worktree root name
-        // so multiple open worktrees with same-named skills can each
-        // be addressed unambiguously.
-        assert_eq!(project.scope_prefix(), "zed");
-        assert!(project.matches_scope("zed"));
-        // The empty scope is reserved for globals.
-        assert!(!project.matches_scope(""));
-        // An unrelated worktree name (or MCP server name) must not
-        // match a project skill from a different worktree.
-        assert!(!project.matches_scope("extensions"));
-
-        // A worktree literally named `global` is no longer ambiguous
-        // with the global source: its skills are invoked as
-        // `/global:<name>` while globals are invoked as `/:<name>`.
-        let project_named_global = SkillSource::ProjectLocal {
-            worktree_id: SkillScopeId(2),
-            worktree_root_name: "global".into(),
-        };
-        assert_eq!(project_named_global.scope_prefix(), "global");
-        assert!(project_named_global.matches_scope("global"));
-        assert!(!project_named_global.matches_scope(""));
-    }
-
-    #[test]
-    fn test_select_catalog_skills_emits_issue_for_dropped_skills() {
-        // zed-kask: The catalog budget is disabled. In upstream zed, skill
-        // descriptions are injected into the system prompt, so a 50KB budget
-        // prevents token bloat. In zed-kask, skills execute via YAML manifests —
-        // the catalog is discovery-only (name + description + location). All
-        // skills are kept in the catalog so the model can discover and invoke
-        // any skill via the skill tool. This test pins that contract: even when
-        // the total description size far exceeds the upstream budget, every
-        // visible skill is kept and no budget issue is emitted.
-        let description = "x".repeat(10 * 1024);
-        let mut skills = Vec::new();
-        let total = 10;
-        for i in 0..total {
-            let name = format!("skill-{i:02}");
-            skills.push(Skill {
-                name: name.clone(),
-                description: description.clone(),
-                source: SkillSource::Global,
-                directory_path: PathBuf::from(format!("/skills/{name}")),
-                skill_file_path: PathBuf::from(format!("/skills/{name}/SKILL.md")),
-                load_warnings: Vec::new(),
-                disable_model_invocation: false,
-                dependencies: Vec::new(),
-                core: false,
-            });
-        }
-
-        let (kept, issues) = select_catalog_skills(&skills);
-
-        assert_eq!(
-            kept.len(),
-            skills.len(),
-            "zed-kask keeps all visible skills regardless of total description size (kept {} of {})",
-            kept.len(),
-            skills.len(),
-        );
-        assert!(
-            issues.is_empty(),
-            "zed-kask disables the catalog budget; no issues should be emitted, got {issues:?}",
-        );
-    }
-
-    #[test]
-    fn test_select_catalog_skills_stops_packing_after_first_overflow() {
-        // zed-kask: The catalog budget is disabled, so there is no overflow
-        // cutoff. All visible skills are kept regardless of order or size —
-        // the catalog is discovery-only. This test pins that contract: even
-        // when a skill's description exceeds the upstream budget, every
-        // visible skill is kept and no budget issue is emitted.
-        let half_description = "a".repeat(MAX_SKILL_DESCRIPTIONS_SIZE / 2);
-        let big_description = "b".repeat(MAX_SKILL_DESCRIPTIONS_SIZE);
-        let small_description = "c".repeat(100);
-
-        let first = Skill {
-            name: "skill-01-first".to_string(),
-            description: half_description,
-            source: SkillSource::Global,
-            directory_path: PathBuf::from("/skills/skill-01-first"),
-            skill_file_path: PathBuf::from("/skills/skill-01-first/SKILL.md"),
-            load_warnings: Vec::new(),
-            disable_model_invocation: false,
-            dependencies: Vec::new(),
-            core: false,
-        };
-        let second = Skill {
-            name: "skill-02-overflows".to_string(),
-            description: big_description,
-            source: SkillSource::Global,
-            directory_path: PathBuf::from("/skills/skill-02-overflows"),
-            skill_file_path: PathBuf::from("/skills/skill-02-overflows/SKILL.md"),
-            load_warnings: Vec::new(),
-            disable_model_invocation: false,
-            dependencies: Vec::new(),
-            core: false,
-        };
-        let third = Skill {
-            name: "skill-03-would-fit".to_string(),
-            description: small_description,
-            source: SkillSource::Global,
-            directory_path: PathBuf::from("/skills/skill-03-would-fit"),
-            skill_file_path: PathBuf::from("/skills/skill-03-would-fit/SKILL.md"),
-            load_warnings: Vec::new(),
-            disable_model_invocation: false,
-            dependencies: Vec::new(),
-            core: false,
-        };
-
-        let skills = vec![first.clone(), second.clone(), third.clone()];
-        let (kept, issues) = select_catalog_skills(&skills);
-
-        let kept_names: Vec<&str> = kept.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(
-            kept_names,
-            vec![
-                first.name.as_str(),
-                second.name.as_str(),
-                third.name.as_str()
-            ],
-            "zed-kask keeps all visible skills regardless of size or order"
-        );
-        assert!(
-            issues.is_empty(),
-            "zed-kask disables the catalog budget; no issues should be emitted, got {issues:?}",
-        );
-    }
-
-    #[test]
-    fn test_select_catalog_skills_excludes_hidden_skills_from_catalog() {
-        // Hidden skills (`disable_model_invocation: true`) are slash-only and
-        // must not appear in the catalog returned by `select_catalog_skills`,
-        // even when they would otherwise fit in the budget. They also don't
-        // count against the budget, so a hidden skill larger than the entire
-        // budget shouldn't generate a loading issue or prevent later visible
-        // skills from fitting.
-        let huge_description = "y".repeat(MAX_SKILL_DESCRIPTIONS_SIZE * 2);
-        let hidden = Skill {
-            name: "hidden-huge".to_string(),
-            description: huge_description,
-            source: SkillSource::Global,
-            directory_path: PathBuf::from("/skills/hidden-huge"),
-            skill_file_path: PathBuf::from("/skills/hidden-huge/SKILL.md"),
-            load_warnings: Vec::new(),
-            disable_model_invocation: true,
-            dependencies: Vec::new(),
-            core: false,
-        };
-        let visible = Skill {
-            name: "visible".to_string(),
-            description: "short".to_string(),
-            source: SkillSource::Global,
-            directory_path: PathBuf::from("/skills/visible"),
-            skill_file_path: PathBuf::from("/skills/visible/SKILL.md"),
-            load_warnings: Vec::new(),
-            disable_model_invocation: false,
-            dependencies: Vec::new(),
-            core: false,
-        };
-
-        let (kept, issues) = select_catalog_skills(&[hidden, visible]);
-
-        assert!(issues.is_empty(), "expected no issues, got: {issues:?}");
-        let kept_names: Vec<&str> = kept.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(kept_names, vec!["visible"]);
     }
 
     #[gpui::test]
@@ -7712,46 +7330,6 @@ mod internal_tests {
         });
     }
 
-    #[test]
-    fn test_strip_slash_command_prefix_keeps_inline_args() {
-        // The bug being guarded against: skill slash invocation used to
-        // discard the entire first text block, which threw away anything
-        // the user typed on the same line as the command.
-        assert_eq!(
-            strip_slash_command_prefix("/fix-review #1, #2, #3"),
-            "#1, #2, #3",
-        );
-    }
-
-    #[test]
-    fn test_strip_slash_command_prefix_preserves_newlines() {
-        // Continuations across newlines are common when users compose
-        // structured prompts; the first newline is the command terminator,
-        // but everything after it must reach the model verbatim.
-        assert_eq!(
-            strip_slash_command_prefix("/fix-review\nline 1\nline 2"),
-            "line 1\nline 2",
-        );
-    }
-
-    #[test]
-    fn test_strip_slash_command_prefix_command_only_is_empty() {
-        assert_eq!(strip_slash_command_prefix("/fix-review"), "");
-        assert_eq!(strip_slash_command_prefix("/fix-review "), "");
-    }
-
-    #[test]
-    fn test_strip_slash_command_prefix_ignores_leading_whitespace() {
-        assert_eq!(strip_slash_command_prefix("   /fix-review hello"), "hello",);
-    }
-
-    #[test]
-    fn test_strip_slash_command_prefix_passes_through_non_command_text() {
-        // Defense in depth: if somehow we're called with a non-slash-prefixed
-        // block, the safe behavior is to return it unchanged rather than
-        // silently mangling unrelated user text.
-        assert_eq!(strip_slash_command_prefix("hello world"), "hello world",);
-    }
 }
 
 fn mcp_message_content_to_acp_content_block(

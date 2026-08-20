@@ -90,7 +90,7 @@ steps:
       entity types, and existing ontologies that define how the domain
       works. Record each anchor with citation and how it shapes the
       skill. Select the ontology reference set (PKO, Dublin Core, GOLEM,
-      MovieLabs OMC, ESO, or domain-specific). Derive the PDCA shape
+      ESO, or domain-specific). Derive the PDCA shape
       from the anchors — the shape emerges from the domain's process
       structure, not from a generic template. The research phase is
       first because the anchors determine everything else. Consumes

@@ -60,22 +60,6 @@ ontologies:
     annotation_pattern: "Template contracts use Narrative/Character/Event types; spans use reg.<skill>.narrative.*"
     url: "https://github.com/GOLEM-lab/golem-ontology"
 
-  - id: movielabs_omc
-    name: "MovieLabs Ontology for Media Creation"
-    citation: "MovieLabs 2021-2025 (v2.8)"
-    domain: "Media production workflows"
-    use_when: "The skill models media creation pipelines (capture → post → distribution)"
-    key_concepts:
-      - Creative Work
-      - Asset
-      - Workflow
-      - Participant
-      - Version
-      - Pipeline stage
-    pdc_shape_implied: "Capture → Process → Post → Distribute (pipeline stages from OMC)"
-    annotation_pattern: "Template contracts use CreativeWork/Asset/Workflow types; spans use reg.<skill>.pipeline.*"
-    url: "https://github.com/MovieLabs/OMC"
-
   - id: eso
     name: "Event and Implied Situation Ontology"
     citation: "Segers et al. 2015-2016 (LREC)"

@@ -55,8 +55,6 @@ impl agent::MetacognitionProvider for BridgeMetacognitionProvider {
                 "accepted": s.regulation_health.accepted,
                 "staged": s.regulation_health.staged,
                 "blocked": s.regulation_health.blocked,
-                "grounding_clean_rate": s.grounding_clean_rate,
-                "grounding_coverage_rate": s.grounding_coverage_rate,
                 // Algedonic alert log cap status. When the log approaches its
                 // cap, the operator (or the algedonic-review skill) should
                 // review and clear reviewed entries before they are evicted.
