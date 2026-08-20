@@ -331,6 +331,7 @@ dependencies = [
  "language_models",
  "log",
  "lsp",
+ "minijinja",
  "parking_lot",
  "paths",
  "pretty_assertions",

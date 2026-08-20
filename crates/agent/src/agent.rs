@@ -943,6 +943,15 @@ impl NativeAgent {
                 skills_resolver_for_project(weak.clone(), project_id),
                 self.fs.clone(),
             ));
+            // Register the lisp_eval tool for deterministic computation
+            // (convergence signals, structural invariant checks, arithmetic
+            // on structured data). The SKILL.md body tells the model when to
+            // call it.
+            thread.add_tool(crate::tools::LispEvalTool);
+            // Register the render_template tool for Jinja2 template rendering
+            // from the kask registry. The SKILL.md body tells the model when
+            // to call it for structured prompt scaffolding.
+            thread.add_tool(crate::tools::RenderTemplateTool);
         });
 
         let subscriptions = vec![
@@ -4320,6 +4329,24 @@ pub fn skill_body_resolver_for_project(
             })
         }
     }
+}
+
+/// Global hook for the kask registry templates directory (D1).
+/// Wired in `main.rs` at startup. The `render_template` tool reads this
+/// to resolve Jinja2 template refs (e.g., `essentialist/essentialist-flow`).
+static TEMPLATE_BASE_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Set the global template base path for the `render_template` tool.
+/// Called once at startup from `main.rs`.
+pub fn set_template_base_path(path: std::path::PathBuf) {
+    if let Err(_) = TEMPLATE_BASE_PATH.set(path) {
+        log::warn!("set_template_base_path: hook already set — second wiring attempt dropped.");
+    }
+}
+
+/// Get the global template base path, if set.
+pub(crate) fn template_base_path() -> Option<&'static std::path::Path> {
+    TEMPLATE_BASE_PATH.get().map(|p| p.as_path())
 }
 
 /// Collect successfully-loaded global and project-local skills into a

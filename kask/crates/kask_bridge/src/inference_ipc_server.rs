@@ -399,7 +399,6 @@ impl InferenceIpcServer {
                         let port = port.clone();
                         let emb_port = emb_port.clone();
                         let tools = tools.clone();
-                        let skill_exec = skill_exec.clone();
                         let list_models_tx = list_models_tx.clone();
                         let worktree_spawn_tx = worktree_spawn_tx.clone();
                         tokio::spawn(async move {
@@ -408,7 +407,6 @@ impl InferenceIpcServer {
                                 port,
                                 emb_port,
                                 tools,
-                                skill_exec,
                                 list_models_tx,
                                 Some(worktree_spawn_tx),
                             )

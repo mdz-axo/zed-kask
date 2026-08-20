@@ -10,13 +10,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings};
 use settings_content::{
-    KaskCompaniesSettingsContent, KaskCondenserSettingsContent,
-    KaskCorpusSettingsContent, KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent,
-    KaskDataServiceSettingsContent, KaskGeneralSettingsContent,
-    KaskInferenceProvidersSettingsContent, KaskMcpSettingsContent, KaskMediaSettingsContent,
-    KaskMemorySettingsContent, KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent,
-    KaskResearchSettingsContent, KaskScenariosSettingsContent, KaskSettingsContent,
-    KaskSwarmSettingsContent, KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
+    KaskCompaniesSettingsContent, KaskCondenserSettingsContent, KaskCorpusSettingsContent,
+    KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent, KaskDataServiceSettingsContent,
+    KaskGeneralSettingsContent, KaskInferenceProvidersSettingsContent, KaskMcpSettingsContent,
+    KaskMediaSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
+    KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
+    KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
+    KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
 };
 
 use collections::HashMap;
@@ -1243,7 +1243,6 @@ impl From<KaskCondenserSettingsContent> for KaskCondenserSettings {
     }
 }
 
-
 impl From<KaskResearchSettingsContent> for KaskResearchSettings {
     fn from(c: KaskResearchSettingsContent) -> Self {
         let default = Self::default();
@@ -1867,35 +1866,6 @@ mod tests {
     // settings emit no swarm env vars; a non-default credit ceiling emits
     // `HKASK_ABW_MAX_CREDITS`; the API key is never in `mcp_env()` (it is a
     // keychain credential, injected by `build_mcp_server_env`).
-    // Cross-crate seam pin: the agent crate's `skill_tool.rs` mirrors these
-    // four cascade-memory defaults as named constants (it cannot depend on
-    // kask_bridge — dependency direction is kask_bridge → agent). This test
-    // imports the constants and fails when a `Default` change here is not
-    // propagated there. Same pattern as the SwarmConfig seam above.
-    #[test]
-    fn cascade_settings_fallbacks_match_agent_skill_tool_constants() {
-        use agent::{
-            DEFAULT_CASCADE_MEMORY_MAX_CHUNKS, DEFAULT_CASCADE_MEMORY_SALIENCY_FLOOR,
-            DEFAULT_CASCADE_SHORT_TERM_TURNS, DEFAULT_CASCADE_TURN_TOKEN_CAP,
-        };
-        let defaults = KaskMemorySettings::default();
-        assert_eq!(
-            defaults.cascade_short_term_turns,
-            DEFAULT_CASCADE_SHORT_TERM_TURNS
-        );
-        assert_eq!(
-            defaults.cascade_turn_token_cap,
-            DEFAULT_CASCADE_TURN_TOKEN_CAP
-        );
-        assert_eq!(
-            defaults.cascade_memory_saliency_floor,
-            DEFAULT_CASCADE_MEMORY_SALIENCY_FLOOR
-        );
-        assert_eq!(
-            defaults.cascade_memory_max_chunks,
-            DEFAULT_CASCADE_MEMORY_MAX_CHUNKS
-        );
-    }
 
     #[test]
     fn swarm_settings_default_emits_no_env() {

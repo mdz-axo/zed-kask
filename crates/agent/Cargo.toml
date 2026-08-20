@@ -44,6 +44,7 @@ heck.workspace = true
 hkask-lisp.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
+minijinja.workspace = true
 http_proxy.workspace = true
 indoc.workspace = true
 itertools.workspace = true
