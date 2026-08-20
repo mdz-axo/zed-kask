@@ -206,29 +206,33 @@ mod tests {
     // ── Schema validation tests (Step 3: "one artifact, two uses") ──────
 
     #[test]
-    fn validate_output_passes_when_no_schema_registered() {
+    fn validate_output_returns_no_schema_when_no_schema_registered() {
         let registry = PortRegistry::builtin();
-        // "text" has no schema in the built-in registry — validation is a no-op.
+        // "text" has no schema in the built-in registry.
         let output = serde_json::json!("anything");
-        assert!(
-            registry
-                .validate_output(&["text".to_string()], &output)
-                .is_ok()
+        let result = registry.validate_output(&["text".to_string()], &output);
+        assert_eq!(
+            result.status,
+            hkask_verification::envelope::ValidationStatus::NoSchema
         );
     }
 
     #[test]
-    fn validate_output_passes_when_produces_is_empty() {
+    fn validate_output_returns_no_schema_when_produces_is_empty() {
         let registry = PortRegistry::builtin();
         let output = serde_json::json!({"key": "value"});
-        assert!(registry.validate_output(&[], &output).is_ok());
+        let result = registry.validate_output(&[], &output);
+        assert_eq!(
+            result.status,
+            hkask_verification::envelope::ValidationStatus::NoSchema
+        );
     }
 
     #[test]
-    fn validate_output_passes_when_output_matches_schema() {
+    fn validate_output_returns_valid_when_output_matches_schema() {
         let mut registry = PortRegistry::builtin();
         registry.register_type(
-            "task_result",
+            "custom",
             Some(serde_json::json!({
                 "type": "object",
                 "required": ["deliverable_path"],
@@ -242,18 +246,18 @@ mod tests {
             "deliverable_path": "/src/main.rs",
             "summary": "did the work"
         });
-        assert!(
-            registry
-                .validate_output(&["task_result".to_string()], &output)
-                .is_ok()
+        let result = registry.validate_output(&["custom".to_string()], &output);
+        assert_eq!(
+            result.status,
+            hkask_verification::envelope::ValidationStatus::Valid
         );
     }
 
     #[test]
-    fn validate_output_fails_when_output_missing_required_field() {
+    fn validate_output_returns_invalid_when_output_missing_required_field() {
         let mut registry = PortRegistry::builtin();
         registry.register_type(
-            "task_result",
+            "custom",
             Some(serde_json::json!({
                 "type": "object",
                 "required": ["deliverable_path"],
@@ -265,28 +269,26 @@ mod tests {
         let output = serde_json::json!({
             "summary": "did the work but no path"
         });
-        let err = registry
-            .validate_output(&["task_result".to_string()], &output)
-            .unwrap_err();
-        match err {
-            PortValidationError::SchemaMismatch {
-                port_type,
-                violations,
-            } => {
-                assert_eq!(port_type, "task_result");
-                assert!(
-                    violations.contains("deliverable_path"),
-                    "error must name the missing field: {violations}"
-                );
-            }
-        }
+        let result = registry.validate_output(&["custom".to_string()], &output);
+        assert_eq!(
+            result.status,
+            hkask_verification::envelope::ValidationStatus::Invalid
+        );
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| v.path.contains("deliverable_path")),
+            "violations must name the missing field: {:?}",
+            result.violations
+        );
     }
 
     #[test]
-    fn validate_output_fails_when_output_has_wrong_type() {
+    fn validate_output_returns_invalid_when_output_has_wrong_type() {
         let mut registry = PortRegistry::builtin();
         registry.register_type(
-            "task_result",
+            "custom",
             Some(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -297,17 +299,30 @@ mod tests {
         let output = serde_json::json!({
             "deliverable_path": 42
         });
-        let err = registry
-            .validate_output(&["task_result".to_string()], &output)
-            .unwrap_err();
-        match err {
-            PortValidationError::SchemaMismatch {
-                port_type,
-                violations: _,
-            } => {
-                assert_eq!(port_type, "task_result", "error must name the port type");
-            }
-        }
+        let result = registry.validate_output(&["custom".to_string()], &output);
+        assert_eq!(
+            result.status,
+            hkask_verification::envelope::ValidationStatus::Invalid
+        );
+    }
+
+    #[test]
+    fn validate_output_returns_valid_for_builtin_task_result_schema() {
+        // The built-in `task_result` schema is registered at construction.
+        // Verify it accepts a well-formed task agent output (with nulled
+        // fields, as grounding produces).
+        let registry = PortRegistry::builtin();
+        let output = serde_json::json!({
+            "deliverable_path": "/src/main.rs",
+            "test_verdict": null,
+            "summary": "did the work",
+            "approach": "directly"
+        });
+        let result = registry.validate_output(&["task_result".to_string()], &output);
+        assert_eq!(
+            result.status,
+            hkask_verification::envelope::ValidationStatus::Valid
+        );
     }
 
     #[test]
