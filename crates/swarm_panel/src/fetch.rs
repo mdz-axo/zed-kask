@@ -594,14 +594,13 @@ impl SwarmPanel {
 /// at a displayed cloud row is suppressed — the cloud row (now `Synced`) is
 /// the display row. Clones carry a `-clone`-suffixed `agent_id` that never
 /// equals the cloud id, so the dedup must key on `cloud_swarm_id` too.
-pub(crate) fn merge_local_agents(
-    entries: &mut Vec<SwarmEntry>,
-    local_agents: Vec<LocalAgentInfo>,
-) {
+pub(crate) fn merge_local_agents(entries: &mut Vec<SwarmEntry>, local_agents: Vec<LocalAgentInfo>) {
     let local_ids: std::collections::HashSet<String> =
         local_agents.iter().map(|a| a.agent_id.clone()).collect();
-    let local_cloud_swarm_ids: std::collections::HashSet<String> =
-        local_agents.iter().filter_map(|a| a.cloud_swarm_id.clone()).collect();
+    let local_cloud_swarm_ids: std::collections::HashSet<String> = local_agents
+        .iter()
+        .filter_map(|a| a.cloud_swarm_id.clone())
+        .collect();
     for entry in entries.iter_mut() {
         if let SwarmEntry::Agent(card) = entry
             && (local_ids.contains(&card.id) || local_cloud_swarm_ids.contains(&card.id))
