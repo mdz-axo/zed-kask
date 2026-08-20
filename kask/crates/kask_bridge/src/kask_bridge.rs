@@ -82,6 +82,26 @@ pub use directive_bridge::BridgeCuratorDirectiveSink;
 mod algedonic_log_bridge;
 pub use algedonic_log_bridge::BridgeAlgedonicLogSink;
 
+/// Open the swarm ledger's `DelegationCounter` at the standard path. Returns
+/// `None` if the ledger file doesn't exist yet (the swarm server creates it
+/// on first use). The caller should accept the absence — the
+/// `GroundingSensor` returns 0.0 (honest: "no gap detected") until the
+/// counter is wired.
+pub fn open_swarm_delegation_counter()
+-> Option<std::sync::Arc<dyn hkask_verification::DelegationCounter>> {
+    let ledger_path = std::env::var("HKASK_SWARM_LEDGER_PATH")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            hkask_types::agent_paths::resolve_under_data_dir(
+                &hkask_types::agent_paths::mcp_server_db("swarm", "ledger"),
+            )
+            .to_string_lossy()
+            .to_string()
+        });
+    hkask_mcp_swarm::open_delegation_counter(&ledger_path)
+}
+
 /// The URL prefix for kask-namespaced credentials in the keychain.
 /// Used by the settings UI to read/write API keys via zed's CredentialsProvider.
 pub const KASK_CREDENTIAL_NAMESPACE: &str = "kask://credentials";

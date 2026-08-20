@@ -1592,6 +1592,23 @@ fn main() {
                                 // re-evaluates descriptors on notify.
                                 cx.update(|cx| sync_kask_mcp_servers(cx));
 
+                                // zed-kask: Wire the swarm ledger's DelegationCounter
+                                // into the CyberneticsLoop's LivenessGap sensor.
+                                // Without this, the liveness gap is always 0.0 —
+                                // delegations that skip `enforce_and_stamp` are
+                                // invisible. The counter opens the swarm ledger
+                                // at the same path the swarm server uses; SQLite
+                                // creates the file if it doesn't exist yet, so
+                                // this can run before the swarm server receives
+                                // its first tool call.
+                                if let Some(counter) = kask_bridge::open_swarm_delegation_counter() {
+                                    let mut loop_guard = cybernetics_loop_for_panel_deferred.write().await;
+                                    loop_guard.set_delegation_counter(counter);
+                                    log::info!("hKask grounding liveness-gap sensor wired — swarm ledger delegation counter connected");
+                                } else {
+                                    log::warn!("hKask grounding liveness-gap sensor NOT wired — swarm ledger could not be opened (delegations that skip enforce_and_stamp will be invisible)");
+                                }
+
                                 // D11: Wire the context injector now that the real memory port exists.
                                 // The injector shares the same memory port as the ingestion path.
                                 //

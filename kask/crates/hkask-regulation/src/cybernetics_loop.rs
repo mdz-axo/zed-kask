@@ -417,7 +417,7 @@ impl CyberneticsLoop {
     ) {
         match &self.liveness_gap_sensor {
             Some(sensor) => sensor.set_delegation_counter(counter),
-            None =>> tracing::warn!(
+            None => tracing::warn!(
                 "CyberneticsLoop::set_delegation_counter called but no LivenessGap \
                  sensor is registered — verification store was not wired"
             ),
@@ -2720,22 +2720,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn with_verification_store_registers_three_sensors() {
+    async fn with_verification_store_registers_four_sensors() {
         let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
         let store = Arc::new(hkask_verification::VerificationStore::in_memory());
         let loop_instance = CyberneticsLoop::new(ledger).with_verification_store(store);
-        // The sensor registry should have the 3 default sensors (energy,
-        // variety, test coverage, mutation score) + 3 grounding sensors = 7.
-        // But the default build registers 4 (energy, variety, test coverage,
-        // mutation score), so with 3 grounding sensors = 7 total.
+        // The sensor registry should have the 4 default sensors (energy,
+        // variety, test coverage, mutation score) + 4 grounding sensors
+        // (clean rate, coverage rate, violation delta, liveness gap) = 8 total.
         let provider_names = loop_instance.sensor_registry.provider_names();
         let grounding_count = provider_names
             .iter()
             .filter(|n| n.contains("GroundingSensor"))
             .count();
         assert_eq!(
-            grounding_count, 3,
-            "expected 3 GroundingSensor instances, got {}: {:?}",
+            grounding_count, 4,
+            "expected 4 GroundingSensor instances (clean rate, coverage rate, \
+             violation delta, liveness gap), got {}: {:?}",
             grounding_count, provider_names
         );
     }

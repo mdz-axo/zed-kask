@@ -686,7 +686,7 @@ impl GroundingSensor {
     /// sensor returns 0.0 (honest: "no gap detected" because we can't
     /// measure it).
     pub fn with_delegation_counter(
-        mut self,
+        self,
         counter: Arc<dyn hkask_verification::DelegationCounter>,
     ) -> Self {
         *self.delegation_counter.lock() = Some(counter);
