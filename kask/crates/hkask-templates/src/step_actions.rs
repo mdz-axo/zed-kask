@@ -1746,12 +1746,9 @@ fn format_cascade_memory_context(snippets: &[MemorySnippet]) -> String {
 }
 
 /// Call inference with streaming, timeout, and reasoning-delta forwarding,
-/// using the message-array API (`generate_stream_with_messages`).
-///
-/// This is the cascade-aware variant of `call_inference_stream` — it takes a
-/// `&[ChatMessage]` instead of a single `&str` prompt, so the provider sees
-/// the full conversation (memory + prior turns + template) as proper
-/// role-tagged messages.
+/// using the message-array API (`generate_stream_with_messages`). Takes a
+/// `&[ChatMessage]` so the provider sees the full conversation (memory +
+/// prior turns + template) as proper role-tagged messages.
 async fn call_inference_stream_with_messages(
     inference: Arc<dyn InferencePort + 'static>,
     messages: Vec<ChatMessage>,

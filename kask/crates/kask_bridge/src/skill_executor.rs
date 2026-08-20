@@ -433,10 +433,25 @@ impl BridgeManifestExecutor {
     /// Inject config-driven model defaults into the template context.
     /// Factored out of `execute_skill` so both paths share the same injection.
     fn inject_model_defaults(&self, context: &mut HashMap<String, Value>) {
-        const DEFAULTS: &[(&str, &str, &str)] = &[
-            ("embedding_model", "", ""),
-            ("classifier_model", "", ""),
-            ("ocr_model", "", ""),
+        // Function-based defaults (no env var override).
+        const FN_DEFAULTS: &[(&str, fn() -> String)] = &[
+            ("embedding_model", || {
+                hkask_inference::model_constants::embedding_model().to_string()
+            }),
+            ("classifier_model", || {
+                hkask_inference::model_constants::classifier_model().to_string()
+            }),
+            ("ocr_model", || {
+                hkask_inference::model_constants::ocr_model().to_string()
+            }),
+        ];
+        for (key, f) in FN_DEFAULTS {
+            if !context.contains_key(*key) {
+                context.insert((*key).to_string(), Value::String(f()));
+            }
+        }
+        // Env-var-based defaults.
+        const ENV_DEFAULTS: &[(&str, &str, &str)] = &[
             (
                 "default_model",
                 "HKASK_DEFAULT_MODEL",
@@ -468,21 +483,11 @@ impl BridgeManifestExecutor {
                 hkask_inference::model_constants::DEFAULT_IMAGE_GEN_MODEL,
             ),
         ];
-        for (key, env_var, default) in DEFAULTS {
-            if context.contains_key(*key) {
-                continue;
+        for (key, env_var, default) in ENV_DEFAULTS {
+            if !context.contains_key(*key) {
+                let value = std::env::var(env_var).unwrap_or_else(|_| default.to_string());
+                context.insert((*key).to_string(), Value::String(value));
             }
-            let value = match *key {
-                "embedding_model" => {
-                    hkask_inference::model_constants::embedding_model().to_string()
-                }
-                "classifier_model" => {
-                    hkask_inference::model_constants::classifier_model().to_string()
-                }
-                "ocr_model" => hkask_inference::model_constants::ocr_model().to_string(),
-                _ => std::env::var(env_var).unwrap_or_else(|_| default.to_string()),
-            };
-            context.insert((*key).to_string(), Value::String(value));
         }
     }
 

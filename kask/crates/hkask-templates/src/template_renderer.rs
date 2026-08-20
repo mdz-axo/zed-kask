@@ -286,6 +286,8 @@ pub fn strip_front_matter(template_content: &str) -> &str {
 /// [inference]
 /// temperature = 0.2
 /// thinking_budget = "full"
+/// work_effort = "high"
+/// verbosity = "detailed"
 /// ```
 /// This struct captures the parsed values. Fields not present in the block
 /// remain `None` — the caller merges them over `LLMParameters::default()`.
@@ -293,6 +295,15 @@ pub fn strip_front_matter(template_content: &str) -> &str {
 pub struct InferenceBlock {
     pub temperature: Option<f32>,
     pub thinking_budget: Option<String>,
+    /// Work effort level: "high" | "medium" | "low" | "minimal".
+    /// Maps to thinking_budget when thinking_budget is not explicitly set:
+    /// "high"/"medium" → thinking ON, "low"/"minimal" → thinking OFF.
+    /// thinking_budget takes precedence if both are declared.
+    pub work_effort: Option<String>,
+    /// Output verbosity: "terse" | "concise" | "standard" | "detailed" | "verbose".
+    /// Injects a system-prompt instruction controlling output length.
+    /// "standard" is the default (no instruction injected).
+    pub verbosity: Option<String>,
 }
 
 /// Parse and strip the `[inference]` config block from a template body.

@@ -89,7 +89,8 @@ pub struct StepMachine {
     /// The highest `StepId` that stored a result during this cascade.
     /// Used to extract the final result in O(1).
     pub(crate) last_result_step: Option<StepId>,
-    /// Matryoshka recursion depth. Only incremented by `FlowDefAction`.
+    /// Matryoshka recursion depth. Incremented by `execute_flowdef` and
+    /// `execute_parallel` (both spawn sub-machines).
     pub(crate) depth: u8,
     pub(crate) tool_calls: Vec<serde_json::Value>,
     pub(crate) discovered_tools: Option<Vec<String>>,
@@ -147,8 +148,8 @@ impl StepMachine {
 
     /// Run the cascade to completion.
     pub async fn run(mut self, infra: Infra) -> Result<CascadeOutcome> {
-        // Matryoshka guard — only FlowDefAction recurses, but the guard is
-        // checked here so it's in one place, not threaded through every call.
+        // Matryoshka guard — `execute_flowdef` and `execute_parallel` both
+        // recurse via sub-machines; the guard is checked here in one place.
         if self.depth > hkask_capability::SYSTEM_MAX_RECURSION {
             return Err(crate::ports::TemplateError::Manifest(format!(
                 "Matryoshka depth limit ({}) exceeded",
