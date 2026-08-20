@@ -29,7 +29,7 @@ The agent's tool-use loop reaches MCP tools through the `LazyToolRouter`,
 which filters MCP candidates but bypasses built-in tools (`lisp_eval`,
 `render_template`, `read_file`, etc.). Both paths land in
 `McpRuntime::invoke`, which meters (call cap) and dispatches but does **not**
-authorize — the per-call capability gate was removed 2026-08-12 (RR-0056).
+authorize.
 
 ```mermaid
 architecture-beta

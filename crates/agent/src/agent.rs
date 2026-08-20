@@ -5,12 +5,13 @@ mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
 mod sandboxing;
+pub mod skill_step_tracker;
 mod templates;
 #[cfg(test)]
 mod tests;
 mod thread;
 mod thread_store;
-mod tool_permissions;
+pub mod tool_permissions;
 pub mod tool_retry_tracker;
 pub mod tool_router;
 mod tools;
@@ -2214,6 +2215,13 @@ impl NativeAgent {
 
             thread.update(cx, |thread, cx| {
                 thread.push_acp_user_block(client_user_message_id, combined, path_style, cx);
+                // Activate skill step tracking for the slash-command path.
+                // The model-driven path (SkillTool::run) activates via
+                // handle_tool_use_event when it detects tool name "skill".
+                thread
+                    .skill_step_tracker
+                    .borrow_mut()
+                    .activate(skill.name.clone());
             });
 
             let response_stream = thread.update(cx, |thread, cx| thread.send_existing(cx))?;
@@ -2799,6 +2807,11 @@ pub struct ThreadTurnRecord {
     /// The memory port uses this to route ingestion to the correct
     /// perspective-scoped store — Curator turns go to the curator's sovereign DB.
     pub agent_id: Option<AgentId>,
+    /// Calibration report for skill invocations. `None` for normal turns
+    /// (no skill was active). When a skill was invoked, this carries the
+    /// ordered tool-call sequence so the consumer can verify which steps
+    /// the model actually executed versus what the SKILL.md declared.
+    pub skill_step_report: Option<skill_step_tracker::SkillStepReport>,
 }
 
 /// Port for ingesting completed thread turns into memory (D6).

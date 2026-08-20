@@ -815,6 +815,39 @@ fn main() {
             .with_alerts_channel(alert_tx)
             .with_curator_directive_channel(directive_rx)
             .with_event_sink(event_sink.clone());
+        // zed-kask: event-substrate phase 6 — wire the rollout event source
+        // so `verify_impact` can query the store for before/after metric
+        // values. The store path mirrors the swarm server's default
+        // (`mcp/swarm/events.db` under the kask data dir, overridable via
+        // `HKASK_SWARM_EVENTS_PATH`). A missing/unopenable store leaves the
+        // loop unwired (degraded, not broken — the re-sense fallback still
+        // verifies) with a warn naming the path, per the failure-signal rule.
+        let cybernetics_loop_inner = {
+            let events_path = std::env::var("HKASK_SWARM_EVENTS_PATH")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| {
+                    hkask_types::agent_paths::resolve_under_data_dir(
+                        &hkask_types::agent_paths::mcp_server_db("swarm", "events"),
+                    )
+                    .to_string_lossy()
+                    .to_string()
+                });
+            match kask_bridge::BridgeRolloutEventSource::open(&events_path) {
+                Ok(source) => {
+                    cybernetics_loop_inner.with_rollout_event_source(std::sync::Arc::new(source))
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "hkask.regulation",
+                        path = %events_path,
+                        error = %error,
+                        "rollout event source not wired — verify_impact falls back to re-sensing"
+                    );
+                    cybernetics_loop_inner
+                }
+            }
+        };
         let cybernetics_loop_inner = if let Some(sink) = alert_email_sink {
             cybernetics_loop_inner.with_alert_email_sink(sink)
         } else {
