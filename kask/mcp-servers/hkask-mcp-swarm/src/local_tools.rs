@@ -575,6 +575,7 @@ impl SwarmServer {
                     },
                     cloud_swarm_id: Some(req.agent_name),
                     tags: Vec::new(),
+                    sample_queries: Vec::new(),
                     visibility: String::new(),
                     valence: None,
                 };
@@ -844,6 +845,7 @@ impl SwarmServer {
                     },
                     cloud_swarm_id: None,
                     tags: req.tags,
+                    sample_queries: req.sample_queries,
                     visibility: if req.visibility.trim().is_empty() {
                         "private".to_string()
                     } else {
@@ -1173,12 +1175,83 @@ impl SwarmServer {
                 "system_prompt": req.system_prompt,
                 "mission": req.mission,
                 "agents": req.agents,
+                "tags": req.tags,
+                "sample_queries": req.sample_queries,
+                "accepts": req.accepts,
+                "produces": req.produces,
+                "has_valence": req.has_valence,
             }))
             .map_err(|e| {
                 map_local_swarm_error(LocalSwarmError::Unavailable(format!(
                     "failed to serialize ai-assist task: {e}"
                 )))
             })?;
+
+            // Validate runs the deterministic ABW contract FIRST (the fermi
+            // `agent_contract` requirement table, ported to `contract.rs`),
+            // then asks the LLM for advisory warnings. The contract decides
+            // `valid`; the LLM can never flip it — the same Error/Warning
+            // split as fermi's publish pipeline. If inference fails, the
+            // deterministic verdict still returns (an inference outage must
+            // not read as "the agent is malformed").
+            if req.action == "validate" {
+                let mut payload = if req.surface == "agent" {
+                    let input = crate::contract::AgentContractInput {
+                        name: req.name.clone(),
+                        description: req.description.clone(),
+                        system_prompt: req.system_prompt.clone(),
+                        tags: crate::contract::split_csv(&req.tags),
+                        sample_queries: crate::contract::split_lines(&req.sample_queries),
+                        accepts: crate::contract::split_csv(&req.accepts),
+                        produces: crate::contract::split_csv(&req.produces),
+                        has_valence: req.has_valence,
+                        mode: req.mode.clone(),
+                    };
+                    crate::contract::checks_to_payload(
+                        &crate::contract::agent_contract_checks(&input),
+                    )
+                } else {
+                    let input = crate::contract::SwarmContractInput {
+                        name: req.name.clone(),
+                        mission: req.mission.clone(),
+                        agents: crate::contract::split_csv(&req.agents),
+                        mode: req.mode.clone(),
+                    };
+                    crate::contract::checks_to_payload(
+                        &crate::contract::swarm_contract_checks(&input),
+                    )
+                };
+
+                // Advisory layer: the LLM reviews the same fields for what a
+                // table cannot judge (prompt quality, role overlap, mission
+                // fit). Its findings are appended to `warnings` — never to
+                // `issues` — and an inference failure is reported as a note
+                // while the deterministic verdict stands.
+                match self.ai_assist_advisory(&json_task).await {
+                    Ok(advisory) => {
+                        if let Some(warnings) = payload["warnings"].as_array_mut() {
+                            for issue in advisory {
+                                warnings.push(serde_json::Value::String(issue));
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            "swarm_ai_assist advisory layer failed — deterministic contract verdict stands: {err}"
+                        );
+                        payload["notes"] = serde_json::Value::String(format!(
+                            "Advisory review unavailable: {err}. The contract checks above \
+                             are deterministic and unaffected."
+                        ));
+                    }
+                }
+                payload["action"] = serde_json::Value::String(req.action.clone());
+                payload["surface"] = serde_json::Value::String(req.surface.clone());
+                payload["mode"] = serde_json::Value::String(req.mode.clone());
+                payload["suggestions"] = serde_json::Value::Null;
+                return Ok(payload);
+            }
 
             // Use the inference port directly for AI-assisted composition guidance.
             let runtime = self
@@ -1202,84 +1275,88 @@ impl SwarmServer {
             let text = result.text;
 
             let parsed = serde_json::from_str::<serde_json::Value>(&text).ok();
-            let result = if req.action == "suggest" {
-                match parsed {
-                    Some(v) => {
-                        let suggestions = serde_json::json!({
-                            "name": v.get("name").and_then(|x| x.as_str()).unwrap_or(""),
-                            "agent_type": v.get("agent_type").and_then(|x| x.as_str()).unwrap_or(""),
-                            "description": v.get("description").and_then(|x| x.as_str()).unwrap_or(""),
-                            "system_prompt": v.get("system_prompt").and_then(|x| x.as_str()).unwrap_or(""),
-                            "mission": v.get("mission").and_then(|x| x.as_str()).unwrap_or(""),
-                            "agents": v.get("agents").and_then(|x| x.as_str()).unwrap_or(""),
-                        });
-                        serde_json::json!({
-                            "action": req.action,
-                            "surface": req.surface,
-                            "mode": req.mode,
-                            "suggestions": suggestions,
-                            "valid": serde_json::Value::Null,
-                            "issues": serde_json::json!([]),
-                            "notes": "",
-                        })
-                    }
-                    None => {
-                        tracing::warn!(
-                            target: "hkask.mcp.swarm",
-                            "swarm_ai_assist (suggest) output was not valid JSON — returning raw text in notes"
-                        );
-                        serde_json::json!({
-                            "action": req.action,
-                            "surface": req.surface,
-                            "mode": req.mode,
-                            "suggestions": serde_json::json!({
-                                "name": "", "agent_type": "", "description": "",
-                                "system_prompt": "", "mission": "", "agents": "",
-                            }),
-                            "valid": false,
-                            "issues": serde_json::json!([]),
-                            "notes": text,
-                        })
-                    }
+            // Only "suggest" reaches here — validate returned early via the
+            // deterministic contract path above.
+            let result = match parsed {
+                Some(v) => {
+                    let suggestions = serde_json::json!({
+                        "name": v.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+                        "agent_type": v.get("agent_type").and_then(|x| x.as_str()).unwrap_or(""),
+                        "description": v.get("description").and_then(|x| x.as_str()).unwrap_or(""),
+                        "system_prompt": v.get("system_prompt").and_then(|x| x.as_str()).unwrap_or(""),
+                        "mission": v.get("mission").and_then(|x| x.as_str()).unwrap_or(""),
+                        "agents": v.get("agents").and_then(|x| x.as_str()).unwrap_or(""),
+                    });
+                    serde_json::json!({
+                        "action": req.action,
+                        "surface": req.surface,
+                        "mode": req.mode,
+                        "suggestions": suggestions,
+                        "valid": serde_json::Value::Null,
+                        "issues": serde_json::json!([]),
+                        "notes": "",
+                    })
                 }
-            } else {
-                match parsed {
-                    Some(v) => {
-                        let valid = v
-                            .get("valid")
-                            .and_then(|x| x.as_bool())
-                            .unwrap_or(false);
-                        let issues = v.get("issues").cloned().unwrap_or(serde_json::json!([]));
-                        serde_json::json!({
-                            "action": req.action,
-                            "surface": req.surface,
-                            "mode": req.mode,
-                            "suggestions": serde_json::Value::Null,
-                            "valid": valid,
-                            "issues": issues,
-                            "notes": "",
-                        })
-                    }
-                    None => {
-                        tracing::warn!(
-                            target: "hkask.mcp.swarm",
-                            "swarm_ai_assist (validate) output was not valid JSON — returning raw text in notes"
-                        );
-                        serde_json::json!({
-                            "action": req.action,
-                            "surface": req.surface,
-                            "mode": req.mode,
-                            "suggestions": serde_json::Value::Null,
-                            "valid": false,
-                            "issues": serde_json::json!([]),
-                            "notes": text,
-                        })
-                    }
+                None => {
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        "swarm_ai_assist (suggest) output was not valid JSON — returning raw text in notes"
+                    );
+                    serde_json::json!({
+                        "action": req.action,
+                        "surface": req.surface,
+                        "mode": req.mode,
+                        "suggestions": serde_json::json!({
+                            "name": "", "agent_type": "", "description": "",
+                            "system_prompt": "", "mission": "", "agents": "",
+                        }),
+                        "valid": serde_json::Value::Null,
+                        "issues": serde_json::json!([]),
+                        "notes": text,
+                    })
                 }
             };
             Ok(result)
         })
         .await
+    }
+
+    /// The advisory layer for `swarm_ai_assist` validate: one inference call
+    /// over the serialized form fields, returning advisory warnings only.
+    /// The caller appends these to `warnings` — they can never flip `valid`.
+    async fn ai_assist_advisory(&self, json_task: &str) -> Result<Vec<String>, LocalSwarmError> {
+        let runtime = self.local_runtime.get_or_init().await?;
+        let inference = runtime.inference();
+        let result = inference
+            .generate(
+                &format!(
+                    "You are reviewing an AI agent or swarm composition form for \
+                     quality issues a checklist cannot judge: prompt coherence, role \
+                     overlap in the roster, mission fit, missing methodology steps. \
+                     The deterministic contract (names, required fields, roster size) \
+                     has already been checked — do NOT repeat those. Return ONLY a JSON \
+                     array of short advisory strings (empty array if nothing to add):\n\n{}",
+                    json_task
+                ),
+                &hkask_types::LLMParameters::default(),
+                None,
+            )
+            .await
+            .map_err(|e| {
+                LocalSwarmError::Unavailable(format!("AI assist inference failed: {e}"))
+            })?;
+        let text = result.text.trim();
+        let parsed = serde_json::from_str::<serde_json::Value>(text).map_err(|e| {
+            LocalSwarmError::Unavailable(format!("advisory output was not a JSON array: {e}"))
+        })?;
+        Ok(parsed
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     /// Deterministic task-success evaluator. The Curator (or a human) calls

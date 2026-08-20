@@ -310,7 +310,7 @@ impl TrainingServer {
     ///
     /// ML-Schema reference: <https://www.w3.org/community/ml-schema/>
     fn ontology_anchor(tool: &str) -> Option<&'static str> {
-        use hkask_bridge_ontology::mlschema;
+        use hkask_bridge_ontology::ml_schema as mlschema;
         match tool {
             // Dataset ingestion / assembly — data axis
             "training_ingest_qa" | "training_assemble_dataset" | "training_ingest_dataset" => {

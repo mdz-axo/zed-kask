@@ -1367,7 +1367,7 @@ impl KanbanServer {
             let bid = parse_board_id(&board_id)?;
 
             let proposals: Vec<hkask_types::ExpectProposal> =
-                match serde_json::from_value(proposals.into_inner()) {
+                match serde_json::from_value(serde_json::Value::from(proposals)) {
                     Ok(p) => p,
                     Err(e) => return Err(McpToolError::invalid_argument(format!("invalid proposals: {e}"))),
                 };

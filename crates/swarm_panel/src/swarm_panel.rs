@@ -765,6 +765,11 @@ struct ValidationResult {
     surface: String,
     valid: bool,
     issues: Vec<String>,
+    /// Advisory findings (fermi Warning severity) — reported, never
+    /// blocking. Includes the typed-tier notice and the LLM quality review.
+    warnings: Vec<String>,
+    /// Carrier for out-of-band notes (e.g. "advisory layer unavailable").
+    notes: String,
 }
 
 impl SwarmPanel {
@@ -1352,6 +1357,35 @@ impl SwarmPanel {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
+        // fermi contract fields: sample queries (one per line — they contain
+        // commas) and the accepts/produces composition ports (CSV).
+        let sample_queries: Vec<String> = self
+            .author
+            .sample_queries
+            .read(cx)
+            .text(cx)
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let accepts: Vec<String> = self
+            .author
+            .accepts
+            .read(cx)
+            .text(cx)
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let produces: Vec<String> = self
+            .author
+            .produces
+            .read(cx)
+            .text(cx)
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
         let visibility = self.author.visibility.clone();
         // Parse valence fields. Arousal and valence are optional floats.
         let arousal_raw = self.author.valence_arousal.read(cx).text(cx);
@@ -1396,6 +1430,9 @@ impl SwarmPanel {
                             "tags": tags,
                             "visibility": visibility,
                             "valence": valence,
+                            "sample_queries": sample_queries,
+                            "accepts": accepts,
+                            "produces": produces,
                         }),
                     )
                     .await
@@ -1412,6 +1449,9 @@ impl SwarmPanel {
                             "tags": tags,
                             "visibility": visibility,
                             "valence": valence,
+                            "sample_queries": sample_queries,
+                            "accepts": accepts,
+                            "produces": produces,
                         }),
                     )
                     .await
@@ -1906,6 +1946,34 @@ impl SwarmPanel {
                 self.compose.agents.read(cx).text(cx),
             )
         };
+        // Agent-surface contract fields (fermi `agent_contract`): tags,
+        // sample queries, accepts/produces, valence presence. Sent on both
+        // actions so `suggest` can propose them and `validate` can check
+        // them against the deterministic contract.
+        let (tags, sample_queries, accepts, produces, has_valence) = if surface == "agent" {
+            let arousal = self.author.valence_arousal.read(cx).text(cx);
+            let valence = self.author.valence_valence.read(cx).text(cx);
+            let affect = self.author.valence_primary_affect.read(cx).text(cx);
+            let traits = self.author.valence_personality_traits.read(cx).text(cx);
+            (
+                self.author.tags.read(cx).text(cx),
+                self.author.sample_queries.read(cx).text(cx),
+                self.author.accepts.read(cx).text(cx),
+                self.author.produces.read(cx).text(cx),
+                !arousal.trim().is_empty()
+                    || !valence.trim().is_empty()
+                    || !affect.trim().is_empty()
+                    || !traits.trim().is_empty(),
+            )
+        } else {
+            (
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                false,
+            )
+        };
 
         self.ai_assist.busy = true;
         self.ai_assist.action = Some(action.to_string());
@@ -1933,6 +2001,11 @@ impl SwarmPanel {
                         "system_prompt": system_prompt,
                         "mission": mission,
                         "agents": agents,
+                        "tags": tags,
+                        "sample_queries": sample_queries,
+                        "accepts": accepts,
+                        "produces": produces,
+                        "has_valence": has_valence,
                     }),
                 )
                 .await;
@@ -1973,12 +2046,31 @@ impl SwarmPanel {
                                             .collect()
                                     })
                                     .unwrap_or_default();
+                                // Advisory tier (fermi Warning severity): reported
+                                // but never blocking. Includes the deterministic
+                                // typed-tier notice and the LLM's quality review.
+                                let warnings = content
+                                    .get("warnings")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str().map(str::to_string))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let notes = content
+                                    .get("notes")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
                                 this.ai_assist.validation = Some(ValidationResult {
                                     surface: surface_owned.clone(),
                                     valid,
                                     issues,
+                                    warnings,
+                                    notes,
                                 });
-                            }
+                            };
                         }
                     }
                     Err(err) => {
@@ -2617,7 +2709,7 @@ impl SwarmPanel {
                         }))
                         .when(v.valid, |this| {
                             this.child(
-                                Label::new("Inputs look well-formed.")
+                                Label::new("Meets the ABW composition contract.")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
@@ -2629,6 +2721,27 @@ impl SwarmPanel {
                             .size(LabelSize::XSmall)
                             .color(Color::Warning)
                     })))
+                })
+                // Advisory tier — fermi Warning severity: worth fixing, never
+                // blocking. Rendered muted so the visual weight stays on the
+                // contract failures above.
+                .when(!v.warnings.is_empty(), |this| {
+                    this.child(
+                        v_flex()
+                            .gap_0p5()
+                            .children(v.warnings.iter().map(|warning| {
+                                Label::new(format!("◦ {warning}"))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted)
+                            })),
+                    )
+                })
+                .when(!v.notes.is_empty(), |this| {
+                    this.child(
+                        Label::new(v.notes.clone())
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
                 })
                 .child(
                     h_flex().gap_2().items_center().child(div().flex_1()).child(

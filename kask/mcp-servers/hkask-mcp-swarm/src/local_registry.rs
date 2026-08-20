@@ -102,6 +102,10 @@ pub struct LocalAgentCard {
     /// Visibility level ("public", "private", "unlisted"). Default "private".
     #[serde(default)]
     pub visibility: String,
+    /// Sample queries (fermi `has_sample_queries`) — one per entry.
+    /// `#[serde(default)]` so existing cards still deserialize.
+    #[serde(default)]
+    pub sample_queries: Vec<String>,
     /// Valence / personality encoding. Optional — not all local agents need it.
     #[serde(default)]
     pub valence: Option<LocalAgentValence>,
