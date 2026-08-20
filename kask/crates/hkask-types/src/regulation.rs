@@ -29,18 +29,8 @@ use serde::{Deserialize, Serialize};
 pub struct QueueDepth(pub f64);
 
 impl QueueDepth {
-    /// Create a queue depth threshold.
-    pub fn new(value: f64) -> Self {
-        QueueDepth(value.max(0.0))
-    }
-
     /// Default backpressure threshold: 100 messages.
     pub const DEFAULT_BACKPRESSURE: QueueDepth = QueueDepth(100.0);
-
-    /// Return the raw `f64` value.
-    pub fn as_raw(self) -> f64 {
-        self.0
-    }
 }
 
 // Regulation Health — Observability data struct

@@ -796,7 +796,7 @@ impl KaskSettings {
                     .to_string()
             })
         };
-        env.insert("HKASK_DATA_DIR".to_string(), data_dir);
+        env.insert("HKASK_DATA_DIR".to_string(), data_dir.clone());
 
         // Map the curator's WebID (stashed in `HKASK_CURATOR_WEBID` by the
         // deferred task) to `HKASK_WEBID` so the curator MCP server picks it
@@ -912,12 +912,21 @@ impl KaskSettings {
         if self.corpus.ocr_tuneable != corpus_default.ocr_tuneable {
             env.insert("HKASK_OCR_TUNEABLE".to_string(), "false".to_string());
         }
-        if self.corpus.template_root != corpus_default.template_root {
-            env.insert(
-                "HKASK_TEMPLATE_ROOT".to_string(),
-                self.corpus.template_root.clone(),
-            );
-        }
+        // Always emit HKASK_TEMPLATE_ROOT so MCP servers (corpus, training)
+        // find templates in production where the CWD-relative default does not
+        // exist. When the operator hasn't overridden the default, resolve to
+        // `{data_dir}/skills/registry/` — the path where `seed_templates` writes.
+        // When overridden, use the operator's value.
+        let template_root = if self.corpus.template_root != corpus_default.template_root {
+            self.corpus.template_root.clone()
+        } else {
+            std::path::Path::new(&data_dir)
+                .join("skills")
+                .join("registry")
+                .to_string_lossy()
+                .to_string()
+        };
+        env.insert("HKASK_TEMPLATE_ROOT".to_string(), template_root);
 
         // ── Media ──
         if !self.media.tts_model.is_empty() {
@@ -1785,10 +1794,9 @@ mod tests {
             !env.contains_key("HKASK_OCR_SIMPLE_MAX"),
             "default ocr_simple_max must not be emitted"
         );
-        assert!(
-            !env.contains_key("HKASK_TEMPLATE_ROOT"),
-            "default template_root must not be emitted"
-        );
+        // HKASK_TEMPLATE_ROOT is now always emitted (resolved from data_dir),
+        // so it's no longer suppressed for default settings — see
+        // `mcp_env_always_emits_template_root`.
         assert!(
             !env.contains_key("HKASK_EMBEDDING_MODEL"),
             "default embedding_model must not be emitted — the `is_empty()` check was a drift bug; the default is non-empty"
@@ -1833,7 +1841,59 @@ mod tests {
         );
     }
 
-    // `mcp_env()` must emit env vars when a setting differs from `Default`.
+    // `HKASK_TEMPLATE_ROOT` must ALWAYS be emitted so MCP servers (corpus,
+    // training) find templates in production where the CWD-relative default
+    // ("kask/registry") does not exist. For default settings, the value is
+    // resolved from `data_dir` as `{data_dir}/skills/registry/` — the path
+    // where `agent_skills::seed_templates` writes at startup.
+    #[test]
+    fn mcp_env_always_emits_template_root() {
+        let settings = KaskSettings::default();
+        let env = settings.mcp_env();
+        let template_root = env.get("HKASK_TEMPLATE_ROOT");
+        assert!(
+            template_root.is_some(),
+            "HKASK_TEMPLATE_ROOT must always be emitted — without it, MCP servers \
+             fall back to a CWD-relative path that does not exist in production"
+        );
+        let data_dir = env.get("HKASK_DATA_DIR").expect("data_dir must be emitted");
+        let expected = std::path::Path::new(data_dir)
+            .join("skills")
+            .join("registry")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            template_root.map(String::as_str),
+            Some(expected.as_str()),
+            "default template_root must resolve to `{{data_dir}}/skills/registry`"
+        );
+    }
+
+    // When the operator overrides `corpus.template_root`, `mcp_env()` must use
+    // that value instead of the data-dir-resolved default.
+    #[test]
+    fn mcp_env_template_root_override_emits_user_value() {
+        let mut settings = KaskSettings::default();
+        settings.corpus.template_root = "/custom/templates".to_string();
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_TEMPLATE_ROOT").map(String::as_str),
+            Some("/custom/templates")
+        );
+    }
+
+    // When the operator sets `data_dir` in settings, the template_root must
+    // resolve from the custom data_dir, not the platform default.
+    #[test]
+    fn mcp_env_template_root_follows_data_dir_override() {
+        let mut settings = KaskSettings::default();
+        settings.data_dir = "/custom/kask/data".to_string();
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_TEMPLATE_ROOT").map(String::as_str),
+            Some("/custom/kask/data/skills/registry")
+        );
+    }
     // This pins the other direction: the `Default`-based comparison still
     // detects non-default values.
     #[test]

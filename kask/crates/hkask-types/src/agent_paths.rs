@@ -22,7 +22,7 @@
 use std::path::PathBuf;
 
 /// Root directory for agent artifacts.
-pub const AGENTS_DIR: &str = "agents";
+pub(crate) const AGENTS_DIR: &str = "agents";
 
 /// Root directory for MCP server artifacts (D28 — Standardized Artifact Storage).
 /// Each server owns a subtree: `mcp/{server_id}/{purpose}.db`.

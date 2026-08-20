@@ -81,7 +81,6 @@ hKask ships **10 MCP servers** launched by zed's `context_server` as child proce
 - `gpa-evolution` — Genetic-Pareto mutation of text artifacts.
 - `bug-hunt` / `diagnose` — Exploration and debugging.
 - `refactor-architecture` — End-to-end architecture refactoring (discover → audit → strangle → verify).
-- `kali-audit` / `supply-chain-sentinel` — Security posture.
 - `lora-training` — PEFT method selection + math-contract gates (pre-flight before training job).
 - `skill-router` — Match tasks to installed skills (fit-scored recommendations, gap signals for skill-discovery).
 - `skill-discovery` — Detect capability gaps, search catalog, evaluate candidates, guide installation.
@@ -146,7 +145,6 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 | Hard bug / regression | `diagnose` | `bug-hunt` (exploratory testing) |
 | Low confidence / high uncertainty | `metacognition` (assess + calibrate) | `falsifiability` (if hypothesis-conflict) or `improv` (riffing, for divergent exploration) |
 | Module design / simplification | `essentialist` (3 gates) | `deep-module` |
-| Security audit | `kali-audit` | `supply-chain-sentinel` (dependency files) |
 | LoRA/QLoRA training config audit | `lora-training` | `tdd` (training-loop code) |
 | GPU training pod creation | [`kask/docs/research/archive/gpu-provider-research-2026-07-23.md`](kask/docs/research/archive/gpu-provider-research-2026-07-23.md) | `lora-training` (config audit) |
 | Self-improvement / prompt evolution | `metacognition` | `gpa-evolution` (post-convergence) |

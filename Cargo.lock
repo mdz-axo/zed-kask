@@ -9688,7 +9688,6 @@ version = "0.36.0"
 dependencies = [
  "chrono",
  "futures-util",
- "hex",
  "rusqlite",
  "schemars 1.0.4",
  "serde",

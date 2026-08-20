@@ -4307,7 +4307,18 @@ fn combine_skills(
     let mut errors = Vec::new();
     for result in global.into_iter().chain(project) {
         match result {
-            Ok(skill) => skills.push(skill),
+            Ok(skill) => {
+                // zed-kask: register declared steps for skill verification.
+                // The SkillStepTracker reads this registry at activation
+                // time to produce a trust verdict at turn end.
+                if !skill.steps.is_empty() {
+                    skill_step_tracker::register_skill_steps(
+                        skill.name.clone(),
+                        skill.steps.clone(),
+                    );
+                }
+                skills.push(skill);
+            }
             Err(e) => errors.push(e),
         }
     }

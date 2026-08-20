@@ -165,6 +165,11 @@ pub struct Skill {
     /// startup, locked against editing, undisableable, and unshadowable.
     /// See `SkillMetadata::core` for the full contract.
     pub core: bool,
+    /// Declared execution steps for skill verification. Passed through from
+    /// `SkillMetadata::steps`. Registered in the process-global step registry
+    /// at load time so `SkillStepTracker::activate` can look them up.
+    // zed-kask: skill step verification — D-seam for trust calibration.
+    pub steps: Vec<SkillStepDeclaration>,
 }
 
 /// Indicates where a skill was loaded from.
@@ -318,6 +323,28 @@ pub struct SkillMetadata {
     /// distinguishing system-critical kask-skills from user kask-skills.
     #[serde(default)]
     pub core: bool,
+    /// Declared execution steps for skill verification. Each step lists the
+    /// tool names it requires. At turn end, the `SkillStepTracker` compares
+    /// the actual tool-call sequence against these declared steps and
+    /// produces a trust verdict (`Verified` | `Incomplete` | `NoDeclaration`).
+    /// When absent, the tracker reports `NoDeclaration` — raw calibration
+    /// data without a verdict.
+    // zed-kask: skill step verification — D-seam for trust calibration.
+    #[serde(default)]
+    pub steps: Vec<SkillStepDeclaration>,
+}
+
+/// A step declared in the SKILL.md frontmatter for verification. The step
+/// is considered executed when ALL listed tools appear at least once in
+/// the actual call sequence.
+// zed-kask: skill step verification — D-seam for trust calibration.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SkillStepDeclaration {
+    /// Step identifier (e.g. "sense_gather", "synthesize").
+    pub id: String,
+    /// Tool names this step requires. Empty = no tool dependency.
+    #[serde(default)]
+    pub tools: Vec<String>,
 }
 
 /// Minimal skill info for system prompt.
@@ -395,6 +422,7 @@ pub fn parse_skill_frontmatter(
         disable_model_invocation: metadata.disable_model_invocation,
         dependencies: metadata.dependencies,
         core: metadata.core,
+        steps: metadata.steps,
     })
 }
 
@@ -2175,6 +2203,7 @@ description: A skill with no body content
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            steps: Vec::new(),
         };
 
         let summary = SkillSummary::from(&skill);
@@ -2728,6 +2757,68 @@ description: A skill with no body content
         assert!(
             !after.contains("TAMPERED"),
             "tampered content survived re-seed — core overwrite is broken: {after}"
+        );
+    }
+
+    // Template seeding writes the compiled-in .j2 templates to disk so MCP
+    // servers (corpus, training) find them in production where the CWD-relative
+    // default does not exist. Unlike skill seeding, templates are ALWAYS
+    // overwritten — they have no user-sovereignty exception.
+    #[gpui::test]
+    async fn test_seed_templates_writes_all_shipped_templates_to_disk(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let target_dir = Path::new("/templates");
+        fs.create_dir(target_dir).await.unwrap();
+
+        seed_templates(fs.as_ref(), target_dir).await;
+
+        let seed = shipped_template_seed();
+        assert!(
+            !seed.is_empty(),
+            "shipped_template_seed must not be empty — build.rs scans kask/registry/templates/"
+        );
+
+        for (rel_path, expected_content) in seed {
+            let full_path = target_dir.join(rel_path);
+            assert!(
+                fs.is_file(&full_path).await,
+                "template '{}' must be seeded to disk",
+                full_path.display()
+            );
+            let actual = fs.load(&full_path).await.unwrap();
+            assert_eq!(
+                actual, *expected_content,
+                "seeded template '{}' does not match the compiled-in source",
+                rel_path
+            );
+        }
+    }
+
+    // Template seeding always overwrites — a stale or corrupted file is
+    // replaced with the shipped copy on re-seed.
+    #[gpui::test]
+    async fn test_seed_templates_overwrites_existing_files(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let target_dir = Path::new("/templates");
+        fs.create_dir(target_dir).await.unwrap();
+
+        // Seed once.
+        seed_templates(fs.as_ref(), target_dir).await;
+
+        let seed = shipped_template_seed();
+        let first_rel = seed[0].0;
+        let first_path = target_dir.join(first_rel);
+        let original = fs.load(&first_path).await.unwrap();
+
+        // Corrupt the file.
+        fs.write(&first_path, b"TAMPERED").await.unwrap();
+
+        // Re-seed — the corrupted content must be replaced.
+        seed_templates(fs.as_ref(), target_dir).await;
+        let after = fs.load(&first_path).await.unwrap();
+        assert_eq!(
+            after, original,
+            "template re-seed must overwrite corrupted content; got tampered file"
         );
     }
 }
