@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::let_underscore_future)]
-//! hKask Capability — tool dispatch port.
+//! hKask Tool Port — tool dispatch port.
 //!
 //! # No per-call capability gate
 //!

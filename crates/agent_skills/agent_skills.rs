@@ -1719,13 +1719,6 @@ Content.
 
     #[test]
     fn test_parse_description_too_long_loads_with_warning() {
-        // zed-kask: Description length warnings are disabled. SKILL.md files
-        // are reference-only — their descriptions appear in the discovery
-        // catalog but are never injected into prompts. Skills execute via
-        // YAML manifests in the kask registry, so description length has no
-        // token-cost impact. A long description now loads cleanly with no
-        // warning; this test pins that contract so the disabled warning
-        // can't silently regress.
         let long_desc = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
         let content = format!(
             r#"---

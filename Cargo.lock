@@ -9110,15 +9110,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-capability"
-version = "0.36.0"
-dependencies = [
- "hkask-types",
- "serde_json",
- "thiserror 2.0.17",
-]
-
-[[package]]
 name = "hkask-condenser"
 version = "0.36.0"
 dependencies = [
@@ -9264,8 +9255,8 @@ dependencies = [
 name = "hkask-mcp"
 version = "0.36.0"
 dependencies = [
- "hkask-capability",
  "hkask-regulation",
+ "hkask-tool-port",
  "hkask-types",
  "rmcp",
  "serde_json",
@@ -9680,6 +9671,15 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+]
+
+[[package]]
+name = "hkask-tool-port"
+version = "0.36.0"
+dependencies = [
+ "hkask-types",
+ "serde_json",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -10939,7 +10939,6 @@ dependencies = [
  "futures-util",
  "gpui",
  "gpui_tokio",
- "hkask-capability",
  "hkask-condenser",
  "hkask-email",
  "hkask-event-store",
@@ -10951,6 +10950,7 @@ dependencies = [
  "hkask-services-core",
  "hkask-storage",
  "hkask-tool-invoker",
+ "hkask-tool-port",
  "hkask-types",
  "http_client",
  "language_model",
@@ -25773,10 +25773,10 @@ dependencies = [
  "gpui_tokio",
  "gpui_util",
  "hdrhistogram",
- "hkask-capability",
  "hkask-email",
  "hkask-mcp",
  "hkask-regulation",
+ "hkask-tool-port",
  "hkask-types",
  "http_client",
  "image",

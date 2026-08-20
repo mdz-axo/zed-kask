@@ -1,5 +1,5 @@
 ---
-title: "hKask Capability — Class Diagram"
+title: "hKask Tool Port — Class Diagram"
 audience: [architects, developers]
 last_updated: 2026-08-20
 version: "2.2.1"
@@ -8,7 +8,7 @@ domain: "Trust"
 mds_categories: [trust]
 ---
 
-# hKask Capability — Class Diagram
+# hKask Tool Port — Class Diagram
 
 Type system after the two 2026-08-12 removals: the per-call capability gate
 (RR-0056) and the FIDES taint lattice (RR-0053). The crate now holds the dispatch
