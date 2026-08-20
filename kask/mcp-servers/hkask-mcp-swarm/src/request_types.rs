@@ -952,3 +952,34 @@ pub struct ExecutePlanLocalRequest {
     /// The delegations to execute, in order. Capped at 10 (same as fanout).
     pub delegations: Vec<PlanDelegation>,
 }
+
+/// A single task in a `swarm_eval_agent_local` run. The evaluator is required:
+/// the harness exists to measure pass rates, so a task without an oracle is
+/// unmeasurable and is rejected upfront rather than silently counted as
+/// neither pass nor fail.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalAgentTask {
+    /// The task text to send to the agent.
+    pub task: String,
+    /// Maximum credits authorized per rollout of this task.
+    pub credits_authorized: u32,
+    /// The deterministic evaluator run against each rollout's response.
+    pub evaluator: PlanEvaluator,
+}
+
+/// Request for `swarm_eval_agent_local` — the rollout harness. Runs one agent
+/// card against a task set N times each, stamps deterministic verdicts, and
+/// reports per-task pass rates with standard error (the sampled part is the
+/// rollout, not the evaluator — repeat counts exist because local inference
+/// is sampled and identical tasks diverge).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalAgentLocalRequest {
+    /// The agent id to evaluate. Must exist in the local registry.
+    pub agent_name: String,
+    /// The task set. Capped at 10 tasks.
+    pub tasks: Vec<EvalAgentTask>,
+    /// Repeats per task (default 3, cap 10). The total rollout count
+    /// (tasks × repeats) is capped at 50 — each rollout is a real inference
+    /// call with real token cost.
+    pub repeats: Option<u32>,
+}

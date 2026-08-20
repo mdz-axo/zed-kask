@@ -199,10 +199,10 @@ token per continuation message). Setting
 
 ## 13. Companion skill: `swarm-intelligence`
 
-Registry-first cascade (`kask/registry/manifests/swarm-intelligence.yaml` +
-`kask/registry/templates/swarm-intelligence/*.j2`): SENSE → ORIENT → DECIDE →
-ACT → CHECK → CONVERGE (Cauchy criterion on the swarm-state distance `d`,
-algedonic override on 402 / un-acknowledged curator dispatch).
+The `swarm-intelligence` skill (`kask/registry/templates/swarm-intelligence/*.j2`):
+SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE (Cauchy criterion on the
+swarm-state distance `d`, algedonic override on 402 / un-acknowledged curator
+dispatch).
 
 Mode-aware (v2 §15): SENSE/ACT/CHECK branch on `{{ mode }}` ("abw" | "local").
 The mode + `swarm_id` reach the cascade through the `skill` tool's `context`

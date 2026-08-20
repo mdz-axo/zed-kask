@@ -206,12 +206,12 @@ Nothing in this crate or on the invoke path inspects information flow. Defense
 same register as Layer 3 (instruction hierarchy): de-advertised rather than
 deployed.
 
-The FIDES lattice that once lived in a `src/tool_taint.rs` file labelled each
-tool `Source` / `Sink` / `Pure` / `Endorser` and blocked `Source → Sink`. It was
-deleted rather than repaired because the gate consuming it could not decide
-anything: `McpRuntime::get_tool_info` hardcoded `Pure` at the only `ToolInfo`
-construction site, so the `Sink` arm never matched. An inert gate is worse than
-no gate — it invites reliance on a protection that does not exist.
+The FIDES lattice labelled each tool `Source` / `Sink` / `Pure` / `Endorser`
+and blocked `Source → Sink`. It was deleted rather than repaired because the
+gate consuming it could not decide anything: `McpRuntime::get_tool_info`
+hardcoded `Pure` at the only `ToolInfo` construction site, so the `Sink` arm
+never matched. An inert gate is worse than no gate — it invites reliance on a
+protection that does not exist.
 
 Governing entry: `kask/security/regressions/RR-0053.yaml`, rewritten as an
 absence check that forbids re-adding the machinery in inert form and states the

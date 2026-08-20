@@ -55,18 +55,18 @@ skip result without meaningful work. This is necessary because skill execution p
 
 | Tool | Phase | When |
 |------|-------|------|
-| `kanban_board_create` | decompose | Post-process: create the board |
-| `kanban_task_create` | decompose | Post-process: create each task |
-| `kanban_task_list` | decompose, operate | Post-process: verify / pre-step: fetch |
-| `kanban_board_list` | operate | Pre-process: fetch board state |
-| `kanban_task_spawn` | delegate | Post-process: spawn subagent |
-| `kanban_task_delegate_result` | delegate | Post-process: read structured result |
-| `kanban_task_comment` | delegate, operate | Post-process: post progress notes / coordinator replies |
-| `kanban_task_add_deliverable` | delegate, operate | Post-process: record deliverable links |
-| `kanban_task_move` | operate | Post-process: execute status transitions |
-| `kanban_task_verify` | operate | Post-process: record verification evidence |
-| `kanban_task_reopen` | operate | Post-process: reopen for rework |
-| `kanban_task_comments_since` | operate | Pre-process: read incremental updates |
+| `kanban_board_create` | decompose | Post-step: create the board |
+| `kanban_task_create` | decompose | Post-step: create each task |
+| `kanban_task_list` | decompose, operate | Post-step: verify / pre-step: fetch |
+| `kanban_board_list` | operate | Pre-step: fetch board state |
+| `kanban_task_spawn` | delegate | Post-step: spawn subagent |
+| `kanban_task_delegate_result` | delegate | Post-step: read structured result |
+| `kanban_task_comment` | delegate, operate | Post-step: post progress notes / coordinator replies |
+| `kanban_task_add_deliverable` | delegate, operate | Post-step: record deliverable links |
+| `kanban_task_move` | operate | Post-step: execute status transitions |
+| `kanban_task_verify` | operate | Post-step: record verification evidence |
+| `kanban_task_reopen` | operate | Post-step: reopen for rework |
+| `kanban_task_comments_since` | operate | Pre-step: read incremental updates |
 
 All tools are on the `hkask-mcp-kata-kanban` server.
 

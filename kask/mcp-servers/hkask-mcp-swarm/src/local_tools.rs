@@ -12,6 +12,21 @@ use crate::local_registry::{
 };
 use crate::local_runtime::{LocalDelegateResult, MAX_FANOUT};
 use crate::request_types::*;
+
+/// Task-set cap for `swarm_eval_agent_local`. Bounds one harness call's
+/// breadth; the total-rollout cap below bounds its depth × breadth.
+pub(crate) const MAX_EVAL_TASKS: usize = 10;
+
+/// Default and cap for `repeats` in `swarm_eval_agent_local`. The default (3)
+/// is enough to expose a hard 0-or-1 failure mode; the cap keeps a single
+/// call's cost bounded.
+pub(crate) const DEFAULT_EVAL_REPEATS: u32 = 3;
+pub(crate) const MAX_EVAL_REPEATS: u32 = 10;
+
+/// Total rollouts (tasks × repeats) cap for `swarm_eval_agent_local`. Each
+/// rollout is a real inference call with real token cost, so the product —
+/// not just the factors — needs a ceiling.
+pub(crate) const MAX_EVAL_ROLLOUTS: usize = 50;
 use crate::sanitize::{
     filter_declared_skills, filter_mcp_tools, sanitize_abw_text, sanitize_agent_id,
 };
@@ -1396,6 +1411,176 @@ impl SwarmServer {
                     "balance": balance,
                     "failed": failed,
                     "succeeded": req.delegations.len() - failed,
+                }))
+            },
+        )
+        .await
+    }
+
+    /// The rollout harness (event-substrate phase 1): run one agent card
+    /// against a task set N times each, stamp deterministic verdicts, and
+    /// report per-task pass rates with standard error. In-memory only — no
+    /// event store yet; this phase validates that task sets reuse across
+    /// cards before any infrastructure is built.
+    ///
+    /// Rollouts run sequentially (the local ledger is single-writer, same
+    /// constraint as fanout/plan). A delegation error counts as a failed
+    /// rollout for that task — the harness measures end-to-end pass rate,
+    /// which includes crashes, not just wrong answers.
+    #[tool(
+        description = "Rollout harness: run one local agent against a task set N times each, evaluate each rollout with a deterministic evaluator (contains/not_contains/regex), and report per-task pass rates with standard error and totals. In-memory only. Tasks capped at 10, repeats at 10, total rollouts at 50."
+    )]
+    pub(crate) async fn swarm_eval_agent_local(
+        &self,
+        parameters: Parameters<EvalAgentLocalRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "swarm_eval_agent_local",
+            Some(hkask_bridge_ontology::pko::PROCEDURE),
+            async {
+                let req = parameters.0;
+                if req.agent_name.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "agent_name must be non-empty".to_string(),
+                    ));
+                }
+                if req.tasks.is_empty() || req.tasks.len() > MAX_EVAL_TASKS {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "tasks must contain 1..={MAX_EVAL_TASKS} entries, got {}",
+                        req.tasks.len()
+                    )));
+                }
+                let repeats = req.repeats.unwrap_or(DEFAULT_EVAL_REPEATS);
+                if repeats == 0 || repeats > MAX_EVAL_REPEATS {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "repeats must be 1..={MAX_EVAL_REPEATS}, got {repeats}"
+                    )));
+                }
+                let total_rollouts = req.tasks.len().saturating_mul(repeats as usize);
+                if total_rollouts > MAX_EVAL_ROLLOUTS {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "total rollouts (tasks × repeats = {total_rollouts}) exceeds the cap of \
+                         {MAX_EVAL_ROLLOUTS} — each rollout is a real inference call with real \
+                         token cost"
+                    )));
+                }
+                // Validate every evaluator spec upfront: a bad regex must fail
+                // the whole call before any tokens are spent, not halfway
+                // through the run.
+                for (index, task) in req.tasks.iter().enumerate() {
+                    if task.task.trim().is_empty() {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "tasks[{index}].task must be non-empty"
+                        )));
+                    }
+                    run_evaluator("", &task.evaluator.evaluator, &task.evaluator.spec)?;
+                }
+                let runtime = self
+                    .local_runtime
+                    .get_or_init()
+                    .await
+                    .map_err(map_local_swarm_error)?;
+                let agent = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                    McpToolError::not_found(format!(
+                        "agent '{}' not found in local registry — load agents from \
+                         agents/local/curated/<id>/agent_card.json",
+                        req.agent_name
+                    ))
+                })?;
+                let ceiling = self.client.config().max_credits_per_dispatch;
+
+                let mut task_reports = Vec::with_capacity(req.tasks.len());
+                let mut total_passes = 0usize;
+                let mut total_cost = 0i64;
+                let mut total_cost_uncapped = 0i64;
+                let mut total_tokens = 0i64;
+                for task in &req.tasks {
+                    let mut passes = 0usize;
+                    let mut errors = 0usize;
+                    let mut latencies_ms: Vec<u64> = Vec::with_capacity(repeats as usize);
+                    for _repeat in 0..repeats {
+                        match runtime
+                            .delegate(&agent, &task.task, task.credits_authorized, ceiling)
+                            .await
+                        {
+                            Ok(result) => {
+                                total_cost += result.cost;
+                                total_cost_uncapped += result.cost_uncapped;
+                                total_tokens += result.tokens_used;
+                                latencies_ms.push(result.latency_ms);
+                                // The evaluator is deterministic, so a pass
+                                // here is a real verdict, not a sample.
+                                if run_evaluator(
+                                    &result.response,
+                                    &task.evaluator.evaluator,
+                                    &task.evaluator.spec,
+                                )? {
+                                    passes += 1;
+                                }
+                            }
+                            Err(e) => {
+                                // A crashed rollout is a failed rollout: the
+                                // pass rate measures end-to-end reliability,
+                                // which includes crashes.
+                                errors += 1;
+                                tracing::warn!(
+                                    target: "hkask.mcp.swarm",
+                                    agent = %req.agent_name,
+                                    error = %e,
+                                    "rollout failed during eval harness run"
+                                );
+                            }
+                        }
+                    }
+                    total_passes += passes;
+                    let attempts = passes + errors;
+                    let pass_rate = if attempts == 0 {
+                        // `repeats >= 1` is enforced above, so attempts == 0
+                        // is unreachable; guard anyway rather than divide by
+                        // zero.
+                        f64::NAN
+                    } else {
+                        passes as f64 / attempts as f64
+                    };
+                    // Standard error of a proportion: sqrt(p(1-p)/n). With
+                    // small n this is wide — that is the point: a pass rate
+                    // without variance is noise (non-determinism risk in the
+                    // proposal).
+                    let std_error = if attempts > 1 {
+                        (pass_rate * (1.0 - pass_rate) / attempts as f64).sqrt()
+                    } else {
+                        f64::NAN
+                    };
+                    let mean_latency_ms = if latencies_ms.is_empty() {
+                        None
+                    } else {
+                        Some(latencies_ms.iter().sum::<u64>() / latencies_ms.len() as u64)
+                    };
+                    task_reports.push(serde_json::json!({
+                        "task": task.task,
+                        "evaluator": task.evaluator.evaluator,
+                        "spec": task.evaluator.spec,
+                        "repeats": attempts,
+                        "passes": passes,
+                        "errors": errors,
+                        "pass_rate": pass_rate,
+                        "pass_rate_std_error": std_error,
+                        "mean_latency_ms": mean_latency_ms,
+                    }));
+                }
+                let overall_pass_rate = total_passes as f64 / total_rollouts as f64;
+                let balance: Option<i64> = runtime.balance();
+                Ok(serde_json::json!({
+                    "agent_name": req.agent_name,
+                    "tasks": task_reports,
+                    "total_rollouts": total_rollouts,
+                    "total_passes": total_passes,
+                    "overall_pass_rate": overall_pass_rate,
+                    "total_cost": total_cost,
+                    "total_cost_uncapped": total_cost_uncapped,
+                    "total_tokens": total_tokens,
+                    "balance": balance,
                 }))
             },
         )

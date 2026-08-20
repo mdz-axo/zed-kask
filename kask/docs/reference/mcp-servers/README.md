@@ -103,7 +103,7 @@ classDiagram
         +kata: KataEngine
     }
     class KataEngine {
-        +run_kata(board, task) CascadeOutcome
+        +run_kata(board, task)
     }
     class HMemStore {
         +boards: HashMap~String, Board~

@@ -17,8 +17,7 @@ Regulation spans are the observability substrate of hKask's Cybernetic Nervous S
 > via `kask regulation ...` are now available through programmatic `RegulationLedger` calls
 > (the former kask panel D10 was deleted; no UI surface remains). Skill spans (§3.9) are now emitted
 > by the agent crate's `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs`) via upstream-Zed
-> body injection (`render_skill_envelope`) — the `hkask-templates` crate and its `ManifestExecutor`
-> were deleted (commit `5f4cf5f10d`), replacing the earlier `hkask-services-skill`.
+> body injection (`render_skill_envelope`).
 
 A **span** is a typed identifier that pins an observation to a canonical dot-separated namespace (e.g., `reg.tool.web_search`). Spans carry an **operation** verb (e.g., `invoked`, `completed`, `reserved`) and optional structured fields. They flow through two paths:
 
@@ -160,11 +159,10 @@ Additional QA namespaces in `CANONICAL_NAMESPACES` (emitted as tracing events, n
 
 Skill lifecycle, registry, cascade, convergence, budget, provenance, profile-enforcement, routing, and discovery spans. All namespaced under `reg.skill.*`. Unlike other span types (which have dedicated Rust enums), skill spans are canonical namespace strings emitted as tracing events by the skill execution layer. The hierarchical `is_canonical()` function makes `reg.skill.<any-id>.*` valid without per-skill registration.
 
-> **Ownership note (v0.32.0; updated 2026-08-20):** Skill execution moved from the deleted `hkask-services-skill`
-> crate to upstream-Zed body injection: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`)
+> **Ownership note (v0.32.0; updated 2026-08-20):** Skill execution is upstream-Zed
+> body injection: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`)
 > reads the `SKILL.md` body via `agent_skills::read_skill_body` and injects it via
-> `render_skill_envelope`. The prior `hkask-templates` (`ManifestExecutor` + registry + cascade +
-> PDCA) intermediary was deleted (commit `5f4cf5f10d`); the D1 seam is now direct. The span
+> `render_skill_envelope`. The D1 seam is direct. The span
 > emission points are unchanged; only the emitting crate moved.
 
 | Namespace group | Sub-namespaces | Emitted When |
@@ -174,8 +172,8 @@ Skill lifecycle, registry, cascade, convergence, budget, provenance, profile-enf
 | `reg.skill.cascade` | `.step_executed`, `.compute`, `.escalated`, `.branching_misconfigured`, `.choice_misconfigured`, `.timeout_retry`, `.gate_passed`, `.gate_failed` | Cascade step execution; cascade escalation; branching/choice misconfiguration; timeout retry; gate pass/fail outcomes |
 | `reg.skill.convergence` | `.converged`, `.escalated` | Cascade convergence outcomes (metric ≤ threshold, or max iterations exhausted) |
 | `reg.skill.budget` | `.gas_exhausted`, `.gas_alert`, `.rjoule_exhausted`, `.rjoule_alert` | Gas and rJoule budget events |
-| `reg.skill.provenance` | (bare) | Skill provenance tracking (skill_executor / manifest executor) |
-| `reg.skill.profile_enforcement` | (bare) | Skill profile enforcement (skill_executor / manifest executor) |
+| `reg.skill.provenance` | (bare) | Skill provenance tracking |
+| `reg.skill.profile_enforcement` | (bare) | Skill profile enforcement |
 | `reg.skill.frontmatter` | `.missing` | SKILL.md frontmatter parse errors |
 | `reg.skill.manifest` | `.unparseable`, `.absent`, `.unreadable` | Registry manifest errors |
 | `reg.skill.routing` | `.matched`, `.uncovered` | Skill-to-task routing (skill-router) |
@@ -241,7 +239,7 @@ The following namespace groups are registered in `CANONICAL_NAMESPACES` and emit
 | **Deploy** | `reg.deploy.backup_auto_export`, `.backup_export`, `.backup_upload`, `.session_close`, `.session_open` | Deploy/session lifecycle |
 | **Gas** | `reg.gas.calibration` | Gas calibration events (core `reg.gas` is `RegulationSpan::Gas`, §3.1) |
 | **Goal** | `reg.goal` | Goal operations |
-| **Guard** | ~~`reg.guard`, `.canary`, `.input`, `.output`, `.redact`, `.runtime_policy`, `.violation`~~ | **No longer registered or emitted.** No `reg.guard*` string appears in `CANONICAL_NAMESPACES`. `.canary`/`.input`/`.output`/`.redact` went with the `hkask-guard` crate (2026-08-10, RR-0055 `obsolete`); `.runtime_policy` went with the FIDES runtime policy (2026-08-12, RR-0053 — the gate's `Log` verdict was its only emitter). Historic records carrying these namespaces remain in the audit trail; `reg.guard.redact` marked **post-hoc redaction** of streaming output, sanitizing the *stored* version only. |
+| **Guard** | ~~`reg.guard`, `.canary`, `.input`, `.output`, `.redact`, `.runtime_policy`, `.violation`~~ | **No longer registered or emitted.** No `reg.guard*` string appears in `CANONICAL_NAMESPACES`. `.canary`/`.input`/`.output`/`.redact` went with the guard crate (2026-08-10, RR-0055 `obsolete`); `.runtime_policy` went with the FIDES runtime policy (2026-08-12, RR-0053 — the gate's `Log` verdict was its only emitter). Historic records carrying these namespaces remain in the audit trail; `reg.guard.redact` marked **post-hoc redaction** of streaming output, sanitizing the *stored* version only. |
 | **Heal** | `reg.heal`, `.attempt`, `.code_change_proposed`, `.dotenv`, `.escalated`, `.file_created`, `.llm_assisted`, `.retry_loop`, `.set_env`, `.strategy`, `.unmatched` | Self-healing operations |
 | **Kata/Keystore** | `reg.kata`, `reg.keystore` | Kata and keystore operations |
 | **Ledger** | `reg.ledger` | Governance/rollback failure signals (runtime-posture-monitor visible) |

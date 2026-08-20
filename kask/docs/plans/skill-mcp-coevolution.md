@@ -173,10 +173,11 @@ output" to "this skill needs improvement."
 call `curator_report_skill_use_issue` with a "grounding violation" issue type.
 This requires either:
 
-- **Option A:** A callback from `BridgeManifestExecutor` to the curator MCP
-  server. The executor would call `curator_report_skill_use_issue` via the
-  tool port after grounding enforcement, similar to how `dispatch_with_retry`
-  calls it on step failures. This closes the gap automatically.
+- **Option A:** A callback from the skill execution surface to the curator
+  MCP server. The executor would call `curator_report_skill_use_issue` via
+  the tool port after grounding enforcement, similar to how
+  `dispatch_with_retry` calls it on step failures. This closes the gap
+  automatically.
 - **Option B (simpler, current path):** The gemba walk's `recommend-actions`
   template already proposes `skill-maintenance` for skills with grounding
   issues (Phase 3). The operator sees the recommendation and decides to run
@@ -207,7 +208,7 @@ briefing and makes the connection explicitly.
 ```mermaid
 graph TD
     subgraph "Skill Cascade"
-        SC[BridgeManifestExecutor::execute_skill]
+        SC[Skill execution]
     end
 
     subgraph "Loop 2: Skill-Use Reporting"

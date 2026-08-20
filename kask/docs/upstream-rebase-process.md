@@ -50,8 +50,8 @@ one-sentence purpose. See §4 for the `main.rs` inventory (28 units).
 
 Classify every functional unit by pragmatic-semantics constraint force:
 
-- **Prohibition** — must be re-applied or the system breaks (e.g., `set_manifest_executor`
-  hook: without it, skill cascades run blind). These are the load-bearing wirings.
+- **Prohibition** — must be re-applied or the system breaks (e.g., a load-bearing
+  hook: without it, skill execution runs blind). These are the load-bearing wirings.
 - **Guardrail** — should be re-applied; omitting degrades behavior but doesn't
   break (e.g., algedonic threshold: without it, the setting is dead config).
 - **Guideline** — nice-to-have; omitting is a regression but not a failure
@@ -100,7 +100,8 @@ Per the `.rules` trap "Tests must pin deliberate zed-kask deviations from
 upstream": every `// zed-kask:` marker must have a corresponding test asserting
 the wired behavior. For `main.rs` wirings (which are process-global hooks, not
 unit-testable functions), the pinning test is typically:
-- A test asserting the hook is `Some` after init (e.g., `assert!(agent::manifest_executor().is_some())`).
+- A test asserting the hook is `Some` after init (e.g.,
+  `assert!(agent::memory_port().is_some())`).
 - A test asserting the wired behavior fires (e.g., the cybernetics loop tick
   populates the regulation ledger).
 - A compile-time pin: the `set_*` hook signature requires a type from a kask
@@ -169,15 +170,15 @@ noted.
 | F17 | 1559 | kask extensions panel wiring | Guideline | (panel registered) | upstream panel infra | after panel infra init |
 | F18 | 1582 | Collab binary path resolution (dev) | Guideline | (path resolved) | — | early, before collab init |
 | F19 | 1919 | MCP re-sync (inference socket, deferred) | Prohibition | (re-sync call) | F13, `INFERENCE_SOCKET_PATH` | F13, in deferred task |
-| F20 | 2211 | Deferred task (model-dependent hooks: `set_manifest_executor`, `set_memory_port`, `set_thread_condenser`, `set_tool_invoker`, `set_context_injector`, `set_curator_context_injector`) | Prohibition | (all model-dependent hooks) | `LanguageModelRegistry::default_model`, F2 | after user resolves, F2 |
+| F20 | 2211 | Deferred task (model-dependent hooks: `set_memory_port`, `set_thread_condenser`, `set_tool_invoker`, `set_context_injector`, `set_curator_context_injector`) | Prohibition | (all model-dependent hooks) | `LanguageModelRegistry::default_model`, F2 | after user resolves, F2 |
 | F21 | 2496 | `sync_kask_mcp_servers` fn definition | Prohibition | (fn) | F22, F23, F24 | — (fn definition, hoisted) |
 | F22 | 2501 | `resolve_mcp_binary` fn definition | Prohibition | (fn) | `HKASK_MCP_*_BIN` env | — (fn definition, hoisted) |
 | F23 | 2563 | `kask_server_env` (env var resolution for MCP servers) | Prohibition | (fn) | `KaskSettings`, credentials | — (fn definition, hoisted) |
 | F24 | 2618 | `sync_kask_mcp_servers` impl (descriptor registration) | Prohibition | (fn body) | F22, F23, `KaskMcpDescriptor` | F22, F23 |
 | F25 | 2701 | `sync_kask_mcp_runtime_servers` (governed McpRuntime restart) | Prohibition | (fn) | `McpRuntime`, `kask_server_env` (F23) | F23 |
 | F26 | 2706 | `tool_invoker` hook (`set_tool_invoker`) | Prohibition | (hook set) | `swarm_panel::ToolInvoker` | in deferred task (F20) |
-| F27 | 2808 | `skill_executor` + `tool_invoke` IPC (inference IPC server) | Prohibition | (IPC methods) | `manifest_executor`, `ToolPort` | F20 |
-| F28 | 2810 | Skill executor resolution (resolves at call time) | Prohibition | (resolver fn) | `manifest_executor` (F20) | F20 |
+| F27 | 2808 | `tool_invoke` IPC (inference IPC server) | Prohibition | (IPC methods) | `ToolPort` | F20 |
+| F28 | 2810 | Skill executor resolution (resolves at call time) | Prohibition | (resolver fn) | (F20) | F20 |
 
 ### 4.2 Dependency DAG (topological order for re-application)
 
@@ -208,7 +209,7 @@ F20 (deferred task) → after user resolves, F2
   F16 (LazyToolRouter) → in F20
   F19 (MCP re-sync inference socket) → in F20, after F13
   F26 (tool_invoker) → in F20
-  F27 (skill_executor IPC) → in F20
+  F27 (tool_invoke IPC) → in F20
   F28 (skill executor resolver) → in F20
 ```
 
@@ -258,7 +259,7 @@ These are load-bearing: removing any breaks compilation or core kask behavior.
   F7 (metacognition provider), F8 (global Fs), F9 (kask_settings_for_mcp),
   F11 (ensure_openai_compatible), F13 (sync_kask_mcp_servers), F14 (embedding creds),
   F16 (LazyToolRouter), F19 (MCP re-sync inference socket), F20 (deferred task),
-  F21–F25 (fn definitions), F26 (tool_invoker), F27 (skill_executor IPC), F28 (skill executor resolver).
+  F21–F25 (fn definitions), F26 (tool_invoker), F27 (tool_invoke IPC), F28 (skill executor resolver).
 
 ### 5.2 Guardrail-force units (should re-apply — 4 units)
 
