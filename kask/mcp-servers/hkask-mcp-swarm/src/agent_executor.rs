@@ -318,15 +318,8 @@ mod tests {
     /// a no-op and `run` behaves exactly as before (the zero-behavior-change
     /// contract for non-captured paths).
     #[test]
-    fn capture_is_none_by_default() {
-        // The constructor leaves capture unwired; try_send on None never
-        // happens. This pins the field's default so a future refactor
-        // cannot silently start capturing without wiring.
-        let executor = AgentExecutor {
-            inference: Arc::new(StubInference),
-            tool_dispatch: Arc::new(StubDispatch),
-            capture: None,
-        };
+    fn capture_is_inert_when_unwired() {
+        let executor = AgentExecutor::new(Arc::new(StubInference), Arc::new(StubDispatch));
         executor.capture_inference(CapturedInference {
             rollout_id: "r".into(),
             model: "m".into(),
@@ -339,45 +332,82 @@ mod tests {
         // No panic, no channel error — inert by construction.
     }
 
+    /// A wired capture receives the inference call; a full channel drops
+    /// without panicking (the drop counter lives on the drainer side).
+    #[tokio::test]
+    async fn capture_receives_inference_calls() {
+        let executor = AgentExecutor::new(Arc::new(StubInference), Arc::new(StubDispatch));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        executor.set_capture(tx);
+        executor.capture_inference(CapturedInference {
+            rollout_id: "rollout-a".into(),
+            model: "stub-model".into(),
+            status: "ok",
+            latency_ms: 5,
+            total_tokens: 2,
+            tool_calls: 0,
+            round: 0,
+        });
+        let captured = rx.recv().await.expect("capture must arrive");
+        assert_eq!(captured.rollout_id, "rollout-a");
+        assert_eq!(captured.status, "ok");
+    }
+
     struct StubInference;
 
-    #[async_trait::async_trait]
     impl hkask_types::InferencePort for StubInference {
-        async fn generate_with_messages(
+        fn generate(
             &self,
-            _messages: &[hkask_types::ChatMessage],
-            _params: &hkask_types::LLMParameters,
-            _model_override: Option<&str>,
+            _prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
             _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Result<hkask_types::InferenceResult, hkask_types::InferenceError> {
-            Ok(hkask_types::InferenceResult {
-                text: "stub".into(),
-                model: "stub-model".into(),
-                tool_calls: vec![],
-                usage: hkask_types::ChatUsage {
-                    prompt_tokens: 1,
-                    completion_tokens: 1,
-                    total_tokens: 2,
-                    cost: None,
-                    market_cost: None,
-                    estimated_cost: None,
-                },
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Ok(hkask_types::InferenceResult {
+                    text: "stub".into(),
+                    model: "stub-model".into(),
+                    usage: hkask_types::InferenceUsage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    finish_reason: "stop".into(),
+                    token_probabilities: None,
+                    tool_calls: vec![],
+                    reasoning: None,
+                    cost_usd: None,
+                })
             })
         }
     }
 
     struct StubDispatch;
 
-    #[async_trait::async_trait]
     impl hkask_types::ToolDispatchPort for StubDispatch {
-        async fn invoke_tool(
-            &self,
-            _server: &str,
-            _tool: &str,
+        fn invoke_tool<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
             _args: serde_json::Value,
-            _allowlist: &[String],
-        ) -> Result<serde_json::Value, String> {
-            Ok(serde_json::json!({"ok": true}))
+            _allowlist: &'a [String],
+        ) -> Pin<
+            Box<
+                dyn Future<Output = Result<serde_json::Value, hkask_types::InferenceError>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async { Ok(serde_json::json!({"ok": true})) })
         }
     }
+
+    use std::future::Future;
+    use std::pin::Pin;
 }

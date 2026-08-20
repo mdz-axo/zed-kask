@@ -155,6 +155,26 @@ pub struct LocalAgentCapabilities {
     /// Optional output contract for the agent's structured output.
     #[serde(default)]
     pub output_contract: Option<serde_json::Value>,
+    /// Per-card declared evaluators (the evaluator contract, event-substrate
+    /// phase 4). When present, `swarm_delegate_local` runs each against the
+    /// delegation response and stamps the verdict onto `task_success` with
+    /// `provenance: Deterministic` — the card carries its own oracle, so
+    /// every delegation is judged without the Curator having to call
+    /// `swarm_evaluate_local` manually. An empty list = no declared oracle
+    /// (open task; `task_success` stays null, same as before).
+    #[serde(default)]
+    pub evaluators: Vec<DeclaredEvaluator>,
+}
+
+/// A deterministic evaluator declared on an agent card. Same three kinds
+/// as `run_evaluator` (contains / not_contains / regex) — the card-declared
+/// contract reuses the single evaluation implementation.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct DeclaredEvaluator {
+    /// The evaluator type: "contains", "not_contains", or "regex".
+    pub evaluator: String,
+    /// The spec: substring (contains/not_contains) or regex pattern.
+    pub spec: String,
 }
 
 /// Name of the persisted port-type extension file inside the agents dir.
