@@ -808,7 +808,6 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
-    use hkask_test_harness::{
         OracleVerdict, TraceEntry, oracle_hardcoded, oracle_inconclusive, oracle_invariant,
         oracle_reference, write_trace,
     };

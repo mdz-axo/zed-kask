@@ -26,7 +26,6 @@ workspace = true
 [dev-dependencies]
 proptest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "process", "time"] }
-hkask-test-harness = { workspace = true }
 # `reconnect_integration` SIGKILLs the fixture child directly; the repo lint bans
 # the blocking `Command::status` that shelling out to `kill` would need.
 libc = { workspace = true }

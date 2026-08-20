@@ -233,7 +233,6 @@ ingestion:
 
 mod proptests {
     use super::*;
-    use hkask_test_harness::{OracleVerdict, TraceEntry, oracle_invariant, write_trace};
     use proptest::prelude::*;
 
     fn trace_dir() -> Option<std::path::PathBuf> {

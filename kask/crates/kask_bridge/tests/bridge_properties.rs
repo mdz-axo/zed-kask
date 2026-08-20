@@ -38,7 +38,6 @@
 //! - `InferenceIpcServer::dispatch` (the routing the stub ports drove) is async
 //!   and takes live `InferencePort`/`ToolPort`/`SkillExecPort` trait objects.
 
-use hkask_test_harness::{OracleVerdict, arb_json_value, oracle_invariant};
 use hkask_types::inference_ipc::{
     InferenceMethod, InferenceOutcome, InferenceParams, InferenceRequest, InferenceResponse,
 };

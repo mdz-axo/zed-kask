@@ -894,7 +894,6 @@ impl Sensor for GroundingSensor {
 #[cfg(test)]
 mod grounding_sensor_tests {
     use super::*;
-    use hkask_verification::VerificationStore;
 
     /// Build an in-memory store with `n_clean` clean delegations and
     /// `n_nulled` delegations-with-nulled for the `"task"` agent_type.

@@ -12,7 +12,6 @@ use crate::agent_executor::{AgentExecutor, RawDelegateResult};
 use crate::error::LocalSwarmError;
 use crate::local_registry::LocalAgentCard;
 use crate::sanitize::strip_leading_mentions;
-use hkask_verification::EnforcementOutcome;
 
 /// The local swarm runtime — ledger + inference.
 ///
@@ -868,7 +867,6 @@ mod tests {
     use super::*;
     use hkask_ledger::Ledger;
     use hkask_storage::database::sqlite::SqliteDriver;
-    use hkask_verification::GroundingResult;
 
     /// The ledger operations `delegate` performs, without the inference port.
     ///
@@ -1317,7 +1315,6 @@ mod delegation_counter_tests {
     use super::*;
     use hkask_ledger::Ledger;
     use hkask_storage::database::sqlite::SqliteDriver;
-    use hkask_verification::DelegationCounter;
     use std::sync::Arc;
 
     /// Build an in-memory ledger with the operator account ensured, mirroring

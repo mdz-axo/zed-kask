@@ -16,7 +16,6 @@ path = "src/main.rs"
 [dependencies]
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
-hkask-verification.workspace = true
 
 hkask-memory.workspace = true
 hkask-storage.workspace = true

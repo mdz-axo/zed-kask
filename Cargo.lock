@@ -9210,7 +9210,6 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "futures-util",
- "hkask-test-harness",
  "hkask-types",
  "proptest",
  "serde",
@@ -9284,7 +9283,6 @@ version = "0.35.0"
 dependencies = [
  "hkask-capability",
  "hkask-regulation",
- "hkask-test-harness",
  "hkask-types",
  "libc",
  "proptest",
@@ -9307,9 +9305,7 @@ dependencies = [
  "hkask-forecast",
  "hkask-mcp-portfolio",
  "hkask-mcp-server",
- "hkask-test-harness",
  "hkask-types",
- "hkask-verification",
  "proptest",
  "rand 0.9.4",
  "regex",
@@ -9345,9 +9341,7 @@ dependencies = [
  "hkask-memory",
  "hkask-services-core",
  "hkask-storage",
- "hkask-test-harness",
  "hkask-types",
- "hkask-verification",
  "image",
  "minijinja",
  "pdf-extract",
@@ -9378,7 +9372,6 @@ dependencies = [
  "hkask-services-core",
  "hkask-storage",
  "hkask-types",
- "hkask-verification",
  "rmcp",
  "schemars 1.0.4",
  "serde",
@@ -9398,9 +9391,7 @@ dependencies = [
  "hkask-mcp-server",
  "hkask-mcp-swarm",
  "hkask-storage",
- "hkask-test-harness",
  "hkask-types",
- "hkask-verification",
  "proptest",
  "rmcp",
  "schemars 1.0.4",
@@ -9420,7 +9411,6 @@ dependencies = [
  "hkask-bridge-ontology",
  "hkask-mcp-server",
  "hkask-types",
- "hkask-verification",
  "rmcp",
  "rusqlite",
  "schemars 1.0.4",
@@ -9446,7 +9436,6 @@ dependencies = [
  "hkask-mcp-portfolio",
  "hkask-mcp-server",
  "hkask-types",
- "hkask-verification",
  "proptest",
  "rmcp",
  "schemars 1.0.4",
@@ -9475,9 +9464,7 @@ dependencies = [
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-storage",
- "hkask-test-harness",
  "hkask-types",
- "hkask-verification",
  "jsonpath-rust",
  "mediatype",
  "pdf-extract",
@@ -9507,7 +9494,6 @@ dependencies = [
  "hkask-mcp-prediction-markets",
  "hkask-mcp-server",
  "hkask-types",
- "hkask-verification",
  "rmcp",
  "schemars 1.0.4",
  "serde",
@@ -9527,7 +9513,6 @@ dependencies = [
  "hkask-memory",
  "hkask-storage",
  "hkask-types",
- "hkask-verification",
  "rmcp",
  "serde",
  "serde_json",
@@ -9550,9 +9535,7 @@ dependencies = [
  "hkask-mcp-server",
  "hkask-memory",
  "hkask-storage",
- "hkask-test-harness",
  "hkask-types",
- "hkask-verification",
  "proptest",
  "r2d2",
  "r2d2_sqlite",
@@ -9586,7 +9569,6 @@ dependencies = [
  "hkask-memory",
  "hkask-storage",
  "hkask-types",
- "hkask-verification",
  "minijinja",
  "r2d2",
  "r2d2_sqlite",
@@ -9667,9 +9649,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "hkask-test-harness",
  "hkask-types",
- "hkask-verification",
  "parking_lot",
  "proptest",
  "serde",
@@ -9758,7 +9738,6 @@ dependencies = [
  "hkask-capability",
  "hkask-forecast",
  "hkask-lisp",
- "hkask-test-harness",
  "hkask-types",
  "minijinja",
  "proptest",
@@ -9770,16 +9749,6 @@ dependencies = [
  "tokio",
  "tracing",
  "walkdir",
-]
-
-[[package]]
-name = "hkask-test-harness"
-version = "0.35.0"
-dependencies = [
- "hkask-capability",
- "hkask-types",
- "proptest",
- "serde_json",
 ]
 
 [[package]]
@@ -9811,22 +9780,6 @@ dependencies = [
  "tracing",
  "uuid",
  "zeroize",
-]
-
-[[package]]
-name = "hkask-verification"
-version = "0.35.0"
-dependencies = [
- "chrono",
- "hkask-storage",
- "hkask-test-harness",
- "hkask-types",
- "proptest",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -11083,10 +11036,8 @@ dependencies = [
  "hkask-services-core",
  "hkask-storage",
  "hkask-templates",
- "hkask-test-harness",
  "hkask-tool-invoker",
  "hkask-types",
- "hkask-verification",
  "http_client",
  "language_model",
  "language_model_core",
@@ -25945,7 +25896,6 @@ dependencies = [
  "hkask-mcp",
  "hkask-regulation",
  "hkask-types",
- "hkask-verification",
  "http_client",
  "image",
  "image_viewer",

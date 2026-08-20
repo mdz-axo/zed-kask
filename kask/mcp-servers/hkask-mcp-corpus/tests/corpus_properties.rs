@@ -23,7 +23,6 @@
 
 use hkask_inference::{ProviderId, RouterModelEntry};
 use hkask_mcp_corpus::inference_svc::ModelInfo;
-use hkask_test_harness::{OracleVerdict, arb_json_value, oracle_invariant, oracle_reference};
 use hkask_types::ModelEntry;
 use proptest::prelude::*;
 use serde_json::{Value as JsonValue, json};

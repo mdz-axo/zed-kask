@@ -136,7 +136,6 @@ impl PortRegistry {
         produces: &[String],
         output: &serde_json::Value,
     ) -> hkask_verification::envelope::ValidationResult {
-        use hkask_verification::envelope::{SchemaViolation, ValidationResult, ValidationStatus};
         let mut violations = Vec::new();
         let mut unsupported = Vec::new();
         let mut had_schema = false;

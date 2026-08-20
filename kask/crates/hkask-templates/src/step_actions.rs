@@ -907,7 +907,11 @@ impl StepMachine {
             sub_manifest.convergence.max_iterations,
         );
         let sub_convergence =
-            crate::convergence::ConvergenceTracker::new(&sub_manifest.convergence);
+            crate::convergence::ConvergenceTracker::new(
+                sub_manifest.convergence.max_iterations,
+                sub_manifest.convergence.min_iterations,
+                sub_manifest.convergence.threshold,
+            );
 
         // Snapshot the parent's keys (so we merge back only parent-key updates
         // from the sub-cascade, dropping sub-only keys). Computed before the
@@ -1130,7 +1134,6 @@ fn effective_timeout(seconds: Option<u64>) -> std::time::Duration {
     std::time::Duration::from_secs(seconds.unwrap_or(300))
 }
 
-}
 
 fn build_cascade_messages(
     prior_messages: &[ChatMessage],
@@ -1228,4 +1231,67 @@ async fn call_inference_stream_with_messages(
             }),
         };
     Ok((full_text, tool_calls, cost_usd, finish_reason))
+}
+
+fn invoke_tool(
+    tools: Arc<dyn ToolPort>,
+    tool_name: String,
+    input: Value,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send>> {
+    Box::pin(async move {
+        let info = tools.get_tool_info(&tool_name)
+            .map_err(|e| TemplateError::Manifest(format!("tool '{tool_name}': {e}")))?;
+        let result = tools.invoke(&info.server_id, &info.tool_name, &input)
+            .await
+            .map_err(|e| TemplateError::Manifest(format!("tool '{tool_name}' failed: {e}")))?;
+        Ok(result)
+    })
+}
+
+fn parse_json_response(text: &str, step_ordinal: u32) -> Result<Value> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(TemplateError::Manifest(format!(
+            "Step {step_ordinal}: model returned empty output"
+        )));
+    }
+    // Try direct parse
+    if let Ok(v) = serde_json::from_str::<Value>(text) {
+        return Ok(v);
+    }
+    // Try extracting JSON from markdown code blocks
+    if let Some(start) = text.find("```json") {
+        let after = &text[start + 7..];
+        if let Some(end) = after.find("```") {
+            if let Ok(v) = serde_json::from_str::<Value>(after[..end].trim()) {
+                return Ok(v);
+            }
+        }
+    }
+    if let Some(start) = text.find("```") {
+        let after = &text[start + 3..];
+        if let Some(end) = after.find("```") {
+            if let Ok(v) = serde_json::from_str::<Value>(after[..end].trim()) {
+                return Ok(v);
+            }
+        }
+    }
+    // Try finding first { or [ and last } or ]
+    if let Some(start) = text.find('{') {
+        if let Some(end) = text.rfind('}') {
+            if let Ok(v) = serde_json::from_str::<Value>(&text[start..=end]) {
+                return Ok(v);
+            }
+        }
+    }
+    if let Some(start) = text.find('[') {
+        if let Some(end) = text.rfind(']') {
+            if let Ok(v) = serde_json::from_str::<Value>(&text[start..=end]) {
+                return Ok(v);
+            }
+        }
+    }
+    Err(TemplateError::Manifest(format!(
+        "Step {step_ordinal}: could not parse JSON from model output"
+    )))
 }

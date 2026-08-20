@@ -9,7 +9,6 @@ description = "Kata-Kanban workflow coordination MCP server"
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
 hkask-storage.workspace = true
-hkask-verification.workspace = true
 # Folded from hkask-services-kata-kanban
 hkask-inference.workspace = true
 # Local swarm delegation — kanban_task_spawn delegates to local agents via the
@@ -42,4 +41,3 @@ workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 serde_json.workspace = true
 proptest.workspace = true
-hkask-test-harness.workspace = true

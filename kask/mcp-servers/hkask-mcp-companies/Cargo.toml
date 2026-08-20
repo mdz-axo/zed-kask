@@ -17,7 +17,6 @@ path = "src/main.rs"
 hkask-mcp-server.workspace = true
 hkask-mcp-portfolio.workspace = true
 hkask-types.workspace = true
-hkask-verification.workspace = true
 hkask-bridge-ontology.workspace = true
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 reqwest.workspace = true
@@ -44,4 +43,3 @@ workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 proptest.workspace = true
-hkask-test-harness.workspace = true

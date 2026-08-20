@@ -25,7 +25,6 @@
 //! - P1 (Correctness): the decision matches the documented threshold for every
 //!   input.
 
-use hkask_test_harness::{OracleVerdict, oracle_invariant, oracle_reference};
 use kask_bridge::test_utils::should_recall;
 use proptest::prelude::*;
 use serde_json::{Value, json};
