@@ -55,6 +55,7 @@ impl A2aHttpServer {
     pub fn start(
         runtime: Arc<LazyLocalSwarmRuntime>,
         registry: Arc<LocalAgentRegistry>,
+        verification_store: Arc<hkask_verification::VerificationStore>,
         tokio_handle: tokio::runtime::Handle,
         max_credits_per_dispatch: u32,
     ) -> Result<Self, LocalSwarmError> {
@@ -74,6 +75,7 @@ impl A2aHttpServer {
                 server,
                 runtime,
                 registry,
+                verification_store,
                 tokio_handle,
                 base_url,
                 max_credits_per_dispatch,
@@ -96,6 +98,7 @@ fn run_server(
     server: tiny_http::Server,
     runtime: Arc<LazyLocalSwarmRuntime>,
     registry: Arc<LocalAgentRegistry>,
+    verification_store: Arc<hkask_verification::VerificationStore>,
     tokio_handle: tokio::runtime::Handle,
     base_url: String,
     max_credits_per_dispatch: u32,
@@ -107,6 +110,7 @@ fn run_server(
                     request,
                     &runtime,
                     &registry,
+                    &verification_store,
                     &tokio_handle,
                     &base_url,
                     max_credits_per_dispatch,
@@ -124,6 +128,7 @@ fn handle_request(
     mut request: tiny_http::Request,
     runtime: &Arc<LazyLocalSwarmRuntime>,
     registry: &Arc<LocalAgentRegistry>,
+    verification_store: &Arc<hkask_verification::VerificationStore>,
     tokio_handle: &tokio::runtime::Handle,
     base_url: &str,
     max_credits_per_dispatch: u32,
@@ -155,6 +160,7 @@ fn handle_request(
                 &body,
                 runtime,
                 registry,
+                verification_store,
                 tokio_handle,
                 max_credits_per_dispatch,
             );
@@ -233,6 +239,7 @@ fn handle_jsonrpc(
     body: &str,
     runtime: &Arc<LazyLocalSwarmRuntime>,
     registry: &Arc<LocalAgentRegistry>,
+    verification_store: &Arc<hkask_verification::VerificationStore>,
     tokio_handle: &tokio::runtime::Handle,
     max_credits_per_dispatch: u32,
 ) -> JsonRpcResponse {
@@ -318,7 +325,30 @@ fn handle_jsonrpc(
                     .await
             });
             match result {
-                Ok(delegate_result) => {
+                Ok(mut delegate_result) => {
+                    // Rung 3 (Grounding): enforce via the central verification
+                    // ledger, same as the in-process A2A tools. A2A HTTP
+                    // responses are free prose — grounding records an
+                    // unenforceable record, visible in the trend.
+                    hkask_verification::card_contract::register_if_valid(
+                        verification_store,
+                        agent
+                            .capabilities
+                            .output_contract
+                            .as_ref()
+                            .and_then(|oc| oc.get("grounding")),
+                        &agent.capabilities.mcp_tools,
+                        &agent.agent_type,
+                    );
+                    let outcome = verification_store.enforce_and_stamp(
+                        "swarm_a2a_http",
+                        &agent.agent_id,
+                        &agent.agent_type,
+                        &delegate_result.response,
+                        &delegate_result.tool_calls,
+                        &[],
+                    );
+                    delegate_result.apply_grounding(outcome, None);
                     let task = crate::a2a::task_from_response(
                         &delegate_result.response,
                         context_id,
@@ -521,9 +551,10 @@ mod tests {
             "/tmp/hkask-a2a-test-unused-ledger.db".to_string(),
             None,
         ));
+        let verification_store = Arc::new(hkask_verification::VerificationStore::in_memory());
         let handle = tokio::runtime::Runtime::new().unwrap();
         let handle = handle.handle().clone();
-        handle_jsonrpc(body, &runtime, registry, &handle, 50)
+        handle_jsonrpc(body, &runtime, registry, &verification_store, &handle, 50)
     }
 
     #[test]

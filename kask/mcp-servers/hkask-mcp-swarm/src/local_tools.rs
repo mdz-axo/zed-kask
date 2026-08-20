@@ -81,9 +81,11 @@ impl SwarmServer {
                 ))
             })?;
             // Rung 4 (Binding): check the request against the agent's declared
-            // `accepts` labels. Recorded, not fatal — the paper's "absence ≠
-            // contradiction". `None` = no accepts declared; `Some(false)` =
-            // mismatch (logged at warn).
+            // `accepts` labels. `None` = no accepts declared or non-text label
+            // (absence ≠ contradiction, paper Rule 5.3). `Some(true)` = the
+            // agent declares `accepts: ["text"]` (universal accept). The
+            // classification heuristic was deleted — the typing layer at
+            // admission (`validate_typing`) is the gate.
             let bind_matched = crate::local_runtime::check_bind(&agent, &req.task);
             // Rung 3 (Card-declared grounding): if the agent card declares an
             // output_contract.grounding, validate and register it before
@@ -125,32 +127,10 @@ impl SwarmServer {
             );
             // Rung 2 (Typing) post-invocation: validate the agent's output
             // against the schema for its `produces` port type (paper's "one
-            // artifact, two uses"). The output has already been grounded
-            // (unsourced fields nulled); schema validation is an additional
-            // structural check on what remains. The result is carried into
-            // the envelope so consumers can distinguish Valid from NoSchema.
-            let validation = if !agent.produces.is_empty() {
-                let val = self
-                    .local_registry
-                    .port_registry()
-                    .validate_output(&agent.produces, &outcome.cleaned);
-                if val.status != hkask_verification::envelope::ValidationStatus::Valid
-                    && val.status
-                        != hkask_verification::envelope::ValidationStatus::NoSchema
-                {
-                    tracing::warn!(
-                        target: "hkask.swarm.port_registry",
-                        agent = %req.agent_name,
-                        produces = ?agent.produces,
-                        status = ?val.status,
-                        violations = ?val.violations,
-                        "Port schema validation failed — agent output does not match its declared produces schema"
-                    );
-                }
-                Some(val)
-            } else {
-                None
-            };
+            // artifact, two uses"). The result is carried into the envelope
+            // so consumers can distinguish Valid from NoSchema.
+            let validation =
+                self.validate_produces(&req.agent_name, &agent.produces, &outcome.cleaned);
             result.apply_grounding(outcome, validation.as_ref());
             // Stigmergy (ACO pheromone trail): record the delegation's
             // performance annotation to the agent's prefix-scoped semantic
@@ -264,7 +244,12 @@ impl SwarmServer {
                                 // envelope to cap against.
                                 &[],
                             );
-                            r.apply_grounding(outcome, None);
+                            let validation = self.validate_produces(
+                                &entry.agent_name,
+                                &agent.produces,
+                                &outcome.cleaned,
+                            );
+                            r.apply_grounding(outcome, validation.as_ref());
                             total_cost += r.cost;
                             total_cost_uncapped += r.cost_uncapped;
                             total_tokens += r.tokens_used;
@@ -417,7 +402,12 @@ impl SwarmServer {
                                 &r.tool_calls,
                                 &prev_upstream_blocks,
                             );
-                            r.apply_grounding(outcome, None);
+                            let validation = self.validate_produces(
+                                &step.agent_name,
+                                &agent.produces,
+                                &outcome.cleaned,
+                            );
+                            r.apply_grounding(outcome, validation.as_ref());
                             // Capture this step's envelope blocks for the next
                             // iteration's weakest-link cap. When grounding did
                             // not run (no contract / unenforceable), the
@@ -1533,7 +1523,12 @@ impl SwarmServer {
                                 // parent envelope to cap against.
                                 &[],
                             );
-                            r.apply_grounding(outcome, None);
+                            let validation = self.validate_produces(
+                                &entry.agent_name,
+                                &agent.produces,
+                                &outcome.cleaned,
+                            );
+                            r.apply_grounding(outcome, validation.as_ref());
                             // Record stigmergy (same as swarm_delegate_local).
                             local_knowledge::record_delegation(
                                 &self.local_memory,
@@ -1570,9 +1565,42 @@ impl SwarmServer {
         )
         .await
     }
-}
 
-#[cfg(test)]
+    /// Rung 2 (Typing) post-invocation: validate the agent's output against
+    /// the schema for its `produces` port type (paper's "one artifact, two
+    /// uses"). The output has already been grounded (unsourced fields
+    /// nulled); schema validation is an additional structural check on what
+    /// remains. Returns `Some(ValidationResult)` when the agent declares a
+    /// `produces` port, `None` otherwise. The result is carried into the
+    /// envelope so consumers can distinguish `Valid` from `NoSchema`.
+    pub(crate) fn validate_produces(
+        &self,
+        agent_id: &str,
+        produces: &[String],
+        cleaned: &serde_json::Value,
+    ) -> Option<hkask_verification::envelope::ValidationResult> {
+        if produces.is_empty() {
+            return None;
+        }
+        let val = self
+            .local_registry
+            .port_registry()
+            .validate_output(produces, cleaned);
+        if val.status != hkask_verification::envelope::ValidationStatus::Valid
+            && val.status != hkask_verification::envelope::ValidationStatus::NoSchema
+        {
+            tracing::warn!(
+                target: "hkask.swarm.port_registry",
+                agent = %agent_id,
+                produces = ?produces,
+                status = ?val.status,
+                violations = ?val.violations,
+                "Port schema validation failed — agent output does not match its declared produces schema"
+            );
+        }
+        Some(val)
+    }
+}
 mod grounding_wiring_tests {
     use super::*;
     use crate::config::SwarmConfig;

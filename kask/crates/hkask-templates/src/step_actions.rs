@@ -3312,4 +3312,37 @@ steps:
             .to_string();
         assert!(msg.contains("Matryoshka depth limit"), "got: {msg}");
     }
+
+    #[test]
+    fn cap_string_value_caps_long_strings_and_preserves_other_types() {
+        use serde_json::json;
+        assert_eq!(cap_string_value(&json!("short")), json!("short"));
+        let long = "x".repeat(64 * 1024 + 100);
+        let capped = cap_string_value(&json!(long));
+        assert_eq!(capped.as_str().unwrap().len(), 64 * 1024);
+        assert_eq!(cap_string_value(&json!(42)), json!(42));
+        assert_eq!(cap_string_value(&json!({"a": 1})), json!({"a": 1}));
+        assert_eq!(cap_string_value(&json!(null)), json!(null));
+    }
+
+    #[test]
+    fn tool_call_summary_shape_for_ok_and_err() {
+        use serde_json::json;
+        let ok = tool_call_summary("srv/tool", Ok(&json!({"path": "/x"})));
+        assert_eq!(ok["tool"], "srv/tool");
+        assert_eq!(ok["ok"], true);
+        assert_eq!(ok["result"]["path"], "/x");
+        let err = tool_call_summary("srv/tool", Err(()));
+        assert_eq!(err["tool"], "srv/tool");
+        assert_eq!(err["ok"], false);
+        assert!(err.get("result").is_none(), "err must not carry result");
+    }
+
+    #[test]
+    fn tool_call_summary_caps_long_string_result() {
+        use serde_json::json;
+        let long = "x".repeat(64 * 1024 + 100);
+        let summary = tool_call_summary("t", Ok(&json!(long)));
+        assert_eq!(summary["result"].as_str().unwrap().len(), 64 * 1024);
+    }
 }

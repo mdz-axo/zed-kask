@@ -651,14 +651,14 @@ pub struct LocalDelegateResult {
     /// response shape is unchanged for callers that ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_success: Option<TaskSuccessVerdict>,
-    /// Rung 4 (Binding): whether the request classification matched at least
-    /// one declared `accepts` label. `None` = not checked (no `accepts`
-    /// declared — absence ≠ contradiction, paper Rule 5.3). `Some(true)` =
-    /// match. `Some(false)` = mismatch (recorded, not fatal — the paper's
-    /// "absence ≠ contradiction"). The classification heuristic itself is
-    /// logged at `warn!` but not serialized — it has no correct setting
-    /// (paper Rule 5.2) and its deletion is the success condition for the
-    /// typing layer.
+    /// Rung 4 (Binding): whether the request matched at least one declared
+    /// `accepts` label. `None` = not checked (no `accepts` declared, or the
+    /// label is not `"text"" — absence ≠ contradiction, paper Rule 5.3).
+    /// `Some(true)` = the agent declares `accepts: ["text"]`, which is a
+    /// universal accept. The runtime classification heuristic that produced
+    /// `Some(false)` was deleted (no correct setting — paper Rule 5.2); the
+    /// typing layer at admission (`validate_typing`) is the gate that
+    /// enforces `accepts` labels resolve to registered types.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bind_matched: Option<bool>,
     /// The raw LLM response before grounding enforcement (paper §4:

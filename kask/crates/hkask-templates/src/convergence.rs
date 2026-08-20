@@ -113,9 +113,11 @@ pub struct ConvergenceTracker {
     improvement_ratio: f64,
     improvement_gate: String,
     baseline_quality: Option<f64>,
-    /// Self-grade quality history — used by the legacy stability gates.
-    /// Retained for manifests that haven't migrated to the Kata model.
     quality_history: Vec<f64>,
+    /// True when every signal reading has been non-finite — the loop step's
+    /// `convergence_signal` binding never resolved to a number. The machine
+    /// escalates instead of running to `max_iterations` with no signal.
+    signal_broken: bool,
 }
 
 impl ConvergenceTracker {
@@ -145,6 +147,7 @@ impl ConvergenceTracker {
             improvement_gate: config.improvement_gate.clone(),
             baseline_quality: None,
             quality_history: Vec::new(),
+            signal_broken: false,
         }
     }
 
@@ -229,6 +232,7 @@ impl ConvergenceTracker {
             // operator reading logs can distinguish "signal is 0" from "signal
             // binding is broken" (the .rules "startup-failure signal" trap).
             if !signal.is_finite() {
+                self.signal_broken = true;
                 tracing::warn!(
                     target: "hkask.templates.convergence",
                     field = "convergence_signal",
@@ -315,6 +319,13 @@ impl ConvergenceTracker {
 
         // Legacy self-grade model
         self.check_legacy_met(context)
+    }
+
+    /// True when every signal reading has been non-finite — the loop step's
+    /// `convergence_signal` binding never resolved to a number. The machine
+    /// escalates instead of running to `max_iterations` with no signal.
+    pub fn signal_is_broken(&self) -> bool {
+        self.signal_broken
     }
 
     /// Kata convergence check: gap, Cauchy, and/or calibration.
@@ -1135,6 +1146,72 @@ mod tests {
         assert!(
             tracker.check_met(&ctx, 1),
             "improvement gate (both) must fire when baseline is captured via fallback"
+        );
+    }
+
+    fn kata_config_for_signal() -> ConvergenceConfig {
+        let mut cfg = config(0.0, "", 5, 1);
+        cfg.convergence_mode = "cauchy".to_string();
+        cfg.target_artifacts_field = Some("a".to_string());
+        cfg.current_artifacts_field = Some("a".to_string());
+        cfg
+    }
+
+    #[test]
+    fn signal_broken_true_when_all_readings_non_finite() {
+        let cfg = kata_config_for_signal();
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        for _ in 0..3 {
+            tracker.push_cycle_from_context(&ctx);
+        }
+        assert!(
+            tracker.signal_is_broken(),
+            "all-NaN history must set signal_broken"
+        );
+    }
+
+    #[test]
+    fn signal_broken_false_when_any_finite_reading() {
+        let cfg = kata_config_for_signal();
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let mut ctx = HashMap::new();
+        tracker.push_cycle_from_context(&ctx);
+        assert!(tracker.signal_is_broken());
+        ctx.insert("convergence_signal".to_string(), json!(0.5));
+        tracker.push_cycle_from_context(&ctx);
+        assert!(
+            tracker.signal_is_broken(),
+            "once broken, the flag stays set (conservative)"
+        );
+    }
+
+    #[test]
+    fn signal_broken_false_when_all_finite() {
+        let cfg = kata_config_for_signal();
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let mut ctx = HashMap::new();
+        ctx.insert("convergence_signal".to_string(), json!(0.5));
+        for _ in 0..3 {
+            tracker.push_cycle_from_context(&ctx);
+        }
+        assert!(
+            !tracker.signal_is_broken(),
+            "all-finite history must not set signal_broken"
+        );
+    }
+
+    #[test]
+    fn signal_broken_false_in_legacy_mode_even_with_missing_field() {
+        let cfg = config(0.15, "nonexistent", 5, 1);
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        for _ in 0..3 {
+            tracker.push_cycle_from_context(&ctx);
+        }
+        assert!(
+            !tracker.signal_is_broken(),
+            "legacy mode must not set signal_broken"
         );
     }
 }

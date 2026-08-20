@@ -242,8 +242,16 @@ impl StepMachine {
 
                     let max_iterations = self.convergence.max_iterations();
                     if self.iteration >= max_iterations {
-                        self.finalize(ExitKind::MaxedOut, "energy_spent");
-                        break ExitKind::MaxedOut;
+                        let (kind, reason) = if self.convergence.signal_is_broken() {
+                            (
+                                ExitKind::Escalated,
+                                "convergence_signal never produced a finite reading",
+                            )
+                        } else {
+                            (ExitKind::MaxedOut, "energy_spent")
+                        };
+                        self.finalize(kind, reason);
+                        break kind;
                     }
 
                     if self.convergence.check_met(&self.context, self.iteration) {

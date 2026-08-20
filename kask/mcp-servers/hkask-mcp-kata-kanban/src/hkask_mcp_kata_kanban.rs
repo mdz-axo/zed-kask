@@ -1081,31 +1081,14 @@ impl KanbanServer {
                         );
                     }
 
-                    // Rung 3 (Card-declared grounding validation + enforcement):
-                    // If the agent card declares an output_contract.grounding,
-                    // validate it and register it as an enforceable contract.
-                    // `register_if_valid` validates, converts, and registers in
-                    // one call — it logs nothing (the swarm local tools call it
-                    // without logging; this path logs findings at warn first for
-                    // the operator).
+                    // Rung 3 (Card-declared grounding): register the card's
+                    // output_contract.grounding as an enforceable contract.
+                    // `register_if_valid` validates internally — error findings
+                    // prevent registration, warnings pass. Admission-time
+                    // validation in `write_card`/`load` already logs bad
+                    // contracts, so this path doesn't re-log findings.
                     if let Some(ref oc) = agent.capabilities.output_contract {
                         let grounding = oc.get("grounding");
-                        let findings = hkask_verification::card_contract::validate(
-                            grounding,
-                            &agent.capabilities.mcp_tools,
-                        );
-                        if !findings.is_empty() {
-                            let only_warnings = findings.iter().all(|f| f.is_warning());
-                            tracing::warn!(
-                                target: "hkask.mcp.kata_kanban",
-                                task_id = %tid,
-                                agent_id = %agent.agent_id,
-                                findings = ?findings.iter().map(|f| f.message.as_str()).collect::<Vec<_>>(),
-                                "card-declared grounding contract has {} finding(s){}",
-                                findings.len(),
-                                if only_warnings { " (warnings only — contract still registered)" } else { " (errors — contract NOT registered)" },
-                            );
-                        }
                         if hkask_verification::card_contract::register_if_valid(
                             &self.verification_store,
                             grounding,
