@@ -480,8 +480,20 @@ impl StepMachine {
             "REG"
         );
 
-        Ok(Effect::Stored {
+        // Stored as a NAMED result (suffix "compute"), not the primary
+        // `Stored` effect: compute outputs are auxiliary values (convergence
+        // signals feeding a loop step, pre-flight validation lists), not the
+        // skill's product. `Stored` sets `last_result_step`, which made the
+        // convergence signal the cascade's final result — 49 of ~58 registry
+        // manifests end in `…compute → loop`, so their skills returned bare
+        // numbers ("0") instead of the last select step's report. Named
+        // storage keeps the value reachable as `step_{ordinal}_result` (via
+        // the typed results map) AND `step_{ordinal}_compute`, while
+        // `last_result_step` stays on the last select/render/execute step —
+        // the same rule the populate/render named path already follows.
+        Ok(Effect::StoredNamed {
             step_id: node.id,
+            suffix: "compute".to_string(),
             value: result,
         })
     }

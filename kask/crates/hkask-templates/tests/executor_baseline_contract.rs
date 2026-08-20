@@ -147,10 +147,21 @@ steps:
 ";
 
 /// The expected `extract_final_step_result` for the bench manifest. The
-/// highest-ordinal step that stores a result is step 3 (`compute` `(- 10 4)`
-/// → 6); step 4 is `choice` (NoOp, no store), step 5 is `loop` (Reenter, no
-/// store), step 6 is `abort` (never reached — step 5 re-enters first).
-const GOLDEN_FINAL: i64 = 6;
+/// manifest is compute-only (steps 1-3 `compute`, 4 `choice`, 5 `loop`, 6
+/// `abort`). Compute steps store via `StoredNamed` (suffix `"compute"`) and do
+/// NOT set `last_result_step` — their output is an auxiliary value, not the
+/// skill's product. `choice`/`loop`/`abort` don't store either, so no step sets
+/// `last_result_step`. The fallback in `extract_final_step_result` surfaces the
+/// highest-ordinal step result — step 3's compute `(- 10 4)` = `6`. (Before the
+/// `StoredNamed` fix, compute steps set `last_result_step` directly and the
+/// final was also `6`, but for the wrong reason — 49 of ~58 registry manifests
+/// ending in `…select → compute(convergence signal) → loop` returned bare
+/// numbers instead of the select step's report. The `StoredNamed` fix +
+/// fallback split makes compute-only manifests surface their compute result
+/// via the fallback, while select/render-final manifests use the primary rule.)
+fn golden_final() -> Value {
+    serde_json::json!(6)
+}
 
 fn build_executor() -> ManifestExecutor {
     ManifestExecutor::new(
@@ -176,7 +187,7 @@ async fn golden_output_is_stable() {
     let final_value = extract_final_step_result(&result);
     assert_eq!(
         final_value,
-        Value::from(GOLDEN_FINAL),
+        golden_final(),
         "golden final-step result changed — a later slice altered observable behavior"
     );
 }
@@ -217,10 +228,7 @@ async fn concurrency_field_has_no_effect_today() {
          either the field is partially wired (a hidden enforcement point) or \
          the test manifest is non-deterministic"
     );
-    assert_eq!(
-        extract_final_step_result(&result_p),
-        Value::from(GOLDEN_FINAL),
-    );
+    assert_eq!(extract_final_step_result(&result_p), golden_final(),);
 }
 
 #[tokio::test]
@@ -246,7 +254,7 @@ async fn compute_steps_do_not_invoke_inference() {
 
     assert_eq!(
         extract_final_step_result(&result),
-        Value::from(GOLDEN_FINAL),
+        golden_final(),
         "compute-only manifest produced unexpected output"
     );
 }
@@ -357,7 +365,15 @@ async fn execute_manifest_rejects_over_cap_at_top_level() {
 
 // ── K2: parallel action ──────────────────────────────────────────────────
 
-/// Sub-manifest for `parallel` branch A: single compute step, `(+ 1 10)` → 11.
+/// Sub-manifest for `parallel` branch A: a compute step `(+ 1 10)` → 11, then a
+/// `render` step that stores the compute result as the branch's final result.
+/// The render step is required because compute steps use `StoredNamed` (suffix
+/// `compute`) and do NOT set `last_result_step` — without a trailing
+/// `render`/`select`/`execute` step, the sub-cascade's
+/// `extract_final_step_result` returns `Null`, which would not discriminate
+/// join order. The render step's inline `template_ref` (no `renderer:
+/// minijinja`) is rendered with `{{}}` substitution and stored as
+/// `Value::String`, setting `last_result_step`.
 const PARALLEL_BRANCH_A_YAML: &str = "\
 manifest:
   id: parallel-branch-a
@@ -376,9 +392,16 @@ steps:
     description: compute-a
     input_mapping:
       form: \"(+ 1 10)\"
+  - ordinal: 2
+    action: render
+    description: emit-a
+    template_ref: \"{{step_1_result}}\"
 ";
 
-/// Sub-manifest for `parallel` branch B: single compute step, `(* 2 20)` → 40.
+/// Sub-manifest for `parallel` branch B: a compute step `(* 2 20)` → 40, then
+/// a `render` step that stores the compute result as the branch's final
+/// result. See `PARALLEL_BRANCH_A_YAML` for why the trailing render step is
+/// required.
 const PARALLEL_BRANCH_B_YAML: &str = "\
 manifest:
   id: parallel-branch-b
@@ -397,6 +420,10 @@ steps:
     description: compute-b
     input_mapping:
       form: \"(* 2 20)\"
+  - ordinal: 2
+    action: render
+    description: emit-b
+    template_ref: \"{{step_1_result}}\"
 ";
 
 /// Parent manifest: a single `parallel` step with two branches.
@@ -433,7 +460,8 @@ async fn parallel_step_joins_branch_results_in_order() {
     // 2. Branch results are in `branch_id` order (0 before 1), not
     //    completion order — the sort by `branch_id` is the deterministic join.
     // 3. Each branch result is the sub-cascade's `extract_final_step_result`
-    //    (the compute step's value), not the whole sub-cascade context.
+    //    (the trailing render step's string output of the compute value), not
+    //    the whole sub-cascade context.
     // 4. rJoule is settled after the wave (parent charges the sum of both branches).
 
     // Write sub-manifests to a temp dir so `load_from_disk` resolves them.
@@ -460,8 +488,13 @@ async fn parallel_step_joins_branch_results_in_order() {
 
     let final_value = extract_final_step_result(&result);
 
-    // The joined result is a 2-element array in branch_id order.
-    let expected = Value::Array(vec![Value::from(11), Value::from(40)]);
+    // The joined result is a 2-element array in branch_id order. The render
+    // step stores its output as `Value::String`, so the branch results are
+    // strings ("11", "40"), not numbers — the compute step's value is
+    // reachable as `step_1_result` via the typed results map (StoredNamed
+    // inserts into by_ordinal), and the render step's `{{ step_1_result }}`
+    // substitution produces the string form.
+    let expected = Value::Array(vec![Value::from("11"), Value::from("40")]);
     assert_eq!(
         final_value, expected,
         "parallel step must join branch results in branch_id order, \
@@ -474,7 +507,9 @@ async fn parallel_step_joins_branch_results_in_order() {
 
 // ── Parallel allSettled: no branch outcome silently dropped ──────────────
 
-/// Sub-manifest for `allSettled` branch 0: compute `(+ 1 10)` → 11.
+/// Sub-manifest for `allSettled` branch 0: compute `(+ 1 10)` → 11, then a
+/// `render` step that stores the compute result as the branch's final result.
+/// See `PARALLEL_BRANCH_A_YAML` for why the trailing render step is required.
 const ALLSETTLED_BRANCH_0_YAML: &str = "\
 manifest:
   id: allsettled-branch-0
@@ -493,9 +528,15 @@ steps:
     description: compute-0
     input_mapping:
       form: \"(+ 1 10)\"
+  - ordinal: 2
+    action: render
+    description: emit-0
+    template_ref: \"{{step_1_result}}\"
 ";
 
-/// Sub-manifest for `allSettled` branch 1: compute `(* 2 20)` → 40.
+/// Sub-manifest for `allSettled` branch 1: compute `(* 2 20)` → 40, then a
+/// `render` step that stores the compute result as the branch's final result.
+/// See `PARALLEL_BRANCH_A_YAML` for why the trailing render step is required.
 const ALLSETTLED_BRANCH_1_YAML: &str = "\
 manifest:
   id: allsettled-branch-1
@@ -514,9 +555,15 @@ steps:
     description: compute-1
     input_mapping:
       form: \"(* 2 20)\"
+  - ordinal: 2
+    action: render
+    description: emit-1
+    template_ref: \"{{step_1_result}}\"
 ";
 
-/// Sub-manifest for `allSettled` branch 2: compute `(+ 3 30)` → 33.
+/// Sub-manifest for `allSettled` branch 2: compute `(+ 3 30)` → 33, then a
+/// `render` step that stores the compute result as the branch's final result.
+/// See `PARALLEL_BRANCH_A_YAML` for why the trailing render step is required.
 const ALLSETTLED_BRANCH_2_YAML: &str = "\
 manifest:
   id: allsettled-branch-2
@@ -535,6 +582,10 @@ steps:
     description: compute-2
     input_mapping:
       form: \"(+ 3 30)\"
+  - ordinal: 2
+    action: render
+    description: emit-2
+    template_ref: \"{{step_1_result}}\"
 ";
 
 /// Parent manifest: a single `parallel` step with 4 branches, one of which
@@ -628,15 +679,27 @@ async fn parallel_allsettled_preserves_successful_branches_when_one_errors() {
 
     // 3 successful branches → 3 results, in branch_id order (0, 2, 3).
     // The successful branches are 0, 2, 3 (branch 1 errored). Their results
-    // are the compute values: 11, 40, 33.
+    // are the render step's string output of the compute values: "11", "40", "33".
     assert_eq!(
         results.len(),
         3,
         "allSettled must preserve all 3 successful branch results, got {results:?}"
     );
-    assert_eq!(results[0], Value::from(11), "branch 0 result must be 11");
-    assert_eq!(results[1], Value::from(40), "branch 2 result must be 40");
-    assert_eq!(results[2], Value::from(33), "branch 3 result must be 33");
+    assert_eq!(
+        results[0],
+        Value::from("11"),
+        "branch 0 result must be \"11\""
+    );
+    assert_eq!(
+        results[1],
+        Value::from("40"),
+        "branch 2 result must be \"40\""
+    );
+    assert_eq!(
+        results[2],
+        Value::from("33"),
+        "branch 3 result must be \"33\""
+    );
 
     // 1 failed branch → 1 error summary with a stable code.
     assert_eq!(
@@ -758,10 +821,7 @@ async fn baseline_tail_latency() {
             .expect("execution");
         let elapsed = start.elapsed();
         // Guard the measurement against a silent behavior break.
-        assert_eq!(
-            extract_final_step_result(&result),
-            Value::from(GOLDEN_FINAL)
-        );
+        assert_eq!(extract_final_step_result(&result), golden_final());
         durations_us.push(elapsed.as_micros() as u64);
     }
 

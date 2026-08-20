@@ -14,7 +14,7 @@
 //! `description` is a derived companion. When they disagree, the registry wins
 //! (already stated in every SKILL.md's Constraints section).
 
-use hkask_templates::load_manifest_from_yaml;
+use hkask_templates::{load_manifest_from_yaml, process_manifest_seed};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -265,6 +265,118 @@ fn no_aspirational_documentation_blocks() {
         "manifests with aspirational documentation blocks (commented-out fields \
          the Rust schema cannot parse): {}",
         offenders.join(", ")
+    );
+}
+
+/// The compiled-in process-manifest seed (`process_manifest_seed()`, embedded
+/// by `build.rs`) must agree with the on-disk `kask/registry/manifests/*.yaml`
+/// source tree. `build.rs` regenerates the seed on every build from a directory
+/// glob, so a stale seed (file deleted from disk but binary not rebuilt) or a
+/// glob miss (file present on disk but not matched by the glob) would silently
+/// ship a binary whose seed disagrees with the source tree the operator sees.
+///
+/// This is the seed-layer pin for the "one skill system" invariant: the
+/// compiled-in execution surface (manifests) must agree with the on-disk source
+/// of truth. The pairwise disk-only checks above (`every_skill_md_*`) catch a
+/// SKILL.md/manifest divergence on disk; this catches the same divergence at
+/// the compiled-in seed layer, which is what actually ships to users.
+#[test]
+fn compiled_manifest_seed_agrees_with_on_disk_registry() {
+    let manifests_dir = registry_manifests_dir();
+    if !manifests_dir.is_dir() {
+        eprintln!(
+            "{} not found — skipping (not a source-tree build)",
+            manifests_dir.display()
+        );
+        return;
+    }
+
+    let seed: HashSet<&str> = process_manifest_seed()
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+
+    let mut on_disk: HashSet<String> = HashSet::new();
+    for entry in walkdir::WalkDir::new(&manifests_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "yaml") {
+            continue;
+        }
+        let yaml = std::fs::read_to_string(path).unwrap_or_default();
+        if !yaml.contains("\nmanifest:") && !yaml.starts_with("manifest:") {
+            continue;
+        }
+        let manifest = match load_manifest_from_yaml(&yaml) {
+            Ok(m) => m,
+            Err(_) => continue, // load failures caught by other tests
+        };
+        if !manifest.is_skill() {
+            continue;
+        }
+        on_disk.insert(manifest.id);
+    }
+
+    let seed_strings: HashSet<&str> = seed.iter().copied().collect();
+    let on_disk_refs: HashSet<&str> = on_disk.iter().map(|s| s.as_str()).collect();
+
+    let missing_from_seed: Vec<&str> = on_disk_refs.difference(&seed_strings).copied().collect();
+    let missing_from_disk: Vec<&str> = seed_strings.difference(&on_disk_refs).copied().collect();
+
+    assert!(
+        missing_from_seed.is_empty(),
+        "skill manifests present on disk but absent from the compiled-in seed \
+         (build.rs glob miss or stale binary): {missing_from_seed:?}"
+    );
+    assert!(
+        missing_from_disk.is_empty(),
+        "skill manifests in the compiled-in seed but absent from disk \
+         (file deleted without rebuilding, or stale seed): {missing_from_disk:?}"
+    );
+}
+
+/// The bijection between the manifest seed and the SKILL.md companions, pinned
+/// at the count layer. The pairwise `every_skill_md_*` tests above catch a
+/// single missing link; this catches a wholesale drift (e.g. a bulk
+/// rename/move that leaves the counts unequal but happens to keep each
+/// surviving pair consistent) with a clearer failure message.
+///
+/// This is the count-layer pin for the "one skill system" invariant: every
+/// skill has BOTH a manifest (execution) and a SKILL.md (description), and the
+/// two sets must be equal in size. A gap in either direction is an
+/// architectural defect, not a cosmetic issue.
+#[test]
+fn manifest_seed_count_matches_skill_md_count() {
+    let skills_dir = global_skills_dir();
+    if !skills_dir.is_dir() {
+        eprintln!(
+            "{} not found — skipping (not a source-tree build)",
+            skills_dir.display()
+        );
+        return;
+    }
+
+    let seed_count = process_manifest_seed().len();
+
+    let mut skill_md_count = 0usize;
+    for entry in std::fs::read_dir(&skills_dir).expect("read .agents/skills") {
+        let entry = entry.expect("dir entry");
+        let skill_dir = entry.path();
+        if !skill_dir.is_dir() {
+            continue;
+        }
+        if skill_dir.join("SKILL.md").is_file() {
+            skill_md_count += 1;
+        }
+    }
+
+    assert_eq!(
+        seed_count, skill_md_count,
+        "compiled-in manifest seed has {seed_count} entries but {skill_md_count} \
+         SKILL.md companions exist on disk — the two surfaces of the one skill \
+         system (execution manifests vs description SKILL.md) have diverged"
     );
 }
 

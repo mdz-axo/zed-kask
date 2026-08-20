@@ -218,3 +218,11 @@ INSER = "INSER"
 BVE = "BVE"
 # Test data fragment in text crate tests.
 Iz = "Iz"
+# Intentional typo example used in manifest_load_validation tests and the
+# bundle::manifest doc comment — pins that a misspelled `category` value is a
+# load error, not a silent "not a skill" classification.
+catgory = "catgory"
+# MUC-7: the Seventh Message Understanding Conference's Named Entity
+# Recognition shared task (a proper noun cited in the structured-extraction
+# skill's identify-entities template). Not the word "much".
+MUC = "MUC"

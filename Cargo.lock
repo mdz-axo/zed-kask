@@ -9478,7 +9478,6 @@ dependencies = [
  "hkask-test-harness",
  "hkask-types",
  "hkask-verification",
- "minijinja",
  "proptest",
  "rmcp",
  "schemars 1.0.4",

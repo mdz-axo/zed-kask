@@ -4206,4 +4206,50 @@ mod tests {
             "empty-state must suggest setting the key when it is NOT configured"
         );
     }
+
+    // ── Local-agent merge dedup ──────────────────────────────────────────────
+    //
+    // `swarm_clone_to_local` writes a local clone with `agent_id = <cloud>-clone`
+    // and `cloud_swarm_id = Some(<cloud>)`. The panel merge must collapse the
+    // clone into the cloud row (marked Synced), not render a duplicate Local
+    // row. Before the fix, suppression keyed only on `agent_id`, which never
+    // matched the cloud id — the clone always leaked as a second row.
+
+    #[test]
+    fn clone_with_matching_cloud_collapses_to_single_synced_row() {
+        use crate::fetch::merge_local_agents;
+        use crate::parse::{AgentCard, AgentSource, LocalAgentInfo};
+
+        let cloud = SwarmEntry::Agent(AgentCard {
+            id: "efra_communication".into(),
+            agent_type: "worker".into(),
+            description: "desc".into(),
+            author: String::new(),
+            executions: 0,
+            updated_at: None,
+            display_name: String::new(),
+            source: AgentSource::Cloud,
+        });
+        let clone = LocalAgentInfo {
+            agent_id: "efra_communication-clone".into(),
+            agent_type: "worker".into(),
+            description: "desc".into(),
+            display_name: String::new(),
+            cloud_swarm_id: Some("efra_communication".into()),
+        };
+
+        let mut entries = vec![cloud];
+        merge_local_agents(&mut entries, vec![clone]);
+
+        let rows: Vec<&AgentCard> = entries
+            .iter()
+            .filter_map(|e| match e {
+                SwarmEntry::Agent(c) => Some(c),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows.len(), 1, "clone must not produce a duplicate row");
+        assert_eq!(rows[0].id, "efra_communication");
+        assert_eq!(rows[0].source, AgentSource::Synced);
+    }
 }

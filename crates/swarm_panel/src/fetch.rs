@@ -12,8 +12,8 @@ use crate::SWARM_SERVER;
 use crate::SwarmEntry;
 use crate::SwarmPanel;
 use crate::parse::{
-    AgentCard, AgentListResponse, AgentSource, LocalAgentListResponse, LocalSwarmListResponse,
-    SwarmCard, WorkspaceListResponse, extract_wallet_balance,
+    AgentCard, AgentListResponse, AgentSource, LocalAgentInfo, LocalAgentListResponse,
+    LocalSwarmListResponse, SwarmCard, WorkspaceListResponse, extract_wallet_balance,
 };
 
 impl SwarmPanel {
@@ -372,60 +372,7 @@ impl SwarmPanel {
                                 serde_json::from_value::<LocalAgentListResponse>(c).ok()
                             });
                             if let Some(response) = parsed {
-                                let local_agents = response.agents;
-                                // Mark cloud agents that have a matching local card as Synced.
-                                let local_ids: std::collections::HashSet<String> =
-                                    local_agents.iter().map(|a| a.agent_id.clone()).collect();
-                                let local_cloud_swarm_ids: std::collections::HashSet<String> =
-                                    local_agents
-                                        .iter()
-                                        .filter_map(|a| a.cloud_swarm_id.clone())
-                                        .collect();
-                                for entry in this.entries.iter_mut() {
-                                    if let SwarmEntry::Agent(card) = entry
-                                        && (local_ids.contains(&card.id)
-                                            || local_cloud_swarm_ids.contains(&card.id))
-                                    {
-                                        card.source = AgentSource::Synced;
-                                    }
-                                }
-                                // Add local-only agents (no matching cloud id) as Local entries.
-                                let existing_cloud_swarm_ids: std::collections::HashSet<String> =
-                                    this.entries
-                                        .iter()
-                                        .filter_map(|e| match e {
-                                            SwarmEntry::Agent(c)
-                                                if c.source != AgentSource::Local =>
-                                            {
-                                                Some(c.id.clone())
-                                            }
-                                            _ => None,
-                                        })
-                                        .collect();
-                                for local in local_agents {
-                                    // Skip if a cloud row already displays this
-                                    // local agent — the cloud card is the display
-                                    // row for synced agents, and the local card is
-                                    // the execution target. With clone-specific
-                                    // agent_ids (`xaman-ek-clone` vs `xaman-ek`),
-                                    // a local clone is only suppressed when its
-                                    // cloud counterpart is present in the cloud
-                                    // fetch. When the cloud fetch fails, the clone
-                                    // appears as a standalone Local row.
-                                    if existing_cloud_swarm_ids.contains(&local.agent_id) {
-                                        continue;
-                                    }
-                                    this.entries.push(SwarmEntry::Agent(AgentCard {
-                                        id: local.agent_id,
-                                        agent_type: local.agent_type,
-                                        description: local.description,
-                                        display_name: local.display_name,
-                                        author: String::new(),
-                                        executions: 0,
-                                        updated_at: None,
-                                        source: AgentSource::Local,
-                                    }));
-                                }
+                                merge_local_agents(&mut this.entries, response.agents);
                                 this.filter_entries(cx);
                             }
                         }
@@ -636,5 +583,62 @@ impl SwarmPanel {
             }
         })
         .detach();
+    }
+}
+
+/// Merge local-agent cards into the panel entry list.
+///
+/// Cloud rows whose id matches a local card's `agent_id` or `cloud_swarm_id`
+/// are upgraded to `Synced`. Local-only cards (no matching cloud row) are
+/// appended as `Local` entries. A local clone whose `cloud_swarm_id` points
+/// at a displayed cloud row is suppressed — the cloud row (now `Synced`) is
+/// the display row. Clones carry a `-clone`-suffixed `agent_id` that never
+/// equals the cloud id, so the dedup must key on `cloud_swarm_id` too.
+pub(crate) fn merge_local_agents(
+    entries: &mut Vec<SwarmEntry>,
+    local_agents: Vec<LocalAgentInfo>,
+) {
+    let local_ids: std::collections::HashSet<String> =
+        local_agents.iter().map(|a| a.agent_id.clone()).collect();
+    let local_cloud_swarm_ids: std::collections::HashSet<String> =
+        local_agents.iter().filter_map(|a| a.cloud_swarm_id.clone()).collect();
+    for entry in entries.iter_mut() {
+        if let SwarmEntry::Agent(card) = entry
+            && (local_ids.contains(&card.id) || local_cloud_swarm_ids.contains(&card.id))
+        {
+            card.source = AgentSource::Synced;
+        }
+    }
+    let existing_cloud_swarm_ids: std::collections::HashSet<String> = entries
+        .iter()
+        .filter_map(|e| match e {
+            SwarmEntry::Agent(c) if c.source != AgentSource::Local => Some(c.id.clone()),
+            _ => None,
+        })
+        .collect();
+    for local in local_agents {
+        // Suppress the Local row when the cloud counterpart is already
+        // displayed. Clones carry a `-clone`-suffixed agent_id that never
+        // matches the cloud id, so dedup on cloud_swarm_id too. When the
+        // cloud fetch fails (no cloud row present), the clone is not
+        // suppressed and appears as a standalone Local row.
+        if existing_cloud_swarm_ids.contains(&local.agent_id)
+            || local
+                .cloud_swarm_id
+                .as_ref()
+                .is_some_and(|cid| existing_cloud_swarm_ids.contains(cid))
+        {
+            continue;
+        }
+        entries.push(SwarmEntry::Agent(AgentCard {
+            id: local.agent_id,
+            agent_type: local.agent_type,
+            description: local.description,
+            display_name: local.display_name,
+            author: String::new(),
+            executions: 0,
+            updated_at: None,
+            source: AgentSource::Local,
+        }));
     }
 }

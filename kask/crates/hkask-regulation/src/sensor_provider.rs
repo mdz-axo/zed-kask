@@ -646,7 +646,10 @@ pub struct GroundingSensor {
     /// present, the liveness-gap sensor computes the true gap: external
     /// delegations minus verification-store records. When absent, the gap
     /// is 0.0 (honest: "no gap detected" because we can't measure it).
-    delegation_counter: Option<Arc<dyn hkask_verification::DelegationCounter>>,
+    /// Wrapped in a Mutex so the counter can be wired after construction
+    /// (the `CyberneticsLoop` is built before the swarm server, which owns
+    /// the ledger the counter reads).
+    delegation_counter: parking_lot::Mutex<Option<Arc<dyn hkask_verification::DelegationCounter>>>,
 }
 
 /// Which grounding metric this sensor instance produces.
@@ -673,7 +676,7 @@ impl GroundingSensor {
             coverage_rate_floor,
             previous_nulled: parking_lot::Mutex::new(None),
             was_outage: parking_lot::Mutex::new(false),
-            delegation_counter: None,
+            delegation_counter: parking_lot::Mutex::new(None),
         }
     }
 
@@ -683,11 +686,19 @@ impl GroundingSensor {
     /// sensor returns 0.0 (honest: "no gap detected" because we can't
     /// measure it).
     pub fn with_delegation_counter(
-        mut self,
+        self,
         counter: Arc<dyn hkask_verification::DelegationCounter>,
     ) -> Self {
-        self.delegation_counter = Some(counter);
+        *self.delegation_counter.lock() = Some(counter);
         self
+    }
+
+    /// Wire a delegation counter on an already-constructed sensor. Used
+    /// when the counter becomes available after the sensor is registered
+    /// (e.g. the swarm ledger is opened in the deferred post-login task,
+    /// after the `CyberneticsLoop` is already running).
+    pub fn set_delegation_counter(&self, counter: Arc<dyn hkask_verification::DelegationCounter>) {
+        *self.delegation_counter.lock() = Some(counter);
     }
 
     /// Read the trend from the verification ledger. Each sensor instance
@@ -823,7 +834,7 @@ impl GroundingSensor {
         if report.total_delegations == 0 {
             return None;
         }
-        let gap = match &self.delegation_counter {
+        let gap = match self.delegation_counter.lock().as_ref() {
             Some(counter) => {
                 let total = counter.delegation_count()?;
                 total.saturating_sub(report.total_delegations as u64) as f64
