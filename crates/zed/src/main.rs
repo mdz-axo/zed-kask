@@ -883,16 +883,10 @@ fn main() {
             tokio::sync::mpsc::unbounded_channel::<hkask_regulation::AlertEvent>();
         spawn_alert_toast_drainer(alert_sink_rx, cx);
         let alert_sink = std::sync::Arc::new(ToastAlertSink::new(alert_sink_tx));
-        // Clone before the move into `metacognition_loop` so the model-dependent
-        // manifest-executor wiring can also wire grounding (Loop 4). Without this,
-        // `BridgeManifestExecutor::execute_skill` skips `enforce_for_agent` —
-        // the grounding path is implemented but inert at runtime.
-        let verification_store_for_model_task = verification_store.clone();
         let metacognition_loop = std::sync::Arc::new(
             hkask_regulation::MetacognitionLoop::new(regulation_ledger.clone())
                 .with_alert_receiver(alert_rx)
-                .with_alert_sink(alert_sink)
-                .with_verification_store(verification_store),
+                .with_alert_sink(alert_sink),
         );
         let metacognition_loop_for_tick = metacognition_loop.clone();
 
@@ -1546,7 +1540,7 @@ fn main() {
                                 // curator server (via the config_env allowlist).
                                 // We do NOT set `HKASK_WEBID` here — it's
                                 // process-global and would override the identity
-                                // of all other MCP servers (codegraph, condenser,
+                                // of all other MCP servers (condenser,
                                 // etc.), which resolve their identity from it in
                                 // `transport.rs`.
                                 let curator_db = hkask_types::agent_paths::resolve_under_data_dir(
@@ -2459,7 +2453,6 @@ fn main() {
                         &registry_manifests_dir,
                         &registry_templates_dir,
                         &regulation_ledger_for_model_task,
-                        &verification_store_for_model_task,
                         cx,
                     )
                     .await
@@ -2491,7 +2484,6 @@ fn main() {
                 let manifests_dir_for_sub = registry_manifests_dir.clone();
                 let templates_dir_for_sub = registry_templates_dir.clone();
                 let regulation_ledger_for_sub = regulation_ledger_for_model_task.clone();
-                let verification_store_for_sub = verification_store_for_model_task.clone();
                 // zed-kask: D24 — separate AtomicBool for the edit-prediction port.
                 let ep_wired_for_sub =
                     std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2512,7 +2504,6 @@ fn main() {
                                 let ep_wired = ep_wired_for_sub.clone();
                                 let http_client = http_client_for_sub.clone();
                                 let regulation_ledger = regulation_ledger_for_sub.clone();
-                                let verification_store = verification_store_for_sub.clone();
                                 cx.spawn(async move |cx| {
                                     if let Err(e) = try_wire_manifest_executor(
                                         &wired,
@@ -2521,7 +2512,6 @@ fn main() {
                                         &manifests_dir,
                                         &templates_dir,
                                         &regulation_ledger,
-                                        &verification_store,
                                         cx,
                                     )
                                     .await
@@ -2969,7 +2959,7 @@ fn main() {
 /// Resolve an MCP server binary to an absolute path.
 ///
 /// GUI-launched apps (Finder/Spotlight/Dock/.desktop) do not inherit the
-/// user's shell PATH, so a bare binary name like `hkask-mcp-codegraph`
+/// user's shell PATH, so a bare binary name like `hkask-mcp-swarm`
 /// fails to spawn — the server lands in `ContextServerState::Error` and
 /// is unavailable to the agent. Resolution order:
 ///
@@ -3033,7 +3023,7 @@ impl project::context_server_store::registry::ContextServerDescriptor for KaskMc
             // credentials per-server in the correct order. The previous inline
             // composition leaked the full unfiltered `mcp_env()` map (the
             // `extend` only overwrote allowed keys, never removed disallowed
-            // ones), so codegraph received the curator's email config.
+            // ones), so servers received the curator's email config.
             let settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
             let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
             let env_map = kask_bridge::build_mcp_server_env(
@@ -3087,7 +3077,6 @@ async fn try_wire_manifest_executor(
     registry_manifests_dir: &std::path::Path,
     registry_templates_dir: &std::path::Path,
     regulation_ledger: &std::sync::Arc<tokio::sync::RwLock<hkask_regulation::RegulationLedger>>,
-    verification_store: &std::sync::Arc<hkask_verification::VerificationStore>,
     cx: &mut gpui::AsyncApp,
 ) -> Result<(), anyhow::Error> {
     // Already wired — no-op.
@@ -4840,26 +4829,6 @@ mod tests {
     ///
     /// Respects the `.rules` trap "Advertised invariants need enforcement
     /// points."
-    #[test]
-    fn resolve_mcp_binary_honors_env_var_override() {
-        // Use a non-existent path — env-var resolution returns it verbatim
-        // without checking existence (the operator asserted it exists).
-        let fake_path = "/tmp/hkask-mcp-codegraph-test-override";
-        // SAFETY: this test runs single-threaded; no other thread reads or writes
-        // `HKASK_MCP_CODEGRAPH_BIN` while this block executes.
-        unsafe {
-            std::env::set_var("HKASK_MCP_CODEGRAPH_BIN", fake_path);
-        }
-        let resolved = resolve_mcp_binary("codegraph", "hkask-mcp-codegraph");
-        // SAFETY: see above.
-        unsafe {
-            std::env::remove_var("HKASK_MCP_CODEGRAPH_BIN");
-        }
-        assert_eq!(
-            resolved, fake_path,
-            "HKASK_MCP_{{ID}}_BIN env var must take precedence over all other resolution paths"
-        );
-    }
 
     /// When no env var is set and the binary is not found next to the running
     /// exe, `resolve_mcp_binary` falls back to the bare name. This pins the

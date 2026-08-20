@@ -16,7 +16,6 @@
 //! the shared credential-cache helpers, shared constants, and `mod` declarations
 //! for the per-sub-page render modules under `kask_page/`.
 
-mod codegraph;
 mod collab;
 mod companies;
 mod condenser;
@@ -25,7 +24,7 @@ mod data_services;
 mod general;
 mod inference_providers;
 pub(crate) use {
-    codegraph::render_codegraph_page, collab::render_collab_page, companies::render_companies_page,
+collab::render_collab_page, companies::render_companies_page,
     condenser::render_condenser_page, corpus::render_corpus_page,
     curator::render_curator_email_page, curator::render_curator_page,
     data_services::render_data_services_page, general::render_general_page,
@@ -255,7 +254,7 @@ pub(crate) fn nudge_mcp_servers(cx: &mut App) {
 }
 
 // ---------------------------------------------------------------------------
-// Shared input helper (used by codegraph, companies, corpus, media, scenarios,
+// Shared input helper (used by companies, corpus, media, scenarios,
 // training, models sub-modules)
 // ---------------------------------------------------------------------------
 
@@ -289,10 +288,6 @@ pub(crate) fn kask_string_input(
                             }
                             ("research", "rss_db") => {
                                 kask.research.get_or_insert_default().rss_db = Some(parsed.clone());
-                            }
-                            ("codegraph", "db_path") => {
-                                kask.codegraph.get_or_insert_default().db_path =
-                                    Some(parsed.clone());
                             }
                             ("companies", "chronic_staleness_days") => {
                                 if let Ok(v) = parsed.parse::<u32>() {
@@ -602,18 +597,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_condenser_page,
-        }),
-        SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Codegraph".into(),
-            r#type: Default::default(),
-            json_path: Some("kask.codegraph"),
-            description: Some(
-                "Configure the codegraph MCP server: database path for code structure storage.".into(),
-            ),
-            search_aliases: &["codegraph", "graph", "code structure"],
-            in_json: true,
-            files: USER,
-            render: render_codegraph_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Research".into(),

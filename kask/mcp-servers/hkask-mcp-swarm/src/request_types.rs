@@ -273,7 +273,7 @@ pub struct CreateAgentRequest {
     /// Outbound MCP tool allowlist — what this agent *exposes* over
     /// `/mcp/agents/:id` to external MCP clients (Claude Desktop, Cursor,
     /// Zed). Qualified `server/tool` names (e.g.
-    /// `["codegraph/codegraph_query"]`). Passed through to the ABW card's
+    /// `["research/web_search"]`). Passed through to the ABW card's
     /// `capabilities.mcp_tools`. The local-mode analog is the local
     /// card's `capabilities.mcp_tools` (executed by
     /// `swarm_delegate_local`).

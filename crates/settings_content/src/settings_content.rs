@@ -1581,9 +1581,6 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub condenser: Option<KaskCondenserSettingsContent>,
 
-    /// Codegraph MCP server configuration.
-    #[serde(default)]
-    pub codegraph: Option<KaskCodegraphSettingsContent>,
 
     /// Research MCP server configuration.
     #[serde(default)]
@@ -1767,11 +1764,6 @@ pub struct KaskCondenserSettingsContent {
     pub auto_compress_tool_results: Option<bool>,
     pub persona_keywords: Option<Vec<String>>,
     pub saliency_window: Option<u32>,
-}
-
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskCodegraphSettingsContent {
-    pub db_path: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
