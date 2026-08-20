@@ -88,15 +88,10 @@ async fn main() -> Result<()> {
 
                 if mode.is_api() {
                     fetch_extensions_from_blob_store_periodically(state.clone());
-                    collab::api::fetch_kask_skills_from_blob_store_periodically(state.clone());
 
                     app = app
                         .merge(collab::api::events::router())
                         .merge(collab::api::extensions::router())
-                        // zed-kask: D30 — pass `AppState` so the kask-skills
-                        // router can select the dev-bypass vs. real auth
-                        // middleware based on `Config::is_development()`.
-                        .merge(collab::api::kask_skills::router(&state))
                 }
 
                 app = app.layer(Extension(state.clone()));
@@ -194,22 +189,17 @@ async fn setup_app_database(config: &Config) -> Result<()> {
     let mut db = Database::new(db_options).await?;
 
     // zed-kask: for local SQLite dev, the database file starts empty. Apply
-    // the SQLite schema migration so `initialize_notification_kinds` and
-    // `ensure_kask_skill_tables` have tables to work with. In production
-    // (Postgres), the schema is applied out-of-band and the migration SQL
-    // is Postgres-specific, so this only runs for SQLite backends.
+    // the SQLite schema migration so `initialize_notification_kinds` has
+    // tables to work with. In production (Postgres), the schema is applied
+    // out-of-band and the migration SQL is Postgres-specific, so this only
+    // runs for SQLite backends.
     if db.pool.get_database_backend() == sea_orm::DatabaseBackend::Sqlite {
         // zed-kask: only apply the bootstrap schema when the local SQLite
         // database is empty. The migration SQL uses `CREATE TABLE "users"`
         // (not `IF NOT EXISTS`), so re-applying it on every startup crashes
-        // the second run with "table users already exists". That silently
-        // kills the auto-launched local collab server and surfaces in the
-        // kask extensions panel as "Connection refused" on
-        // /api/kask-skills with no bridging log. `users` is the first table
-        // the bootstrap SQL creates, so its presence indicates the schema
-        // was already bootstrapped on a prior run and the re-apply can be
-        // skipped. (A partial-bootstrap crash mid-apply is a pre-existing
-        // edge case this sentinel does not handle.)
+        // the second run with "table users already exists". `users` is the
+        // first table the bootstrap SQL creates, so its presence indicates
+        // the schema was already bootstrapped on a prior run.
         let already_bootstrapped = db
             .pool
             .query_one(sea_orm::Statement::from_string(
@@ -233,11 +223,6 @@ async fn setup_app_database(config: &Config) -> Result<()> {
     }
 
     db.initialize_notification_kinds().await?;
-
-    // zed-kask: self-heal the kask skill marketplace tables for self-hosted
-    // deployments (upstream applies schema out-of-band; a fresh self-hosted
-    // server would otherwise 500 on `/api/kask-skills` with no signal).
-    db.ensure_kask_skill_tables().await?;
 
     Ok(())
 }

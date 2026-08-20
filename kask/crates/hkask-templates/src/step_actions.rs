@@ -1000,11 +1000,10 @@ impl StepMachine {
             let manifest_id = self.manifest_id.clone();
             let infra_clone = infra.clone();
             tool_futs.push(async move {
-                let limiter_guard = if let Some(ref l) = limiter { l.acquire().await } else { None };
-                let _ = limiter_guard;
-                let manifest = sub_manifest.ok_or_else(|| TemplateError::Manifest(
-                    format!("parallel branch {i} has no manifest")
-                ))?;
+                // Concurrency limiting removed
+                let manifest_yaml = load_sub_manifest_yaml(&infra_clone.template_renderer, template_ref.as_deref().unwrap_or(""), node_ordinal)?;
+                let manifest = crate::manifest_loader::load_manifest_from_yaml(&manifest_yaml)
+                    .map_err(|e| TemplateError::Manifest(format!("parallel branch {i}: {e}")))?;
                 let graph = crate::step_graph::StepGraph::new(&manifest.steps, manifest.convergence.max_iterations);
                 let context = crate::step_context::StepContext::new(ctx.inputs.clone());
                 let convergence = crate::convergence::ConvergenceTracker::new(
@@ -1029,7 +1028,7 @@ impl StepMachine {
             Ok(joined) => joined,
             Err(_) => return Err(TemplateError::Timeout {
                 step_ordinal: node.ordinal,
-                elapsed_seconds: node.timeout_seconds,
+                elapsed_seconds: node.timeout_seconds as u64,
             }),
         };
 
@@ -1116,8 +1115,8 @@ fn render_step_template_with_raw(
     Ok((rendered, raw, inference_block))
 }
 
-fn effective_timeout(seconds: Option<u64>) -> std::time::Duration {
-    std::time::Duration::from_secs(seconds)
+fn effective_timeout(seconds: u32) -> std::time::Duration {
+    std::time::Duration::from_secs(seconds as u64)
 }
 
 fn build_cascade_messages(
@@ -1218,9 +1217,12 @@ async fn call_inference_stream_with_messages(
     Ok((full_text, tool_calls, cost_usd, finish_reason))
 }
 
-fn invoke_tool(tools: Arc<dyn ToolPort>, tool_name: String, input: Value) -> Result<Value> {
-    let info = tools.get_tool_info(&tool_name)?;
-    let result = tools.invoke(&info.server_id, &info.tool_name, &input, std::sync::Arc::new(|| {}))?;
+async fn invoke_tool(tools: Arc<dyn ToolPort>, tool_name: String, input: Value) -> Result<Value> {
+    let info = tools.get_tool_info(&tool_name).await
+        .ok_or_else(|| TemplateError::Manifest(format!("tool '{tool_name}' not found")))?;
+    let webid = hkask_types::WebID::from_persona(b"manifest-executor");
+    let result = tools.invoke(&info.server_id, &info.name, input, webid).await
+        .map_err(|e| TemplateError::Manifest(format!("tool '{tool_name}' failed: {e}")))?;
     Ok(result)
 }
 

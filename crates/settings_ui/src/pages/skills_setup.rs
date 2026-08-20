@@ -1,6 +1,6 @@
-use agent_skills::{Skill, SkillIndex, SkillSource, SkillVisibility, encode_skill_share_link};
+use agent_skills::{Skill, SkillIndex, SkillSource};
 use fs::RemoveOptions;
-use gpui::{App, ClipboardItem, FontWeight, PromptLevel, ScrollHandle, SharedString, prelude::*};
+use gpui::{App, FontWeight, PromptLevel, ScrollHandle, SharedString, prelude::*};
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
@@ -139,15 +139,7 @@ fn render_skill_row(
         _ => ("global", "on this machine"),
     };
 
-    let share_copied = settings_window.last_copied_skill_directory_path.as_deref()
-        == Some(skill.directory_path.as_path());
     let warning_message = skill.load_warnings.first().map(|warning| warning.message());
-
-    let (share_icon, share_icon_color) = if share_copied {
-        (IconName::Check, Color::Success)
-    } else {
-        (IconName::Link, Color::Muted)
-    };
 
     let group = format!("group-{}", skill.name);
 
@@ -169,92 +161,6 @@ fn render_skill_row(
                 .icon_color(Color::Accent)
                 .tooltip(Tooltip::text("Core skill — always on, not editable")),
             )
-        })
-        // User skills: show share link + visibility toggle as before.
-        .when(!is_core, |this| {
-            this.child({
-                let share_skill_file_path = skill.skill_file_path.clone();
-                let share_directory_path = skill.directory_path.clone();
-                IconButton::new(
-                    SharedString::from(format!("share-{}", skill.name)),
-                    share_icon,
-                )
-                .tab_index(0_isize)
-                .shape(ui::IconButtonShape::Square)
-                .icon_size(IconSize::Small)
-                .icon_color(share_icon_color)
-                .tooltip(Tooltip::text("Copy Share Link"))
-                .visible_on_hover(&group)
-                .on_click(cx.listener(
-                    move |_settings_window, _event, _window, cx| {
-                        let skill_file_path = share_skill_file_path.clone();
-                        let directory_path = share_directory_path.clone();
-                        let app_state = workspace::AppState::global(cx);
-                        let fs = app_state.fs.clone();
-                        cx.spawn(async move |settings_window, cx| {
-                            match fs.load(&skill_file_path).await {
-                                Ok(content) => {
-                                    let link = encode_skill_share_link(&content);
-                                    settings_window
-                                        .update(cx, |settings_window, cx| {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(link));
-                                            settings_window.last_copied_skill_directory_path =
-                                                Some(directory_path.clone());
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                }
-                                Err(error) => {
-                                    log::error!(
-                                        "failed to read skill file {} for sharing: {error:#}",
-                                        skill_file_path.display()
-                                    );
-                                }
-                            }
-                        })
-                        .detach();
-                    },
-                ))
-            })
-            // zed-kask: Marketplace visibility toggle. Only renders for
-            // `SkillSource::Global` user skills. Core skills don't get this
-            // toggle — they are always on and not publishable.
-            .when(matches!(skill.source, SkillSource::Global), |this| {
-                let visibility = skill.visibility;
-                let (vis_icon, vis_tooltip, vis_color) = match visibility {
-                    SkillVisibility::Private => (
-                        IconName::Lock,
-                        "Private — click to publish to marketplace",
-                        Color::Muted,
-                    ),
-                    SkillVisibility::Public => (
-                        IconName::LockOff,
-                        "Public — click to unpublish from marketplace",
-                        Color::Accent,
-                    ),
-                };
-                let toggle_skill = skill.clone();
-                this.child(
-                    IconButton::new(
-                        SharedString::from(format!("visibility-{}", skill.name)),
-                        vis_icon,
-                    )
-                    .tab_index(0_isize)
-                    .shape(ui::IconButtonShape::Square)
-                    .icon_size(IconSize::Small)
-                    .icon_color(vis_color)
-                    .tooltip(Tooltip::text(vis_tooltip))
-                    .on_click(cx.listener(
-                        move |settings_window, _event, _window, cx| {
-                            crate::pages::handle_visibility_toggle(
-                                &toggle_skill,
-                                settings_window,
-                                cx,
-                            );
-                        },
-                    )),
-                )
-            })
         })
         .child(
             Label::new(skill.name.clone()).when(is_core, |this| this.weight(FontWeight::SEMIBOLD)),

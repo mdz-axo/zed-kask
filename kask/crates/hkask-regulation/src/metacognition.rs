@@ -96,10 +96,6 @@ pub struct HealthSnapshot {
     /// phase. Zero means no threshold was breached; a positive count means
     /// the Curator should self-calibrate or surface the breach to the user.
     pub escalation_count: usize,
-    /// `None` when no grounded delegations exist (absence ≠ 0 — paper Rule 5.3)
-    /// loop. The Curator surfaces this via `CuratorStatusTool` so the user
-    /// fire.
-    /// `None` when no delegations exist or the store is not wired.
 }
 
 /// Escalation alert emitted when a threshold is breached.
@@ -184,8 +180,6 @@ pub struct MetacognitionLoop {
     /// notification (e.g. a toast). Best-effort: errors are logged and
     /// swallowed.
     alert_sink: Option<Arc<dyn AlertSink>>,
-
-    /// just see alerts when they fire. `None` when not wired (snapshot
 }
 
 impl MetacognitionLoop {
@@ -263,10 +257,7 @@ impl MetacognitionLoop {
             regulation_health,
             // Filled in after `compare` produces the alerts below.
             escalation_count: 0,
-            // when wired. `None` on absence (no grounded delegations) or
-            // DB failure (absence ≠ 0, paper Rule 5.3).
         };
-        }
 
         // ── Compare + Compute ──────────────────────────────────────────
         let mut alerts = self.compare(&snapshot);

@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result};
-use const_format::{concatcp, formatcp};
+use const_format::formatcp;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{App, Global, SharedString};
@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use url::Url;
 use util::paths::component_matches_ignore_ascii_case;
 
 /// First segment of the project-local skills directory path: `.agents`.
@@ -145,24 +144,6 @@ impl SkillLoadWarning {
 
 /// Visibility of a skill on the kask marketplace. `Private` is the safe
 /// default — no skill is published without explicit user action. `Public`
-/// means the user has opted the skill into the marketplace publish pipeline.
-///
-/// This is a *flag* on a skill the user authored (typically
-/// `SkillSource::Global`). It is distinct from `SkillSource::Public`, which
-/// is the *source* of a skill installed *from* the marketplace. See the
-/// "Kask Extensions Panel & Skill Sharing" plan §2.2 for the distinction.
-// zed-kask: `Private` is the default so a missing `visibility` frontmatter
-// field never silently publishes a skill. Pinned by
-// `test_skill_visibility_defaults_to_private` and
-// `test_skill_metadata_missing_visibility_field_defaults_to_private`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum SkillVisibility {
-    #[default]
-    Private,
-    Public,
-}
-
 /// Represents a loaded skill with all its metadata and content.
 #[derive(Debug, Clone)]
 pub struct Skill {
@@ -179,11 +160,6 @@ pub struct Skill {
     /// `skill` tool refuses to load it. The user can still invoke it as a
     /// slash command.
     pub disable_model_invocation: bool,
-    /// Marketplace visibility flag. `Private` (default) means the skill is
-    /// not shared; `Public` means the user has opted it into the publish
-    /// pipeline. Distinct from `SkillSource::Public` (which marks a skill
-    /// *installed from* the marketplace).
-    pub visibility: SkillVisibility,
     /// Skill names this skill depends on. Checked at invocation time so the
     /// user gets a clear error before tokens are spent on a cascade that
     /// will fail mid-execution.
@@ -330,10 +306,6 @@ pub struct SkillMetadata {
     pub description: String,
     #[serde(default, rename = "disable-model-invocation")]
     pub disable_model_invocation: bool,
-    /// Marketplace visibility flag. Defaults to `Private` so a missing field
-    /// never silently publishes a skill.
-    #[serde(default)]
-    pub visibility: SkillVisibility,
     /// Skill names this skill depends on. At invocation time, the skill tool
     /// checks that all dependencies are installed and returns a clear error
     /// before running the cascade (saves tokens by failing fast).
@@ -424,7 +396,6 @@ pub fn parse_skill_frontmatter(
         skill_file_path: skill_file_path.to_path_buf(),
         load_warnings,
         disable_model_invocation: metadata.disable_model_invocation,
-        visibility: metadata.visibility,
         dependencies: metadata.dependencies,
         core: metadata.core,
     })
@@ -1091,58 +1062,6 @@ pub fn is_agents_skills_path(path: &Path) -> bool {
     false
 }
 
-/// The application URL scheme used by share links.
-const SKILL_SHARE_LINK_SCHEME: &str = paths::URL_SCHEME;
-/// The host (the part after the scheme) that identifies a skill share link.
-const SKILL_SHARE_LINK_HOST: &str = "skill";
-/// The query parameter that carries the embedded `SKILL.md` payload.
-const SKILL_SHARE_LINK_DATA_PARAM: &str = "data";
-
-/// The application deep-link prefix for a shared skill. Opening a link with
-/// this prefix prompts the recipient to review and install the embedded skill.
-pub const SKILL_SHARE_LINK_PREFIX: &str =
-    concatcp!(SKILL_SHARE_LINK_SCHEME, "://", SKILL_SHARE_LINK_HOST);
-
-/// Build a shareable skill link that fully embeds the given `SKILL.md` file
-/// contents.
-///
-/// The contents are base64url-encoded (no padding) so the link is
-/// self-contained and URL-safe: the recipient doesn't need the skill to be
-/// hosted anywhere. Recover the contents with [`decode_skill_share_link`].
-pub fn encode_skill_share_link(skill_file_content: &str) -> String {
-    use base64::Engine as _;
-    let data =
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(skill_file_content.as_bytes());
-    let mut url = Url::parse(SKILL_SHARE_LINK_PREFIX).expect("skill share link prefix is valid");
-    url.query_pairs_mut()
-        .append_pair(SKILL_SHARE_LINK_DATA_PARAM, &data);
-    url.into()
-}
-
-/// Recover the `SKILL.md` contents embedded in a link produced by
-/// [`encode_skill_share_link`].
-pub fn decode_skill_share_link(link: &str) -> Result<String> {
-    use base64::Engine as _;
-    let url = Url::parse(link).context("skill share link is not a valid URL")?;
-    anyhow::ensure!(
-        url.scheme() == SKILL_SHARE_LINK_SCHEME && url.host_str() == Some(SKILL_SHARE_LINK_HOST),
-        "not a skill share link"
-    );
-    let data = url
-        .query_pairs()
-        .find_map(|(key, value)| (key == SKILL_SHARE_LINK_DATA_PARAM).then_some(value))
-        .context("skill share link is missing the `data` parameter")?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(data.as_bytes())
-        .context("skill share link `data` is not valid base64")?;
-    anyhow::ensure!(
-        bytes.len() <= MAX_SKILL_FILE_SIZE,
-        "shared skill exceeds the maximum size of {MAX_SKILL_FILE_SIZE} bytes"
-    );
-    let content = String::from_utf8(bytes).context("skill share link `data` is not valid UTF-8")?;
-    Ok(content)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1229,83 +1148,6 @@ mod tests {
         assert!(source.matches_scope(""));
         assert!(!source.matches_scope("alice"));
         assert!(!source.matches_scope("global"));
-    }
-
-    // zed-kask: `SkillVisibility` defaults to `Private` so a missing
-    // `visibility` frontmatter field never silently publishes a skill.
-    // This is the safe-default contract (plan §2.1). Pinned here so a future
-    // change to the `Default` impl fails loudly.
-    #[test]
-    fn test_skill_visibility_defaults_to_private() {
-        let default: SkillVisibility = Default::default();
-        assert_eq!(default, SkillVisibility::Private);
-    }
-
-    // zed-kask: A SKILL.md frontmatter with no `visibility` field must parse
-    // to `SkillVisibility::Private`. This pins the serde default so a missing
-    // field never silently publishes (plan §2.1, `.rules` "process-global hooks
-    // need a startup-failure signal" — a missing field must not silently opt in).
-    #[test]
-    fn test_skill_metadata_missing_visibility_field_defaults_to_private() {
-        let content = r"---
-name: my-skill
-description: A test skill.
----
-
-Body.
-";
-        let skill = parse_skill_frontmatter(
-            Path::new("/skills/my-skill/SKILL.md"),
-            content,
-            SkillSource::Global,
-        )
-        .expect("should parse");
-        assert_eq!(skill.visibility, SkillVisibility::Private);
-    }
-
-    // zed-kask: A SKILL.md frontmatter with `visibility: public` must parse
-    // to `SkillVisibility::Public`. This pins the serde rename_all=lowercase
-    // so the frontmatter field name stays stable.
-    #[test]
-    fn test_skill_metadata_explicit_public_visibility_parses() {
-        let content = r"---
-name: my-skill
-description: A test skill.
-visibility: public
----
-
-Body.
-";
-        let skill = parse_skill_frontmatter(
-            Path::new("/skills/my-skill/SKILL.md"),
-            content,
-            SkillSource::Global,
-        )
-        .expect("should parse");
-        assert_eq!(skill.visibility, SkillVisibility::Public);
-    }
-
-    // zed-kask: Built-in and shipped skills also default to
-    // `Private` visibility — they cannot be published (built-ins are part of
-    // the binary; shipped skills are seeded from the repo catalog). This pins
-    // that the parse functions populate `visibility` from metadata.
-    #[test]
-    fn test_parse_skill_visibility_defaults_to_private() {
-        // A skill with no visibility field should default to Private.
-        let content = r#"---
-name: test-visibility-skill
-description: A test skill for visibility defaults
----
-
-# Test
-"#;
-        let skill = parse_skill_frontmatter(
-            Path::new("/skills/test-visibility-skill/SKILL.md"),
-            content,
-            SkillSource::Global,
-        )
-        .expect("skill should parse");
-        assert_eq!(skill.visibility, SkillVisibility::Private);
     }
 
     // zed-kask: A skill declaring `core: true` with a non-reserved name must
@@ -2310,7 +2152,6 @@ description: A skill with no body content
             skill_file_path: PathBuf::from("/skills/test-skill/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             core: false,
         };
@@ -2645,27 +2486,6 @@ description: A skill with no body content
                 );
             }
         }
-    }
-
-    #[test]
-    fn skill_share_link_round_trips() {
-        let content =
-            "---\nname: my-skill\ndescription: Does a thing.\n---\n\n## Steps\n\nDo the thing.\n";
-        let link = encode_skill_share_link(content);
-        let data = link
-            .strip_prefix("zed-kask://skill?data=")
-            .expect("link should start with the skill share prefix");
-        // base64url (no-pad) output must not require percent-encoding.
-        assert!(!data.contains('+') && !data.contains('/') && !data.contains('='));
-        assert_eq!(decode_skill_share_link(&link).unwrap(), content);
-    }
-
-    #[test]
-    fn decode_skill_share_link_rejects_non_skill_links() {
-        assert!(decode_skill_share_link("zed-kask://settings/agent.skills").is_err());
-        assert!(decode_skill_share_link("zed-kask://skill").is_err());
-        assert!(decode_skill_share_link("zed-kask://skill?other=1").is_err());
-        assert!(decode_skill_share_link("zed-kask://skill?data=!!!notbase64").is_err());
     }
 
     // zed-kask: Shipped skills (authored in .agents/skills/) must parse

@@ -965,17 +965,6 @@ pub struct SettingsWindow {
         HashMap<language_model::LanguageModelProviderId, gpui::AnyView>,
     /// The provider whose configuration sub-page is currently open, if any.
     pub(crate) configuring_provider: Option<language_model::LanguageModelProviderId>,
-    /// Directory path of the skill whose share link was most recently copied,
-    /// used to show a transient "copied" checkmark on its share button.
-    pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
-    /// Pending marketplace visibility changes, drained lazily on page-leave /
-    /// window-close / 30s debounce. See `skills_visibility::SkillVisibilityQueue`.
-    pub(crate) skill_visibility_queue: pages::SkillVisibilityQueue,
-    /// zed-kask: outcome of the most recent visibility-toggle drain (publish /
-    /// unpublish). `None` until a drain completes; set to a user-facing message
-    /// on failure so the icon flip is not the only signal (the warn-only path
-    /// left the user thinking the skill was published when it had failed).
-    pub(crate) last_publish_status: Option<gpui::SharedString>,
     /// State for the active "add OpenAI/Anthropic-compatible provider" form sub-page, if open.
     pub(crate) llm_provider_form: Option<LlmProviderForm>,
     /// Stable focus handle for the LLM "Add Provider" button, so it can show a

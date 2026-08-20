@@ -165,7 +165,7 @@ pub struct ContentPromptContextV2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_skills::{Skill, SkillSource, SkillVisibility};
+    use agent_skills::{Skill, SkillSource};
     use std::path::PathBuf;
 
     #[test]
@@ -182,7 +182,6 @@ mod tests {
             skill_file_path: PathBuf::from("/skills/oversized/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             core: false,
         };

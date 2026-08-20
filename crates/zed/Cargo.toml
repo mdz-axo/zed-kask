@@ -75,7 +75,6 @@ hkask-types.workspace = true
 hkask-regulation.workspace = true
 hkask-email.workspace = true
 
-kask_extensions_ui.workspace = true
 swarm_panel.workspace = true
 kanban_panel.workspace = true
 agent.workspace = true

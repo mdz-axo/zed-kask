@@ -1,8 +1,7 @@
 use agent_skills::{
     AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE, SKILL_FILE_NAME,
-    SKILLS_DIR_NAME, SkillMetadata, SkillVisibility, SkillsUpdatedHook, global_skills_dir,
-    is_reserved_skill_name, parse_skill_file_content, slugify_skill_name, validate_description,
-    validate_name,
+    SKILLS_DIR_NAME, SkillMetadata, SkillsUpdatedHook, global_skills_dir, is_reserved_skill_name,
+    parse_skill_file_content, slugify_skill_name, validate_description, validate_name,
 };
 use anyhow::{Context as _, Result, anyhow};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
@@ -1276,7 +1275,6 @@ fn format_skill_file(
         name: name.to_string(),
         description: description.to_string(),
         disable_model_invocation,
-        visibility: SkillVisibility::Private,
         dependencies: Vec::new(),
         core: false,
     };

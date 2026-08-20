@@ -53,7 +53,6 @@ members = [
     "crates/debugger_ui",
     "crates/deepseek",
     "crates/dev_container",
-    "crates/kask_extensions_ui",
     "crates/swarm_panel",
     "crates/kanban_panel",
     "crates/marketplace_ui_common",
@@ -380,7 +379,6 @@ deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 dev_container = { path = "crates/dev_container" }
 
-kask_extensions_ui = { path = "crates/kask_extensions_ui" }
 swarm_panel = { path = "crates/swarm_panel" }
 kanban_panel = { path = "crates/kanban_panel" }
 marketplace_ui_common = { path = "crates/marketplace_ui_common" }
