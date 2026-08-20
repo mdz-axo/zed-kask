@@ -294,9 +294,10 @@ impl MetacognitionLoop {
             regulation_health,
             // Filled in after `compare` produces the alerts below.
             escalation_count: 0,
-            // D34 — populated by the skill verification sense path; zero
-            // until that path runs.
-            skill_verification_failures: 0,
+            // D34 — drain the process-global skill verification failure
+            // counter. This reads-and-resets: each tick sees only the
+            // failures since the last tick.
+            skill_verification_failures: drain_skill_verification_failures(),
         };
 
         // ── Compare + Compute ──────────────────────────────────────────
@@ -458,6 +459,36 @@ impl MetacognitionLoop {
                     "Regulation effectiveness {:.1}% below floor {:.1}%",
                     snapshot.regulation_effectiveness * 100.0,
                     self.config.effectiveness_floor * 100.0
+                ),
+            });
+        }
+
+        // D34 — Skill verification failure check. When incomplete skill
+        // verdicts accumulate above the threshold since the last tick,
+        // skills are systematically skipping steps. The curator should
+        // investigate and issue a CuratorDirective to fix the skill.
+        if snapshot.skill_verification_failures > 0
+            && snapshot.skill_verification_failures
+                >= self.config.skill_verification_failure_threshold
+        {
+            let severity = if snapshot.skill_verification_failures
+                >= self.config.skill_verification_failure_threshold * 2
+            {
+                EscalationSeverity::Critical
+            } else {
+                EscalationSeverity::Warning
+            };
+            alerts.push(EscalationAlert {
+                trigger: EscalationTrigger::SkillVerificationFailure {
+                    count: snapshot.skill_verification_failures,
+                },
+                severity,
+                value: snapshot.skill_verification_failures as f64,
+                threshold: self.config.skill_verification_failure_threshold as f64,
+                message: format!(
+                    "Skill verification failures {} exceed threshold {} — skills are systematically skipping declared steps",
+                    snapshot.skill_verification_failures,
+                    self.config.skill_verification_failure_threshold
                 ),
             });
         }

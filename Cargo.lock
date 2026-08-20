@@ -9258,6 +9258,7 @@ dependencies = [
  "hkask-regulation",
  "hkask-tool-port",
  "hkask-types",
+ "libc",
  "rmcp",
  "serde_json",
  "thiserror 2.0.17",

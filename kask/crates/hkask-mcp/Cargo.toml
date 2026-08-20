@@ -36,4 +36,10 @@ required-features = ["test-fixture"]
 [features]
 test-fixture = []
 
-required-features = ["test-fixture"]
+[dev-dependencies]
+# reconnect_integration.rs drives real child processes through the fixture
+# binary to pin connection healing. `libc` is the direct-SIGKILL path the
+# repo lint requires (no blocking `Command::status`).
+hkask-tool-port.workspace = true
+libc.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

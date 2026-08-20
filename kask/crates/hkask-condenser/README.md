@@ -81,15 +81,13 @@ The `reg.condenser` tracing spans are **diagnostic logging** for human inspectio
 ## Consumers
 
 - `kask_bridge` — `BridgeThreadCondenser`: the runtime tool-result compression path wired into the agent turn loop via `agent::set_thread_condenser` (gated on `kask.condenser.auto_compress_tool_results`, default off)
-- `hkask-mcp-condenser` — MCP server exposing `condenser_ping`, `condenser_persist`, `condenser_thread_summary`, `condenser_score_saliency`
+
+The `hkask-mcp-condenser` MCP server was removed during the skill-system migration cleanup (2026-08). The condenser is now a pure domain library consumed only by `kask_bridge`.
 
 ## Saliency Architecture
 
-The saliency module is split between the domain crate (pure logic) and the MCP server (I/O dispatch):
+The saliency module is pure domain logic in the domain crate:
 
 - **Domain crate** (`saliency.rs`): `score_against_persona`, `extract_query_words`, `score_memory_results` — pure functions, fully testable without memory stores.
-- **MCP server** (`condenser_score_saliency` tool): Dispatches to semantic or episodic memory stores, delegates scoring to the domain crate.
 
 The `word_frequencies` function is the canonical word-frequency computation shared with `WordRankAlgorithm` — the algorithm delegates to `saliency` instead of maintaining a copy.
-
-Persona keywords are configurable via the `HKASK_CONDENSER_PERSONA_KEYWORDS` env var at the MCP server level, and per-request via the `persona_keywords` parameter on the `SaliencyRequest` schema.
