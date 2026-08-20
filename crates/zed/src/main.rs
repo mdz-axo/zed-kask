@@ -765,15 +765,19 @@ fn main() {
         };
         agent::set_template_base_path(template_base_path.clone());
 
-        // Seed templates to disk in production. In dev, the live source tree
-        // IS the target so seeding is a no-op.
-        if !is_dev {
-            let seed_fs = fs.clone();
-            let seed_dir = template_base_path.clone();
-            cx.spawn(async move |_cx| {
-                agent_skills::seed_templates(seed_fs.as_ref(), &seed_dir).await;
-            }).detach();
-        }
+        // Seed templates to the data-dir path so MCP servers (corpus,
+        // training) find them regardless of dev/prod. The `render_template`
+        // tool uses the live source tree in dev (via `template_base_path`
+        // above), so this seeding only affects MCP servers which read
+        // `HKASK_TEMPLATE_ROOT`. In dev, the seeded copy mirrors the
+        // compiled-in source tree; in production, it IS the only copy.
+        let seed_dir = hkask_types::agent_paths::resolve_under_data_dir(
+            std::path::Path::new("skills/registry/templates"),
+        );
+        let seed_fs = fs.clone();
+        cx.spawn(async move |_cx| {
+            agent_skills::seed_templates(seed_fs.as_ref(), &seed_dir).await;
+        }).detach();
 
         // zed-kask: D8 — F4: algedonic threshold → variety_max_deficit (Guardrail).
         // Wire `kask.curator.algedonic_threshold` (0.0–1.0, default 0.8) to

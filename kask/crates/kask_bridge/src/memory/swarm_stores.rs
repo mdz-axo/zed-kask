@@ -66,6 +66,24 @@ impl SwarmStore {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn for_tests(store: Option<Arc<MemoryStore>>) -> Self {
+        Self {
+            store: RwLock::new(store),
+            passphrase: String::new(),
+            embedding_dim: 1024,
+            heal_attempt_logged: std::sync::atomic::AtomicBool::new(false),
+            heal_enabled: false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_for_tests(&self, store: Option<Arc<MemoryStore>>) {
+        if let Ok(mut guard) = self.store.write() {
+            *guard = store;
+        }
+    }
+
     pub(crate) fn availability(&self) -> bool {
         match self.store.read() {
             Ok(guard) => guard.is_some(),

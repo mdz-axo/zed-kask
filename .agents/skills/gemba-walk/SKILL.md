@@ -3,6 +3,24 @@ name: gemba-walk
 core: true
 description: "Human-in-the-loop guided review of the cybernetic regulation system. Queries algedonic alerts, pending escalations, and the curator's memory for skill performance patterns, then synthesizes a structured briefing with per-skill digest and proposed refinement actions for operator approval. Implements the Prepare and Present phases of the gemba loop.
 "
+steps:
+  - id: sense_gather
+    tools:
+      - curator_algedonic_log
+      - curator_escalations
+      - curator_consult
+  - id: synthesize
+    tools:
+      - render_template
+  - id: present
+    tools:
+      - render_template
+  - id: recommend
+    tools:
+      - render_template
+  - id: converge
+    tools:
+      - lisp_eval
 ---
 
 # Gemba Walk

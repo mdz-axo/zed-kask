@@ -304,6 +304,79 @@ impl RealMemoryPort {
     ///
     /// Kept as a method so tests can fire consolidation directly without
     /// starting a timer.
+    #[cfg(test)]
+    fn maybe_consolidate(&self) {
+        let Some(consolidation) = &self.consolidation else {
+            return;
+        };
+        if self.consolidation_cadence_secs == 0 {
+            return;
+        }
+
+        let now = Utc::now();
+        let cadence = chrono::Duration::seconds(self.consolidation_cadence_secs as i64);
+        let should_fire = match self.last_consolidation.lock() {
+            Ok(mut guard) => {
+                let elapsed = guard
+                    .map(|last| now.signed_duration_since(last) >= cadence)
+                    .unwrap_or(true);
+                if elapsed {
+                    *guard = Some(now);
+                    true
+                } else {
+                    false
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.memory",
+                    error = %e,
+                    "last_consolidation mutex poisoned — skipping consolidation trigger"
+                );
+                return;
+            }
+        };
+        if !should_fire {
+            return;
+        }
+
+        let request = hkask_types::ConsolidationRequest {
+            confidence_floor: Some(self.confidence_floor),
+            ..Default::default()
+        };
+        match consolidation.consolidate(&self.user_webid, request.clone()) {
+            Ok(outcome) => {
+                tracing::info!(
+                    target: "reg.memory",
+                    consolidated = outcome.consolidated_count,
+                    "maybe_consolidate pass complete"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(target: "reg.memory", error = %e, "maybe_consolidate failed");
+            }
+        }
+        if let Some(curator_consolidation) = self
+            .curator_consolidation
+            .read()
+            .ok()
+            .and_then(|g| g.clone())
+        {
+            match curator_consolidation.consolidate(&self.curator_webid, request) {
+                Ok(outcome) => {
+                    tracing::info!(
+                        target: "reg.memory",
+                        consolidated = outcome.consolidated_count,
+                        "maybe_consolidate curator pass complete"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(target: "reg.memory", error = %e, "maybe_consolidate curator pass failed");
+                }
+            }
+        }
+    }
+
     /// Start a background timer that fires consolidation on the configured
     /// cadence. This decouples consolidation from the ingestion path —
     /// ingestion writes complete quickly without waiting for consolidation,
@@ -1371,18 +1444,30 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
         let user_message = !record.user_input.trim().is_empty();
         hkask_tool_invoker::correlate_reask(user_message);
         // Emit a skill step verification span when a skill was invoked. This
-        // is the calibration info the consumer of the skill output reads —
-        // the ordered tool-call sequence shows which steps the model actually
-        // executed versus what the SKILL.md declared. Emitted as a
-        // `reg.curation.skill_verification` span so it is queryable via
-        // `reg_query` and visible to the curator's regulation loop.
+        // is the trust verdict the consumer of the skill output reads —
+        // `Verified` means all declared steps executed; `Incomplete` lists
+        // the missing steps. Emitted as a `reg.curation.skill_verification`
+        // span so it is queryable via `reg_query` and visible to the
+        // curator's regulation loop.
         if let Some(ref report) = record.skill_step_report {
+            let verdict_str = match &report.verdict {
+                agent::skill_step_tracker::SkillVerificationVerdict::Verified => "verified",
+                agent::skill_step_tracker::SkillVerificationVerdict::Incomplete {
+                    missing_steps,
+                } => {
+                    format!("incomplete: missing {:?}", missing_steps)
+                }
+                agent::skill_step_tracker::SkillVerificationVerdict::NoDeclaration => {
+                    "no_declaration"
+                }
+            };
             hkask_types::regulation::RegulationSpan::Curation.emit("skill_verification");
             tracing::info!(
                 target: "reg.curation",
                 skill = %report.skill_name,
+                verdict = %verdict_str,
                 tool_calls = ?report.tool_call_sequence,
-                "Skill step report — calibration info for skill output consumer"
+                "Skill step verification"
             );
         }
         Box::pin(async move {
@@ -2636,6 +2721,7 @@ mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: None,
+            skill_step_report: None,
         };
         let result = bridge.ingest_turn(record).await;
         assert!(

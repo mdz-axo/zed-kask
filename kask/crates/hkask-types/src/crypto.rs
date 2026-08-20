@@ -14,32 +14,8 @@ use serde::{Deserialize, Serialize};
 pub struct Ed25519PublicKey(pub [u8; 32]);
 
 impl Ed25519PublicKey {
-    pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        Ed25519PublicKey(bytes)
-    }
-
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
-    }
-}
-
-impl std::fmt::Display for Ed25519PublicKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
-    }
-}
-
-impl std::str::FromStr for Ed25519PublicKey {
-    type Err = hex::FromHexError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = hex::decode(s)?;
-        if bytes.len() != 32 {
-            return Err(hex::FromHexError::InvalidStringLength);
-        }
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&bytes);
-        Ok(Ed25519PublicKey(arr))
     }
 }
 
@@ -49,38 +25,12 @@ impl std::str::FromStr for Ed25519PublicKey {
 /// skill marketplace signing layer: publishers sign manifests, the
 /// collab server and client verify signatures before indexing or
 /// installing. Conversion to/from `ed25519_dalek::Signature` lives in
-/// `hkask-keystore`. Exchanged as hex via `Display`/`FromStr` (serde
-/// implements arrays only up to 32 bytes, so the manifest carries the hex
-/// string instead of this newtype).
+/// `hkask-keystore`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ed25519Signature(pub [u8; 64]);
 
 impl Ed25519Signature {
-    pub fn from_bytes(bytes: [u8; 64]) -> Self {
-        Ed25519Signature(bytes)
-    }
-
     pub fn as_bytes(&self) -> &[u8; 64] {
         &self.0
-    }
-}
-
-impl std::fmt::Display for Ed25519Signature {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
-    }
-}
-
-impl std::str::FromStr for Ed25519Signature {
-    type Err = hex::FromHexError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = hex::decode(s)?;
-        if bytes.len() != 64 {
-            return Err(hex::FromHexError::InvalidStringLength);
-        }
-        let mut arr = [0u8; 64];
-        arr.copy_from_slice(&bytes);
-        Ok(Ed25519Signature(arr))
     }
 }
