@@ -129,7 +129,7 @@ primitive, not just an implicit side-effect of "hire"). The move carries:
 `accepts`/`produces` (the uncovered transform's input/output types), and an
 optional `model`/`mcp_tools`/`skills`. Authoring the prompt:
 {% if mode == "local" %}
-- In local mode the cascade authors the `system_prompt` directly (there is no
+- In local mode the process authors the `system_prompt` directly (there is no
   ABW generation endpoint); the ACT phase creates the card via
   `swarm_create_local_agent` with the authored fields. No `swarm_hire_local`
   tool (§15.1.1 rejected) — the agent is created directly into the local

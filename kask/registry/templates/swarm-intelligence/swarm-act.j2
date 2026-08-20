@@ -130,7 +130,7 @@ For each Proceed decision, emit the corresponding hkask-mcp-swarm local call:
 - `author_agent` → `swarm_create_local_agent` with the move's `authored_card`
   fields (`agent_id`, `agent_type`, `description`, `system_prompt`, `accepts`,
   `produces`, `model?`, `mcp_tools?`, `skills?`). Agent creation + authoring as
-  a first-class move: the cascade authored the `system_prompt` for an
+  a first-class move: the process authored the `system_prompt` for an
   uncovered transform; ACT creates the card directly into the local registry
   (no `swarm_hire_local` tool — §15.1.1 rejected). The new agent is
   immediately delegable; a separate `delegate` move runs it.

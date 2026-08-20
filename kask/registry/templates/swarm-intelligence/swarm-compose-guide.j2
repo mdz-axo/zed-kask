@@ -18,7 +18,7 @@ contract:
 visibility: Public
 ---
 {# Canonical source for composition guidance — consumed by the swarm-compose-guide #}
-{# skill cascade (invoked from the swarm_ai_assist MCP tool via SkillExecPort) #}
+{# skill process (invoked from the swarm_ai_assist MCP tool via SkillExecPort) #}
 {# and referenceable by the swarm-intelligence DECIDE phase. #}
 {# hKask v0.36.0 — Swarm Intelligence (mode-aware v2 §15) #}
 {#
@@ -30,8 +30,8 @@ visibility: Public
   The DECIDE phase (swarm-decide.j2) may propose an `author_agent` move when
   no catalogue agent covers a required transform; this template is the
   canonical authoring guidance that move can reference. The `swarm_ai_assist`
-  MCP tool runs the `swarm-compose-guide` skill cascade, which renders this
-  template — the panel and the cascade share this single source of truth for
+  MCP tool runs the `swarm-compose-guide` skill process, which renders this
+  template — the panel and the process share this single source of truth for
   field definitions and backend considerations.
 #}
 
@@ -85,7 +85,7 @@ When composing a **swarm**, the following fields are defined:
 - Agents live on the local filesystem under `agents/local/curated/<id>/agent_card.json`; the local ledger is operator-funded (no cloud credits, no consent gate).
 - Agent ids are filesystem-safe slugs (alphanumeric + dash + underscore + dot).
 - Prompts may be memory-seeded (the local registry can inject prior knowledge into the system prompt).
-- Authoring an agent: the cascade authors the `system_prompt` directly (no ABW generation endpoint); the card is created via `swarm_create_local_agent` and is immediately delegable. There is no `swarm_hire_local` tool (§15.1.1 rejected — the team is emergent from the call pattern).
+- Authoring an agent: the process authors the `system_prompt` directly (no ABW generation endpoint); the card is created via `swarm_create_local_agent` and is immediately delegable. There is no `swarm_hire_local` tool (§15.1.1 rejected — the team is emergent from the call pattern).
 {% endif %}
 
 ## Composition guidance (both modes)
