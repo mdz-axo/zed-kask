@@ -240,10 +240,9 @@ steps:
       convergence_signal: "{{ step_5_result }}"
 
 error_handling:
-  on_timeout: retry
+  on_error: retry
   max_retries: 1
   retry_backoff_seconds: 1
-  on_validation_failure: abort
 
 # The gemba walk is itself a skill tracked by the regulation system.
 # BridgeManifestExecutor::execute_skill records reg.skill.gemba-walk.outcome

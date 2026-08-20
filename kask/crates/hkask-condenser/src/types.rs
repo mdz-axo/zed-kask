@@ -223,7 +223,7 @@ pub struct ThreadSummaryRequest {
     pub current_query: String,
     /// Override the server's default inference model.
     /// When provided, this model is used instead of the server-configured default.
-    /// Supports provider-prefixed names (ollama/, FW/, DeepInfra/) for backend routing.
+    /// Supports provider-prefixed names (ollama/, FW/, OpenRouter/) for backend routing.
     pub model: Option<String>,
 }
 

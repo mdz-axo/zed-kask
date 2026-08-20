@@ -66,11 +66,9 @@ steps:
       skill_outputs: "{{ skill_outputs }}"
 
 error_handling:
-  on_timeout: retry
-  on_parse_failure: retry
+  on_error: retry
   max_retries: 2
   retry_backoff_seconds: 2
-  on_validation_failure: abort
 
 ledger:
   emit_spans: true

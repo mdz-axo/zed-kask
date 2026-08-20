@@ -77,7 +77,7 @@ impl TrainingServer {
                          ephemeral pod terminates. Error: {reason}"
                     ))
                 }
-                (crate::providers::TrainingHostId::DeepInfra | crate::providers::TrainingHostId::Nebius, _) => {
+                (crate::providers::TrainingHostId::Nebius, _) => {
                     tracing::warn!(
                         target: "reg.lora.audit",
                         gate = "G-P1",
@@ -304,7 +304,7 @@ impl TrainingServer {
                 let dataset = training.publish_dataset(&job.id, bytes, &dataset_sha256).await.map_err(map_training_artifact_error)?;
                 job.artifacts = Some(training.prepare_training_artifacts(&job.id, dataset).await.map_err(map_training_artifact_error)?);
             } else {
-                // Completion detection is not yet wired for DeepInfra/Nebius:
+                // Completion detection is not yet wired for Nebius:
                 // `check_completion_manifest` short-circuits when `job.artifacts`
                 // is `None`, so `training_status` stays `Running` indefinitely.
                 // Runpod is the only host that publishes HuggingFace artifacts.

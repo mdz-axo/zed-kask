@@ -434,9 +434,8 @@ impl StepMachine {
     /// per-step timeout; a longer retry timeout would need a separate schema
     /// field. Backoff is `retry_backoff_seconds` (default 1s).
     ///
-    /// This is the enforcement point for `ErrorHandlingConfig.on_timeout` /
-    /// `max_retries` / `retry_backoff_seconds` — previously parsed but never
-    /// read (an advertised invariant with no enforcement point).
+    /// This is the enforcement point for `ErrorHandlingConfig.on_error` /
+    /// `max_retries` / `retry_backoff_seconds`.
     ///
     /// Per-step `on_failure` config: when a step (any action, not just gates)
     /// fails after retries are exhausted, the `on_failure` config is checked.
@@ -449,14 +448,12 @@ impl StepMachine {
         node: crate::step_graph::StepNode,
         infra: Infra,
     ) -> Result<crate::step_actions::Effect> {
-        let max_retries = if self.error_handling.on_timeout == "retry"
-            || self.error_handling.on_parse_failure == "retry"
-        {
+        let max_retries = if self.error_handling.on_error == "retry" {
             if self.error_handling.max_retries == 0 {
                 tracing::warn!(
                     target: "hkask.templates.retry",
                     step = node.ordinal,
-                    "on_timeout/on_parse_failure is 'retry' but max_retries is 0 — no retries will fire"
+                    "on_error is 'retry' but max_retries is 0 — no retries will fire"
                 );
             }
             self.error_handling.max_retries
@@ -468,48 +465,21 @@ impl StepMachine {
         loop {
             match self.dispatch_action(node.clone(), infra.clone()).await {
                 Ok(effect) => return Ok(effect),
-                Err(crate::ports::TemplateError::Timeout {
-                    step_ordinal,
-                    elapsed_seconds,
-                }) if attempt < max_retries && self.error_handling.on_timeout == "retry" => {
+                Err(e)
+                    if attempt < max_retries
+                        && self.error_handling.on_error == "retry"
+                        && e.is_transient() =>
+                {
                     attempt += 1;
                     tracing::warn!(
-                        target: "reg.skill.cascade.timeout_retry",
-                        step = step_ordinal,
-                        attempt,
-                        max_retries,
-                        elapsed_seconds,
-                        backoff_seconds = self.error_handling.retry_backoff_seconds,
-                        failure_mode = "timeout",
-                        "Step {} timed out after {}s — retrying (attempt {}/{}) after {}s backoff",
-                        step_ordinal,
-                        elapsed_seconds,
-                        attempt,
-                        max_retries,
-                        self.error_handling.retry_backoff_seconds,
-                    );
-                    if self.error_handling.retry_backoff_seconds > 0 {
-                        tokio::time::sleep(std::time::Duration::from_secs(
-                            self.error_handling.retry_backoff_seconds as u64,
-                        ))
-                        .await;
-                    }
-                    continue;
-                }
-                Err(crate::ports::TemplateError::ParseFailure {
-                    step_ordinal,
-                    detail: _,
-                }) if attempt < max_retries && self.error_handling.on_parse_failure == "retry" => {
-                    attempt += 1;
-                    tracing::warn!(
-                        target: "reg.skill.cascade.parse_failure_retry",
-                        step = step_ordinal,
+                        target: "reg.skill.cascade.retry",
+                        step = node.ordinal,
                         attempt,
                         max_retries,
                         backoff_seconds = self.error_handling.retry_backoff_seconds,
-                        failure_mode = "parse_failure",
-                        "Step {} parse failure — retrying (attempt {}/{}) after {}s backoff",
-                        step_ordinal,
+                        "Step {} transient failure ({:?}) — retrying (attempt {}/{}) after {}s backoff",
+                        node.ordinal,
+                        e,
                         attempt,
                         max_retries,
                         self.error_handling.retry_backoff_seconds,
@@ -586,7 +556,6 @@ impl StepMachine {
                     action = on_failure.action.as_str(),
                     error = %error,
                     resume = %on_failure.resume,
-                    failure_mode = classify_failure_mode(error),
                     "Step {} failed — on_failure config halts the cascade",
                     node.ordinal
                 );
@@ -772,26 +741,6 @@ pub(crate) fn parse_json_response(text: &str, step_ordinal: u32) -> Result<serde
 /// `reg.skill.cascade.step_failed` tracing target. This lets operators
 /// filter and aggregate skill failures by mode (e.g.
 /// `failure_mode=timeout`, `failure_mode=parse_failure`,
-/// `failure_mode=tool_not_found`) in log analysis tools without
-/// string-matching the error Display output. Mirrors the literal
-/// `failure_mode = "..."` fields already emitted by the retry-loop warnings
-/// (`timeout`, `parse_failure`) so the halt-warning log is consistent with
-/// the retry log for the same failure class.
-fn classify_failure_mode(error: &crate::ports::TemplateError) -> &'static str {
-    match error {
-        crate::ports::TemplateError::Timeout { .. } => "timeout",
-        crate::ports::TemplateError::ParseFailure { .. } => "parse_failure",
-        crate::ports::TemplateError::NotFound(_) => "tool_not_found",
-        crate::ports::TemplateError::Manifest(_) => "manifest_error",
-        crate::ports::TemplateError::Mcp(_) => "mcp_error",
-        crate::ports::TemplateError::Render(_) => "render_error",
-        crate::ports::TemplateError::Inference(_) => "inference_error",
-        crate::ports::TemplateError::Database(_) => "database_error",
-        crate::ports::TemplateError::Validation(_) => "validation_error",
-        crate::ports::TemplateError::PathTraversal(_) => "path_traversal",
-        crate::ports::TemplateError::SandboxViolation(_) => "sandbox_violation",
-    }
-}
 
 #[cfg(test)]
 mod extract_feedback_phase_tests {
@@ -826,128 +775,5 @@ mod extract_feedback_phase_tests {
             Some("Outcome")
         );
         assert_eq!(extract_feedback_phase("skill/unknown-phase"), None);
-    }
-}
-
-#[cfg(test)]
-mod classify_failure_mode_tests {
-    use super::classify_failure_mode;
-    use crate::ports::TemplateError;
-    use hkask_types::{InferenceError, NotFound};
-
-    // Pin every variant's `failure_mode` string. This is the contract the
-    // `reg.skill.cascade.step_failed` tracing target exposes to operators —
-    // changing a string here silently breaks log queries without this test.
-    // The `timeout` and `parse_failure` strings must match the literals in
-    // the retry-loop warnings (`dispatch_with_retry`) so the halt log is
-    // consistent with the retry log for the same failure class.
-    #[test]
-    fn timeout_classifies_as_timeout() {
-        assert_eq!(
-            classify_failure_mode(&TemplateError::Timeout {
-                step_ordinal: 1,
-                elapsed_seconds: 30,
-            }),
-            "timeout"
-        );
-    }
-
-    #[test]
-    fn parse_failure_classifies_as_parse_failure() {
-        assert_eq!(
-            classify_failure_mode(&TemplateError::ParseFailure {
-                step_ordinal: 1,
-                detail: "empty output".to_string(),
-            }),
-            "parse_failure"
-        );
-    }
-
-    #[test]
-    fn not_found_classifies_as_tool_not_found() {
-        assert_eq!(
-            classify_failure_mode(&TemplateError::NotFound(NotFound {
-                entity_type: "tool".to_string(),
-                id: "web_search".to_string(),
-            })),
-            "tool_not_found"
-        );
-    }
-
-    #[test]
-    fn manifest_classifies_as_manifest_error() {
-        assert_eq!(
-            classify_failure_mode(&TemplateError::Manifest("malformed yaml".to_string())),
-            "manifest_error"
-        );
-    }
-
-    #[test]
-    fn render_classifies_as_render_error() {
-        assert_eq!(
-            classify_failure_mode(&TemplateError::Render("template syntax".to_string())),
-            "render_error"
-        );
-    }
-
-    #[test]
-    fn inference_classifies_as_inference_error() {
-        assert_eq!(
-            classify_failure_mode(&TemplateError::Inference(InferenceError::Model(
-                "rate limited".to_string()
-            ))),
-            "inference_error"
-        );
-    }
-
-    #[test]
-    fn database_classifies_as_database_error() {
-        assert_eq!(
-            classify_failure_mode(&TemplateError::Database(
-                hkask_types::InfrastructureError::database("conn refused")
-            )),
-            "database_error"
-        );
-    }
-
-    #[test]
-    fn validation_classifies_as_validation_error() {
-        assert_eq!(
-            classify_failure_mode(&TemplateError::Validation("bad input".to_string())),
-            "validation_error"
-        );
-    }
-
-    #[test]
-    fn path_traversal_classifies_as_path_traversal() {
-        assert_eq!(
-            classify_failure_mode(&TemplateError::PathTraversal("../etc/passwd".to_string())),
-            "path_traversal"
-        );
-    }
-
-    #[test]
-    fn sandbox_violation_classifies_as_sandbox_violation() {
-        assert_eq!(
-            classify_failure_mode(&TemplateError::SandboxViolation(
-                "wrote outside sandbox".to_string()
-            )),
-            "sandbox_violation"
-        );
-    }
-
-    // (SkillLoad/Frontmatter variants were removed with the dead
-    // `skill_loader.rs` module; their classifier tests went with them.)
-
-    // The `Mcp` variant wraps `Box<dyn std::error::Error + Send + Sync>`.
-    // Constructed via `From` from a concrete error to avoid depending on a
-    // public constructor that may not exist.
-    #[test]
-    fn mcp_classifies_as_mcp_error() {
-        let err = TemplateError::Mcp(Box::from(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "transport",
-        )));
-        assert_eq!(classify_failure_mode(&err), "mcp_error");
     }
 }

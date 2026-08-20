@@ -12,7 +12,6 @@
 //! routed through `hkask-services` shared config init. The host is fixed
 //! to Runpod (cloud-only, single host).
 
-pub mod deepinfra;
 pub mod harness;
 pub mod nebius;
 pub mod runpod;
@@ -21,7 +20,6 @@ pub mod types;
 
 // ── Re-exports for lib.rs compatibility ──────────────────────────────────
 
-pub use deepinfra::DeepInfraHost;
 pub use harness::{AxolotlHarness, HarnessAdapter, LudwigHarness};
 pub use nebius::NebiusHost;
 pub use runpod::RunpodHost;
@@ -36,7 +34,7 @@ pub use types::{
 
 /// Create a training host from configuration.
 ///
-/// Supports three providers: Runpod, DeepInfra, and Nebius.
+/// Supports two providers: Runpod and Nebius.
 /// The provider is selected from `config.host`.
 pub fn create_host(
     config: &TrainingHostConfig,
@@ -55,22 +53,6 @@ pub fn create_host(
                 container_disk_gb: config.runpod_container_disk_gb,
                 docker_image: config.runpod_docker_image.clone(),
             })))
-        }
-        TrainingHostId::DeepInfra => {
-            let api_key = std::env::var("DEEPINFRA_API_KEY").map_err(|_| {
-                HostProviderError::NotConfigured("DEEPINFRA_API_KEY not configured".to_string())
-            })?;
-            let gpu_config = std::env::var("DEEPINFRA_GPU_CONFIG")
-                .unwrap_or_else(|_| "1xB200-180GB".to_string());
-            let container_image = std::env::var("DEEPINFRA_CONTAINER_IMAGE")
-                .unwrap_or_else(|_| "di-cont-ubuntu-torch:latest".to_string());
-            let ssh_key = read_ssh_public_key()?;
-            Ok(Box::new(DeepInfraHost::new(
-                api_key,
-                gpu_config,
-                container_image,
-                ssh_key,
-            )))
         }
         TrainingHostId::Nebius => {
             let project_id = std::env::var("NEBIUS_PROJECT_ID").map_err(|_| {
@@ -114,10 +96,10 @@ fn read_ssh_public_key() -> Result<String, HostProviderError> {
 
 /// Training host configuration resolved from hKask settings.
 ///
-/// Supports three providers: Runpod, DeepInfra, and Nebius.
+/// Supports two providers: Runpod and Nebius.
 /// The provider is selected from `host` field. Runpod-specific fields
-/// are only used when `host == TrainingHostId::Runpod`. DeepInfra and
-/// Nebius read their configuration from environment variables at
+/// are only used when `host == TrainingHostId::Runpod`. Nebius reads its
+/// configuration from environment variables at
 /// `create_host` time.
 #[derive(Debug, Clone)]
 pub struct TrainingHostConfig {
@@ -137,14 +119,11 @@ pub struct TrainingHostConfig {
 
 impl Default for TrainingHostConfig {
     fn default() -> Self {
-        // Auto-detect: prefer DeepInfra (B200, cheapest dedicated GPU),
-        // then Nebius (H100), then Runpod (H100) as fallback.
+        // Auto-detect: prefer Nebius (H100), then Runpod (H100) as fallback.
         // HKASK_TRAINING_HOST overrides this selection.
         // This matches the auto-detection in lib.rs::run().
         let host = if let Ok(h) = std::env::var("HKASK_TRAINING_HOST") {
             TrainingHostId::from_str(&h).unwrap_or(TrainingHostId::Runpod)
-        } else if std::env::var("DEEPINFRA_API_KEY").is_ok() {
-            TrainingHostId::DeepInfra
         } else if std::env::var("NEBIUS_PROJECT_ID").is_ok() {
             TrainingHostId::Nebius
         } else {
@@ -197,10 +176,6 @@ mod tests {
             Some(TrainingHostId::Runpod)
         );
         assert_eq!(
-            TrainingHostId::from_str("deepinfra"),
-            Some(TrainingHostId::DeepInfra)
-        );
-        assert_eq!(
             TrainingHostId::from_str("nebius"),
             Some(TrainingHostId::Nebius)
         );
@@ -221,15 +196,6 @@ mod tests {
         assert_eq!(cost, 1_500_000);
         let cost = types::estimate_training_cost_urj(&TrainingHostId::Runpod, 2, "Llama-3.3-70B");
         assert_eq!(cost, 4_000_000);
-    }
-
-    #[test]
-    fn estimate_cost_deepinfra_b200() {
-        // B200 at $3.69/hr = 740_000 urj per epoch
-        let cost = types::estimate_training_cost_urj(&TrainingHostId::DeepInfra, 1, "Qwen3:8b");
-        assert_eq!(cost, 740_000);
-        let cost = types::estimate_training_cost_urj(&TrainingHostId::DeepInfra, 3, "Qwen3:8b");
-        assert_eq!(cost, 2_220_000);
     }
 
     #[test]
@@ -434,18 +400,17 @@ mod tests {
 
     #[test]
     fn host_config_default() {
-        // The Default impl auto-detects the host from env vars (DeepInfra →
-        // Nebius → Runpod). Clear them so this test asserts the documented
+        // The Default impl auto-detects the host from env vars (Nebius →
+        // Runpod). Clear them so this test asserts the documented
         // fallback deterministically, regardless of the operator's configured
         // API keys. Without this, the test fails on any machine with
-        // DEEPINFRA_API_KEY or NEBIUS_PROJECT_ID set.
+        // NEBIUS_PROJECT_ID set.
         //
         // Edition 2024 marks env mutation as unsafe. nextest runs each test in
         // its own process by default, so there is no cross-test leakage; the
         // crate permits unsafe in test builds via cfg_attr(not(test), ...).
         unsafe {
             std::env::remove_var("HKASK_TRAINING_HOST");
-            std::env::remove_var("DEEPINFRA_API_KEY");
             std::env::remove_var("NEBIUS_PROJECT_ID");
         }
         let config = TrainingHostConfig::default();

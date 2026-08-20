@@ -184,8 +184,6 @@ impl TrlTrainer {
 pub enum TrainingHostId {
     /// runpod — Runpod GPU cloud training, pod-based axolotl dispatch
     Runpod,
-    /// deepinfra — DeepInfra dedicated GPU containers with SSH access
-    DeepInfra,
     /// nebius — Nebius AI Cloud VMs with H100/H200/B200 GPUs
     Nebius,
 }
@@ -196,7 +194,6 @@ impl TrainingHostId {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "runpod" => Some(Self::Runpod),
-            "deepinfra" => Some(Self::DeepInfra),
             "nebius" => Some(Self::Nebius),
             _ => None,
         }
@@ -278,7 +275,6 @@ pub(crate) fn estimate_training_cost_urj(
 ) -> u64 {
     let base_per_epoch: u64 = match host {
         TrainingHostId::Runpod => 500_000, // ~$0.50/epoch (H100 @ $2.39/hr)
-        TrainingHostId::DeepInfra => 740_000, // ~$0.74/epoch (B200 @ $3.69/hr)
         TrainingHostId::Nebius => 650_000, // ~$0.65/epoch (H100 @ $3.85/hr)
     };
     let size_mult = extract_model_size_multiplier(base_model);
@@ -697,7 +693,7 @@ pub enum HostProviderError {
     #[error("Provider '{0}' is not available (missing CLI or configuration)")]
     Unavailable(String),
     /// A required provider credential or configuration value is missing (e.g.
-    /// `RUNPOD_API_KEY` unset, `DEEPINFRA_API_KEY` unset, `NEBIUS_PROJECT_ID`
+    /// `RUNPOD_API_KEY` unset, `NEBIUS_PROJECT_ID`
     /// unset). This is a configuration/authorization failure, not transient
     /// unavailability — callers map it to `permission_denied` rather than
     /// `unavailable`. Replaces string-matching on "not configured" in
@@ -807,7 +803,7 @@ fn is_valid_ssh_host(host: &str) -> bool {
 }
 
 /// Parse an `ssh_command` string of the form `ssh <user>@<host> [-p <port>]`
-/// (as built by DeepInfra/Nebius from cloud API responses) into validated
+/// (as built by Nebius from cloud API responses) into validated
 /// (user, host, port) components. Returns None on any deviation — the
 /// provider response is untrusted input, and a malformed value must never
 /// reach process argv.

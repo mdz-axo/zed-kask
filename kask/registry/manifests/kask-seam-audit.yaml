@@ -559,10 +559,9 @@ steps:
       iterations: "{{ _convergence.iteration | default(1) }}"
 
 error_handling:
-  on_timeout: retry
+  on_error: retry
   max_retries: 1
   retry_backoff_seconds: 1
-  on_validation_failure: abort
 
 audit:
   enabled: true

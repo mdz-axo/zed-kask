@@ -80,12 +80,10 @@ steps:
     input_mapping:
       form: \"(- 10 4)\"
   - ordinal: 4
-    action: choice
+    action: loop
     description: gate
     input_mapping:
-      branches:
-        - condition: default
-          action: continue
+      loop_target: \"1\"
   - ordinal: 5
     action: loop
     description: iterate
@@ -130,12 +128,10 @@ steps:
     input_mapping:
       form: \"(- 10 4)\"
   - ordinal: 4
-    action: choice
+    action: loop
     description: gate
     input_mapping:
-      branches:
-        - condition: default
-          action: continue
+      loop_target: \"1\"
   - ordinal: 5
     action: loop
     description: iterate
