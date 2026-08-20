@@ -575,6 +575,7 @@ impl SwarmServer {
                     },
                     cloud_swarm_id: Some(req.agent_name),
                     tags: Vec::new(),
+                    sample_queries: Vec::new(),
                     visibility: String::new(),
                     valence: None,
                 };
@@ -1324,11 +1325,7 @@ impl SwarmServer {
     /// over the serialized form fields, returning advisory warnings only.
     /// The caller appends these to `warnings` — they can never flip `valid`.
     async fn ai_assist_advisory(&self, json_task: &str) -> Result<Vec<String>, LocalSwarmError> {
-        let runtime = self
-            .local_runtime
-            .get_or_init()
-            .await
-            .map_err(map_local_swarm_error)?;
+        let runtime = self.local_runtime.get_or_init().await?;
         let inference = runtime.inference();
         let result = inference
             .generate(

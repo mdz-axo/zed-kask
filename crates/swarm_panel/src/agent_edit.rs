@@ -38,6 +38,9 @@ pub(crate) struct AgentDetail {
     pub(crate) valence_valence: Option<f64>,
     pub(crate) valence_primary_affect: Option<String>,
     pub(crate) valence_personality_traits: Vec<String>,
+    pub(crate) sample_queries: Vec<String>,
+    pub(crate) accepts: Vec<String>,
+    pub(crate) produces: Vec<String>,
 }
 
 impl AgentDetail {
@@ -83,6 +86,9 @@ impl AgentDetail {
         let valence = card.get("valence");
         let (valence_arousal, valence_valence, valence_primary_affect, valence_personality_traits) =
             parse_valence(valence);
+        let sample_queries = string_array(card.get("sample_queries"));
+        let accepts = string_array(card.get("accepts"));
+        let produces = string_array(card.get("produces"));
         Self {
             agent_id,
             agent_type,
@@ -94,6 +100,9 @@ impl AgentDetail {
             valence_valence,
             valence_primary_affect,
             valence_personality_traits,
+            sample_queries,
+            accepts,
+            produces,
         }
     }
 
@@ -144,6 +153,13 @@ impl AgentDetail {
         let valence = card.get("metadata").and_then(|m| m.get("valence"));
         let (valence_arousal, valence_valence, valence_primary_affect, valence_personality_traits) =
             parse_valence(valence);
+        // fermi contract fields: sample queries live under metadata (the
+        // create-card builder puts them there); accepts/produces are
+        // top-level on the ABW card.
+        let sample_queries =
+            string_array(card.get("metadata").and_then(|m| m.get("sample_queries")));
+        let accepts = string_array(card.get("accepts"));
+        let produces = string_array(card.get("produces"));
         Self {
             agent_id,
             agent_type,
@@ -155,8 +171,23 @@ impl AgentDetail {
             valence_valence,
             valence_primary_affect,
             valence_personality_traits,
+            sample_queries,
+            accepts,
+            produces,
         }
     }
+}
+
+/// Extract a JSON array of strings, defaulting to empty.
+fn string_array(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Extract valence fields from a `metadata.valence` (cloud) or top-level
@@ -358,6 +389,18 @@ impl SwarmPanel {
         self.author
             .valence_personality_traits
             .update(cx, |e, cx| e.set_text(traits, window, cx));
+        let queries = detail.sample_queries.join("\n");
+        self.author
+            .sample_queries
+            .update(cx, |e, cx| e.set_text(queries, window, cx));
+        let accepts = detail.accepts.join(", ");
+        self.author
+            .accepts
+            .update(cx, |e, cx| e.set_text(accepts, window, cx));
+        let produces = detail.produces.join(", ");
+        self.author
+            .produces
+            .update(cx, |e, cx| e.set_text(produces, window, cx));
     }
 
     /// Save edits to an existing agent. Branches on `editing_id`:
