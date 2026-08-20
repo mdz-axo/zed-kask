@@ -3,7 +3,7 @@ name = "hkask-inference"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Multi-provider inference router for hKask — chat (DeepInfra, OpenRouter, Ollama, RunPod) and media (AtlasCloud)"
+description = "Multi-provider inference router for hKask — chat (OpenRouter, Ollama) and vision/OCR (RunPod)"
 
 
 [lib]

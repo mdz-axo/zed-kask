@@ -3,9 +3,9 @@
 //!
 //! Each provider is scored across 7 dimensions: `task_fit`, `quality`,
 //! `control`, `reliability`, `cost`, `latency`, `continuity`. The provider
-//! with the highest weighted score is selected. Default scores encode the
-//! current DeepInfra-first / AtlasCloud-fallback policy so behavior is preserved
-//! until operators tune weights.
+//! with the highest weighted score is selected. Default scores are a
+//! starting point for operators to tune once multiple media providers are
+//! registered again.
 
 use crate::provider::{MediaOp, MediaProvider, ProviderRegistry};
 use hkask_types::MediaGenerateParams;
@@ -73,34 +73,10 @@ impl ProviderScore {
 
 /// Score a single provider for a given op.
 ///
-/// Default scoring encodes the current dispatch policy:
-/// - `deepinfra`: highest for `RemoveBackground`/`GenerateSpeech`/`Transcribe`
-///   (cheapest for these ops, registered first as fallback target)
-/// - `atlascloud`: highest for image/video (quality, broad support) — the
-///   catch-all arm makes it the primary for every op DeepInfra doesn't win
+/// Default scoring is a neutral baseline; provider-specific arms are added
+/// here as media providers are (re-)registered.
 fn score_provider(id: &str, op: MediaOp) -> ProviderScore {
     match (id, op) {
-        (
-            "deepinfra",
-            MediaOp::RemoveBackground | MediaOp::GenerateSpeech | MediaOp::Transcribe,
-        ) => ProviderScore {
-            task_fit: 0.95,
-            quality: 0.80,
-            control: 0.70,
-            reliability: 0.90,
-            cost: 0.95,
-            latency: 0.85,
-            continuity: 0.80,
-        },
-        ("atlascloud", _) => ProviderScore {
-            task_fit: 0.90,
-            quality: 0.90,
-            control: 0.85,
-            reliability: 0.85,
-            cost: 0.70,
-            latency: 0.75,
-            continuity: 0.90,
-        },
         _ => ProviderScore::default(),
     }
 }
@@ -110,10 +86,6 @@ fn score_provider(id: &str, op: MediaOp) -> ProviderScore {
 /// Returns the chosen provider + all candidate scores (including the
 /// chosen one). The decision is logged via `tracing::info!` at
 /// `reg.media.select` with all candidate scores.
-///
-/// Default weights reproduce the current DeepInfra-first / AtlasCloud-fallback
-/// policy: DeepInfra wins for `RemoveBackground`/`GenerateSpeech`/`Transcribe`,
-/// AtlasCloud wins for everything else.
 pub fn select_scored(
     registry: &ProviderRegistry,
     op: MediaOp,
@@ -173,38 +145,6 @@ mod tests {
     use crate::config::InferenceConfig;
     use crate::media_router::MediaRouter;
 
-    /// Build a router with both DeepInfra and AtlasCloud keys so both backends
-    /// register — the multi-provider case where `select_scored` is exercised.
-    fn router_with_both() -> MediaRouter {
-        let config = InferenceConfig {
-            deepinfra_api_key: "di-key".into(),
-            atlascloud_api_key: "ac-key".into(),
-            ..Default::default()
-        };
-        MediaRouter::new(config)
-    }
-
-    #[test]
-    fn select_scored_prefers_deepinfra_for_shared_ops() {
-        let router = router_with_both();
-        let params = MediaGenerateParams::default();
-        // GenerateSpeech and Transcribe are served by both DeepInfra and AtlasCloud.
-        // The score table ranks DeepInfra higher for these shared ops.
-        for op in [MediaOp::GenerateSpeech, MediaOp::Transcribe] {
-            let (chosen, scores) =
-                select_scored(&router.registry, op, &params).expect("candidates exist");
-            assert_eq!(chosen.id(), "deepinfra", "DeepInfra must win for {op:?}");
-            assert!(
-                scores.iter().any(|s| s.id == "deepinfra"),
-                "DeepInfra scored"
-            );
-            assert!(
-                scores.iter().any(|s| s.id == "atlascloud"),
-                "atlascloud scored"
-            );
-        }
-    }
-
     #[test]
     fn select_scored_errors_when_no_provider_supports_op() {
         let router = MediaRouter::new(InferenceConfig::default());
@@ -214,28 +154,5 @@ mod tests {
             &MediaGenerateParams::default(),
         );
         assert!(result.is_err(), "empty registry must error, not panic");
-    }
-
-    #[test]
-    fn select_scored_returns_all_candidate_scores() {
-        let router = router_with_both();
-        let (chosen, scores) = select_scored(
-            &router.registry,
-            MediaOp::GenerateSpeech,
-            &MediaGenerateParams::default(),
-        )
-        .expect("candidates exist");
-        // GenerateSpeech is served by both DeepInfra and AtlasCloud → both appear in scores.
-        assert_eq!(scores.len(), 2, "both candidates scored");
-        // The chosen provider's score must be the maximum.
-        let max = scores
-            .iter()
-            .map(|s| s.weighted)
-            .fold(f64::NEG_INFINITY, f64::max);
-        assert!(
-            scores
-                .iter()
-                .any(|s| s.id == chosen.id() && (s.weighted - max).abs() < f64::EPSILON)
-        );
     }
 }

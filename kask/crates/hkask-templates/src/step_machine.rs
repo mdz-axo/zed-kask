@@ -410,12 +410,10 @@ impl StepMachine {
                 Ok(crate::step_actions::Effect::Exit(ExitKind::Escalated))
             }
             // Sync arms: borrow `node`/`infra` — no await, no move needed.
-            "choice" => self.execute_choice(&node),
             "loop" => self.execute_loop(&node, &infra),
             // Async arms: move `node`/`infra` by value so each future owns them
             // and is `Send + 'static` under `tokio::spawn`.
             "select" => self.execute_select(node, infra).await,
-            "populate" => self.execute_populate(node, infra).await,
             "compute" => self.execute_compute(node, infra).await,
             "render" => self.execute_render(node, infra).await,
             "execute" | "feedback" | "validate" | "retrieve" => {
@@ -423,7 +421,6 @@ impl StepMachine {
             }
             "flowdef" => self.execute_flowdef(node, infra).await,
             "parallel" => self.execute_parallel(node, infra).await,
-            "gate" => self.execute_gate(node, infra).await,
             other => Err(crate::ports::TemplateError::Manifest(format!(
                 "Unknown manifest step action: '{other}'"
             ))),

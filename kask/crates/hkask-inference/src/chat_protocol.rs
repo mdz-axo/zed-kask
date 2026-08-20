@@ -1,7 +1,7 @@
 //! Shared OpenAI-compatible chat completion protocol types and helpers.
 //!
-//! All four chat backends (DeepInfra, OpenRouter, Ollama,
-//! AtlasCloud) speak the same `/v1/chat/completions` wire format. Media
+//! All chat backends (OpenRouter, Ollama)
+//! speak the same `/v1/chat/completions` wire format. Media
 //! backends (image/video/audio/ASR) do not use this protocol.
 //! This module provides the shared request/response types and helper functions
 //! used by all backends.
@@ -153,14 +153,14 @@ pub struct ChatResponseMessage {
     /// emitting `content` (GLM-5.2, Qwen3).
     #[serde(default)]
     pub content: Option<String>,
-    /// Thinking-mode reasoning trace (Qwen3, GLM-5.2 on DeepInfra).
-    /// Populated when the model thinks; the final answer lives in `content`.
+    /// Thinking-mode reasoning trace (Qwen3, GLM-5.2 on OpenAI-compatible
+    /// providers). Populated when the model thinks; the final answer lives in `content`.
     /// Captured so callers can recover the answer when `content` is empty
     /// (e.g. thinking exhausted the token budget before emitting `content`).
     #[serde(default)]
     pub reasoning_content: Option<String>,
     /// Thinking-mode reasoning trace (Ollama emits this as `reasoning`).
-    /// DeepInfra/Qwen3 use `reasoning_content`; both are captured so the
+    /// Qwen3-style providers use `reasoning_content`; both are captured so the
     /// REPL can surface the chain-of-thought live.
     #[serde(default)]
     pub reasoning: Option<String>,
@@ -182,7 +182,8 @@ pub struct ChatUsage {
     /// (e.g. Ollama, local, $0). OpenRouter uses this field name.
     #[serde(default)]
     pub cost: Option<f64>,
-    /// DeepInfra's cost field (same meaning as `cost`, different key).
+    /// `estimated_cost` — an alternate cost key used by some OpenAI-compatible
+    /// providers (same meaning as `cost`, different key).
     #[serde(default)]
     pub estimated_cost: Option<f64>,
     /// Market compute value (BYOK). The real energy cost of the
@@ -248,7 +249,7 @@ pub struct StreamChoice {
 pub struct StreamDelta {
     #[serde(default)]
     pub content: Option<String>,
-    /// Thinking-mode reasoning delta (DeepInfra/Qwen3/GLM-5.2 streaming).
+    /// Thinking-mode reasoning delta (Qwen3/GLM-5.2 streaming on OpenAI-compatible providers).
     #[serde(default)]
     pub reasoning_content: Option<String>,
     /// Thinking-mode reasoning delta (Ollama streaming: `delta.reasoning`).
@@ -346,8 +347,8 @@ pub fn chat_response_to_result(response: ChatResponse) -> Result<InferenceResult
         .unwrap_or_default();
 
     // Thinking-mode models (Qwen3, GLM-5.2, DeepSeek-R1) put the final answer
-    // in `content` and deliberation in `reasoning_content` (DeepInfra) or
-    // `reasoning` (Ollama). When `content` is null/empty (the model spent its
+    // in `content` and deliberation in `reasoning_content` (OpenAI-compatible
+    // providers) or `reasoning` (Ollama). When `content` is null/empty (the model spent its
     // token budget reasoning, or returned tool calls without content), fall
     // back to the reasoning trace so downstream JSON extractors can still
     // recover the answer — in that degenerate case the reasoning IS the
@@ -600,8 +601,8 @@ mod tests {
             "id": "chatcmpl-847",
             "object": "chat.completion",
             "created": 1781219013,
-            "model": "DeepInfra/google/gemma-4-9b-it",
-            "system_fingerprint": "fp_deepinfra",
+            "model": "OpenRouter/google/gemma-4-9b-it",
+            "system_fingerprint": "fp_openrouter",
             "choices": [{
                 "index": 0,
                 "message": {
@@ -696,8 +697,9 @@ mod tests {
 
     /// Anti-regression (Cline #8636 class): reasoning deltas in an SSE stream
     /// must land on `InferenceStreamChunk.reasoning_delta`, never be silently
-    /// dropped, and never leak into `text_delta`. Covers both DeepInfra-style
-    /// `delta.reasoning_content` and Ollama-style `delta.reasoning`.
+    /// dropped, and never leak into `text_delta`. Covers both
+    /// `delta.reasoning_content` (OpenAI-compatible providers) and
+    /// Ollama-style `delta.reasoning`.
     #[test]
     fn stream_carries_reasoning_delta() {
         let body = r#"data: {"model":"OpenRouter/glm-5.2","choices":[{"delta":{"content":"","reasoning_content":"Let me think."}}]}
@@ -887,11 +889,12 @@ data: [DONE]
         assert_eq!(result.cost_usd, Some(0.001));
     }
 
-    // DeepInfra reports cost under `estimated_cost` (different key, same meaning).
+    // Some OpenAI-compatible providers report cost under `estimated_cost`
+    // (different key, same meaning).
     #[test]
-    fn chat_result_carries_deepinfra_estimated_cost() {
+    fn chat_result_carries_estimated_cost_key() {
         let raw = r#"{
-            "model": "DeepInfra/meta-llama/Llama-3.3-70B-Instruct",
+            "model": "OpenRouter/meta-llama/Llama-3.3-70B-Instruct",
             "choices": [{
                 "index": 0,
                 "message": {"role": "assistant", "content": "ok"},

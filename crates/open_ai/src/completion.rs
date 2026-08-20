@@ -5117,7 +5117,7 @@ mod tests {
             ))])),
             Some(Some(0.001))
         );
-        // DeepInfra: `usage.estimated_cost` (different key, same meaning).
+        // Some OpenAI-compatible providers: `usage.estimated_cost` (different key, same meaning).
         assert_eq!(
             cost_of(map_completion_events(vec![event_with(usage_with_cost(
                 None,

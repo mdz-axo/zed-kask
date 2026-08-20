@@ -7,10 +7,9 @@
 //! in `MediaRouter`: adding a provider = implement `MediaProvider` + register
 //! in `MediaRouter::new`; no dispatch edits.
 //!
-//! Two implementations exist (`DeepInfraBackend`, `AtlasCloudBackend`),
-//! so this trait is not speculative generality. The registry order encodes the
-//! existing policy: DeepInfra first (cheapest for background removal / TTS /
-//! STT), AtlasCloud fallback for those three ops and sole provider for the rest.
+//! No implementations are currently registered (the former media backends
+//! were removed); the trait + registry remain the generic dispatch
+//! infrastructure for providers added in the future.
 
 use hkask_types::{InferenceError, MediaGenerateParams};
 use serde_json::Value;
@@ -80,7 +79,7 @@ impl MediaOp {
 /// provider-specific call. The trait is `Send + Sync` so providers can live in
 /// an `Arc<dyn MediaProvider>` behind the registry.
 pub trait MediaProvider: Send + Sync {
-    /// Stable provider id (e.g. `"deepinfra"`, `"atlascloud"`) for logging / audit.
+    /// Stable provider id (e.g. `"openrouter"`) for logging / audit.
     fn id(&self) -> &'static str;
 
     /// Whether this provider can serve `op`. The registry uses this to filter
@@ -102,10 +101,7 @@ pub trait MediaProvider: Send + Sync {
 /// Ordered registry of media providers. Dispatches an op to the first
 /// supporting provider, falling back on runtime error.
 ///
-/// Order matters: register the preferred provider first. For the ops both
-/// providers support (background removal / TTS / STT), DeepInfra is registered
-/// first so it is preferred, with AtlasCloud as the runtime fallback — preserving
-/// the pre-refactor `MediaRouter` policy exactly.
+/// Order matters: register the preferred provider first.
 pub struct ProviderRegistry {
     providers: Vec<Arc<dyn MediaProvider>>,
 }
@@ -149,9 +145,7 @@ impl ProviderRegistry {
     /// 7-dimension scored engine (`scoring::select_scored`), which emits the
     /// `reg.media.select` span, and the fallback chain is ordered by descending
     /// weighted score. With a single candidate there is no selection to make —
-    /// the lone provider is used directly. The default score table reproduces
-    /// the prior registration-order policy (DeepInfra-first / AtlasCloud-fallback), so
-    /// dispatch behavior is preserved.
+    /// the lone provider is used directly.
     ///
     /// expect: "The system routes media ops through the configured provider membrane"
     /// pre:  at least one provider supports op (otherwise returns Connection error)

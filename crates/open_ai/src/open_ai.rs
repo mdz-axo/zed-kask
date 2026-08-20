@@ -768,7 +768,8 @@ pub struct Usage {
     pub completion_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
     // zed-kask D20: provider-reported USD cost. OpenRouter uses
-    // `cost`, DeepInfra uses `estimated_cost`, BYOK providers use `market_cost`
+    // `cost`, some OpenAI-compatible providers use `estimated_cost`, BYOK
+    // providers use `market_cost`
     // (real compute energy). Surfaced into `TokenUsage.cost` by the event
     // mapper so kask's rJoule budget charges observed (not operator-configured)
     // cost. `None` for providers that don't report cost (Anthropic, OpenAI).

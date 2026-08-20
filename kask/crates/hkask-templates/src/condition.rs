@@ -191,19 +191,6 @@ fn eval_step_comparison<C: ContextLookup>(lhs: &str, op: &str, rhs: &str, contex
 /// unparsable. Operators: `<=`, `>=`, `==`, `!=`, `<`, `>` (two-char checked
 /// before one-char to avoid prefix collisions). This matches the operator set
 /// supported by `parse_step_comparison` (used by `evaluate_step_condition`).
-pub fn parse_choice_condition(condition: &str) -> Option<(&str, &str, &str)> {
-    let condition = condition.trim();
-    for op in &["<=", ">=", "==", "!=", "<", ">"] {
-        if let Some(pos) = condition.find(op) {
-            let field = condition[..pos].trim();
-            let value = condition[pos + op.len()..].trim();
-            if !field.is_empty() && !value.is_empty() {
-                return Some((field, *op, value));
-            }
-        }
-    }
-    None
-}
 
 #[cfg(test)]
 mod tests {

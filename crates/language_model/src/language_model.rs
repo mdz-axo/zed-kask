@@ -102,7 +102,7 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
-    /// The provider's OpenAI-compatible base URL (e.g. `https://api.deepinfra.com/v1/openai`),
+    /// The provider's OpenAI-compatible base URL (e.g. `https://openrouter.ai/api/v1`),
     /// when this model is backed by an OpenAI-compatible provider. `None` for providers
     /// that don't expose a single base URL (e.g. zed.dev cloud) or that aren't
     /// OpenAI-compatible. Used by the kask embedding port to make raw `/embeddings`

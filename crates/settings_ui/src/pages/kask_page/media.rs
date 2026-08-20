@@ -19,12 +19,14 @@ pub(crate) fn render_media_page(
     let vision_model = media.vision_model;
     let image_gen_model = media.image_gen_model;
 
-    // Placeholders mirror hkask_inference::model_constants::DEFAULT_*_MODEL
-    // (DeepInfra defaults).
+    // Placeholders mirror hkask_inference::model_constants::DEFAULT_*_MODEL.
+    // No media backends are currently registered in the MediaRouter, so the
+    // TTS/STT/image-gen overrides have no active consumer — they are kept for
+    // when a media backend is registered again.
     let tts_input = kask_string_input(
         "kask-media-tts-model",
         "TTS Model",
-        "DeepInfra/hexgrad/Kokoro-82M",
+        "ollama/kokoro",
         tts_model,
         "media",
         "tts_model",
@@ -32,7 +34,7 @@ pub(crate) fn render_media_page(
     let stt_input = kask_string_input(
         "kask-media-stt-model",
         "STT Model",
-        "DeepInfra/whisper-large-v3",
+        "ollama/whisper-large-v3",
         stt_model,
         "media",
         "stt_model",
@@ -48,7 +50,7 @@ pub(crate) fn render_media_page(
     let image_gen_input = kask_string_input(
         "kask-media-image-gen-model",
         "Image Generation Model",
-        "DeepInfra/black-forest-labs/FLUX-2-klein-4b",
+        "",
         image_gen_model,
         "media",
         "image_gen_model",

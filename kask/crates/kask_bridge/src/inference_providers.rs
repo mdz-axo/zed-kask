@@ -1,20 +1,12 @@
 //! Inference provider descriptors and `openai_compatible` settings sync.
 //!
-//! DeepInfra and AtlasCloud are exposed as zed OpenAI-compatible providers:
-//! when the user enables one in the kask settings UI, the composition root
-//! calls `ensure_openai_compatible_entries` to write an
-//! `openai_compatible.<provider_id>` entry into settings.json, and zed's
-//! `register_compatible_providers` machinery registers it in the
-//! `LanguageModelRegistry` (Settings → AI → LLM Providers + agent model
-//! picker).
-//!
 //! OpenRouter is NOT registered here — zed already ships a built-in
 //! `OpenRouterLanguageModelProvider`. Its kask toggle only mirrors the API
 //! key to MCP servers via `credential_urls_for_mcp`.
 //!
-//! Removed providers (fal.ai, Cline, KiloCode, and stale OpenRouter entries
-//! from prior versions) are scrubbed from settings.json by
-//! `ensure_openai_compatible_entries`.
+//! Removed providers (fal.ai, Cline, KiloCode, DeepInfra, AtlasCloud, and
+//! stale OpenRouter entries from prior versions) are scrubbed from
+//! settings.json by `ensure_openai_compatible_entries`.
 //!
 //! API keys are stored in the keychain under the provider's `api_url` (the
 //! same URL zed's OpenAI-compatible provider reads) and mirrored to
@@ -53,28 +45,12 @@ pub struct InferenceProviderDescriptor {
 /// `openai_compatible` registration (see `ensure_openai_compatible_entries`).
 pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     InferenceProviderDescriptor {
-        id: "DeepInfra",
-        name: "DeepInfra",
-        api_url: "https://api.deepinfra.com/v1/openai",
-        env_var: "DEEPINFRA_API_KEY",
-        credential_key: "deepinfra",
-        dashboard_url: "https://deepinfra.com/",
-    },
-    InferenceProviderDescriptor {
         id: "OpenRouter",
         name: "OpenRouter",
         api_url: "https://openrouter.ai/api/v1",
         env_var: "OPENROUTER_API_KEY",
         credential_key: "openrouter",
         dashboard_url: "https://openrouter.ai/",
-    },
-    InferenceProviderDescriptor {
-        id: "AtlasCloud",
-        name: "AtlasCloud",
-        api_url: "https://api.atlascloud.ai/v1",
-        env_var: "ATLASCLOUD_API_KEY",
-        credential_key: "atlascloud",
-        dashboard_url: "https://www.atlascloud.ai/",
     },
     // RunPod has a dedicated `LanguageModelProvider` (D29), not an
     // `openai_compatible` entry. It's listed here so `mirror_env_keys_to_keychain`
@@ -443,9 +419,7 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
             continue;
         }
         let enabled = match provider.credential_key {
-            "deepinfra" => settings.inference_providers.deepinfra_enabled,
             "openrouter" => settings.inference_providers.openrouter_enabled,
-            "atlascloud" => settings.inference_providers.atlascloud_enabled,
             _ => false,
         };
         if enabled {
@@ -476,24 +450,22 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
 /// key to MCP servers via `credential_urls_for_mcp` (which iterates
 /// `INFERENCE_PROVIDERS` directly, not this function).
 pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut App) {
-    // Extract enabled states before the `move` closure to avoid borrowing
-    // `settings` inside it. OpenRouter is absent: it has a built-in zed provider.
-    let enabled_states: [(&'static str, bool); 2] = [
-        ("DeepInfra", settings.inference_providers.deepinfra_enabled),
-        (
-            "AtlasCloud",
-            settings.inference_providers.atlascloud_enabled,
-        ),
-    ];
+    // No kask `openai_compatible` providers remain to write: OpenRouter and
+    // RunPod are skipped (built-in / dedicated zed providers), and the former
+    // kask-registered providers have been removed. This function now only
+    // scrubs stale entries so user settings.json stays clean.
+    let _ = settings;
 
     // Stale `openai_compatible` entries to scrub. The api_url guard avoids
     // removing a user's custom provider that happens to share an id.
     // OpenRouter is included to clean up entries written by prior versions.
-    let removed_providers: [(&'static str, &str); 4] = [
+    let removed_providers: [(&'static str, &str); 6] = [
         ("fal.ai", "https://api.fal.ai/v1"),
         ("Cline", "https://api.cline.bot/api/v1"),
         ("KiloCode", "https://api.kilo.ai/api/gateway"),
         ("OpenRouter", "https://openrouter.ai/api/v1"),
+        ("DeepInfra", "https://api.deepinfra.com/v1/openai"),
+        ("AtlasCloud", "https://api.atlascloud.ai/v1"),
     ];
 
     let fs = <dyn fs::Fs>::global(cx);
@@ -513,47 +485,6 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
                 openai_compatible.remove(&id);
             }
         }
-
-        for provider in INFERENCE_PROVIDERS {
-            // OpenRouter has a built-in zed provider; RunPod has a dedicated
-            // provider (D29). Neither should get an `openai_compatible` entry.
-            if provider.credential_key == "openrouter" || provider.credential_key == "runpod" {
-                continue;
-            }
-
-            let enabled = enabled_states
-                .iter()
-                .find(|(id, _)| *id == provider.id)
-                .map(|(_, e)| *e)
-                .unwrap_or(false);
-
-            let provider_id: std::sync::Arc<str> = std::sync::Arc::from(provider.id);
-            if enabled {
-                // Only insert if not already present — don't overwrite
-                // user-configured available_models, custom headers, or
-                // auto_discover setting. The kask-surfaced providers default to
-                // `auto_discover: true` so models appear in the picker as soon
-                // as the user enters an API key (API-key presence is the opt-in).
-                openai_compatible.entry(provider_id).or_insert_with(|| {
-                    OpenAiCompatibleSettingsContent {
-                        api_url: provider.api_url.to_string(),
-                        available_models: Vec::new(),
-                        custom_headers: None,
-                        auto_discover: true,
-                    }
-                });
-            } else {
-                // Remove the entry if the provider was disabled.
-                // We only remove if the api_url matches our known URL
-                // (to avoid removing a user's custom provider that happens
-                // to share the ID).
-                if let Some(existing) = openai_compatible.get(&provider_id)
-                    && existing.api_url == provider.api_url
-                {
-                    openai_compatible.remove(&provider_id);
-                }
-            }
-        }
     });
 }
 
@@ -561,9 +492,9 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
 /// the `INFERENCE_PROVIDERS` table + env var.
 ///
 /// This is the direct path: parse the provider prefix from the model string
-/// (e.g. `DeepInfra/Qwen/...` → `DeepInfra`), look up the descriptor in
+/// (e.g. `ollama/nomic-embed-text` → `ollama`), look up the descriptor in
 /// `INFERENCE_PROVIDERS`, and read the API key from the env var named in the
-/// descriptor (`DEEPINFRA_API_KEY`, etc.). No `LanguageModelRegistry` lookup,
+/// descriptor (`OPENROUTER_API_KEY`, etc.). No `LanguageModelRegistry` lookup,
 /// no GPUI access, no case-sensitivity traps.
 ///
 /// Returns `None` (after logging a warn) if:
@@ -672,7 +603,7 @@ impl MirrorTarget {
 /// their credentials via `build_mcp_server_env`, which reads from the
 /// keychain (`kask://credentials/<key>`) — not from the parent process env.
 /// Without this mirror, an operator who sets a provider key (e.g.
-/// `DEEPINFRA_API_KEY`) only in `.env` gets a working main process but
+/// `OPENROUTER_API_KEY`) only in `.env` gets a working main process but
 /// MCP servers silently fail with "API key not configured".
 ///
 /// For each provider in `INFERENCE_PROVIDERS` whose env var is set and
@@ -840,31 +771,31 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn resolve_embedding_credentials_deepinfra_with_key() {
+    fn resolve_embedding_credentials_openrouter_with_key() {
         let _guard = ENV_LOCK.lock().unwrap();
         // SAFETY: test-only env mutation, serialized by ENV_LOCK.
         unsafe {
-            std::env::set_var("DEEPINFRA_API_KEY", "test-key");
+            std::env::set_var("OPENROUTER_API_KEY", "test-key");
         }
-        let result = resolve_embedding_credentials("DeepInfra/Qwen/Qwen3-Embedding-0.6B");
+        let result = resolve_embedding_credentials("OpenRouter/Qwen/Qwen3-Embedding-0.6B");
         unsafe {
-            std::env::remove_var("DEEPINFRA_API_KEY");
+            std::env::remove_var("OPENROUTER_API_KEY");
         }
         assert!(result.is_some(), "should resolve with key present");
         let (api_url, api_key) = result.unwrap();
-        assert_eq!(api_url, "https://api.deepinfra.com/v1/openai");
+        assert_eq!(api_url, "https://openrouter.ai/api/v1");
         assert_eq!(api_key, "test-key");
     }
 
     #[test]
-    fn resolve_embedding_credentials_deepinfra_case_insensitive() {
+    fn resolve_embedding_credentials_openrouter_case_insensitive() {
         let _guard = ENV_LOCK.lock().unwrap();
         unsafe {
-            std::env::set_var("DEEPINFRA_API_KEY", "test-key");
+            std::env::set_var("OPENROUTER_API_KEY", "test-key");
         }
-        let result = resolve_embedding_credentials("deepinfra/Qwen/Qwen3-Embedding-0.6B");
+        let result = resolve_embedding_credentials("openrouter/Qwen/Qwen3-Embedding-0.6B");
         unsafe {
-            std::env::remove_var("DEEPINFRA_API_KEY");
+            std::env::remove_var("OPENROUTER_API_KEY");
         }
         assert!(
             result.is_some(),
@@ -873,12 +804,12 @@ mod tests {
     }
 
     #[test]
-    fn resolve_embedding_credentials_deepinfra_no_key() {
+    fn resolve_embedding_credentials_openrouter_no_key() {
         let _guard = ENV_LOCK.lock().unwrap();
         unsafe {
-            std::env::remove_var("DEEPINFRA_API_KEY");
+            std::env::remove_var("OPENROUTER_API_KEY");
         }
-        let result = resolve_embedding_credentials("DeepInfra/Qwen/Qwen3-Embedding-0.6B");
+        let result = resolve_embedding_credentials("OpenRouter/Qwen/Qwen3-Embedding-0.6B");
         assert!(result.is_none(), "should return None when key is missing");
     }
 
@@ -952,11 +883,11 @@ mod tests {
             for desc in DATA_SERVICES {
                 std::env::remove_var(desc.env_var);
             }
-            std::env::set_var("DEEPINFRA_API_KEY", "di-test-key");
+            std::env::set_var("OPENROUTER_API_KEY", "or-test-key");
             std::env::set_var("HF_TOKEN", "hf-test-key");
         }
         let collected = collect_env_keys_for_mirror();
-        // DeepInfra is an inference provider (chat); HF_TOKEN is a data-service
+        // OpenRouter is an inference provider (chat); HF_TOKEN is a data-service
         // credential. Both are mirrored, but only the inference provider carries
         // an api_url.
         assert_eq!(
@@ -964,26 +895,26 @@ mod tests {
             2,
             "two env vars set → two entries collected, got {collected:?}"
         );
-        // DeepInfra — InferenceProvider variant (writes api_url + credential_url).
-        let di_entry = collected
+        // OpenRouter — InferenceProvider variant (writes api_url + credential_url).
+        let or_entry = collected
             .iter()
-            .find(|t| t.env_var() == "DEEPINFRA_API_KEY")
-            .expect("DEEPINFRA_API_KEY entry should be present");
-        match di_entry {
+            .find(|t| t.env_var() == "OPENROUTER_API_KEY")
+            .expect("OPENROUTER_API_KEY entry should be present");
+        match or_entry {
             MirrorTarget::InferenceProvider {
                 api_url,
                 credential_url,
                 key,
                 ..
             } => {
-                assert_eq!(api_url, "https://api.deepinfra.com/v1/openai", "api_url");
+                assert_eq!(api_url, "https://openrouter.ai/api/v1", "api_url");
                 assert_eq!(
-                    credential_url, "kask://credentials/deepinfra",
+                    credential_url, "kask://credentials/openrouter",
                     "credential_url"
                 );
-                assert_eq!(key, "di-test-key", "key");
+                assert_eq!(key, "or-test-key", "key");
             }
-            other => panic!("DEEPINFRA_API_KEY should be InferenceProvider, got {other:?}"),
+            other => panic!("OPENROUTER_API_KEY should be InferenceProvider, got {other:?}"),
         }
         // HF_TOKEN — DataService variant (no api_url; data-service credential).
         let hf_entry = collected
@@ -1005,7 +936,7 @@ mod tests {
             other => panic!("HF_TOKEN should be DataService, got {other:?}"),
         }
         unsafe {
-            std::env::remove_var("DEEPINFRA_API_KEY");
+            std::env::remove_var("OPENROUTER_API_KEY");
             std::env::remove_var("HF_TOKEN");
         }
     }
@@ -1228,6 +1159,8 @@ mod tests {
         assert_eq!(openrouter.env_var, "OPENROUTER_API_KEY");
 
         // Replicate the skip filter from `ensure_openai_compatible_entries`.
+        // After the removal of the kask-registered openai_compatible providers,
+        // the write set is empty — nothing is written, only stale entries scrubbed.
         let write_set: Vec<&str> = INFERENCE_PROVIDERS
             .iter()
             .filter(|p| p.credential_key != "openrouter")
@@ -1237,8 +1170,6 @@ mod tests {
             !write_set.contains(&"OpenRouter"),
             "OpenRouter must not be in the openai_compatible write set"
         );
-        assert!(write_set.contains(&"DeepInfra"));
-        assert!(write_set.contains(&"AtlasCloud"));
     }
 
     // D29 pin: RunPod is in `INFERENCE_PROVIDERS` so the keychain mirror writes
@@ -1268,6 +1199,8 @@ mod tests {
         );
 
         // Replicate the skip filter from `ensure_openai_compatible_entries`.
+        // After the removal of the kask-registered openai_compatible providers,
+        // the write set is empty — nothing is written, only stale entries scrubbed.
         let write_set: Vec<&str> = INFERENCE_PROVIDERS
             .iter()
             .filter(|p| p.credential_key != "openrouter" && p.credential_key != "runpod")
@@ -1277,8 +1210,6 @@ mod tests {
             !write_set.contains(&"RunPod"),
             "RunPod must not be in the openai_compatible write set (dedicated provider, D29)"
         );
-        assert!(write_set.contains(&"DeepInfra"));
-        assert!(write_set.contains(&"AtlasCloud"));
 
         // RunPod must be skipped in `credential_urls_for_mcp`'s
         // `INFERENCE_PROVIDERS` loop (MCP injection is via `DATA_SERVICES`).

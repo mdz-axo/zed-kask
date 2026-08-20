@@ -515,18 +515,15 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: Some("kask.inference_providers"),
             description: Some(
-                "Configure API keys for OpenAI-compatible inference providers \
-                 (DeepInfra, OpenRouter, AtlasCloud). \
-                 When enabled, each provider appears in Settings → AI → LLM Providers \
-                 and in the agent model picker."
+                "Configure API keys for inference providers (OpenRouter). \
+                 OpenRouter has a built-in zed provider; its toggle mirrors the \
+                 key to kask MCP servers."
                     .into(),
             ),
             search_aliases: &[
                 "inference",
                 "provider",
-                "deepinfra",
                 "openrouter",
-                "atlascloud",
                 "glm",
                 "llm",
                 "model",
@@ -807,7 +804,7 @@ mod tests {
 
     /// The nudge must only fire for `kask://credentials/...` URLs. Inference
     /// providers write keys under their `api_url` (e.g.
-    /// `https://api.deepinfra.com/v1/openai`) AND mirror to
+    /// `https://openrouter.ai/api/v1`) AND mirror to
     /// `kask://credentials/<key>`; the `api_url` write is consumed by zed's
     /// `LanguageModelRegistry`, not by kask MCP servers, so it must NOT
     /// trigger a restart. This test pins the namespace guard predicate so a
@@ -835,11 +832,7 @@ mod tests {
         // `LanguageModelRegistry`, NOT by kask MCP servers, and must NOT nudge.
         // (The mirrored `kask://credentials/<key>` write from the same flow IS
         // kask-namespaced and will nudge — that's the intended dual-write.)
-        let provider_api_urls = [
-            "https://api.deepinfra.com/v1/openai",
-            "https://openrouter.ai/api/v1",
-            "https://api.atlascloud.ai/v1",
-        ];
+        let provider_api_urls = ["https://openrouter.ai/api/v1", "https://api.runpod.io"];
         for url in provider_api_urls {
             assert!(
                 !url.starts_with(KASK_CREDENTIAL_NAMESPACE),

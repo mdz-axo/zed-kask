@@ -1,10 +1,8 @@
-//! Inference Providers page — API keys for OpenAI-compatible providers
-//! (DeepInfra, OpenRouter, AtlasCloud). Toggling DeepInfra or AtlasCloud
-//! writes an `openai_compatible.<provider_id>` entry to settings.json so the
-//! provider appears in the LLM provider picker. OpenRouter has a built-in zed
-//! provider, so its toggle only mirrors the API key to MCP servers. Keys are
-//! stored in the keychain under the provider's `api_url` and mirrored to
-//! `kask://credentials/<key>` for MCP server env injection.
+//! Inference Providers page — API keys for inference providers
+//! (OpenRouter). OpenRouter has a built-in zed provider, so its toggle only
+//! mirrors the API key to MCP servers. Keys are stored in the keychain under
+//! the provider's `api_url` and mirrored to `kask://credentials/<key>` for
+//! MCP server env injection.
 //!
 //! RunPod is deliberately NOT listed here: it is a dedicated
 //! (non-OpenAI-compatible) endpoint provider (D29), so there is never an
@@ -18,9 +16,7 @@ use super::*;
 
 /// Render the Inference Providers sub-page.
 ///
-/// Each provider has an enable toggle and an API key input. DeepInfra and
-/// AtlasCloud toggles write an `openai_compatible.<provider_id>` entry to
-/// settings.json (appears in Settings → AI → LLM Providers). OpenRouter's
+/// Each provider has an enable toggle and an API key input. OpenRouter's
 /// toggle only mirrors the key to MCP servers (zed already ships a built-in
 /// OpenRouter provider). Keys are stored in the keychain under the
 /// provider's `api_url` and mirrored to `kask://credentials/<key>`.
@@ -34,7 +30,7 @@ pub(crate) fn render_inference_providers_page(
     let raw = raw_kask_settings(cx);
     // Resolve via `From` so the UI shows the same defaults the runtime uses.
     // When the subsection is absent or a field is `None`, `From` reads env vars
-    // (`DEEPINFRA_API_KEY`, etc.), so a user with an API key set sees the
+    // (`OPENROUTER_API_KEY`, etc.), so a user with an API key set sees the
     // toggle as on even without an explicit `kask.inference_providers` entry.
     // `Default::default()` returns all-false (pure) — we must go through `From`
     // or `from_env()` to get the env-var auto-enable behavior.
@@ -54,15 +50,12 @@ pub(crate) fn render_inference_providers_page(
         // key lives under Settings → AI → LLM Providers.
         .filter(|desc| desc.credential_key != "runpod")
     {
-        // Match on `credential_key` (lowercase canonical key: "deepinfra",
-        // "openrouter", "atlascloud"), not `desc.id`
-        // (which is the display-form "DeepInfra", "OpenRouter", …).
+        // Match on `credential_key` (lowercase canonical key: "openrouter"),
+        // not `desc.id` (which is the display-form "OpenRouter", …).
         // The runtime matchers in `kask_bridge` use `credential_key`; the UI
         // must agree or every toggle renders off and writes no-op.
         let enabled = match desc.credential_key {
-            "deepinfra" => inference.deepinfra_enabled,
             "openrouter" => inference.openrouter_enabled,
-            "atlascloud" => inference.atlascloud_enabled,
             _ => false,
         };
         rows.push(render_inference_provider_row(
@@ -88,12 +81,9 @@ pub(crate) fn render_inference_providers_page(
                 .child(SettingsSectionHeader::new("Inference Providers"))
                 .child(
                     Label::new(
-                        "API keys for OpenAI-compatible inference providers. \
-                         Toggle DeepInfra or AtlasCloud to register them as LLM \
-                         providers in zed (Settings → AI → LLM Providers and the \
-                         agent model picker). OpenRouter has a built-in provider; \
-                         its toggle only mirrors the key to kask MCP servers. \
-                         Keys are stored in the system keychain.",
+                        "API keys for inference providers. OpenRouter has a \
+                         built-in provider; its toggle only mirrors the key to \
+                         kask MCP servers. Keys are stored in the system keychain.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -283,14 +273,12 @@ fn render_inference_provider_row(
 }
 
 fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App) {
-    // `provider_id` arrives as `desc.id` (display-form: "DeepInfra",
-    // "OpenRouter", …). Translate to the canonical lowercase `credential_key`
-    // so the match arms fire. Without this, toggling a provider writes
-    // nothing because none of the lowercase arms match the display-form id.
+    // `provider_id` arrives as `desc.id` (display-form: "OpenRouter", …).
+    // Translate to the canonical lowercase `credential_key` so the match arms
+    // fire. Without this, toggling a provider writes nothing because none of
+    // the lowercase arms match the display-form id.
     let credential_key = match provider_id {
-        "DeepInfra" => "deepinfra",
         "OpenRouter" => "openrouter",
-        "AtlasCloud" => "atlascloud",
         other => other,
     }
     .to_string();
@@ -298,9 +286,7 @@ fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App
         let kask = settings.kask.get_or_insert_default();
         let inference = kask.inference_providers.get_or_insert_default();
         match credential_key.as_str() {
-            "deepinfra" => inference.deepinfra_enabled = Some(enabled),
             "openrouter" => inference.openrouter_enabled = Some(enabled),
-            "atlascloud" => inference.atlascloud_enabled = Some(enabled),
             _ => {}
         }
     });

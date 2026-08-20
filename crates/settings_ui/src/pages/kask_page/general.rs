@@ -143,7 +143,7 @@ pub(crate) fn render_general_page(
                          cascades, corpus OCR, and MCP tool calls. The limiter starts \
                          at the concurrency step and ramps up by the step on success \
                          until the maximum or a provider throttle (429/503). Providers \
-                         throttle at different levels; OpenRouter and DeepInfra scale \
+                         throttle at different levels; OpenRouter scales \
                          to the ceiling. Changes require a restart to take effect.",
                     )
                     .size(LabelSize::Small)

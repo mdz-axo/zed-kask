@@ -30,7 +30,7 @@ pub(crate) fn render_models_page(
     let embedding_model_input = kask_string_input(
         "kask-models-embedding",
         "Embedding Model",
-        "DeepInfra/Qwen/Qwen3-Embedding-0.6B",
+        "ollama/nomic-embed-text",
         embedding_model,
         "models",
         "embedding_model",

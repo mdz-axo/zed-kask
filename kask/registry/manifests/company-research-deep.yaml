@@ -164,6 +164,8 @@ steps:
         input_mapping:
           query: "{{ ticker }} investor relations about company business"
           num_results: 10
+    input_mapping:
+      join: allSettled
     timeout_seconds: 300
     on_failure:
       action: report
