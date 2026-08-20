@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "Foundation"
 mds_categories: [domain, composition]
@@ -392,8 +392,11 @@ an `InferenceOutcome` (`inference_ipc.rs:197`). The socket path is passed via
   (`corpus.rs:103`), `ExpertiseLevel` (`corpus.rs:20`).
 - `hmem_ontology.rs`: `HMemOntology` (`hmem_ontology.rs:35`) — dual-axis
   ontological anchoring (DC+BIBO state axis, PKO process axis).
-- `template.rs` / `template_type.rs`: `LLMParameters` (`template.rs:14`),
-  `TemplateType` (`template_type.rs:28` — WordAct/KnowAct/FlowDef/RenderAct).
+- `template.rs` / `template_type.rs`: `LLMParameters` (`template.rs:14`).
+  (The former `TemplateType` enum at `template_type.rs:28` —
+  WordAct/KnowAct/FlowDef/RenderAct — was deleted with `hkask-templates`,
+  commit `5f4cf5f10d`; `template_type.rs` no longer exists. `LLMParameters`
+  survives as a foundational config primitive.)
 - `skill.rs`: `SkillPolarity` (`skill.rs:27` —
   Generative/Evaluative/Regulative/Procedural).
 - `voice.rs`: `VoiceDesign` (`voice.rs:15`).

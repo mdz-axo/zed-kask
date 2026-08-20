@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "Foundation"
 mds_categories: [trust, curation]
@@ -15,8 +15,10 @@ inside zed-kask, but the kask crates must not depend on zed's internal types,
 on concrete storage backends, or on `hkask-capability` (which would create a
 dependency cycle). The foundation crate defines the contracts that mediate
 between these worlds: kask crates depend on abstractions, and `kask_bridge`,
-`hkask-storage`, `hkask-regulation`, and `hkask-templates` provide the
-adapters. This is the hexagonal architecture pattern applied at the crate
+`hkask-storage`, and `hkask-regulation` provide the
+adapters. (The former `hkask-templates` crate was deleted, commit `5f4cf5f10d`;
+skill execution is now upstream-Zed body injection via `SkillTool::run` →
+`render_skill_envelope`.) This is the hexagonal architecture pattern applied at the crate
 boundary.[^cockburn]
 
 ## Source citations
