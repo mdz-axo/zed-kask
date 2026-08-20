@@ -1382,6 +1382,80 @@ mod tests {
             ),
         }
     }
+
+    #[test]
+    fn administrative_tool_contracts_are_registered() {
+        let store = test_store();
+        let contracts = store.contracts.lock().unwrap();
+        for name in crate::grounding::ADMINISTRATIVE_TOOL_NAMES {
+            assert!(
+                contracts.contains_key(*name),
+                "administrative contract must be registered for tool '{name}'"
+            );
+            assert!(
+                contracts[*name].field_sources.is_empty(),
+                "administrative contract for '{name}' must have empty field_sources \
+                 (core-level grounding passes tool_calls: [], so any sourced \
+                 field would be nulled)"
+            );
+        }
+    }
+
+    #[test]
+    fn administrative_contract_keeps_object_output_without_nulling() {
+        let store = test_store();
+        let output = json!({"agents": ["alpha", "beta"], "count": 2});
+        let (result, cleaned) = store.enforce_for_agent(
+            "core:swarm_list_local_agents",
+            "swarm_list_local_agents",
+            "swarm_list_local_agents",
+            &output,
+            &[],
+            &output.to_string(),
+            &[],
+        );
+        assert!(result.is_some(), "contract exists -> grounding runs");
+        let gr = result.as_ref().expect("grounding ran");
+        assert!(
+            gr.nulled_fields.is_empty(),
+            "no fields should be nulled for an administrative tool with empty field_sources"
+        );
+        // The core data fields are unchanged (provenance metadata is added
+        // as _provenance siblings, but the original values are preserved).
+        assert_eq!(
+            cleaned.get("agents"),
+            Some(&json!(["alpha", "beta"])),
+            "agents field must be preserved"
+        );
+        assert_eq!(
+            cleaned.get("count"),
+            Some(&json!(2)),
+            "count field must be preserved"
+        );
+    }
+
+    #[test]
+    fn administrative_contract_records_unenforceable_for_string_output() {
+        let store = test_store();
+        let output = json!("{\"symbol\":\"AAPL\",\"pe\":28.5}");
+        let (result, cleaned) = store.enforce_for_agent(
+            "core:company_transcript",
+            "company_transcript",
+            "company_transcript",
+            &output,
+            &[],
+            &output.to_string(),
+            &[],
+        );
+        assert!(
+            result.is_none(),
+            "non-object output with a contract -> grounding is unenforceable (returns None)"
+        );
+        assert_eq!(
+            cleaned, output,
+            "output must be unchanged when unenforceable"
+        );
+    }
 }
 
 /// Property-based tests for the central grounding ledger.

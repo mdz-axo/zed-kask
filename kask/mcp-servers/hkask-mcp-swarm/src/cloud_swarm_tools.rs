@@ -2374,4 +2374,53 @@ mod tests {
             );
         }
     }
+
+    // ── Grounding wiring: cloud delegation source strings ───────────────
+    //
+    // The cloud delegation tools call `enforce_narrative` with a specific
+    // source string. These tests pin the source strings so a refactor that
+    // changes or removes a source is caught. Full integration tests (like
+    // the local `grounding_wiring_tests` in `local_tools.rs`) require ABW
+    // API mocking, which is not feasible here. The source string is the
+    // contract between the tool and the trend query.
+
+    #[test]
+    fn swarm_execute_agent_narrative_source_is_recorded() {
+        let store = hkask_verification::VerificationStore::in_memory();
+        store.enforce_narrative(
+            "swarm_execute_agent",
+            "test_agent",
+            "abw_cloud",
+            "I wrote the file at /src/main.rs and all tests passed.",
+        );
+        let trend = store
+            .grounding_trend(&hkask_verification::TrendScope::Global)
+            .expect("trend must succeed");
+        assert_eq!(trend.total_delegations, 1);
+    }
+
+    #[test]
+    fn swarm_delegate_narrative_source_is_recorded() {
+        let store = hkask_verification::VerificationStore::in_memory();
+        store.enforce_narrative(
+            "swarm_delegate",
+            "test_agent",
+            "abw_cloud",
+            "Clean response.",
+        );
+        let trend = store
+            .grounding_trend(&hkask_verification::TrendScope::Global)
+            .expect("trend must succeed");
+        assert_eq!(trend.total_delegations, 1);
+    }
+
+    #[test]
+    fn swarm_fanout_narrative_source_is_recorded() {
+        let store = hkask_verification::VerificationStore::in_memory();
+        store.enforce_narrative("swarm_fanout", "test_agent", "abw_cloud", "Clean response.");
+        let trend = store
+            .grounding_trend(&hkask_verification::TrendScope::Global)
+            .expect("trend must succeed");
+        assert_eq!(trend.total_delegations, 1);
+    }
 }

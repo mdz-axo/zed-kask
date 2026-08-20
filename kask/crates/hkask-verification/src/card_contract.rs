@@ -39,8 +39,10 @@
 //! 6. `derived` entries' `from` must name a key in the same grounding object.
 
 use serde_json::Value;
+use std::collections::HashMap;
 
 use crate::grounding::{DerivedSpec, FieldSpec, GroundingContract};
+use crate::ledger::VerificationStore;
 
 /// Minimum length of a `why`. Short enough not to be tyrannical, long
 /// enough that "n/a" and "tool" do not pass.
@@ -344,6 +346,31 @@ pub fn from_card_grounding(
     })
 }
 
+/// Validate and register a card-declared grounding contract. If the card's
+/// `output_contract.grounding` is present and passes validation (no errors,
+/// only warnings), convert it to a `GroundingContract` and register it in
+/// the `VerificationStore`. Returns `true` if a contract was registered.
+///
+/// This is the single entry point for making card-declared grounding
+/// enforceable — call it before `enforce_and_stamp` so the contract is
+/// available for lookup by `agent_type`.
+pub fn register_if_valid(
+    store: &VerificationStore,
+    grounding: Option<&Value>,
+    mcp_tools: &[String],
+    agent_type: &str,
+) -> bool {
+    let findings = validate(grounding, mcp_tools);
+    let only_warnings = findings.iter().all(|f| f.is_warning());
+    if findings.is_empty() || only_warnings {
+        if let Some(contract) = from_card_grounding(grounding, agent_type) {
+            store.register_contract(contract);
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -616,5 +643,136 @@ mod tests {
             findings.is_empty(),
             "derived with existing from should pass: {findings:?}"
         );
+    }
+
+    // ── from_card_grounding conversion ──────────────────────────────────────
+
+    #[test]
+    fn from_card_grounding_converts_sourced_field() {
+        let grounding = json!({
+            "deliverable_path": {
+                "status": "sourced",
+                "tools": ["zed/write_file"],
+                "response_path": "path",
+                "why": "A file path the agent claims to have written. Must be sourced from a file-writing tool."
+            }
+        });
+        let contract = from_card_grounding(Some(&grounding), "task");
+        let contract = contract.expect("non-empty grounding must produce a contract");
+        assert_eq!(contract.agent_type, "task");
+        let spec = contract
+            .field_sources
+            .get("deliverable_path")
+            .expect("field present");
+        assert_eq!(spec.sources, vec!["zed/write_file".to_string()]);
+        assert_eq!(spec.response_path, "path");
+        assert!(spec.derived_from.is_none());
+    }
+
+    #[test]
+    fn from_card_grounding_converts_inferred_field() {
+        let grounding = json!({
+            "summary": {
+                "status": "inferred",
+                "why": "A prose summary commissioned by the system prompt for the task."
+            }
+        });
+        let contract = from_card_grounding(Some(&grounding), "task");
+        let contract = contract.expect("non-empty grounding must produce a contract");
+        let spec = contract
+            .field_sources
+            .get("summary")
+            .expect("field present");
+        assert!(
+            spec.sources.is_empty(),
+            "inferred fields have no tool sources"
+        );
+        assert!(spec.derived_from.is_none());
+    }
+
+    #[test]
+    fn from_card_grounding_converts_derived_field() {
+        let grounding = json!({
+            "deliverable_path": {
+                "status": "sourced",
+                "tools": ["zed/write_file"],
+                "response_path": "path",
+                "why": "A file path the agent claims to have written. Must be sourced from a file-writing tool."
+            },
+            "file_extension": {
+                "status": "derived",
+                "from": "deliverable_path",
+                "why": "Computed from deliverable_path by platform code. Reproducible and auditable."
+            }
+        });
+        let contract = from_card_grounding(Some(&grounding), "task");
+        let contract = contract.expect("non-empty grounding must produce a contract");
+        let spec = contract
+            .field_sources
+            .get("file_extension")
+            .expect("field present");
+        assert!(
+            spec.sources.is_empty(),
+            "derived fields have no direct tool sources"
+        );
+        let derived = spec
+            .derived_from
+            .as_ref()
+            .expect("derived_from must be set");
+        assert_eq!(derived.from, "deliverable_path");
+    }
+
+    #[test]
+    fn from_card_grounding_returns_none_for_empty() {
+        assert!(from_card_grounding(Some(&json!({})), "task").is_none());
+        assert!(from_card_grounding(None, "task").is_none());
+    }
+
+    #[test]
+    fn from_card_grounding_produces_enforceable_contract() {
+        // The contract produced by from_card_grounding must be usable by
+        // enforce_grounding — a sourced field with no matching tool call
+        // must be nulled. This is the falsification test: if the conversion
+        // is wrong (e.g. maps tools incorrectly), the contract won't catch
+        // fabricated values.
+        use crate::grounding::enforce_grounding;
+        let grounding = json!({
+            "deliverable_path": {
+                "status": "sourced",
+                "tools": ["zed/write_file"],
+                "response_path": "path",
+                "why": "A file path the agent claims to have written. Must be sourced from a file-writing tool."
+            },
+            "summary": {
+                "status": "inferred",
+                "why": "A prose summary commissioned by the system prompt for the task."
+            }
+        });
+        let contract =
+            from_card_grounding(Some(&grounding), "task").expect("contract must be produced");
+        // Fabricated output: deliverable_path claims a file was written but
+        // no tool was called.
+        let output = json!({
+            "deliverable_path": "/src/fabricated.rs",
+            "summary": "did the work"
+        });
+        let (result, cleaned) = enforce_grounding(&contract, &output, &[], &output.to_string());
+        assert!(
+            result.nulled_fields.iter().any(|f| f == "deliverable_path"),
+            "sourced field with no tool call must be nulled: {result:?}"
+        );
+        assert!(
+            !result.nulled_fields.iter().any(|f| f == "summary"),
+            "inferred field must NOT be nulled: {result:?}"
+        );
+        assert_eq!(cleaned["deliverable_path"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn is_warning_distinguishes_warnings_from_errors() {
+        let warning = finding("grounding_sourced_response_path", "test");
+        let error = finding("grounding_declared", "test");
+        assert!(warning.is_warning());
+        assert!(!error.is_warning());
     }
 }

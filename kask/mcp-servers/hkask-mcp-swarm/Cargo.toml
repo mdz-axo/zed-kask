@@ -19,6 +19,11 @@ path = "tests/swarm_gap_properties.rs"
 required-features = ["test-utils"]
 
 [[test]]
+name = "swarm_properties"
+path = "tests/swarm_properties.rs"
+required-features = ["test-utils"]
+
+[[test]]
 name = "swarm_live_probes"
 path = "tests/swarm_live_probes.rs"
 required-features = ["test-utils"]

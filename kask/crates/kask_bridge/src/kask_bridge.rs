@@ -110,6 +110,15 @@ pub fn open_swarm_delegation_counter()
 /// Each delegation is a debit transaction with `metadata: { "action": "debit" }`.
 /// Fund transactions are deposits, not delegations. Returns `None` on query
 /// failure (absence ≠ 0 — a failed read is not a measured zero).
+///
+/// This duplicates the query logic in `hkask_mcp_swarm::local_runtime::
+/// SwarmDelegationCounter`. They exist in separate crates because `kask_bridge`
+/// cannot depend on `hkask-mcp-swarm` as a regular dependency (it is
+/// dev-only). If the swarm ledger's transaction metadata schema changes
+/// (e.g. the `"action": "debit"` filter), both implementations must be
+/// updated. The `local_runtime` version is used by the swarm server process;
+/// this version is used by the main zed process to wire the liveness-gap
+/// sensor.
 struct SwarmLedgerDelegationCounter {
     ledger: std::sync::Arc<hkask_ledger::Ledger>,
 }
