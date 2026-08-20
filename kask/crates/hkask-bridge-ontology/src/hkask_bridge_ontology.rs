@@ -29,7 +29,6 @@
 //! - **FIBO** (`fibo`): financial / company analysis.
 //! - **ESO** (`eso`): scientific reasoning, hypotheses, evidence.
 //! - **GOLEM** (`golem`): literature, narrative, persona.
-//! - **OMC** (`omc`): media production.
 //! - **ML-Schema** (`mlschema`): machine-learning experiments.
 //! - **SDMX** (`sdmx`): statistical data exchange (FRED, DBnomics, World Bank).
 //!
@@ -58,7 +57,6 @@
 //! - FIBO: <https://spec.edmcouncil.org/fibo/>
 //! - ESO: <https://w3id.org/eso/>
 //! - GOLEM: <https://w3id.org/golem/>
-//! - OMC: <https://movielabs.com/ontology-for-media-creation/>
 //! - ML-Schema: <https://www.w3.org/community/ml-schema/>
 //! - SDMX: <https://sdmx.org/> (ISO 17369)
 
@@ -69,7 +67,6 @@ pub mod fibo;
 pub mod five_w_one_h;
 pub mod golem;
 pub mod mlschema;
-pub mod omc;
 pub mod pko;
 pub mod sdmx;
 pub mod sumo;
@@ -86,8 +83,6 @@ pub use pko::PkoConcept;
 ///
 /// The dispatch is driven by the concept URI prefix (the ontology
 /// namespace). Each ontology contributes its own match arm:
-/// - `omc:Scene` / `omc:Asset` → `gallery_analyze` (media scene/asset)
-/// - `omc:*` → `describe_image` (media vision fallback)
 /// - `fibo:*` → `research_search` (financial research)
 /// - `sdmx:*` → `research_search` (statistical data research)
 /// - `pko:*` → `kanban_task_list` (process step inspection)
@@ -99,9 +94,6 @@ pub use pko::PkoConcept;
 /// pipeline position, not by ontology concept. This function is for widgets
 /// that dispatch *because* of the ontology tag.
 pub fn explain_tool_for(ontology: &str) -> &'static str {
-    if ontology.starts_with("omc:") {
-        return omc::explain_tool_for(ontology);
-    }
     if ontology.starts_with("fibo:") {
         return "research_search";
     }

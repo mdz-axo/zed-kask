@@ -452,42 +452,6 @@ impl RegulationPolicy {
                         reason: ModelUnavailable,
                     }],
                 },
-                // ── Grounding (Cybernetics Loop 6 — verification ladder Rung 3) ──
-                // Grounding clean rate below floor → Escalate to Curation.
-                // The operator must investigate which delegations have nulled
-                // fields (curator_grounding_violations) and fix the root cause.
-                RegulationRule {
-                    metric: GroundingCleanRate,
-                    direction: BelowSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: GroundingCleanRateDegraded,
-                    }],
-                },
-                // Grounding coverage rate below floor → Escalate to Curation.
-                // The operator must register contracts for uncovered agent types.
-                RegulationRule {
-                    metric: GroundingCoverageRate,
-                    direction: BelowSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: GroundingCoverageDegraded,
-                    }],
-                },
-                // Grounding violation delta above zero → Escalate to Curation.
-                // A positive delta means new nulled fields appeared since the
-                // last tick — the spike is the regulation signal.
-                RegulationRule {
-                    metric: GroundingViolationDelta,
-                    direction: AboveSetPoint,
-                    proposed: &[ProposedAction {
-                        target: Curation,
-                        action_type: Escalate,
-                        reason: GroundingViolationDeltaIncreased,
-                    }],
-                },
             ],
         }
     }
@@ -619,9 +583,6 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         | SignalMetric::ToolReliability
         | SignalMetric::TestCoverage
         | SignalMetric::MutationScore
-        | SignalMetric::GroundingCleanRate
-        | SignalMetric::GroundingCoverageRate
-        | SignalMetric::GroundingViolationDelta
-        | SignalMetric::GroundingLivenessGap => &[],
+        => &[],
     }
 }

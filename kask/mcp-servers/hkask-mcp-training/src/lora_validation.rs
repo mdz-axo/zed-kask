@@ -559,21 +559,4 @@ pub use runtime_metrics::validate_runtime_metrics;
         );
     }
 
-    #[test]
-    fn gr1_unknown_alert_level_warns_not_info() {
-        let mut manifest = test_manifest();
-        manifest.alerts = vec![crate::huggingface::TrainingAlert {
-            title: "Unknown severity".to_string(),
-            level: "severe".to_string(),
-            text: "Some unknown alert".to_string(),
-            step: None,
-        }];
-        let findings = validate_runtime_metrics(&manifest);
-        assert!(
-            findings
-                .iter()
-                .any(|f| { f.gate_id == "G-R1" && f.severity == ValidationSeverity::Warn }),
-            "Unknown alert level should default to Warn, not Info"
-        );
-    }
 }

@@ -182,13 +182,41 @@ pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::Inferen
                 error = %e,
                 "IPC bridge connection failed — inference unavailable (the zed process is required)"
             );
+            std::sync::Arc::new(UnavailableInference)
         }
         None => {
             tracing::info!(
                 target: "hkask.inference",
                 "HKASK_INFERENCE_SOCKET not set — inference unavailable (the zed process is required)"
             );
+            std::sync::Arc::new(UnavailableInference)
         }
+    }
+}
+
+/// Inference stub for MCP servers without the IPC bridge. Every method
+/// returns a clear error naming the missing socket so callers can
+/// distinguish "dispatch unavailable" from other failures.
+struct UnavailableInference;
+
+impl hkask_types::InferencePort for UnavailableInference {
+    fn generate(
+        &self,
+        _prompt: &str,
+        _parameters: &hkask_types::template::LLMParameters,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Connection(
+                "inference unavailable: HKASK_INFERENCE_SOCKET not set or IPC bridge unreachable —                  inference requires the zed process".to_string(),
+            ))
+        })
     }
 }
 

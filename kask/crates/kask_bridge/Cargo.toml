@@ -22,6 +22,7 @@ hkask-keystore.workspace = true
 hkask-regulation.workspace = true
 hkask-email.workspace = true
 hkask-services-core.workspace = true
+hkask-condenser.workspace = true
 hkask_tool_invoker.workspace = true
 
 # zed-kask side — the facilities the bridge adapts over

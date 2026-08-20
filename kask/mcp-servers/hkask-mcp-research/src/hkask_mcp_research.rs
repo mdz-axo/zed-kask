@@ -1723,7 +1723,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
             Ok(ResearchServer::new(
                 ctx.webid,
-                Arc::new(hkask_verification::VerificationStore::open()),
                 Arc::new(pool),
                 Arc::new(ResponseCache::new(
                     cache_max,
