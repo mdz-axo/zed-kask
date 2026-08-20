@@ -1,7 +1,6 @@
 ---
 name: bug-hunt
 core: true
-visibility: public
 description: "Exploratory bug hunting: explores a target crate for threats to user-defined quality using heuristic test strategy and exploratory testing charters. Emits reg.bughunt.* spans."
 ---
 

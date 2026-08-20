@@ -1,6 +1,5 @@
 ---
 name: kata-improvement
-visibility: public
 description: "4-step Improvement Kata templates for scientific capability development: Understand Direction, Grasp Current Condition, Establish Target Condition, Experiment (PDCA). Includes beginner_mode drills for foundational scientific thinking habit-building."
 ---
 

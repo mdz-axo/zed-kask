@@ -1998,9 +1998,6 @@ impl SettingsWindow {
             last_copied_link_path: None,
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
-            last_copied_skill_directory_path: None,
-            skill_visibility_queue: pages::SkillVisibilityQueue::default(),
-            last_publish_status: None,
             llm_provider_form: None,
             llm_provider_add_focus_handle: cx.focus_handle(),
             mcp_server_form: None,
@@ -2616,10 +2613,6 @@ impl SettingsWindow {
     }
 
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
-        // Navigating to another page dismisses the transient "copied share
-        // link" checkmark shown on a Skills page row.
-        self.last_copied_skill_directory_path = None;
-
         if !self.is_nav_entry_visible(navbar_entry) {
             self.open_first_nav_page();
         }
@@ -2744,8 +2737,6 @@ impl SettingsWindow {
         if let SettingsUiFile::Project((_, _)) = &self.current_file {
             telemetry::event!("Setting Project Clicked");
         }
-
-        self.last_copied_skill_directory_path = None;
 
         let sub_page_stack = std::mem::take(&mut self.sub_page_stack);
         self.build_ui(window, cx);
@@ -4196,13 +4187,6 @@ impl SettingsWindow {
         cx: &mut Context<SettingsWindow>,
     ) {
         self.sandbox_host_validation_error = None;
-        // zed-kask: clear the publish-failure banner when (re-)entering the
-        // skills sub-page so a stale failure from a prior visit doesn't persist
-        // across navigations. A successful drain already sets it to `None`;
-        // this covers the failure → navigate-away → come-back case.
-        if sub_page_link.json_path == Some(AGENT_SKILLS_SETTINGS_PATH) {
-            self.last_publish_status = None;
-        }
         self.sub_page_stack
             .push(SubPage::new(sub_page_link, section_header));
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
@@ -4413,14 +4397,6 @@ impl SettingsWindow {
         if let Some(popped) = self.sub_page_stack.pop() {
             if popped.link.r#type == SubPageType::SkillCreator {
                 self.skill_creator_page = None;
-            }
-            // zed-kask: Drain the visibility queue when navigating off the
-            // Skills sub-page. The drain task is a no-op in Phase 2 (logs
-            // intent); the actual publish/unpublish pipelines land in Phase 5.
-            if popped.link.json_path == Some(AGENT_SKILLS_SETTINGS_PATH)
-                && !self.skill_visibility_queue.is_empty()
-            {
-                pages::spawn_drain(&mut self.skill_visibility_queue, cx).detach();
             }
         }
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
@@ -5331,7 +5307,6 @@ pub mod test {
                 last_copied_link_path: None,
                 provider_configuration_views: HashMap::default(),
                 configuring_provider: None,
-                last_copied_skill_directory_path: None,
                 llm_provider_form: None,
                 llm_provider_add_focus_handle: cx.focus_handle(),
                 mcp_server_form: None,
@@ -5339,8 +5314,6 @@ pub mod test {
                 custom_agent_form: None,
                 external_agent_add_focus_handle: cx.focus_handle(),
                 skill_creator_page: None,
-                skill_visibility_queue: pages::SkillVisibilityQueue::default(),
-                last_publish_status: None,
             }
         }
     }
@@ -5472,7 +5445,6 @@ pub mod test {
             last_copied_link_path: None,
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
-            last_copied_skill_directory_path: None,
             llm_provider_form: None,
             llm_provider_add_focus_handle: cx.focus_handle(),
             mcp_server_form: None,
@@ -5480,8 +5452,6 @@ pub mod test {
             custom_agent_form: None,
             external_agent_add_focus_handle: cx.focus_handle(),
             skill_creator_page: None,
-            skill_visibility_queue: pages::SkillVisibilityQueue::default(),
-            last_publish_status: None,
         };
 
         settings_window.build_filter_table();

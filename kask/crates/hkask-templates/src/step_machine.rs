@@ -112,7 +112,7 @@ impl StepMachine {
 
             // Dispatch.
             let effect = self.dispatch_with_retry(node.clone(), infra.clone()).await?;
-            let cf = self.apply_effect(node, effect);
+            let cf = self.apply_effect(&node, effect);
             match cf {
                 ControlFlow::Fallthrough => {
                     self.pc = self.pc + 1;

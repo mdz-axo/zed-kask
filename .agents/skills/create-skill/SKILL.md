@@ -1,7 +1,6 @@
 ---
 name: create-skill
 core: true
-visibility: public
 description: "Create a new kask skill as a complete registry crate: manifest.yaml + .j2 templates + process manifest + SKILL.md companion. Overrides the built-in Zed create-skill, which only produces SKILL.md files."
 ---
 

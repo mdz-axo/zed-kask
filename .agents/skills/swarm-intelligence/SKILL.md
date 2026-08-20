@@ -1,7 +1,6 @@
 ---
 name: swarm-intelligence
 core: true
-visibility: public
 description: "Convergent swarm-composition process. Senses swarm state, orients via Ashby requisite variety and PSO balance, decides composition adjustments (PSO velocity, ACO pheromone, Reynolds flocking), and acts via gated delegation calls with a budget gate."
 ---
 

@@ -1,7 +1,6 @@
 ---
 name: swarm-compose-guide
 core: true
-visibility: public
 description: "Agent/swarm composition authoring and validation aid. Given partial form inputs, renders guidance templates and returns either suggested completions for unfilled fields (action=suggest) or a validation verdict over supplied fields (action=validate)."
 ---
 

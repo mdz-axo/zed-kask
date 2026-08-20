@@ -419,7 +419,7 @@ impl StepMachine {
             })
             .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
 
-        let result = crate::compute::dispatch_compute(&compute_ref, &input)?;
+        let result = crate::compute::dispatch_compute(&compute_ref, &input).await?;
 
         tracing::info!(
             target: "reg.skill.cascade.compute",
@@ -988,11 +988,12 @@ impl StepMachine {
         let branch_count = branches.len();
         let batch_started = std::time::Instant::now();
 
+        let node_ordinal = node.ordinal;
         let mut tool_futs = Vec::with_capacity(branches.len());
         for (i, branch) in branches.iter().enumerate() {
             let template_ref = branch.get("template_ref").and_then(|v| v.as_str()).map(|s| s.to_string());
             let branch_id = branch.get("branch_id").and_then(|v| v.as_u64()).unwrap_or(i as u64) as usize;
-            let timeout = effective_timeout(branch.get("timeout_seconds").and_then(|v| v.as_u64()).map(|s| s as u64));
+            let timeout = std::time::Duration::from_secs(branch.get("timeout_seconds").and_then(|v| v.as_u64()).unwrap_or(300));
             let limiter = infra.concurrency_limiter.clone();
             let depth = self.depth + 1;
             let ctx = self.context.clone();

@@ -1,6 +1,5 @@
 ---
 name: kata-coaching
-visibility: public
 description: "5-question Coaching Kata templates for teaching scientific thinking. Grounded in the learner's actual Improvement Kata storyboard data. Q1: Target Condition. Q2: Actual Condition. Q3: Obstacles. Q4: Next Step/Experiment. Q5: Feedback loop closure.
 "
 ---

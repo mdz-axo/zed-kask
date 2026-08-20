@@ -1,6 +1,5 @@
 ---
 name: scenario-builder
-visibility: public
 description: "Scenario planning methodology following Schwartz's framework. Refines focal questions, maps key forces, generates divergent 2x2 scenario narratives, runs a quality gate, and derives implications with early-warning indicators."
 ---
 

@@ -28,15 +28,13 @@
 
 pub mod chat_protocol;
 pub mod config;
-pub mod inference_ipc_client;pub mod model_constants;
+pub mod inference_ipc_client;
+pub mod model_constants;
 pub mod openai_compat;
-pub mod provider;
-pub mod scoring;
 
 // Re-exports — public API
 pub use config::{InferenceConfig, ProviderConfig, ProviderId};
 pub use inference_ipc_client::InferenceIpcClient;
-pub pub use provider::{MediaOp, MediaProvider, ProviderRegistry};
 
 /// Unified model entry from any provider, with provider prefix applied.
 #[derive(Debug, Clone)]
@@ -182,11 +180,13 @@ pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::Inferen
             tracing::warn!(
                 target: "hkask.inference",
                 error = %e,
+                "IPC bridge connection failed — inference unavailable (the zed process is required)"
             );
         }
         None => {
             tracing::info!(
                 target: "hkask.inference",
+                "HKASK_INFERENCE_SOCKET not set — inference unavailable (the zed process is required)"
             );
         }
     }

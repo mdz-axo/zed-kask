@@ -30,7 +30,7 @@ pub const SKILLS_DIR_NAME: &str = "skills";
 /// - `apply_skill_overrides` — to enforce unshadowability.
 /// - `skill_tool` — to skip the authorization prompt.
 /// - `settings_ui::skills_setup` — to render core skills with a distinct
-///   visual treatment and hide edit/delete/visibility controls.
+///   visual treatment and hide edit/delete controls.
 ///
 /// A skill is core if it meets ALL of:
 /// 1. System-critical: the skill system, agent loop, curator, or an MCP
@@ -142,8 +142,6 @@ impl SkillLoadWarning {
     }
 }
 
-/// Visibility of a skill on the kask marketplace. `Private` is the safe
-/// default — no skill is published without explicit user action. `Public`
 /// Represents a loaded skill with all its metadata and content.
 #[derive(Debug, Clone)]
 pub struct Skill {
@@ -437,7 +435,7 @@ fn parse_skill_file_content_for_loading(
     // skills whose name is in `CORE_SKILL_NAMES`. A marketplace-installed or
     // hand-edited skill declaring `core: true` with a non-reserved name would
     // otherwise be treated as core (sovereign, not overwritten on seed, hidden
-    // edit/delete/visibility controls) — a backdoor around the core-skill
+    // edit/delete controls) — a backdoor around the core-skill
     // contract. `is_reserved_skill_name` already refuses a non-core skill from
     // bearing a core *name*; this closes the symmetric case where a non-core
     // name claims core *status*. Pinned by
@@ -1153,7 +1151,7 @@ mod tests {
     // zed-kask: A skill declaring `core: true` with a non-reserved name must
     // be refused at load time. This closes the backdoor where a marketplace-
     // installed or hand-edited skill claims core status to gain sovereignty
-    // (never overwritten on seed) and hidden edit/delete/visibility controls.
+    // (never overwritten on seed) and hidden edit/delete controls.
     // The symmetric case (a non-core skill bearing a core *name*) is already
     // refused by `is_reserved_skill_name`; this pins the status side.
     #[test]

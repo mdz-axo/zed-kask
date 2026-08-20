@@ -1,7 +1,6 @@
 ---
 name: swarm-steering
 core: true
-visibility: public
 description: "Local-swarm steering skill for the Kask Curator or a human in the loop. Takes a swarm-intelligence plan, produces the delegation sequence + delegate_results collection shape + re-invoke instruction, closing the execute-and-feed-back loop."
 ---
 

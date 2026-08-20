@@ -1,6 +1,5 @@
 ---
 name: lora-training
-visibility: public
 description: "LoRA/QLoRA training configuration and contract enforcement for hKask. Produces an advisory PEFT recommendation through a deterministic 8-gate refinement; the operator accepts, overrides, or rejects it, and the runtime enforces hard contracts."
 ---
 

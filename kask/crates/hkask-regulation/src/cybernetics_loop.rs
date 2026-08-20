@@ -110,17 +110,6 @@ pub struct CyberneticsLoop {
     simulator: MovingAverageExtrapolator,
     /// Runtime-calibratable thresholds — updated by `SetPointCalibrator` background task.
     calibrated_thresholds: Arc<RwLock<CalibratedThresholds>>,
-    /// Central verification ledger — when wired, `verify_impact` re-senses
-    /// grounding metrics to close the feedback loop for grounding alerts.
-    /// `None` when `with_verification_store` was not called (grounding
-    /// sensors are still registered, but impact verification skips
-    /// grounding actions — the loop fires alerts but doesn't learn whether
-    /// they're effective).
-    verification_store: Option<Arc<hkask_verification::VerificationStore>>,
-    /// Typed handle to the LivenessGap `GroundingSensor`, retained so the
-    /// `DelegationCounter` can be wired after construction (the swarm ledger
-    /// is opened in the deferred post-login task, after this loop is built).
-    liveness_gap_sensor: Option<Arc<crate::sensor_provider::GroundingSensor>>,
 }
 
 impl CyberneticsLoop {
@@ -195,8 +184,6 @@ impl CyberneticsLoop {
             budget_persistence_path: None,
             stagnation_detector,
             sensor_registry,
-            verification_store: None,
-            liveness_gap_sensor: None,
 
             tool_stats: None,
             strategy_evaluator: Mutex::new(StrategyEvaluator::new()),
@@ -336,92 +323,6 @@ impl CyberneticsLoop {
                 crate::tool_stats::DEFAULT_RELIABILITY_THRESHOLD,
             )));
         self.tool_stats = Some(stats);
-    }
-
-    /// Wire the central verification ledger for grounding health sensing.
-    /// Registers three `GroundingSensor` instances (clean rate, coverage
-    /// rate, violation delta) into the sensor registry, closing the
-    /// cybernetic feedback loop: grounding enforcement → ledger →
-    /// regulation sense → algedonic alert → curator → user → action →
-    /// improved contracts → better enforcement.
-    ///
-    /// The thresholds come from `SetPoints.grounding_clean_rate_floor`
-    /// and `SetPoints.grounding_coverage_rate_floor` (env-configurable via
-    /// `HKASK_GROUNDING_CLEAN_RATE_FLOOR` / `HKASK_GROUNDING_COVERAGE_RATE_FLOOR`,
-    /// with `log::warn!` on parse failure per the `.rules` numeric-env-var trap).
-    ///
-    /// expect: "The system provides pluggable metric sensing for the cybernetic regulation loop"
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_verification_store(
-        mut self,
-        store: Arc<hkask_verification::VerificationStore>,
-    ) -> Self {
-        self.set_verification_store(store);
-        self
-    }
-
-    /// Set the verification store on an already-constructed loop (post-build
-    /// wiring). Registers the three `GroundingSensor` instances.
-    ///
-    /// expect: "The system provides pluggable metric sensing for the cybernetic regulation loop"
-    pub fn set_verification_store(&mut self, store: Arc<hkask_verification::VerificationStore>) {
-        let clean_floor = self.set_points.grounding_clean_rate_floor;
-        let coverage_floor = self.set_points.grounding_coverage_rate_floor;
-        self.sensor_registry
-            .register(Arc::new(crate::sensor_provider::GroundingSensor::new(
-                Arc::clone(&store),
-                crate::sensor_provider::GroundingSensorMetric::CleanRate,
-                clean_floor,
-                coverage_floor,
-            )));
-        self.sensor_registry
-            .register(Arc::new(crate::sensor_provider::GroundingSensor::new(
-                Arc::clone(&store),
-                crate::sensor_provider::GroundingSensorMetric::CoverageRate,
-                clean_floor,
-                coverage_floor,
-            )));
-        self.sensor_registry
-            .register(Arc::new(crate::sensor_provider::GroundingSensor::new(
-                Arc::clone(&store),
-                crate::sensor_provider::GroundingSensorMetric::ViolationDelta,
-                clean_floor,
-                coverage_floor,
-            )));
-        // Register the LivenessGap sensor and retain a typed handle so the
-        // `DelegationCounter` can be wired later (the swarm ledger is opened
-        // in the deferred post-login task, after this loop is built). Without
-        // this sensor, the liveness gap is never measured — delegations that
-        // skip `enforce_and_stamp` are invisible.
-        let liveness_sensor = Arc::new(crate::sensor_provider::GroundingSensor::new(
-            Arc::clone(&store),
-            crate::sensor_provider::GroundingSensorMetric::LivenessGap,
-            clean_floor,
-            coverage_floor,
-        ));
-        self.sensor_registry.register(liveness_sensor.clone());
-        self.liveness_gap_sensor = Some(liveness_sensor);
-        self.verification_store = Some(store);
-    }
-
-    /// Wire a `DelegationCounter` (e.g. from the swarm ledger) into the
-    /// LivenessGap sensor so the true liveness gap can be measured: external
-    /// delegations minus verification-store records. Called from the deferred
-    /// post-login task once the swarm server's ledger is available. When the
-    /// LivenessGap sensor was never registered (no verification store wired),
-    /// this is a no-op with a `warn!`.
-    pub fn set_delegation_counter(
-        &mut self,
-        counter: Arc<dyn hkask_verification::DelegationCounter>,
-    ) {
-        match &self.liveness_gap_sensor {
-            Some(sensor) => sensor.set_delegation_counter(counter),
-            None => tracing::warn!(
-                "CyberneticsLoop::set_delegation_counter called but no LivenessGap \
-                 sensor is registered — verification store was not wired"
-            ),
-        }
     }
 
     /// Override the stagnation detection threshold (default: 5 cycles).

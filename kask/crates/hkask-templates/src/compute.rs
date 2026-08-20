@@ -33,7 +33,7 @@ impl ComputeRef {
     }
 }
 
-pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
+pub async fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
     match ComputeRef::parse(compute_ref)? {
         ComputeRef::LispEval => {
             let form = input
@@ -59,11 +59,12 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| TemplateError::Manifest("shell.exec: missing 'command'".into()))?;
             let cwd = input.get("cwd").and_then(|v| v.as_str()).unwrap_or(".");
-            let output = std::process::Command::new("sh")
+            let output = tokio::process::Command::new("sh")
                 .arg("-c")
                 .arg(command)
                 .current_dir(cwd)
                 .output()
+                .await
                 .map_err(|e| TemplateError::Manifest(format!("shell.exec: {e}")))?;
             Ok(serde_json::json!({
                 "stdout": String::from_utf8_lossy(&output.stdout),
@@ -73,4 +74,3 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         }
     }
 }
-

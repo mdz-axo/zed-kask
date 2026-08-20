@@ -1,6 +1,5 @@
 ---
 name: lean-prover
-visibility: public
 description: "Machine-checked proof construction. Anchor proof obligations against the Prop/Type discipline, construct proofs via tactics and term mode, challenge through counterexample search, and converge toward proofs that compile and erase."
 ---
 

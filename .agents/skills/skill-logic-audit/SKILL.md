@@ -1,7 +1,6 @@
 ---
 name: skill-logic-audit
 core: true
-visibility: public
 description: "Bounded dual-layer logic audit of .j2 templates and manifest.yaml files against their stated goals. Loads the annotated goal block, generates adversarial critique, filters for soundness, composes a revised artifact with unified diff, and drives a user-review loop."
 ---
 

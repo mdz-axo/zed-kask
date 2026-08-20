@@ -1,11 +1,7 @@
 #![forbid(unsafe_code)]
 //! zed-kask: Shared chrome for marketplace-style catalog pages (card
-//! container, bordered search bar, empty-state row). Extracted from the
-//! duplicated copies in `crates/extensions_ui` (upstream) and
-//! `crates/kask_extensions_ui` so both pages render identical chrome from
-//! one source. Upstream `extensions_ui` is intentionally left untouched
-//! (minimal-divergence); this crate is the adoption point if the shared
-//! components are ever upstreamed.
+//! container, bordered search bar, empty-state row). Used by `swarm_panel`
+//! and `kanban_panel`.
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AnyElement, App, Entity, KeyContext, TextStyle, Window, prelude::*, relative, rems};

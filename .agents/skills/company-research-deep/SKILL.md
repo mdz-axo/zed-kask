@@ -1,6 +1,5 @@
 ---
 name: company-research-deep
-visibility: public
 description: "Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Sequential 16-step flowdef: COMPANY deep 8-part analysis (native MCP tool calls + LLM synthesis) → FALSTAFFIAN competitive perspective rotation → WARDLEY compressed value-chain map → GORILLA 4-dimension framework (fixed weights, lisp.eval scoring) + capabilities-reasoner floor/ceiling/maturity assessment → ECONOMIC TRAJECTORY probe → IMAGINE 5/10/20Y scenarios + digital stage (scenario_build MCP tool call + LLM synthesis) → THESIS three-pillar synthesis + essentialist 3-gate eliminative interrogation (cross-skill goal-analysis quality gate) → convergence check → loop on needs_work. MCP tool calls are native action: execute steps; templates do LLM synthesis over their outputs. Converges on THESIS investment_grade verdict."
 ---
 
