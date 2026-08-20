@@ -943,14 +943,10 @@ impl NativeAgent {
                 skills_resolver_for_project(weak.clone(), project_id),
                 self.fs.clone(),
             ));
-            // Register the lisp_eval tool for deterministic computation
-            // (convergence signals, structural invariant checks, arithmetic
-            // on structured data). The SKILL.md body tells the model when to
-            // call it.
-            thread.add_tool(crate::tools::LispEvalTool);
             // Register the render_template tool for Jinja2 template rendering
             // from the kask registry. The SKILL.md body tells the model when
-            // to call it for structured prompt scaffolding.
+            // to call it for structured prompt scaffolding. `lisp_eval` is
+            // already registered via `add_default_tools`.
             thread.add_tool(crate::tools::RenderTemplateTool);
         });
 
@@ -3034,47 +3030,6 @@ pub struct MemorySnippetRecord {
 pub struct CascadeChatMessage {
     pub role: String,
     pub content: String,
-}
-
-/// Port for gathering cascade context (short-term thread messages +
-/// long-term memory from participant stores).
-///
-/// The bridge provides the implementation (`BridgeCascadeContextProvider`),
-/// which holds an `Arc<RealMemoryPort>` and applies the participant matrix
-/// to select recall sources. When no implementation is injected, skill
-/// cascades run without thread context or memory (the pre-fix behavior).
-pub trait CascadeContextProvider: Send + Sync {
-    fn gather_context<'a>(
-        &'a self,
-        request: &'a CascadeContextRequest,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<CascadeContext, String>> + Send + 'a>,
-    >;
-}
-
-/// Global hook for the cascade context provider.
-///
-/// Set by the zed-kask composition root at startup alongside
-/// `set_context_injector`. When set, skill cascades receive short-term
-/// thread context + long-term memory. When `None`, cascades run isolated
-/// (the pre-fix behavior).
-static CASCADE_CONTEXT_PROVIDER: std::sync::OnceLock<Option<Arc<dyn CascadeContextProvider>>> =
-    std::sync::OnceLock::new();
-
-/// Set the global cascade context provider (composition root).
-pub fn set_cascade_context_provider(provider: Option<Arc<dyn CascadeContextProvider>>) {
-    if let Err(_prev) = CASCADE_CONTEXT_PROVIDER.set(provider) {
-        log::warn!(
-            "set_cascade_context_provider: hook already set — second wiring attempt dropped. \
-             The previously-wired provider remains active. \
-             Remediation: restart the app to re-wire from a clean process."
-        );
-    }
-}
-
-/// Get the global cascade context provider, if set.
-pub(crate) fn cascade_context_provider() -> Option<&'static Arc<dyn CascadeContextProvider>> {
-    CASCADE_CONTEXT_PROVIDER.get().and_then(|opt| opt.as_ref())
 }
 
 /// Thread condenser — compresses tool results before they enter the message
