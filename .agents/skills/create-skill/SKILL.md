@@ -2,6 +2,16 @@
 name: create-skill
 core: true
 description: "Create a new kask skill: SKILL.md process instructions + .j2 prompt templates. The SKILL.md is the process surface the agent reads and follows; templates are readable resources for prompt structure. The agent is the executor."
+steps:
+  - id: prior_context
+    tools:
+      - curator_memory_recall
+  - id: design
+    tools:
+      - render_template
+  - id: validate
+    tools:
+      - lisp_eval
 ---
 
 # Create Skill

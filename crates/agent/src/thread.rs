@@ -1532,6 +1532,13 @@ impl Thread {
             parent_thread_id: parent_thread.read(cx).id().clone(),
             depth: parent_thread.read(cx).depth() + 1,
         });
+        // zed-kask: D6/D34 — inherit the parent thread's agent_id so
+        // curator-spawned subagents route their turns to the curator's
+        // sovereign DB for memory ingestion and context recall. Without
+        // this, a curator subagent's turns are ingested as user-perspective
+        // records and the curator has no first-person memory of the
+        // delegated work.
+        thread.agent_id = parent_thread.read(cx).agent_id.clone();
         thread.inherit_parent_settings(parent_thread, cx);
         if let Some(subagent_model) = AgentSettings::get_global(cx).subagent_model.clone() {
             thread.inherits_parent_model_settings = false;

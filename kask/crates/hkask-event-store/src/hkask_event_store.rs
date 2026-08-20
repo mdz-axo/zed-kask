@@ -63,8 +63,15 @@ impl EventStore {
             return Err(EventStoreError::EmptyKind);
         }
         let now = chrono::Utc::now().to_rfc3339();
-        self.driver.execute(
-            "INSERT INTO events (rollout_id, kind, payload, created_at) VALUES (?1, ?2, ?3, ?4)",
+        // INSERT ... RETURNING executes insert + position read as ONE
+        // statement on ONE connection. The prior INSERT-then-SELECT-MAX pair
+        // raced under concurrent writers (the capture drainer and the
+        // harness loop append concurrently by design, and each driver call
+        // may take a different pooled connection): writer A could receive
+        // writer B's position, violating position-is-identity.
+        let row = self.driver.query_optional(
+            "INSERT INTO events (rollout_id, kind, payload, created_at) \
+             VALUES (?1, ?2, ?3, ?4) RETURNING position",
             &[
                 DbValue::Text(rollout.to_string()),
                 DbValue::Text(kind.to_string()),
@@ -72,12 +79,6 @@ impl EventStore {
                 DbValue::Text(now),
             ],
         )?;
-        // Position in the log is identity: last_insert_rowid via MAX(position)
-        // is safe under the single-writer discipline the swarm runtime
-        // already enforces for its ledger.
-        let row = self
-            .driver
-            .query_optional("SELECT MAX(position) FROM events", &[])?;
         row.map(|r| r.get_int(0).unwrap_or(0))
             .ok_or(EventStoreError::NoPosition)
     }
@@ -305,5 +306,49 @@ mod tests {
             })
             .unwrap();
         assert_eq!(events[0].payload, payload, "payload round-trips verbatim");
+    }
+
+    #[test]
+    fn concurrent_appends_receive_distinct_positions() {
+        // The founding contract: position is identity. Two concurrent
+        // appenders (the capture drainer and the harness verdict loop run
+        // concurrently in production) must never receive the same position.
+        // The store is Send + Sync via the driver, so spawn real threads.
+        use std::sync::Arc;
+        let store = Arc::new(memory_store());
+        let mut handles = Vec::new();
+        for thread_index in 0..4 {
+            let store = Arc::clone(&store);
+            handles.push(std::thread::spawn(move || {
+                let mut positions = Vec::new();
+                for i in 0..25 {
+                    positions.push(
+                        store
+                            .append(
+                                &format!("rollout-{thread_index}"),
+                                "model_request",
+                                &serde_json::json!({"i": i}),
+                            )
+                            .unwrap(),
+                    );
+                }
+                positions
+            }));
+        }
+        let mut all = Vec::new();
+        for handle in handles {
+            all.extend(handle.join().expect("thread must not panic"));
+        }
+        let total = all.len();
+        all.sort_unstable();
+        all.dedup();
+        assert_eq!(
+            all.len(),
+            total,
+            "every append must return a DISTINCT position — position is identity"
+        );
+        // And they must be contiguous 1..=total (AUTOINCREMENT from empty).
+        let expected: Vec<i64> = (1..=total as i64).collect();
+        assert_eq!(all, expected, "positions must be contiguous");
     }
 }
