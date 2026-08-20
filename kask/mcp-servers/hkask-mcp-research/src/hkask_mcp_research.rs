@@ -414,7 +414,7 @@ impl ResearchServer {
                 let json_schema_str = json_schema
                     .as_ref()
                     .and_then(|v| serde_json::to_string(v).ok());
-                let json_schema_inner = json_schema.map(hkask_mcp_server::AnyJsonValue::into_inner);
+                let json_schema_inner = json_schema.map(serde_json::Value::from);
 
                 let fingerprint = self.pool.provider_fingerprint();
                 let cache_params = serde_json::json!({

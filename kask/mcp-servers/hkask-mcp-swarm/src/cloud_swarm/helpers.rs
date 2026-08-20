@@ -47,6 +47,8 @@ pub fn build_create_agent_card(
             "sample_queries": req.sample_queries.clone().unwrap_or_default(),
         },
         "visibility": req.visibility.clone().unwrap_or_else(|| "private".to_string()),
+        "accepts": req.accepts.clone().unwrap_or_default(),
+        "produces": req.produces.clone().unwrap_or_default(),
     });
     // fermi v0.16.1 (mig-177 (fermi v0.16.1)): inbound MCP servers. Inject only when the
     // caller supplied a value. See the struct doc on `CreateAgentRequest`

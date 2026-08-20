@@ -77,6 +77,7 @@ mod cloud_swarm;
 mod cloud_swarm_tools;
 mod config;
 mod consent;
+mod contract;
 mod error;
 mod knowledge_tools;
 mod ledger_tools;

@@ -42,6 +42,13 @@ pub(crate) struct AuthorForm {
     pub(crate) valence_primary_affect: Entity<Editor>,
     /// Comma-separated personality trait descriptors.
     pub(crate) valence_personality_traits: Entity<Editor>,
+    /// Sample queries, one per line (fermi `has_sample_queries`: without
+    /// one, nobody can tell what to ask this agent).
+    pub(crate) sample_queries: Entity<Editor>,
+    /// Comma-separated declared input types (fermi `declares_accepts`).
+    pub(crate) accepts: Entity<Editor>,
+    /// Comma-separated declared output types (fermi `declares_produces`).
+    pub(crate) produces: Entity<Editor>,
     /// Which backend to create the agent on (Cloud = ABW, Local = local
     /// substrate). A per-form choice — not gated on `kask.swarm.mode`.
     /// When editing, this is derived from `editing_source`.
@@ -110,6 +117,29 @@ impl AuthorForm {
                 let mut e = Editor::single_line(window, cx);
                 e.set_placeholder_text(
                     "analytical, cautious, pragmatic (comma-separated)",
+                    window,
+                    cx,
+                );
+                e
+            }),
+            sample_queries: cx.new(|cx| {
+                let mut e = Editor::auto_height(2, 6, window, cx);
+                e.set_placeholder_text(
+                    "One sample query per line — what would someone ask this agent?",
+                    window,
+                    cx,
+                );
+                e
+            }),
+            accepts: cx.new(|cx| {
+                let mut e = Editor::single_line(window, cx);
+                e.set_placeholder_text("text, market_report, … (comma-separated)", window, cx);
+                e
+            }),
+            produces: cx.new(|cx| {
+                let mut e = Editor::single_line(window, cx);
+                e.set_placeholder_text(
+                    "sentiment_report, risk_assessment, … (comma-separated)",
                     window,
                     cx,
                 );
@@ -545,6 +575,85 @@ impl SwarmPanel {
                                          (e.g. analytical, cautious, pragmatic). Optional.",
                                     ))
                                     .child(self.author.valence_personality_traits.clone()),
+                            ),
+                    ),
+            )
+            // Sample queries — one per line. fermi `has_sample_queries`:
+            // without one, nobody can tell what to ask this agent.
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Sample queries")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .id("author-sample-queries")
+                            .border_1()
+                            .border_color(border)
+                            .rounded_sm()
+                            .tooltip(Tooltip::text(
+                                "One example question per line. The ABW publish gate \
+                                 requires at least one — without one, nobody can tell \
+                                 what to ask this agent.",
+                            ))
+                            .child(self.author.sample_queries.clone()),
+                    ),
+            )
+            // Accepts / produces — the composition contract. fermi
+            // `declares_accepts` / `declares_produces`: composition planning
+            // routes on inputs; downstream agents match on outputs.
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .flex_1()
+                            .child(
+                                Label::new("Accepts (input types)")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                div()
+                                    .id("author-accepts")
+                                    .border_1()
+                                    .border_color(border)
+                                    .rounded_sm()
+                                    .tooltip(Tooltip::text(
+                                        "Comma-separated input types this agent accepts \
+                                         (e.g. text, market_report). The ABW publish gate \
+                                         requires at least one — composition planning cannot \
+                                         route work to an agent with no declared inputs.",
+                                    ))
+                                    .child(self.author.accepts.clone()),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .flex_1()
+                            .child(
+                                Label::new("Produces (output types)")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                div()
+                                    .id("author-produces")
+                                    .border_1()
+                                    .border_color(border)
+                                    .rounded_sm()
+                                    .tooltip(Tooltip::text(
+                                        "Comma-separated output types this agent produces \
+                                         (e.g. sentiment_report). The ABW publish gate \
+                                         requires at least one — downstream agents match \
+                                         against it to build pipelines.",
+                                    ))
+                                    .child(self.author.produces.clone()),
                             ),
                     ),
             )

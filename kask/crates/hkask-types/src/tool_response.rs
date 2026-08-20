@@ -58,7 +58,7 @@ pub fn parse_tool_response(output: &str) -> Option<Value> {
 /// Unwrap the `content` envelope from an already-parsed tool response.
 ///
 /// `{"content": {…}}` → `{…}`; any other value is returned unchanged.
-pub(crate) fn unwrap_tool_envelope(value: Value) -> Value {
+pub fn unwrap_tool_envelope(value: Value) -> Value {
     value.get("content").cloned().unwrap_or(value)
 }
 

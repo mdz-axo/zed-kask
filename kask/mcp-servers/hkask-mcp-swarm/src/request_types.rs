@@ -266,6 +266,14 @@ pub struct CreateAgentRequest {
     pub tags: Option<Vec<String>>,
     /// Sample queries to help users understand what to ask.
     pub sample_queries: Option<Vec<String>>,
+    /// Declared input types (fermi `declares_accepts` — composition planning
+    /// routes on these). Passed through to the ABW card's top-level
+    /// `accepts`.
+    pub accepts: Option<Vec<String>>,
+    /// Declared output types (fermi `declares_produces` — downstream agents
+    /// match on these). Passed through to the ABW card's top-level
+    /// `produces`.
+    pub produces: Option<Vec<String>>,
     /// Required dependency agent names (for compound agents).
     pub dependencies_required: Option<Vec<String>>,
     /// Optional dependency agent names (for compound agents).
@@ -460,6 +468,9 @@ pub struct CreateLocalAgentRequest {
     /// Tags for local catalogue discovery. Optional.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Sample queries (fermi `has_sample_queries`) — one per entry.
+    #[serde(default)]
+    pub sample_queries: Vec<String>,
     /// Visibility level ("public", "private", "unlisted"). Default "private".
     #[serde(default)]
     pub visibility: String,
@@ -893,6 +904,22 @@ pub struct AiAssistRequest {
     /// Swarm agents, comma-separated (swarm surface).
     #[serde(default)]
     pub agents: String,
+    /// Tags, comma-separated (agent surface).
+    #[serde(default)]
+    pub tags: String,
+    /// Sample queries, one per line (agent surface). Newline-separated
+    /// because queries contain commas.
+    #[serde(default)]
+    pub sample_queries: String,
+    /// Declared input types, comma-separated (agent surface).
+    #[serde(default)]
+    pub accepts: String,
+    /// Declared output types, comma-separated (agent surface).
+    #[serde(default)]
+    pub produces: String,
+    /// Whether any valence field is set (agent surface).
+    #[serde(default)]
+    pub has_valence: bool,
 }
 
 /// Request for `swarm_evaluate_local` — a deterministic task-success evaluator.
