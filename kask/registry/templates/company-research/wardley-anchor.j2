@@ -10,11 +10,11 @@ contract:
 visibility: Public
 ---
 {# Cross-skill adapter: compresses wardley-mapper's inventory → classify → map → #}
-{# movement cascade into a single LLM call. This is a deliberate compression — #}
+{# movement process into a single LLM call. This is a deliberate compression — #}
 {# the full wardley-mapper skill is available for standalone use. This adapter #}
 {# exists to ground GORILLA's Invisible Gorilla and Choke Point dimensions and #}
 {# ECONOMIC TRAJECTORY's falling-cost anchor in Wardley's value-chain framework #}
-{# without adding a 6-step sub-cascade inside the deep pipeline. #}
+{# without adding a 6-step sub-process inside the deep pipeline. #}
 
 [inference]
 temperature = 0.1
@@ -64,7 +64,7 @@ The FALSTAFFIAN step has already rotated the competitive framing to correct pers
 
 ## Task
 
-Produce a compressed Wardley map in a single pass. This compresses the full wardley-mapper's 6-step cascade (inventory → classify → map → movement → recommendations → present) into one call. The output feeds two downstream steps:
+Produce a compressed Wardley map in a single pass. This compresses the full wardley-mapper's 6-step process (inventory → classify → map → movement → recommendations → present) into one call. The output feeds two downstream steps:
 
 1. **GORILLA** (step 5): the `invisible_gorilla` and `choke_point` dimensions use the Wardley map to ground their assessment — what's invisible in the value chain, and where is the strategic choke point?
 2. **ECONOMIC TRAJECTORY** (step 9): the `falling_cost` and `commoditization_candidates` fields use the Wardley map's evolution classifications to identify what's becoming commodity (the falling-cost trajectory) and what the company should stop building.

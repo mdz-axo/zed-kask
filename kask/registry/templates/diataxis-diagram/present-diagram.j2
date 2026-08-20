@@ -1,7 +1,7 @@
-{# Surface the finalized diataxis-diagram markdown as the cascade's final output.
+{# Surface the finalized diataxis-diagram markdown as the process's final output.
 [inference]
    This is a pure Jinja2 template (no frontmatter) executed by the `render` action.
-   The output is stored as step_N_result (Value::String) and becomes the cascade's
+   The output is stored as step_N_result (Value::String) and becomes the process's
    final output via extract_final_step_result (highest ordinal).
 
    The write step (step 6) produces {file_path, file_content, description_paragraph}

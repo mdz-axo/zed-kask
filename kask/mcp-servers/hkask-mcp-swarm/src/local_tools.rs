@@ -110,8 +110,7 @@ impl SwarmServer {
             // Rung 2 (Typing) post-invocation: validate the agent's output
             // against the schema for its `produces` port type (paper's "one
             // artifact, two uses").
-            let validation =
-                self.validate_produces(&req.agent_name, &agent.produces, &result.response);
+            self.validate_produces(&req.agent_name, &agent.produces, &result.response);
             // Stigmergy (ACO pheromone trail): record the delegation's
             // performance annotation to the agent's prefix-scoped semantic
             // memory. The SENSE phase can read these via
@@ -193,12 +192,8 @@ impl SwarmServer {
                         .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
                         .await
                     {
-                        Ok(mut r) => {
-                            let validation = self.validate_produces(
-                                &entry.agent_name,
-                                &agent.produces,
-                                &r.response,
-                            );
+                        Ok(r) => {
+                            self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
                             total_cost += r.cost;
                             total_cost_uncapped += r.cost_uncapped;
                             total_tokens += r.tokens_used;
@@ -305,12 +300,8 @@ impl SwarmServer {
                         .delegate(&agent, &task, step.credits_authorized, ceiling)
                         .await
                     {
-                        Ok(mut r) => {
-                            let validation = self.validate_produces(
-                                &step.agent_name,
-                                &agent.produces,
-                                &r.response,
-                            );
+                        Ok(r) => {
+                            self.validate_produces(&step.agent_name, &agent.produces, &r.response);
                             prev_output = r.response.clone();
                             total_cost += r.cost;
                             total_cost_uncapped += r.cost_uncapped;
@@ -1376,11 +1367,7 @@ impl SwarmServer {
                                 });
                             }
                             // Record stigmergy (same as swarm_delegate_local).
-                            let validation = self.validate_produces(
-                                &entry.agent_name,
-                                &agent.produces,
-                                &r.response,
-                            );
+                            self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
                             local_knowledge::record_delegation(
                                 &self.local_memory,
                                 &entry.agent_name,
