@@ -47,7 +47,7 @@ mitigation: |
   claims to have been "verified against grep std::env::var" — that claim is now
   stale, which is precisely the failure mode a per-server test is meant to catch.
 
-  Over-grant: codegraph is allowlisted DEEPINFRA_API_KEY + OPENROUTER_API_KEY
+  Over-grant: codegraph is allowlisted OPENROUTER_API_KEY
   (mcp_servers.rs:45) with no direct read site, and the crate's own doc says
   "Credentials are resolved from zed's LanguageModelRegistry — no env-var API
   keys needed" (hkask_mcp_codegraph.rs:466). Reachable only via the degraded
@@ -98,7 +98,7 @@ note: |
   invariant that matters is that no OTHER server's secret reaches this one, not
   the cardinality.
 
-  DELIBERATELY NOT CHANGED: codegraph keeps DEEPINFRA_API_KEY +
+  DELIBERATELY NOT CHANGED: codegraph keeps
   OPENROUTER_API_KEY. They have no direct read site, but they ARE reachable via
   `resolve_inference_port`'s no-socket fallback (`InferenceConfig::from_env`), so
   removing them would break embeddings whenever the inference socket is down. The

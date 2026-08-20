@@ -775,9 +775,9 @@ impl InferencePort for LanguageModelInferencePort {
 // `/embeddings` POSTs through the app's `HttpClient`. No GPUI access is
 // needed at request time — credentials are resolved once at construction.
 //
-// The model string (e.g. `DeepInfra/Qwen/Qwen3-Embedding-0.6B`) is stripped
-// of its provider prefix before being sent to the API — DeepInfra expects
-// `Qwen/Qwen3-Embedding-0.6B`, not the prefixed form.
+// The model string (e.g. `OpenRouter/qwen/qwen3-embedding`) is stripped
+// of its provider prefix before being sent to the API — the provider expects
+// the bare model id, not the prefixed form.
 
 use hkask_types::EmbeddingGenerationError;
 use http_client::{AsyncBody, HttpClient, Method, Request};
@@ -788,7 +788,7 @@ use futures::AsyncReadExt;
 
 /// Request sent to the tokio-side embedding executor.
 struct EmbedRequest {
-    /// The provider-prefixed model string (e.g. `DeepInfra/Qwen/Qwen3-Embedding-0.6B`).
+    /// The provider-prefixed model string (e.g. `OpenRouter/qwen/qwen3-embedding`).
     /// The prefix is stripped before the API call.
     model: String,
     /// Texts to embed.
@@ -954,7 +954,7 @@ impl LanguageModelEmbeddingPort {
     /// Generate embeddings for a batch of texts.
     ///
     /// `model` is the provider-prefixed model string (e.g.
-    /// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`). The prefix is stripped
+    /// `ollama/nomic-embed-text`). The prefix is stripped
     /// before the API call.
     pub async fn embed(
         &self,
@@ -982,19 +982,19 @@ impl LanguageModelEmbeddingPort {
 
 /// Strip the provider prefix from a model string, case-insensitive.
 ///
-/// Accepts long-form prefixes (`DeepInfra/`, `OpenRouter/`,
+/// Accepts long-form prefixes (`OpenRouter/`,
 /// `RunPod/`, `ollama/`).
 /// Returns the bare model id. If no prefix is recognized, returns the
 /// string unchanged (the API will reject it, which surfaces a clear error).
 fn strip_provider_prefix(model: &str) -> String {
     // Long-form prefixes (case-insensitive). Order matters only for
     // overlapping prefixes; none overlap here.
-    const LONG_FORM: &[&str] = &["DeepInfra/", "RunPod/", "OpenRouter/", "ollama/"];
+    const LONG_FORM: &[&str] = &["RunPod/", "OpenRouter/", "ollama/"];
     for prefix in LONG_FORM {
         if let Some(rest) = model.strip_prefix(prefix) {
             return rest.to_string();
         }
-        // Case-insensitive match (e.g. "deepinfra/..." or "DEEPINFRA/...").
+        // Case-insensitive match (e.g. "openrouter/..." or "OPENROUTER/...").
         if model.len() >= prefix.len() && model[..prefix.len()].eq_ignore_ascii_case(prefix) {
             return model[prefix.len()..].to_string();
         }
@@ -1278,7 +1278,7 @@ mod embedding_tests {
     #[test]
     fn strip_prefix_long_form() {
         assert_eq!(
-            strip_provider_prefix("DeepInfra/Qwen/Qwen3-Embedding-0.6B"),
+            strip_provider_prefix("OpenRouter/Qwen/Qwen3-Embedding-0.6B"),
             "Qwen/Qwen3-Embedding-0.6B"
         );
         assert_eq!(
@@ -1290,11 +1290,11 @@ mod embedding_tests {
     #[test]
     fn strip_prefix_case_insensitive() {
         assert_eq!(
-            strip_provider_prefix("deepinfra/Qwen/Qwen3-Embedding-0.6B"),
+            strip_provider_prefix("openrouter/Qwen/Qwen3-Embedding-0.6B"),
             "Qwen/Qwen3-Embedding-0.6B"
         );
         assert_eq!(
-            strip_provider_prefix("DEEPINFRA/Qwen/Qwen3-Embedding-0.6B"),
+            strip_provider_prefix("OPENROUTER/Qwen/Qwen3-Embedding-0.6B"),
             "Qwen/Qwen3-Embedding-0.6B"
         );
     }

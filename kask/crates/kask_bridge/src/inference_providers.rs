@@ -4,9 +4,9 @@
 //! `OpenRouterLanguageModelProvider`. Its kask toggle only mirrors the API
 //! key to MCP servers via `credential_urls_for_mcp`.
 //!
-//! Removed providers (fal.ai, Cline, KiloCode, DeepInfra, AtlasCloud, and
-//! stale OpenRouter entries from prior versions) are scrubbed from
-//! settings.json by `ensure_openai_compatible_entries`.
+//! Removed providers (fal.ai, Cline, KiloCode, and two former media/LLM
+//! providers, plus stale OpenRouter entries from prior versions) are scrubbed
+//! from settings.json by `ensure_openai_compatible_entries`.
 //!
 //! API keys are stored in the keychain under the provider's `api_url` (the
 //! same URL zed's OpenAI-compatible provider reads) and mirrored to
@@ -459,6 +459,10 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
     // Stale `openai_compatible` entries to scrub. The api_url guard avoids
     // removing a user's custom provider that happens to share an id.
     // OpenRouter is included to clean up entries written by prior versions.
+    // The last two entries scrub the two inference providers removed
+    // 2026-08-20 — the id + api_url literals are required to match stale
+    // user settings.json entries written by prior versions (they are scrub
+    // data, not provider support).
     let removed_providers: [(&'static str, &str); 6] = [
         ("fal.ai", "https://api.fal.ai/v1"),
         ("Cline", "https://api.cline.bot/api/v1"),
@@ -505,7 +509,7 @@ pub fn resolve_embedding_credentials(embedding_model: &str) -> Option<(String, S
     let provider = embedding_provider_descriptor(embedding_model).or_else(|| {
         tracing::warn!(
             "Embedding model '{}' has no recognized provider prefix \
-             (expected e.g. 'DeepInfra/...'). \
+             (expected e.g. 'OpenRouter/...'). \
              Set kask.corpus.embedding_model to a provider-prefixed name, \
              or set HKASK_EMBEDDING_MODEL.",
             embedding_model

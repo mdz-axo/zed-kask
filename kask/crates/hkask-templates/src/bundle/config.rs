@@ -259,42 +259,6 @@ fn default_weight() -> f64 {
     1.0
 }
 
-/// rJoule (inference energy budget) configuration — caps LLM inference cost.
-/// Cost per token is set by the inference provider/model, not the manifest.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct RjouleConfig {
-    /// Total rJoule budget for inference in this cascade — a **USD budget**
-    /// (`1 rJoule = $1 USD`).
-    ///
-    /// Enforced: `ManifestExecutor::execute_select` charges each inference
-    /// call's observed USD cost (the provider's `usage.cost` / `market_cost` /
-    /// `estimated_cost`, carried on `InferenceResult.cost_usd`) to this budget
-    /// via `BudgetTracker::charge_rjoule`. When cumulative spend exceeds `cap`
-    /// and `hard_limit` is true, `check_exhausted` trips the
-    /// `reg.skill.budget.rjoule_exhausted` span and exits the cascade `MaxedOut`.
-    /// A threshold-crossing `reg.skill.budget.rjoule_alert` fires once at
-    /// `alert_threshold`. Calls that report no cost (local Ollama, the zed IPC
-    /// bridge path which surfaces only token counts) have `cost_usd = None`
-    /// and are free (not charged).
-    ///
-    /// Scope: only LLM inference (`select` steps) is charged here. MCP `execute`
-    /// steps that hit paid external APIs are NOT yet charged rJoule through the
-    /// executor — `hkask-mcp-media` self-gates its own rJoule budget per call
-    /// (`MediaBudget`); other paid MCP servers will follow that pattern. TODO.
-    pub cap: u32,
-    pub alert_threshold: f64,
-    pub hard_limit: bool,
-}
-impl Default for RjouleConfig {
-    fn default() -> Self {
-        Self {
-            cap: 0, // 0 = no rJoule budget (backward compat)
-            alert_threshold: 0.8,
-            hard_limit: true,
-        }
-    }
-}
 
 /// Error handling configuration. Loaded from manifest YAML.
 ///
@@ -360,7 +324,6 @@ pub struct BundleAuditConfig {
     pub log_level: String,
     pub include_input: bool,
     pub include_output: bool,
-    pub include_rjoule_cost: bool,
     pub include_reg_events: bool,
 }
 impl Default for BundleAuditConfig {
@@ -370,7 +333,6 @@ impl Default for BundleAuditConfig {
             log_level: "info".into(),
             include_input: true,
             include_output: true,
-            include_rjoule_cost: true,
             include_reg_events: true,
         }
     }

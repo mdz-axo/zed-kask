@@ -142,7 +142,7 @@ impl StepMachine {
 
         // Copy convergence signal from protocol to inputs so the
         // convergence tracker can find it.
-        if let Some(v) = self.context.protocol.get("convergence_signal") {
+        if let Some(v) = self.context.protocol(("convergence_signal") {
             self.context
                 .inputs
                 .insert("convergence_signal".to_string(), v.clone());
@@ -313,12 +313,6 @@ impl StepMachine {
         }
 
         let (result_text, tool_calls, cost_usd, finish_reason) = inference_result?;
-
-        // Charge rJoule (USD cost).
-        if let Some(cost) = cost_usd {
-            self.budget.charge_rjoule(cost);
-        }
-
         // Extract the parsed result.
         let parsed: Value = if let Some(tool_call) = tool_calls.first() {
             tracing::info!(
@@ -384,7 +378,6 @@ impl StepMachine {
         };
 
         // Inject budget context for template awareness.
-        self.budget.inject_into_context(&mut self.context);
 
         Ok(Effect::Stored {
             step_id: node.id,
@@ -898,18 +891,6 @@ impl StepMachine {
         )?;
 
         // Cap the sub-cascade's budget to the parent's remaining budget.
-        let sub_rjoule_cap_f64 =
-            (sub_manifest.rjoule.cap as f64).min(self.budget.remaining_rjoule().max(0.0));
-        let sub_rjoule_cap = if sub_rjoule_cap_f64.is_finite() {
-            sub_rjoule_cap_f64
-        } else {
-            tracing::warn!(
-                target: "hkask.templates",
-                "sub_rjoule_cap is not finite — clamping to 0."
-            );
-            0.0
-        };
-        sub_manifest.rjoule.cap = sub_rjoule_cap as u32;
 
         // Apply input_mapping.
         if let Some(ref mapping) = node.input_mapping {
@@ -925,7 +906,6 @@ impl StepMachine {
             &sub_manifest.steps,
             sub_manifest.convergence.max_iterations,
         );
-        let sub_budget = crate::budget::BudgetTracker::new(&sub_manifest.rjoule);
         let sub_convergence =
             crate::convergence::ConvergenceTracker::new(&sub_manifest.convergence);
 
@@ -943,7 +923,6 @@ impl StepMachine {
         let mut sub_machine = StepMachine::new(
             sub_graph,
             self.context.clone(),
-            sub_budget,
             sub_convergence,
             sub_manifest.error_handling.clone(),
             format!("{}::flowdef", self.manifest_id),
@@ -967,8 +946,6 @@ impl StepMachine {
         );
 
         // Deduct the sub-cascade's actual rJoule consumption.
-        self.budget
-            .consume_child(sub_outcome.budget_snapshot.rjoule_used);
 
         Ok(Effect::Stored {
             step_id: node.id,
@@ -1025,7 +1002,6 @@ impl StepMachine {
         drop(mapping);
 
         // Per-branch rJoule (settled after the wave).
-        let rjoule_remaining = self.budget.remaining_rjoule();
         let context_template = self.context.clone();
         let parent_manifest_id = self.manifest_id.clone();
         // The global concurrency limiter gates how many branches run
@@ -1103,7 +1079,6 @@ impl StepMachine {
                             step_ordinal, branch_id, template_ref
                         ),
                     )?;
-                    let sub_budget = crate::budget::BudgetTracker::from_remaining(rjoule_remaining);
                     let sub_convergence =
                         crate::convergence::ConvergenceTracker::new(&sub_manifest.convergence);
                     let sub_graph = crate::step_graph::StepGraph::new(
@@ -1114,7 +1089,6 @@ impl StepMachine {
                     let mut sub_machine = StepMachine::new(
                         sub_graph,
                         context_template.clone(),
-                        sub_budget,
                         sub_convergence,
                         sub_manifest.error_handling.clone(),
                         format!("{}::parallel", sub_manifest_id),
@@ -1241,13 +1215,8 @@ impl StepMachine {
         // propagating so the parent's budget doesn't underreport.
         if join_mode == "list" {
             if let Some(first_err) = errs.into_iter().next() {
-                // Settle rJoule from completed branches even on the error path.
-                let sum_rjoule: f64 = oks
-                    .iter()
-                    .filter_map(|r| r.as_ref().ok())
-                    .map(|(_, o)| o.budget_snapshot.rjoule_used)
+                // Settle rJoule from completed branches even on the error path.                    .map(|(_, o)| o)
                     .sum();
-                self.budget.charge_rjoule(sum_rjoule);
                 return Err(first_err.unwrap_err());
             }
             let mut ordered: Vec<(usize, CascadeOutcome)> =
@@ -1256,15 +1225,7 @@ impl StepMachine {
             let branch_results: Vec<Value> = ordered
                 .iter()
                 .map(|(_, o)| crate::executor::extract_final_step_result(o))
-                .collect();
-            let sum_rjoule: f64 = ordered
-                .iter()
-                .map(|(_, o)| o.budget_snapshot.rjoule_used)
-                .sum();
-            self.budget.charge_rjoule(sum_rjoule);
-            return Ok(Effect::Stored {
-                step_id: node.id,
-                value: Value::Array(branch_results),
+                .collect();                value: Value::Array(branch_results),
             });
         }
 
@@ -1294,15 +1255,7 @@ impl StepMachine {
             oks.into_iter().map(|r| r.unwrap()).collect();
         ordered.sort_by_key(|(id, _)| *id);
 
-        // Settle rJoule from completed branches (settled post-wave).
-        let sum_rjoule: f64 = ordered
-            .iter()
-            .map(|(_, o)| o.budget_snapshot.rjoule_used)
-            .sum();
-        self.budget.charge_rjoule(sum_rjoule);
-
-        // Build the result. If any branch errored, attach an `errors` sidecar
-        // and emit a warn so the deviation is visible. The successful results
+        // Settle rJoule from completed branches (settled post-wave).        // and emit a warn so the deviation is visible. The successful results
         // remain in `results` (branch_id order).
         if errs.is_empty() {
             let branch_results: Vec<Value> = ordered

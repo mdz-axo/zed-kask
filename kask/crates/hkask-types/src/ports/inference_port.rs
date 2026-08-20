@@ -339,7 +339,7 @@ pub trait InferencePort: Send + Sync {
     /// Generate embeddings for a batch of texts.
     ///
     /// `model` is the provider-prefixed model string (e.g.
-    /// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`). The implementation strips the
+    /// `ollama/nomic-embed-text`). The implementation strips the
     /// prefix and resolves credentials from the appropriate provider.
     ///
     /// Default: returns an error. `InferenceIpcClient` overrides this to

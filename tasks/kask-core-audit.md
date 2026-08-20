@@ -89,9 +89,9 @@ benchmark. IS = asserted fact about current code; OUGHT = normative proposal.
 | 2 | `kask/crates/hkask-inference/src/config.rs:198` vs `:251` | 2 literal drift | `Default::default().pool_max_idle=5` but `from_env` falls back to `256` | 1 field | Guardrail | IS | `.unwrap_or(InferenceConfig::default().pool_max_idle)` |
 | 3 | `kask/crates/hkask-inference/src/fal_backend.rs:122` | 1 silent-degradation | `unwrap_or("unknown")` then polls queue with `request_id="unknown"` on malformed submit | 1 | Guardrail | IS | `.ok_or_else(InferenceError::Json(...))?` |
 | 4 | `kask/crates/hkask-inference/src/fal_backend.rs:129,134` | 2 magic literal | `Duration::from_secs(120)` + coupled `"120s"` error string | 2 | Guardrail | IS | `const FAL_QUEUE_POLL_TIMEOUT_SECS: u64 = 120;` + interpolate |
-| 5 | `kask/crates/hkask-inference/src/atlascloud_backend.rs:88,127,131` | 2 magic literal | `0..200` poll loop + `from_secs(3000)` + `"10 min max"` string, coupled, unnamed | 3 | Guardrail | IS | `const ATLASCLOUD_MAX_POLLS`/`POLL_INTERVAL` + computed string |
+| 5 | ~~`kask/crates/hkask-inference/src/<removed media backend>.rs:88,127,131`~~ (file removed 2026-08-20 — provider removal) | 2 magic literal | `0..200` poll loop + `from_secs(3000)` + `"10 min max"` string, coupled, unnamed | 3 | Guardrail | IS | consts + computed string (moot — backend removed) |
 | 6 | `kask/crates/hkask-inference/src/openrouter_backend.rs:24-310` | 5 dead surface | `OpenRouterBackend` module: zero `::new`/`::new_public` callers repo-wide (grep-verified); chat routes via IPC bridge | 1 module | Prohibition | IS | delete module + `pub mod` line in `hkask_inference.rs:47` |
-| 7 | `kask/crates/hkask-inference/src/deepinfra_backend.rs:68-241,300,323` | 5 dead surface | chat + image methods (generate*/generate_image/image_to_image) zero callers; only `MediaProvider` impl used | 7 methods | Prohibition | IS | delete chat/image methods, keep 3 media ops |
+| 7 | ~~`kask/crates/hkask-inference/src/<removed media backend>.rs:68-241,300,323`~~ (file removed 2026-08-20 — provider removal) | 5 dead surface | chat + image methods (generate*/generate_image/image_to_image) zero callers; only `MediaProvider` impl used | 7 methods | Prohibition | IS | delete chat/image methods (moot — backend removed) |
 | 8 | `kask/crates/hkask-inference/src/ollama_registry.rs:44-332` | 5 dead surface + advertised-invariant | re-exported (`hkask_inference.rs:56-58`) but zero callers in `hkask-mcp-training` (where `AdapterStore` lives); doc L89-95 advertises a seam that has no enforcement point | 1 module | Prohibition | IS | wire `register_adapter` into train→local path, or delete |
 | 9 | `kask/crates/hkask-inference/src/fal_workflow.rs:147,71,79` | 5 dead surface | `topological_sort` + helpers test-only; live sort is `workflow::topological_sort_graph` | 1 fn+2 | Prohibition | IS | delete; move proptest assertions to live sort |
 | 10 | `kask/crates/hkask-inference/src/inference_ipc_client.rs` (11 sites: 224,365,490,633,740,852,958,1005,1052,1103,+) | 6 hot-path dup | `InferenceParams { …~28 None… }` hand-written; no `Default` derive (`hkask-types/src/inference_ipc.rs:111`) | 11 | Guardrail | IS | derive `Default` on `InferenceParams`, use `..Default::default()` |
@@ -242,7 +242,7 @@ correct (UI layer doesn't depend on `settings_content`).
 
 | rank | recommendation | findings | blast radius |
 |---|---|---|---|
-| 1 | Delete the `OpenRouterBackend` module (#6) and the `DeepInfraBackend` chat/image methods (#7) | #6,#7 | low — zero callers; removes ~450 lines; confirm no near-term consumer first |
+| 1 | Delete the `OpenRouterBackend` module (#6) and the removed media backend's chat/image methods (#7) — superseded 2026-08-20: both backends fully removed with the provider removal | #6,#7 | low — zero callers; removes ~450 lines; confirm no near-term consumer first |
 | 2 | Fix `find_existing_by_eav` silent DB-error swallow (#14) | #14 | medium — on the live consolidation path; changes write semantics (duplicate h_mem seed → skip-with-warn) |
 | 3 | Resolve `OllamaRegistry` advertised seam (#8): wire or delete | #8 | medium — either lands the train→local migration the doc promises, or removes ~290 lines + a misleading doc |
 | 4 | Surface the 6 unsurfaced `KaskCorpusSettings` OCR/embedding-dim fields in `corpus.rs` (§3a) | §3a | low — pure UI additions; fields + `mcp_env` already exist |
@@ -308,9 +308,9 @@ verified with `cargo check` and the affected test suites. Status per finding:
 |---|---|---|
 | 1,2 | fixed | `config.rs` numeric env reads now `tracing::warn!` on parse failure; `pool_max_idle` falls back to `Default` (drift closed) |
 | 3 | fixed | `fal_backend.rs` `request_id` now errors instead of polling with `"unknown"` |
-| 4,5 | fixed | named `FAL_QUEUE_POLL_TIMEOUT_SECS` / `ATLASCLOUD_MAX_POLLS` / `ATLASCLOUD_POLL_INTERVAL` consts, interpolated into messages |
+| 4,5 | fixed | named `FAL_QUEUE_POLL_TIMEOUT_SECS` / poll-timeout consts, interpolated into messages — the media backends were later removed with the provider removal (2026-08-20) |
 | 6 | fixed | `openrouter_backend.rs` module deleted (zero callers); `RR-0049.yaml` `include` glob updated to drop the deleted file |
-| 7 | fixed | `DeepInfraBackend` chat + image methods deleted; only the live `MediaProvider` impl (bg/speech/transcribe) kept |
+| 7 | fixed | the media backend's chat + image methods deleted; only the live `MediaProvider` impl (bg/speech/transcribe) was kept — the whole backend was later removed with the provider removal (2026-08-20) |
 | 8 | fixed | `ollama_registry.rs` module + re-exports deleted (advertised `AdapterStore` seam had no enforcement point) |
 | 9 | fixed | dead `fal_workflow::topological_sort` deleted; `workflow::topological_sort_graph` made `pub`; the 3 proptest properties re-homed to exercise the live sort (all pass) |
 | 10 | fixed | `InferenceParams` derives `Default` (`hkask-types`); 10 construction sites in `inference_ipc_client.rs` now use `..Default::default()` |

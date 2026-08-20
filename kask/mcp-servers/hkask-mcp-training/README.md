@@ -64,7 +64,7 @@ candidate set covering GRPO (reward-model-free RLHF) and the full advanced-PEFT
 initializer set (PiSSA, EVA, CorDA, LoftQ) that hKask's `LoraInit` enum
 declares. Source: https://ludwig.ai/latest/ · https://github.com/ludwig-ai/ludwig
 
-Deleted providers (2026-07-19): `TogetherHost` (Together AI REST API). Deleted providers (2026-08-20): `DeepInfraHost` (DeepInfra GPU containers). The Runpod host is sufficient for all training workloads.
+Deleted providers (2026-07-19): `TogetherHost` (Together AI REST API). Deleted providers (2026-08-20): the Deep-Infra GPU-container host (provider removed from the repo). The Runpod host is sufficient for all training workloads.
 
 Deleted harnesses (2026-07-19): `UnslothHarness` (Python). Re-add when there's a concrete data/training need — Axolotl + TRL + Ludwig are sufficient until then.
 

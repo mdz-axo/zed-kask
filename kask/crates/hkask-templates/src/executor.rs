@@ -6,7 +6,6 @@
 //! bridge (`kask_bridge::skill_executor`) calls, plus `extract_final_step_result`
 //! and `normalize_model_output`.
 
-use crate::budget::BudgetTracker;
 use crate::convergence::ConvergenceTracker;
 use crate::ports::Result;
 use crate::step_context::StepContext;
@@ -164,7 +163,6 @@ impl ManifestExecutor {
         )?;
         let graph = StepGraph::new(&manifest.steps, manifest.convergence.max_iterations);
         let context = StepContext::new(initial_context);
-        let budget = BudgetTracker::new(&manifest.rjoule);
         let convergence = ConvergenceTracker::new(
             manifest.convergence.max_iterations,
             manifest.convergence.min_iterations,
@@ -187,7 +185,6 @@ impl ManifestExecutor {
         let machine = StepMachine::new(
             graph,
             context,
-            budget,
             convergence,
             manifest.error_handling.clone(),
             manifest.id.clone(),
@@ -280,7 +277,6 @@ pub(crate) fn normalize_model_output(value: &Value) -> std::borrow::Cow<'_, Valu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::budget::BudgetSnapshot;
     use crate::step_context::StepContext;
     use crate::step_graph::{ExitKind, StepId};
     use crate::step_machine::CascadeOutcome;
@@ -289,22 +285,12 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
 
-    /// Build a minimal `CascadeOutcome` for `extract_final_step_result` tests:
-    /// the typed context + the machine-tracked `last_result_step` (what the
-    /// machine sets in `apply_effect`). A zeroed `BudgetSnapshot` — irrelevant
-    /// to final-result extraction.
     fn outcome_with_last(context: StepContext, last: Option<StepId>) -> CascadeOutcome {
         CascadeOutcome {
             context,
             iterations: 1,
             exit_kind: ExitKind::Converged,
             last_result_step: last,
-            budget_snapshot: BudgetSnapshot {
-                rjoule_used: 0.0,
-                rjoule_cap: 0.0,
-                rjoule_remaining: 0.0,
-                rjoule_enabled: false,
-            },
             resume_text: None,
             tool_calls: Vec::new(),
         }

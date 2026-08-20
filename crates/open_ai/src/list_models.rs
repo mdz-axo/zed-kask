@@ -62,7 +62,7 @@ pub struct DiscoveredModel {
     /// `context_length`; others do not. OpenRouter nests it under
     /// `top_provider.max_completion_tokens` — `resolve_provider_fallbacks`
     /// folds that into this field when the top-level value is absent.
-    /// AtlasCloud uses the field name `max_output_length` for the same
+    /// Some providers use the field name `max_output_length` for the same
     /// quantity, handled via the serde alias.
     #[serde(
         default,

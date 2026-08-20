@@ -104,7 +104,7 @@ impl VoiceDesign {
 
     /// Map this voice design to the closest ElevenLabs voice preset.
     ///
-    /// ElevenLabs voices available on DeepInfra:
+    /// ElevenLabs-compatible voice presets:
     /// Rachel (default, warm feminine), Aria (soft feminine), Roger (confident masculine),
     /// Sarah (warm feminine), Laura (calm feminine), Charlie (friendly masculine),
     /// George (authoritative masculine), Callum (deep masculine), River (gentle androgynous),

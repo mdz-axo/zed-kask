@@ -16,7 +16,9 @@ detection:
   # moment someone writes the call, even in a branch that never runs.
   # Mutation-verified 2026-08-12: replacing the clear+passthrough construction
   # with inherit-all makes this test FAIL with "child inherited parent secret
-  # DEEPINFRA_API_KEY", so the gate can actually detect the regression.
+  # OPENROUTER_API_KEY" (originally verified against a since-removed provider
+  # key; re-verified 2026-08-20 with the current fixture set), so the gate can
+  # actually detect the regression.
   pattern: "spawned_child_env_excludes_non_allowlisted_secrets"
   include: "crates/hkask-mcp/src/runtime.rs"
 mitigation: |
@@ -36,12 +38,12 @@ mitigation: |
   environment (crates/zed/src/main.rs:379, `dotenvy::from_path`) and injects the
   SMTP password (main.rs:1591, `std::env::set_var("HKASK_SMTP_PASSWORD", ...)`).
 
-  Consequence: all 13 MCP servers inherit DEEPINFRA_API_KEY, OPENROUTER_API_KEY,
-  ATLASCLOUD_API_KEY, HKASK_SMTP_PASSWORD and every other .env/shell secret
+  Consequence: all 13 MCP servers inherit OPENROUTER_API_KEY,
+  HKASK_FRED_API_KEY, HKASK_SMTP_PASSWORD and every other .env/shell secret
   regardless of their allowlist. `portfolio`, allowlisted `Some(&[])`/`Some(&[])`,
   receives all of them. The intent documented at
   kask/crates/kask_bridge/src/mcp_servers.rs:405 ("a server that only needs
-  DEEPINFRA_API_KEY won't receive HKASK_SMTP_PASSWORD") holds only for
+  OPENROUTER_API_KEY won't receive HKASK_SMTP_PASSWORD") holds only for
   keychain-only secrets, NOT for the .env deployment main.rs:344 supports as
   first-class.
 
