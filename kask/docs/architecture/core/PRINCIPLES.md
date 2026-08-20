@@ -12,7 +12,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Purpose:** Twelve principles governing hKask architecture, grounded in the Principle of Least Action (§0). The first four principles are the Magna Carta principles; all remaining principles flow from them. In the contract system (see `zed-host-architecture-plan.md`), each principle can serve as a **goal principle** (driving the explicit user functional expectation of a contract) or a **constraining principle** (shaping how the goal is delivered without overriding it).
 
-**Related:** [`AGENTS.md`](../../../AGENTS.md), [`zed-host-architecture-plan.md`](zed-host-architecture-plan.md), [`TESTING_DISCIPLINE.md`](TESTING_DISCIPLINE.md)
+**Related:** [`AGENTS.md`](../../../../AGENTS.md), [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md), [`TESTING_DISCIPLINE.md`](../TESTING_DISCIPLINE.md)
 
 **Cross-reference:** §1.6 Goal Principle Anchoring — see `zed-host-architecture-plan.md` and `TESTING_DISCIPLINE.md` §1.2 `expect:` syntax.
 

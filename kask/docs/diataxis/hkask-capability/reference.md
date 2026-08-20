@@ -216,7 +216,7 @@ protection that does not exist.
 Governing entry: `kask/security/regressions/RR-0053.yaml`, rewritten as an
 absence check that forbids re-adding the machinery in inert form and states the
 bar a real IFC gate must clear. Full rationale:
-[`DIVERGENCE.md`](../../../DIVERGENCE.md) D4 and
+[`DIVERGENCE.md`](../../../../DIVERGENCE.md) D4 and
 `kask/security/regressions/RR-0053.yaml`.
 
 ## CapabilityTier (sibling crate)

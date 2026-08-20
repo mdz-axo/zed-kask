@@ -113,7 +113,7 @@ followed by `git show <sha>:<path>`. The `docs/archive/` directory is
 gitignored and kept on disk for personal reference, organized by date
 (`docs/archive/YYYY-MM-DD-<label>/`). Archived documents must not be
 linked from the active tree. No active-tree document may describe retired
-or removed subsystems — per [`AGENTS.md`](../../AGENTS.md) §2.4.
+or removed subsystems — per [`AGENTS.md`](../../../AGENTS.md) §2.4.
 
 ## 4. Mermaid diagrams
 

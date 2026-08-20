@@ -54,7 +54,6 @@ crate:
 templates:
   - id: <skill-name>/<skill-name>-<verb>
     path: <skill-name>-<verb>.j2
-    # type: KnowAct  # DEPRECATED — act types removed; no longer used
     description: >
       <what this template produces at inference time>
 
@@ -65,14 +64,8 @@ vocabulary_terms:
 ```
 
 Generate at least one `.j2` template with:
-- `[inference]` frontmatter: template_type, contract (input/output typed fields, visibility)
+- `[inference]` frontmatter: contract (input/output typed fields, visibility)
 - Jinja2 body after `---`: system prompt with imperative instructions, {{ input_variable }} placeholders, JSON output schema
-
-Template types (Pattern A) — deprecated, act types no longer enforced:
-- **KnowAct** (deprecated): Cognitive/reasoning steps — rendered `.j2` + inference + JSON parse (default for agent companion skills)
-- **WordAct** (deprecated): Deterministic text transformation — rendered `.j2` without inference (format, extract, compress)
-- **FlowDef** (deprecated): Multi-step workflow orchestration — `.yaml` sub-manifest with its own steps and convergence
-- **RenderAct** (deprecated): Reference content — rendered `.j2` or `.yaml` without inference (macros, reference docs)
 
 ## Step 1b: Build the Process Manifest (registry/manifests/<skill-name>.yaml)
 
@@ -87,7 +80,6 @@ manifest:
   name: <Title Case Name>
   description: >
     <one-paragraph description>
-  # functional_role: flowdef  # DEPRECATED — flowdef terminology removed
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
@@ -145,21 +137,20 @@ ledger:
 
 ### Canonical Actions (only these are valid in step.action)
 
-| Action | Pattern A Type (deprecated) | When to use |
-|--------|---------------|-------------|
-| `select` | KnowAct (deprecated) | Render `.j2` + inference + parse JSON |
-| `populate` | WordAct (deprecated) | Render `.j2` without inference |
-| `compute` | Deterministic | Math primitive via `compute_ref` |
-| `execute` | MCP Tool | Invoke MCP tool (requires `mcp:` field) |
-| `feedback` | MCP Tool | Emit Regulation feedback |
-| `validate` | MCP Tool | Validate a contract/condition |
-| `retrieve` | MCP Tool | Retrieve data (e.g., semantic search) |
-| `render` | RenderAct (deprecated) | Render `.j2`/`.yaml` without inference |
-| `flowdef` | FlowDef (deprecated) | Execute a `.yaml` sub-manifest recursively |
-| `loop` | Control Flow | Re-enter process from target ordinal |
-| `choice` | Control Flow | Branch on condition |
-| `abort` | Control Flow | Exit with success (converged) |
-| `escalate` | Control Flow | Exit with error (blocked) |
+| Action | When to use |
+|--------|-------------|
+| `select` | Render `.j2` + inference + parse JSON |
+| `populate` | Render `.j2` without inference |
+| `compute` | Math primitive via `compute_ref` |
+| `execute` | Invoke MCP tool (requires `mcp:` field) |
+| `feedback` | Emit Regulation feedback |
+| `validate` | Validate a contract/condition |
+| `retrieve` | Retrieve data (e.g., semantic search) |
+| `render` | Render `.j2`/`.yaml` without inference |
+| `loop` | Re-enter process from target ordinal |
+| `choice` | Branch on condition |
+| `abort` | Exit with success (converged) |
+| `escalate` | Exit with error (blocked) |
 
 ### rJoule Budget Guidelines
 
@@ -198,9 +189,9 @@ description: "<crate.description>"
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|--------|
-| `<template.path>` | `<template.type>` | `<template.description>` |
+| Template | Purpose |
+|----------|---------|
+| `<template.path>` | `<template.description>` |
 ...
 
 ## Constraints
@@ -220,7 +211,6 @@ Respond with a JSON object:
   "template_bodies": [
     {
       "path": "<basename>.j2",
-      "template_type": "KnowAct|WordAct|FlowDef|RenderAct (deprecated)",
       "content": "<complete .j2 content>"
     }
   ],
@@ -231,7 +221,6 @@ Respond with a JSON object:
     "name_valid": true,
     "description_specific": true,
     "has_template_entries": true,
-    "template_type_valid": true,
     "contract_valid": true,
     "vocabulary_coverage": true,
     "actions_canonical": true,
@@ -245,9 +234,8 @@ Respond with a JSON object:
 
 - The registry crate is the primary deliverable. SKILL.md is a derived companion.
 - The process manifest (registry/manifests/<name>.yaml) is mandatory for every skill.
-- Every .j2 template must have a valid `[inference]` frontmatter with template_type in {WordAct, KnowAct, FlowDef, RenderAct} (deprecated — act types no longer enforced).
 - Every .j2 template must have a contract with structured input and output types.
-- Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate). (Note: `flowdef` action is deprecated.)
+- Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, loop, choice, abort, escalate).
 - The process manifest must have a `rjoule:` block with `cap > 0` if any step uses `action: select` (inference).
 - The process manifest must have an `rjoule:` block with `cap > 0` if any step uses `action: select` (inference).
 - The process manifest must have a `convergence:` block with threshold, max_iterations, min_iterations, convergence_field, and on_not_reached.

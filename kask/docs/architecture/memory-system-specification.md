@@ -286,6 +286,6 @@ no-op stub) and the embedding path was silently skipped.
 - [Memory Ingest Sequence](../diagrams/sequence-memory-ingest.md)
 - [Memory Recall Flow](../diagrams/flowchart-memory-recall.md)
 - [Memory Store ERD](../diagrams/erd-memory-store.md)
-- [D6: Thread → memory](../../DIVERGENCE.md) — the divergence seam
+- [D6: Thread → memory](../../../DIVERGENCE.md) — the divergence seam
 - [hkask-memory README](../crates/hkask-memory/README.md) — crate-level docs
 - [hkask-storage Diataxis](../diataxis/hkask-storage/reference.md) — full schema
