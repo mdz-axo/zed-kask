@@ -26,7 +26,6 @@ graph TD
         fibo["fibo.rs<br/>FIBO (union)"]
         eso["eso.rs<br/>ESO"]
         golem["golem.rs<br/>GOLEM"]
-        omc["omc.rs<br/>OMC"]
         mlschema["mlschema.rs<br/>ML-Schema"]
         axis --> dc_bibo
         axis --> pko
@@ -35,7 +34,6 @@ graph TD
     subgraph servers["MCP servers (functional areas)"]
         condenser["hkask-condenser<br/>re-exports axis types"]
         corpus["hkask-mcp-corpus<br/>tagging + triples"]
-        media["hkask-mcp-media<br/>omc dispatch + ontology tag"]
         companies["hkask-mcp-companies<br/>fibo dispatch + ontology tag"]
         training["hkask-mcp-training<br/>mlschema dispatch only"]
         pm["hkask-mcp-prediction-markets<br/>FIBO-anchored CMP"]
@@ -43,7 +41,6 @@ graph TD
 
     condenser -->|"depends on"| shared
     corpus -->|"depends on"| shared
-    media -->|"depends on"| shared
     companies -->|"depends on"| shared
     training -->|"depends on"| shared
     pm -->|"depends on"| shared
@@ -54,7 +51,7 @@ graph TD
         old_fibo_cu["~~kask/crates/hkask-bridge-ontology/src/fibo.rs~~"]
         old_eso["~~kask/crates/hkask-bridge-ontology/src/eso.rs~~"]
         old_golem["~~kask/crates/hkask-bridge-ontology/src/golem.rs~~"]
-        old_omc["~~media/omc.rs (original, dead surface)~~"]
+        old_omc["~~omc.rs (deleted 2026-08-20 with the media server)~~"]
         old_ml["~~training/mlschema.rs~~"]
     end
 ```
@@ -80,7 +77,6 @@ flowchart LR
     select -->|"finance/company"| fibo_anchor["FIBO + DC"]
     select -->|"science/research"| eso_anchor["ESO + DC"]
     select -->|"narrative/corpus"| golem_anchor["GOLEM + DC"]
-    select -->|"media/generate"| omc_anchor["OMC + DC"]
     select -->|"training/ml"| ml_anchor["ML-Schema + DC"]
     select -->|"memory/cognitive"| sumo_anchor["SUMO + DC"]
     select -->|"kanban/task/process"| pko_anchor["PKO + DC"]

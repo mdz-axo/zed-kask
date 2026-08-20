@@ -51,6 +51,14 @@ pub use memory::{
     open_curator_regulation_archive,
 };
 pub use model_resolution::resolve_model_names;
+pub use settings::{
+    KaskCodegraphSettings, KaskCollabSettings, KaskCompaniesSettings, KaskCondenserSettings,
+    KaskCorpusSettings, KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings,
+    KaskGeneralSettings, KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings,
+    KaskMemorySettings, KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
+    KaskScenariosSettings, KaskSettings, KaskSwarmSettings, KaskToolRouterSettings,
+    KaskTrainingSettings, SwarmModeConfig,
+};
 pub use skill_executor::{
     BridgeManifestExecutor, ProfileResolver, SnapshotProfileResolver, seed_registry_to_disk,
 };

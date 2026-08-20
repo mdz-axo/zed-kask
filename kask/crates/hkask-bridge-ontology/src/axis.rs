@@ -308,7 +308,15 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
     }
     // Process workflows → PKO dual-axis.
     if [
-        "kanban", "board", "task", "spec", "skill", "docproc", "curator", "kata",
+        "kanban",
+        "board",
+        "task",
+        "spec",
+        "skill",
+        "docproc",
+        "curator",
+        "kata",
+        "condenser",
     ]
     .iter()
     .any(|kw| matches_kw(kw))

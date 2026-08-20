@@ -15,7 +15,7 @@ that does tagging depends on this crate.
   noun dimension. Always available.
 - **Process axis** — PKO (`pko`): the "how did this come to be" verb dimension.
   Always available.
-- **Domain supplements** — FIBO, ESO, GOLEM, OMC, ML-Schema: layered on top
+- **Domain supplements** — FIBO, ESO, GOLEM, ML-Schema: layered on top
   where the universal axes aren't specific enough for a domain.
 
 The invariant: one axis is always Dublin Core or PKO, so every artifact has a
@@ -30,7 +30,6 @@ common mapping in process or state space regardless of domain.
 | `fibo` | Financial Industry Business Ontology | Domain supplement (financial) |
 | `eso` | Epistemic Science Ontology | Domain supplement (scientific) |
 | `golem` | GOLEM narrative ontology | Domain supplement (narrative) |
-| `omc` | MovieLabs Ontology for Media Creation | Domain supplement (media) |
 | `mlschema` | ML-Schema | Domain supplement (ML training) |
 | `axis` | Domain-selection logic | `OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor` |
 

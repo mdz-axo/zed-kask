@@ -1,6 +1,6 @@
 ---
 name: lisp-scaffold-reasoning
-description: "Reference skill demonstrating deterministic Lisp scaffolding of LLM probabilistic reasoning. Interleaves LLM hypothesis-generation steps with stateless lisp.eval compute steps that check structural invariants the LLM cannot reliably self-evaluate."
+description: "Reference skill demonstrating deterministic Lisp scaffolding of LLM probabilistic reasoning. Interleaves LLM hypothesis-generation steps with stateless lisp_eval tool calls that check structural invariants the LLM cannot reliably self-evaluate."
 ---
 
 # Lisp-Scaffold-Reasoning
@@ -10,84 +10,71 @@ reasoning, after de la Torre (2025, arXiv:2506.10021) — "From Tool Calling to
 Symbolic Thinking: LLMs in a Persistent Lisp Metaprogramming Loop". The paper
 proposes a live SBCL REPL with middleware-intercepted `<lisp>` tags and
 persistent state across turns. kask realizes the same symbolic-neural
-scaffolding via stateless `lisp.eval` compute steps interleaved between LLM
-`select` steps:
+scaffolding via stateless `lisp_eval` tool calls interleaved between LLM
+reasoning steps:
 
 ```
-LLM propose  →  Lisp invariant check  →  LLM refine (gated)  →  Lisp score  →  converge
+LLM propose  →  lisp_eval invariant check  →  LLM refine (gated)  →  lisp_eval score  →  converge
 ```
 
-State lives in the manifest's step-result chain (auditable YAML), not in a
-persistent REPL (attack surface). The interpreter is stateless, sandboxed
-(`#![forbid(unsafe_code)]`, no I/O/FS/network/`eval`, bounded steps+depth),
-and gated to `category: skill`.
+The interpreter is stateless, sandboxed (`#![forbid(unsafe_code)]`, no
+I/O/FS/network/`eval`, bounded steps+depth). State crosses the stateless
+boundary through the `env` parameter — prior step outputs are passed as JSON
+bindings the Lisp form can access via `assoc`.
 
 ## When to Use
 
-- When you want to see a worked example of `lisp.eval` interleaved with LLM
-  `select` steps — read the manifest at `kask/registry/manifests/lisp-scaffold-reasoning.yaml`.
+- When you want to see a worked example of `lisp_eval` interleaved with LLM
+  reasoning steps.
 - When you need a template for adding deterministic structural checks to a
-  probabilistic reasoning cascade (count, completeness, diversity, mutual
+  probabilistic reasoning process (count, completeness, diversity, mutual
   exclusivity).
 - When you want to extend the symbolic-neural scaffolding pattern to your own
-  skill — copy the `compute_ref: lisp.eval` step shape and adapt the `form:`.
+  skill — call the `lisp_eval` tool and adapt the `form`.
 
 ## When NOT to Use
 
 - As a production reasoning skill — use `falsifiability` for real eliminative
-  inference. This skill is a reference for the `lisp.eval` pattern.
+  inference. This skill is a reference for the `lisp_eval` pattern.
 - For persistent REPL or self-evolving tool scenarios — kask's interpreter is
-  deliberately stateless. See the skill manifest's header comment for why.
+  deliberately stateless.
 
-## The lisp.eval Pattern
+## The lisp_eval Pattern
 
-The manifest's step 2 is the canonical example. It implements all four
-structural invariants via recursive Lisp helpers:
+The canonical example implements four structural invariants via recursive
+Lisp helpers. The agent calls `lisp_eval` with:
 
-```yaml
-- ordinal: 2
-  action: compute
-  compute_ref: lisp.eval
-  input_mapping:
-    form: >
-      (let ((hyps (assoc "hypotheses" step_1_result)))
-        (if (is_null hyps)
-            (list "no_hypotheses_field")
-            (let ((n (length hyps)))
-              (begin
-                (define append2
-                  (lambda (a b)
-                    (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
-                (define count-defects ...)
-                (define check-completeness (lambda (hs acc) ...))
-                (define check-diversity (lambda (hs nh nm nl) ...))
-                (define check-duplicates (lambda (hs seen) ...))
-                (append2 (append2 count-defects completeness-defects)
-                         (append2 diversity-defects duplicate-defects))))))
-    env:
-      step_1_result: "{{ step_1_result }}"
+- `form`: a Lisp source string (auditable in the conversation, not a
+  runtime-emitted string from the model).
+- `env`: a JSON object whose keys become top-level Lisp bindings. Pass prior
+  step outputs here — this is how state crosses the stateless boundary.
+
+Example call:
+
+```json
+{
+  "form": "(let ((hyps (assoc \"hypotheses\" step_1_result))) (if (is_null hyps) (list \"no_hypotheses_field\") (let ((n (length hyps))) (begin (define check-completeness (lambda (hs acc) ...)) (check-completeness hyps nil)))))",
+  "env": { "step_1_result": { "hypotheses": [...] } }
+}
 ```
+
+The result is returned as JSON (here, a list of defect strings). The agent
+uses the result to decide whether to refine the hypotheses (if defects were
+found) or proceed to the report (if the set is clean).
 
 Key points:
 
-- `form:` is a static YAML field (auditable in code review), not a
-  runtime-emitted string (the paper's `<lisp>` tag).
-- `env:` binds prior step results into the Lisp environment via Jinja
-  `{{ }}` expressions — this is how state crosses the stateless boundary.
-- The Lisp form returns a JSON value (here, a list of defect strings) stored
-  as `step_2_result` and consumed by downstream steps.
-- Step 3's `condition: "{{ step_2_result | length > 0 }}"` gates the LLM
-  refinement on the Lisp verdict — the symbolic→neural feedback loop.
-- Step 1's `prior_defects: "{{ step_2_result | default([]) }}"` carries the
-  defect list forward across loop iterations — this closes the feedback loop.
-  The binding is to the bare list (not `step_2_result.defects`, which would be
-  undefined on a list result).
+- `form` is a static string the agent passes to the tool — it is auditable in
+  the conversation log, not a runtime-emitted string.
+- `env` binds prior step results into the Lisp environment — this is how state
+  crosses the stateless boundary.
+- The Lisp form returns a JSON value stored as the tool result and consumed by
+  the agent's next reasoning step.
+- The agent gates its refinement on the Lisp verdict — if the check found
+  structural defects, the agent repairs them; otherwise it proceeds. This is
+  the symbolic→neural feedback loop.
 
 ### Interpreter constraints honored by the form
-
-These constraints are non-obvious and were verified by the
-`dispatch_lisp_eval_hypothesis_four_invariants` test in
-`kask/crates/hkask-templates/src/compute.rs`:
 
 - `define` inside `begin` at the `let` scope mutates the `let`'s child env
   (works — `define` mutates the env it receives, which is the `let` env).
@@ -108,24 +95,11 @@ These constraints are non-obvious and were verified by the
 
 ## Constraints
 
-- `lisp.eval` is gated to `category: skill` manifests only. Infrastructure
-  manifests run without human review and a Turing-complete step language is
-  an attack surface.
 - The interpreter supports prefix `(+ a b)` and infix `a + b` operator
   notation. Use infix for simple scoring (`score_a * 0.6 + score_b * 0.4`),
   prefix for complex nested logic with `let`, `if`, `assoc`.
 - No `eval` builtin (Lisp code cannot evaluate arbitrary strings). No
-  `load`/`require`. Bounded recursion depth (64) and bounded evaluation
-  steps (100000).
-- rJoule cap: 2 per invocation. Maximum 10 iterations.
-- Registry is authoritative — when this SKILL.md disagrees with registry
-  templates, the registry wins.
-
-## Registry Templates
-
-| Template | Type | Purpose |
-|----------|------|---------|
-| `propose-hypotheses.j2` | KnowAct | Probabilistic step: the LLM generates 3-7 candidate hypotheses for the target question. Each hypothesis carries a prediction, a falsifier, and a likelihood estimate. This is the connectionist compute the Lisp steps scaffold — the LLM is good at generation, bad at counting its own outputs and checking structural completeness. |
-| `refine-hypotheses.j2` | KnowAct | Probabilistic step: the LLM refines the hypothesis set in response to the deterministic Lisp invariant check. Gated by `condition:` on the Lisp verdict — only runs if the Lisp step found structural defects the LLM must repair (missing falsifier, duplicate hypothesis, insufficient diversity). This is the feedback loop: Lisp finds a structural defect, LLM repairs it, Lisp re-checks. |
-| `report.j2` | KnowAct | Final report: the surviving hypothesis set with the Lisp invariant verdict and convergence score. Surfaces which structural defects were found and repaired across iterations, making the symbolic scaffolding auditable. |
-
+  `load`/`require`. Bounded recursion depth (default 64) and bounded
+  evaluation steps (default 100000). Both are configurable per call via
+  `max_steps` and `max_depth` parameters.
+- The tool is sandboxed: no I/O, no filesystem, no network, no side effects.
