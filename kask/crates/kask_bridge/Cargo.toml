@@ -20,7 +20,6 @@ hkask-ledger.workspace = true
 hkask-inference.workspace = true
 hkask-keystore.workspace = true
 hkask-regulation.workspace = true
-hkask-verification.workspace = true
 hkask-email.workspace = true
 hkask-services-core.workspace = true
 hkask-condenser.workspace = true
@@ -65,7 +64,6 @@ test-utils = []
 futures.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 proptest.workspace = true
-hkask-test-harness.workspace = true
 hkask-mcp-swarm = { workspace = true, features = ["test-utils"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }

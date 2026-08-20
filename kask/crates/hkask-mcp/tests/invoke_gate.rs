@@ -20,7 +20,6 @@
 use hkask_capability::{ToolPort, ToolPortError};
 use hkask_mcp::{McpRuntime, McpServer, McpTool};
 use hkask_regulation::{CyberneticsLoop, NoopEventSink, RegulationLedger};
-use hkask_test_harness::test_agent_webid;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;

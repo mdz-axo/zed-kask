@@ -18,7 +18,6 @@ use hkask_regulation::sensor_provider::{
     MetricsLocateError, MutationScoreSensor, Sensor, TestCoverageSensor,
 };
 use hkask_regulation::types::loops::{Signal, SignalMetric};
-use hkask_test_harness::{Oracle, OracleVerdict, arb_json_value, oracle_invariant};
 use proptest::prelude::*;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};

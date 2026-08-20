@@ -9,7 +9,6 @@ description = "Unified corpus MCP server — gather, process, and output: docume
 # Shared infrastructure
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
-hkask-verification.workspace = true
 
 # Ontology bridges — vocabulary constants for metadata, provenance, and domain predicates
 hkask-bridge-ontology.workspace = true
@@ -82,6 +81,5 @@ rand.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 proptest.workspace = true
 tempfile.workspace = true
-hkask-test-harness.workspace = true
 serde_json.workspace = true
 dotenvy.workspace = true

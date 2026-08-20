@@ -37,7 +37,6 @@
 //! delegations with `was_enforced: true` — the coverage gap closes, and
 //! the narrative-leak scan runs on every tool's prose fields.
 
-use hkask_verification::{FieldSpec, GroundingContract};
 use std::collections::HashMap;
 
 /// Register all companies-tool grounding contracts with the store.

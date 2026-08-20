@@ -12,7 +12,6 @@
 
 use hkask_inference::scoring::{ProviderScore, ScoreWeights};
 use hkask_inference::{MediaOp, RouterModelEntry};
-use hkask_test_harness::{OracleVerdict, oracle_invariant, oracle_reference};
 use proptest::prelude::*;
 use std::str::FromStr;
 

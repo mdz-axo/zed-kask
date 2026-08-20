@@ -1609,7 +1609,6 @@ mod grounding_wiring_tests {
     use crate::local_runtime::LocalSwarmRuntime;
     use hkask_types::ports::inference_port::{InferencePort, SkillExecPort, ToolDispatchPort};
     use hkask_types::{InferenceError, InferenceResult, InferenceUsage, SkillExecError, WebID};
-    use hkask_verification::{TrendScope, VerificationStore};
     use std::future::Future;
     use std::pin::Pin;
 

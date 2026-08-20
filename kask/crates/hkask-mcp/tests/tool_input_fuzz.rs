@@ -10,7 +10,6 @@
 //! - P4 (Clear Boundaries): input surfaces must reject invalid input gracefully, never panic
 //! - P1 (Correctness): envelope unwrapping is deterministic and lossless
 
-use hkask_test_harness::arb_json_value;
 use hkask_types::tool_response::{parse_tool_response, unwrap_tool_envelope};
 use proptest::prelude::*;
 use serde_json::{Value as JsonValue, json};

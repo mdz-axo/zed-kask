@@ -235,7 +235,6 @@ mod tests {
     // rather than individual hand-picked inputs. They complement the
     // example-based tests above by verifying universal invariants.
 
-    use hkask_test_harness::arb_json_value;
     use proptest::prelude::*;
 
     use crate::request_types::CreateAgentRequest;

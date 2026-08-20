@@ -35,7 +35,6 @@ use hkask_mcp_kata_kanban::types::{
     TaskReopenRequest, TaskSpawnRequest, TaskVerifyRequest,
 };
 use hkask_mcp_server::find_boolean_schema_positions;
-use hkask_test_harness::{OracleVerdict, arb_json_value, oracle_invariant};
 use proptest::prelude::*;
 use schemars::schema_for;
 use serde_json::Value as JsonValue;

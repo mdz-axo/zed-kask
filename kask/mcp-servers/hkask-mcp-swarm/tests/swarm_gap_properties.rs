@@ -29,7 +29,6 @@ use hkask_mcp_swarm::test_utils::{
     sanitize_abw_response, sanitize_abw_text, sanitize_agent_id, strip_leading_mentions,
     url_encode_segment, validate_agent_name,
 };
-use hkask_test_harness::{OracleVerdict, arb_json_value, oracle_invariant, oracle_reference};
 use proptest::prelude::*;
 use serde_json::{Value, json};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
