@@ -1148,4 +1148,70 @@ mod tests {
             "improvement gate (both) must fire when baseline is captured via fallback"
         );
     }
+
+    fn kata_config_for_signal() -> ConvergenceConfig {
+        let mut cfg = config(0.0, "", 5, 1);
+        cfg.convergence_mode = "cauchy".to_string();
+        cfg.target_artifacts_field = Some("a".to_string());
+        cfg.current_artifacts_field = Some("a".to_string());
+        cfg
+    }
+
+    #[test]
+    fn signal_broken_true_when_all_readings_non_finite() {
+        let cfg = kata_config_for_signal();
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        for _ in 0..3 {
+            tracker.push_cycle_from_context(&ctx);
+        }
+        assert!(
+            tracker.signal_is_broken(),
+            "all-NaN history must set signal_broken"
+        );
+    }
+
+    #[test]
+    fn signal_broken_false_when_any_finite_reading() {
+        let cfg = kata_config_for_signal();
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let mut ctx = HashMap::new();
+        tracker.push_cycle_from_context(&ctx);
+        assert!(tracker.signal_is_broken());
+        ctx.insert("convergence_signal".to_string(), json!(0.5));
+        tracker.push_cycle_from_context(&ctx);
+        assert!(
+            tracker.signal_is_broken(),
+            "once broken, the flag stays set (conservative)"
+        );
+    }
+
+    #[test]
+    fn signal_broken_false_when_all_finite() {
+        let cfg = kata_config_for_signal();
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let mut ctx = HashMap::new();
+        ctx.insert("convergence_signal".to_string(), json!(0.5));
+        for _ in 0..3 {
+            tracker.push_cycle_from_context(&ctx);
+        }
+        assert!(
+            !tracker.signal_is_broken(),
+            "all-finite history must not set signal_broken"
+        );
+    }
+
+    #[test]
+    fn signal_broken_false_in_legacy_mode_even_with_missing_field() {
+        let cfg = config(0.15, "nonexistent", 5, 1);
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let ctx = HashMap::new();
+        for _ in 0..3 {
+            tracker.push_cycle_from_context(&ctx);
+        }
+        assert!(
+            !tracker.signal_is_broken(),
+            "legacy mode must not set signal_broken"
+        );
+    }
 }

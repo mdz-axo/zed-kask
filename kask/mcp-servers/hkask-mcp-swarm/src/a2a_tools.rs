@@ -78,7 +78,9 @@ impl SwarmServer {
                     &result.tool_calls,
                     &[],
                 );
-                result.apply_grounding(outcome, None);
+                let validation =
+                    self.validate_produces(&req.agent_name, &agent.produces, &outcome.cleaned);
+                result.apply_grounding(outcome, validation.as_ref());
                 let mut task = a2a::task_from_response(
                     &result.response,
                     req.context_id.clone(),
@@ -239,7 +241,12 @@ impl SwarmServer {
                                 &result.tool_calls,
                                 &[],
                             );
-                            result.apply_grounding(outcome, None);
+                            let validation = self.validate_produces(
+                                member_id,
+                                &agent.produces,
+                                &outcome.cleaned,
+                            );
+                            result.apply_grounding(outcome, validation.as_ref());
                             let task = a2a::task_from_response(
                                 &result.response,
                                 Some(context_id.clone()),
