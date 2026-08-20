@@ -17,7 +17,7 @@
 ///
 /// Models often wrap JSON in ```json ... ``` blocks. This also handles
 /// fences without a language tag (``` ... ```).
-pub fn strip_json_fences(text: &str) -> String {
+pub(crate) fn strip_json_fences(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.starts_with("```") {
         // Find the first newline after the opening fence
@@ -75,7 +75,7 @@ pub fn extract_json_from_response(text: &str) -> String {
 /// injecting a JSON-looking block in chunk text that the LLM echoes in its
 /// reasoning preamble, which the old `find('{')` ... `rfind('}')` approach
 /// would silently merge with the model's real answer.
-pub fn find_balanced_json_object(text: &str) -> Option<&str> {
+pub(crate) fn find_balanced_json_object(text: &str) -> Option<&str> {
     let bytes = text.as_bytes();
     let start = bytes.iter().position(|&b| b == b'{')?;
     let mut depth: i32 = 0;

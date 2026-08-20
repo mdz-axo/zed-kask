@@ -48,36 +48,18 @@ impl WebID {
     /// Uses SHA-1 name-based UUID with a fixed namespace.
     /// Same persona bytes → same WebID.
     ///
-    /// Note: This uses a default namespace. For namespace isolation,
-    /// use `from_persona_with_namespace` instead.
-    ///
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// pre:  persona_bytes is any non-empty byte slice (empty produces a deterministic but degenerate WebID)
     /// post: returns a [`WebID`] deterministically derived from persona_bytes using the default "hkask" namespace;
     ///       same persona_bytes → same WebID
     pub fn from_persona(persona_bytes: &[u8]) -> Self {
-        Self::from_persona_with_namespace(persona_bytes, "hkask")
-    }
-
-    /// Derive WebID deterministically from persona with namespace isolation (R10)
-    ///
-    /// Uses SHA-1 name-based UUID with a fixed namespace.
-    /// Combines namespace and persona bytes to prevent collisions across
-    /// different agent registries.
-    ///
-    /// Same namespace + persona bytes → same WebID.
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  persona_bytes is any byte slice; namespace is any non-empty string
-    /// post: returns a [`WebID`] deterministically derived; same (namespace, persona_bytes) → same WebID;
-    ///       different namespace → different WebID (namespace isolation)
-    pub fn from_persona_with_namespace(persona_bytes: &[u8], namespace: &str) -> Self {
         // Fixed namespace UUID for hKask personas
         // UUID: 686b6173-6b2d-7065-7273-6f6e612d6e73
         let base_namespace = Uuid::parse_str("686b6173-6b2d-7065-7273-6f6e612d6e73")
             .expect("Invalid namespace UUID");
 
         // Combine namespace and persona bytes to create isolated WebIDs
+        let namespace = "hkask";
         let mut combined = Vec::with_capacity(namespace.len() + 1 + persona_bytes.len());
         combined.extend_from_slice(namespace.as_bytes());
         combined.push(b':');

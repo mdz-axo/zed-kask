@@ -58,7 +58,7 @@ pub fn parse_tool_response(output: &str) -> Option<Value> {
 /// Unwrap the `content` envelope from an already-parsed tool response.
 ///
 /// `{"content": {…}}` → `{…}`; any other value is returned unchanged.
-pub fn unwrap_tool_envelope(value: Value) -> Value {
+pub(crate) fn unwrap_tool_envelope(value: Value) -> Value {
     value.get("content").cloned().unwrap_or(value)
 }
 
@@ -97,7 +97,7 @@ pub fn parse_tool_error(output: &str) -> Option<ToolErrorEnvelope> {
 /// error envelope without re-parsing. Checks the raw value before `content`
 /// unwrapping, since the error envelope has no `content` wrapper.
 #[must_use]
-pub fn parse_tool_error_value(value: &Value) -> Option<ToolErrorEnvelope> {
+pub(crate) fn parse_tool_error_value(value: &Value) -> Option<ToolErrorEnvelope> {
     let obj = value.as_object()?;
     let message = obj.get("error")?.as_str()?;
     let kind_str = obj.get("kind")?.as_str()?;

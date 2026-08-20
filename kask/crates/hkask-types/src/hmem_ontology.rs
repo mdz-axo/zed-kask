@@ -85,11 +85,6 @@ pub struct HMemOntology {
 }
 
 impl HMemOntology {
-    /// Create a new empty ontology blob.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Create a semantic-fact ontology (state-axis anchored).
     ///
     /// Semantic h_mems are facts: Dublin Core type + subject + source, with
@@ -176,19 +171,6 @@ impl HMemOntology {
             pko_step: None,
             ontology_tags: self.ontology_tags.clone(),
         }
-    }
-
-    /// Does this ontology carry a tag from the given namespace?
-    pub fn has_ontology(&self, namespace: &str) -> bool {
-        self.ontology_tags.contains_key(namespace)
-    }
-
-    /// Concepts from a specific ontology namespace (empty if absent).
-    pub fn ontology_concepts(&self, namespace: &str) -> &[String] {
-        self.ontology_tags
-            .get(namespace)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
     }
 
     /// Serialize to a JSON string for storage in the `ontology` column.
