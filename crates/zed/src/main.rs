@@ -641,13 +641,9 @@ fn main() {
         gpui_tokio::init_from_handle(cx, kask_runtime_handle.clone());
         std::mem::forget(kask_tokio_runtime);
 
-        // D1 composition root: wire the hKask skill cascade into the SkillTool.
-        // After this call, skill activations run the hKask cascade (KnowAct/FlowDef/
-        // RenderAct + PDCA + gas/rjoule budgets) instead of injecting the SKILL.md body.
-        // The SKILL.md files in .agents/skills/ remain the discovery-only catalog entries.
-        // The manifest YAMLs in kask/registry/manifests/ drive the cascade.
-        //
-        // This uses a OnceLock global hook so the agent crate doesn't depend on kask_bridge.
+        // D1: The skill tool follows upstream Zed — it reads the SKILL.md body
+        // and returns it to the agent. No manifest cascade. The `lisp_eval`
+        // and `render_template` tools are available for skill composition.
         //
         // The built-in kask MCP servers come from the canonical registry in
         // `kask_bridge::BUILT_IN_MCP_SERVERS` (single source of truth).

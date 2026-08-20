@@ -150,7 +150,7 @@ const KANBAN_SERVER: &str = hkask_types::kanban_wire::KANBAN_SERVER_NAME;
 /// security violation: both backends have their own spending gates (consent
 /// tokens for ABW, ledger balance for local), so a wrong-mode cascade cannot
 /// bypass spending controls. Hard enforcement (declaring `mode` as a required
-/// manifest input) would change the `hkask-templates` schema and break
+/// manifest input) would change the schema and break
 /// existing callers. The prompt instruction is the pragmatic tradeoff.
 fn steer_system_prompt(
     selected_workspace: Option<&str>,
