@@ -12,6 +12,9 @@ contract:
     suggestion: string
 visibility: Public
 ---
+[inference]
+thinking_budget = "off"
+
 {# graph-audit/fix-suggestion.j2 — Generate fix suggestions for analysis findings.
    Rendered per-finding, sent to inference router for suggestions.
 

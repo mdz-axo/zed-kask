@@ -101,6 +101,21 @@ dispatches only canonical actions; non-canonical actions cause runtime errors.
 | E13 | on_failure config on execute steps | Every `action: execute` step should have an `on_failure` config with `action: report` (wires `curator_report_skill_use_issue`) and a non-empty `resume` text. Steps without `on_failure` silently propagate errors as `TemplateError` — the operator sees `ExitKind::Escalated` but not the resume instruction. The `report` action surfaces the failure to the Curator before escalating. | Medium |
 | E14 | execute step mcp field references known tool | Every `action: execute` step's `mcp:` field references a tool in the known MCP tool list (see `manifest_load_validation.rs` `KNOWN_MCP_TOOLS`). Unknown tool names cause runtime `TemplateError::Manifest` errors. | Critical |
 
+### Template Efficiency Checks (inference optimization)
+
+These checks verify that templates are optimized for inference speed and
+output quality. The `[inference]` block parameters (`thinking_budget`,
+`work_effort`, `verbosity`, `temperature`) are now wired into the inference
+pipeline — they are not cosmetic. Templates that fail these checks waste
+tokens, time, or produce inconsistent outputs.
+
+| ID | Check | Pass Criteria | Severity |
+|----|-------|---------------|----------|
+| T1 | thinking_budget declared | Every .j2 with a body `[inference]` block declares `thinking_budget` explicitly ("full", "on", "off", or "none"). Templates with no `thinking_budget` and no `work_effort` default to thinking ON implicitly — this is a gap because the author's intent is ambiguous (did they want thinking, or did they forget to set it?). | Medium |
+| T2 | thinking_budget matches step role | Templates for synthesis/classification/formatting steps should declare `thinking_budget = "off"` (or `work_effort = "low"`). Deep analytical steps should declare `thinking_budget = "full"`. A synthesis step (e.g., "assemble the prior outputs into a thesis") with `thinking_budget = "full"` wastes inference time on re-reasoning already-analyzed data. Flag when the step description indicates synthesis/classification but thinking is ON. | Medium |
+| T3 | No concrete example values in JSON schemas | JSON output schemas should use type placeholders (e.g., `"(description)"`, `"(mechanism)"`), not concrete analysis content as example values (e.g., full sentences, specific company names, industry-specific examples). Concrete examples waste tokens, risk the LLM partially copying example content, and are domain-specific where the template should be domain-general. | Low |
+| T4 | No repeated paragraphs | No paragraph (60+ characters) should appear more than once in the same template. Repeated paragraphs indicate the same concept is explained in multiple sections — consolidate to a single explanation. Common pattern: a "theory/basis" section and a "protocol/steps" section that re-explain the same concepts. | Low |
+
 ### Canonical Action Semantics (Pattern A type system)
 
 | Action | Pattern A Type | Description |
@@ -171,6 +186,7 @@ Respond with a JSON object:
 - Fix suggestions must be actionable.
 - Registry check failures (R1–R5) are always `critical`.
 - Executor compliance failures (E1, E2, E4, E5, E6, E7, E9, E11, E12, E16) are always `critical`.
+- Template efficiency failures (T1, T2) are `medium`. (T3, T4) are `low`.
 - Safety check failures (Z5, Z6, Z7) are always `high`.
 - Missing SKILL.md (Z1 absent) is `info` — not a failure.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
