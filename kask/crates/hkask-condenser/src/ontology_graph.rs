@@ -229,36 +229,6 @@ impl OntologyGraph {
             ],
         );
 
-        // ── OMC media ────────────────────────────────────────────────────
-        edges.insert(
-            "scene",
-            vec![
-                ("shot", OntologyRelation::Contains),
-                ("sequence", OntologyRelation::PartOf),
-            ],
-        );
-        edges.insert(
-            "sequence",
-            vec![
-                ("scene", OntologyRelation::Contains),
-                ("shot", OntologyRelation::Contains),
-            ],
-        );
-        edges.insert(
-            "image",
-            vec![
-                ("creative_work", OntologyRelation::RelatedTo),
-                ("camera_metadata", OntologyRelation::RelatedTo),
-            ],
-        );
-        edges.insert(
-            "video",
-            vec![
-                ("shot", OntologyRelation::Contains),
-                ("scene", OntologyRelation::Contains),
-            ],
-        );
-
         // ── Cross-domain bridges ─────────────────────────────────────────
         // A PKO process concept that maps to a domain supplement concept
         edges.insert(
@@ -346,10 +316,6 @@ pub fn anchor_keywords(anchor: &crate::types::OntologyAnchor) -> Vec<&'static st
             namespace: crate::types::OntologyNamespace::MlSchema,
             ..
         } => vec!["run", "model", "training", "evaluation"],
-        crate::types::OntologyAnchor::DomainSupplement {
-            namespace: crate::types::OntologyNamespace::Omc,
-            ..
-        } => vec!["scene", "sequence", "image", "video"],
         crate::types::OntologyAnchor::DomainSupplement {
             namespace: crate::types::OntologyNamespace::Eso,
             ..

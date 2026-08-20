@@ -677,24 +677,14 @@ mod test {
     }
 
     #[test]
-    fn test_refuse_skill_catalog_read_redirects_to_skill_tool() {
-        // The refusal must name the `skill` tool and the skill's own name,
-        // otherwise the model has no actionable next step and will retry the
-        // read or improvise the methodology — the exact failure this gates.
-        let err = refuse_skill_catalog_read(
+    fn test_refuse_skill_catalog_read_allows_skill_md() {
+        // D1 revert: SKILL.md reads are now allowed. The `skill` tool reads
+        // the body from disk and injects it. `read_file` can also read it.
+        refuse_skill_catalog_read(
             Path::new("/home/u/proj/.agents/skills/hypothesis-framer/SKILL.md"),
             ".agents/skills/hypothesis-framer/SKILL.md",
         )
-        .expect_err("a SKILL.md read must be refused");
-        let message = format!("{err:?}");
-        assert!(
-            message.contains("skill") && message.contains("hypothesis-framer"),
-            "refusal must redirect to the `skill` tool with the skill name: {message}"
-        );
-        assert!(
-            message.contains("task"),
-            "refusal must tell the model to pass the request as `task`: {message}"
-        );
+        .expect("SKILL.md reads must be allowed (body injection restored)");
     }
 
     /// The blocked-read telemetry key must stay out of the `reg.skill.*`

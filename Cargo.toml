@@ -289,7 +289,6 @@ members = [
     "kask/crates/hkask-email",
     "crates/hkask-tool-invoker",
     "crates/hkask-conversation-injector",
-    "crates/hkask-media-widget",
     "crates/hkask-viz-core",
     "crates/hkask-graph-widget",
     "crates/hkask-kanban-widget",
@@ -386,7 +385,6 @@ marketplace_ui_common = { path = "crates/marketplace_ui_common" }
 kask_bridge = { path = "kask/crates/kask_bridge" }
 hkask_tool_invoker = { path = "crates/hkask-tool-invoker", package = "hkask-tool-invoker" }
 hkask_conversation_injector = { path = "crates/hkask-conversation-injector", package = "hkask-conversation-injector" }
-hkask_media_widget = { path = "crates/hkask-media-widget", package = "hkask-media-widget" }
 hkask_viz_core = { path = "crates/hkask-viz-core", package = "hkask-viz-core" }
 hkask_graph_widget = { path = "crates/hkask-graph-widget", package = "hkask-graph-widget" }
 hkask_kanban_widget = { path = "crates/hkask-kanban-widget", package = "hkask-kanban-widget" }
@@ -507,7 +505,6 @@ remote = { path = "crates/remote" }
 remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
-ffmpeg-next = { version = "8.1", default-features = false, features = ["codec", "format", "software-resampling", "software-scaling"] }
 reqwest_client = { path = "crates/reqwest_client" }
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", features = ["wav", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }

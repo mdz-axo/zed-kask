@@ -2154,19 +2154,6 @@ fn main() {
                         // zed's configured API keys) instead of
                         // constructing their own MediaRouter with separate keys.
                         //
-                        // The media router is a hKask `MediaRouter` used for
-                        // media generation (image/video/speech/transcription via
-                        // registered `MediaProvider` backends). These backends aren't part of zed's
-                        // `LanguageModel` abstraction, so the media MCP server routes
-                        // them through the IPC bridge to this router instead of
-                        // constructing its own. No media backends are currently
-                        // registered — the router returns a clear "no provider
-                        // configured" error until one is added back.
-                        let media_router = std::sync::Arc::new(
-                            kask_bridge::MediaRouter::new(
-                                kask_bridge::InferenceConfig::from_env(),
-                            ),
-                        );
                         // The governed McpRuntime backs `tool_invoke` requests
                         // (delegated swarm agents calling MCP tools). The IPC
                         // server mints the panel token — the child process
@@ -2184,7 +2171,6 @@ fn main() {
                         match kask_bridge::InferenceIpcServer::start(
                             inference_port,
                             embedding_port_for_ipc.clone(),
-                            Some(media_router),
                             tool_port_for_ipc,
                             skill_exec_port_for_ipc,
                             cx,
@@ -2281,15 +2267,7 @@ fn main() {
 
                         // Start the IPC server with a no-op inference port so
                         // `INFERENCE_SOCKET_PATH` is set and MCP servers connect
-                        // to the bridge. The media router is still constructed
-                        // so media generation requests get a clear error — media
-                        // backends are not part of zed's `LanguageModel`
-                        // abstraction.
-                        let media_router = std::sync::Arc::new(
-                            kask_bridge::MediaRouter::new(
-                                kask_bridge::InferenceConfig::from_env(),
-                            ),
-                        );
+                        // to the bridge.
                         let no_model_port: std::sync::Arc<dyn hkask_types::InferencePort> =
                             std::sync::Arc::new(kask_bridge::NoModelInferencePort);
                         // No tool port here: the no-op port means no chat model
@@ -2302,7 +2280,6 @@ fn main() {
                         match kask_bridge::InferenceIpcServer::start(
                             no_model_port,
                             None,
-                            Some(media_router),
                             None,
                             None,
                             cx,

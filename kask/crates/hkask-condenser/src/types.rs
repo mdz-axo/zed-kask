@@ -480,7 +480,7 @@ mod tests {
                 < 0.001
         );
 
-        // GOLEM, ML-Schema, OMC: ±0.00 (standard)
+        // GOLEM, ML-Schema: ±0.00 (standard)
         assert!(
             (OntologyAnchor::DomainSupplement {
                 namespace: OntologyNamespace::Golem,
@@ -599,10 +599,6 @@ mod tests {
             "ml_schema".parse::<OntologyNamespace>().unwrap(),
             OntologyNamespace::MlSchema
         );
-        assert_eq!(
-            "omc".parse::<OntologyNamespace>().unwrap(),
-            OntologyNamespace::Omc
-        );
         assert!("unknown".parse::<OntologyNamespace>().is_err());
     }
 
@@ -612,7 +608,6 @@ mod tests {
             OntologyNamespace::Fibo,
             OntologyNamespace::Golem,
             OntologyNamespace::MlSchema,
-            OntologyNamespace::Omc,
             OntologyNamespace::Sumo,
         ];
         for ns in &namespaces {

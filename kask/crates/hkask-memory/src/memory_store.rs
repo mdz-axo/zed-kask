@@ -415,7 +415,7 @@ impl MemoryStore {
     }
 
     /// Recall h_mems tagged by an open-world ontology namespace (`fibo`,
-    /// `golem`, `omc`, …) — the domain-supplement query.
+    /// `golem`, …) — the domain-supplement query.
     pub fn query_by_ontology_namespace(
         &self,
         namespace: &str,

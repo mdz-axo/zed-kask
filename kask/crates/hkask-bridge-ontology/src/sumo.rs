@@ -1,7 +1,7 @@
 //! SUMO (Suggested Upper Merged Ontology) vocabulary bridge.
 //!
 //! SUMO is the upper ontology — the general-purpose fallback for domains
-//! that don't map to a specific supplement (FIBO, ESO, GOLEM, OMC, ML-Schema).
+//! that don't map to a specific supplement (FIBO, ESO, GOLEM, ML-Schema).
 //! It provides the foundational categories (Entity, Process, Object, Agent,
 //! Relation) that all domain supplements ultimately specialize. Where Dublin
 //! Core is the universal state axis and PKO is the universal process axis,

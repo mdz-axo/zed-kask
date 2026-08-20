@@ -76,7 +76,7 @@ pub(crate) fn predicate_to_dimension(predicate: &str) -> hkask_types::Dimension 
 /// Returns the confidence to store for an assertion: the LLM-reported confidence,
 /// or 0.5 (capped) when the assertion fails verification. Verification:
 ///
-/// - Abstract-namespace predicates (golem/eso/fibo/pko/epistemic/omc/other)
+/// - Abstract-namespace predicates (golem/eso/fibo/pko/epistemic/other)
 ///   bypass the subject/object-in-text check ONLY if the predicate's
 ///   namespace was actually tagged for this chunk. Without that cross-check,
 ///   the LLM could emit any `golem:`/`eso:` predicate to bypass the guard
@@ -95,7 +95,7 @@ pub(crate) fn assertion_confidence(
     let pred_ns = predicate.split(':').next().unwrap_or("").to_lowercase();
     let is_abstract_ns = matches!(
         pred_ns.as_str(),
-        "golem" | "eso" | "fibo" | "pko" | "epistemic" | "omc" | "other"
+        "golem" | "eso" | "fibo" | "pko" | "epistemic" | "other"
     );
     let namespace_tagged = !chunk_namespaces.is_empty() && chunk_namespaces.contains(&pred_ns);
     if is_abstract_ns && namespace_tagged {

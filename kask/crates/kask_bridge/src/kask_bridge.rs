@@ -10,7 +10,8 @@
 //! depends on hKask. This bridge is the only crate that depends on both sides.
 
 mod cascade_context;
-mod concurrency;mod context_injector;
+mod concurrency;
+mod context_injector;
 
 mod identity;
 mod inference;
@@ -24,15 +25,8 @@ mod skill_executor;
 
 pub use cascade_context::{AgentCascadeContextProviderAdapter, BridgeCascadeContextProvider};
 pub use concurrency::{global_concurrency_limiter, set_global_concurrency_limiter};
-pub pub use context_injector::BridgeContextInjector;
-
+pub use context_injector::BridgeContextInjector;
 pub use hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL;
-/// Re-exports for the media IPC bridge — the composition root constructs the
-/// media router and passes it to `InferenceIpcServer::start`. Re-exported here
-/// so `zed` doesn't need a direct `hkask-inference` dependency for these two
-/// types.
-pub /// Re-exported so the settings UI can display the resolved default data
-/// directory without a direct `hkask-types` dependency.
 pub use hkask_types::agent_paths::resolve_data_dir;
 pub use identity::{
     ProvisionError, ProvisionedAgent, agent_name_from_username, mirror_provisioned_db_passphrase,
@@ -57,7 +51,7 @@ pub use memory::{
     open_curator_regulation_archive,
 };
 pub use model_resolution::resolve_model_names;
-pub pub use skill_executor::{
+pub use skill_executor::{
     BridgeManifestExecutor, ProfileResolver, SnapshotProfileResolver, seed_registry_to_disk,
 };
 

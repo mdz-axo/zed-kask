@@ -3,7 +3,7 @@ name = "hkask-viz-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Block-renderer registry composing kask viz widgets (media, graph, kanban, portfolio, scenarios) behind the D18 markdown seam"
+description = "Block-renderer registry composing kask viz widgets (graph, kanban, portfolio, scenarios, swarm) behind the D18 markdown seam"
 
 [lib]
 path = "src/hkask_viz_core.rs"
@@ -13,7 +13,6 @@ anyhow.workspace = true
 gpui.workspace = true
 log.workspace = true
 serde.workspace = true
-hkask_media_widget.workspace = true
 hkask_graph_widget.workspace = true
 hkask_kanban_widget.workspace = true
 hkask_portfolio_widget.workspace = true

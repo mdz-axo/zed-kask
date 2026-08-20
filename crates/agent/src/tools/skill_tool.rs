@@ -1039,7 +1039,7 @@ mod tests {
 
     /// Build a `Skill`, write its SKILL.md to a FakeFs, and return both.
     /// These tests exercise the tool's rendering and authorization behavior.
-    fn create_test_skill(
+    async fn create_test_skill(
         cx: &mut TestAppContext,
         name: &str,
         description: &str,
@@ -1065,7 +1065,8 @@ mod tests {
             "test-skill",
             "A test skill for testing",
             "# Instructions\n\nDo the thing.",
-        );
+        )
+        .await;
         let skills = Arc::new(vec![skill]);
 
         let tool = Arc::new(SkillTool::new(
@@ -1114,7 +1115,8 @@ mod tests {
             "my-skill",
             "A test skill",
             "# Header\n\nSome instructions.",
-        );
+        )
+        .await;
         let skills = Arc::new(vec![skill]);
 
         let tool = Arc::new(SkillTool::new(
@@ -1162,7 +1164,8 @@ mod tests {
             "safe-skill",
             "A skill with a hostile body",
             malicious_body,
-        );
+        )
+        .await;
         let skills = Arc::new(vec![skill]);
 
         let tool = Arc::new(SkillTool::new(
@@ -1212,7 +1215,8 @@ mod tests {
         // through verbatim (only `<skill_content`/`</skill_content>` tags
         // are neutralized, not other HTML elements).
         let body = "<details><summary>More</summary>See <a href=\"https://example.com\">link</a> &amp; details.</details>";
-        let (skill, fs) = create_test_skill(cx, "html-skill", "A skill with legitimate HTML", body);
+        let (skill, fs) =
+            create_test_skill(cx, "html-skill", "A skill with legitimate HTML", body).await;
         let skills = Arc::new(vec![skill]);
 
         let tool = Arc::new(SkillTool::new(
@@ -1271,7 +1275,7 @@ mod tests {
         init_test(cx);
 
         let (global_skill, fs) =
-            create_test_skill(cx, "global-skill", "A global skill", "Global content");
+            create_test_skill(cx, "global-skill", "A global skill", "Global content").await;
 
         let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
 
@@ -1346,7 +1350,8 @@ mod tests {
     async fn test_skill_tool_unknown_skill(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (skill, fs) = create_test_skill(cx, "existing-skill", "An existing skill", "Content");
+        let (skill, fs) =
+            create_test_skill(cx, "existing-skill", "An existing skill", "Content").await;
         let skills = Arc::new(vec![skill]);
 
         let tool = Arc::new(SkillTool::new(
@@ -1376,9 +1381,10 @@ mod tests {
         // somehow got the name (e.g. by hallucination or seeing it in user
         // input).
         let (mut hidden, hidden_fs) =
-            create_test_skill(cx, "deploy", "Deploy to production", "Steps");
+            create_test_skill(cx, "deploy", "Deploy to production", "Steps").await;
         hidden.disable_model_invocation = true;
-        let (visible, _visible_fs) = create_test_skill(cx, "visible", "Visible skill", "Hello");
+        let (visible, _visible_fs) =
+            create_test_skill(cx, "visible", "Visible skill", "Hello").await;
         let skills = Arc::new(vec![hidden, visible]);
 
         // Both skills' SKILL.md files must be on the same fs the tool reads
@@ -1434,7 +1440,7 @@ mod tests {
             agent_settings::AgentSettings::override_global(settings, cx);
         });
 
-        let (skill, fs) = create_test_skill(cx, "my-skill", "A test skill", "# Body");
+        let (skill, fs) = create_test_skill(cx, "my-skill", "A test skill", "# Body").await;
         let skills = Arc::new(vec![skill]);
         let tool = Arc::new(SkillTool::new(
             move |_cx| skills.clone(),
@@ -1488,7 +1494,7 @@ mod tests {
             agent_settings::AgentSettings::override_global(settings, cx);
         });
 
-        let (skill, fs) = create_test_skill(cx, "my-skill", "A test skill", "# Body");
+        let (skill, fs) = create_test_skill(cx, "my-skill", "A test skill", "# Body").await;
         let expected_path = skill.skill_file_path.to_string_lossy().into_owned();
         let skills = Arc::new(vec![skill]);
         let tool = Arc::new(SkillTool::new(
@@ -1545,7 +1551,7 @@ mod tests {
             agent_settings::AgentSettings::override_global(settings, cx);
         });
 
-        let (skill, fs) = create_test_skill(cx, "my-skill", "A test skill", "# Body");
+        let (skill, fs) = create_test_skill(cx, "my-skill", "A test skill", "# Body").await;
         let skills = Arc::new(vec![skill]);
         let tool = Arc::new(SkillTool::new(
             move |_cx| skills.clone(),
