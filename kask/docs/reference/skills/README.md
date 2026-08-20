@@ -1,219 +1,201 @@
 ---
-title: "Skill, Template, and Bundle Registry — Reference"
+title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-08-15
-version: "0.36.0"
+last_updated: 2026-08-20
+version: "0.37.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]
 ---
 
-# Skill, Template, and Bundle Registry
+# Skill Registry
 
-> **Layout (verified against the filesystem 2026-08-05):** A skill is a **PDCA improving loop** composed of two artifacts:
+> **Execution model (verified 2026-08-20):** Skills execute via **upstream Zed body injection**.
+> `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the `SKILL.md` body from disk
+> and injects it into the agent's context via `render_skill_envelope`. The model reads the body
+> and follows the instructions. There is no `ManifestExecutor`, no `StepMachine`, no PDCA cascade
+> machinery — the agent is the executor. The prior manifest-driven cascade model
+> (`hkask-templates`, `registry/manifests/`, `FlowDef`) was deleted (commit `5f4cf5f10d`).
 >
-> 1. a **FlowDef manifest** at `kask/registry/manifests/<name>.yaml` — the steps, `convergence.threshold`, gas budget, and `loop` actions; this is what `ManifestExecutor` drives.
-> 2. a **template crate** at `kask/registry/templates/<name>/` — `manifest.yaml` (template metadata: ids, types, lexicon) plus the `*.j2` templates referenced by the FlowDef's `template_ref` values.
+> **Two tools support skill execution:**
+> - `lisp_eval` — sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`). No I/O,
+>   no `eval`, no network. Bounded by `max_steps` (default 100000) and `max_depth` (default 64).
+>   The model calls it when a SKILL.md instructs deterministic computation (convergence signals,
+>   invariant checks, scoring).
+> - `render_template` — renders Jinja2 templates from `kask/registry/templates/` using `minijinja`.
+>   Strips YAML frontmatter. Path traversal protection via `canonicalize` + `starts_with` check.
+>   Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup.
 >
-> The template crate is the **single source of truth** (P5.1). A **SKILL.md** companion in `.agents/skills/<name>/` (repo root, not under `kask/`) is _derived_ from the registry crate via the `skill-maintenance` skill (`skill-maintenance-reverse.j2`, LLM-driven) — it is not independently authored and is not required for runtime. Skills execute inside an agent's inference environment (the zed-kask agent panel); there is no standalone "run a skill" surface, by design.
+> **PDCA loops are model-coordinated, not machine-enforced.** The SKILL.md body describes
+> convergence criteria; the model self-iterates using `lisp_eval` for deterministic checks and
+> `render_template` for structured prompt scaffolding. There is no runtime that drives the loop.
 >
-> **Manifest category:** every FlowDef manifest carries a `manifest.category` field distinguishing agent skills from infrastructure that shares the `.yaml` form: `skill` (agent PDCA loop, bindable as an agent `process_manifest`), `qa-script` (run by `kask qa`), `runtime-config` (system bootstrap config), `daemon-process` (Regulation/Curator daemon, run directly — not agent-bound), `pipeline` (MCP-server/pipeline processes). The execution boundary (`kask_bridge::skill_executor`) only binds `skill` manifests to agents; the audit counts only `skill`-category manifests as skills (non-skill manifests and template crates are health-checked but reported separately).
+> **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
+> containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
+> plus a markdown body of process instructions. 60 skills ship. 62 template crates remain under
+> `kask/registry/templates/` for use by `render_template` — these are companion resources, not the
+> source of truth for skill execution. The `kask/registry/manifests/` directory does not exist
+> (all FlowDef manifests were deleted, commit `5f4cf5f10d`).
 
-**Skill lifecycle:** Skills are PDCA (Plan-Do-Check-Act) loops with convergence thresholds, gas budgets, and `loop` actions; the cascade iterates until the convergence metric ≤ threshold or `max_iterations` is exhausted. Templates are one-shot prompt executions. The "kata bundle" is a conceptual composition of `kata-improvement` + `kata-coaching` realized by `KataEngine` routing — there is **no** `registry/bundles/kata/manifest.yaml` file; the kata skills each have their own FlowDef manifest in `kask/registry/manifests/`.
-
-**Template types (Pattern A):** a triad of inference-invoked cognitive acts — `WordAct` (speech acts — "what to say"), `KnowAct` (metacognition — "how to think"), `FlowDef` (process — "what to do", `.yaml`) — plus `RenderAct`, a non-inference type for Jinja2 components that produce text via rendering (reference content, `{% macro %}` libraries, error views included via `{% include %}`/`{% from %}`) and are never sent to the LLM. The action is the rendering. See `kask/crates/hkask-types/src/template_type.rs` and `kask/crates/hkask-templates/src/executor.rs`.
+**Skill lifecycle:** A skill is activated when the agent invokes the `skill` tool with a skill
+name. `SkillTool::run` resolves the skill directory, reads `SKILL.md`, and injects the body via
+`render_skill_envelope`. The model reads the instructions and follows them — calling `lisp_eval`
+for deterministic computation, `render_template` for structured prompt scaffolding, and MCP tools
+for external capabilities. Convergence is the model's judgment, optionally checked by `lisp_eval`.
 
 ---
 
-## Registry counts (verified 2026-08-16)
+## Registry counts (verified 2026-08-20)
 
-| Surface                                               | Count  | Notes                                                                                        |
-| ----------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------- |
-| FlowDef manifests (`kask/registry/manifests/*.yaml`)  | **67** | All `category: skill` — **1:1 with SKILL.md dirs**                                           |
-| Template crates (`kask/registry/templates/*/`)        | **70** | Includes crates consumed from Rust rather than a manifest (`docproc`, `training`, `heal`)    |
-| SKILL.md directories (`.agents/skills/*/`, repo root) | **67** | Every directory contains a `SKILL.md`                                                      |
+| Surface | Count | Notes |
+|---------|-------|-------|
+| SKILL.md directories (`.agents/skills/*/`, repo root) | **60** | Every directory contains a `SKILL.md` |
+| Template crates (`kask/registry/templates/*/`) | **62** | Companion Jinja2 resources for `render_template` |
+| FlowDef manifests (`kask/registry/manifests/`) | **0** | Directory deleted (commit `5f4cf5f10d`) |
 
-**Category rule:** only `category: skill` manifests exist in
-`registry/manifests/`, and each **must** have a matching
-`.agents/skills/<name>/SKILL.md` companion. The 67 manifests and 67 SKILL.md
-directories are in exact 1:1 correspondence, enforced by
-`every_skill_md_has_a_process_manifest` and `every_skill_manifest_has_a_skill_md`
-(`hkask-templates/tests/skill_companion_consistency.rs`). Note: a naive
-`grep 'category: skill'` overcounts — several manifests carry the comment "gated
-to category: skill manifests only"; match the anchored field only.
-
-**Infrastructure categories were removed (2026-08-12).** 41 manifests carrying
-`pipeline` (20), `qa-script` (11), `runtime-config` (7), and `daemon-process` (3)
-were deleted after an audit found **no runtime consumer for any of them**.
-The execution boundary (`kask_bridge::skill_executor`) rejects non-`skill`
-categories, so no loader for these categories ever existed:
-they were embedded into the binary by `build.rs`, seeded to the user's disk,
-version-bumped by CI, schema-validated — and never read. Two of them
-(`harness-evolve-cycle`, `qa-mcp-server-smoke`) were additionally shadowed by
-hand-rolled shell scripts that reimplemented the same loop, and
-`qa-mcp-server-smoke.yaml` conceded in its own header that it needed a
-`QaScriptRunner` type that does not exist.
-
-The `manifest.category` **field** is retained: it is the security gate for
-`lisp.eval` and `shell.exec` (`hkask-templates/src/compute.rs`), which must run
-only in operator-reviewed `skill` manifests. `manifest_compliance.rs` now
-allows `skill` only, so a reintroduced infrastructure manifest fails CI rather
-than shipping as dead surface. To add a category back, first wire a loader that
-can actually execute it.
-
-Reconciliation notes:
-
-- **`skill-router`** — has a template crate (`kask/registry/templates/skill-router/`) but **no** FlowDef manifest and **no** SKILL.md directory. It is a stateless `KnowAct` matching service (template-only, not a PDCA loop): route tasks to installed skills with ranked fit-scored recommendations plus uncovered capability gap signals. Invoked by the orchestrator and by process-skill templates; cannot bind as `process_manifest`.
-- **`swarm-compose-guide`** has no dedicated template crate — its manifest reuses templates from another crate. No `.agents/skills/` directory is orphaned.
-- **Orphaned template crates were removed (2026-08-12).** Deleting the 41 infrastructure manifests orphaned 23 template crates, since each was reachable only from a now-deleted manifest: `chat-template`, `composition`, `curator`, `git`, `gml`, `inference`, `knowact`, `memory`, `process`, `prompt-defense`, `prompt-templates`, `rag`, `rca`, `reasoning`, `registry`, `regulation`, `replica`, `shared`, `skill-translator`, `ttbs`, `voice`, `web`, `wordact` (536K). Verified per-crate: zero `template_ref` from the 63 surviving manifests, zero non-`build.rs` Rust references, zero cross-crate Jinja `include`/`from`. `build.rs` embeds `registry/templates/` **by directory glob**, so anything left here ships inside the binary whether or not it is reachable — a glob is not a consumer.
-- **Name mismatch is the trap when auditing this tree.** A crate's directory name is not its reference name: `logo-builder/`'s manifest holds no templates of its own and catalogs `media/*` via `path: ../media/…`, so `logo-builder` looks orphaned by name while both crates are live. Always resolve the actual `template_ref` values.
-- **`heal/` was kept** despite having no runtime consumer: security regression `RR-0037` (`status: enforced`) greps `registry/templates/heal` for `RunCommand|SetEnv` via `check-kali-regressions.sh`. The gate fails on a *match*, so an absent directory passes silently — deleting the crate would retire the regression by accident rather than by decision. Retire `RR-0037` first if `heal/` should go.
-- **Re-audited 2026-08-12 after the removal: zero orphans remain.** All 66 surviving crates resolve to a consumer. 62 are named by a `template_ref`, a Jinja `include`/`from`, or a `path: ../<crate>/` entry in a sibling bundle manifest. The other four are live by other means and are the ones a future audit is most likely to mis-flag:
-  - `docproc` — referenced from Rust (`hkask-mcp-corpus`: `ocr/llm_ocr.rs`, `services/consolidation.rs`).
-  - `training` — referenced from Rust (`hkask-mcp-training/providers/trl_harness.rs`) and pinned by `RR-0062`.
-  - `heal` — pinned by `RR-0037` (see above).
-  - `logo-builder` — **the name-mismatch trap.** It contains no `.j2` or `.yaml` templates at all; its `manifest.yaml` registers four `media/*` entries via `path: ../media/…`. Because `build.rs` keys `MANIFEST_YAMLS` on the *directory name*, deleting the directory would silently drop those four registry entries. It is a fully live skill (`.agents/skills/logo-builder/SKILL.md` + `kask/registry/manifests/logo-builder.yaml`).
-
-  A name-based orphan check would flag all four. Resolve actual `template_ref`/`path:` values and grep Rust and `kask/security/regressions/` before concluding anything here is dead.
-
-### Composition Principles (verified 2026-08-15)
-
-Five composition principles discovered through the co-evolution of skills and
-MCP tools. All 11 migrated skills satisfy these principles:
-
-| Principle | Limit type | Threshold | Skills satisfying |
-|-----------|------------|-----------|-------------------|
-| Determinism frontier | Floor + Ceiling | ≥1 deterministic step + ≥1 select step | 11/11 |
-| Persistence-grounded learning | Floor | ≥1 persistence read at ordinal 0 (if skill produces forecasts) | 7/7 |
-| Failure surfacing | Floor | 100% of execute steps have on_failure: report | 11/11 |
-| Lisp scaffold | Maturity gate | lisp.eval invariant checks after structured LLM output | 8/11 |
-| Co-evolution loop | Maturity gate | on_failure: report signals flow to Curator | 11/11 |
-
-See [`skills-and-composition.md`](../explanation/skills-and-composition.md)
-§Composition Principles for the five principles reference and
-[`skill-mcp-integration.md`](../explanation/skill-mcp-integration.md) §Co-Evolution Patterns
-for the three feedback loops.
+**The SKILL.md is the source of truth.** The prior model — where `registry/manifests/<name>.yaml`
+was canonical and `SKILL.md` was derived — is gone. A skill is its `SKILL.md`. Template crates are
+read-only resources the skill body may reference via `render_template`.
 
 ---
 
 ## Guardrails (1 skill)
 
-| Skill               | Type  | Purpose                                                                                                                   | Artifacts                                                                             |
-| ------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `coding-guidelines` | Skill | Enforce Karpathy's four coding principles: Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution | `registry/manifests/coding-guidelines.yaml` · `registry/templates/coding-guidelines/` |
+| Skill | Purpose |
+|-------|---------|
+| `coding-guidelines` | Enforce Karpathy's four coding principles: Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution |
 
 ---
 
 ## Core Development (13 skills)
 
-| Skill                   | Type  | Purpose                                                                                                                                                                                                                                                                          | Artifacts                                                                                     |
-| ----------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `bug-hunt`              | Skill | Bug hunting expeditions against target crates using Weinberg, Beizer, Bach, Hendrickson methodologies                                                                                                                                                                            | `registry/manifests/bug-hunt.yaml` · `registry/templates/bug-hunt/`                           |
-| `tdd`                   | Skill | Test-driven development: RED → GREEN → REFACTOR loop                                                                                                                                                                                                                             | `registry/manifests/tdd.yaml` · `registry/templates/tdd/`                                     |
-| `proptest`              | Skill | Property-based testing: identify testable properties from a function's contract, design input strategies, generate + execute proptest code, analyze shrunk counterexamples. Complements tdd with the universal test over the input space                                         | `registry/manifests/proptest.yaml` · `registry/templates/proptest/`                           |
-| `harness-optimize`      | Skill | Suite-level test harness proposer: reads raw execution traces, identifies under-tested areas, proposes test improvements; dispatches to proptest in generate_only mode                                                                                                           | `registry/manifests/harness-optimize.yaml` · `registry/templates/harness-optimize/`           |
-| `diagnose`              | Skill | Disciplined diagnosis loop: reproduce → anchor → hypothesise → instrument → fix → regression-test                                                                                                                                                                                | `registry/manifests/diagnose.yaml` · `registry/templates/diagnose/`                           |
-| `code-review`           | Skill | Convergent code review of a change against its stated spec: scope → multi-axis perspectives → adjudicate → report → optional implement                                                                                                                                           | `registry/manifests/code-review.yaml` · `registry/templates/code-review/`                     |
-| `deep-module`           | Skill | Module design via Ousterhout's deletion test and interface minimalism (≤7 public functions)                                                                                                                                                                                      | `registry/manifests/deep-module.yaml` · `registry/templates/deep-module/`                     |
-| `refactor-architecture` | Skill | End-to-end architecture refactoring: discover friction, rank candidates, walk design tree, audit duplication, plan strangler-fig migration, verify integrity. Merged from improve-codebase-architecture + refactor-service-layer + strangler-fig.                                | `registry/manifests/refactor-architecture.yaml` · `registry/templates/refactor-architecture/` |
-
-| `idiomatic-rust`        | Skill | Type-driven Rust design through Graydon Hoare's principles                                                                                                                                                                                                                       | `registry/manifests/idiomatic-rust.yaml` · `registry/templates/idiomatic-rust/`               |
-| `idiomatic-lisp`        | Skill | Idiomatic Lisp design through McCarthy/Sussman/Graham principles (homoiconicity, metacircularity, data-as-program) with REPL evaluation as the extrinsic oracle                                                                                                                  | `registry/manifests/idiomatic-lisp.yaml` · `registry/templates/idiomatic-lisp/`               |
-| `task-breakdown`        | Skill | Convergent planning: vertical task slicing with acceptance criteria, checkpoints, and skill_match_query routing                                                                                                                                                                  | `registry/manifests/task-breakdown.yaml` · `registry/templates/task-breakdown/`               |
-| `graph-audit`           | Skill | Unified graph analysis: code mode (query/traverse/analyze code graph via MCP), semantic mode (domain-agnostic graph health), dual mode (extract code graph then audit it). Includes context-expansion mode (folded from zoom-out). Merged from codegraph + semantic-graph-audit. | `registry/manifests/graph-audit.yaml` · `registry/templates/graph-audit/`                     |
-| `diataxis-diagram`      | Skill | Generate Mermaid diagrams from code using Diataxis methodology                                                                                                                                                                                                                   | `registry/manifests/diataxis-diagram.yaml` · `registry/templates/diataxis-diagram/`           |
+| Skill | Purpose |
+|-------|---------|
+| `bug-hunt` | Bug hunting expeditions against target crates using Weinberg, Beizer, Bach, Hendrickson methodologies |
+| `tdd` | Test-driven development: RED → GREEN → REFACTOR loop |
+| `proptest` | Property-based testing: identify testable properties, design input strategies, generate + execute proptest code, analyze shrunk counterexamples |
+| `harness-optimize` | Suite-level test harness proposer: reads raw execution traces, identifies under-tested areas, proposes test improvements |
+| `diagnose` | Disciplined diagnosis loop: reproduce → anchor → hypothesise → instrument → fix → regression-test |
+| `code-review` | Convergent code review of a change against its stated spec: scope → multi-axis perspectives → adjudicate → report → optional implement |
+| `deep-module` | Module design via Ousterhout's deletion test and interface minimalism (≤7 public functions) |
+| `refactor-architecture` | End-to-end architecture refactoring: discover friction, rank candidates, walk design tree, audit duplication, plan strangler-fig migration, verify integrity |
+| `idiomatic-rust` | Type-driven Rust design through Graydon Hoare's principles |
+| `idiomatic-lisp` | Idiomatic Lisp design through McCarthy/Sussman/Graham principles (homoiconicity, metacircularity, data-as-program) with REPL evaluation as the extrinsic oracle |
+| `task-breakdown` | Convergent planning: vertical task slicing with acceptance criteria, checkpoints, and skill_match_query routing |
+| `graph-audit` | Unified graph analysis: code mode (query/traverse/analyze code graph via MCP), semantic mode (domain-agnostic graph health), dual mode (extract code graph then audit it). Includes context-expansion mode (folded from zoom-out). Merged from codegraph + semantic-graph-audit. |
+| `diataxis-diagram` | Generate Mermaid diagrams from code using Diataxis methodology |
 
 ---
 
 ## Reasoning & Analysis (10 skills)
 
-| Skill                   | Type  | Purpose                                                                                                                                                                                                                                                                                                                    | Artifacts                                                                                     |
-| ----------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `pragmatic-semantics`   | Skill | Classify statements by certainty, constraint force, provenance                                                                                                                                                                                                                                                             | `registry/manifests/pragmatic-semantics.yaml` · `registry/templates/pragmatic-semantics/`     |
-| `pragmatic-cybernetics` | Skill | Feedback loops, variety engineering, system homeostasis                                                                                                                                                                                                                                                                    | `registry/manifests/pragmatic-cybernetics.yaml` · `registry/templates/pragmatic-cybernetics/` |
-| `essentialist`          | Skill | Recursive eliminative interrogation (Exist → Surface → Contract)                                                                                                                                                                                                                                                           | `registry/manifests/essentialist.yaml` · `registry/templates/essentialist/`                   |
-| `grill-me`              | Skill | Socratic questioning to stress-test understanding                                                                                                                                                                                                                                                                          | `registry/manifests/grill-me.yaml` · `registry/templates/grill-me/`                           |
-| `sequential-inquiry`    | Skill | Dynamic chain-of-thought with automatic deep-dive delegation                                                                                                                                                                                                                                                               | `registry/manifests/sequential-inquiry.yaml` · `registry/templates/sequential-inquiry/`       |
-| `falsifiability`        | Skill | Eliminative inference: Popper falsifiability gate, Chamberlin multiple hypotheses, Platt strong inference, Pearl counterfactuals                                                                                                                                                                                           | `registry/manifests/falsifiability.yaml` · `registry/templates/falsifiability/`               |
-| `lean-prover`           | Skill | Machine-checked proof construction through Curry-Howard/de Bruijn/Carneiro lens. Sibling to falsifiability — where falsifiability designs discriminating tests, lean-prover constructs machine-checked proofs that discriminate                                                                                            | `registry/manifests/lean-prover.yaml` · `registry/templates/lean-prover/`                     |
-| `capabilities-reasoner` | Skill | Reason about a system's capabilities against a typed registry with floor/ceiling/maturity-gate limits: Register → Elicit → Evaluate → Reason → Report → Convergence. Fuses the Sen/Nussbaum capability approach + object-capability security + CMMI with ML capability evaluation (HELM, EvalTree, Password-Locked Models) | `registry/manifests/capabilities-reasoner.yaml` · `registry/templates/capabilities-reasoner/` |
-| `metacognition`         | Skill | Master self-reflection: decompose goals, assess progress, calibrate strategy, GEPA self-improvement                                                                                                                                                                                                                        | `registry/manifests/metacognition.yaml` · `registry/templates/metacognition/`                 |
-| `gradient-hunter`       | Skill | Find steep gradients between populated and unpopulated regions of a codebase/telemetry/test field. Anchored to Parisi spin glass theory + 7 surface gradient-shape ontologies. Phased: Prior → Map → Detect → Hypothesize → Report → Convergence.                                                                          | `registry/manifests/gradient-hunter.yaml` · `registry/templates/gradient-hunter/`             |
+| Skill | Purpose |
+|-------|---------|
+| `pragmatic-semantics` | Classify statements by certainty, constraint force, provenance |
+| `pragmatic-cybernetics` | Feedback loops, variety engineering, system homeostasis |
+| `essentialist` | Recursive eliminative interrogation (Exist → Surface → Contract) |
+| `grill-me` | Socratic questioning to stress-test understanding |
+| `sequential-inquiry` | Dynamic chain-of-thought with automatic deep-dive delegation |
+| `falsifiability` | Eliminative inference: Popper falsifiability gate, Chamberlin multiple hypotheses, Platt strong inference, Pearl counterfactuals |
+| `lean-prover` | Machine-checked proof construction through Curry-Howard/de Bruijn/Carneiro lens. Sibling to falsifiability |
+| `capabilities-reasoner` | Reason about a system's capabilities against a typed registry with floor/ceiling/maturity-gate limits |
+| `metacognition` | Master self-reflection: decompose goals, assess progress, calibrate strategy, GEPA self-improvement |
+| `gradient-hunter` | Find steep gradients between populated and unpopulated regions of a codebase/telemetry/test field. Anchored to Parisi spin glass theory + 7 surface gradient-shape ontologies |
 
 ---
 
 ## Kata & Coaching (3 skills)
 
-| Skill              | Type  | Purpose                                                                                       | Artifacts                                                                           |
-| ------------------ | ----- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `kata-coaching`    | Skill | 5-question Coaching Kata dialogue                                                             | `registry/manifests/kata-coaching.yaml` · `registry/templates/kata-coaching/`       |
-| `kata-improvement` | Skill | 4-step Improvement Kata PDCA pattern (includes beginner_mode drills folded from kata-starter) | `registry/manifests/kata-improvement.yaml` · `registry/templates/kata-improvement/` |
-| `improv`           | Skill | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing)                           | `registry/manifests/improv.yaml` · `registry/templates/improv/`                     |
+| Skill | Purpose |
+|-------|---------|
+| `kata-coaching` | 5-question Coaching Kata dialogue |
+| `kata-improvement` | 4-step Improvement Kata PDCA pattern (includes beginner_mode drills folded from kata-starter) |
+| `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
 ---
 
-## Meta & Maintenance (6 skills + 1 template)
+## Meta & Maintenance (6 skills)
 
-| Skill                   | Type                         | Purpose                                                                                                                                                                                                                                                                                                                                            | Artifacts                                                                                                     |
-| ----------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `self-improvement`      | Skill                        | Unified self-induced update operator (Ren et al. 2026, arXiv:2607.13104): nested PDCA + outer Improvement Kata across two pathways — Foundation Model (θ) and Scaffolding (Σ) — driven by intrinsic generative demos, intrinsic evaluative feedback, and extrinsic exploratory experience                                                          | `registry/manifests/self-improvement.yaml` · `registry/templates/self-improvement/`                           |
-| `skill-maintenance`     | Skill                        | Audit skill architecture for staleness, coverage gaps; also derives SKILL.md from registry crates (reverse-translation). Includes validate sub-operation (folded from skill-logic-audit): audit .j2 template logic against stated goals.                                                                                                           | `registry/manifests/skill-maintenance.yaml` · `registry/templates/skill-maintenance/`                         |
-| `skill-bundler`         | Skill                        | Compose multiple skills into a cohesive bundle                                                                                                                                                                                                                                                                                                     | `registry/manifests/skill-bundler.yaml` · `registry/templates/skill-bundler/`                                 |
-| `skill-discovery`       | Skill                        | Acquire NEW skills: detect capability gaps, search catalog, evaluate candidates, guide installation                                                                                                                                                                                                                                                | `registry/manifests/skill-discovery.yaml` · `registry/templates/skill-discovery/`                             |
-| `skill-router`          | Template                     | Route tasks to installed skills: ranked fit-scored recommendations + uncovered capability gap signals. Stateless `KnowAct` matching service invoked by the orchestrator and by process-skill templates (not a PDCA loop; cannot bind as `process_manifest`). **No FlowDef manifest and no SKILL.md directory** — template crate only.              | `registry/templates/skill-router/manifest.yaml` (template metadata only) · `registry/templates/skill-router/` |
-| `gpa-evolution`         | Skill                        | Genetic-Pareto evolutionary optimization over text artifacts: sample, reflect, mutate, recombine Pareto frontier                                                                                                                                                                                                                                   | `registry/manifests/gpa-evolution.yaml` · `registry/templates/gpa-evolution/`                                 |
-| `create-skill`          | Skill                        | Convergent kask-native skill creation with ontological grounding: research phase finds academic/industry anchors, PDCA shape emerges from anchors, artifacts annotated with ontology references (PKO, Dublin Core, GOLEM, ESO). Delegates to skill-maintenance-build for scaffolding and skill-maintenance-validate for validation. | `registry/manifests/create-skill.yaml` · `registry/templates/create-skill/`                                   |
-
+| Skill | Purpose |
+|-------|---------|
+| `self-improvement` | Unified self-induced update operator (Ren et al. 2026, arXiv:2607.13104): nested PDCA + outer Improvement Kata across two pathways — Foundation Model (θ) and Scaffolding (Σ) |
+| `skill-maintenance` | Audit skill architecture for staleness, coverage gaps; validate .j2 template logic against stated goals |
+| `skill-bundler` | Compose multiple skills into a cohesive bundle |
+| `skill-discovery` | Acquire NEW skills: detect capability gaps, search catalog, evaluate candidates, guide installation |
+| `skill-router` | Route tasks to installed skills: ranked fit-scored recommendations + uncovered capability gap signals. Stateless matching service invoked by the orchestrator. Template-crate-only (no SKILL.md directory). |
+| `gpa-evolution` | Genetic-Pareto evolutionary optimization over text artifacts: sample, reflect, mutate, recombine Pareto frontier |
+| `create-skill` | Convergent kask-native skill creation with ontological grounding: research phase finds academic/industry anchors, PDCA shape emerges from anchors, artifacts annotated with ontology references |
 
 ---
 
 ## Security & Posture (3 skills)
 
-| Skill                     | Type  | Purpose                                                                                                                                                                                                                                                | Artifacts                                                                                         |
-| ------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| `kali-audit`              | Skill | Convergent security review: OWASP LLM Top 10, MITRE ATLAS, NIST SSDF against code, templates, manifests, MCP surfaces, LLM I/O. Includes taxonomy_map phase (folded from attack-taxonomy-mapper): maps supply-chain findings to OSC&R attack taxonomy. | `registry/manifests/kali-audit.yaml` · `registry/templates/kali-audit/`                           |
-| `supply-chain-sentinel`   | Skill | Dependency and supply chain audit: version pinning, registry verification, license conflicts, unmaintained indicators                                                                                                                                  | `registry/manifests/supply-chain-sentinel.yaml` · `registry/templates/supply-chain-sentinel/`     |
-| `runtime-posture-monitor` | Skill | Runtime security posture: observes Regulation telemetry for endpoint abuse, bot traffic, LLM usage anomalies                                                                                                                                           | `registry/manifests/runtime-posture-monitor.yaml` · `registry/templates/runtime-posture-monitor/` |
+| Skill | Purpose |
+|-------|---------|
+| `kali-audit` | Convergent security review: OWASP LLM Top 10, MITRE ATLAS, NIST SSDF against code, templates, manifests, MCP surfaces, LLM I/O. Includes taxonomy_map phase (folded from attack-taxonomy-mapper): maps supply-chain findings to OSC&R attack taxonomy. |
+| `supply-chain-sentinel` | Dependency and supply chain audit: version pinning, registry verification, license conflicts, unmaintained indicators |
+| `runtime-posture-monitor` | Runtime security posture: observes Regulation telemetry for endpoint abuse, bot traffic, LLM usage anomalies |
 
 ---
 
 ## Specialized (17 skills)
 
-| Skill                   | Type  | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Artifacts                                                                                                  |
-| ----------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `superforecasting`      | Skill | Calibrated probability forecasting (Tetlock's Good Judgment Project)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `registry/manifests/superforecasting.yaml` · `registry/templates/superforecasting/`                        |
-| `mcda`                  | Skill | Multi-Criteria Decision Analysis with compensation masking                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `registry/manifests/mcda.yaml` · `registry/templates/mcda/`                                                |
-| `scenario-builder`      | Skill | Schwartz scenario planning with STEEP analysis                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | `registry/manifests/scenario-builder.yaml` · `registry/templates/scenario-builder/`                        |
-| `hypothesis-framer`     | Skill | Research question framing via FINER + PICO                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | `registry/manifests/hypothesis-framer.yaml` · `registry/templates/hypothesis-framer/`                      |
-| `adversarial-red-team`  | Skill | Adversarial robustness testing with ATLAS/GARAK taxonomy                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `registry/manifests/adversarial-red-team.yaml` · `registry/templates/adversarial-red-team/`                |
-| `goal-analysis`         | Skill | Goal specification and completion verification                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | `registry/manifests/goal-analysis.yaml` · `registry/templates/goal-analysis/`                              |
-| `structured-extraction` | Skill | Extract structured data from unstructured text                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | `registry/manifests/structured-extraction.yaml` · `registry/templates/structured-extraction/`              |
-| `caveman`               | Skill | Multi-mode text compression (TTbS stage in stt-tts pipeline)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `registry/manifests/caveman.yaml` · `registry/templates/caveman/`                                          |
-| `logo-builder`          | Skill | Pragmatic logo design (Improvement Kata: Martin MVB → Bokhua gates → Peters iterative refinement)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `registry/manifests/logo-builder.yaml` · `registry/templates/logo-builder/`                                |
-| `wardley-mapper`        | Skill | Generic Wardley mapping: inventory components, classify evolution, map value chain, derive strategy                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `registry/manifests/wardley-mapper.yaml` · `registry/templates/wardley-mapper/`                            |
-| `lora-training`         | Skill | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, math/quant/data/harness audit. PDCA loop: select-method → audit-config → convergence-check → revise.                                                                                                                                                                                                                                                                                                                                                                                | `registry/manifests/lora-training.yaml` · `registry/templates/lora-training/`                              |
-| `prompt-enhance`        | Skill | General-purpose prompt enhancement: 7-type taxonomy routing (coding, reasoning, creative, classification, extraction, agent-task, meta) with 3-tier effort knob                                                                                                                                                                                                                                                                                                                                                                                                        | `registry/manifests/prompt-enhance.yaml` · `registry/templates/prompt-enhance/`                            |
-| `sankey-flow`           | Skill | Dynamic Sankey flow diagramming: classify domain, gather quantities, render Mermaid `sankey-beta`. Anchored to PKO Procedure.                                                                                                                                                                                                                                                                                                                                                                                                                                          | `registry/manifests/sankey-flow.yaml` · `registry/templates/sankey-flow/`                                  |
-| `swarm-intelligence`    | Skill | ABW agent-swarm composition PDCA: SENSE swarm state (Onto4MAT + ABW workspace/wallet) → ORIENT (Ashby variety, PSO balance) → DECIDE (PSO/ACO/Reynolds tuning) → ACT (gated swarm_hire/swarm_delegate) → CHECK (algedonic) → CONVERGE (Cauchy). Acts on the `hkask-mcp-swarm` substrate; invoked from the Swarm panel's Steer mode.                                                                                                                                                                                                                                    | `registry/manifests/swarm-intelligence.yaml` · `registry/templates/swarm-intelligence/`                    |
-| `swarm-steering`        | Skill | Focused local-swarm steering: codifies the execute-and-feed-back loop — takes a swarm-intelligence plan (`emitted_calls`), produces the `swarm_delegate_local` execution sequence + `delegate_results` collection shape + the re-invoke instruction. Pairs with swarm-intelligence (the planner).                                                                                                                                                                                                                                                                      | `registry/manifests/swarm-steering.yaml` · `registry/templates/swarm-steering/`                            |
-| `swarm-compose-guide`   | Skill | Agent/swarm composition authoring aid: given partial form inputs (surface, mode, action, compose fields), renders the `swarm-intelligence/swarm-compose-guide.j2` guidance template and returns suggested completions (`action=suggest`) or a validation verdict (`action=validate`). Single-step, read-only — no convergence loop, no ledger debit. Used by the swarm panel's AI Assist / Validate buttons via the `swarm_ai_assist` MCP tool. **No dedicated template crate** — the manifest reuses the shared template in `registry/templates/swarm-intelligence/`. | `registry/manifests/swarm-compose-guide.yaml` (template lives in `registry/templates/swarm-intelligence/`) |
-| `ui-layout-discipline`  | Skill | Measured layout discipline for GPUI card/panel renderers: Sense (measure container + children) → Orient (count actions, compare to budget) → Decide (Fagan checklist gates) → Act (PopoverMenu/truncate/flex remedies) → Review (adversarial probes). Prevents unmeasured action congestion.                                                                                                                                                                                                                                                                           | `registry/manifests/ui-layout-discipline.yaml` · `registry/templates/ui-layout-discipline/`                |
+| Skill | Purpose |
+|-------|---------|
+| `superforecasting` | Calibrated probability forecasting (Tetlock's Good Judgment Project) |
+| `mcda` | Multi-Criteria Decision Analysis with compensation masking |
+| `scenario-builder` | Schwartz scenario planning with STEEP analysis |
+| `hypothesis-framer` | Research question framing via FINER + PICO |
+| `adversarial-red-team` | Adversarial robustness testing with ATLAS/GARAK taxonomy |
+| `goal-analysis` | Goal specification and completion verification |
+| `structured-extraction` | Extract structured data from unstructured text |
+| `caveman` | Multi-mode text compression (TTbS stage in stt-tts pipeline) |
+| `logo-builder` | Pragmatic logo design (Improvement Kata: Martin MVB → Bokhua gates → Peters iterative refinement) |
+| `wardley-mapper` | Generic Wardley mapping: inventory components, classify evolution, map value chain, derive strategy |
+| `lora-training` | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, math/quant/data/harness audit |
+| `prompt-enhance` | General-purpose prompt enhancement: 7-type taxonomy routing (coding, reasoning, creative, classification, extraction, agent-task, meta) with 3-tier effort knob |
+| `sankey-flow` | Dynamic Sankey flow diagramming: classify domain, gather quantities, render Mermaid `sankey-beta`. Anchored to PKO Procedure. |
+| `swarm-intelligence` | ABW agent-swarm composition PDCA: SENSE swarm state → ORIENT (Ashby variety, PSO balance) → DECIDE (PSO/ACO/Reynolds tuning) → ACT (gated swarm_hire/swarm_delegate) → CHECK (algedonic) → CONVERGE (Cauchy) |
+| `swarm-steering` | Focused local-swarm steering: codifies the execute-and-feed-back loop — takes a swarm-intelligence plan, produces the execution sequence + delegate_results collection shape + re-invoke instruction |
+| `swarm-compose-guide` | Agent/swarm composition authoring aid: given partial form inputs, renders guidance templates and returns suggested completions or a validation verdict. No dedicated template crate — reuses the shared template in `registry/templates/swarm-intelligence/`. |
+| `ui-layout-discipline` | Measured layout discipline for GPUI card/panel renderers: Sense → Orient → Decide → Act → Review. Prevents unmeasured action congestion. |
+
+---
+
+## Additional skills (7)
+
+| Skill | Purpose |
+|-------|---------|
+| `algedonic-review` | Human-in-the-loop review and triage of the algedonic alert backlog |
+| `company-research-deep` | Equity research deep pipeline converted from EFRA-AI (Replicant-Partners). Sequential 16-step process converging on THESIS investment-grade verdict |
+| `company-research-flash` | Equity research flash pipeline converted from EFRA-AI. Sequential 23-step process with early-exit gates converging on LENS verdict consistency |
+| `constraint-forces-recast` | Interdisciplinary concept generation via minimal-satisfiability projection |
+| `gemba-walk` | Human-in-the-loop guided review of the cybernetic regulation system |
+| `gradient-seeded-recombination` | Find where to apply constraint-forces recast. Inventories ontology namespaces, builds a complete-graph prior, maps the recombination field, detects gradients, generates reason hypotheses, and selects seed concepts |
+| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (DIVERGENCE.md D1-D33) |
+| `listening` | Apply the MAIA v3 listening template to an earnings-call transcript using a retrieve-cite-verify process |
+| `principle-constraints` | Compiles a stated principle into a set of checkable, code-path-anchored constraints with named falsifiers |
+| `skill-logic-audit` | Bounded dual-layer logic audit of .j2 templates and manifest.yaml files against their stated goals |
+| `upstream-rebase` | Manage upstream Zed rebases for zed-kask |
 
 ---
 
 ## Summary
 
-| Category             | Count                                         | Types                              |
-| -------------------- | --------------------------------------------- | ---------------------------------- |
-| Guardrails           | 1                                             | Skill                              |
-| Core Development     | 13                                            | Skills                             |
-| Reasoning & Analysis | 10                                            | Skills                             |
-| Kata & Coaching      | 3                                             | Skills                             |
-| Meta & Maintenance   | 6 skills + 1 template                         | Skills + Template                  |
-| Security & Posture   | 3                                             | Skills                             |
-| Specialized          | 17                                            | Skills                             |
-| **Catalogued here**  | **52 skills + 1 template**                    | **53 capabilities**                |
+| Category | Count |
+|----------|-------|
+| Guardrails | 1 |
+| Core Development | 13 |
+| Reasoning & Analysis | 10 |
+| Kata & Coaching | 3 |
+| Meta & Maintenance | 6 |
+| Security & Posture | 3 |
+| Specialized | 17 |
+| Additional | 7 |
+| **Total** | **60** |
 
-> **Filesystem reality (verified 2026-08-14):** `kask/registry/manifests/` contains 64 FlowDef manifests, all `category: skill`; `.agents/skills/` (repo root) contains 64 SKILL.md directories, aligned 1:1 (test-enforced). The 41 infrastructure manifests were deleted — see "Infrastructure categories were removed" above. `skill-router` is template-crate-only (no FlowDef manifest, no SKILL.md); `swarm-compose-guide` is manifest + SKILL.md but shares the `swarm-intelligence` template crate. This catalogue section lists a subset of the 64 and is not itself count-enforced — trust the tests, not the table.
->
-> **Consolidation history (2026-07-25):** Deleted `self-critique-revision` (superseded by metacognition), `pragmatic-laziness` (thin wrapper duplicating essentialist), `handoff` (session handoff — low value, replaced by native Zed session persistence), `qa-script-builder` (no consumers — dead code), `kata` bundle (dead code — `KataEngine::run_bundle` never called; `kata-coaching` and `kata-improvement` work independently). Deleted 8 `platform-*` infrastructure manifests + `platform-engineer` templates (aspirational Curator self-monitoring — compiled into registry but never invoked by any code). Folded `kata-starter` → `kata-improvement` (beginner_mode), `attack-taxonomy-mapper` → `kali-audit` (taxonomy_map phase), `skill-logic-audit` → `skill-maintenance` (validate sub-operation), `strangler-fig` → `refactor-service-layer` (migration-strategy phase), `zoom-out` → `graph-audit` (context-expansion mode). Merged `codegraph` + `semantic-graph-audit` → `graph-audit` (3-mode skill: code, semantic, dual). Merged `improve-codebase-architecture` + `refactor-service-layer` → `refactor-architecture` (end-to-end: discover → audit → strangle → verify). Archived `magna-carta-verifier` (deleted; recoverable from git history).
+> **Filesystem reality (verified 2026-08-20):** `.agents/skills/` (repo root) contains 60 SKILL.md
+> directories. `kask/registry/templates/` contains 62 template crates (companion Jinja2 resources
+> for `render_template`). `kask/registry/manifests/` does not exist — all FlowDef manifests were
+> deleted (commit `5f4cf5f10d`). The prior 1:1 manifest↔SKILL.md invariant and its
+> `skill_companion_consistency` test are gone with the `hkask-templates` crate.

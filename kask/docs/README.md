@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-15
-version: "0.36.0"
+last_updated: 2026-08-20
+version: "0.37.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -10,22 +10,22 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # zed-kask Documentation
 
-> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; the 13 MCP servers are launched as child processes over stdio by zed's `context_server` host.
+> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; the 10 MCP servers are launched as child processes over stdio by zed's `context_server` host.
 
-**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D28 integration plan, composition root, and current crate inventory. The authoritative divergence surface is [`DIVERGENCE.md`](../../DIVERGENCE.md) at the repo root.
+**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D33 integration plan, composition root, and current crate inventory. The authoritative divergence surface is [`DIVERGENCE.md`](../../DIVERGENCE.md) at the repo root.
 
-**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) — Diataxis documentation set (tutorial, how-to, reference, explanation) for 11 cross-cutting crate sets (40 artifacts).
+**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) — Diataxis documentation set (tutorial, how-to, reference, explanation) for 10 cross-cutting crate sets (36 artifacts).
 
 ## Architecture
 
 | Document                                                                                | Description                                                                                                                                               |
 | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md)           | **Canonical architecture** — D1–D28 integration seams, composition root, crate inventory, deletion history.                                               |
+| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md)           | **Canonical architecture** — D1–D33 integration seams, composition root, crate inventory, deletion history.                                               |
 | [`standardized-artifact-storage.md`](architecture/standardized-artifact-storage.md)     | **D28** — the canonical path layout for all persistent kask artifacts (memory DBs, curator DBs, MCP server DBs, skills registry, archived threads).       |
 | [`memory-system-specification.md`](architecture/memory-system-specification.md)         | **Memory system spec** — vector + relational lookup, ingestion, recall, consolidation, decay, configuration.                                              |
 | [`salience-specification.md`](architecture/salience-specification.md)                   | Passage salience algorithm for `hkask-memory` (`compute_salience_batch`).                                                                                 |
 | [`AGENT_SYSTEM_PROMPT.md`](architecture/AGENT_SYSTEM_PROMPT.md)                         | The agent system prompt — structure and zed-kask divergence from upstream Zed.                                                                          |
-| [`test-harness-trace-schema.md`](architecture/test-harness-trace-schema.md)             | Trace filesystem schema for the proptest/bug-hunt/harness-optimize skill pipeline.                                                                        |
+
 | [`core/PRINCIPLES.md`](architecture/core/PRINCIPLES.md)                                 | Architecture principles P1–P12.                                                                                                                           |
 | [`core/magna-carta.md`](architecture/core/magna-carta.md)                               | The Magna Carta — 4 sovereignty principles (P1–P4).                                                                                                       |
 | [`core/MDS.md`](architecture/core/MDS.md)                                               | Minimal Domain Specification (5-category taxonomy).                                                                                                       |
@@ -39,15 +39,15 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | Document                                                                   | Description                                                             |
 | -------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | [`reference/regulation-spans.md`](reference/regulation-spans.md)           | Regulation span catalog.                                                |
-| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md)       | MCP server registry — 13 built-in servers, 308 tools fleet-wide.        |
+| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md)       | MCP server registry — 10 built-in servers, 259 `#[tool]` methods fleet-wide.        |
 | [`reference/mcp-servers/companies.md`](reference/mcp-servers/companies.md) | Companies server — valuation, forecasting, portfolio (44 tools).        |
-| [`reference/mcp-servers/condenser.md`](reference/mcp-servers/condenser.md) | Condenser server — compression algorithms.                              |
+
 | [`reference/mcp-servers/corpus.md`](reference/mcp-servers/corpus.md)       | Corpus server — gather→process→output pipeline.                         |
 | [`reference/mcp-servers/portfolio.md`](reference/mcp-servers/portfolio.md) | Portfolio server — transaction-ledger portfolio store.                 |
 | [`reference/mcp-servers/prediction-markets.md`](reference/mcp-servers/prediction-markets.md) | Prediction-markets server — Polymarket/Kalshi calibration.        |
 | [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline.                           |
 | [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md)         | Swarm server — Agent Bestiary World agent swarms, Xaman Ek curator, local substrate (52 tools). |
-| [`reference/skills/README.md`](reference/skills/README.md)                 | Skill, template, and bundle registry — 64 skills, 1:1 with SKILL.md dirs. |
+| [`reference/skills/README.md`](reference/skills/README.md)                 | Skill, template, and bundle registry — 60 skills, body-injection model. |
 | [`reference/kask-settings.md`](reference/kask-settings.md)                 | Kask settings reference.                                                 |
 | [`reference/ontology-bridge.md`](reference/ontology-bridge.md)             | Ontology bridge API reference.                                           |
 | [`reference/lora-training-catalog.md`](reference/lora-training-catalog.md) | LoRA training method/gate/harness catalog.                              |
@@ -78,7 +78,7 @@ Build plans for major features. All plans in the active tree have `status: Activ
 | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server (52 tools: 27 ABW + 25 local) + `swarm_panel`. v1 feature-complete; v2 local mode implemented. |
 | [`plans/cybernetic-swarm-plan.md`](plans/cybernetic-swarm-plan.md)   | Cybernetic Swarm Plan — the `swarm-intelligence` skill design + implementation record. 10-step PDCA cascade, C0–C8 cybernetic components, steering modes, `delegate_results` contract.  |
-| [`plans/evolving-test-harness.md`](plans/evolving-test-harness.md)   | Evolving test harness plan — trace filesystem, oracle taxonomy, property-based testing infrastructure.                                                                                  |
+
 
 ## Other
 
