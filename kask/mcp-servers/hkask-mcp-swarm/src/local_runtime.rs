@@ -209,6 +209,7 @@ impl LocalSwarmRuntime {
     /// the executor) or store append failure (drainer side). A sensor
     /// signal, not an error: the delegation path must never fail because
     /// capture is degraded — but the degradation must be visible.
+    #[allow(dead_code)] // sensor signal — awaiting a consumer
     pub(crate) fn capture_drops(&self) -> usize {
         let send = self
             .executor

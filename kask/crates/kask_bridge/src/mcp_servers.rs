@@ -898,12 +898,10 @@ mod tests {
         // secret grant in the registry, so pin that every granted secret has a
         // read site.
         let creds = s.credentials.unwrap();
-        for key in ["HF_TOKEN"] {
-            assert!(
-                creds.contains(&key),
-                "training reads {key} but it is not allowlisted"
-            );
-        }
+        assert!(
+            creds.contains(&"HF_TOKEN"),
+            "training reads HF_TOKEN but it is not allowlisted"
+        );
         // Guard the other direction: the training server must not be handed the
         // SMTP password or another server's DB keys.
         assert!(

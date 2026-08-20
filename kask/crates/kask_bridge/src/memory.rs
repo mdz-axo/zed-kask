@@ -1520,6 +1520,7 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
 /// without duplicating the heavy `RealMemoryPort` setup. Mirrors the
 /// private `in_memory_port` helper in `tests` below.
 #[cfg(test)]
+#[allow(dead_code)] // test utility
 pub(crate) fn in_memory_port_for_tests() -> RealMemoryPort {
     use hkask_storage::database::sqlite::SqliteDriver;
     let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();

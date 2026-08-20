@@ -95,6 +95,7 @@ impl AgentExecutor {
     /// Captures dropped on the send side (channel full). Shared with the
     /// runtime so `capture_drops()` reports both send-side and drainer-side
     /// drops.
+    #[allow(dead_code)] // sensor signal — consumed by capture_drops when wired
     pub(crate) fn capture_send_drops(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
         std::sync::Arc::clone(&self.capture_send_drops)
     }
