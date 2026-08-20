@@ -90,7 +90,7 @@ impl StepMachine {
         let exit_kind = loop {
             self.iteration += 1;
 
-            let node = self.graph.step(self.pc);
+            let node = self.graph.step(self.pc).clone();
 
             // Title callback.
             if let Some(ref title) = infra.title {
@@ -111,7 +111,7 @@ impl StepMachine {
             }
 
             // Dispatch.
-            let effect = self.dispatch_with_retry(node, infra.clone()).await?;
+            let effect = self.dispatch_with_retry(node.clone(), infra.clone()).await?;
             let cf = self.apply_effect(node, effect);
             match cf {
                 ControlFlow::Fallthrough => {
@@ -126,7 +126,7 @@ impl StepMachine {
                 }
                 ControlFlow::Reenter(target) => {
                     // Convergence check — the one place.
-                    let status = self.convergence.check(&self.context.inputs);
+                    let status = self.convergence.check(&self.context.inputs.clone().into_iter().collect::<serde_json::Map<_,_>>());
                     match status {
                         ConvergenceStatus::Converged => break ExitKind::Converged,
                         ConvergenceStatus::MaxedOut => break ExitKind::MaxedOut,
@@ -199,7 +199,7 @@ impl StepMachine {
         infra: Infra,
     ) -> Result<crate::step_actions::Effect> {
         use crate::step_actions::Effect;
-        let action = &node.action;
+        let action: &str = &node.action;
         match action {
             "abort" => Ok(Effect::Exit(ExitKind::Converged)),
             "escalate" => Ok(Effect::Exit(ExitKind::Escalated)),

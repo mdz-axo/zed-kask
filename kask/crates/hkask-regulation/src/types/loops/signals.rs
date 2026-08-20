@@ -91,35 +91,6 @@ pub enum SignalMetric {
     /// Read from the latest trace run's `metrics.json` `mutation_score`.
     /// Set-point: mutation_score_floor (default 0.50).
     MutationScore,
-    /// Grounding clean rate (Cybernetics Loop 6).
-    /// Fraction of grounded delegations (contract ran) with zero nulled
-    /// fields. `None` (encoded as a signal value of -1.0) when no grounded
-    /// delegations exist (absence ≠ 0 — paper Rule 5.3). Higher is better.
-    /// Set-point: grounding_clean_rate_floor (default 0.80).
-    GroundingCleanRate,
-    /// Grounding coverage rate (Cybernetics Loop 6).
-    /// Fraction of delegations that had a grounding contract. `None`
-    /// (encoded as -1.0) when no delegations exist. Higher is better.
-    /// Set-point: grounding_coverage_rate_floor (default 0.50).
-    GroundingCoverageRate,
-    /// Grounding violation delta (Cybernetics Loop 6).
-    /// Change in `delegations_with_nulled` since the last sense tick.
-    /// Positive = getting worse (new violations). Negative = improving.
-    /// Zero = stable. The signal value is the raw delta; the set-point is 0
-    /// (any positive delta is a deviation — a spike in nulled fields is the
-    /// regulation signal that something changed: a tool broke, an agent's
-    /// prompt drifted, a model was swapped).
-    GroundingViolationDelta,
-    /// Grounding liveness gap (Cybernetics Loop 6).
-    /// Count of delegations that should have produced a grounding record
-    /// but didn't. A delegation that skipped `enforce_for_agent` entirely
-    /// produces no record — absence of a record is indistinguishable from
-    /// "clean." This metric surfaces that gap. Requires a second data
-    /// source (swarm ledger) to compute the true gap; until then, returns
-    /// 0.0 when records exist and None when the store is empty (absence ≠ 0).
-    /// Set-point: 0 (any positive value is a deviation — delegations are
-    /// happening without grounding enforcement).
-    GroundingLivenessGap,
 }
 
 impl std::fmt::Display for SignalMetric {
@@ -168,10 +139,6 @@ impl SignalMetric {
             SignalMetric::ToolReliability => "tool_reliability",
             SignalMetric::TestCoverage => "test_coverage",
             SignalMetric::MutationScore => "mutation_score",
-            SignalMetric::GroundingCleanRate => "grounding_clean_rate",
-            SignalMetric::GroundingCoverageRate => "grounding_coverage_rate",
-            SignalMetric::GroundingViolationDelta => "grounding_violation_delta",
-            SignalMetric::GroundingLivenessGap => "grounding_liveness_gap",
         }
     }
 }

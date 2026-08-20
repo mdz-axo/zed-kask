@@ -4646,7 +4646,7 @@ mod internal_tests {
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
     use agent_servers::AgentServer;
     use agent_settings::COMPACTION_PROMPT;
-    use agent_skills::{MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, SkillVisibility};
+    use agent_skills::{MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE};
     use fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::formatdoc;
@@ -4670,7 +4670,6 @@ mod internal_tests {
             skill_file_path: dir.join("SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             core: false,
         }
@@ -5006,7 +5005,6 @@ mod internal_tests {
             skill_file_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}/SKILL.md")),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             core: false,
         }
@@ -5235,7 +5233,6 @@ mod internal_tests {
                 skill_file_path: PathBuf::from(format!("/skills/{name}/SKILL.md")),
                 load_warnings: Vec::new(),
                 disable_model_invocation: false,
-                visibility: SkillVisibility::Private,
                 dependencies: Vec::new(),
                 core: false,
             });
@@ -5275,7 +5272,6 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/skill-01-first/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             core: false,
         };
@@ -5287,7 +5283,6 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/skill-02-overflows/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             core: false,
         };
@@ -5299,7 +5294,6 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/skill-03-would-fit/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             core: false,
         };
@@ -5340,7 +5334,6 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/hidden-huge/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: true,
-            visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             core: false,
         };
@@ -5352,7 +5345,6 @@ mod internal_tests {
             skill_file_path: PathBuf::from("/skills/visible/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            visibility: SkillVisibility::Private,
             dependencies: Vec::new(),
             core: false,
         };

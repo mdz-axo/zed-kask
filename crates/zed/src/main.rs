@@ -2700,7 +2700,6 @@ fn main() {
             }).detach();
         })
         .detach();
-        kask_extensions_ui::init(cx);
         swarm_panel::init(cx);
         kanban_panel::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
@@ -3873,21 +3872,6 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                 );
                             }
                         });
-                    })
-                })
-                .detach_and_log_err(cx);
-            }
-            OpenRequestKind::InstallSkill { content } => {
-                cx.spawn(async move |cx| {
-                    let multi_workspace =
-                        workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
-
-                    multi_workspace.update(cx, |_multi_workspace, _window, cx| {
-                        settings_ui::open_skill_creator(
-                            settings_ui::pages::SkillCreatorOpenMode::Install { content },
-                            Some(multi_workspace),
-                            cx,
-                        );
                     })
                 })
                 .detach_and_log_err(cx);

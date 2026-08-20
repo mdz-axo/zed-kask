@@ -46,7 +46,7 @@ struct ManifestFile {
     #[serde(default)]
     convergence: Option<ConvergenceConfig>,
     #[serde(default)]
-    #[serde(default)]
+
     error_handling: Option<ErrorHandlingConfig>,
     #[serde(default)]
     ledger: Option<BundleLedgerConfig>,

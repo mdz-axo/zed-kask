@@ -2131,7 +2131,6 @@ mod tests {
                 .join("_marketplace/alice/bug-hunt/SKILL.md"),
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            visibility: agent_skills::SkillVisibility::Private,
             dependencies: Vec::new(),
             core: false,
         };
