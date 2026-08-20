@@ -273,7 +273,7 @@ impl CorpusServer {
             //   `kask/registry/company-sources/{symbol}.yaml` works directly.
             //   In production, the manifests are seeded to
             //   `{kask_data_dir}/skills/registry/company-sources/{symbol}.yaml`
-            //   by `seed_registry_to_disk`.
+            //   by the registry seeder at startup.
             let (manifest_text, _manifest_source) = match params.manifest_path.clone() {
                 Some(explicit_path) => {
                     // LLM-controlled path — contain under project root.
@@ -303,7 +303,7 @@ impl CorpusServer {
                     //    the live source tree.
                     // 2. Production (CWD ≠ repo root): resolve
                     //    `skills/registry/company-sources/{symbol}.yaml`
-                    //    under the data dir — where `seed_registry_to_disk`
+                    //    under the data dir — where the registry seeder
                     //    materialises the compiled-in seed payload (D28:
                     //    registry is under `skills/`, not `agents/`).
                     let symbol_lower = params.symbol.to_lowercase();

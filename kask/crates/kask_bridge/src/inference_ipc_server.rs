@@ -282,9 +282,6 @@ impl InferenceIpcServer {
     /// `hkask-mcp-swarm`'s local delegate). When `None`, `tool_invoke`
     /// requests return an error. The zed side mints the OCAP panel token —
     /// the child process never holds token material.
-    /// `skill_exec_port` runs `skill_execute` requests through the zed-side
-    /// `ManifestExecutor` (its own enforcement). When `None`,
-    /// `skill_execute` requests return an error.
     pub fn start(
         inference_port: Arc<dyn InferencePort>,
         embedding_port: Option<LanguageModelEmbeddingPort>,
@@ -818,7 +815,6 @@ async fn dispatch(
         InferenceMethod::Embed
         | InferenceMethod::ListModels
         | InferenceMethod::ToolInvoke
-        | InferenceMethod::SkillExecute
         | InferenceMethod::CreateWorktreeThread => unreachable!(),
     };
 

@@ -3,7 +3,7 @@
 //! When a zed-kask agent thread completes a turn, the conversation is offered
 //! to the memory system for ingestion. This port is the hexagonal boundary:
 //! the `agent` crate calls it (via a global hook, same pattern as
-//! `set_manifest_executor`), and the bridge provides the implementation.
+//! the memory port hook), and the bridge provides the implementation.
 //!
 //! The `TurnRecord` schema (`{"user_input": ..., "agent_response": ...}`)
 //! is the write-side contract for the h_mem `value` field. The read side

@@ -21,48 +21,32 @@ use crate::local_registry::LocalAgentCard;
 /// is the credit gate, this is the round gate).
 pub(crate) const MAX_TOOL_ROUNDS: usize = 4;
 
-/// Maximum declared skills executed per delegation. Each skill is a cascade
-/// with its own gas budget on the zed side; the cap bounds context bloat and
-/// cascade amplification from a maliciously-large `skills` list.
-pub(crate) const MAX_SKILLS_PER_DELEGATION: usize = 3;
-
 /// The raw result of running an agent — text, model, token usage, and the
-/// tool/skill execution summaries. NOT debited. The caller
+/// tool execution summary. NOT debited. The caller
 /// (`LocalSwarmRuntime::delegate`) debits the ledger.
 pub(crate) struct RawDelegateResult {
     pub text: String,
     pub model: String,
     pub tokens_used: i64,
     pub tool_calls: Vec<serde_json::Value>,
-    pub executed_skills: Vec<serde_json::Value>,
 }
 
-/// The agent-run policy: how a local agent executes (skill cascade,
-/// tool-loop orchestration). Owns the inference, tool-dispatch, and skill-exec
-/// ports. Ledger-unaware — the runtime owns spending.
+/// The agent-run policy: how a local agent executes (tool-loop
+/// orchestration). Owns the inference and tool-dispatch ports.
+/// Ledger-unaware — the runtime owns spending.
 pub(crate) struct AgentExecutor {
     inference: Arc<dyn hkask_types::InferencePort>,
     tool_dispatch: Arc<dyn hkask_types::ToolDispatchPort>,
-    skill_exec: Arc<dyn hkask_types::SkillExecPort>,
-    /// Directory containing the zed-kask skill corpus (`.agents/skills/`),
-    /// used to inject skill descriptions into the local agent's system prompt
-    /// (Slice 6 — local agent skill-awareness). `None` = skill-awareness
-    /// disabled (the agent runs skill-blind).
-    skills_dir: Option<std::path::PathBuf>,
 }
 
 impl AgentExecutor {
     pub(crate) fn new(
         inference: Arc<dyn hkask_types::InferencePort>,
         tool_dispatch: Arc<dyn hkask_types::ToolDispatchPort>,
-        skill_exec: Arc<dyn hkask_types::SkillExecPort>,
-        skills_dir: Option<std::path::PathBuf>,
     ) -> Self {
         Self {
             inference,
             tool_dispatch,
-            skill_exec,
-            skills_dir,
         }
     }
 
@@ -72,90 +56,6 @@ impl AgentExecutor {
     /// are authoring aids — no ledger debit, no tool loop).
     pub(crate) fn inference(&self) -> Arc<dyn hkask_types::InferencePort> {
         Arc::clone(&self.inference)
-    }
-
-    /// The resolved skill-execution port. Exposed so `swarm_ai_assist` can run
-    /// the on-disk `swarm-compose-guide` skill cascade (rendering the Jinja2
-    /// guidance template) rather than building the prompt from hardcoded Rust
-    /// strings — the template is the single source of truth for composition
-    /// guidance.
-    pub(crate) fn skill_exec(&self) -> Arc<dyn hkask_types::SkillExecPort> {
-        Arc::clone(&self.skill_exec)
-    }
-
-    /// Test-only constructor with injected dependencies (mirrors the
-    /// `StubInferencePort` pattern).
-    /// Build a skill catalog block for the agent's declared skills, reading
-    /// the `name` and `description` fields from each skill's `SKILL.md`
-    /// frontmatter. Returns `None` when `skills_dir` is unset or no declared
-    /// skill has a readable `SKILL.md` — the agent runs skill-blind (the
-    /// pre-Slice-6 behavior). The catalog is injected into the system prompt
-    /// so the agent understands what skills were run for it and why, but the
-    /// card's `skills` list remains the execution allowlist (no runtime
-    /// discovery — the executor pre-runs the declared skills, the model
-    /// cannot invoke new ones).
-    ///
-    /// The frontmatter is parsed with a minimal YAML extractor (the `name`
-    /// and `description` fields only) — the swarm server does not depend on
-    /// the zed-side `agent_skills` crate (which is GPUI-bound). A missing or
-    /// malformed `SKILL.md` is logged and skipped — the catalog is best-effort,
-    /// not a gate.
-    fn build_skill_catalog(&self, declared_skills: &[String]) -> Option<String> {
-        let skills_dir = self.skills_dir.as_ref()?;
-        let mut entries = Vec::new();
-        for skill_id in declared_skills {
-            // Validate the skill id before joining it into a path — a
-            // malicious cloned ABW card could declare `skills:
-            // ["../../../etc/passwd"]` to read arbitrary files via path
-            // traversal. Skill ids must be lowercase letters, numbers, and
-            // hyphens only (mirrors `agent_skills::validate_name`, which the
-            // swarm server can't depend on — it's GPUI-bound). Reject any id
-            // containing path separators or `..`.
-            if !is_valid_skill_id(skill_id) {
-                tracing::warn!(
-                    target: "hkask.mcp.swarm",
-                    skill = skill_id.as_str(),
-                    "invalid skill id (path traversal or invalid chars) — skipped from catalog"
-                );
-                continue;
-            }
-            let skill_md = skills_dir.join(skill_id).join("SKILL.md");
-            match std::fs::read_to_string(&skill_md) {
-                Ok(content) => {
-                    if let Some((name, description)) = parse_skill_frontmatter(&content) {
-                        entries.push(format!(
-                            "  <skill>\n    <name>{name}</name>\n    <description>{description}</description>\n  </skill>"
-                        ));
-                    } else {
-                        tracing::warn!(
-                            target: "hkask.mcp.swarm",
-                            skill = skill_id.as_str(),
-                            path = %skill_md.display(),
-                            "SKILL.md frontmatter missing name/description — skipped from catalog"
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        skill = skill_id.as_str(),
-                        error = %e,
-                        path = %skill_md.display(),
-                        "could not read SKILL.md — skipped from catalog"
-                    );
-                }
-            }
-        }
-        if entries.is_empty() {
-            return None;
-        }
-        Some(format!(
-            "\n<declared_skills>\n  The following skills were pre-executed for this task. \
-             Their cascade outputs appear as context below. You cannot invoke \
-             additional skills at runtime — the card's `skills` list is the \
-             execution allowlist.\n{}\n</declared_skills>",
-            entries.join("\n")
-        ))
     }
 
     /// Run a local agent: execute declared skills, build the declared tool
@@ -170,56 +70,12 @@ impl AgentExecutor {
         task_clean: &str,
     ) -> Result<RawDelegateResult, LocalSwarmError> {
         // Build the prompt: system prompt + task.
-        // Inject the skill catalog (name + description for declared skills)
-        // into the system prompt when `skills_dir` is configured, so the
-        // agent understands what skills were pre-run for it and why. The
-        // card's `skills` list remains the execution allowlist — the catalog
-        // is awareness, not discovery.
-        let base_system_prompt = agent
+        let system_prompt = agent
             .capabilities
             .system_prompt
             .as_deref()
             .unwrap_or("You are a helpful assistant.");
-        let skill_catalog = self.build_skill_catalog(&agent.capabilities.skills);
-        let system_prompt = match &skill_catalog {
-            Some(catalog) => format!("{base_system_prompt}{catalog}"),
-            None => base_system_prompt.to_string(),
-        };
-
-        // Run the declared skills (capped) against the task BEFORE the LLM
-        // call. Each cascade runs on the zed side (`ManifestExecutor`, own
-        // gas/OCAP enforcement). A missing skill or cascade failure is
-        // recorded, not fatal — the delegation proceeds with whatever
-        // context the successful skills produced.
-        let mut executed_skills: Vec<serde_json::Value> = Vec::new();
-        let mut skill_context = String::new();
-        for skill in agent
-            .capabilities
-            .skills
-            .iter()
-            .take(MAX_SKILLS_PER_DELEGATION)
-        {
-            match self.skill_exec.execute_skill(skill, task_clean).await {
-                Ok(output) => {
-                    executed_skills.push(serde_json::json!({ "skill": skill, "ok": true }));
-                    skill_context.push_str(&format!("\n\n## Skill '{skill}' output\n{output}"));
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        skill,
-                        error = %e,
-                        "declared skill failed — delegation proceeds without it"
-                    );
-                    executed_skills.push(serde_json::json!({
-                        "skill": skill,
-                        "ok": false,
-                        "error": e.to_string(),
-                    }));
-                }
-            }
-        }
-        let prompt = format!("{system_prompt}{skill_context}\n\n---\n\nTask: {task_clean}");
+        let prompt = format!("{system_prompt}\n\n---\n\nTask: {task_clean}");
 
         // Build the declared tool set from the card's `mcp_tools` (qualified
         // `server/tool` names). This list is the allowlist: a model call for
@@ -375,7 +231,6 @@ impl AgentExecutor {
             model: final_model,
             tokens_used: total_tokens,
             tool_calls: tool_calls_made,
-            executed_skills,
         })
     }
 }
