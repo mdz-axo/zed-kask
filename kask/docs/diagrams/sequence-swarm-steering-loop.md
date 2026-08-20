@@ -31,7 +31,6 @@ sequenceDiagram
             Curator->>Swarm: swarm_delegate_local agent task credits
             Swarm->>Swarm: Rung 4 Binding check_bind<br/>Rung 1-2 admission already passed at authoring
             Swarm->>Swarm: skill cascade + tool loop + ledger debit
-            Swarm->>Swarm: Rung 3 Grounding enforce_grounding<br/>null unsourced fields, scan narrative
             Swarm-->>Curator: LocalDelegateResult agent_id response tool_calls bind_matched
         end
         Curator->>Curator: collect LocalDelegateResults into delegate_results array
@@ -50,8 +49,3 @@ verified_date: 2026-08-20
 verified_against: .agents/skills/swarm-steering/SKILL.md:60,64; .agents/skills/swarm-intelligence/SKILL.md:147,156,184; kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39,73,check_bind
 status: VERIFIED
 -->
-
-> **Note (2026-08-20):** The `hkask-verification` crate (which provided
-> `enforce_grounding`) was deleted (commit `9e9c41ef3c`). The "Rung 3
-> Grounding enforce_grounding" step in the diagram above is no longer wired;
-> the `check_bind` Rung 4 binding check survives in `local_runtime.rs`.

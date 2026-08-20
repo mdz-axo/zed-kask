@@ -115,9 +115,8 @@ upstream Zed's body-injection model. `SkillTool::run`
 (`crates/agent/src/tools/skill_tool.rs:266`) reads the `SKILL.md` body from
 disk via `agent_skills::read_skill_body` and injects it into the
 conversation via `render_skill_envelope` (`crates/agent/src/agent.rs`). The
-model reads the body and follows the instructions — there is no manifest
-executor, no step machine, no Jinja2 cascade, and no `BridgeManifestExecutor`
-in the bridge. The bridge does not participate in this path.
+model reads the body and follows the instructions. The bridge does not
+participate in this path.
 
 Two companion built-in agent tools support the model-coordinated PDCA loops
 the SKILL.md bodies describe:

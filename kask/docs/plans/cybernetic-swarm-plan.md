@@ -12,22 +12,12 @@ mds_categories: [composition, trust]
 
 > **⚠️ Partially deprecated 2026-08-20.** The cybernetic reference model
 > (six canonical loops, C0–C6) and the swarm-intelligence composition
-> remain current. However, many implementation details reference deleted
-> subsystems:
-> - The `ManifestExecutor` / `BridgeManifestExecutor` skill-cascade path
->   and `kask/registry/manifests/*.yaml` FlowDef manifests were removed with
->   `hkask-templates` (commit `5f4cf5f10d`). Skill execution is now
->   upstream-Zed body injection (`SkillTool::run` → `render_skill_envelope`);
->   PDCA loops are model-coordinated via `lisp_eval` and `render_template`.
-> - The `hkask-guard` crate was deleted (2026-08-10); guard scanning is gone.
-> - The `hkask-verification` crate was deleted (commit `9e9c41ef3c`);
->   `enforce_grounding`, `VerificationStore`, and the `GroundingSensor`
->   regulation-loop sensor are gone.
-> - `cargo test -p hkask-templates` commands throughout the validation
->   sections are no longer runnable (the crate is deleted).
+> remain current. Skill execution is upstream-Zed body injection
+> (`SkillTool::run` → `render_skill_envelope`); PDCA loops are
+> model-coordinated via `lisp_eval` and `render_template`.
 >
 > The cybernetic frame, the swarm-intelligence and swarm-steering skills, and
-> the `hkask-mcp-swarm` server survive. Claims that reference the deleted
+> the `hkask-mcp-swarm` server survive. Claims that reference deleted
 > subsystems are historical.
 
 > Companion to `abw-swarm-intelligence.md`. That document is the
@@ -51,13 +41,10 @@ mds_categories: [composition, trust]
 > caller-supplied value against itself and denied nothing
 > (`security/regressions/RR-0056.yaml`). The D1 elements that still stand are
 > the consent gate, the per-dispatch ceiling, and the ledger balance check.
-> **Guard scanning is also gone**: the `hkask-guard` crate was deleted 2026-08-10
-> (the `RoleOverride` scanner's bare `system:` substring match blocked legitimate
-> skill cascade template rendering); provider-side safety and refusal fallbacks
-> remain. Tool reach is bounded by the swarm card `mcp_tools` allowlist and the
+> Tool reach is bounded by the swarm card `mcp_tools` allowlist and the
 > inference IPC `tool_allowlist`, and the call ceiling is a runaway-loop breaker
 > that is fail-open on an unseeded agent (`RR-0057.yaml`). Read "OCAP" below as
-> "tool allowlist separation" and "guard scanning" as "removed"; the cybernetic
+> "tool allowlist separation"; the cybernetic
 > argument is unaffected.
 
 ## Design constraints (this revision)
@@ -354,8 +341,8 @@ S3/S4/S5/S7 and is presented first because it gates three of the components.
      task-success signal `s` (C0) declines, i.e. the swarm looks healthier but
      is failing more tasks. This is the cybernetic Go See diagnosis (§5)
      automated as a cheap statistic.
-- **Integration point:** a new CONVERGE-side `compute` step
-  (`action: compute`, `compute_ref:` a new deterministic primitive, e.g.
+- **Integration point:** a new CONVERGE-side deterministic compute step
+  (a new `compute_ref` primitive, e.g.
   `swarm.second_order_monitor`) reading the last `k` iterations' spans.
 - **Why value-added:** S1 §5.4 names this the "highest-value, lowest-cost
   intervention" and it is **deterministic by S1's own framing** — exactly what
@@ -465,11 +452,7 @@ S3/S4/S5/S7 and is presented first because it gates three of the components.
      (L581–591), attribute to the **earliest such agent** in delegation order.
   3. Else if any agent's `executed_skills[].ok = false` (a declared skill
      cascade failed, L442–454), attribute to the **earliest such agent**.
-  4. Else if a guard redaction occurred on an agent's tool output
-     (the former `scan_input` rejection at L550–557 was removed with `hkask-guard`
-     on 2026-08-10; this attribution branch is no longer reachable — kept here as
-     a historical record of the C5 rule shape), attribute to that agent.
-  5. Tie-break by delegation order (deterministic).
+  4. Tie-break by delegation order (deterministic).
 - **Integration point:** ORIENT emits `agent_at_fault` (deterministic, per the
   rule above) for each failed task; CONVERGE aggregates
   `blame_count[agent] += 1` across iterations and surfaces
@@ -834,8 +817,7 @@ convergence-check template"):
 - `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs` —
   `LocalSwarmRuntime::delegate` (L366–638): the tool loop, the
   `executed_skills`/`tool_calls` trace (the deterministic attribution source
-  for C5), the 1cr/1000tok debit. (The former guard scanning at L550–557 was
-  removed with `hkask-guard` on 2026-08-10.)
+  for C5), the 1cr/1000tok debit.
 - `kask/mcp-servers/hkask-mcp-swarm/src/local_registry.rs` — `LocalAgentCard`
   (typed `accepts`/`produces` ports, `dependencies`, `capabilities`); the
   reload-on-staleness `load` (L131) that C6's `reconfigure_agent` relies on.
@@ -934,11 +916,9 @@ Applying the skill-sharing model to agents and swarms:
     against the operator's governed server set (the existing clone-time filter
     in `swarm_clone_to_local`, `abw-swarm-intelligence.md` §15.3, applies).
   - **guard-scan the `system_prompt`** — a shared agent's `system_prompt` is
-    untrusted text. (The former `scan_input` guard at `local_runtime.rs` L418
-    was the enforcement point; it was removed with `hkask-guard` on 2026-08-10.
-    Provider-side safety and refusal fallbacks remain; a crate whose
-    `system_prompt` would have tripped the guard is no longer rejected at this
-    layer.)
+    untrusted text. Provider-side safety and refusal fallbacks remain the
+    active defense; a crate whose `system_prompt` would have tripped a guard
+    is no longer rejected at this layer.
   - **Magna Carta / Regulation span** — user sovereignty, affirmative consent,
     clear boundaries (the same checks skill-discovery runs).
   - Install → `agents/local/curated/<id>/` (or a new `agents/shared/` dir to

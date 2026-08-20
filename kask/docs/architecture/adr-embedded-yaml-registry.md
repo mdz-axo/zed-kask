@@ -25,10 +25,7 @@ criteria and the model self-iterates using the `lisp_eval` tool
 (`hkask_lisp::eval_sandboxed_with_budget`) for deterministic checks and the
 `render_template` tool for structured prompt scaffolding.
 
-There is no `ManifestExecutor`, no `StepMachine`, no `FlowDef`, no
-`BridgeManifestExecutor`, no `build.rs`, no `Registry`, no `TemplateRenderer`,
-no `BudgetTracker`, no `ConvergenceTracker`, no `BundleManifest`, no `ExitKind`,
-and no `kask/registry/manifests/` directory.
+There is no `build.rs`, no `Registry`, and no `TemplateRenderer`.
 
 ## What survives
 
@@ -51,12 +48,10 @@ and no `kask/registry/manifests/` directory.
 
 ## Why the build-time model was superseded
 
-The build-time embedding model embedded all four artifact classes
-(per-skill template manifests, FlowDef cascades, Jinja2 templates, FlowDef
-sub-manifests) into the binary via `include_str!` and drove skill execution
-through a `ManifestExecutor` cascade. That machinery is gone. Skill execution
-now follows upstream Zed's progressive-disclosure pattern: only `name` and
-`description` are preloaded into the system prompt, and the `SKILL.md` body loads
-only when the `skill` tool is invoked. The Jinja2 template layer survives as a
+The build-time embedding model embedded Jinja2 templates into the binary via
+`include_str!`. That machinery is gone. Skill execution now follows upstream
+Zed's progressive-disclosure pattern: only `name` and `description` are
+preloaded into the system prompt, and the `SKILL.md` body loads only when the
+`skill` tool is invoked. The Jinja2 template layer survives as a
 prompt-scaffolding resource the model retrieves on demand via `render_template`,
 not as a parallel representation of skill semantics.

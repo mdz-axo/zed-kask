@@ -26,8 +26,7 @@ body-injection model: `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:26
 reads the `SKILL.md` body via `agent_skills::read_skill_body` and injects it
 via `render_skill_envelope`. The `lisp_eval` and `render_template` built-in
 agent tools (`crates/agent/src/tools/`) support the model-coordinated PDCA
-loops the SKILL.md bodies describe. There is no `SkillManifestExecutor` trait,
-no `BridgeManifestExecutor`, and no `skill_executor.rs` in this crate.
+loops the SKILL.md bodies describe.
 
 ## Source citations
 
@@ -442,11 +441,10 @@ Zed's body-injection model and lives entirely in the `agent` crate:
   `crates/zed/src/main.rs` at startup (dev: `kask/registry/templates/`, prod:
   `{kask_data_dir}/skills/registry/templates/`).
 
-The former `BridgeManifestExecutor` / `skill_executor.rs` / `ManifestExecutor`
-infrastructure (and the `hkask-templates` executor crate) was deleted. PDCA
-iteration is model-coordinated: the SKILL.md body describes convergence
-criteria, and the model uses `lisp_eval` for deterministic convergence checks
-and `render_template` for structured prompt scaffolding within iterations.
+PDCA iteration is model-coordinated: the SKILL.md body describes
+convergence criteria, and the model uses `lisp_eval` for deterministic
+convergence checks and `render_template` for structured prompt scaffolding
+within iterations.
 
 ## Context injector
 

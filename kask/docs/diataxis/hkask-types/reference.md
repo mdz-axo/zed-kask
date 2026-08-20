@@ -65,7 +65,6 @@ prevention — see `Cargo.toml:13`).
 | `TaggedChunk` / `ChunkOntology` / `ExpertiseLevel` | `kask/crates/hkask-types/src/corpus.rs:133,103,20` |
 | `HMemOntology` | `kask/crates/hkask-types/src/hmem_ontology.rs:35` |
 | `LLMParameters` | `kask/crates/hkask-types/src/template.rs:14` |
-| `TemplateType` | `kask/crates/hkask-types/src/template_type.rs:28` |
 | `SkillPolarity` | `kask/crates/hkask-types/src/skill.rs:27` |
 | `VoiceDesign` | `kask/crates/hkask-types/src/voice.rs:15` |
 | `TaskStatus` | `kask/crates/hkask-types/src/kanban_status.rs:24` |
@@ -392,11 +391,8 @@ an `InferenceOutcome` (`inference_ipc.rs:197`). The socket path is passed via
   (`corpus.rs:103`), `ExpertiseLevel` (`corpus.rs:20`).
 - `hmem_ontology.rs`: `HMemOntology` (`hmem_ontology.rs:35`) — dual-axis
   ontological anchoring (DC+BIBO state axis, PKO process axis).
-- `template.rs` / `template_type.rs`: `LLMParameters` (`template.rs:14`).
-  (The former `TemplateType` enum at `template_type.rs:28` —
-  WordAct/KnowAct/FlowDef/RenderAct — was deleted with `hkask-templates`,
-  commit `5f4cf5f10d`; `template_type.rs` no longer exists. `LLMParameters`
-  survives as a foundational config primitive.)
+- `template.rs`: `LLMParameters` (`template.rs:14`) — a foundational config
+  primitive.
 - `skill.rs`: `SkillPolarity` (`skill.rs:27` —
   Generative/Evaluative/Regulative/Procedural).
 - `voice.rs`: `VoiceDesign` (`voice.rs:15`).
@@ -414,7 +410,7 @@ an `InferenceOutcome` (`inference_ipc.rs:197`). The socket path is passed via
 The crate root (`hkask_types.rs:41-66`) re-exports the most-used types
 (`Ed25519PublicKey`, `CuratorHandle`, `Block`, `DbError`, `RegulationRecord`,
 the `Id` aliases, `TaskStatus`, `LedgerHealth`, `ObservableSpan`,
-`SkillPolarity`, `LLMParameters`, `TemplateType`, `AnyJsonValue`,
+`SkillPolarity`, `LLMParameters`, `AnyJsonValue`,
 `HMemOntology`, `Visibility`, `VoiceDesign`) and the entire `ports` module
 via `pub use ports::*;`. Downstream crates depend on `hkask-types` and
 receive all port traits, identifier newtypes, and domain types through this

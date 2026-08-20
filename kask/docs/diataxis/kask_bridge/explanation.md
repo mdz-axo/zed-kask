@@ -201,9 +201,8 @@ Skill execution in zed-kask follows upstream Zed's body-injection model.
 `SkillTool::run` (`crates/agent/src/tools/skill_tool.rs:266`) reads the
 `SKILL.md` body from disk via `agent_skills::read_skill_body` and injects it
 into the conversation via `render_skill_envelope`. The model reads the body
-and follows the instructions — there is no manifest executor, no step
-machine, no Jinja2 cascade, and no `BridgeManifestExecutor` / `skill_executor.rs`
-in `kask_bridge`.
+and follows the instructions. The bridge crate does not participate in
+skill execution.
 
 Two companion built-in tools support the model-coordinated PDCA loops the
 SKILL.md bodies describe:
@@ -308,8 +307,5 @@ The D28 divergence surface touches this crate in four places:
    follows the `mcp/<server>/` convention; the curator DB lives at
    `agents/curator/curator.db` (renamed from the former `pod.db`).
 
-The former `seed_registry_to_disk` registry-seeding path (which wrote to
-`{kask_data_dir}/skills/registry/`) was removed with the `hkask-templates`
-executor infrastructure. Skill bodies and templates now live under the
-skills directory read by `agent_skills::read_skill_body` and the
-`render_template` tool's base path.
+Skill bodies and templates live under the skills directory read by
+`agent_skills::read_skill_body` and the `render_template` tool's base path.
