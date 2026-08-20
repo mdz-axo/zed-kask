@@ -33,10 +33,6 @@ pub const MCP_DIR: &str = "mcp";
 /// Marketplace skills nest as `skills/_marketplace/{source_user}/{skill_name}/`.
 pub const SKILLS_DIR: &str = "skills";
 
-/// Root directory for archived chat threads (D28 — Standardized Artifact Storage).
-/// Contains `threads.db` (SQLite).
-pub const THREADS_DIR: &str = "threads";
-
 /// Default filename for the primary hKask database.
 ///
 /// Resolved relative to `resolve_data_dir()` unless overridden via `HKASK_DB_PATH`.
@@ -116,26 +112,6 @@ pub fn mcp_server_db(server_id: &str, purpose: &str) -> PathBuf {
         .join(format!("{purpose}.db"))
 }
 
-// ── Skills paths (D28 — Standardized Artifact Storage) ───────────────────────
-
-/// Relative path for the skills root directory.
-///
-/// Returns `skills/` — the caller resolves this against the data dir via
-/// `resolve_under_data_dir`.
-pub fn skills_dir() -> PathBuf {
-    PathBuf::from(SKILLS_DIR)
-}
-
-// ── Threads paths (D28 — Standardized Artifact Storage) ──────────────────────
-
-/// Relative path for the archived threads SQLite DB.
-///
-/// Returns `threads/threads.db` — the caller resolves this against the data
-/// dir via `resolve_under_data_dir`.
-pub fn threads_db_path() -> PathBuf {
-    PathBuf::from(THREADS_DIR).join("threads.db")
-}
-
 // ── Database paths ───────────────────────────────────────────────────────────
 
 /// Agent sovereign database — HMemStore, EmbeddingStore, Regulation events.
@@ -151,24 +127,6 @@ pub fn agent_db(name: &str) -> PathBuf {
 /// Memory database — episodic + semantic tool storage.
 pub fn agent_memory_db(name: &str) -> PathBuf {
     agent_dir(name).join("memory.db")
-}
-
-// ── Initialization ───────────────────────────────────────────────────────────
-
-/// Create the agent's root directory on disk.
-///
-/// Called during agent provisioning to ensure the agent's space exists
-/// before any databases are deployed. Safe to call multiple times
-/// (idempotent — directories already existing are not errors).
-///
-/// D28: the scaffolding subdirs (`gallery`, `documents`, `library`,
-/// `sessions`, `adapters`, `portfolios`, `artifacts`) were removed — they
-/// were created on disk but never read/written by any production code.
-/// MCP-server artifacts now live under `mcp/{server_id}/`, not under
-/// `agents/{name}/`. Agent DBs (`agent_db`, `agent_memory_db`) create
-/// their own parent dir on open.
-pub fn ensure_agent_dirs(name: &str) -> std::io::Result<()> {
-    std::fs::create_dir_all(agent_dir(name))
 }
 
 /// Sanitize an agent name for filesystem use.

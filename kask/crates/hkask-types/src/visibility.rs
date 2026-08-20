@@ -83,11 +83,8 @@ impl std::fmt::Display for Visibility {
 /// replaces the repeated pattern of passing these three as separate
 /// parameters (Fowler H10: Group Data Clump Into Object).
 ///
-/// Canonical constructors:
+/// Canonical constructor:
 /// - `AccessControl::new(owner)` — default: private, no perspective
-/// - `AccessControl::episodic(perspective, owner)` — private, perspective-bound
-/// - `AccessControl::semantic(owner)` — shared, no perspective
-/// - `AccessControl::public(owner)` — public, no perspective
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct AccessControl {
     pub perspective: Option<WebID>,
@@ -107,59 +104,6 @@ impl AccessControl {
             perspective: None,
             visibility: Visibility::Private,
             owner_webid: owner,
-        }
-    }
-
-    /// Create an episodic (perspective-bound) access control: private, owned by `owner`.
-    /// Create episodic access control.
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  perspective and owner are valid
-    /// post: returns AccessControl with Private visibility and perspective
-    pub fn episodic(perspective: WebID, owner: WebID) -> Self {
-        Self {
-            perspective: Some(perspective),
-            visibility: Visibility::Private,
-            owner_webid: owner,
-        }
-    }
-
-    /// Create a semantic (shared, perspective-free) access control.
-    /// Create semantic access control.
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  owner is valid
-    /// post: returns AccessControl with Shared visibility, no perspective
-    pub fn semantic(owner: WebID) -> Self {
-        Self {
-            perspective: None,
-            visibility: Visibility::Shared,
-            owner_webid: owner,
-        }
-    }
-
-    /// Create a public (unrestricted, perspective-free) access control.
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  owner is valid
-    /// post: returns AccessControl with Public visibility, no perspective
-    pub fn public(owner: WebID) -> Self {
-        Self {
-            perspective: None,
-            visibility: Visibility::Public,
-            owner_webid: owner,
-        }
-    }
-
-    /// Convert to public access control: strip perspective, set visibility to Public.
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// post: returns AccessControl with Public visibility, no perspective
-    pub fn to_public(&self) -> Self {
-        Self {
-            perspective: None,
-            visibility: Visibility::Public,
-            owner_webid: self.owner_webid,
         }
     }
 
@@ -185,20 +129,6 @@ impl AccessControl {
     /// post: returns Self with visibility set
     pub fn with_visibility(mut self, visibility: Visibility) -> Self {
         self.visibility = visibility;
-        self
-    }
-
-    /// Remove the perspective from this access control.
-    ///
-    /// F-SYN-004: this is the explicit operation to take a h_mem
-    /// from *episodic* (perspective-bound) to *semantic* (shared,
-    /// perspective-free). It does not change the visibility mode.
-    /// Remove perspective (for legitimate sharing).
-    ///
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// post: returns Self with perspective set to None
-    pub fn without_perspective(mut self) -> Self {
-        self.perspective = None;
         self
     }
 }

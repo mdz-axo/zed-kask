@@ -32,12 +32,6 @@ impl ChatMessage {
             content: content.into(),
         }
     }
-    pub fn assistant(content: impl Into<String>) -> Self {
-        Self {
-            role: "assistant".to_string(),
-            content: content.into(),
-        }
-    }
 }
 
 /// Inference error types
@@ -86,28 +80,6 @@ pub struct TokenProbability {
 pub struct TokenProb {
     pub token: String,
     pub prob: f64,
-}
-
-/// Confidence = avg(prob) × (1 - sqrt(variance)). Higher avg + lower variance = higher confidence.
-///
-/// expect: "System types preserve semantic identity and are provenance-aware"
-/// pre:  probs is a slice of [`TokenProbability`] values; may be empty
-/// post: returns 0.0 if probs is empty; otherwise returns avg(prob) × (1 - √variance),
-///       a value in [0.0, 1.0] where higher average probability and lower variance produce higher confidence
-pub fn compute_confidence(probs: &[TokenProbability]) -> f64 {
-    if probs.is_empty() {
-        return 0.0;
-    }
-
-    let avg_prob: f64 = probs.iter().map(|p| p.prob).sum::<f64>() / probs.len() as f64;
-
-    let variance: f64 = probs
-        .iter()
-        .map(|p| (p.prob - avg_prob).powi(2))
-        .sum::<f64>()
-        / probs.len() as f64;
-
-    avg_prob * (1.0 - variance.sqrt())
 }
 
 /// OpenAI-compatible tool definition sent to models that support native function calling.

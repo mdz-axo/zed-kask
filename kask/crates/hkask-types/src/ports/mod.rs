@@ -17,7 +17,6 @@ pub use inference_port::{
 pub use inference_types::{
     ChatMessage, ChatToolDefinition, ChatToolFunction, InferenceError, InferenceResult,
     InferenceStreamChunk, InferenceUsage, StructuredToolCall, TokenProb, TokenProbability,
-    compute_confidence,
 };
 pub use memory_port::{MemoryError, MemoryFuture, MemoryPort, MemorySnippet, TurnRecord};
 pub use regulation::{ConsolidationOutcome, ConsolidationRequest};
