@@ -10,6 +10,12 @@ contract:
     regressions_checked: array
 visibility: Public
 ---
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "concise"
+thinking_budget = "off"
+
 {# goal: Discover dependency manifest surfaces (Cargo.toml, deny.toml, lockfiles, package-lock.json, go.sum) within workspace (P4). Read security/regressions/ for existing supply-chain checks. Return concrete manifest_paths (verifiable file paths only — no synthetic files). Emit reg.supply_chain.select span (P9). Authenticated host mandatory (P12). Surface parameter: cargo|npm|python|deny|all. #}
 {% set surfaces = [
   {id: 'cargo', files: ['Cargo.toml', '*.lock'], registry: 'crates.io'},

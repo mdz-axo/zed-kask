@@ -830,6 +830,27 @@ impl AgentTool for SkillTool {
                         serde_json::Value::String(task.clone()),
                     );
 
+                    // Inject the thread's current model so the cascade's
+                    // inference calls route through it instead of the
+                    // InferencePort's startup-pinned default. Without this,
+                    // the cascade uses a different model (and rate-limit pool)
+                    // than the thread the user invoked the skill from.
+                    if let Some(thread_weak) = event_stream.thread() {
+                        let thread_model = cx.update(|cx| {
+                            thread_weak.upgrade().and_then(|thread| {
+                                thread.read(cx).model().map(|model| {
+                                    format!("{}/{}", model.provider_id().0, model.id().0)
+                                })
+                            })
+                        });
+                        if let Some(model_id) = thread_model {
+                            context.insert(
+                                "thread_model".to_string(),
+                                serde_json::Value::String(model_id),
+                            );
+                        }
+                    }
+
                     // Gather short-term (thread) and long-term (memory)
                     // context for the cascade. This closes the isolation gap
                     // where template steps were submitted as single-prompt

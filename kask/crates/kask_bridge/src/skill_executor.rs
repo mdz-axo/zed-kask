@@ -36,6 +36,7 @@ use agent_skills::is_core_skill;
 /// `execute_skill` below. Listed here so validation never flags them as typos.
 const SKILL_CONTEXT_SYSTEM_KEYS: &[&str] = &[
     "task",
+    "thread_model",
     "embedding_model",
     "classifier_model",
     "ocr_model",

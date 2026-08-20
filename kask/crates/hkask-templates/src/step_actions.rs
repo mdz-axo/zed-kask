@@ -371,10 +371,22 @@ impl StepMachine {
         // pointees are `Send + Sync`. Borrowing a standalone local sidesteps it.
         let inference = infra.inference.clone();
         let progress = infra.progress.clone();
+        // Read the thread's model from the cascade context. The caller
+        // (SkillTool / send_skill_invocation) injects "thread_model" as a
+        // provider-prefixed string. When present, the inference call routes
+        // through this model instead of the InferencePort's startup-pinned
+        // default.
+        let model_override = self
+            .context
+            .inputs
+            .get("thread_model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let inference_result = call_inference_stream_with_messages(
             inference,
             messages,
             params,
+            model_override.as_deref(),
             tools,
             timeout_dur,
             node.ordinal,
@@ -1821,6 +1833,7 @@ async fn call_inference_stream_with_messages(
     inference: Arc<dyn InferencePort + 'static>,
     messages: Vec<ChatMessage>,
     params: LLMParameters,
+    model_override: Option<&str>,
     tools: Option<Vec<ChatToolDefinition>>,
     timeout: std::time::Duration,
     step_ordinal: u32,
@@ -1842,8 +1855,12 @@ async fn call_inference_stream_with_messages(
         timeout
     };
 
-    let stream =
-        inference.generate_stream_with_messages(&messages, &params, None, tools.as_deref());
+    let stream = inference.generate_stream_with_messages(
+        &messages,
+        &params,
+        model_override,
+        tools.as_deref(),
+    );
 
     let (full_text, tool_calls, cost_usd, finish_reason) =
         match tokio::time::timeout(timeout, async move {
@@ -2017,6 +2034,7 @@ mod tests {
             }],
             LLMParameters::default(),
             None,
+            None,
             std::time::Duration::from_secs(30),
             1,
             None,
@@ -2185,6 +2203,7 @@ convergence:
                 content: "prompt".into(),
             }],
             LLMParameters::default(),
+            None,
             None,
             std::time::Duration::from_secs(30),
             1,

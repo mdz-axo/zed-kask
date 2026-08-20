@@ -27,6 +27,10 @@ visibility: Public
 ---
 
 [inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "concise"
+thinking_budget = "off"
 
 INPUT: threats = {{ threats }} (structured array from classify-threat phase)
 INPUT: defense_layers_firing = {{ defense_layers_firing }}

@@ -1,13 +1,11 @@
-//! Inference configuration — multi-provider routing for 4 chat providers: DeepInfra, RunPod (vision/OCR only), OpenRouter, Ollama (local).
+//! Inference configuration — multi-provider routing for 3 chat providers: RunPod (vision/OCR only), OpenRouter, Ollama (local).
 //!
 //! # Environment Variables
 //!
-//! - `DEEPINFRA_BASE_URL` / `DEEPINFRA_API_KEY` — DeepInfra (cloud, required)
-//! - `ATLASCLOUD_BASE_URL` / `ATLASCLOUD_API_KEY` — AtlasCloud (cloud media + LLM)
 //! - `OPENROUTER_BASE_URL` / `OPENROUTER_API_KEY` — OpenRouter (cloud, required)
 //! - `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` — Ollama (local; key optional, header ignored)
 //! - `RUNPOD_API_KEY` / `RUNPOD_BASE_URL` or `RUNPOD_TEMPLATE_ID` — RunPod (vision/OCR only)
-//! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DeepInfra, RunPod, OpenRouter, ollama; default: DeepInfra)
+//! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (RunPod, OpenRouter, ollama; default: OpenRouter)
 //! - `HKASK_DEFAULT_MODEL` — default model (default: `OpenRouter/z-ai/glm-5.2`)
 //!
 //! # API Key Resolution
@@ -19,21 +17,17 @@
 //! # Model Naming Convention
 //!
 //! Models use a full-name provider prefix:
-//! - `DeepInfra/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra (cloud)
 //! - `OpenRouter/openai/gpt-4o` → OpenRouter (cloud)
 //! - `ollama/qwen3:8b` → Ollama (local)
 //! - `RunPod/kask-ocr` → RunPod (OLMOCR-2 vision/OCR via serverless vLLM endpoint, D29)
-//! - No prefix → default provider (configurable, default: DeepInfra)
+//! - No prefix → default provider (configurable, default: OpenRouter)
 
 use serde::{Deserialize, Serialize};
 
 /// Provider identifier for inference routing. Used as the model-string
-/// prefix (e.g. `DeepInfra/model`, `OpenRouter/model`) and in log messages.
+/// prefix (e.g. `OpenRouter/model`, `ollama/model`) and in log messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ProviderId {
-    /// DeepInfra (cloud) — prefix `DeepInfra/`
-    #[serde(rename = "DI")]
-    DeepInfra,
     /// Runpod (cloud) — prefix `RunPod/`
     #[serde(rename = "RP")]
     Runpod,
@@ -55,14 +49,13 @@ impl ProviderId {
     /// expect: "The system normalizes provider responses for monitoring"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — model-name routing to provider boundary
     /// pre:  model is non-empty
-    /// post: returns Some((ProviderId, stripped_model)) for DeepInfra/, RunPod/, OpenRouter/, ollama/ prefixes
+    /// post: returns Some((ProviderId, stripped_model)) for RunPod/, OpenRouter/, ollama/ prefixes
     /// post: returns None for unrecognized or missing prefix
     #[must_use]
     pub fn parse_from_model(model: &str) -> Option<(Self, &str)> {
         // Full-name prefixes. Each entry is (prefix, provider, prefix_len).
         // `strip_prefix` handles the matching; the match assigns the variant.
         const PREFIXES: &[(&str, ProviderId)] = &[
-            ("DeepInfra/", ProviderId::DeepInfra),
             ("RunPod/", ProviderId::Runpod),
             ("OpenRouter/", ProviderId::OpenRouter),
             ("ollama/", ProviderId::Ollama),
@@ -85,7 +78,7 @@ impl ProviderId {
     /// This is the lenient counterpart to [`ProviderId::parse_from_model`]:
     /// `parse_from_model` does strict case-sensitive full-prefix stripping and
     /// returns the rest of the model name; `from_prefix_segment` classifies an
-    /// already-split segment and accepts aliases (`"di"`, `"or"`, …).
+    /// already-split segment and accepts aliases (`"or"`, …).
     /// Centralizing the alias table here keeps provider knowledge in one place,
     /// so adding or removing a variant updates one match instead of several.
     ///
@@ -96,7 +89,6 @@ impl ProviderId {
     #[must_use]
     pub fn from_prefix_segment(segment: &str) -> Self {
         match segment.to_lowercase().as_str() {
-            "deepinfra" | "di" => ProviderId::DeepInfra,
             "runpod" | "rp" => ProviderId::Runpod,
             "openrouter" | "or" => ProviderId::OpenRouter,
             "ollama" | "om" => ProviderId::Ollama,
@@ -119,11 +111,10 @@ impl ProviderId {
     ///
     /// expect: "The system normalizes provider responses for monitoring"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — stable provider name for routing
-    /// post: returns "DeepInfra", "RunPod", "OpenRouter", or "ollama"
+    /// post: returns "RunPod", "OpenRouter", or "ollama"
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
-            ProviderId::DeepInfra => "DeepInfra",
             ProviderId::Runpod => "RunPod",
             ProviderId::OpenRouter => "OpenRouter",
             ProviderId::Ollama => "ollama",
@@ -133,17 +124,15 @@ impl ProviderId {
 
 /// Configuration for the inference router.
 ///
-/// Holds connection settings for DeepInfra, OpenRouter,
-/// Ollama, and AtlasCloud. The router uses this config to construct
+/// Holds connection settings for OpenRouter and
+/// Ollama. The router uses this config to construct
 /// backends and decide the default provider for unprefixed model names.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceConfig {
     /// Default provider for model names without a prefix.
-    /// Default: DeepInfra (cloud-first).
+    /// Default: OpenRouter (cloud-first).
     pub default_provider: ProviderId,
 
-    pub deepinfra_base_url: String,
-    pub deepinfra_api_key: String,
     pub openrouter_base_url: String,
     pub openrouter_api_key: String,
     /// Ollama local inference — defaults to `http://localhost:11434`. The API key
@@ -151,10 +140,6 @@ pub struct InferenceConfig {
     /// other backends and to support remote Ollama instances that require auth.
     pub ollama_base_url: String,
     pub ollama_api_key: String,
-    /// AtlasCloud — task-based media API (image/video/3D/audio/ASR) + OpenAI-compatible LLM.
-    /// Env: `ATLASCLOUD_API_KEY`, `ATLASCLOUD_BASE_URL` (default `https://api.atlascloud.ai/api/v1`).
-    pub atlascloud_base_url: String,
-    pub atlascloud_api_key: String,
     pub timeout_secs: u64,
     pub pool_max_idle: usize,
     pub default_model: String,
@@ -163,15 +148,11 @@ pub struct InferenceConfig {
 impl Default for InferenceConfig {
     fn default() -> Self {
         Self {
-            default_provider: ProviderId::DeepInfra,
-            deepinfra_base_url: "https://api.deepinfra.com".to_string(),
-            deepinfra_api_key: String::new(),
+            default_provider: ProviderId::OpenRouter,
             openrouter_base_url: "https://openrouter.ai/api".to_string(),
             openrouter_api_key: String::new(),
             ollama_base_url: "http://localhost:11434".to_string(),
             ollama_api_key: String::new(),
-            atlascloud_base_url: "https://api.atlascloud.ai/api/v1".to_string(),
-            atlascloud_api_key: String::new(),
             timeout_secs: 120,
             pool_max_idle: 5,
             default_model: crate::model_constants::DEFAULT_FALLBACK_MODEL.to_string(),
@@ -187,26 +168,17 @@ impl InferenceConfig {
     /// expect: "The system resolves inference configuration from the environment"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — inference configuration resolved from environment
     /// post: returns InferenceConfig resolved from env vars and keychain
-    /// post: defaults to DeepInfra cloud if env vars unset
+    /// post: defaults to OpenRouter cloud if env vars unset
     pub fn from_env() -> Self {
-        let di = ProviderConfig::from_env("DeepInfra", "https://api.deepinfra.com");
         let or = ProviderConfig::from_env("OpenRouter", "https://openrouter.ai/api");
         let om = ProviderConfig::from_env("ollama", "http://localhost:11434");
 
-        let atlascloud_base_url = std::env::var("ATLASCLOUD_BASE_URL")
-            .unwrap_or_else(|_| "https://api.atlascloud.ai/api/v1".to_string());
-        let atlascloud_api_key = resolve_api_key("ATLASCLOUD_API_KEY");
-
         Self {
             default_provider: resolve_default_provider(),
-            deepinfra_base_url: di.base_url,
-            deepinfra_api_key: di.api_key,
             openrouter_base_url: or.base_url,
             openrouter_api_key: or.api_key,
             ollama_base_url: om.base_url,
             ollama_api_key: om.api_key,
-            atlascloud_base_url,
-            atlascloud_api_key,
             timeout_secs: parse_env_numeric(
                 "HKASK_HTTP_TIMEOUT_SECS",
                 resolve_config_str("HKASK_HTTP_TIMEOUT_SECS"),
@@ -274,8 +246,8 @@ fn resolve_api_key(env_name: &str) -> String {
 /// Resolve the default provider from env var or keychain.
 ///
 /// Reads `HKASK_DEFAULT_PROVIDER` via [`resolve_api_key`] (env var first, then
-/// OS keychain). Accepted values: DeepInfra, RunPod, OpenRouter,
-/// ollama. Defaults to DeepInfra.
+/// OS keychain). Accepted values: RunPod, OpenRouter,
+/// ollama. Defaults to OpenRouter.
 fn resolve_default_provider() -> ProviderId {
     let raw = resolve_api_key("HKASK_DEFAULT_PROVIDER");
     parse_provider_code(&raw)
@@ -283,16 +255,15 @@ fn resolve_default_provider() -> ProviderId {
 
 /// Parse a provider code string to a ProviderId.
 ///
-/// Accepted values: full provider names (DeepInfra,
-/// RunPod, OpenRouter, ollama). Anything else (including
-/// empty) → DeepInfra.
+/// Accepted values: full provider names (RunPod,
+/// OpenRouter, ollama). Anything else (including
+/// empty) → OpenRouter.
 fn parse_provider_code(raw: &str) -> ProviderId {
     match raw {
-        "DeepInfra" => ProviderId::DeepInfra,
         "RunPod" => ProviderId::Runpod,
         "OpenRouter" => ProviderId::OpenRouter,
         "ollama" => ProviderId::Ollama,
-        _ => ProviderId::DeepInfra,
+        _ => ProviderId::OpenRouter,
     }
 }
 
@@ -353,8 +324,7 @@ impl ProviderConfig {
     /// and `{prefix}_API_KEY` (keychain-first, then env).
     pub fn from_env(prefix: &str, default_base_url: &str) -> Self {
         // Sanitize the prefix for env var names: uppercase, remove spaces
-        // and dots. e.g. "DeepInfra" → "DEEPINFRA",
-        // "fal.ai" → "FALAI", "ollama" → "OLLAMA".
+        // and dots. e.g. "fal.ai" → "FALAI", "ollama" → "OLLAMA".
         // This keeps env var names valid (no spaces/dots) while the provider
         // ID (used for routing) retains its zed-format display name.
         let env_prefix = prefix.to_uppercase().replace([' ', '.'], "");
@@ -379,8 +349,8 @@ mod tests {
     #[test]
     fn parse_provider_prefix() {
         assert_eq!(
-            ProviderId::parse_from_model("DeepInfra/meta-llama/Llama-3.3-70B-Instruct"),
-            Some((ProviderId::DeepInfra, "meta-llama/Llama-3.3-70B-Instruct"))
+            ProviderId::parse_from_model("OpenRouter/openai/gpt-4o"),
+            Some((ProviderId::OpenRouter, "openai/gpt-4o"))
         );
         assert_eq!(
             ProviderId::parse_from_model("RunPod/my-model"),
@@ -400,7 +370,7 @@ mod tests {
     /// \[P9\] Motivating: Homeostatic Self-Regulation — validates malformed model rejection
     #[test]
     fn parse_empty_model_returns_none() {
-        assert_eq!(ProviderId::parse_from_model("DeepInfra/"), None);
+        assert_eq!(ProviderId::parse_from_model("OpenRouter/"), None);
         assert_eq!(ProviderId::parse_from_model("fal.ai/"), None);
     }
 
@@ -409,7 +379,7 @@ mod tests {
     #[test]
     fn parse_too_short_returns_none() {
         // No prefix — too short to contain a recognized provider prefix.
-        assert_eq!(ProviderId::parse_from_model("DI"), None);
+        assert_eq!(ProviderId::parse_from_model("OR"), None);
         assert_eq!(ProviderId::parse_from_model("FA"), None);
         assert_eq!(ProviderId::parse_from_model("X"), None);
     }
@@ -428,8 +398,8 @@ mod tests {
     #[test]
     fn prefix_model_format() {
         assert_eq!(
-            ProviderId::DeepInfra.prefix_model("meta-llama/Llama-3.3-70B"),
-            "DeepInfra/meta-llama/Llama-3.3-70B"
+            ProviderId::OpenRouter.prefix_model("openai/gpt-4o"),
+            "OpenRouter/openai/gpt-4o"
         );
         assert_eq!(
             ProviderId::Runpod.prefix_model("my-model"),
@@ -443,7 +413,6 @@ mod tests {
     /// \[P9\] Motivating: Homeostatic Self-Regulation — validates provider code parser
     #[test]
     fn parse_provider_code_all_codes() {
-        assert_eq!(parse_provider_code("DeepInfra"), ProviderId::DeepInfra);
         assert_eq!(parse_provider_code("RunPod"), ProviderId::Runpod);
         assert_eq!(parse_provider_code("OpenRouter"), ProviderId::OpenRouter);
         assert_eq!(parse_provider_code("ollama"), ProviderId::Ollama);
@@ -452,12 +421,12 @@ mod tests {
     /// expect: "Inference provider code default works correctly under test conditions"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — validates safe default provider
     #[test]
-    fn parse_provider_code_unknown_defaults_to_deepinfra() {
-        assert_eq!(parse_provider_code("XX"), ProviderId::DeepInfra);
-        assert_eq!(parse_provider_code(""), ProviderId::DeepInfra);
-        assert_eq!(parse_provider_code("unknown"), ProviderId::DeepInfra);
+    fn parse_provider_code_unknown_defaults_to_openrouter() {
+        assert_eq!(parse_provider_code("XX"), ProviderId::OpenRouter);
+        assert_eq!(parse_provider_code(""), ProviderId::OpenRouter);
+        assert_eq!(parse_provider_code("unknown"), ProviderId::OpenRouter);
         // Wrong case ("Ollama" vs canonical "ollama") is not recognized.
-        assert_eq!(parse_provider_code("Ollama"), ProviderId::DeepInfra);
+        assert_eq!(parse_provider_code("Ollama"), ProviderId::OpenRouter);
     }
 
     // ── resolve_api_key ──────────────────────────────────────────────────
@@ -520,10 +489,6 @@ mod tests {
     fn from_prefix_segment_classifies_aliases_case_insensitively() {
         // Full names, case-insensitive.
         assert_eq!(
-            ProviderId::from_prefix_segment("DeepInfra"),
-            ProviderId::DeepInfra
-        );
-        assert_eq!(
             ProviderId::from_prefix_segment("openrouter"),
             ProviderId::OpenRouter
         );
@@ -536,7 +501,6 @@ mod tests {
             ProviderId::Ollama
         );
         // Short aliases.
-        assert_eq!(ProviderId::from_prefix_segment("di"), ProviderId::DeepInfra);
         assert_eq!(
             ProviderId::from_prefix_segment("or"),
             ProviderId::OpenRouter

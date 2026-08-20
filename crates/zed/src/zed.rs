@@ -6015,6 +6015,7 @@ mod tests {
                 "image_viewer",
                 "inline_assistant",
                 "journal",
+                "kanban_panel",
                 "kask_extensions_ui",
                 "keymap_editor",
                 "keystroke_input",

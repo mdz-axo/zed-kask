@@ -2244,6 +2244,25 @@ impl NativeAgent {
                         serde_json::Value::String(task_text.clone()),
                     );
 
+                    // Inject the thread's current model so the cascade's
+                    // inference calls route through it instead of the
+                    // InferencePort's startup-pinned default.
+                    let thread_model = cx.update(|cx| {
+                        thread.read(cx).model().map(|model| {
+                            format!(
+                                "{}/{}",
+                                model.provider_id().0,
+                                model.id().0
+                            )
+                        })
+                    });
+                    if let Some(model_id) = thread_model {
+                        context.insert(
+                            "thread_model".to_string(),
+                            serde_json::Value::String(model_id),
+                        );
+                    }
+
                     // Gather short-term (thread) and long-term (memory)
                     // context for the cascade — same as the model-invoked
                     // `skill` tool path. The slash-command path has the
