@@ -539,7 +539,7 @@ pub(crate) fn filter_outcome_to_pages(
 ///
 /// Templates live in `registry/templates/docproc/` as Jinja2 files.
 /// Uses the same minijinja rendering pattern as `self_heal.rs` and the
-/// hkask-templates ManifestExecutor. Falls back to empty string if the
+/// hkask-templates skill cascade. Falls back to empty string if the
 /// template file is missing or rendering fails — callers provide an
 /// inline fallback prompt.
 ///

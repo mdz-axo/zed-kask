@@ -3773,7 +3773,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let output = task.await.unwrap();
     cx.run_until_parked();
-    // zed-kask: `SkillTool::new` wires no manifest executor, so `run` returns
+    // zed-kask: `SkillTool::new` wires no skill cascade, so `run` returns
     // the no-op envelope (body injection is disabled in zed-kask — the
     // SKILL.md body is never injected; skills execute via YAML manifests in
     // the kask registry). The envelope structure — wrapper tag, source,

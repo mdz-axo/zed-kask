@@ -269,7 +269,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // Skills corpus dir — set from `KaskSwarmSettings.skills_dir`.
             // Retained for settings UI compatibility; the swarm server no
             // longer reads this env var (skill-awareness was removed with the
-            // ManifestExecutor cleanup).
+            // skill cascade cleanup).
             "HKASK_SKILLS_DIR",
             // Swarm memory store shape — read in config.rs alongside the
             // passphrase above. Without these the DB path and embedding

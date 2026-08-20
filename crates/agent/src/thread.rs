@@ -3,9 +3,9 @@ use crate::{
     CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
     DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
     GoToDefinitionTool, GrepTool, LispEvalTool, ListAgentsAndModelsTool, ListDirectoryTool,
-    MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
-    WriteFileTool, decide_permission_from_settings,
+    MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, RenderTemplateTool,
+    SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ToolPermissionDecision, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{ClientUserMessageId, MentionUri};
 use action_log::ActionLog;
@@ -2506,7 +2506,7 @@ impl Thread {
         ));
         self.add_tool(WebSearchTool);
         self.add_tool(LispEvalTool);
-        self.add_tool(TemplateRenderTool::new(self.project.read(cx).fs().clone()));
+        self.add_tool(RenderTemplateTool);
 
         self.add_tool(AskUserTool);
 
