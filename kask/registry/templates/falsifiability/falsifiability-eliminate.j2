@@ -1,6 +1,5 @@
 {# goal: Apply evidence, eliminate hypotheses whose predictions fail, corroborate survivors — never confirm. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     hypotheses: array
@@ -15,10 +14,6 @@ contract:
     verdict: string
 visibility: Public
 ---
-{# Template: falsifiability/falsifiability-eliminate.j2 #}
-{# Functional Role: KnowAct — eliminate failures, corroborate survivors #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: eliminated, corroborated, survived_by_default, falsification_log, verdict #}
 
 [inference]
 temperature = 0.3

@@ -1,6 +1,5 @@
 {# goal: Independent quality gate that evaluates scenario divergence, consistency, and coverage. Separated from the narrative generator to prevent self-assessment bias. Receives scenarios[] from step 4 output and produces calibrated scores. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     scenarios: array
@@ -14,10 +13,6 @@ contract:
     parametric_variation_flag: boolean
 visibility: Public
 ---
-{# Template: scenario-builder/scenario-quality-gate.j2 #}
-{# Functional Role: KnowAct — Independent quality gate for scenario divergence, consistency, and coverage #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: gate_pass, gate_findings, divergence_score, consistency_score, coverage_score, parametric_variation_flag #}
 
 [inference]
 temperature = 0.5

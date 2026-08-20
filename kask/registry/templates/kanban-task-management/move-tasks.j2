@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     triage_phase: string
@@ -10,10 +9,6 @@ contract:
     blocked_moves: array
 visibility: Public
 ---
-{# Template: kanban-task-management/move-tasks.j2 #}
-{# Functional Role: KnowAct — Decide valid kanban task transitions while enforcing WIP limits #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: transitions, blocked_moves #}
 
 [inference]
 temperature = 0.1

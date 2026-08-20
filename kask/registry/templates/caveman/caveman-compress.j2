@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     draft_response: string
@@ -12,10 +11,6 @@ contract:
     clarity_exceptions: array
 visibility: Public
 ---
-{# Template: caveman/caveman-compress.j2 #}
-{# Functional Role: KnowAct — Compress response into caveman mode #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: compressed_response, original_token_estimate, compressed_token_estimate, compression_ratio, clarity_exceptions #}
 
 [inference]
 temperature = 0.1

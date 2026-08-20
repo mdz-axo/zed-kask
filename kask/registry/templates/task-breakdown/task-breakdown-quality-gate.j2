@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     tasks: array
@@ -15,13 +14,11 @@ contract:
     gate_findings: array
 visibility: Public
 ---
-{# Template: task-breakdown/task-breakdown-quality-gate.j2 #}
 {# Independent quality gate — evaluates the plan WITHOUT #}
 {# self-assessment bias. Distinct from the producer-coupled evaluate step: this #}
 {# gate is a deterministic rubric, not a generator. Mirrors superforecasting's #}
 {# forecast-quality-gate separation of concerns. #}
 {# v0.36.0: adds target_condition_coverage criterion (7 criteria total). #}
-{# Produces: gate_scores, gate_weighted_total, gate_pass, gate_findings #}
 
 [inference]
 temperature = 0.1

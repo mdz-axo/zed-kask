@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     operation: string
@@ -11,8 +10,6 @@ contract:
 visibility: Public
 ---
 {# goal: Diagnose transient failures (timeout, 5xx, rate limit) and propose retry/backoff recovery actions. #}
-{# Template: heal/transient_retry.j2 #}
-{# KnowAct — Diagnose and recover from transient failures #}
 
 [inference]
 temperature = 0.1

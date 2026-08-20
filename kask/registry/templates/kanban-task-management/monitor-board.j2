@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     triage_phase: string
@@ -9,10 +8,6 @@ contract:
     board_summary: object
 visibility: Public
 ---
-{# Template: kanban-task-management/monitor-board.j2 #}
-{# Functional Role: KnowAct — Monitor kanban board state #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: board_summary #}
 
 [inference]
 temperature = 0.1

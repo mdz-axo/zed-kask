@@ -1,6 +1,5 @@
 {# goal: Identify B's axioms that c violates. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     axiom_graph: object
@@ -10,8 +9,6 @@ contract:
     no_violations: boolean
 visibility: Public
 ---
-{# Template: constraint-forces-recast/cfr-violate.j2 #}
-{# Produces: violations, no_violations #}
 
 [inference]
 temperature = 0.2

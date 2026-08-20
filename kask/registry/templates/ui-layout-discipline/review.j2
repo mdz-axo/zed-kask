@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     target:
@@ -25,9 +24,7 @@ contract:
       description: Result of the mechanical squint test — {dominant_element, hierarchy_present}.
 visibility: Public
 ---
-{# Template: ui-layout-discipline/review.j2 #}
 {# Phase: REVIEW — adversarial probes + squint test #}
-{# Produces: probes, all_probes_passed, failing_gates, squint_test_result #}
 
 [inference]
 temperature = 0.1

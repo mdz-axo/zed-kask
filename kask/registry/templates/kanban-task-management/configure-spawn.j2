@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     triage_phase: string
@@ -15,10 +14,6 @@ contract:
     timeout_seconds: integer
 visibility: Public
 ---
-{# Template: kanban-task-management/configure-spawn.j2 #}
-{# Functional Role: KnowAct — Configure a consent-mediated agent spawn for one kanban task #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: delegation_level, delegated_skills, memory_scope, tool_servers, rjoule_budget, timeout_seconds #}
 
 [inference]
 temperature = 0.1

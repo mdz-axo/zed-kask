@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     task_description: string
@@ -12,10 +11,6 @@ contract:
     plan: array
 visibility: Public
 ---
-{# Template: coding-guidelines/guidelines-assess.j2 #}
-{# Functional Role: KnowAct — Pre-implementation assessment against Karpathy principles #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: assumptions, simplicity_risks, scope_creep_warnings, success_criteria, plan #}
 
 [inference]
 temperature = 0.2

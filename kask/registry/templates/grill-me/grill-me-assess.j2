@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     topic: string
@@ -11,10 +10,6 @@ contract:
     overall_assessment: string
 visibility: Public
 ---
-{# Template: grill-me/grill-me-assess.j2 #}
-{# Functional Role: KnowAct — Final assessment synthesis #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: summary, recommendations, overall_assessment #}
 
 [inference]
 temperature = 0.3

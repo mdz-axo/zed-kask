@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     operation: string
@@ -11,8 +10,6 @@ contract:
 visibility: Public
 ---
 {# goal: Diagnose permission-denied errors and propose filesystem recovery actions. #}
-{# Template: heal/permission_denied.j2 #}
-{# KnowAct — Diagnose and recover from permission denied errors #}
 
 [inference]
 temperature = 0.1

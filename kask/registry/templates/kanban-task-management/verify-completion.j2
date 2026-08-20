@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     triage_phase: string
@@ -13,10 +12,6 @@ contract:
     criteria_results: array
 visibility: Public
 ---
-{# Template: kanban-task-management/verify-completion.j2 #}
-{# Functional Role: KnowAct — Verify task completion against acceptance criteria #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: passed, reasoning, criteria_results #}
 
 [inference]
 temperature = 0.1

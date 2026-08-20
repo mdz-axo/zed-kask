@@ -1,6 +1,5 @@
 {# goal: Select seed concepts — most central concept by graph degree in the source ontology. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     priority_ranking: array
@@ -9,8 +8,6 @@ contract:
     seed_concepts: array
 visibility: Public
 ---
-{# Template: gradient-seeded-recombination/gsr-select-seeds.j2 #}
-{# Produces: seed_concepts #}
 
 [inference]
 temperature = 0.2

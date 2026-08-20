@@ -1,6 +1,5 @@
 {# goal: Refine and bound the focal question with decision relevance, time horizon, and scope boundaries. Produces a current state summary. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     focal_question: string
@@ -15,10 +14,6 @@ contract:
     current_state_summary: string
 visibility: Public
 ---
-{# Template: scenario-builder/focal-question.j2 #}
-{# Functional Role: KnowAct — Refine a focal question for strategic scenario analysis #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: refined_focal_question #}
 
 [inference]
 temperature = 0.2

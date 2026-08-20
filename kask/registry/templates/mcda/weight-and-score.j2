@@ -1,6 +1,5 @@
 {# goal: Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces normalized scores and composite rankings for each alternative. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     decision_question: string
@@ -13,10 +12,6 @@ contract:
     composite_scores: array
 visibility: Public
 ---
-{# Template: mcda/weight-and-score.j2 #}
-{# Functional Role: KnowAct — Criteria weighting, alternative scoring, and composite aggregation #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: weights, normalized_scores, composite_scores #}
 
 [inference]
 temperature = 0.2

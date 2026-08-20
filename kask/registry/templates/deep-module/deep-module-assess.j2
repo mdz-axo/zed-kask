@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     module_path: string
@@ -15,10 +14,6 @@ contract:
     recommendations: array
 visibility: Public
 ---
-{# Template: deep-module/deep-module-assess.j2 #}
-{# Functional Role: KnowAct — Assess module depth: enumerate public interface, evaluate behavior, compute depth score #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: interface_inventory, behavior_estimate, depth_score, classification, red_flags, recommendations #}
 
 [inference]
 temperature = 0.2

@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     project_description: string
@@ -10,10 +9,6 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# Template: kanban-task-management/triage.j2 #}
-{# Functional Role: KnowAct — Determine which kanban management phase to run #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: phase, rationale #}
 {# Ontology: PKO — pko:ProcedureExecution (phase selection) #}
 
 [inference]

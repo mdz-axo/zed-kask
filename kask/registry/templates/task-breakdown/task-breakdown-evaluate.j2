@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     tasks: array
@@ -14,10 +13,6 @@ contract:
     red_flags: array
 visibility: Public
 ---
-{# Template: task-breakdown/task-breakdown-evaluate.j2 #}
-{# Functional Role: KnowAct — Score the plan against seven weighted criteria (CHECK) #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: scores, weighted_total, refinement_directives, red_flags #}
 {# v0.36.0: adds target_condition_coverage criterion (do the tasks collectively #}
 {# achieve the target condition?) and re-weights the seven criteria. #}
 

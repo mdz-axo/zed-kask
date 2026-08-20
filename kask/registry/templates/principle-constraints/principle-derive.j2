@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     principle:
@@ -37,7 +36,6 @@ contract:
       description: 'True if any constraint is gap or unverified.'
 visibility: Public
 ---
-{# Template: principle-constraints/principle-derive.j2 #}
 {# Compiles a principle into checkable, code-path-anchored constraints. #}
 {# Output is a *proposed* constraint set — human reviews before permanent. #}
 

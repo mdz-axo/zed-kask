@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 functional_role: KnowAct
 implementation_type: jinja2
 visibility: Public
@@ -13,10 +12,6 @@ contract:
     confidence: 0.5
 
 ---
-{# Template: goal-analysis/judge_simple.j2 #}
-{# Functional Role: KnowAct — Fallback goal verification with minimal evaluation #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: verdict, confidence #}
 
 **Goal:** {{ goal_text }}
 

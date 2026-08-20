@@ -1,6 +1,5 @@
 {# goal: Platt discriminating-test design — tests that rule out at least one hypothesis, not one test per hypothesis. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     hypotheses: array
@@ -13,10 +12,6 @@ contract:
     user_review_requested: boolean
 visibility: Public
 ---
-{# Template: falsifiability/falsifiability-discriminate.j2 #}
-{# Functional Role: KnowAct — Platt discriminating-test design #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: discriminating_tests, coverage_matrix, irreducible_pairs, user_review_requested #}
 
 [inference]
 temperature = 0.4

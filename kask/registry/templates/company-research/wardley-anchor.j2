@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     rotated_board: object
@@ -10,8 +9,6 @@ contract:
     inventory_notes: string
 visibility: Public
 ---
-{# Template: company-research/wardley-anchor.j2 #}
-{# Functional Role: KnowAct — Compressed Wardley mapping pass over the rotated Company Board #}
 {# Cross-skill adapter: compresses wardley-mapper's inventory → classify → map → #}
 {# movement cascade into a single LLM call. This is a deliberate compression — #}
 {# the full wardley-mapper skill is available for standalone use. This adapter #}

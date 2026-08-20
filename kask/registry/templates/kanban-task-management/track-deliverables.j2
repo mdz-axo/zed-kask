@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     triage_phase: string
@@ -11,10 +10,6 @@ contract:
     action: string
 visibility: Public
 ---
-{# Template: kanban-task-management/track-deliverables.j2 #}
-{# Functional Role: KnowAct — Assess task deliverables for completeness and review readiness #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: deliverable_assessment, missing_deliverables, action #}
 
 [inference]
 temperature = 0.1

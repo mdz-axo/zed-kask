@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     swarm_id: string
@@ -28,9 +27,6 @@ contract:
     redundancy_pairs: array
 visibility: Public
 ---
-{# Template: swarm-intelligence/swarm-sense.j2 #}
-{# Functional Role: KnowAct — Sense current swarm state #}
-{# Produces: swarm_state #}
 {# Phase 1 — SENSE (CHECK: measure current swarm state against Onto4MAT + backend) #}
 {# hKask v0.36.0 — Swarm Intelligence (mode-aware v2 §15) #}
 {#

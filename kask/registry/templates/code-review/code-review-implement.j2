@@ -1,6 +1,5 @@
 {# goal: User-gated Act phase — generate + apply concrete fixes for findings at/above the requested severity tier. Reuses the report's structural remedies. Reads the actual file before emitting old_text — never fabricates. Honors project conventions and .rules. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     adjudicated_findings: array
@@ -14,10 +13,6 @@ contract:
     fixes_skipped: array
 visibility: Public
 ---
-{# Template: code-review/code-review-implement.j2 #}
-{# Functional Role: KnowAct — Act phase (Fagan rework; user-gated via fix_mode) #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: implement #}
 {# Phase 5 — IMPLEMENT (Act phase; SKIPPED when fix_mode == 'none' via step.condition) #}
 {# hKask v0.36.0 — Code Review #}
 {#

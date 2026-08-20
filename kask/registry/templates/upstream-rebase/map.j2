@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     target_file: string
@@ -12,9 +11,6 @@ contract:
     topological_order: array
 visibility: Public
 ---
-{# Template: upstream-rebase/map.j2 #}
-{# Functional Role: KnowAct — Extract functional inventory + classify + build DAG #}
-{# Produces: functional_units, constraint_force_table, dependency_dag, topological_order #}
 
 [inference]
 temperature = 0.2

@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     operation: string
@@ -11,8 +10,6 @@ contract:
 visibility: Public
 ---
 {# goal: Diagnose network connection errors and propose retry/fallback recovery actions. #}
-{# Template: heal/network_error.j2 #}
-{# KnowAct — Diagnose and recover from network connection errors #}
 
 [inference]
 temperature = 0.1

@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     triage_phase: string
@@ -12,10 +11,6 @@ contract:
     recomposition: object
 visibility: Public
 ---
-{# Template: kanban-task-management/decompose-tasks.j2 #}
-{# Functional Role: KnowAct — Decompose project into INVEST-compliant kanban tasks #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: tasks #}
 
 [inference]
 temperature = 0.3

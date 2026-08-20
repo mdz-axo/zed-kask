@@ -1,6 +1,5 @@
 {# goal: Classify evaluated bug findings into Beizer taxonomy with severity ratings. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     evaluated_findings: array
@@ -10,10 +9,6 @@ contract:
     taxonomy_summary: object
 visibility: Public
 ---
-{# Template: bug-hunt/bug-hunt-taxonomize.j2 #}
-{# Functional Role: KnowAct — Classify evaluated bug findings into Beizer taxonomy with severity ratings #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: taxonomy #}
 {# Phase 4 — TAXONOMIZE (Beizer classification + severity rating) #}
 {# hKask v0.36.0 — Bug Hunting Expedition #}
 

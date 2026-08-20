@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     pre_act_state: object
@@ -22,9 +21,6 @@ contract:
     task_success: object|null
 visibility: Public
 ---
-{# Template: swarm-intelligence/swarm-check.j2 #}
-{# Functional Role: KnowAct — Re-measure, compute d, emit next_focus + algedonic #}
-{# Produces: check_result #}
 {# Phase 5 — CHECK (CHECK: re-measure + convergence metric + algedonic) #}
 {# hKask v0.36.0 — Swarm Intelligence (mode-aware v2 §15) #}
 {#

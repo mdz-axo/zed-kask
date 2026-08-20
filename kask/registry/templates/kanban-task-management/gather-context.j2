@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     triage_phase: string
@@ -12,10 +11,6 @@ contract:
     target_task_hours: number
 visibility: Public
 ---
-{# Template: kanban-task-management/gather-context.j2 #}
-{# Functional Role: KnowAct — Extract structured context from project description #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: project_name, goals, constraints, resources, target_task_hours #}
 
 [inference]
 temperature = 0.2

@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     focus_area: string
@@ -15,10 +14,6 @@ contract:
     top_recommendation: string
 visibility: Public
 ---
-{# Template: refactor-architecture/rsl-audit.j2 #}
-{# Functional Role: KnowAct — Audit and classify duplicated operations across surfaces #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: rdf_triples, classification_table, mermaid_diagram, deletion_test_results, constraint_force_map, top_recommendation #}
 
 [inference]
 temperature = 0.4

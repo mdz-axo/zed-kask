@@ -1,6 +1,5 @@
 {# goal: Identify micro-level forces: proximate factors, market dynamics, competitor actions, demand shifts, and regulatory changes. Clusters identified forces into thematic groups. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     refined_question: string
@@ -11,10 +10,6 @@ contract:
     clustered_themes: array
 visibility: Public
 ---
-{# Template: scenario-builder/key-forces.j2 #}
-{# Functional Role: KnowAct — Identify and cluster micro-level key forces #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: key_forces, clustered_themes #}
 
 [inference]
 temperature = 0.5

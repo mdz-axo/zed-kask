@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     contract_code: string
@@ -17,10 +16,6 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# Template: tdd/tdd-strengthen.j2 #}
-{# Functional Role: KnowAct — Strengthen a GREEN tracer bullet with a proptest universal test #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: proptest_verdict, shrunk_counterexample, universal_test_code, universal_test_file_path, routing, proptest_dispatch, rationale #}
 {# Design: kask/docs/plans/evolving-test-harness.md §3.3 (oracle taxonomy); test-harness-skill-evolution.md §2.6 #}
 
 [inference]

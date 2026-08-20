@@ -1,7 +1,6 @@
 {# goal: LLM proposes 3-7 candidate hypotheses with predictions, falsifiers, likelihoods. #}
 {# This is the probabilistic compute the Lisp steps scaffold. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     target: string
@@ -14,9 +13,6 @@ contract:
     notes: string
 visibility: Public
 ---
-{# Template: lisp-scaffold-reasoning/propose-hypotheses.j2 #}
-{# Functional Role: KnowAct — probabilistic hypothesis generation #}
-{# Produces: hypotheses (array of {rank, hypothesis, prediction, falsifier, likelihood}), notes #}
 
 [inference]
 temperature = 0.5

@@ -1,6 +1,5 @@
 {# goal: Perform sensitivity analysis on decision rankings by perturbing weights. Identifies rank reversals, critical weights, and classifies overall decision robustness. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     decision_question: string
@@ -15,10 +14,6 @@ contract:
     recommendation: string
 visibility: Public
 ---
-{# Template: mcda/sensitivity-analysis.j2 #}
-{# Functional Role: KnowAct — Weight sensitivity analysis and robustness classification #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: perturbation_results, rank_reversals, decision_robustness, critical_weights, recommendation #}
 
 [inference]
 temperature = 0.1

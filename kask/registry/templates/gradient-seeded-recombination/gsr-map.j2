@@ -1,6 +1,5 @@
 {# goal: Map the actual recombination field — which pairs have populated recombination surfaces. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     namespaces: array
@@ -12,8 +11,6 @@ contract:
     field_coverage: number
 visibility: Public
 ---
-{# Template: gradient-seeded-recombination/gsr-map.j2 #}
-{# Produces: actual_field, populated_pairs, unpopulated_pairs, field_coverage #}
 
 [inference]
 temperature = 0.2

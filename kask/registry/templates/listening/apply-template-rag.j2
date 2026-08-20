@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     corpus_passages: array
@@ -12,10 +11,7 @@ contract:
     ignored_short_term: array
 visibility: Public
 ---
-{# Template: listening/apply-template-rag.j2 #}
-{# Functional Role: KnowAct — Apply the v3 listening template over RAG-retrieved corpus passages #}
 {# Design: company-corpus-design.md §B4.1 (cross-source verdict citation) #}
-{# Produces: per_section, horizon_summary, ignored_short_term #}
 {# #}
 {# No-fabrication design (process-embedded, not instruction-embedded): #}
 {# The corpus passages are numbered chunks. The model's job is to SEARCH #}

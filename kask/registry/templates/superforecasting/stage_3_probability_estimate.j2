@@ -1,5 +1,4 @@
 [inference]
-template_type: WordAct
 contract:
   input:
     forecasting_question: string
@@ -15,10 +14,6 @@ contract:
     tree_nodes: array
 visibility: Public
 ---
-{# Template: superforecasting/stage_3_probability_estimate.j2 #}
-{# Functional Role: WordAct — Inside-view probability estimation (post-delegation) #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: hypothesis_probabilities #}
 {# Note: hypothesis generation is delegated to falsifiability/falsifiability-hypothesize #}
 {#       (forced diversity, Platt-form predictions, falsifiers) and necessary-conditions #}
 {#       counterfactual analysis to falsifiability/falsifiability-counterfactual. This #}

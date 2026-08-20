@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     forecasting_question: string
@@ -15,7 +14,6 @@ contract:
     record_completeness_score: number
 visibility: Public
 ---
-{# Template: superforecasting/forecast-quality-gate.j2 #}
 {# goal: Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality. Separated from the calibration stage to prevent self-assessment bias. #}
 
 [inference]

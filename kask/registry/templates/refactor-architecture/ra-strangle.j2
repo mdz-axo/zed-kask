@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     domain: string
@@ -19,10 +18,6 @@ contract:
     verification_steps: array
 visibility: Public
 ---
-{# Template: refactor-architecture/rsl-strangle.j2 #}
-{# Functional Role: KnowAct — Plan a strangler fig migration for a selected domain #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: migration_plan, service_interface, cli_adapter, api_adapter, test_seam, deletion_targets, verification_steps #}
 
 [inference]
 temperature = 0.2

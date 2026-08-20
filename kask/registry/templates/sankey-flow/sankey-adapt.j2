@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     domain: string
@@ -21,8 +20,6 @@ contract:
     adapt_notes: string
 visibility: Public
 ---
-{# Template: sankey-flow/sankey-adapt.j2 #}
-{# KnowAct — ADAPT: fill user data into matched example structure, produce final Sankey #}
 {# Replaces draft + evaluate + converge + write — single pass, anchored to example #}
 
 {% include 'sankey-flow/sankey-examples.j2' %}

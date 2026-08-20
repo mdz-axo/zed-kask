@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     candidate_skill_content: string
@@ -11,9 +10,7 @@ contract:
     recommendation: string
 visibility: Public
 ---
-{# Template: skill-discovery/skill-discovery-evaluate.j2 #}
 {# goal: Evaluate a candidate skill for quality, contract validity, and fitness for the described capability gap. #}
-{# KnowAct — Candidate skill evaluation against quality/safety/format criteria #}
 {# hKask v0.36.0 — A Minimal Viable Container for UserPods #}
 
 [inference]

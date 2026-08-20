@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     target_file: string
@@ -17,9 +16,6 @@ contract:
     call_site_count: integer
 visibility: Public
 ---
-{# Template: upstream-rebase/execute.j2 #}
-{# Functional Role: KnowAct — Execute the chosen strategy (surgical or full re-application) #}
-{# Produces: markers_added, tests_added, verification results #}
 
 [inference]
 temperature = 0.2

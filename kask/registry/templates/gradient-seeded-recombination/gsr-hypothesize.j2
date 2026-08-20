@@ -1,6 +1,5 @@
 {# goal: Generate reason hypotheses for each gradient using the 7-class taxonomy. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     gradients: array
@@ -10,8 +9,6 @@ contract:
     gradient_hypotheses: array
 visibility: Public
 ---
-{# Template: gradient-seeded-recombination/gsr-hypothesize.j2 #}
-{# Produces: gradient_hypotheses #}
 
 [inference]
 temperature = 0.3

@@ -1,7 +1,6 @@
 {# goal: LLM refines the hypothesis set in response to the Lisp invariant verdict. #}
 {# Gated by condition: only runs if the Lisp step found structural defects. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     target: string
@@ -14,8 +13,6 @@ contract:
     notes: string
 visibility: Public
 ---
-{# Template: lisp-scaffold-reasoning/refine-hypotheses.j2 #}
-{# Functional Role: KnowAct — probabilistic refinement gated on symbolic verdict #}
 
 [inference]
 temperature = 0.4

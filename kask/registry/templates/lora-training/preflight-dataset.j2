@@ -1,6 +1,5 @@
 {# goal: Detect dataset format, check compatibility against the expected format for the selected trainer/method, and emit copy-paste Python mapping code when a fixable column-name mismatch is found. Mirrors the HuggingFace dataset_inspector.py three-state pattern (Ready / NeedsMapping / Incompatible). This is the runtime-evidence source for G-D0; it does not execute training. Preserve operator authority: the skill reports the verdict and mapping code; the operator decides whether to apply it. Emit reg.lora.preflight span (P9). No actual training execution; userpod_host mandatory (P12). #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     dataset_path: string
@@ -16,9 +15,6 @@ contract:
     reg_span_emitted: boolean
 visibility: Public
 ---
-{# Template: lora-training/preflight-dataset.j2 #}
-{# Functional Role: KnowAct — dataset format compatibility preflight #}
-{# Produces: verdict, detected_format, expected_format, mapping_code, findings #}
 {# Design: mirrors HF dataset_inspector.py three-state pattern (Ready/NeedsMapping/Incompatible) #}
 
 [inference]

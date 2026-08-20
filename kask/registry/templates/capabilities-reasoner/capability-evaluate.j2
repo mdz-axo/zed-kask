@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     registry: object
@@ -14,9 +13,6 @@ contract:
     delegate_notes: string
 visibility: Public
 ---
-{# Template: capabilities-reasoner/capability-evaluate.j2 #}
-{# Functional Role: KnowAct — Compare against floor/ceiling/maturity #}
-{# Produces: evaluations #}
 {# Phase 3 — EVALUATE (CHECK: compare elicited vs limits) #}
 {# hKask v0.36.0 — Capabilities Reasoner #}
 {#

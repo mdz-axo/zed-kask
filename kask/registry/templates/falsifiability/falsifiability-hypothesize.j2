@@ -1,6 +1,5 @@
 {# goal: Chamberlin multiple working hypotheses — generate 3-7 falsifiable candidate explanations with no early commitment. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     admitted_target: string
@@ -12,10 +11,6 @@ contract:
     user_review_requested: boolean
 visibility: Public
 ---
-{# Template: falsifiability/falsifiability-hypothesize.j2 #}
-{# Functional Role: KnowAct — Chamberlin multiple working hypotheses #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: hypotheses, discarded, user_review_requested #}
 
 [inference]
 temperature = 0.5

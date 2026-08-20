@@ -1,6 +1,5 @@
 {# goal: Open Information Extraction (Banko et al. 2007): extract binary relations between identified entities as (arg1, relation, arg2) tuples with textual evidence and spans. NOT RDF triples — predicates are free-text verb phrases, not typed IRIs from a vocabulary. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     source_text: string
@@ -11,10 +10,6 @@ contract:
     orphan_entities: array
 visibility: Public
 ---
-{# Template: structured-extraction/extract-relations.j2 #}
-{# Functional Role: KnowAct (knowledge-action — relation extraction) #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: relations (OpenIE binary tuples), orphan_entities #}
 {# Reference: Banko et al. 2007 "Open Information Extraction from the Web" (AAAI). #}
 {# Distinction: These are OpenIE (arg1, relation, arg2) tuples, NOT RDF triples #}
 {# (W3C RDF 1.1) — predicates are free-text verb phrases, not vocabulary IRIs. #}

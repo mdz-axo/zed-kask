@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     loop_analysis: object
@@ -11,10 +10,6 @@ contract:
     unviable_components: array
 visibility: Public
 ---
-{# Template: pragmatic-cybernetics/cybernetics-vsm-map.j2 #}
-{# Functional Role: KnowAct — Map hKask components to VSM S1–S5 #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: vsm_mapping, viability_assessment, unviable_components #}
 
 [inference]
 temperature = 0.3

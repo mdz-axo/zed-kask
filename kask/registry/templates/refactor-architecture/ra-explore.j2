@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     focus_area: string
@@ -12,10 +11,6 @@ contract:
     exploration_notes: array
 visibility: Public
 ---
-{# Template: refactor-architecture/arch-explore.j2 #}
-{# Functional Role: KnowAct — Explore codebase for architectural friction #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: friction_points, shallow_modules, deletion_test_results, exploration_notes #}
 
 [inference]
 temperature = 0.4

@@ -1,6 +1,5 @@
 {# goal: Popper admissibility gate — rule out unfalsifiable targets before generating hypotheses. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     target: string
@@ -16,10 +15,6 @@ contract:
     refined_target: string
 visibility: Public
 ---
-{# Template: falsifiability/falsifiability-admit.j2 #}
-{# Functional Role: KnowAct — Popper admissibility gate (question/claim level) #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: admissible, ontological_mode, epistemic_mode, constraint_force, falsifying_observation, ruled_out_reason, refined_target #}
 
 [inference]
 temperature = 0.2

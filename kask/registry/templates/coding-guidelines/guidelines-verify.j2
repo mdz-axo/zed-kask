@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     task_description: string
@@ -14,10 +13,6 @@ contract:
     recommendations: array
 visibility: Public
 ---
-{# Template: coding-guidelines/guidelines-verify.j2 #}
-{# Functional Role: KnowAct — Post-implementation verification against Karpathy principles #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: violations, compliance_score, passed, recommendations #}
 
 [inference]
 temperature = 0.1

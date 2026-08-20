@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 functional_role: KnowAct
 implementation_type: jinja2
 visibility: Public
@@ -13,10 +12,6 @@ contract:
     failed_criteria: array
 
 ---
-{# Template: goal-analysis/judge_command.j2 #}
-{# Functional Role: KnowAct — assertion via command execution #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: verdict, reason, failed_criteria #}
 
 {% set all_passed = true %}
 {% set failed = [] %}

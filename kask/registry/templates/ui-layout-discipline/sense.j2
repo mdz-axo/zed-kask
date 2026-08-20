@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     target:
@@ -33,9 +32,7 @@ contract:
       description: Minimum target width per Fitts's Law (32px mouse floor).
 visibility: Public
 ---
-{# Template: ui-layout-discipline/sense.j2 #}
 {# Phase: SENSE — measure container and children #}
-{# Produces: container_available_width, child_min_widths, overflow_delta, text_column_residual #}
 
 [inference]
 temperature = 0.1

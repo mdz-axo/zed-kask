@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     topic: string
@@ -17,10 +16,6 @@ contract:
     assessment: object
 visibility: Public
 ---
-{# Template: grill-me/grill-me-round.j2 #}
-{# Functional Role: KnowAct — Socratic interrogation round generator #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: questions, evaluations, current_level, round_verdict #}
 
 [inference]
 temperature = 0.4

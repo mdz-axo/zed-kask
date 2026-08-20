@@ -1,6 +1,5 @@
 {# goal: Compare mutant vs relabel structural delta — the discriminating test. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     mutant: object
@@ -15,8 +14,6 @@ contract:
     comparison_verdict: string
 visibility: Public
 ---
-{# Template: constraint-forces-recast/cfr-compare.j2 #}
-{# Produces: mutant_delta, relabel_delta, m1_corroborated, comparison_verdict #}
 
 [inference]
 temperature = 0.2

@@ -5,7 +5,6 @@
 {#   date, quantity, location). Character offsets are ACE2005 standoff #}
 {#   annotation. Confidence scores are standard IE practice. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     source_text: string
@@ -17,10 +16,6 @@ contract:
     entity_count: integer
 visibility: Public
 ---
-{# Template: structured-extraction/identify-entities.j2 #}
-{# Functional Role: KnowAct — Entity identification from unstructured text #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: entities, unmapped_text, entity_count #}
 
 [inference]
 temperature = 0.2

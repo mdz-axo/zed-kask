@@ -1,6 +1,5 @@
 {# goal: Three-criterion test — the falsifier. #}
 [inference]
-template_type: KnowAct
 contract:
   input:
     mutant: object
@@ -15,8 +14,6 @@ contract:
     failure_reason: string
 visibility: Public
 ---
-{# Template: constraint-forces-recast/cfr-three-criterion.j2 #}
-{# Produces: expressible_in_A, absent_from_A, consistent_under_B, three_criterion_mutant, failure_reason #}
 
 [inference]
 temperature = 0.2

@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     task_description: string
@@ -14,10 +13,6 @@ contract:
     assumption_log: array
 visibility: Public
 ---
-{# Template: coding-guidelines/guidelines-apply.j2 #}
-{# Functional Role: KnowAct — Generate constrained implementation directives #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: constrained_plan, guardrails, assumption_log #}
 
 [inference]
 temperature = 0.3

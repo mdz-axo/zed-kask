@@ -1,5 +1,4 @@
 [inference]
-template_type: KnowAct
 contract:
   input:
     triage_phase: string
@@ -11,10 +10,6 @@ contract:
     escalation_candidates: array
 visibility: Public
 ---
-{# Template: kanban-task-management/coordinate-agents.j2 #}
-{# Functional Role: KnowAct — Coordinate active agents through task comment threads #}
-{# Implementation: Jinja2 prompt #}
-{# Produces: responses, resolved_blockers, escalation_candidates #}
 
 [inference]
 temperature = 0.2
