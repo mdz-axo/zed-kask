@@ -54,7 +54,7 @@ crate:
 templates:
   - id: <skill-name>/<skill-name>-<verb>
     path: <skill-name>-<verb>.j2
-    type: KnowAct
+    # type: KnowAct  # DEPRECATED — act types removed; no longer used
     description: >
       <what this template produces at inference time>
 
@@ -68,15 +68,15 @@ Generate at least one `.j2` template with:
 - `[inference]` frontmatter: template_type, contract (input/output typed fields, visibility)
 - Jinja2 body after `---`: system prompt with imperative instructions, {{ input_variable }} placeholders, JSON output schema
 
-Template types (Pattern A):
-- **KnowAct**: Cognitive/reasoning steps — rendered `.j2` + inference + JSON parse (default for agent companion skills)
-- **WordAct**: Deterministic text transformation — rendered `.j2` without inference (format, extract, compress)
-- **FlowDef**: Multi-step workflow orchestration — `.yaml` sub-manifest with its own steps, rJoule, and convergence
-- **RenderAct**: Reference content — rendered `.j2` or `.yaml` without inference (macros, reference docs)
+Template types (Pattern A) — deprecated, act types no longer enforced:
+- **KnowAct** (deprecated): Cognitive/reasoning steps — rendered `.j2` + inference + JSON parse (default for agent companion skills)
+- **WordAct** (deprecated): Deterministic text transformation — rendered `.j2` without inference (format, extract, compress)
+- **FlowDef** (deprecated): Multi-step workflow orchestration — `.yaml` sub-manifest with its own steps and convergence
+- **RenderAct** (deprecated): Reference content — rendered `.j2` or `.yaml` without inference (macros, reference docs)
 
 ## Step 1b: Build the Process Manifest (registry/manifests/<skill-name>.yaml)
 
-Every skill needs a FlowDef process manifest that defines the PDCA cascade.
+Every skill needs a process manifest that defines the PDCA process.
 Generate `registry/manifests/<skill-name>.yaml`:
 
 ```yaml
@@ -87,7 +87,7 @@ manifest:
   name: <Title Case Name>
   description: >
     <one-paragraph description>
-  functional_role: flowdef
+  # functional_role: flowdef  # DEPRECATED — flowdef terminology removed
   version: 0.31.0
   editor: curator-or-human-admin
   visibility: Public
@@ -107,7 +107,7 @@ rjoule:
 
 steps:
   - ordinal: 1
-    action: select          # KnowAct: render .j2 + inference + parse JSON
+    action: select          # render .j2 + inference + parse JSON
     description: <what this step does>
     renderer: minijinja
     template_ref: <skill-name>/<template-name>
@@ -116,7 +116,7 @@ steps:
       <param>: "{{ <param> }}"
 
   - ordinal: 2
-    action: select          # KnowAct: convergence check
+    action: select          # convergence check
     description: <convergence check description>
     renderer: minijinja
     template_ref: <skill-name>/<convergence-check>
@@ -125,7 +125,7 @@ steps:
       primary_result: "{{ step_1_result }}"
 
   - ordinal: 3
-    action: loop            # Control flow: re-enter cascade if not converged
+    action: loop            # Control flow: re-enter process if not converged
     description: Re-enter PDCA cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
@@ -145,18 +145,18 @@ ledger:
 
 ### Canonical Actions (only these are valid in step.action)
 
-| Action | Pattern A Type | When to use |
+| Action | Pattern A Type (deprecated) | When to use |
 |--------|---------------|-------------|
-| `select` | KnowAct | Render `.j2` + inference + parse JSON |
-| `populate` | WordAct | Render `.j2` without inference |
+| `select` | KnowAct (deprecated) | Render `.j2` + inference + parse JSON |
+| `populate` | WordAct (deprecated) | Render `.j2` without inference |
 | `compute` | Deterministic | Math primitive via `compute_ref` |
 | `execute` | MCP Tool | Invoke MCP tool (requires `mcp:` field) |
 | `feedback` | MCP Tool | Emit Regulation feedback |
 | `validate` | MCP Tool | Validate a contract/condition |
 | `retrieve` | MCP Tool | Retrieve data (e.g., semantic search) |
-| `render` | RenderAct | Render `.j2`/`.yaml` without inference |
-| `flowdef` | FlowDef | Execute a `.yaml` sub-manifest recursively |
-| `loop` | Control Flow | Re-enter cascade from target ordinal |
+| `render` | RenderAct (deprecated) | Render `.j2`/`.yaml` without inference |
+| `flowdef` | FlowDef (deprecated) | Execute a `.yaml` sub-manifest recursively |
+| `loop` | Control Flow | Re-enter process from target ordinal |
 | `choice` | Control Flow | Branch on condition |
 | `abort` | Control Flow | Exit with success (converged) |
 | `escalate` | Control Flow | Exit with error (blocked) |
@@ -165,8 +165,8 @@ ledger:
 
 | Skill complexity | Step count | rjoule.cap |
 |-----------------|-----------|------------|
-| Simple KnowAct | 1-3 | 1-2 |
-| Multi-step FlowDef | 4-7 | 3-5 |
+| Simple (1-2 templates) | 1-3 | 1-2 |
+| Multi-step process | 4-7 | 3-5 |
 | Media generation | 5+ | 5+ |
 | Infrastructure (no inference) | any | 0 |
 
@@ -220,7 +220,7 @@ Respond with a JSON object:
   "template_bodies": [
     {
       "path": "<basename>.j2",
-      "template_type": "KnowAct|WordAct|FlowDef|RenderAct",
+      "template_type": "KnowAct|WordAct|FlowDef|RenderAct (deprecated)",
       "content": "<complete .j2 content>"
     }
   ],
@@ -245,9 +245,9 @@ Respond with a JSON object:
 
 - The registry crate is the primary deliverable. SKILL.md is a derived companion.
 - The process manifest (registry/manifests/<name>.yaml) is mandatory for every skill.
-- Every .j2 template must have a valid `[inference]` frontmatter with template_type in {WordAct, KnowAct, FlowDef, RenderAct}.
+- Every .j2 template must have a valid `[inference]` frontmatter with template_type in {WordAct, KnowAct, FlowDef, RenderAct} (deprecated — act types no longer enforced).
 - Every .j2 template must have a contract with structured input and output types.
-- Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate).
+- Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate). (Note: `flowdef` action is deprecated.)
 - The process manifest must have a `rjoule:` block with `cap > 0` if any step uses `action: select` (inference).
 - The process manifest must have an `rjoule:` block with `cap > 0` if any step uses `action: select` (inference).
 - The process manifest must have a `convergence:` block with threshold, max_iterations, min_iterations, convergence_field, and on_not_reached.

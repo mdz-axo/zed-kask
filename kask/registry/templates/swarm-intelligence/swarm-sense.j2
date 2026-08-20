@@ -105,7 +105,7 @@ coordination surface for this swarm. Read its task list to ground the
 swarm-state sensing in persisted task state, not just in-memory telemetry.
 
 Via the hkask-mcp-kata-kanban tools (the agent orchestrates these calls
-between template invocations; in pure FlowDef execution the workspace_roster
+between template invocations; in pure skill execution the workspace_roster
 should be pre-populated):
 
 - `kanban_task_list` with `board_id = {{ kanban_board_id }}` → the board's
@@ -122,7 +122,7 @@ should be pre-populated):
   gap as a budget-overrun signal. `balance` is `null` when the ledger read
   failed: that means **not measured**, never zero.
   `deterministic_verdict` carries the deterministic
-  `TaskSuccessVerdict` (pass, score, detail, provenance) when the executor
+  `TaskSuccessVerdict` (pass, score, detail, provenance) when the model
   stamped one.
 - For each task with a `delegate_result`, use the `delegate_result.agent_id`,
   `delegate_result.latency_ms`, and `deterministic_verdict.pass` as the
@@ -159,7 +159,7 @@ with empty trails are omitted (not fabricated with zeros).
 
 ## Step 1 — Swarm State (pre-fetched by execute step)
 
-The swarm state has been pre-fetched by the flowdef execute step (step 1 for
+The swarm state has been pre-fetched by the skill's execute step (step 1 for
 ABW mode, step 2 for local mode) and is provided as `fetched_swarm_state`.
 Do NOT call swarm_get_swarm or swarm_list_local_agents — the state is already
 here. Parse it and proceed to Step 2.

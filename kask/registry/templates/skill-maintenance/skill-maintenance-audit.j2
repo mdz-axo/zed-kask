@@ -43,8 +43,8 @@ A skill is stale if it exhibits any of these signals:
 
 | Signal | Detection Method | Severity |
 |--------|-------------------|----------|
-| Missing registry crate | No `manifest.yaml` in `registry/manifests/<name>.yaml` (FlowDef) or `registry/templates/<name>/manifest.yaml` (crate catalog) | Critical |
-| Invalid template_type | template_type is not WordAct/KnowAct/FlowDef/RenderAct | Critical |
+| Missing registry crate | No `manifest.yaml` in `registry/manifests/<name>.yaml` (process manifest) or `registry/templates/<name>/manifest.yaml` (crate catalog) | Critical |
+| Invalid template_type | template_type is not WordAct/KnowAct/FlowDef/RenderAct (deprecated — act types no longer enforced) | Critical |
 | Broken file references | Referenced path does not exist in workspace | Critical |
 | Outdated crate references | References `hkask-*` crate that has been renamed or removed | Critical |
 | Outdated architecture references | References architecture that has been superseded | High |
@@ -56,14 +56,14 @@ A skill is stale if it exhibits any of these signals:
 | Deprecated patterns | Uses `todo!`, `unimplemented!`, `#[deprecated]`, or abandoned APIs | Medium |
 | Missing SKILL.md companion | SKILL.md absent from `.agents/skills/<name>/` | Low |
 | Regulation span mismatches | References `reg.*` spans not in defined namespace set | Low |
-| FlowDef `tool:` references nonexistent MCP tool | Cross-check step `tool:` against MCP tool registry | Critical |
-| FlowDef references `tool: internal` | `tool: internal` means no MCP implementation — agent-coordinated, valid but aspirational | Medium |
-| FlowDef `template:` references nonexistent template | Resolve `template:` values against manifest's known templates | Critical |
-| FlowDef step parameter names mismatch MCP tool | Compare step params against tool's declared Parameters struct fields | High |
-| FlowDef YAML present but no manifest entry | Orphaned FlowDefs can't be discovered by cascade | High |
+| Process manifest `tool:` references nonexistent MCP tool | Cross-check step `tool:` against MCP tool registry | Critical |
+| Process manifest references `tool: internal` | `tool: internal` means no MCP implementation — agent-coordinated, valid but aspirational | Medium |
+| Process manifest `template:` references nonexistent template | Resolve `template:` values against manifest's known templates | Critical |
+| Process manifest step parameter names mismatch MCP tool | Compare step params against tool's declared Parameters struct fields | High |
+| Process manifest YAML present but no manifest entry | Orphaned process manifests can't be discovered by the skill system | High |
 | Cross-skill delegation target missing | `ocap.required_capabilities` entry references a `template_id` in another skill's namespace that does not resolve to a `.j2` file on disk | Critical |
 | Span namespace not standardized | Process manifest's `ledger.span_namespace` is not `reg.skill.<manifest.id>` (the unified feedback standard). All skills must use `reg.skill.<id>` for cybernetic feedback; `hkask.template.<id>` goes in `telemetry_namespace` for performative telemetry. | Critical |
-| Abolished spans: list present | Process manifest's `ledger` section contains a `spans:` list. The `spans:` list is abolished — it was ambiguous and unused by the executor. Remove it. | Medium |
+| Abolished spans: list present | Process manifest's `ledger` section contains a `spans:` list. The `spans:` list is abolished — it was ambiguous and unused. Remove it. | Medium |
 
 ## Health Scoring
 
@@ -148,12 +148,12 @@ Respond with a JSON object:
 
 ## PROHIBITION: SKILL.md ≠ Skill Invariant
 
-The canonical artifact of a skill is its FlowDef manifest (.yaml) and its executable templates (.j2).
+The canonical artifact of a skill is its process manifest (.yaml) and its executable templates (.j2).
 The SKILL.md file is a derived companion document — it teaches methodology but is NOT what the
 hKask runtime executes. Editing a SKILL.md does not change the skill's behavior.
 
 Every finding or recommendation you produce MUST cite its source from one of:
-  1. A FlowDef manifest (.yaml) field
+  1. A process manifest (.yaml) field
   2. A .j2 template's contract or inference metadata
   3. A Rust crate's code path (grep-verifiable)
 

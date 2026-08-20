@@ -32,7 +32,6 @@ for the D1–D28 integration seams and the essentialist split.
 
 - [MCP Server Registry](mcp-servers/README.md) — All 13 on-disk MCP servers with tool tables and capability tiers
 - [Companies MCP Server](mcp-servers/companies.md) — 44 tools, dual-provider routing, forecast store, portfolio ledger
-- [Condenser MCP Server](mcp-servers/condenser.md) — 4 tools, 3 compression algorithms, 2-phase condensation
 - [Corpus / DocProc MCP Server](mcp-servers/corpus.md) — Corpus gathering, document processing, QA generation, style replicas
 - [Scenarios MCP Server](mcp-servers/scenarios.md) — Event-tree forecasting pipeline
 - [Swarm MCP Server](mcp-servers/swarm.md) — Agent Bestiary World agent swarms, Xaman Ek curator, consent-gated spend

@@ -116,7 +116,7 @@ verdict; Where = declared dataset path; When = before select-method (preflight);
 Why = prevent the #1 cause of training failures (format mismatches); How =
 detect format, derive expected format, compare, emit mapping code. All 6 present.
 
-MINIMAL: One KnowAct; no execution, no training, no model loading.
+MINIMAL: One prompt template; no execution, no training, no model loading.
 EVIDENCE-BACKED ONLY (P8): detected_format comes from runtime detection;
 expected_format comes from declared trainer/purpose. No inference of format
 from filename alone when detection failed.
