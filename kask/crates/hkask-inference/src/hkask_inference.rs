@@ -4,8 +4,8 @@
 //!
 //! In zed-kask, chat inference routes through the zed IPC bridge
 //! (`InferenceIpcClient` → `LanguageModelRegistry`). This crate provides:
-//! - `MediaRouter` — DeepInfra/AtlasCloud media generation (image/video/speech/
-//!   transcription), not covered by zed's `LanguageModel` abstraction.
+//! - `MediaRouter` — media generation (image/video/speech/transcription) via
+//!   `MediaProvider` backends, not covered by zed's `LanguageModel` abstraction.
 //! - `InferenceIpcClient` — the IPC bridge client used by MCP servers to route
 //!   chat/vision/embed through zed's `LanguageModelRegistry`.
 //! - `InferenceConfig` — shared configuration (base URLs, API keys, default model).
@@ -15,8 +15,9 @@
 //!
 //! ```text
 //! MediaRouter (implements InferencePort — media only)
-//!   ├── DeepInfraBackend — DeepInfra media (background removal/speech/transcription)
-//!   └── AtlasCloudBackend — AtlasCloud media (image/video/audio/asr)
+//!   └── ProviderRegistry — dispatches to registered MediaProvider backends
+//!       (currently empty; providers are registered in MediaRouter::new as
+//!       they are added back)
 //!
 //! InferenceIpcClient (implements InferencePort — chat/vision/embed via zed)
 //!   └── Unix socket → zed LanguageModelRegistry
@@ -26,14 +27,11 @@
 //!
 //! # Model Naming
 //!
-//! - `DeepInfra/meta-llama/Llama-3.3-70B-Instruct` → DeepInfra (via IPC bridge)
 //! - `OpenRouter/openai/gpt-4o` → OpenRouter (via IPC bridge)
 //! - No prefix → default model (configurable, default: OpenRouter/z-ai/glm-5.2)
 
-pub mod atlascloud_backend;
 pub mod chat_protocol;
 pub mod config;
-pub mod deepinfra_backend;
 pub mod inference_ipc_client;
 pub mod media_router;
 pub mod model_constants;
@@ -168,7 +166,7 @@ impl RouterModelEntry {
 ///    `LanguageModelRegistry` (with guard and zed's configured
 ///    API keys). Chat, vision, embed, and list_models all go through here.
 /// 2. `MediaRouter` — constructed from `InferenceConfig::from_env()`.
-///    This handles only media generation (DeepInfra/AtlasCloud). Chat/vision/
+///    This handles only media generation. Chat/vision/
 ///    embed return a clear error directing the operator to the IPC bridge.
 ///    Used when running standalone or when the IPC socket is not available.
 ///

@@ -14,6 +14,12 @@ contract:
     signal: object
 visibility: Public
 ---
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "concise"
+thinking_budget = "off"
+
 {# goal: Select signal sources from the recorded reg_query telemetry (step 1). #}
 {# The reg_query return shape: {namespace, window_seconds, replayed_count, #}
 {#   filtered_count, events: [{timestamp, namespace, path, phase, weight, #}
