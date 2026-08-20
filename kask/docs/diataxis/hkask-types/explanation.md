@@ -12,7 +12,7 @@ mds_categories: [trust, curation]
 
 `hkask-types` exists to solve a boundary problem. hKask is compiled in-process
 inside zed-kask, but the kask crates must not depend on zed's internal types,
-on concrete storage backends, or on `hkask-capability` (which would create a
+on concrete storage backends, or on `hkask-tool-port` (which would create a
 dependency cycle). The foundation crate defines the contracts that mediate
 between these worlds: kask crates depend on abstractions, and `kask_bridge`,
 `hkask-storage`, and `hkask-regulation` provide the
@@ -25,7 +25,7 @@ boundary.[^cockburn]
 |--------|----------|
 | Crate root, `forbid(unsafe_code)`, module list | `kask/crates/hkask-types/src/hkask_types.rs:1,6` |
 | `pub use ports::*` re-export | `kask/crates/hkask-types/src/hkask_types.rs:66` |
-| Cycle-prevention note (`must NOT depend on hkask-capability`) | `kask/crates/hkask-types/Cargo.toml:13` |
+| Cycle-prevention note (`must NOT depend on hkask-tool-port`) | `kask/crates/hkask-types/Cargo.toml:13` |
 | `resolve_data_dir` (single regulator) | `kask/crates/hkask-types/src/agent_paths.rs:62` |
 | `resolve_under_data_dir` (delegates to regulator) | `kask/crates/hkask-types/src/agent_paths.rs:98` |
 | `agent_db` (renamed from `agent_pod_db`) | `kask/crates/hkask-types/src/agent_paths.rs:146` |
@@ -73,7 +73,7 @@ consumer would inherit heavy native deps.
    apart across helpers.
 
 The crate forbids `unsafe` code (`hkask_types.rs:1`) and must not depend on
-`hkask-capability` (`Cargo.toml:13`) — that would create a cycle, since
+`hkask-tool-port` (`Cargo.toml:13`) — that would create a cycle, since
 capability types need the foundation identifiers. Methods that need capability
 tokens live as free functions or extension traits in crates that have the
 capability dep.

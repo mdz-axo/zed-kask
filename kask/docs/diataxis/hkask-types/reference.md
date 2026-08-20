@@ -14,7 +14,7 @@ mds_categories: [domain, composition]
 shared domain types, identifier newtypes, hexagonal port traits, filesystem
 path helpers, and Regulation event substrate that every downstream kask crate
 depends on. The crate forbids `unsafe` code, declares no implementations of
-its own port traits, and must not depend on `hkask-capability` (cycle
+its own port traits, and must not depend on `hkask-tool-port` (cycle
 prevention — see `Cargo.toml:13`).
 
 ## Source citations

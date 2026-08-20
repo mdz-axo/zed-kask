@@ -119,6 +119,6 @@ in the same register as Layer 3 (instruction hierarchy, RR-0010) — see
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-001
 verified_date: 2026-08-20
-verified_against: kask/crates/hkask-capability/src/tool_port.rs; kask/crates/hkask-capability/src/token_types.rs; kask/crates/hkask-capability/src/hkask_capability.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs; kask/crates/hkask-tool-port/src/token_types.rs; kask/crates/hkask-tool-port/src/hkask_tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs
 status: VERIFIED
 -->

@@ -7,7 +7,7 @@ curator, wallet, transcript, corpus, document, templates) used by all
 downstream hKask crates.
 
 `hkask-types` is the dependency root of the hKask crate tree: it must not
-depend on `hkask-capability` (would create a cycle). Domain types that need
+depend on `hkask-tool-port` (would create a cycle). Domain types that need
 capability types live in their owning domain crates.
 
 ## Public Modules

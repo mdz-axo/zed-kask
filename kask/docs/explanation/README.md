@@ -16,7 +16,7 @@ hKask is compiled into zed-kask as a set of native crates, plus 10 MCP servers l
 
 | Guide | Topics | Domain Tier |
 |-------|-------|-------------|
-| [Tool dispatch](../diataxis/hkask-capability/explanation.md) | The `ToolPort` dispatch seam: `McpRuntime::invoke` meters and dispatches but does **not** authorize; the runaway-loop call breaker; the three allowlist boundaries where tool authority is enforced; and defense Layer 5 (information flow control) absent by decision (RR-0053). | Core |
+| [Tool dispatch](../diataxis/hkask-tool-port/explanation.md) | The `ToolPort` dispatch seam: `McpRuntime::invoke` meters and dispatches but does **not** authorize; the runaway-loop call breaker; the three allowlist boundaries where tool authority is enforced; and defense Layer 5 (information flow control) absent by decision (RR-0053). | Core |
 | [Cognition and Replica](cognition-and-replica.md) | Scenario forecasting (Schwartz + Tetlock + Chermack pipeline), ν-event semantics (ObservableSpan, RegulationRecord, CANONICAL_NAMESPACES, decay-weighted replay), Companies MCP server (44 tools, DCF valuation, forecast feedback, portfolio ledger). | Core |
 | [Skills and Composition](skills-and-composition.md) | Skill anatomy (two-zone model), the upstream-Zed body-injection execution path (`SkillTool::run` → `render_skill_envelope`, D1), skill bundles, and how MCP servers register as builtins inside the editor (child processes over stdio). | Core |
 | [Companies MCP Server](companies-mcp.md) | How-to procedures for company valuation, forecasting, and portfolio analysis against the companies MCP server (child process over stdio). | Domain supplement |

@@ -49,7 +49,7 @@ architecture-beta
     service lazy_router(agent)[LazyToolRouter<br/>crates/agent/src/tool_router.rs]
     service thread(agent)[Thread::enabled_tools<br/>crates/agent/src/thread.rs]
 
-    service tool_port(mcp)[ToolPort trait<br/>hkask-capability/src/tool_port.rs]
+    service tool_port(mcp)[ToolPort trait<br/>hkask-tool-port/src/tool_port.rs]
     service mcp_runtime(mcp)[McpRuntime<br/>hkask-mcp/src/runtime.rs]
     service call_cap(mcp)[CallCapManager<br/>hkask-regulation/src/energy.rs]
     service servers(mcp)[10 MCP servers<br/>kask/mcp-servers/hkask-mcp-*]
@@ -117,6 +117,6 @@ under `kask/mcp-servers/hkask-mcp-*` and are enumerated by
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-SKILL-MCP-LISP-001
 verified_date: 2026-08-20
-verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool::run, render_skill_envelope); crates/agent_skills/agent_skills.rs (read_skill_body); crates/agent/src/tools/lisp_eval_tool.rs (lisp_eval tool); crates/agent/src/tools/render_template_tool.rs (render_template tool); kask/crates/hkask-lisp/ (eval_sandboxed_with_budget); crates/agent/src/tool_router.rs (LazyToolRouter, apply_router_bypassing_built_ins); crates/agent/src/thread.rs (enabled_tools); kask/crates/hkask-capability/src/tool_port.rs (ToolPort, ToolPortError::EnergyBudgetExceeded); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime, charge_call_metered); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, CallMeterOutcome); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 10 servers)
+verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool::run, render_skill_envelope); crates/agent_skills/agent_skills.rs (read_skill_body); crates/agent/src/tools/lisp_eval_tool.rs (lisp_eval tool); crates/agent/src/tools/render_template_tool.rs (render_template tool); kask/crates/hkask-lisp/ (eval_sandboxed_with_budget); crates/agent/src/tool_router.rs (LazyToolRouter, apply_router_bypassing_built_ins); crates/agent/src/thread.rs (enabled_tools); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort, ToolPortError::EnergyBudgetExceeded); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime, charge_call_metered); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, CallMeterOutcome); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 10 servers)
 status: VERIFIED
 -->

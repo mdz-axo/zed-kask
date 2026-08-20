@@ -14,7 +14,7 @@
 //!
 //!    `swarm_panel` re-exports these symbols so its existing call sites compile
 //!    unchanged. The `McpRuntime`/`ToolPort`/token minting stays in `main.rs`
-//!    (it needs `hkask-capability` + `hkask-mcp`); only the trait + the global
+//!    (it needs `hkask-tool-port` + `hkask-mcp`); only the trait + the global
 //!    accessor live here.
 //!
 //! 2. [`BlockProvenance`] — the payload a rendered widget block carries so the

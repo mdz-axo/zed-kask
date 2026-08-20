@@ -272,7 +272,7 @@ members = [
     #
     "kask/crates/hkask-types",
     "kask/crates/kask_bridge",
-    "kask/crates/hkask-capability",
+    "kask/crates/hkask-tool-port",
     "kask/crates/hkask-keystore",
     "kask/crates/hkask-regulation",
     "kask/crates/hkask-forecast",
@@ -878,7 +878,7 @@ serde_yaml_ng = "0.10"
 sha2 = "0.10"
 blake3 = "1"
 hkask-types = { path = "kask/crates/hkask-types" }
-hkask-capability = { path = "kask/crates/hkask-capability" }
+hkask-tool-port = { path = "kask/crates/hkask-tool-port" }
 hkask-keystore = { path = "kask/crates/hkask-keystore" }
 hkask-forecast = { path = "kask/crates/hkask-forecast" }
 hkask-inference = { path = "kask/crates/hkask-inference" }

@@ -5,7 +5,7 @@ cwe: CWE-1188
 owasp_llm_2025: LLM06
 atlas_tactic: AML.TA0008
 nist_ssdf: PW.4.1
-discovered_in: kask/crates/hkask-capability/src/token_types.rs
+discovered_in: kask/crates/hkask-tool-port/src/token_types.rs
 discovered_by: kali-audit
 discovered_at: 2026-08-04
 severity: medium

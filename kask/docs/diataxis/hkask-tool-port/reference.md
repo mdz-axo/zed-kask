@@ -1,5 +1,5 @@
 ---
-title: "hkask-capability — Reference"
+title: "hkask-tool-port — Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-08-13
 version: "1.0.0"
@@ -8,9 +8,9 @@ domain: "Sovereignty"
 mds_categories: [domain, trust]
 ---
 
-# hkask-capability — Reference
+# hkask-tool-port — Reference
 
-`hkask-capability` defines the tool dispatch port: the `ToolPort` trait, its
+`hkask-tool-port` defines the tool dispatch port: the `ToolPort` trait, its
 `ToolInfo` metadata, the `ToolFuture` alias, the `ToolPortError` taxonomy, and
 the `SYSTEM_MAX_RECURSION` structural bound. That is the entire surface. It
 contains **no capability tokens, no per-call authorization check, and no
@@ -21,14 +21,14 @@ the allowlist boundaries listed under [Where authority is enforced](#where-autho
 
 | Symbol                       | Location                                                                                       |
 | ---------------------------- | ---------------------------------------------------------------------------------------------- |
-| `ToolPort` trait             | `kask/crates/hkask-capability/src/tool_port.rs:89-115`                                         |
-| `ToolPortError` enum         | `kask/crates/hkask-capability/src/tool_port.rs:8-38`                                           |
-| `ToolPortError::is_retryable`| `kask/crates/hkask-capability/src/tool_port.rs:40-53`                                          |
-| `ToolFuture` type alias      | `kask/crates/hkask-capability/src/tool_port.rs:62`                                            |
-| `ToolInfo` struct            | `kask/crates/hkask-capability/src/tool_port.rs:118-124`                                       |
-| `SYSTEM_MAX_RECURSION` const | `kask/crates/hkask-capability/src/token_types.rs:7`                                            |
-| Crate lib root               | `kask/crates/hkask-capability/src/hkask_capability.rs:1-27`                                    |
-| `ToolPort` implementor      | `kask/crates/hkask-mcp/src/runtime.rs:969-1067` (`impl hkask_capability::ToolPort for McpRuntime`) |
+| `ToolPort` trait             | `kask/crates/hkask-tool-port/src/tool_port.rs:89-115`                                         |
+| `ToolPortError` enum         | `kask/crates/hkask-tool-port/src/tool_port.rs:8-38`                                           |
+| `ToolPortError::is_retryable`| `kask/crates/hkask-tool-port/src/tool_port.rs:40-53`                                          |
+| `ToolFuture` type alias      | `kask/crates/hkask-tool-port/src/tool_port.rs:62`                                            |
+| `ToolInfo` struct            | `kask/crates/hkask-tool-port/src/tool_port.rs:118-124`                                       |
+| `SYSTEM_MAX_RECURSION` const | `kask/crates/hkask-tool-port/src/token_types.rs:7`                                            |
+| Crate lib root               | `kask/crates/hkask-tool-port/src/hkask_tool_port.rs:1-27`                                    |
+| `ToolPort` implementor      | `kask/crates/hkask-mcp/src/runtime.rs:969-1067` (`impl hkask_tool_port::ToolPort for McpRuntime`) |
 | `McpRuntime::invoke` body    | `kask/crates/hkask-mcp/src/runtime.rs:969-1057`                                                |
 | `McpRuntime::with_governance`| `kask/crates/hkask-mcp/src/runtime.rs:271-280`                                                 |
 | `CallMeterOutcome` enum      | `kask/crates/hkask-regulation/src/energy.rs:35-45`                                             |
@@ -40,7 +40,7 @@ the allowlist boundaries listed under [Where authority is enforced](#where-autho
 | Per-server credential allowlist | `kask/crates/kask_bridge/src/mcp_servers.rs:26-43` (`BuiltinMcpServer.credentials`)         |
 | `CapabilityTier::detect`     | `kask/crates/hkask-mcp-server/src/server/context.rs:94-104`                                   |
 
-The crate's `src/` directory holds exactly three files: `hkask_capability.rs`
+The crate's `src/` directory holds exactly three files: `hkask_tool_port.rs`
 (lib root), `token_types.rs`, and `tool_port.rs`.
 
 ## Type surface
@@ -88,7 +88,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-002
 verified_date: 2026-08-13
-verified_against: kask/crates/hkask-capability/src/tool_port.rs:62-124 (ToolFuture, ToolPort, ToolInfo); kask/crates/hkask-capability/src/tool_port.rs:8-53 (ToolPortError); kask/crates/hkask-mcp/src/runtime.rs:969-1067 (impl ToolPort for McpRuntime)
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:62-124 (ToolFuture, ToolPort, ToolInfo); kask/crates/hkask-tool-port/src/tool_port.rs:8-53 (ToolPortError); kask/crates/hkask-mcp/src/runtime.rs:969-1067 (impl ToolPort for McpRuntime)
 status: VERIFIED
 -->
 
@@ -254,9 +254,9 @@ status: VERIFIED
 
 ## See also
 
-- [hkask-capability Explanation](./explanation.md): why per-call gating was
+- [hkask-tool-port Explanation](./explanation.md): why per-call gating was
   removed and separation kept.
-- [hkask-capability Tutorial](./tutorial.md): dispatching through the seam.
+- [hkask-tool-port Tutorial](./tutorial.md): dispatching through the seam.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
   P4 (Clear Boundaries).
 - `kask/security/regressions/RR-0053.yaml`, `RR-0056.yaml`, `RR-0057.yaml`.

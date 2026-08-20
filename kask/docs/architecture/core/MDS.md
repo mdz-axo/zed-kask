@@ -504,7 +504,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-storage` | Domain, Lifecycle | `hMem`, per-user SQLCipher private sphere. (`SpecStore` is planned, not yet implemented — see §4 note.) |
 | `hkask-memory` | Domain, Curation | Semantic/episodic memory, consolidation, hMem coherence |
 | `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `CallCapManager`/`CallCap` (per-agent tool-call ceiling), `CyberneticsLoop`, variety/algedonic |
-| `hkask-capability` | Trust | `ToolPort` dispatch seam (`ToolPort`, `ToolInfo`, `ToolFuture`, `ToolPortError`, `SYSTEM_MAX_RECURSION`). Holds no tokens, no authorization check (RR-0056), and no taint labels (RR-0053) |
+| `hkask-tool-port` | Trust | `ToolPort` dispatch seam (`ToolPort`, `ToolInfo`, `ToolFuture`, `ToolPortError`, `SYSTEM_MAX_RECURSION`). Holds no tokens, no authorization check (RR-0056), and no taint labels (RR-0053) |
 | `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses the `keyring` crate directly for all keychain access (D5 — NOT zed's `CredentialsProvider`) |
 | `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads keys via the `keyring` crate directly (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) |
@@ -537,7 +537,7 @@ graph TD
         STORE[hkask-storage]
         MEM[hkask-memory]
         REG[hkask-regulation]
-        CAP[hkask-capability]
+        CAP[hkask-tool-port]
         KS[hkask-keystore]
         LEDGER[hkask-ledger]
         INF[hkask-inference]

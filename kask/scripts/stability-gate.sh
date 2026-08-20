@@ -107,7 +107,7 @@ if [[ "$mutation_score" == "0" ]] && command -v cargo-mutants &>/dev/null; then
         echo "Running cargo-mutants for mutation score..." >&2
     fi
     cargo mutants --output-format json --in-place \
-        -p hkask-types -p hkask-capability \
+        -p hkask-types -p hkask-tool-port \
         --timeout-seconds 30 2>/dev/null > /tmp/mutants-out.json || true
 
     if [[ -f /tmp/mutants-out.json ]] && command -v jq &>/dev/null; then

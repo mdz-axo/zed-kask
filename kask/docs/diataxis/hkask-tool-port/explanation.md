@@ -1,5 +1,5 @@
 ---
-title: "hkask-capability — Explanation"
+title: "hkask-tool-port — Explanation"
 audience: [developers, architects, agents]
 last_updated: 2026-08-13
 version: "1.0.0"
@@ -8,7 +8,7 @@ domain: "Sovereignty"
 mds_categories: [trust, curation]
 ---
 
-# hkask-capability — Explanation
+# hkask-tool-port — Explanation
 
 The capability layer exists to keep tool authority *separated* — to make it
 structurally impossible for an agent to reach a tool nobody granted it. It does
@@ -24,14 +24,14 @@ worthless.
 
 | Concept                              | Location                                                       |
 | ------------------------------------ | -------------------------------------------------------------- |
-| Per-call gate removal rationale      | `kask/crates/hkask-capability/src/hkask_capability.rs:5-21`    |
-| `invoke` does not authorize          | `kask/crates/hkask-capability/src/tool_port.rs:64-83`          |
+| Per-call gate removal rationale      | `kask/crates/hkask-tool-port/src/hkask_tool_port.rs:5-21`    |
+| `invoke` does not authorize          | `kask/crates/hkask-tool-port/src/tool_port.rs:64-83`          |
 | `invoke` metering + dispatch         | `kask/crates/hkask-mcp/src/runtime.rs:969-1057`                |
 | `CallMeterOutcome` branches          | `kask/crates/hkask-regulation/src/energy.rs:35-45`             |
 | Per-request allowlist gate           | `kask/crates/kask_bridge/src/inference_ipc_server.rs:724-747` |
 | Per-agent `mcp_tools` allowlist       | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:236-346` |
 | Per-server credential allowlist      | `kask/crates/kask_bridge/src/mcp_servers.rs:26-43`             |
-| Taint gate removal rationale         | `kask/crates/hkask-capability/src/hkask_capability.rs:19-21`   |
+| Taint gate removal rationale         | `kask/crates/hkask-tool-port/src/hkask_tool_port.rs:19-21`   |
 
 ## Where authority lives
 
@@ -126,7 +126,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-005
 verified_date: 2026-08-13
-verified_against: kask/crates/hkask-capability/src/tool_port.rs:64-83 (invoke does not authorize); kask/crates/kask_bridge/src/inference_ipc_server.rs:724-747 (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:236-346 (mcp_tools gate); kask/crates/kask_bridge/src/mcp_servers.rs:26-43 (credential allowlist)
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:64-83 (invoke does not authorize); kask/crates/kask_bridge/src/inference_ipc_server.rs:724-747 (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:236-346 (mcp_tools gate); kask/crates/kask_bridge/src/mcp_servers.rs:26-43 (credential allowlist)
 status: VERIFIED
 -->
 
@@ -139,9 +139,9 @@ without that proof — see `kask/security/regressions/RR-0056.yaml`.
 
 ## See also
 
-- [hkask-capability Reference](./reference.md): the current type surfaces and
+- [hkask-tool-port Reference](./reference.md): the current type surfaces and
   the invoke pipeline.
-- [hkask-capability Tutorial](./tutorial.md): dispatching through the seam.
+- [hkask-tool-port Tutorial](./tutorial.md): dispatching through the seam.
 - [`DIVERGENCE.md`](../../../../DIVERGENCE.md) D4 and
   `kask/security/regressions/RR-0053.yaml`: full rationale for the guard-layer
   and taint-gate deletions.

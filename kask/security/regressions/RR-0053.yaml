@@ -5,7 +5,7 @@ cwe: CWE-1188
 owasp_llm_2025: LLM06
 atlas_tactic: AML.TA0006
 nist_ssdf: PW.4.1
-discovered_in: kask/crates/hkask-capability/src/tool_taint.rs (deleted), kask/crates/hkask-regulation/src/runtime_policy.rs (deleted), kask/crates/hkask-templates/src/step_actions.rs (deleted)
+discovered_in: kask/crates/hkask-tool-port/src/tool_taint.rs (deleted), kask/crates/hkask-regulation/src/runtime_policy.rs (deleted), kask/crates/hkask-templates/src/step_actions.rs (deleted)
 discovered_by: kali-audit
 discovered_at: 2026-08-04
 severity: medium
@@ -45,11 +45,11 @@ mitigation: |
   call happens, not that the call can ever decide anything.
 
   RESOLUTION (2026-08-12, operator decision): DELETE rather than repair. Removed
-  `kask/crates/hkask-capability/src/tool_taint.rs`,
+  `kask/crates/hkask-tool-port/src/tool_taint.rs`,
   `kask/crates/hkask-regulation/src/runtime_policy.rs`, the `runtime_policy`
   parameter and policy block in `invoke_tool`, `check_untrusted_input`,
   `ToolInfo.taint`, `StepResult.taint`, `taint_of_key`, `with_runtime_policy`, and
-  the orphaned deps (`serde` from hkask-capability, `hkask-capability` from
+  the orphaned deps (`serde` from hkask-tool-port, `hkask-tool-port` from
   hkask-regulation, `hkask-regulation` from hkask-templates).
 
   Information flow control (defense Layer 5) is therefore ABSENT, deliberately and

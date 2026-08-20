@@ -26,4 +26,4 @@ No environment variables required. The server opens its sovereign `curator.db` (
 - `hkask-mcp-server` — MCP runtime and dispatch
 - `hkask-storage` / `hkask-memory` — sovereign `curator.db` stores
 - `governance` module — escalation CRUD + Regulation event emission
-- `hkask-capability` — DelegationToken consent registry
+- `hkask-tool-port` — DelegationToken consent registry

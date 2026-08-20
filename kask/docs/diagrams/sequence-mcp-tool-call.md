@@ -26,7 +26,7 @@ sequenceDiagram
     participant Agent as Agent (Thread)
     participant Router as LazyToolRouter<br/>crates/agent/src/tool_router.rs
     participant Enabled as Thread::enabled_tools<br/>crates/agent/src/thread.rs
-    participant ToolPort as ToolPort trait<br/>hkask-capability/src/tool_port.rs
+    participant ToolPort as ToolPort trait<br/>hkask-tool-port/src/tool_port.rs
     participant Runtime as McpRuntime<br/>hkask-mcp/src/runtime.rs
     participant Cap as CallCapManager<br/>hkask-regulation/src/energy.rs
     participant Server as MCP server child<br/>kask/mcp-servers/hkask-mcp-*
@@ -131,6 +131,6 @@ property `unwrap_tool_envelope({"content": P}) == P` for all JSON payloads
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SEQ-MCP-TOOL-CALL-001
 verified_date: 2026-08-20
-verified_against: crates/agent/src/tool_router.rs (LazyToolRouter, apply_router_bypassing_built_ins, ToolRouter trait, select_tools, should_activate, default_thresholds_are_the_documented_values); crates/agent/src/thread.rs (enabled_tools calls apply_router_bypassing_built_ins); kask/crates/hkask-capability/src/tool_port.rs (ToolPort trait, ToolPortError::EnergyBudgetExceeded, invoke); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime, charge_call_metered, CallMeterOutcome branches); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome, CallCapManager::charge_metered, DEFAULT_RUNAWAY_CALL_CEILING); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope, parse_tool_response); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer.credentials)
+verified_against: crates/agent/src/tool_router.rs (LazyToolRouter, apply_router_bypassing_built_ins, ToolRouter trait, select_tools, should_activate, default_thresholds_are_the_documented_values); crates/agent/src/thread.rs (enabled_tools calls apply_router_bypassing_built_ins); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort trait, ToolPortError::EnergyBudgetExceeded, invoke); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime, charge_call_metered, CallMeterOutcome branches); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome, CallCapManager::charge_metered, DEFAULT_RUNAWAY_CALL_CEILING); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope, parse_tool_response); kask/crates/kask_bridge/src/inference_ipc_server.rs (tool_allowlist gate); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (mcp_tools allowlist); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer.credentials)
 status: VERIFIED
 -->

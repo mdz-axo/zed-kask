@@ -1,5 +1,5 @@
 ---
-title: "hkask-capability — Tutorial: Dispatch a Tool Through the ToolPort Seam"
+title: "hkask-tool-port — Tutorial: Dispatch a Tool Through the ToolPort Seam"
 audience: [developers, agents]
 last_updated: 2026-08-13
 version: "1.0.0"
@@ -8,9 +8,9 @@ domain: "Sovereignty"
 mds_categories: [lifecycle]
 ---
 
-# hkask-capability — Tutorial: Dispatch a Tool Through the ToolPort Seam
+# hkask-tool-port — Tutorial: Dispatch a Tool Through the ToolPort Seam
 
-This tutorial walks through the three things the `hkask-capability` crate
+This tutorial walks through the three things the `hkask-tool-port` crate
 actually lets you do: dispatch a tool through the `ToolPort` seam, trip the
 runaway-loop breaker, and read a tool's metadata. You will learn what `invoke`
 *does* — it meters and dispatches — and what it deliberately does *not* do:
@@ -35,7 +35,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-001
 verified_date: 2026-08-13
-verified_against: kask/crates/hkask-capability/src/tool_port.rs:89-115 (ToolPort trait); kask/crates/hkask-capability/src/tool_port.rs:8-53 (ToolPortError); kask/crates/hkask-mcp/src/runtime.rs:969-1067 (impl ToolPort for McpRuntime)
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:89-115 (ToolPort trait); kask/crates/hkask-tool-port/src/tool_port.rs:8-53 (ToolPortError); kask/crates/hkask-mcp/src/runtime.rs:969-1067 (impl ToolPort for McpRuntime)
 status: VERIFIED
 -->
 
@@ -46,7 +46,7 @@ them. Build a runtime, register a server so the runtime has tool metadata, and
 invoke:
 
 ```rust
-use hkask_capability::ToolPort;
+use hkask_tool_port::ToolPort;
 use hkask_mcp::{McpRuntime, McpServer, McpTool};
 
 let runtime = McpRuntime::new();
@@ -115,7 +115,7 @@ Both behaviors are pinned in `kask/crates/hkask-mcp/src/runtime.rs` by
 decides anything:
 
 ```rust
-use hkask_capability::ToolPort;
+use hkask_tool_port::ToolPort;
 
 let info = runtime.get_tool_info("test_tool").await.expect("registered above");
 assert_eq!(info.name, "test_tool");
@@ -148,9 +148,9 @@ the caller being checked does not choose:
 
 ## See also
 
-- [hkask-capability Reference](./reference.md): the current type surfaces and
+- [hkask-tool-port Reference](./reference.md): the current type surfaces and
   the invoke pipeline.
-- [hkask-capability Explanation](./explanation.md): why the per-call gate was
+- [hkask-tool-port Explanation](./explanation.md): why the per-call gate was
   removed and what separation still buys.
 - [hkask-types Reference](../hkask-types/reference.md): `WebID` and the shared
   error types `ToolPortError` wraps.
