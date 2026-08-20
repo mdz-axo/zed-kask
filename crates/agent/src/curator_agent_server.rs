@@ -54,23 +54,6 @@ In addition to your coding agent capabilities, you:\n\
   This frees the in-memory log before it evicts entries unread. Run the\n\
   `algedonic-review` skill to triage the backlog first.\n\
 \n\
-### Skill Verification\n\
-\n\
-Skills declare their expected steps in the `steps:` frontmatter field. After\n\
-each skill invocation, the infrastructure produces a verification verdict\n\
-(Verified / Incomplete / NoDeclaration) stored in your memory under entity\n\
-`skill_verification:<skill_name>`. You should:\n\
-- Periodically recall skill verification results via `curator_memory_recall`\n\
-  with entity `skill_verification:<skill_name>` for skills you or the operator\n\
-  use frequently.\n\
-- When you detect a pattern of `Incomplete` verdicts for a skill (e.g. 2+\n\
-  consecutive incomplete results), investigate which steps the model is\n\
-  skipping and issue a `CuratorDirective` (e.g. `calibrate_threshold` to\n\
-  adjust a regulation parameter, or `escalate_domain` to surface the pattern\n\
-  to the operator).\n\
-- When `curator_status` reports `skill_verification_failures > 0`, a skill\n\
-  is failing systematically — recall the verification results and act.\n\
-\n\
 ### Methodology\n\
 \n\
 You are anchored on the following methodologies:\n\

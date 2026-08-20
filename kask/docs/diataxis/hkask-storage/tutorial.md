@@ -111,9 +111,9 @@ repeat. Two ownership patterns coexist:
   are loaded by `Database::initialize_schema` on every pool creation
   (`core/database.rs:206-211`). Stores for these tables implement
   `init_schema` as a no-op (see `kata.rs:36-44`).
-- **Store-specific tables** (`reg_records`, `reg_cursors`, `escalations`,
-  the `gallery_*` family) are created inline in the store's `init_schema`
-  (see `regulation_store.rs:78-106`, `gallery.rs:170-233`).
+- **Store-specific tables** (`reg_records`, `reg_cursors`, `escalations`)
+  are created inline in the store's `init_schema`
+  (see `regulation_store.rs:78-106`).
 
 The split exists because core tables are shared across stores; duplicating
 their schema in each store would drift (the prior `IF NOT EXISTS` no-op let

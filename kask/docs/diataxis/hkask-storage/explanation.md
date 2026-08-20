@@ -151,8 +151,8 @@ Two ownership patterns coexist:
   documents why (`kata.rs:36-44`): re-creating the table here would duplicate
   the schema and drift, because the prior `IF NOT EXISTS` no-op meant the
   live schema depended on which store ran first.
-- **Store-specific tables** (`reg_records`, `reg_cursors`, `escalations`,
-  the `gallery_*` family) are created inline in the store's `init_schema`.
+- **Store-specific tables** (`reg_records`, `reg_cursors`, `escalations`)
+  are created inline in the store's `init_schema`.
   `HMemStore::from_driver` explicitly does NOT re-create `hmems`
   (`hmem.rs:170-176`): the prior `CREATE TABLE IF NOT EXISTS` here declared
   `recalled_at TEXT` nullable while `schema.sql` declared it

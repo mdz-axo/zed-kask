@@ -165,11 +165,6 @@ pub struct Skill {
     /// startup, locked against editing, undisableable, and unshadowable.
     /// See `SkillMetadata::core` for the full contract.
     pub core: bool,
-    /// Declared execution steps for skill verification. Passed through from
-    /// `SkillMetadata::steps`. Registered in the process-global step registry
-    /// at load time so `SkillStepTracker::activate` can look them up.
-    // zed-kask: skill step verification — D-seam for trust calibration.
-    pub steps: Vec<SkillStepDeclaration>,
 }
 
 /// Indicates where a skill was loaded from.
@@ -323,29 +318,8 @@ pub struct SkillMetadata {
     /// distinguishing system-critical kask-skills from user kask-skills.
     #[serde(default)]
     pub core: bool,
-    /// Declared execution steps for skill verification. Each step lists the
-    /// tool names it requires. At turn end, the `SkillStepTracker` compares
-    /// the actual tool-call sequence against these declared steps and
-    /// produces a trust verdict (`Verified` | `Incomplete` | `NoDeclaration`).
-    /// When absent, the tracker reports `NoDeclaration` — raw calibration
-    /// data without a verdict.
-    // zed-kask: skill step verification — D-seam for trust calibration.
-    #[serde(default)]
-    pub steps: Vec<SkillStepDeclaration>,
 }
 
-/// A step declared in the SKILL.md frontmatter for verification. The step
-/// is considered executed when ALL listed tools appear at least once in
-/// the actual call sequence.
-// zed-kask: skill step verification — D-seam for trust calibration.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SkillStepDeclaration {
-    /// Step identifier (e.g. "sense_gather", "synthesize").
-    pub id: String,
-    /// Tool names this step requires. Empty = no tool dependency.
-    #[serde(default)]
-    pub tools: Vec<String>,
-}
 
 /// Minimal skill info for system prompt.
 ///
@@ -422,7 +396,6 @@ pub fn parse_skill_frontmatter(
         disable_model_invocation: metadata.disable_model_invocation,
         dependencies: metadata.dependencies,
         core: metadata.core,
-        steps: metadata.steps,
     })
 }
 

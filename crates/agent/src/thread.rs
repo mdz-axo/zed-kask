@@ -1418,12 +1418,6 @@ pub struct Thread {
     /// Prevents the zero-gain retry death spiral (Ashby variety-deficit).
     /// Never persisted — lives and dies with this thread.
     tool_retry_tracker: Rc<RefCell<crate::tool_retry_tracker::ToolRetryTracker>>,
-    /// Skill step tracker — records tool calls made during a skill invocation
-    /// so the consumer of the skill output has calibration information.
-    /// Activated when the `skill` tool runs or `send_skill_invocation` fires.
-    /// Consumed at turn end by `run_turn` to produce a `SkillStepReport`.
-    /// Never persisted — lives and dies with this thread.
-    pub(crate) skill_step_tracker: Rc<RefCell<crate::skill_step_tracker::SkillStepTracker>>,
     /// Cached rendered system prompt and its input digest. The system prompt is
     /// re-rendered on every `build_request_messages_until` call, but its inputs
     /// (available_tools, model_name, date, user_agents_md, sandboxing, project
@@ -1645,9 +1639,6 @@ impl Thread {
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
             tool_retry_tracker: Rc::new(RefCell::new(
                 crate::tool_retry_tracker::ToolRetryTracker::default(),
-            )),
-            skill_step_tracker: Rc::new(RefCell::new(
-                crate::skill_step_tracker::SkillStepTracker::new(),
             )),
             cached_system_prompt: None,
             cached_filtered_context: None,
@@ -2053,9 +2044,6 @@ impl Thread {
             ))),
             tool_retry_tracker: Rc::new(RefCell::new(
                 crate::tool_retry_tracker::ToolRetryTracker::default(),
-            )),
-            skill_step_tracker: Rc::new(RefCell::new(
-                crate::skill_step_tracker::SkillStepTracker::new(),
             )),
             cached_system_prompt: None,
             cached_filtered_context: None,
@@ -3086,15 +3074,6 @@ impl Thread {
                         // this is a no-op.
                         if let Some(port) = crate::memory_port() {
                             let record = this.update(cx, |thread, _cx| {
-                                let skill_step_report =
-                                    thread.skill_step_tracker.borrow_mut().finalize();
-                                if let Some(ref report) = skill_step_report {
-                                    log::info!(
-                                        "Skill step report: skill={} tool_calls={:?}",
-                                        report.skill_name,
-                                        report.tool_call_sequence
-                                    );
-                                }
                                 crate::ThreadTurnRecord {
                                     thread_id: thread.id().to_string(),
                                     user_input: thread
@@ -3128,7 +3107,6 @@ impl Thread {
                                         .unwrap_or_default(),
                                     thread_title: thread.title().map(|t| t.to_string()),
                                     agent_id: thread.agent_id().cloned(),
-                                    skill_step_report,
                                 }
                             });
                             if let Ok(record) = record {
@@ -4336,20 +4314,6 @@ impl Thread {
         log::debug!("Running tool {}", tool_use.name);
 
         // Skill step tracker — record every tool call made during a skill
-        // invocation. When the `skill` tool itself runs, activate tracking
-        // with the skill name from the input. For all other tools, record
-        // the call if a skill is active. At turn end, `run_turn` finalizes
-        // the tracker and attaches the report to the `ThreadTurnRecord`.
-        {
-            let mut tracker = self.skill_step_tracker.borrow_mut();
-            if tool_name_str == "skill" {
-                if let Some(name) = input.get("name").and_then(|v| v.as_str()) {
-                    tracker.activate(name.to_string());
-                }
-            } else {
-                tracker.record(tool_name_str);
-            }
-        }
 
         // [DIAG-T0003] Non-streaming complete path: is_input_complete=true,
         // tool does not support streaming (or no prior partial was sent).
@@ -10558,7 +10522,7 @@ mod tests {
 
         let subagent = cx.new(|cx| Thread::new_subagent(&parent, cx));
 
-        let subagent_id = subagent.read(cx).agent_id().cloned();
+        let subagent_id = cx.update(|cx| subagent.read(cx).agent_id().cloned());
         assert_eq!(
             subagent_id,
             Some(curator_id),

@@ -157,11 +157,7 @@ classDiagram
         +store(entity_ref, vector, model) String
         +search(query_vector, limit) Vec~SimilarityResult~
     }
-    class GalleryStore {
-        +from_driver(driver) GalleryStore
-        +create(root_path, mode) GalleryRecord
-        +add_image(gallery_id, record) ImageRecord
-    }
+
     class RegulationArchive {
         +from_driver(driver) RegulationArchive
         +replay_weighted(since, limit, config) Vec~WeightedEvent~
@@ -182,7 +178,7 @@ classDiagram
     TransactionHandle --> DatabaseDriver : borrows
     HMemStore --> DatabaseDriver : holds Arc
     EmbeddingStore --> DatabaseDriver : holds Arc
-    GalleryStore --> DatabaseDriver : holds Arc
+
     RegulationArchive --> DatabaseDriver : holds Arc
     EscalationQueue --> DatabaseDriver : holds Arc
     KataHistoryStore --> DatabaseDriver : holds Arc
@@ -191,7 +187,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-003
 verified_date: 2026-08-13
-verified_against: kask/crates/hkask-storage/src/core/database.rs:104-110,177-204,222-270; kask/crates/hkask-storage/src/database/driver.rs:16-58; kask/crates/hkask-storage/src/database/sqlite.rs:42-73; kask/crates/hkask-storage/src/database/transaction.rs:19-53; kask/crates/hkask-storage/src/hmem.rs:162-198; kask/crates/hkask-storage/src/embeddings.rs:63-109; kask/crates/hkask-storage/src/gallery.rs:162; kask/crates/hkask-storage/src/regulation_store.rs:70; kask/crates/hkask-storage/src/escalation.rs:58-82; kask/crates/hkask-storage/src/kata.rs:10
+verified_against: kask/crates/hkask-storage/src/core/database.rs:104-110,177-204,222-270; kask/crates/hkask-storage/src/database/driver.rs:16-58; kask/crates/hkask-storage/src/database/sqlite.rs:42-73; kask/crates/hkask-storage/src/database/transaction.rs:19-53; kask/crates/hkask-storage/src/hmem.rs:162-198; kask/crates/hkask-storage/src/embeddings.rs:63-109; kask/crates/hkask-storage/src/regulation_store.rs:70; kask/crates/hkask-storage/src/escalation.rs:58-82; kask/crates/hkask-storage/src/kata.rs:10
 status: VERIFIED
 -->
 
@@ -199,8 +195,9 @@ status: VERIFIED
 
 The core schema clusters around memory/events and regulation/system. The
 ERD below shows the surviving core tables from `schema.sql`. Store-specific
-tables (`reg_records`, `reg_cursors`, `escalations`, the `gallery_*` family)
-are created inline by their stores and are not in `schema.sql`.
+tables (`reg_records`, `reg_cursors`, `escalations`, the
+  store-specific tables (`reg_records`, `reg_cursors`, `escalations`) are
+  created inline by their stores and are not in `schema.sql`.
 
 ```mermaid
 erDiagram
@@ -335,15 +332,6 @@ streaks, and automaticity across sessions. The `pod_meta` table
 (`schema.sql:22`) stores pod metadata (webid, pod_kind) for passphrase
 derivation and discovery.
 
-### Gallery (store-specific)
-
-The `galleries`, `gallery_images`, `gallery_tags`, `face_registry`,
-`gallery_workflow`, and `gallery_generation` tables are created inline in
-`gallery.rs:170-233`. The gallery is a lens over the filesystem, not a copy
-of it: images are indexed by path + hash, tags are AI-generated metadata,
-and `gallery_generation` records the full lineage (op, prompt, model,
-provider, seed, params, parent_image_id) so an asset stays reproducible even
-if the provider is later removed.
 
 ## Port trait implementors
 
@@ -352,7 +340,7 @@ One port trait from `hkask-types` is implemented in this crate:
 - `RegulationSink` by `RegulationArchive` at `regulation_store.rs:508-520`.
 
 The other stores (`EmbeddingStore`, `EscalationQueue`, `HMemStore`,
-`GalleryStore`, `KataHistoryStore`) expose their methods as inherent impls
+`KataHistoryStore`) expose their methods as inherent impls
 rather than behind port traits — the speculative-generality port traits
 (`EmbeddingPort`, `EscalationPort`, `LedgerStoragePort`) were removed because
 each had a single implementor whose consumers already depended on the

@@ -37,7 +37,6 @@ pub struct ClassifyResult {
 
 /// Semantic h_mem extraction result for a single passage.
 /// Produced by the h_mem-extractor classifier.
-/// Model configured via `HKASK_CLASSIFIER_MODEL` → `registry/classify/hmem-extractor.yaml`.
 #[derive(Debug, Clone, Default)]
 pub struct PassageExtraction {
     /// One-sentence summary of what the passage is about.
@@ -58,7 +57,6 @@ pub struct PassageExtraction {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// Classifier configuration loaded from registry/classify/{name}.yaml.
 #[derive(Debug, Deserialize)]
 pub struct ClassifierYaml {
     pub classifier: ClassifierDef,
@@ -72,7 +70,6 @@ pub struct ClassifierDef {
     /// forwards it to zed's `LanguageModelRegistry` via the IPC bridge. When empty,
     /// `ClassifierConfig::from_def` resolves the canonical classifier model via
     /// `HKASK_CLASSIFIER_MODEL` → `DEFAULT_CLASSIFIER_MODEL`. Leave empty in
-    /// `registry/classify/*.yaml` to defer to the single canonical path.
     #[serde(default)]
     pub model: String,
     #[serde(default)]
@@ -97,13 +94,6 @@ pub struct ClassifierDef {
     #[serde(default)]
     pub cost_cache_read_nj_per_token: u64,
     /// Disable the model's thinking/reasoning mode for this classifier.
-    /// Defaults to `true`: the registry/classify configs emit short, deterministic
-    /// structured JSON (temperature 0.0, 15–500 tokens) where thinking tokens add
-    /// latency and cost without improving the few-shot-equilibrated output (Martin
-    /// et al. arXiv:2603.29878). Set to `false` to opt a classifier into thinking
-    /// (e.g. qa-triage root-cause analysis). Maps to `enable_thinking: false` /
-    /// `chat_template_kwargs: {"enable_thinking": false}` on the wire; harmless
-    /// no-op on models without a thinking mode.
     #[serde(default = "default_disable_thinking")]
     pub disable_thinking: bool,
 }
@@ -137,7 +127,6 @@ fn default_disable_thinking() -> bool {
     true
 }
 
-/// Load a classifier config from registry/classify/{name}.yaml.
 #[must_use = "result must be used"]
 pub fn load_classifier_config(
     name: &str,
@@ -312,9 +301,6 @@ async fn classify_one(
 /// Returns results in the same order as the input texts.
 /// Failed classifications default to "Statement".
 ///
-/// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
-/// pre:  texts must be non-empty; config must have valid timeout and concurrency
-/// post: returns `Vec<ClassifyResult>` in input order; failed classifications fall back to config.fallback_category; all fallback if no model resolved
 #[must_use = "result must be used"]
 pub async fn classify_batch(
     texts: &[String],
@@ -446,15 +432,11 @@ pub async fn classify_batch(
 
 /// Extract semantic h_mems from a batch of passages.
 /// Model is determined by `HKASK_CLASSIFIER_MODEL` env var / settings, falling back
-/// to the model specified in registry/classify/{name}.yaml.
 ///
 /// Returns results in the same order as the input texts.
 /// Failed extractions default to empty PassageExtraction.
 /// Graceful degradation: no model resolved → all empty extractions.
 ///
-/// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
-/// pre:  texts must be non-empty; config must have valid timeout and concurrency
-/// post: returns `Vec<PassageExtraction>` in input order; failed extractions fall back to empty; all empty if no model resolved
 #[must_use = "result must be used"]
 pub async fn extract_passages_batch(
     texts: &[String],
