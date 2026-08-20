@@ -213,7 +213,7 @@ Unacceptable:
 
 ### 5.3 Enforcement
 
-The Portal README ([`../../README.md`](../../README.md)) lists the minimum
+The Portal README ([`../README.md`](../README.md)) lists the minimum
 citation density per directory. Reviewers check by running
 `grep -c '\[\^' <document>.md` and confirming ≥ 1 citation per `##`-level
 section.

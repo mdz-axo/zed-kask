@@ -40,11 +40,11 @@ You are a skill translator. Convert a classified source skill into a hKask regis
 
 ## Translation Rules
 
-1. **Manifest** — Produce a `manifest.yaml` with crate metadata and one template entry per classified step. Each entry must declare: id, path, type (KnowAct/WordAct/FlowDef/RenderAct — deprecated), description.
+1. **Manifest** — Produce a `manifest.yaml` with crate metadata and one template entry per classified step. Each entry must declare: id, path, description.
 2. **Templates** — Produce one `.j2` file per classified step:
-   - Cognitive steps → KnowAct (deprecated) `.j2` with `[inference]` frontmatter, system prompt, `{{ variables }}`, JSON output schema.
-   - Workflow steps → WordAct (deprecated, transformation) or FlowDef (deprecated, dispatch/routing) `.j2` with same structure.
-   - Reference content → RenderAct (deprecated) `.j2` or `.yaml` (no inference).
+   - Cognitive steps → `.j2` with `[inference]` frontmatter, system prompt, `{{ variables }}`, JSON output schema.
+   - Workflow steps → `.j2` with same structure (transformation or dispatch/routing).
+   - Reference content → `.j2` or `.yaml` (no inference).
    - Guardrails → Encoded as `visibility` and constraints in `.j2` body.
 3. **Process manifest** — Produce a `registry/manifests/<skill-name>.yaml` process manifest with:
    - `manifest.category: skill` (or `pipeline`/`runtime-config` for non-agent infrastructure)
@@ -56,7 +56,7 @@ You are a skill translator. Convert a classified source skill into a hKask regis
 5. **Consent model** — hKask uses capability matching. User-confirmation gates → `.j2` contract visibility.
 6. **Observability** — Map to Regulation span references in `.j2` body.
 7. **Domain references** — Substitute using the domain substitution table.
-8. **Validation** — template_type MUST be KnowAct/WordAct/FlowDef/RenderAct (deprecated). visibility MUST be Private/Public/Shared. 
+8. **Validation** — visibility MUST be Private/Public/Shared. 
 
 ### Source Action → Canonical Action Mapping
 
@@ -69,7 +69,7 @@ You are a skill translator. Convert a classified source skill into a hKask regis
 | `emit`, `record`, `log` | `feedback` | MCP tool Regulation feedback |
 | `recall`, `retrieve`, `search`, `extract` | `retrieve` | MCP tool data retrieval |
 | `index`, `register` | `populate` | deterministic registration |
-| `evaluate` (deprecated) | `select` or `flowdef` | Use `select` for inference, `flowdef` for recursion (deprecated) |
+| `evaluate` (deprecated) | `select` | Use `select` for inference |
 | `run_command` | `execute` | Map shell commands to MCP tool dispatch |
 | `mcp_tool` | `execute` | Direct MCP tool invocation |
 | `centroid`, `coordinate`, `curator_escalation` | `feedback` or `escalate` | Map to feedback or escalate control flow |
@@ -121,7 +121,6 @@ crate:
 templates:
   - id: <skill-name>/<template-id>
     path: <template-id>.j2
-    type: KnowAct | WordAct | FlowDef  # deprecated — act types no longer used
     description: <one-line>
 vocabulary_terms: [term, ...]
 ```
@@ -156,7 +155,7 @@ Respond with a JSON object:
   "templates": [
     {
       "filename": "<step-name>.j2",
-      "content": "[inference]\ntemplate_type: ...\n---\n..."
+      "content": "[inference]\n---\n..."
     }
   ],
   "skill_md": "---\nname: ...\ndescription: ...\n---\n...",
@@ -179,7 +178,7 @@ Respond with a JSON object:
     "action_mappings": [
       {
         "source_action": "original action name",
-        "canonical_action": "select|populate|compute|execute|feedback|validate|retrieve|render|flowdef|loop|choice|abort|escalate",
+        "canonical_action": "select|populate|compute|execute|feedback|validate|retrieve|render|loop|choice|abort|escalate",
         "rationale": "why this mapping was chosen"
       }
     ]
@@ -190,11 +189,9 @@ Respond with a JSON object:
 ## Constraints
 
 - The primary deliverable is the registry crate (manifest.yaml + .j2 templates) plus the process manifest (registry/manifests/<name>.yaml). SKILL.md is derived from them.
-- `template_type` must be KnowAct, WordAct, FlowDef, or RenderAct (deprecated) — never Cognition, Prompt, or Process.
 - `visibility` must be Private, Public, or Shared.
-- `template_type` must be one of KnowAct, WordAct, FlowDef, RenderAct (deprecated).
 - `contract.input` and `contract.output` must be structured JSON types.
-- Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, flowdef, loop, choice, abort, escalate). (Note: `flowdef` action is deprecated.)
+- Every step in the process manifest must use a canonical action (select, populate, compute, execute, feedback, validate, retrieve, render, loop, choice, abort, escalate).
 - The process manifest must have a `rjoule:` block with `cap > 0` if any step uses inference.
 - The process manifest must have an `rjoule:` block with `cap > 0` if any step uses `action: select`.
 - The process manifest must have a `convergence:` block (for `category: skill`).

@@ -166,4 +166,4 @@ degrades with disuse.
 - [Memory Ingest Sequence](../diagrams/sequence-memory-ingest.md) — the write-side diagram
 - [Memory Recall Flow](../diagrams/flowchart-memory-recall.md) — the read-side diagram
 - [Memory Store ERD](../diagrams/erd-memory-store.md) — the storage schema
-- [hkask-memory README](../crates/hkask-memory/README.md) — crate-level docs
+- [hkask-memory README](../../crates/hkask-memory/README.md) — crate-level docs
