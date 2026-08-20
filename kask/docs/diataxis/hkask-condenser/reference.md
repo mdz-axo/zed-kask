@@ -2,7 +2,7 @@
 title: "hkask-condenser — Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-08-20
-version: "1.1.0"
+version: "1.2.0"
 status: "Active"
 domain: "Condensation"
 mds_categories: [domain, lifecycle]
@@ -233,9 +233,7 @@ helper:
 | `word_frequencies` | `saliency.rs:25` | Lowercase word → normalized frequency for words with length > 2 |
 
 The domain crate owns the scoring formula and query-word extraction (pure,
-testable). The MCP server (`condenser_score_saliency` tool) owns the I/O
-dispatch to semantic or episodic memory stores and delegates scoring to
-the domain crate.
+testable, in-process).
 
 ## Ontology graph
 
@@ -282,7 +280,7 @@ logic with no HTTP or async.
 
 | Function | Location | Purpose |
 |----------|----------|---------|
-| `SUMMARY_SYSTEM_PROMPT` | `inference.rs:13` | System prompt for the `condenser_thread_summary` tool |
+| `SUMMARY_SYSTEM_PROMPT` | `inference.rs:13` | System prompt for thread summarization |
 | `format_conversation_text` | `inference.rs:21` | Render messages as `[role]: content\n\n` |
 | `build_summarization_prompt` | `inference.rs:35` | Compose the user-turn summarization prompt |
 | `build_summary_output` | `inference.rs:48` | Assemble a `ThreadSummaryOutput` with token estimates |
@@ -294,8 +292,7 @@ The `reg.condenser` tracing spans emitted at
 `kask/crates/hkask-condenser/src/engine.rs:67` and
 `kask/crates/hkask-condenser/src/engine.rs:83` are diagnostic logging
 for human inspection, NOT cybernetic feedback signals. They are not
-consumed by any regulation policy or feedback loop. The actual feedback
-channel is the daemon's `store_experience` call in the MCP server layer.
+consumed by any regulation policy or feedback loop.
 
 | Span | Fields | When |
 |------|--------|------|
@@ -309,16 +306,6 @@ channel is the daemon's `store_experience` call in the MCP server layer.
   tool-result compression path wired into the agent turn loop via
   `agent::set_thread_condenser` (`crates/agent/src/agent.rs:3144`),
   gated on `kask.condenser.auto_compress_tool_results` (default off).
-
-> **Note (2026-08-20):** The `hkask-mcp-condenser` MCP server was deleted
-> (commit `26215d845e`). The former MCP-server surface
-> (`condenser_ping`, `condenser_persist`, `condenser_thread_summary`,
-> `condenser_score_saliency`) no longer exists. The `hkask-condenser`
-> **crate** remains as a pure domain crate consumed only by
-> `kask_bridge::BridgeThreadCondenser` for in-process thread condensation.
-> The `condenser_score_saliency` tool mentioned in the Saliency section
-> above was part of the deleted server; the `saliency` module's public
-> functions remain available to in-process callers.
 
 ## See also
 

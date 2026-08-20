@@ -1,8 +1,8 @@
 ---
 title: "hkask-condenser — Tutorial: Compressing Your First Tool Output"
 audience: [developers new to hkask-condenser]
-last_updated: 2026-08-13
-version: "1.0.0"
+last_updated: 2026-08-20
+version: "1.1.0"
 status: "Active"
 domain: "Condensation"
 mds_categories: [lifecycle]

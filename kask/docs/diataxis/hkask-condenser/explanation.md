@@ -2,7 +2,7 @@
 title: "hkask-condenser — Explanation"
 audience: [developers, architects, agents]
 last_updated: 2026-08-20
-version: "1.1.0"
+version: "1.2.0"
 status: "Active"
 domain: "Condensation"
 mds_categories: [trust, curation]
@@ -38,7 +38,6 @@ implementation (three algorithms + ontology graph + saliency scoring).
 | `set_thread_condenser` | `crates/agent/src/agent.rs:3144` |
 | `NO_COMPRESS_TOOLS` | `crates/agent/src/thread.rs:175` |
 | Deferred-task wiring | `crates/zed/src/main.rs:1929` |
-| D28 condenser DB default | `kask/crates/kask_bridge/src/mcp_servers.rs:577` (D28 `HKASK_TRANSACTIONS_DIR` read site; the `hkask-mcp-condenser` MCP server was deleted 2026-08-20, commit `26215d845e` — the condenser DB default now lives in the `hkask-condenser` crate's `kask_bridge` wiring, not a deleted server path) |
 
 ## The compression cycle
 
@@ -177,27 +176,6 @@ the condenser via `NO_COMPRESS_TOOLS` (`crates/agent/src/thread.rs:175`).
 The condenser's line-level elision (joining non-consecutive selected lines
 with `...`) is destructive for source code, so these tools' output passes
 through verbatim even when a condenser is wired.
-
-## Persistence: D28 standardized storage
-
-> **Note (2026-08-20):** The `hkask-mcp-condenser` MCP server was deleted
-> (commit `26215d845e`). The `hkask-condenser` **crate** remains as a pure
-> domain crate consumed by `kask_bridge::BridgeThreadCondenser` for
-> in-process thread condensation. The MCP-server persistence surface
-> (`condenser_persist`, `condenser_ping`, `condenser_thread_summary`,
-> `condenser_score_saliency`) is gone; the crate no longer persists
-> compressed outputs to episodic memory via an MCP server. The D28
-> standardized storage layout still applies to the surviving MCP servers.
-
-The condenser DB default path (`mcp/condenser/condenser.db` under the kask
-data root) was resolved via `hkask_types::agent_paths::resolve_under_data_dir`
-+ `mcp_server_db("condenser", "condenser")`
-(`kask/crates/hkask-types/src/agent_paths.rs:98` and `:113`) when the
-`hkask-mcp-condenser` server existed. The D28 `HKASK_TRANSACTIONS_DIR` read
-site in `kask/crates/kask_bridge/src/mcp_servers.rs:577` documents the
-standardized storage wiring for the surviving servers. With the server
-deleted, no condenser DB is written; the `BridgeThreadCondenser` runtime
-path compresses tool results in-process without persistence.
 
 ## See also
 

@@ -271,7 +271,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRAIN-002
 verified_date: 2026-07-10
-verified_against: (corpus artifacts are runtime outputs, not committed to the repo); kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs; kask/mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs; kask/crates/hkask-types/src/ (pipeline_runner.rs deleted — pipeline types moved to hkask-templates); kask/mcp-servers/hkask-mcp-training/src/providers/runpod.rs
+verified_against: (corpus artifacts are runtime outputs, not committed to the repo); kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs; kask/mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs; kask/crates/hkask-types/src/ (pipeline_runner.rs deleted — pipeline types formerly moved to hkask-templates, which was itself deleted commit 5f4cf5f10d); kask/mcp-servers/hkask-mcp-training/src/providers/runpod.rs
 status: VERIFIED
 -->
 
@@ -318,7 +318,7 @@ The complete, aspirational corpus workflow is in [`corpus/pipeline-capabilities-
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TRAIN-003
 verified_date: 2026-07-10
-verified_against: kask/mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs; kask/crates/hkask-types/src/ (pipeline_runner.rs deleted — pipeline types moved to hkask-templates):37-142; kask/crates/hkask-types/src/ (pipeline_manifest.rs deleted):49-91; kask/crates/hkask-mcp-server/src/server/tool_span.rs:247-261
+verified_against: kask/mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs; kask/crates/hkask-types/src/ (pipeline_runner.rs deleted — pipeline types formerly moved to hkask-templates, which was itself deleted commit 5f4cf5f10d):37-142; kask/crates/hkask-types/src/ (pipeline_manifest.rs deleted):49-91; kask/crates/hkask-mcp-server/src/server/tool_span.rs:247-261
 status: VERIFIED
 -->
 
